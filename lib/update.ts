@@ -9,6 +9,7 @@ export type UpdateManifest = {
   projectUrl?: string;
   packageUrl?: string;
   sha256?: string;
+  mirrorUrls?: string[];
   publishedAt?: string;
   notes?: string[];
 };
@@ -22,6 +23,7 @@ export type UpdateStatus = {
   projectUrl?: string;
   packageUrl?: string;
   sha256?: string;
+  mirrorUrls?: string[];
   canApply: boolean;
   publishedAt?: string;
   notes?: string[];
@@ -30,7 +32,7 @@ export type UpdateStatus = {
 };
 
 const currentVersion = String(packageInfo.version || '0.0.0');
-const defaultManifestUrl = 'https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json';
+const defaultManifestUrl = 'https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/refs/heads/main/update.json';
 const cacheTtlMs = 6 * 60 * 60 * 1000;
 let cached: { expiresAt: number; status: UpdateStatus } | null = null;
 
@@ -86,6 +88,15 @@ function validPackageUrl(value: string) {
   }
 }
 
+function validMirrorUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function validSha256(value: string) {
   return /^[a-f0-9]{64}$/i.test(value);
 }
@@ -99,11 +110,23 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
   try {
     const parsedUrl = new URL(url);
     if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('更新清单地址必须使用 HTTP 或 HTTPS');
-    const response = await fetch(parsedUrl, {
-      cache: 'no-store',
-      headers: { Accept: 'application/json', 'User-Agent': 'SANMAO.AI update checker' },
-      signal: AbortSignal.timeout(5000),
-    });
+    let response: Response | null = null;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        response = await fetch(parsedUrl, {
+          cache: 'no-store',
+          headers: { Accept: 'application/json', 'User-Agent': 'SANMAO.AI update checker' },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (response.ok) break;
+        throw new Error(`更新清单返回 HTTP ${response.status}`);
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+      }
+    }
+    if (!response?.ok) throw lastError instanceof Error ? lastError : new Error('更新清单请求失败');
     if (!response.ok) throw new Error(`更新清单返回 HTTP ${response.status}`);
 
     const raw = await response.json() as Partial<UpdateManifest>;
@@ -112,6 +135,9 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
     const projectUrl = typeof raw.projectUrl === 'string' && validHttpUrl(raw.projectUrl) ? raw.projectUrl.trim() : undefined;
     const packageUrl = typeof raw.packageUrl === 'string' && validPackageUrl(raw.packageUrl) ? raw.packageUrl.trim() : undefined;
     const sha256 = typeof raw.sha256 === 'string' && validSha256(raw.sha256) ? raw.sha256.trim().toLowerCase() : undefined;
+    const mirrorUrls = Array.isArray(raw.mirrorUrls)
+      ? raw.mirrorUrls.filter((mirror): mirror is string => typeof mirror === 'string' && validMirrorUrl(mirror)).slice(0, 3)
+      : [];
 
     if (!latestVersion || !validHttpUrl(releaseUrl)) throw new Error('更新清单格式无效');
     const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
@@ -124,6 +150,7 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
       projectUrl,
       packageUrl,
       sha256,
+      mirrorUrls,
       canApply: hasUpdate && Boolean(packageUrl && sha256 && hasLocalUpdater()),
       publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : undefined,
       notes: Array.isArray(raw.notes) ? raw.notes.filter((note): note is string => typeof note === 'string').slice(0, 8) : [],

@@ -17,6 +17,17 @@ type UpdateStatus = {
 
 type ApplyState = 'idle' | 'working' | 'started' | 'error';
 type CheckNoticeTone = 'success' | 'error';
+type UpdateProgressStage = 'queued' | 'downloading' | 'verifying' | 'starting' | 'completed' | 'failed';
+type UpdateProgress = {
+  jobId: string;
+  version: string;
+  stage: UpdateProgressStage;
+  message: string;
+  percent: number | null;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  error?: string;
+};
 
 const DISMISSED_KEY = 'sanmao-dismissed-update-version';
 const CHECKED_KEY = 'sanmao-update-checked-at';
@@ -27,6 +38,9 @@ function getCheckErrorMessage(data: UpdateStatus, responseStatus?: number) {
   const error = data.error || '';
   if (responseStatus === 429 || /\b(?:429|5\d\d)\b|rate.?limit|too many requests|更新清单返回 HTTP 5/i.test(error)) {
     return '更新服务暂时繁忙，请稍后再试';
+  }
+  if (/timeout|timed out|aborted|fetch failed|网络|ECONNRESET|ENETUNREACH/i.test(error)) {
+    return '网络连接超时，请检查网络后重试';
   }
   return error || '检查更新失败，请稍后重试';
 }
@@ -41,12 +55,37 @@ function openExternal(url?: string) {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value < 1024) return `${Math.max(0, Math.round(value))} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let size = value / 1024;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[index]}`;
+}
+
+function progressStageLabel(stage?: UpdateProgressStage) {
+  switch (stage) {
+    case 'queued': return '准备中';
+    case 'downloading': return '下载中';
+    case 'verifying': return '校验中';
+    case 'starting': return '启动更新';
+    case 'completed': return '正在重启';
+    case 'failed': return '需要重试';
+    default: return '处理中';
+  }
+}
+
 export default function UpdateNotice() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [applyState, setApplyState] = useState<ApplyState>('idle');
   const [applyMessage, setApplyMessage] = useState('');
+  const [applyProgress, setApplyProgress] = useState<UpdateProgress | null>(null);
   const [checkNotice, setCheckNotice] = useState('');
   const [checkNoticeTone, setCheckNoticeTone] = useState<CheckNoticeTone>('success');
   const checkNoticeTimerRef = useRef<number | null>(null);
@@ -114,12 +153,62 @@ export default function UpdateNotice() {
   const updateLabel = useMemo(() => {
     if (applyState === 'working') return '正在准备更新…';
     if (applyState === 'started') return '更新已开始，等待重启…';
+    if (applyState === 'error') return '重试更新';
     return status?.canApply ? '立即更新并重启' : '前往下载';
   }, [applyState, status?.canApply]);
 
   function dismissUpdate() {
     if (status?.latestVersion) window.localStorage.setItem(DISMISSED_KEY, status.latestVersion);
     setShowModal(false);
+  }
+
+  async function waitForRestart(currentVersion: string) {
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+      try {
+        const checkResponse = await fetch('/api/update?force=1', { cache: 'no-store' });
+        if (checkResponse.ok) {
+          const next = await checkResponse.json() as UpdateStatus;
+          if (next.currentVersion !== currentVersion) {
+            window.location.reload();
+            return;
+          }
+        }
+      } catch {
+        // 更新器正在停止旧服务，短暂请求失败是预期情况。
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+    setApplyState('error');
+    setApplyMessage('更新程序启动超时，请重新运行启动器完成更新。');
+  }
+
+  async function watchUpdateProgress(jobId: string, currentVersion: string) {
+    const deadline = Date.now() + 150_000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`/api/update/progress?jobId=${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+        if (response.ok) {
+          const progress = await response.json() as UpdateProgress;
+          setApplyProgress(progress);
+          setApplyMessage(progress.message);
+          if (progress.stage === 'failed') {
+            setApplyState('error');
+            return;
+          }
+          if (progress.stage === 'completed') {
+            setApplyState('started');
+            await waitForRestart(currentVersion);
+            return;
+          }
+        }
+      } catch {
+        // 网络短暂抖动时继续轮询，避免把正在下载的任务误判为失败。
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 650));
+    }
+    setApplyState('error');
+    setApplyMessage('更新任务响应超时，请检查网络后重试。');
   }
 
   async function applyUpdate() {
@@ -130,37 +219,18 @@ export default function UpdateNotice() {
     }
 
     setApplyState('working');
+    setApplyProgress(null);
     setApplyMessage('正在下载并校验更新包，用户数据不会被覆盖。');
     try {
       const response = await fetch('/api/update/apply', { method: 'POST', cache: 'no-store' });
-      const data = await response.json() as { started?: boolean; error?: string };
-      if (!response.ok || !data.started) throw new Error(data.error || '更新准备失败');
-
-      setApplyState('started');
-      setApplyMessage('服务即将重启，请保持此页面打开。');
-      const startedAt = Date.now();
-      const poll = window.setInterval(async () => {
-        if (Date.now() - startedAt > 90_000) {
-          window.clearInterval(poll);
-          setApplyState('error');
-          setApplyMessage('服务重启超时，请重新运行启动器完成更新。');
-          return;
-        }
-        try {
-          const checkResponse = await fetch('/api/update?force=1', { cache: 'no-store' });
-          if (!checkResponse.ok) return;
-          const next = await checkResponse.json() as UpdateStatus;
-          if (next.currentVersion !== status.currentVersion) {
-            window.clearInterval(poll);
-            window.location.reload();
-          }
-        } catch {
-          // 更新器正在停止旧服务，短暂请求失败是预期情况。
-        }
-      }, 1500);
+      const data = await response.json() as { started?: boolean; jobId?: string; error?: string; progress?: UpdateProgress };
+      if ((!response.ok && response.status !== 409) || !data.jobId) throw new Error(data.error || '更新准备失败');
+      if (data.progress) setApplyProgress(data.progress);
+      if (data.error && response.status !== 409) throw new Error(data.error);
+      await watchUpdateProgress(data.jobId, status.currentVersion);
     } catch (error) {
       setApplyState('error');
-      setApplyMessage(error instanceof Error ? error.message : '更新失败，请前往 GitHub 手动下载。');
+      setApplyMessage(error instanceof Error ? error.message : '更新失败，请检查网络后重试。');
     }
   }
 
@@ -215,7 +285,23 @@ export default function UpdateNotice() {
               <h2 id="update-modal-title">发现新版本 v{status?.latestVersion}</h2>
               <p>当前版本 v{status?.currentVersion}。更新会保留本地配置、API Key、历史记录和图片。</p>
               {status?.notes?.length ? <ul>{status.notes.slice(0, 4).map((note) => <li key={note}>{note}</li>)}</ul> : null}
-              {applyState !== 'idle' ? <div className={`update-progress ${applyState}`} role="status">{applyMessage}</div> : null}
+              {applyState !== 'idle' ? (
+                <div className={`update-progress ${applyState}`} role="status" aria-live="polite">
+                  <div className="update-progress-heading">
+                    <span className="update-progress-loader" aria-hidden="true" />
+                    <strong>{applyProgress?.message || applyMessage}</strong>
+                    <b>{applyProgress?.percent === null || applyProgress?.percent === undefined ? '…' : `${applyProgress.percent}%`}</b>
+                  </div>
+                  <div className="update-progress-track" aria-hidden="true">
+                    <span className={applyProgress?.percent === null || applyProgress?.percent === undefined ? 'indeterminate' : ''} style={{ width: `${Math.max(3, applyProgress?.percent || 0)}%` }} />
+                  </div>
+                  <div className="update-progress-meta">
+                    <span>{progressStageLabel(applyProgress?.stage)}</span>
+                    {applyProgress?.downloadedBytes ? <span>{formatBytes(applyProgress.downloadedBytes)}{applyProgress.totalBytes ? ` / ${formatBytes(applyProgress.totalBytes)}` : ''}</span> : null}
+                  </div>
+                  {applyState === 'error' && applyProgress?.error ? <small>{applyProgress.error}</small> : null}
+                </div>
+              ) : null}
             </div>
             <div className="update-modal-actions">
               <button type="button" className="ghost-button" disabled={applyState === 'working'} onClick={dismissUpdate}>稍后提醒</button>

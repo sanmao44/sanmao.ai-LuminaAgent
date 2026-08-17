@@ -188,6 +188,12 @@ SANMAO.AI 默认会检查官方仓库的 `update.json`。如果你使用自己�
 SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json
 ```
 
+如果部分网络无法稳定访问 GitHub 的源码压缩包，可以配置一个自己控制的 HTTPS 镜像地址作为备用下载源。备用源只负责传输，应用仍会用 `update.json` 中的 SHA-256 校验包内容；不要使用来源不明的公共代理。
+
+```env
+SANMAO_UPDATE_MIRRORS=https://your-cdn.example.com/sanmao-ai-v0.5.4.zip
+```
+
 应用启动后会定期检查更新。侧栏会显示当前版本，发现新版本后弹出更新提示；检查失败不会影响本地使用。
 
 如果 `update.json` 同时提供可信的 GitHub 源码压缩包地址和 SHA-256：
@@ -198,11 +204,14 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
   "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.5.2",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
   "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.5.2",
-  "sha256": "在发布后填写 64 位 SHA-256"
+  "sha256": "在发布后填写 64 位 SHA-256",
+  "mirrorUrls": [
+    "https://your-cdn.example.com/sanmao-ai-v0.5.2.zip"
+  ]
 }
 ```
 
-本地源码运行时，更新提示会显示“立即更新并重启”：下载包会先校验 SHA-256，然后只替换程序文件，并保留 `.data`、`.env.local`、API Key、历史记录和图片。Docker 环境默认关闭此按钮，应通过更新镜像完成升级。没有 `packageUrl` 或 SHA-256 时，按钮只会打开 GitHub Release 下载页。
+本地源码运行时，更新提示会显示“立即更新并重启”：下载包会显示实时进度，网络失败时会自动重试并按顺序尝试 `mirrorUrls` 与 `SANMAO_UPDATE_MIRRORS`，下载包随后校验 SHA-256，再只替换程序文件，并保留 `.data`、`.env.local`、API Key、历史记录和图片。Docker 环境默认关闭此按钮，应通过更新镜像完成升级。没有 `packageUrl` 或 SHA-256 时，按钮只会打开 GitHub Release 下载页。
 
 设置页面的“导出本地备份”会生成包含服务端配置、主密钥、日志、浏览器历史和图片文件的 `.sanmao-backup.tar.gz`。备份文件包含 API Key 恢复所需信息，请勿上传 GitHub 或发送给他人。
 
