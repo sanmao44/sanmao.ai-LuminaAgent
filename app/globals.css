@@ -1514,3 +1514,6 @@ html[data-theme="light"] .sidebar.expanded{
 .app-shell.sidebar-is-open .version-update-button{height:24px;font-size:7px}
 .app-shell.sidebar-is-open .version-card{display:none}
 .app-shell .version-card-head{box-shadow:0 2px 8px rgba(15,23,42,.06)}
+.app-shell .version-latest-status{display:inline-flex;align-items:center;gap:4px;height:21px;margin-right:7px;padding:0 7px;border:1px solid color-mix(in srgb,var(--success) 38%,var(--line));border-radius:999px;background:var(--success-soft);color:var(--success);font-size:8px;font-weight:850;line-height:1;white-space:nowrap}
+.app-shell .version-latest-status-mark{display:grid;place-items:center;width:12px;height:12px;border-radius:50%;background:var(--success);color:var(--panel);font-size:8px;font-weight:950;line-height:1}
+@media(max-width:780px){.app-shell .version-latest-status{margin-right:5px;padding:0 5px;font-size:7px}.app-shell .version-latest-status-mark{width:11px;height:11px;font-size:7px}}
