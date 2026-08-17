@@ -211,7 +211,7 @@ SANMAO_UPDATE_MIRRORS=https://your-cdn.example.com/sanmao-ai-v0.5.4.zip
 }
 ```
 
-本地源码运行时，更新提示会显示“立即更新并重启”：下载包会显示实时进度，网络失败时会自动重试并按顺序尝试 `mirrorUrls` 与 `SANMAO_UPDATE_MIRRORS`，下载包随后校验 SHA-256，再只替换程序文件，并保留 `.data`、`.env.local`、API Key、历史记录和图片。Docker 环境默认关闭此按钮，应通过更新镜像完成升级。没有 `packageUrl` 或 SHA-256 时，按钮只会打开 GitHub Release 下载页。
+本地源码运行时，更新提示会显示“立即更新并重启”：下载包会显示实时进度，网络失败时会自动重试并按顺序尝试 `mirrorUrls` 与 `SANMAO_UPDATE_MIRRORS`，下载包随后校验 SHA-256，再只替换程序文件，并保留 `.data`、`.env.local`、API Key、历史记录和图片。更新器会先确认后台脚本真正启动，再进入重启等待；若脚本执行失败，会将原因写入 `.data/update-staging/update-<版本>.log` 并在界面显示重试信息。Docker 环境默认关闭此按钮，应通过更新镜像完成升级。没有 `packageUrl` 或 SHA-256 时，按钮只会打开 GitHub Release 下载页。
 
 设置页面的“导出本地备份”会生成包含服务端配置、主密钥、日志、浏览器历史和图片文件的 `.sanmao-backup.tar.gz`。备份文件包含 API Key 恢复所需信息，请勿上传 GitHub 或发送给他人。
 
