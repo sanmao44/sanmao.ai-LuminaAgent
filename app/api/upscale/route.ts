@@ -6,6 +6,7 @@ import { getPublicState, getRuntimeImageModelForCapability } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
 
 export const runtime = 'nodejs';
+export const maxDuration = 1800;
 
 export async function POST(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });

@@ -50,3 +50,40 @@ test('does not override an explicitly versioned base URL', () => {
   });
   assert.deepEqual(candidates, [{ url: 'https://example.com/v1/models' }]);
 });
+
+test('normalizes image responses from common provider protocols', () => {
+  const b64 = 'iVBORw0KGgoAAAAAAAAAAAAA';
+  assert.deepEqual(providers.normalizeProviderImages({ data: [{ b64_json: b64, revised_prompt: 'updated' }] }), [
+    { url: `data:image/png;base64,${b64}`, revisedPrompt: 'updated' },
+  ]);
+  assert.deepEqual(providers.normalizeProviderImages({ output: [{ type: 'image_generation_call', result: b64 }] }), [
+    { url: `data:image/png;base64,${b64}` },
+  ]);
+  assert.deepEqual(providers.normalizeProviderImages({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: b64 } }] } }] }), [
+    { url: `data:image/jpeg;base64,${b64}` },
+  ]);
+  assert.deepEqual(providers.normalizeProviderImages({ choices: [{ message: { content: [{ type: 'image_url', image_url: { url: 'https://cdn.example.test/result.png' } }] } }] }), [
+    { url: 'https://cdn.example.test/result.png' },
+  ]);
+  assert.deepEqual(providers.normalizeProviderImages({ content: '![result](https://cdn.example.test/result.png)' }), [
+    { url: 'https://cdn.example.test/result.png' },
+  ]);
+});
+
+test('does not mistake an asynchronous task id for an image', () => {
+  assert.throws(
+    () => providers.normalizeProviderImages({ id: 'task_0123456789abcdef0123456789abcdef', status: 'processing' }),
+    /没有找到可显示的图片/,
+  );
+  assert.throws(
+    () => providers.normalizeProviderImages({ data: { task_id: '0123456789abcdef0123456789abcdef', state: 'processing' } }),
+    /没有找到可显示的图片/,
+  );
+});
+
+test('does not retry image requests after ambiguous upstream failures', () => {
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'transport', providerStatus: 0 }), false);
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'timeout', providerStatus: 0 }), false);
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 500 }), false);
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
+});
