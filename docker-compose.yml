@@ -1,0 +1,17 @@
+services:
+  sanmao-ai:
+    build: .
+    ports:
+      - "127.0.0.1:3210:3210"
+    environment:
+      SANMAO_DATA_DIR: "/data"
+      SANMAO_IMAGE_STORAGE_PATH: "/data/images"
+      SANMAO_DISABLE_LOCAL_UPDATE: "1"
+      SANMAO_UPDATE_MANIFEST_URL: "https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json"
+      # 公开部署时可取消下面两行注释并填写：
+      # SANMAO_MASTER_KEY: "your-long-random-secret"
+      # SANMAO_ADMIN_PASSWORD: "your-admin-password"
+    volumes:
+      - sanmao_data:/data
+volumes:
+  sanmao_data:
