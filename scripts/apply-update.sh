@@ -10,6 +10,7 @@ STAGING_PATH=$(CDPATH= cd -- "$(dirname "$ARCHIVE_PATH")" && pwd)
 EXTRACT_PATH="$STAGING_PATH/extract-$$"
 LOCK_PATH="$STAGING_PATH/update.lock"
 LOG_PATH=${LOG_PATH:-"$STAGING_PATH/update.log"}
+RUNTIME_PATCH_PATH="$STAGING_PATH/local-update-runtime.ts"
 
 write_log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_PATH" 2>/dev/null || true
@@ -17,6 +18,7 @@ write_log() {
 
 cleanup() {
   rm -f "$LOCK_PATH"
+  rm -f "$RUNTIME_PATCH_PATH"
   rm -rf "$EXTRACT_PATH"
 }
 trap cleanup EXIT
@@ -68,7 +70,13 @@ if [ -f "$TARGET_PATH/scripts/apply-update.sh" ]; then
   cp "$0" "$TARGET_PATH/scripts/apply-update.sh"
   chmod +x "$TARGET_PATH/scripts/apply-update.sh"
 fi
+if [ -f "$RUNTIME_PATCH_PATH" ]; then
+  mkdir -p "$TARGET_PATH/lib"
+  cp "$RUNTIME_PATCH_PATH" "$TARGET_PATH/lib/local-update.ts"
+  write_log '已保留本地更新运行时修复'
+fi
 rm -rf "$TARGET_PATH/.next" "$ARCHIVE_PATH" "$EXTRACT_PATH"
+rm -f "$RUNTIME_PATCH_PATH"
 write_log '程序文件替换完成'
 
 if [ "$(uname -s)" = "Darwin" ] && [ -f "$TARGET_PATH/scripts/start-macos.sh" ]; then

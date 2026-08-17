@@ -70,11 +70,21 @@ try {
   if (Test-Path -LiteralPath $installedUpdater) {
     Copy-Item -LiteralPath $PSCommandPath -Destination $installedUpdater -Force
   }
+  $runtimePatchPath = Join-Path $stagingPath 'local-update-runtime.ts'
+  $runtimeTargetPath = Join-Path $TargetPath 'lib\local-update.ts'
+  if (Test-Path -LiteralPath $runtimePatchPath) {
+    if (-not (Test-Path -LiteralPath (Split-Path -Parent $runtimeTargetPath))) {
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeTargetPath) | Out-Null
+    }
+    Copy-Item -LiteralPath $runtimePatchPath -Destination $runtimeTargetPath -Force
+    Write-UpdateLog '已保留本地更新运行时修复'
+  }
   Write-UpdateLog '程序文件替换完成'
 
   # 让启动器重新构建生产产物，并根据 package-lock.json 检查依赖。
   Remove-Item -LiteralPath (Join-Path $TargetPath '.next') -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $runtimePatchPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
 
@@ -89,6 +99,7 @@ try {
   Write-UpdateLog '更新流程完成，等待新服务就绪'
 } catch {
   Write-UpdateLog "更新失败：$($_.Exception.Message)"
+  Remove-Item -LiteralPath (Join-Path $stagingPath 'local-update-runtime.ts') -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
   throw
