@@ -298,7 +298,11 @@ export async function startLocalUpdate(status: UpdateStatus, jobId = createUpdat
       .split(/[\r\n,]+/)
       .map((value) => value.trim())
       .filter(Boolean);
-    const sources = [...new Set([status.packageUrl, ...(status.mirrorUrls || []), ...configuredMirrors].filter(Boolean))] as string[];
+    const rawMirrorUrls: unknown = (status as UpdateStatus & { mirrorUrls?: unknown }).mirrorUrls;
+    const mirrorUrls = Array.isArray(rawMirrorUrls)
+      ? rawMirrorUrls.filter((value): value is string => typeof value === 'string')
+      : [];
+    const sources = [...new Set([status.packageUrl, ...mirrorUrls, ...configuredMirrors].filter(Boolean))] as string[];
     setUpdateProgress(jobId, { stage: 'downloading', message: '正在连接更新源…', percent: 1, downloadedBytes: 0, totalBytes: null });
     let lastReportedAt = 0;
     const download = await downloadFromSources(
