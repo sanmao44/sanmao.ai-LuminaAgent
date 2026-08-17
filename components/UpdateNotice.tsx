@@ -16,6 +16,7 @@ type UpdateStatus = {
 };
 
 type ApplyState = 'idle' | 'working' | 'started' | 'error';
+type CheckNoticeTone = 'success' | 'error';
 
 const DISMISSED_KEY = 'sanmao-dismissed-update-version';
 const CHECKED_KEY = 'sanmao-update-checked-at';
@@ -33,10 +34,12 @@ export default function UpdateNotice() {
   const [applyState, setApplyState] = useState<ApplyState>('idle');
   const [applyMessage, setApplyMessage] = useState('');
   const [checkNotice, setCheckNotice] = useState('');
+  const [checkNoticeTone, setCheckNoticeTone] = useState<CheckNoticeTone>('success');
   const checkNoticeTimerRef = useRef<number | null>(null);
 
-  const announceCheckResult = useCallback((message: string) => {
+  const announceCheckResult = useCallback((message: string, tone: CheckNoticeTone = 'success') => {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
+    setCheckNoticeTone(tone);
     setCheckNotice(message);
     checkNoticeTimerRef.current = message
       ? window.setTimeout(() => {
@@ -58,7 +61,7 @@ export default function UpdateNotice() {
       const data = await response.json() as UpdateStatus;
       if (!response.ok || data.error) {
         setStatus(data);
-        if (announce) announceCheckResult(data.error || '检查更新失败，请稍后重试');
+        if (announce) announceCheckResult(data.error || '检查更新失败，请稍后重试', 'error');
         return;
       }
 
@@ -70,7 +73,7 @@ export default function UpdateNotice() {
       if (data.hasUpdate && (!wasDismissed || announce)) setShowModal(true);
       if (announce && !data.hasUpdate) announceCheckResult('当前已是最新版本');
     } catch {
-      if (announce) announceCheckResult('检查更新失败，请稍后重试');
+      if (announce) announceCheckResult('检查更新失败，请稍后重试', 'error');
       // 更新检查失败不应影响主应用。
     } finally {
       setBusy(false);
@@ -191,7 +194,12 @@ export default function UpdateNotice() {
         </div>
       ) : null}
 
-      {checkNotice ? <div className="toast" role="status" aria-live="polite">{checkNotice}</div> : null}
+      {checkNotice ? (
+        <div className={`version-check-result ${checkNoticeTone}`} role="status" aria-live="polite">
+          <span className="version-check-result-mark" aria-hidden="true">{checkNoticeTone === 'success' ? '✓' : '!'}</span>
+          <span>{checkNotice}</span>
+        </div>
+      ) : null}
     </>
   );
 }
