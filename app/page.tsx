@@ -4004,8 +4004,10 @@ function AssistantMarkdown({ content, onNotify }) {
 }
 export default function Page() {
     const [section, setSectionState] = useState('agent');
+    const sectionRef = useRef('agent');
     const lastNonAngleSectionRef = useRef('agent');
     function setSection(next) {
+        sectionRef.current = next;
         if (next !== 'angle') {
             lastNonAngleSectionRef.current = next;
             try {
@@ -4497,6 +4499,7 @@ export default function Page() {
             const savedSection = localStorage.getItem(LAST_SECTION_STORAGE_KEY);
             if (isRememberedSection(savedSection)) {
                 lastNonAngleSectionRef.current = savedSection;
+                sectionRef.current = savedSection;
                 setSectionState(savedSection);
             }
             const saved = localStorage.getItem('sanmao-theme');
@@ -5119,6 +5122,9 @@ export default function Page() {
         setHistoryNotice(false);
         persistNavNoticeState();
     }
+    function markHistoryImageViewed(item) {
+        markHistoryNoticeSeen(item?.createdAt);
+    }
     function markLogErrorNoticeSeen(at = latestLogErrorCreatedAt(generationLogs)) {
         initializeNavNoticeState();
         navNoticeSeenRef.current.logErrorSeenAt = Math.max(Date.now(), at);
@@ -5139,11 +5145,11 @@ export default function Page() {
         if (section === 'logs') markLogErrorNoticeSeen(latest);
         else setLogErrorNotice(true);
     }
-    function registerHistorySuccess(items) {
+    function registerHistorySuccess(items, visibleNow = false) {
         if (!items.length) return;
         initializeNavNoticeState();
         const latest = latestGalleryCreatedAt(items);
-        if (section === 'history') markHistoryNoticeSeen(latest);
+        if (visibleNow || sectionRef.current === 'history') markHistoryNoticeSeen(latest);
         else setHistoryNotice(true);
     }
     function registerGenerationFailure() {
@@ -5188,9 +5194,15 @@ export default function Page() {
     function getGalleryParent(item) {
         return getComparisonSource(item)?.item || null;
     }
+    function openViewer(item) {
+        if (!item) return;
+        markHistoryImageViewed(item);
+        setViewerId(item.id);
+    }
     function openCompare(item) {
         const source = getComparisonSource(item);
         if (!source) return;
+        markHistoryImageViewed(item);
         setViewerId(null);
         setCompareState({
             item,
@@ -6064,7 +6076,7 @@ export default function Page() {
                 ...items,
                 ...old
             ]);
-        registerHistorySuccess(items);
+        registerHistorySuccess(items, sectionRef.current === 'generate' || (meta.source === 'agent' && sectionRef.current === 'agent'));
         void saveImagesToLocalDirectory(images);
         return items;
     }
@@ -6586,6 +6598,7 @@ export default function Page() {
     }
     function openAngleResultFromToast() {
         if (!angleResultToast) return;
+        markHistoryImageViewed(angleResultToast);
         setSection('angle');
         setAngleResultOpenRequest(angleResultToast.id);
         setAngleResultToast(null);
@@ -7151,6 +7164,7 @@ export default function Page() {
     }
     async function reversePrompt(item) {
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        markHistoryImageViewed(item);
         try {
             let ref;
             if (item.url.startsWith('data:image/')) ref = {
@@ -7303,6 +7317,7 @@ export default function Page() {
         });
     }
     async function openAngleConsole(item) {
+        markHistoryImageViewed(item);
         const requestId = uid('angle-open');
         const hasImmediateImage = item.url.startsWith('data:image/');
         const optimisticRef = {
@@ -7350,6 +7365,7 @@ export default function Page() {
         }
     }
     async function useAsReference(item, target = 'generate') {
+        markHistoryImageViewed(item);
         const optimisticRef = {
             id: uid('ref'),
             name: `历史-${item.id.slice(-6)}.png`,
@@ -7390,6 +7406,7 @@ export default function Page() {
     function openEdit(item) {
         setEditorMaskOpen(false);
         if (!availableEditModels.length) return notify('还没有支持图片修改的模型，请先到模型库启用带“修改”能力的图片模型。');
+        markHistoryImageViewed(item);
         const lastCall = getLastModelCall('edit');
         const saved = lastCall?.params || {};
         const dimensions = outputDimensions(item.outputSize);
@@ -7422,6 +7439,7 @@ export default function Page() {
     function openUpscale(item) {
         setEditorMaskOpen(false);
         if (!availableUpscaleModels.length) return notify('还没有可用的超分模型。请到模型库重新读取并启用 SeedVR2-7B。');
+        markHistoryImageViewed(item);
         const lastCall = getLastModelCall('upscale');
         const saved = lastCall?.params || {};
         const rememberedModel = lastCall?.mode === 'manual' && lastCall.modelId && availableUpscaleModels.some((model)=>model.id === lastCall.modelId) ? lastCall.modelId : 'auto';
@@ -7455,6 +7473,7 @@ export default function Page() {
         if (lastCall) notify('已恢复上次图片超分设置');
     }
     function openOutpaintEditor(item) {
+        markHistoryImageViewed(item);
         setViewerId(null);
         setOutpaintEditor({
             item
@@ -8539,7 +8558,7 @@ export default function Page() {
                                                                     children: message.images.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                                             item: item,
                                                                             previousItem: getGalleryParent(item),
-                                                                            onPreview: ()=>setViewerId(item.id),
+                                                                            onPreview: ()=>openViewer(item),
                                                                             onEdit: ()=>openEdit(item),
                                                                             onUpscale: ()=>openUpscale(item),
                                                                             onReuse: ()=>reuseItem(item),
@@ -8954,6 +8973,7 @@ export default function Page() {
                                 openResultId: angleResultOpenRequest,
                                 suppressAutoOpenId: angleSuppressAutoOpenId,
                                 onResultOpened: (id)=>{
+                                    markHistoryNoticeSeen();
                                     setAngleResultOpenRequest(null);
                                     setAngleResultToast((current)=>current?.id === id ? null : current);
                                 },
@@ -8973,7 +8993,7 @@ export default function Page() {
                                 },
                                 onBrowseHistory: ()=>setSection('history'),
                                 onGenerate: submitAngleGeneration,
-                                onOpenResult: (item)=>setViewerId(item.id),
+                                onOpenResult: (item)=>openViewer(item),
                                 onUseResult: openAngleConsole,
                                 onDownloadResult: (item)=>downloadUrl(item.url, `SANMAO-${item.id}.png`),
                                 onNotify: notify
@@ -9859,7 +9879,7 @@ export default function Page() {
                                                                     task.items.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                                             item: item,
                                                                             previousItem: getGalleryParent(item),
-                                                                            onPreview: ()=>setViewerId(item.id),
+                                                                            onPreview: ()=>openViewer(item),
                                                                             onEdit: ()=>openEdit(item),
                                                                             onUpscale: ()=>openUpscale(item),
                                                                             onReuse: ()=>reuseItem(item),
@@ -9935,7 +9955,7 @@ export default function Page() {
                                                 children: resultItems.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                         item: item,
                                                         previousItem: getGalleryParent(item),
-                                                        onPreview: ()=>setViewerId(item.id),
+                                                        onPreview: ()=>openViewer(item),
                                                         onEdit: ()=>openEdit(item),
                                                         onUpscale: ()=>openUpscale(item),
                                                         onReuse: ()=>reuseItem(item),
@@ -10121,7 +10141,7 @@ export default function Page() {
                                                                 else next.add(item.id);
                                                                 return next;
                                                             }),
-                                                        onPreview: ()=>setViewerId(item.id),
+                                                        onPreview: ()=>openViewer(item),
                                                         onEdit: ()=>openEdit(item),
                                                         onUpscale: ()=>openUpscale(item),
                                                         onReuse: ()=>reuseItem(item),
@@ -10390,6 +10410,7 @@ export default function Page() {
                                                                         href: url,
                                                                         target: "_blank",
                                                                         rel: "noreferrer",
+                                                                        onClick: ()=>markHistoryNoticeSeen(),
                                                                         children: /*#__PURE__*/ _jsx("img", {
                                                                             src: url,
                                                                             alt: `生成结果 ${index + 1}`
@@ -11815,6 +11836,7 @@ export default function Page() {
                                     href: url,
                                     target: "_blank",
                                     rel: "noreferrer",
+                                    onClick: ()=>markHistoryNoticeSeen(),
                                     children: /*#__PURE__*/ _jsx("img", {
                                         src: url,
                                         alt: `生成结果 ${index + 1}`
@@ -12089,7 +12111,7 @@ export default function Page() {
                                         /*#__PURE__*/ _jsx("button", {
                                             className: "viewer-nav prev",
                                             disabled: viewerIndex <= 0,
-                                            onClick: ()=>setViewerId(viewerItems[Math.max(0, viewerIndex - 1)]?.id || viewerItem.id),
+                                            onClick: ()=>openViewer(viewerItems[Math.max(0, viewerIndex - 1)] || viewerItem),
                                             children: /*#__PURE__*/ _jsx(Icon, {
                                                 name: "left"
                                             })
@@ -12097,7 +12119,7 @@ export default function Page() {
                                         /*#__PURE__*/ _jsx("button", {
                                             className: "viewer-nav next",
                                             disabled: viewerIndex >= viewerItems.length - 1,
-                                            onClick: ()=>setViewerId(viewerItems[Math.min(viewerItems.length - 1, viewerIndex + 1)]?.id || viewerItem.id),
+                                            onClick: ()=>openViewer(viewerItems[Math.min(viewerItems.length - 1, viewerIndex + 1)] || viewerItem),
                                             children: /*#__PURE__*/ _jsx(Icon, {
                                                 name: "right"
                                             })
