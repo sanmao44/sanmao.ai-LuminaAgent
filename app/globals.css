@@ -1526,3 +1526,4 @@ html[data-theme="light"] .sidebar.expanded{
 .author-contact[data-tooltip]::before{content:'';position:absolute;left:19px;bottom:calc(100% + 5px);z-index:6;width:7px;height:7px;border-right:1px solid var(--line-strong);border-bottom:1px solid var(--line-strong);background:color-mix(in srgb,var(--panel) 96%,#0b0c10);opacity:0;visibility:hidden;pointer-events:none;transform:rotate(45deg);transition:opacity .15s ease,visibility .15s ease}
 .author-contact[data-tooltip]:hover::after,.author-contact[data-tooltip]:focus-visible::after{opacity:1;visibility:visible;transform:translateY(0)}
 .author-contact[data-tooltip]:hover::before,.author-contact[data-tooltip]:focus-visible::before{opacity:1;visibility:visible}
+.app-shell.angle-app-shell .version-card{display:none}
