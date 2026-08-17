@@ -29,16 +29,22 @@ function openExternal(url?: string) {
 export default function UpdateNotice() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checkFailed, setCheckFailed] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [applyState, setApplyState] = useState<ApplyState>('idle');
   const [applyMessage, setApplyMessage] = useState('');
 
   const check = useCallback(async (force = false) => {
     setBusy(true);
+    setCheckFailed(false);
     try {
       const response = await fetch(`/api/update${force ? '?force=1' : ''}`, { cache: 'no-store' });
       const data = await response.json() as UpdateStatus;
-      if (!response.ok) return;
+      if (!response.ok || data.error) {
+        setStatus(data);
+        setCheckFailed(true);
+        return;
+      }
 
       setStatus(data);
       window.localStorage.setItem(CHECKED_KEY, String(Date.now()));
@@ -47,6 +53,7 @@ export default function UpdateNotice() {
         : false;
       if (data.hasUpdate && !wasDismissed) setShowModal(true);
     } catch {
+      setCheckFailed(true);
       // 更新检查失败不应影响主应用。
     } finally {
       setBusy(false);
@@ -112,6 +119,15 @@ export default function UpdateNotice() {
   }
 
   const hasUpdate = Boolean(status?.hasUpdate && status.latestVersion && status.releaseUrl);
+  const isLatest = Boolean(
+    status
+    && status.configured
+    && !checkFailed
+    && !status.error
+    && status.latestVersion
+    && !status.hasUpdate
+    && !busy,
+  );
 
   return (
     <>
@@ -130,6 +146,12 @@ export default function UpdateNotice() {
             <small>v{status?.currentVersion || '…'}</small>
           </div>
           {hasUpdate ? <i className="version-update-dot" aria-label="有可用更新" /> : null}
+          {isLatest ? (
+            <span className="version-latest-status" title="当前为最新版本，点击重新检查" aria-label="当前为最新版本">
+              <span className="version-latest-status-mark" aria-hidden="true">✓</span>
+              <span>已是最新</span>
+            </span>
+          ) : null}
         </button>
         {hasUpdate ? (
           <button type="button" className="version-update-button" onClick={() => setShowModal(true)}>
