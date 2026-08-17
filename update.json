@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.5.1",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases",
+  "latestVersion": "0.5.2",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.5.2",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "publishedAt": "2026-08-17T00:00:00Z",
+  "publishedAt": "2026-08-17T16:50:00+08:00",
   "notes": [
-    "首次公开发布"
+    "补齐完整源码并通过 GitHub Actions 测试与生产构建",
+    "更新提醒支持安全校验后直接本地更新"
   ]
 }
