@@ -1530,3 +1530,4 @@ html[data-theme="light"] .sidebar.expanded{
 .app-shell .version-card{transition:left .24s ease,opacity .18s ease,transform .24s cubic-bezier(.22,1,.36,1),visibility 0s linear}
 .app-shell.sidebar-is-open .version-card{display:block;visibility:hidden;opacity:0;pointer-events:none;transform:translateX(12px) scale(.98)}
 .app-shell.angle-app-shell .version-card{display:none}
+.toast{z-index:420}
