@@ -1765,6 +1765,6 @@ html[data-theme="light"] .sidebar.expanded{
   .logs-page .history-toolbar,
   .logs-page .storage-settings,
   .history-page:not(.logs-page) .history-toolbar{
-    left:var(--shell-content-left);
+    left:calc(var(--shell-content-left) + 22px);
   }
 }
