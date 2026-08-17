@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type UpdateStatus = {
   configured?: boolean;
@@ -29,20 +29,36 @@ function openExternal(url?: string) {
 export default function UpdateNotice() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [checkFailed, setCheckFailed] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [applyState, setApplyState] = useState<ApplyState>('idle');
   const [applyMessage, setApplyMessage] = useState('');
+  const [checkNotice, setCheckNotice] = useState('');
+  const checkNoticeTimerRef = useRef<number | null>(null);
 
-  const check = useCallback(async (force = false) => {
+  const announceCheckResult = useCallback((message: string) => {
+    if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
+    setCheckNotice(message);
+    checkNoticeTimerRef.current = message
+      ? window.setTimeout(() => {
+        setCheckNotice('');
+        checkNoticeTimerRef.current = null;
+      }, 3000)
+      : null;
+  }, []);
+
+  useEffect(() => () => {
+    if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
+  }, []);
+
+  const check = useCallback(async (force = false, announce = false) => {
     setBusy(true);
-    setCheckFailed(false);
+    if (announce) announceCheckResult('');
     try {
       const response = await fetch(`/api/update${force ? '?force=1' : ''}`, { cache: 'no-store' });
       const data = await response.json() as UpdateStatus;
       if (!response.ok || data.error) {
         setStatus(data);
-        setCheckFailed(true);
+        if (announce) announceCheckResult(data.error || '检查更新失败，请稍后重试');
         return;
       }
 
@@ -51,14 +67,15 @@ export default function UpdateNotice() {
       const wasDismissed = data.latestVersion
         ? window.localStorage.getItem(DISMISSED_KEY) === data.latestVersion
         : false;
-      if (data.hasUpdate && !wasDismissed) setShowModal(true);
+      if (data.hasUpdate && (!wasDismissed || announce)) setShowModal(true);
+      if (announce && !data.hasUpdate) announceCheckResult('当前已是最新版本');
     } catch {
-      setCheckFailed(true);
+      if (announce) announceCheckResult('检查更新失败，请稍后重试');
       // 更新检查失败不应影响主应用。
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [announceCheckResult]);
 
   useEffect(() => {
     const lastChecked = Number(window.localStorage.getItem(CHECKED_KEY) || 0);
@@ -119,15 +136,6 @@ export default function UpdateNotice() {
   }
 
   const hasUpdate = Boolean(status?.hasUpdate && status.latestVersion && status.releaseUrl);
-  const isLatest = Boolean(
-    status
-    && status.configured
-    && !checkFailed
-    && !status.error
-    && status.latestVersion
-    && !status.hasUpdate
-    && !busy,
-  );
 
   return (
     <>
@@ -135,8 +143,9 @@ export default function UpdateNotice() {
         <button
           type="button"
           className="version-card-head"
-          title={hasUpdate ? '发现新版本，点击查看更新' : '点击检查更新'}
-          onClick={() => hasUpdate ? setShowModal(true) : void check(true)}
+          title={hasUpdate ? '发现新版本，点击查看更新' : busy ? '正在检查更新…' : '点击检查更新'}
+          disabled={busy}
+          onClick={() => hasUpdate ? setShowModal(true) : void check(true, true)}
         >
           <span className="version-card-github" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.084-.729.084-.729 1.205.084 1.84 1.236 1.84 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.404 1.02.005 2.04.137 3 .404 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.212 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" /></svg>
@@ -146,12 +155,6 @@ export default function UpdateNotice() {
             <small>v{status?.currentVersion || '…'}</small>
           </div>
           {hasUpdate ? <i className="version-update-dot" aria-label="有可用更新" /> : null}
-          {isLatest ? (
-            <span className="version-latest-status" title="当前为最新版本，点击重新检查" aria-label="当前为最新版本">
-              <span className="version-latest-status-mark" aria-hidden="true">✓</span>
-              <span>已是最新</span>
-            </span>
-          ) : null}
         </button>
         {hasUpdate ? (
           <button type="button" className="version-update-button" onClick={() => setShowModal(true)}>
@@ -188,11 +191,7 @@ export default function UpdateNotice() {
         </div>
       ) : null}
 
-      {!status?.configured ? null : !hasUpdate ? (
-        <button type="button" className="update-check-chip" disabled={busy} onClick={() => void check(true)}>
-          {busy ? '检查更新中…' : '检查更新'}
-        </button>
-      ) : null}
+      {checkNotice ? <div className="toast" role="status" aria-live="polite">{checkNotice}</div> : null}
     </>
   );
 }
