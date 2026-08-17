@@ -84,9 +84,16 @@ function updaterCommand() {
   return 'sh';
 }
 
+function powershellLiteral(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 function updaterArguments(scriptPath: string, archivePath: string, targetPath: string, version: string, logPath: string) {
   if (process.platform === 'win32') {
-    return [
+    // Windows PowerShell started directly with detached:true can exit with
+    // code 0 without executing -File. Use a short foreground trampoline;
+    // Start-Process creates the real updater independently of this server.
+    const scriptArgs = [
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
@@ -102,7 +109,9 @@ function updaterArguments(scriptPath: string, archivePath: string, targetPath: s
       version,
       '-LogPath',
       logPath,
-    ];
+    ].map(powershellLiteral).join(', ');
+    const command = `Start-Process -FilePath 'powershell.exe' -ArgumentList @(${scriptArgs}) -WorkingDirectory ${powershellLiteral(targetPath)} -WindowStyle Hidden`;
+    return ['-NoProfile', '-Command', command];
   }
   return [scriptPath, archivePath, targetPath, String(process.pid), version, logPath];
 }
@@ -333,7 +342,7 @@ export async function startLocalUpdate(status: UpdateStatus, jobId = createUpdat
     setUpdateProgress(jobId, { stage: 'starting', message: '更新包已校验，正在启动更新程序…', percent: 98 });
     const child = spawn(updaterCommand(), updaterArguments(updaterPath, archivePath, root, status.latestVersion, logPath), {
       cwd: root,
-      detached: true,
+      detached: process.platform !== 'win32',
       stdio: 'ignore',
       windowsHide: true,
     });
