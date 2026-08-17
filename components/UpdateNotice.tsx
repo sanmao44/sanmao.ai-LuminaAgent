@@ -143,6 +143,7 @@ export default function UpdateNotice() {
   return (
     <>
       <aside className={`version-card ${hasUpdate ? 'has-update' : ''}`} aria-label="SANMAO.AI 版本信息">
+        <div className="version-card-anchor">
         <button
           type="button"
           className="version-card-head"
@@ -159,6 +160,13 @@ export default function UpdateNotice() {
           </div>
           {hasUpdate ? <i className="version-update-dot" aria-label="有可用更新" /> : null}
         </button>
+        {checkNotice ? (
+          <div className={`version-check-result ${checkNoticeTone}`} role="status" aria-live="polite">
+            <span className="version-check-result-mark" aria-hidden="true">{checkNoticeTone === 'success' ? '✓' : '!'}</span>
+            <span>{checkNotice}</span>
+          </div>
+        ) : null}
+        </div>
         {hasUpdate ? (
           <button type="button" className="version-update-button" onClick={() => setShowModal(true)}>
             <span>发现 v{status?.latestVersion}</span>
@@ -194,12 +202,6 @@ export default function UpdateNotice() {
         </div>
       ) : null}
 
-      {checkNotice ? (
-        <div className={`version-check-result ${checkNoticeTone}`} role="status" aria-live="polite">
-          <span className="version-check-result-mark" aria-hidden="true">{checkNoticeTone === 'success' ? '✓' : '!'}</span>
-          <span>{checkNotice}</span>
-        </div>
-      ) : null}
     </>
   );
 }
