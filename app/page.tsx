@@ -2067,14 +2067,14 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                             }),
                             /*#__PURE__*/ _jsxs("button", {
                                 type: "button",
-                                className: "upscale-action",
-                                onClick: onUpscale,
+                                className: "reuse-action",
+                                onClick: onReuse,
                                 children: [
                                     /*#__PURE__*/ _jsx(Icon, {
-                                        name: "upscale",
+                                        name: "reuse",
                                         size: 15
                                     }),
-                                    "超分"
+                                    "复用参数"
                                 ]
                             }),
                             /*#__PURE__*/ _jsxs("button", {
@@ -2131,6 +2131,19 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                         size: 15
                                                     }),
                                                     "反推提示词"
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("button", {
+                                                onClick: ()=>{
+                                                    onUpscale();
+                                                    setMenu(false);
+                                                },
+                                                children: [
+                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "upscale",
+                                                        size: 15
+                                                    }),
+                                                    "超分"
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("button", {
@@ -3959,6 +3972,8 @@ function AssistantCodeBlock({ language, code, onNotify }) {
     });
 }
 function AssistantMarkdown({ content, onNotify }) {
+    const shouldCollapse = content.length > 2400 || content.split(/\n/).length > 36;
+    const [expanded, setExpanded] = useState(false);
     const lines = content.replace(/\r/g, '').split('\n');
     const blocks = [];
     let normalLines = [];
@@ -3997,9 +4012,21 @@ function AssistantMarkdown({ content, onNotify }) {
         onNotify: onNotify
     }, `code-${blocks.length}`));
     flushNormal();
-    return /*#__PURE__*/ _jsx("div", {
-        className: "assistant-markdown",
-        children: blocks
+    return /*#__PURE__*/ _jsxs("div", {
+        className: `assistant-markdown ${shouldCollapse && !expanded ? 'is-collapsed' : ''}`,
+        children: [
+            /*#__PURE__*/ _jsx("div", {
+                className: "assistant-markdown-content",
+                children: blocks
+            }),
+            shouldCollapse && /*#__PURE__*/ _jsx("button", {
+                type: "button",
+                className: "assistant-markdown-toggle",
+                "aria-expanded": expanded,
+                onClick: ()=>setExpanded((value)=>!value),
+                children: expanded ? '收起长内容' : '展开完整内容'
+            })
+        ]
     });
 }
 export default function Page() {
@@ -4017,6 +4044,18 @@ export default function Page() {
         setSectionState(next);
     }
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [supportOpen, setSupportOpen] = useState(false);
+    const [supportTab, setSupportTab] = useState('community');
+    useEffect(()=>{
+        if (!supportOpen) return;
+        const closeOnEscape = (event)=>{
+            if (event.key === 'Escape') setSupportOpen(false);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return ()=>window.removeEventListener('keydown', closeOnEscape);
+    }, [
+        supportOpen
+    ]);
     const [theme, setTheme] = useState('light');
     const [successSoundEnabled, setSuccessSoundEnabled] = useState(false);
     const successAudioRef = useRef(null);
@@ -4182,6 +4221,7 @@ export default function Page() {
     const [sizeTier, setSizeTier] = useState('1k');
     const [count, setCount] = useState(1);
     const [quality, setQuality] = useState('自动');
+    const [generateAdvancedOpen, setGenerateAdvancedOpen] = useState(false);
     const [customWidth, setCustomWidth] = useState(1024);
     const [customHeight, setCustomHeight] = useState(1024);
     const [generateRefs, setGenerateRefs] = useState([]);
@@ -8100,7 +8140,7 @@ export default function Page() {
                         children: "图片工具"
                     }),
                     /*#__PURE__*/ _jsxs("nav", {
-                        className: "main-nav image-tools-nav",
+                                className: "main-nav image-tools-nav",
                         children: [
                             /*#__PURE__*/ _jsxs("button", {
                                 "aria-label": "角度控制台",
@@ -8122,7 +8162,7 @@ export default function Page() {
                             /*#__PURE__*/ _jsxs("button", {
                                 "aria-label": historyNotice ? '生成历史，有新的生成结果' : '生成历史',
                                 "data-tooltip": historyNotice ? '生成历史 · 有新的生成结果' : '生成历史',
-                                className: section === 'history' ? 'active' : '',
+                                className: `${section === 'history' ? 'active' : ''} history-priority`,
                                 onClick: ()=>{
                                     markHistoryNoticeSeen();
                                     setSection('history');
@@ -8144,7 +8184,7 @@ export default function Page() {
                             /*#__PURE__*/ _jsxs("button", {
                                 "aria-label": logErrorNotice ? '生图日志，有失败的生成任务' : '生图日志',
                                 "data-tooltip": logErrorNotice ? '生图日志 · 有失败的生成任务' : '生图日志',
-                                className: section === 'logs' ? 'active' : '',
+                                className: `${section === 'logs' ? 'active' : ''} secondary-nav`,
                                 onClick: ()=>{
                                     markLogErrorNoticeSeen();
                                     setSection('logs');
@@ -8171,7 +8211,7 @@ export default function Page() {
                         children: "管理"
                     }),
                     /*#__PURE__*/ _jsxs("nav", {
-                        className: "main-nav",
+                        className: "main-nav management-nav",
                         children: [
                             /*#__PURE__*/ _jsxs("button", {
                                 "aria-label": "模型库",
@@ -8255,11 +8295,13 @@ export default function Page() {
                                 ]
                             }),
                             /*#__PURE__*/ _jsxs("button", {
-                                className: "author-contact",
+                                className: "author-contact support-card-launch",
                                 type: "button",
-                                onClick: ()=>void copyAuthorWechat(),
-                                "aria-label": "点击复制微信号",
-                                "data-tooltip": "点击复制微信号",
+                                onClick: ()=>{
+                                    setSupportTab('community');
+                                    setSupportOpen(true);
+                                },
+                                "aria-label": "打开交流与支持",
                                 children: [
                                     /*#__PURE__*/ _jsx("span", {
                                         className: "author-contact-mark",
@@ -8271,14 +8313,33 @@ export default function Page() {
                                     /*#__PURE__*/ _jsxs("span", {
                                         children: [
                                             /*#__PURE__*/ _jsx("strong", {
-                                                children: "联系作者"
+                                                children: "交流与支持"
                                             }),
                                             /*#__PURE__*/ _jsx("small", {
-                                                children: "微信：wcsanmao \xb7 点击复制"
+                                                children: "QQ群 1104660815 \xb7 赞赏码"
                                             })
                                         ]
                                     })
                                 ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ _jsxs("button", {
+                        className: "support-rail-button",
+                        type: "button",
+                        onClick: ()=>{
+                            setSupportTab('community');
+                            setSupportOpen(true);
+                        },
+                        "aria-label": "交流与支持",
+                        "data-tooltip": "交流与支持",
+                        children: [
+                            /*#__PURE__*/ _jsx("span", {
+                                className: "support-rail-icon",
+                                children: "✦"
+                            }),
+                            /*#__PURE__*/ _jsx("span", {
+                                children: "交流与支持"
                             })
                         ]
                     })
@@ -8347,6 +8408,8 @@ export default function Page() {
                                     }),
                                     /*#__PURE__*/ _jsxs("button", {
                                         type: "button",
+                                        className: "coming-soon-mode",
+                                        "aria-label": "视频，即将上线",
                                         onClick: ()=>notify('视频接口将在下一阶段接入'),
                                         children: [
                                             /*#__PURE__*/ _jsx(Icon, {
@@ -8355,11 +8418,17 @@ export default function Page() {
                                             }),
                                             /*#__PURE__*/ _jsx("span", {
                                                 children: "视频"
+                                            }),
+                                            /*#__PURE__*/ _jsx("small", {
+                                                className: "mode-status",
+                                                children: "即将上线"
                                             })
                                         ]
                                     }),
                                     /*#__PURE__*/ _jsxs("button", {
                                         type: "button",
+                                        className: "coming-soon-mode",
+                                        "aria-label": "音频，即将上线",
                                         onClick: ()=>notify('音频接口将在下一阶段接入'),
                                         children: [
                                             /*#__PURE__*/ _jsx(Icon, {
@@ -8368,6 +8437,10 @@ export default function Page() {
                                             }),
                                             /*#__PURE__*/ _jsx("span", {
                                                 children: "音频"
+                                            }),
+                                            /*#__PURE__*/ _jsx("small", {
+                                                className: "mode-status",
+                                                children: "即将上线"
                                             })
                                         ]
                                     }),
@@ -9335,7 +9408,7 @@ export default function Page() {
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {
-                                                className: "settings-grid",
+                                                className: `settings-grid generate-primary-settings ${generateAdvancedOpen ? 'advanced-open' : 'advanced-closed'}`,
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "field-block",
@@ -9428,6 +9501,24 @@ export default function Page() {
                                                                 }
                                                             })
                                                         ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("button", {
+                                                type: "button",
+                                                className: `advanced-settings-toggle ${generateAdvancedOpen ? 'active' : ''}`,
+                                                "aria-expanded": generateAdvancedOpen,
+                                                onClick: ()=>setGenerateAdvancedOpen((value)=>!value),
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: generateAdvancedOpen ? '收起更多参数' : '更多参数'
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: generateAdvancedOpen ? '质量、格式、背景限制' : '质量、格式、背景限制'
+                                                    }),
+                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "chevron",
+                                                        size: 14
                                                     })
                                                 ]
                                             }),
@@ -9942,7 +10033,18 @@ export default function Page() {
                                                                                 children: task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("small", {
-                                                                                children: task.error || '部分图片未能生成'
+                                                                                children: task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
+                                                                            }),
+                                                                            task.error && /*#__PURE__*/ _jsxs("details", {
+                                                                                className: "generation-error-details",
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsx("summary", {
+                                                                                        children: "查看技术详情"
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsx("p", {
+                                                                                        children: task.error
+                                                                                    })
+                                                                                ]
                                                                             })
                                                                         ]
                                                                     })
@@ -10219,10 +10321,20 @@ export default function Page() {
                                             /*#__PURE__*/ _jsx("p", {
                                                 children: gallery.length ? '换个关键词或筛选条件试试。' : '每次生图、助手生成和图片修改都会自动保存在这个浏览器里。'
                                             }),
-                                            !gallery.length && /*#__PURE__*/ _jsx("button", {
-                                                className: "primary-action compact",
-                                                onClick: ()=>setSection('generate'),
-                                                children: "去生成第一张图片"
+                                            !gallery.length && /*#__PURE__*/ _jsxs("div", {
+                                                className: "history-empty-actions",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "primary-action compact",
+                                                        onClick: ()=>setSection('agent'),
+                                                        children: "让助手帮我生成"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "secondary-action",
+                                                        onClick: ()=>setSection('generate'),
+                                                        children: "直接开始生图"
+                                                    })
+                                                ]
                                             })
                                         ]
                                     })
@@ -10571,14 +10683,61 @@ export default function Page() {
                                                         children: "把界面偏好、通知、图片存储和日志管理集中放在这里。后续新增功能也会优先归档到设置页。"
                                                     })
                                                 ]
-                                            })
-                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ _jsxs("nav", {
+                                className: "settings-section-nav",
+                                "aria-label": "设置分组",
+                                children: [
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-appearance')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "偏好"
                                     }),
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "settings-layout",
-                                        children: [
-                                            /*#__PURE__*/ _jsxs("section", {
-                                                className: "settings-card surface",
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-search')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "联网"
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-storage')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "存储"
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-backup')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "备份"
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-maintenance')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "维护"
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ _jsxs("div", {
+                                className: "settings-layout",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("section", {
+                                        id: "settings-appearance",
+                                        className: "settings-card surface",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-card-head",
@@ -10695,6 +10854,7 @@ export default function Page() {
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-search",
                                                 className: "settings-card surface settings-search-api",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
@@ -10904,6 +11064,7 @@ export default function Page() {
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-storage",
                                                 className: "settings-card surface",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
@@ -10978,6 +11139,7 @@ export default function Page() {
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-backup",
                                                 className: "settings-card surface settings-backup",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
@@ -11068,6 +11230,7 @@ export default function Page() {
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-maintenance",
                                                 className: "settings-card surface settings-danger",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
@@ -12315,6 +12478,203 @@ export default function Page() {
                     })
                 ]
             }),
+            supportOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
+                className: "support-modal-backdrop",
+                role: "presentation",
+                onMouseDown: (event)=>{
+                    if (event.target === event.currentTarget) setSupportOpen(false);
+                },
+                children: /*#__PURE__*/ _jsxs("section", {
+                    className: "support-modal",
+                    role: "dialog",
+                    "aria-modal": "true",
+                    "aria-labelledby": "support-modal-title",
+                    children: [
+                        /*#__PURE__*/ _jsxs("header", {
+                            className: "support-modal-head",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "support-modal-title",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            className: "support-modal-logo",
+                                            children: "S"
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            children: [
+                                                /*#__PURE__*/ _jsx("small", {
+                                                    children: "SANMAO.AI COMMUNITY"
+                                                }),
+                                                /*#__PURE__*/ _jsx("h2", {
+                                                    id: "support-modal-title",
+                                                    children: "交流与支持"
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "support-modal-close",
+                                    onClick: ()=>setSupportOpen(false),
+                                    "aria-label": "关闭",
+                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                        name: "close",
+                                        size: 18
+                                    })
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "support-tabs",
+                            role: "tablist",
+                            "aria-label": "交流与支持选项",
+                            children: [
+                                /*#__PURE__*/ _jsxs("button", {
+                                    type: "button",
+                                    role: "tab",
+                                    "aria-selected": supportTab === 'community',
+                                    className: supportTab === 'community' ? 'active' : '',
+                                    onClick: ()=>setSupportTab('community'),
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            className: "support-tab-icon qq",
+                                            children: "Q"
+                                        }),
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "QQ 交流群"
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("button", {
+                                    type: "button",
+                                    role: "tab",
+                                    "aria-selected": supportTab === 'reward',
+                                    className: supportTab === 'reward' ? 'active' : '',
+                                    onClick: ()=>setSupportTab('reward'),
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            className: "support-tab-icon reward",
+                                            children: "♡"
+                                        }),
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "赞赏开发"
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsx("div", {
+                            className: "support-modal-body",
+                            children: supportTab === 'community' ? /*#__PURE__*/ _jsxs("div", {
+                                className: "support-community-panel",
+                                role: "tabpanel",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "support-community-hero",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("span", {
+                                                className: "support-community-orb",
+                                                children: /*#__PURE__*/ _jsx("img", {
+                                                    src: "/brand-mark.png",
+                                                    alt: "SANMAO.AI"
+                                                })
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "官方 QQ 交流群"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: "1104660815"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: "交流创作技巧、反馈问题，也能第一时间获取更新动态"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "support-copy-button",
+                                        onClick: async ()=>{
+                                            try {
+                                                await navigator.clipboard.writeText('1104660815');
+                                                notify('QQ群号已复制：1104660815');
+                                            } catch  {
+                                                notify('QQ群：1104660815');
+                                            }
+                                        },
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "copy",
+                                                size: 15
+                                            }),
+                                            "复制群号"
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "support-community-note",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "加入方式"
+                                            }),
+                                            /*#__PURE__*/ _jsx("p", {
+                                                children: "打开 QQ → 搜索群号 → 申请加入"
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }) : /*#__PURE__*/ _jsxs("div", {
+                                className: "support-reward-panel",
+                                role: "tabpanel",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "support-reward-copy",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "自愿赞赏"
+                                            }),
+                                            /*#__PURE__*/ _jsx("h3", {
+                                                children: "每一份支持，都会变成下一次更新"
+                                            }),
+                                            /*#__PURE__*/ _jsx("p", {
+                                                children: "如果 SANMAO.AI 帮到了你，可以扫码请开发者喝杯咖啡。完全自愿，不影响任何功能。"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "support-qr-card",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("img", {
+                                                src: "/mm-reward-qrcode.png",
+                                                alt: "SANMAO.AI 赞赏码"
+                                            }),
+                                            /*#__PURE__*/ _jsx("small", {
+                                                children: "微信扫码赞赏"
+                                            })
+                                        ]
+                                    })
+                                ]
+                            })
+                        }),
+                        /*#__PURE__*/ _jsxs("footer", {
+                            className: "support-modal-foot",
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: "感谢你的反馈、陪伴与支持"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: ()=>void copyAuthorWechat(),
+                                    children: "联系作者 · 微信 wcsanmao"
+                                })
+                            ]
+                        })
+                    ]
+                })
+            }), document.body),
             confirmState && /*#__PURE__*/ _jsx("div", {
                 className: "dialog-backdrop",
                 onClick: ()=>setConfirmState(null),
