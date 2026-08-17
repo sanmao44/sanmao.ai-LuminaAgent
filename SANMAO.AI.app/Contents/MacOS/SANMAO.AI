@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+set -f
+
+SCRIPT_DIR=`CDPATH= cd -- "$(dirname "$0")" && pwd`
+ROOT_DIR=`CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd`
+LOG_DIR="${HOME}/Library/Logs"
+mkdir -p "$LOG_DIR"
+
+exec /bin/sh "$ROOT_DIR/scripts/start-macos.sh" >"$LOG_DIR/SANMAO.AI-startup.log" 2>&1
