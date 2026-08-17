@@ -275,13 +275,16 @@ export async function startLocalUpdate(status: UpdateStatus, jobId = createUpdat
   const updaterPath = join(stagingDir, `apply-update-${safeVersion}${process.platform === 'win32' ? '.ps1' : '.sh'}`);
   const metadataPath = join(stagingDir, `sanmao-update-${safeVersion}.json`);
   const logPath = join(stagingDir, `update-${safeVersion}.log`);
+  const runtimePatchPath = join(stagingDir, 'local-update-runtime.ts');
 
   try {
     await lockHandle.writeFile(JSON.stringify({ jobId, version: status.latestVersion, startedAt: nowIso() }));
     await lockHandle.close();
     await rm(archivePath, { force: true });
     await rm(logPath, { force: true });
+    await rm(runtimePatchPath, { force: true });
     await copyFile(updaterSource, updaterPath);
+    await copyFile(join(root, 'lib', 'local-update.ts'), runtimePatchPath);
     const configuredMirrors = (process.env.SANMAO_UPDATE_MIRRORS || '')
       .split(/[\r\n,]+/)
       .map((value) => value.trim())
@@ -323,6 +326,7 @@ export async function startLocalUpdate(status: UpdateStatus, jobId = createUpdat
       bytes: download.bytes,
       sha256: download.sha256,
       log: logPath,
+      runtimePatch: runtimePatchPath,
       createdAt: new Date().toISOString(),
     }, null, 2), 'utf8');
 
@@ -347,6 +351,7 @@ export async function startLocalUpdate(status: UpdateStatus, jobId = createUpdat
     await rm(archivePath, { force: true }).catch(() => undefined);
     await rm(updaterPath, { force: true }).catch(() => undefined);
     await rm(metadataPath, { force: true }).catch(() => undefined);
+    await rm(runtimePatchPath, { force: true }).catch(() => undefined);
     await rm(lockPath, { force: true }).catch(() => undefined);
     throw error;
   }
