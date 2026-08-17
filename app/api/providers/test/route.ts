@@ -1,0 +1,24 @@
+import { isAdminRequest } from '@/lib/auth';
+import { resolveProviderConfiguration } from '@/lib/provider-presets';
+import { testProviderConnection } from '@/lib/providers';
+import { getProviderWithKey } from '@/lib/store';
+
+export const runtime = 'nodejs';
+
+export async function POST(request: Request) {
+  if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  try {
+    const body = await request.json();
+    const providerId = String(body.providerId || '').trim();
+    const saved = providerId ? await getProviderWithKey(providerId) : null;
+    let apiKey = String(body.apiKey || '').trim();
+    if (!apiKey && saved) apiKey = saved.apiKey;
+    if (!apiKey) return Response.json({ error: '请先填写访问密钥。' }, { status: 400 });
+    const configuration = resolveProviderConfiguration({ ...body, platform: body.platform || saved?.platform }, saved);
+    if (!configuration.baseUrl) return Response.json({ error: '请先填写服务商提供的 API 地址。' }, { status: 400 });
+    const result = await testProviderConnection({ id: providerId || 'test', name: saved?.name || '连接测试', apiKey, ...configuration });
+    return Response.json({ ok: true, ...result });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : '连接测试失败。' }, { status: 502 });
+  }
+}
