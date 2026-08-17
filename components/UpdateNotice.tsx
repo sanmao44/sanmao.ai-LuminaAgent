@@ -21,6 +21,20 @@ type CheckNoticeTone = 'success' | 'error';
 const DISMISSED_KEY = 'sanmao-dismissed-update-version';
 const CHECKED_KEY = 'sanmao-update-checked-at';
 const CHECK_INTERVAL = 24 * 60 * 60 * 1000;
+const MANUAL_CHECK_COOLDOWN = 30 * 1000;
+
+function getCheckErrorMessage(data: UpdateStatus, responseStatus?: number) {
+  const error = data.error || '';
+  if (responseStatus === 429 || /\b(?:429|5\d\d)\b|rate.?limit|too many requests|更新清单返回 HTTP 5/i.test(error)) {
+    return '更新服务暂时繁忙，请稍后再试';
+  }
+  return error || '检查更新失败，请稍后重试';
+}
+
+function isTransientCheckError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /timeout|timed out|aborted/i.test(message);
+}
 
 function openExternal(url?: string) {
   if (!url) return;
@@ -36,6 +50,7 @@ export default function UpdateNotice() {
   const [checkNotice, setCheckNotice] = useState('');
   const [checkNoticeTone, setCheckNoticeTone] = useState<CheckNoticeTone>('success');
   const checkNoticeTimerRef = useRef<number | null>(null);
+  const lastManualCheckRef = useRef(0);
 
   const announceCheckResult = useCallback((message: string, tone: CheckNoticeTone = 'success') => {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
@@ -54,6 +69,14 @@ export default function UpdateNotice() {
   }, []);
 
   const check = useCallback(async (force = false, announce = false) => {
+    if (announce) {
+      const elapsed = Date.now() - lastManualCheckRef.current;
+      if (elapsed < MANUAL_CHECK_COOLDOWN) {
+        announceCheckResult('检查过于频繁，请稍后再试', 'error');
+        return;
+      }
+      lastManualCheckRef.current = Date.now();
+    }
     setBusy(true);
     if (announce) announceCheckResult('');
     try {
@@ -61,7 +84,7 @@ export default function UpdateNotice() {
       const data = await response.json() as UpdateStatus;
       if (!response.ok || data.error) {
         setStatus(data);
-        if (announce) announceCheckResult(data.error || '检查更新失败，请稍后重试', 'error');
+        if (announce) announceCheckResult(getCheckErrorMessage(data, response.status), 'error');
         return;
       }
 
@@ -72,8 +95,11 @@ export default function UpdateNotice() {
         : false;
       if (data.hasUpdate && (!wasDismissed || announce)) setShowModal(true);
       if (announce && !data.hasUpdate) announceCheckResult('当前已是最新版本');
-    } catch {
-      if (announce) announceCheckResult('检查更新失败，请稍后重试', 'error');
+    } catch (error) {
+      if (announce) announceCheckResult(
+        isTransientCheckError(error) ? '更新服务暂时繁忙，请稍后再试' : '检查更新失败，请稍后重试',
+        'error',
+      );
       // 更新检查失败不应影响主应用。
     } finally {
       setBusy(false);
@@ -147,7 +173,8 @@ export default function UpdateNotice() {
         <button
           type="button"
           className="version-card-head"
-          title={hasUpdate ? '发现新版本，点击查看更新' : busy ? '正在检查更新…' : '点击检查更新'}
+          aria-label={hasUpdate ? '发现新版本，点击查看更新' : busy ? '正在检查更新…' : '点击检查更新'}
+          data-tooltip={hasUpdate ? '发现新版本，点击查看更新' : busy ? '正在检查更新…' : '点击检查更新'}
           disabled={busy}
           onClick={() => hasUpdate ? setShowModal(true) : void check(true, true)}
         >

@@ -8239,7 +8239,8 @@ export default function Page() {
                                 className: "author-contact",
                                 type: "button",
                                 onClick: ()=>void copyAuthorWechat(),
-                                title: "点击复制微信号",
+                                "aria-label": "点击复制微信号",
+                                "data-tooltip": "点击复制微信号",
                                 children: [
                                     /*#__PURE__*/ _jsx("span", {
                                         className: "author-contact-mark",
