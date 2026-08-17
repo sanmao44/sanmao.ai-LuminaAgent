@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, copyFile, mkdir, open, rm, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import type { UpdateStatus } from '@/lib/update';
 
 const MAX_UPDATE_BYTES = 150 * 1024 * 1024;
@@ -84,7 +84,7 @@ function updaterCommand() {
   return 'sh';
 }
 
-function updaterArguments(scriptPath: string, archivePath: string, targetPath: string, version: string) {
+function updaterArguments(scriptPath: string, archivePath: string, targetPath: string, version: string, logPath: string) {
   if (process.platform === 'win32') {
     return [
       '-NoProfile',
@@ -100,9 +100,67 @@ function updaterArguments(scriptPath: string, archivePath: string, targetPath: s
       String(process.pid),
       '-Version',
       version,
+      '-LogPath',
+      logPath,
     ];
   }
-  return [scriptPath, archivePath, targetPath, String(process.pid), version];
+  return [scriptPath, archivePath, targetPath, String(process.pid), version, logPath];
+}
+
+/**
+ * A detached child can fail after spawn() returns. Wait for the OS-level
+ * spawn acknowledgement so the UI never reports 100% for a process that was
+ * not actually created. The updater's own log covers failures after spawn.
+ */
+function waitForUpdaterSpawn(child: ChildProcess) {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      child.off('spawn', onSpawn);
+      child.off('error', onError);
+      child.off('exit', onExit);
+    };
+    const onSpawn = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(`更新程序启动失败：${error.message}`));
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const reason = signal ? `信号 ${signal}` : `退出码 ${code ?? '未知'}`;
+      reject(new Error(`更新程序未能启动（${reason}）`));
+    };
+    child.once('spawn', onSpawn);
+    child.once('error', onError);
+    child.once('exit', onExit);
+  });
+}
+
+async function waitForUpdaterHandshake(logPath: string) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      const log = await readFile(logPath, 'utf8');
+      if (/更新失败：|更新后找不到|未能在 15 秒内退出|版本不匹配|没有找到有效/.test(log)) {
+        const lastLine = log.trim().split(/\r?\n/).at(-1) || '更新脚本执行失败';
+        throw new Error(lastLine.replace(/^\[[^\]]+\]\s*/, ''));
+      }
+      if (log.includes('开始应用 SANMAO.AI')) return;
+    } catch (error) {
+      if (error instanceof Error && !/ENOENT|更新脚本执行失败/.test(error.message)) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+  throw new Error('更新程序已创建，但没有开始执行；请查看更新日志后重试');
 }
 
 async function downloadToFile(
@@ -216,11 +274,13 @@ export async function startLocalUpdate(status: UpdateStatus, jobId = createUpdat
   const archivePath = join(stagingDir, `sanmao-update-${safeVersion}.zip`);
   const updaterPath = join(stagingDir, `apply-update-${safeVersion}${process.platform === 'win32' ? '.ps1' : '.sh'}`);
   const metadataPath = join(stagingDir, `sanmao-update-${safeVersion}.json`);
+  const logPath = join(stagingDir, `update-${safeVersion}.log`);
 
   try {
     await lockHandle.writeFile(JSON.stringify({ jobId, version: status.latestVersion, startedAt: nowIso() }));
     await lockHandle.close();
     await rm(archivePath, { force: true });
+    await rm(logPath, { force: true });
     await copyFile(updaterSource, updaterPath);
     const configuredMirrors = (process.env.SANMAO_UPDATE_MIRRORS || '')
       .split(/[\r\n,]+/)
@@ -262,18 +322,21 @@ export async function startLocalUpdate(status: UpdateStatus, jobId = createUpdat
       archive: archivePath,
       bytes: download.bytes,
       sha256: download.sha256,
+      log: logPath,
       createdAt: new Date().toISOString(),
     }, null, 2), 'utf8');
 
     setUpdateProgress(jobId, { stage: 'starting', message: '更新包已校验，正在启动更新程序…', percent: 98 });
-    const child = spawn(updaterCommand(), updaterArguments(updaterPath, archivePath, root, status.latestVersion), {
+    const child = spawn(updaterCommand(), updaterArguments(updaterPath, archivePath, root, status.latestVersion, logPath), {
       cwd: root,
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
     });
+    await waitForUpdaterSpawn(child);
+    await waitForUpdaterHandshake(logPath);
     child.unref();
-    setUpdateProgress(jobId, { stage: 'completed', message: '更新已开始，应用即将重启…', percent: 100 });
+    setUpdateProgress(jobId, { stage: 'completed', message: '更新程序已启动，应用正在重启…', percent: 100 });
     return { started: true, version: status.latestVersion };
   } catch (error) {
     setUpdateProgress(jobId, {
