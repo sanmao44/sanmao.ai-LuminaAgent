@@ -808,6 +808,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--control-hover-b
 .search-box:focus-within::after{opacity:1;transform:translateX(-50%) scaleX(1)}
 .search-box:focus-within>svg{color:var(--accent-text)}
 .search-box input:focus{border-color:transparent;box-shadow:none;outline:none}
+.chat-history-search input:focus,.chat-history-search input:focus-visible{border-color:transparent;box-shadow:none;outline:0}
 
 /* Centered image editing workspace. */
 .drawer-backdrop:has(.edit-drawer){display:none!important}
