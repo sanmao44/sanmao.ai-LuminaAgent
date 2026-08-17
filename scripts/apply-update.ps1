@@ -58,7 +58,7 @@ try {
 
   # 只替换程序文件；用户数据、环境变量和已安装依赖保留不动。
   Get-ChildItem -LiteralPath $TargetPath -Force |
-    Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -notlike '.env*' } |
+    Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -notlike '.env*' } |
     Remove-Item -Recurse -Force
 
   Get-ChildItem -LiteralPath $packageRoot -Force | ForEach-Object {
