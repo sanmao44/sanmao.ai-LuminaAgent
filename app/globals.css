@@ -1724,8 +1724,9 @@ html[data-theme="light"] .sidebar.expanded{
 
 /* Long assistant answers stay readable without taking over the entire chat. */
 .assistant-markdown-content{min-width:0}
-.assistant-markdown.is-collapsed{position:relative;max-height:430px;overflow:hidden}
-.assistant-markdown.is-collapsed::after{content:'';position:absolute;left:0;right:0;bottom:0;height:92px;background:linear-gradient(180deg,transparent,var(--panel));pointer-events:none}
+.assistant-markdown.is-collapsed{position:relative;max-height:none;overflow:visible}
+.assistant-markdown.is-collapsed .assistant-markdown-content{position:relative;max-height:430px;overflow:hidden}
+.assistant-markdown.is-collapsed .assistant-markdown-content::after{content:'';position:absolute;left:0;right:0;bottom:0;height:92px;background:linear-gradient(180deg,transparent,var(--panel));pointer-events:none}
 .assistant-markdown-toggle{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;height:30px;margin-top:8px;padding:0 11px;border:1px solid color-mix(in srgb,var(--accent) 36%,var(--line));border-radius:9px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;font-weight:850}
 .assistant-markdown-toggle:hover{border-color:var(--accent);background:var(--accent-soft-2)}
 
