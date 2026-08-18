@@ -1,3 +1,9 @@
+# 0.5.9 修复干净环境启动
+
+- 启动器现在检查 TypeScript 与 React 类型依赖，并强制按 `--include=dev` 安装，避免生产环境缺少构建依赖导致更新后无法启动。
+- 显式设置 TypeScript `baseUrl`，确保干净构建能解析 `@/...` 路径别名。
+- Windows、macOS、Linux 启动器统一覆盖依赖检查。
+
 # 0.5.8 修复 Windows 更新后启动卡住
 
 - 兼容旧启动器使用相对 `node_modules` 路径启动 Next 的情况，避免残留服务锁定 `next-swc` 导致 `npm ci` 报 `EPERM`。

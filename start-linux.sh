@@ -1,7 +1,9 @@
 #!/usr/bin/env sh
 set -e
 cd "$(dirname "$0")"
-if [ ! -d node_modules ]; then npm install; fi
+if [ ! -x node_modules/.bin/next ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ]; then
+  if [ -f package-lock.json ]; then npm ci --include=dev; else npm install --include=dev; fi
+fi
 if [ ! -f .next/BUILD_ID ]; then npm run build; fi
 PORT="${SANMAO_PORT:-3210}"
 case "$PORT" in

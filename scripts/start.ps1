@@ -160,7 +160,7 @@ if ($existingPort -gt 0) {
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.5.8' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.5.9' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js
@@ -231,6 +231,10 @@ if (Test-Path '.\node_modules\next\package.json') {
   try { $installedNext = (& node -p "require('./node_modules/next/package.json').version").Trim() } catch { $installedNext = '' }
 }
 $nextCmdExists = Test-Path '.\node_modules\.bin\next.cmd'
+$typescriptExists = Test-Path '.\node_modules\typescript\package.json'
+$nodeTypesExists = Test-Path '.\node_modules\@types\node\package.json'
+$reactTypesExists = Test-Path '.\node_modules\@types\react\package.json'
+$reactDomTypesExists = Test-Path '.\node_modules\@types\react-dom\package.json'
 $packageLockHashPath = '.\node_modules\.sanmao-package-lock.sha256'
 $packageLockChanged = $false
 if (Test-Path '.\package-lock.json') {
@@ -246,7 +250,7 @@ if (Test-Path '.\package-lock.json') {
     }
   }
 }
-if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or $packageLockChanged) {
+if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or $packageLockChanged) {
   Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
   # If a stale/legacy launcher escaped the existing-service check, stop only
   # this project's Next process before npm replaces native .node binaries.
@@ -256,7 +260,7 @@ if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or $packageLoc
     if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
   }
   Start-Sleep -Milliseconds 500
-  if (Test-Path '.\package-lock.json') { & npm ci --no-audit --no-fund } else { & npm install --no-audit --no-fund }
+  if (Test-Path '.\package-lock.json') { & npm ci --include=dev --no-audit --no-fund } else { & npm install --include=dev --no-audit --no-fund }
   if ($LASTEXITCODE -ne 0) {
     Write-Host ''
     Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow

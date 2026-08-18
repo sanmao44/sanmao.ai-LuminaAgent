@@ -57,7 +57,7 @@ fi
 rm -f "$LEGACY_MARKER"
 
 printf '%s\n' '========================================'
-printf '%s\n' '        SANMAO.AI macOS 启动器 0.5.8'
+printf '%s\n' '        SANMAO.AI macOS 启动器 0.5.9'
 printf '%s\n' '========================================'
 
 printf '\n==> 检查 Node.js\n'
@@ -84,12 +84,12 @@ printf 'npm：%s\n' `npm --version`
 
 printf '\n==> 检查并安装程序依赖\n'
 NEED_INSTALL=0
-if [ ! -x node_modules/.bin/next ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
+if [ ! -x node_modules/.bin/next ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
   NEED_INSTALL=1
 fi
 if [ "$NEED_INSTALL" -eq 1 ]; then
   printf '%s\n' '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。'
-  if [ -f package-lock.json ]; then npm ci --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; else npm install --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; fi
+  if [ -f package-lock.json ]; then npm ci --include=dev --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; else npm install --include=dev --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; fi
 else
   printf '%s\n' '依赖已安装。'
 fi
