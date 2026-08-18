@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.5.8",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.5.8",
+  "latestVersion": "0.6.0",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.0",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.5.8",
+  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.6.0",
   "mirrorUrls": [],
-  "sha256": "6ac1ee3554573e73fb03f9809eb192c049a1615d31bbc54b41141ab8f146ac67",
-  "publishedAt": "2026-08-18T22:02:00+08:00",
+  "sha256": "a888f06849f6738b439860ec1359599855fee667211eb43eeebe7ce23db5c772",
+  "publishedAt": "2026-08-19T01:38:00+08:00",
   "notes": [
-    "修复旧启动器使用相对 node_modules 路径时更新后卡住并触发 next-swc EPERM 的问题。",
-    "启动器和停止脚本按 SANMAO 健康接口识别残留服务，更新后可靠释放旧进程并回连原端口。",
-    "延续 webpack 构建、旋转加载动画、多源下载、SHA-256 校验和本地数据保留。",
-    "更新下载支持 Gitee、OSS、自有 CDN 等 HTTPS 镜像优先，GitHub 官方源兜底。"
+    "分享版新增用户实际提交的完整提示词，长提示词会自动换行和多栏排版。",
+    "主结果图按原图比例展示，并保留全部参考图的顺序、缩略图和文件名。",
+    "历史记录、结果查看器和生图日志继续兼容旧的单张参考图数据。",
+    "原图下载、备份恢复和本地数据保留逻辑不变。"
   ]
 }
