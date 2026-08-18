@@ -1,12 +1,13 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.5.5",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.5.5",
+  "latestVersion": "0.5.6",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.5.6",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.5.5",
-  "sha256": "220757915ad8465c6fcc1ee6b5eb52dabc35c75e2c48f3510a82c8731b11d827",
-  "publishedAt": "2026-08-18T16:20:00+08:00",
+  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.5.6",
+  "publishedAt": "2026-08-18T17:00:00+08:00",
   "notes": [
+    "修复 Windows 启动器误判已有服务，避免重复启动时 npm ci 锁定 next-swc 文件。",
+    "修复 Windows 停止脚本无法识别 node_modules\\.bin\\..\\next 命令路径的问题。",
     "长结果预览支持清晰展开，展开后可通过页面滚动查看完整内容。",
     "多参考图一镜到底生成结果同时提供对应的中文和英文 VIDEO PROMPT。",
     "保留原有 Prompt 文案，避免额外增加输入 token。"
