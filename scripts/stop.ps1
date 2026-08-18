@@ -53,7 +53,8 @@ foreach ($processItem in $processes) {
   if ($port -eq 0) { continue }
   $rootPattern = [regex]::Escape($root.TrimEnd('\'))
   if ($healthyPorts.Count -eq 0 -or $healthyPorts -contains $port) {
-    if ([string]$processItem.CommandLine -notmatch "(?i)$rootPattern[\\/]node_modules[\\/]next[\\/]dist[\\/]bin[\\/]next") { continue }
+    $nextPathPattern = "(?i)$rootPattern[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
+    if ([string]$processItem.CommandLine -notmatch $nextPathPattern) { continue }
     $targets += $processItem
   }
 }
