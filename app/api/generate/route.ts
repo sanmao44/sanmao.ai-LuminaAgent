@@ -3,8 +3,8 @@ import { getPublicState, getRuntimeImageGenerationModel } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, normalizeAngleState } from '@/lib/angle-control';
+import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
-import sharp from 'sharp';
 import { isTrustedAppRequest } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -50,72 +50,12 @@ async function generatedImageBuffer(url: string, signal?: AbortSignal) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function applyExactCameraRoll(images: GeneratedImage[], roll: number, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  if (Math.abs(roll) < 0.05) return images;
-  return Promise.all(images.map(async (image) => {
-    const input = await generatedImageBuffer(image.url, signal);
-    const normalized = await sharp(input, { failOn: 'none' }).rotate().png().toBuffer({ resolveWithObject: true });
-    const width = normalized.info.width;
-    const height = normalized.info.height;
-    if (!width || !height) return image;
-    const radians = Math.abs(roll) * Math.PI / 180;
-    const cosine = Math.abs(Math.cos(radians));
-    const sine = Math.abs(Math.sin(radians));
-    const scale = Math.max(cosine + (height / width) * sine, cosine + (width / height) * sine) + 0.01;
-    const scaledWidth = Math.max(width, Math.ceil(width * scale));
-    const scaledHeight = Math.max(height, Math.ceil(height * scale));
-    // Do not scale the actual image before rotating it: doing so turns a
-    // modest roll into a severe zoom/crop and commonly removes a face or
-    // head.  A blurred, enlarged backdrop fills the corners while the
-    // unscaled source stays centered above it.
-    const backdrop = await sharp(normalized.data)
-      .resize(scaledWidth, scaledHeight, { fit: 'fill' })
-      .blur(12)
-      .rotate(roll, { background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .png()
-      .toBuffer({ resolveWithObject: true });
-    const backdropLeft = Math.max(0, Math.floor(((backdrop.info.width || width) - width) / 2));
-    const backdropTop = Math.max(0, Math.floor(((backdrop.info.height || height) - height) / 2));
-    const base = await sharp(backdrop.data).extract({ left: backdropLeft, top: backdropTop, width, height }).png().toBuffer();
-
-    const foreground = await sharp(normalized.data)
-      .rotate(roll, { background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .png()
-      .toBuffer({ resolveWithObject: true });
-    const foregroundWidth = foreground.info.width || width;
-    const foregroundHeight = foreground.info.height || height;
-    const foregroundLeft = Math.floor((width - foregroundWidth) / 2);
-    const foregroundTop = Math.floor((height - foregroundHeight) / 2);
-    const visibleLeft = Math.max(0, foregroundLeft);
-    const visibleTop = Math.max(0, foregroundTop);
-    const cropLeft = Math.max(0, -foregroundLeft);
-    const cropTop = Math.max(0, -foregroundTop);
-    const visibleWidth = Math.min(width - visibleLeft, foregroundWidth - cropLeft);
-    const visibleHeight = Math.min(height - visibleTop, foregroundHeight - cropTop);
-    const visibleForeground = await sharp(foreground.data)
-      .extract({ left: cropLeft, top: cropTop, width: Math.max(1, visibleWidth), height: Math.max(1, visibleHeight) })
-      .png()
-      .toBuffer();
-    const output = await sharp(base)
-      .composite([{ input: visibleForeground, left: visibleLeft, top: visibleTop }])
-      .png()
-      .toBuffer();
-    return { ...image, url: `data:image/png;base64,${output.toString('base64')}` };
-  }));
-}
-
-async function normalizeAngleOutputSize(images: GeneratedImage[], width: number, height: number, signal?: AbortSignal): Promise<GeneratedImage[]> {
+async function normalizeAngleOutputSize(images: GeneratedImage[], width: number, height: number, roll: number, signal?: AbortSignal): Promise<GeneratedImage[]> {
   const targetWidth = Math.max(1, Math.round(width));
   const targetHeight = Math.max(1, Math.round(height));
   return Promise.all(images.map(async (image) => {
     const input = await generatedImageBuffer(image.url, signal);
-    const metadata = await sharp(input, { failOn: 'none' }).metadata();
-    if (metadata.width === targetWidth && metadata.height === targetHeight) return image;
-    const output = await sharp(input, { failOn: 'none' })
-      .rotate()
-      .resize(targetWidth, targetHeight, { fit: 'cover', position: 'centre' })
-      .png()
-      .toBuffer();
+    const output = await renderAngleOutput(input, targetWidth, targetHeight, roll);
     return { ...image, url: `data:image/png;base64,${output.toString('base64')}` };
   }));
 }
@@ -182,10 +122,9 @@ export async function POST(request: Request) {
     const providerImages = references.length
       ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references, mask, fidelity: camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
       : await generateImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
-    const rolledImages = camera ? await applyExactCameraRoll(providerImages, effectiveAngle(camera.roll), requestController.signal) : providerImages;
     const generatedImages = camera && angleOutput
-      ? await normalizeAngleOutputSize(rolledImages, angleOutput.width, angleOutput.height, requestController.signal)
-      : rolledImages;
+      ? await normalizeAngleOutputSize(providerImages, angleOutput.width, angleOutput.height, effectiveAngle(camera.roll), requestController.signal)
+      : providerImages;
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
     const storagePath = (await getPublicState()).settings.imageStoragePath;

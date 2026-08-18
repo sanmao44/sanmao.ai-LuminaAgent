@@ -63,6 +63,24 @@ foreach ($processItem in $processes) {
   }
 }
 
+# Fallback: when Windows exposes a different node command line, use the
+# healthy SANMAO API port plus this project's Next path to identify the owner.
+$rootPattern = [regex]::Escape($root.TrimEnd('\'))
+$ownedNextPathPattern = "(?i)$rootPattern[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
+foreach ($port in $healthyPorts) {
+  try {
+    $ownerIds = @(Get-NetTCPConnection -State Listen -LocalPort ([int]$port) -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique)
+  } catch {
+    $ownerIds = @()
+  }
+  foreach ($ownerId in $ownerIds) {
+    $owner = $processes | Where-Object { [int]$_.ProcessId -eq [int]$ownerId } | Select-Object -First 1
+    if ($owner -and ([string]$owner.CommandLine -match $ownedNextPathPattern) -and ([string]$owner.CommandLine -match '(?i)(?:^|\s)start(?:\s|$)')) {
+      $targets += $owner
+    }
+  }
+}
+
 if (-not $targets) {
   Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
   Write-Host 'SANMAO.AI local service is not running.' -ForegroundColor Yellow
@@ -79,9 +97,23 @@ foreach ($target in $targets) {
   & taskkill.exe /PID ([int]$target.ProcessId) /T /F 2>$null | Out-Null
 }
 
+$portsToVerify = @($healthyPorts) + @($targets | ForEach-Object { Get-NextStartPort ([string]$_.CommandLine) })
+$portsToVerify = @($portsToVerify | Where-Object { [int]$_ -gt 0 } | Select-Object -Unique)
+$remainingPorts = @()
+for ($i = 0; $i -lt 50 -and $portsToVerify.Count -gt 0; $i++) {
+  $listeningPorts = @(Get-ListeningPorts)
+  $remainingPorts = @($portsToVerify | Where-Object { $listeningPorts -contains [int]$_ })
+  if ($remainingPorts.Count -eq 0) { break }
+  Start-Sleep -Milliseconds 200
+}
+
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 if ($DryRun) {
   Write-Host 'Dry run complete; no process was stopped.' -ForegroundColor Yellow
 } else {
+  if ($remainingPorts.Count -gt 0) {
+    Write-Host ("停止失败：端口仍被占用：" + ($remainingPorts -join ', ')) -ForegroundColor Red
+    exit 1
+  }
   Write-Host ("SANMAO.AI local service stopped. PID(s): " + (($targets | Select-Object -ExpandProperty ProcessId) -join ', ')) -ForegroundColor Green
 }

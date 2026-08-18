@@ -99,6 +99,35 @@ function Stop-SanmaoProcessAtPort([int]$port) {
   }
 }
 
+function Wait-SanmaoPortReleased([int]$port) {
+  for ($i = 0; $i -lt 50; $i++) {
+    $listeningPorts = Get-ListeningPortSnapshot
+    if ($null -eq $listeningPorts -or $listeningPorts -notcontains $port) { return $true }
+    Start-Sleep -Milliseconds 200
+  }
+  return $false
+}
+
+function Test-SanmaoBuildStale {
+  if ($env:SANMAO_FORCE_BUILD -eq '1') { return $true }
+  $buildIdPath = Join-Path $root '.next\BUILD_ID'
+  if (-not (Test-Path -LiteralPath $buildIdPath)) { return $true }
+  $buildTime = (Get-Item -LiteralPath $buildIdPath).LastWriteTimeUtc
+  $files = @()
+  foreach ($directory in @('app', 'components', 'lib', 'public')) {
+    $path = Join-Path $root $directory
+    if (Test-Path -LiteralPath $path) {
+      $files += Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue
+    }
+  }
+  foreach ($fileName in @('next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json')) {
+    $path = Join-Path $root $fileName
+    if (Test-Path -LiteralPath $path) { $files += Get-Item -LiteralPath $path }
+  }
+  $newest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+  return $null -ne $newest -and $newest.LastWriteTimeUtc -gt $buildTime
+}
+
 # The running service itself is the source of truth. There is deliberately no
 # lock file: a stale launcher PID must not prevent a later launch.
 function Find-ExistingServer {
@@ -152,10 +181,18 @@ foreach ($legacyPort in $legacyPortRange) {
 
 $existingPort = Find-ExistingServer
 if ($existingPort -gt 0) {
-  Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
-  Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
-  Start-Process "http://localhost:$existingPort"
-  exit 0
+  if (Test-SanmaoBuildStale) {
+    Write-Host "检测到源码比当前构建更新，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
+    Stop-SanmaoProcessAtPort $existingPort
+    if (-not (Wait-SanmaoPortReleased $existingPort)) {
+      Fail "旧服务仍占用端口 $existingPort，已停止启动以避免继续使用旧页面。请运行停止 SANMAO.AI - Windows.cmd 后重试。"
+    }
+  } else {
+    Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
+    Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
+    Start-Process "http://localhost:$existingPort"
+    exit 0
+  }
 }
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 

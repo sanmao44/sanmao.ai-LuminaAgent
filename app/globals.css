@@ -583,6 +583,7 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 
 /* Continuous generation queue: keep every round visually separate while requests run in parallel. */
 .panel-title-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+@media(min-width:701px){.result-panel .panel-title>div.panel-title-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;justify-content:flex-start}.result-panel .panel-title-actions .ghost-button{white-space:nowrap}}
 .generate-timing.active{color:var(--accent-text);font-weight:850}
 .generation-task-list{display:grid;gap:14px}
 .generation-task-group{--round-accent:var(--accent);border:1px solid color-mix(in srgb,var(--round-accent) 34%,var(--line));border-left:4px solid var(--round-accent);border-radius:15px;padding:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--round-accent) 7%,var(--panel)),var(--panel) 42%);box-shadow:0 8px 24px color-mix(in srgb,var(--round-accent) 7%,transparent)}

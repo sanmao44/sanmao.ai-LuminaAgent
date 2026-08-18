@@ -37,4 +37,3 @@ export async function renderAngleOutput(input: Buffer, width: number, height: nu
     .png()
     .toBuffer();
 }
-
