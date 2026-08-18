@@ -7225,7 +7225,7 @@ export default function Page() {
             await sendAgent('请根据我上传的参考图反推提示词', 'reverse_prompt', agentRefs);
             return;
         }
-        await sendAgent('请按我上传参考图的顺序，将 Image 1、Image 2、Image 3……串联成一段 15 秒、一镜到底的 Seedance 2.0 视频生成 Prompt。只输出最终可直接使用的 VIDEO PROMPT。', 'one_take_video_prompt', agentRefs);
+        await sendAgent('请按我上传参考图的顺序，将 Image 1、Image 2、Image 3……串联成一段 15 秒、一镜到底的 Seedance 2.0 视频生成 Prompt。生成结果必须同时输出完整、对应的中文版本和英文版本；不要输出分析过程，只输出最终可直接使用的双语 VIDEO PROMPT。', 'one_take_video_prompt', agentRefs);
     }
     async function optimizeAgentPrompt() {
         const source = agentInput.trim();
