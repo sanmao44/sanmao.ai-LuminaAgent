@@ -16,10 +16,10 @@ function Test-SanmaoHealth([int]$port) {
   }
 }
 
-function Get-NextStartPort([string]$commandLine) {
+function Get-NextServerPort([string]$commandLine) {
   if (-not $commandLine) { return 0 }
   if ($commandLine -notmatch '(?i)next[\\/]dist[\\/]bin[\\/]next') { return 0 }
-  if ($commandLine -notmatch '(?i)(?:^|\s)start(?:\s|$)') { return 0 }
+  if ($commandLine -notmatch '(?i)(?:^|\s)(?:start|dev)(?:\s|$)') { return 0 }
   if ($commandLine -match '(?i)(?:^|\s)(?:-p|--port)(?:\s+|=)(?<port>\d+)(?=\s|$)') {
     $port = [int]$Matches.port
     if ($portRange -contains $port) { return $port }
@@ -49,7 +49,7 @@ $targets = @()
 # the configured port is the authoritative ownership signal; the command-line
 # check prevents unrelated web processes from being stopped.
 foreach ($processItem in $processes) {
-  $port = Get-NextStartPort ([string]$processItem.CommandLine)
+  $port = Get-NextServerPort ([string]$processItem.CommandLine)
   if ($port -eq 0) { continue }
   $rootPattern = [regex]::Escape($root.TrimEnd('\'))
   $nextPathPattern = "(?i)$rootPattern[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
@@ -75,7 +75,7 @@ foreach ($port in $healthyPorts) {
   }
   foreach ($ownerId in $ownerIds) {
     $owner = $processes | Where-Object { [int]$_.ProcessId -eq [int]$ownerId } | Select-Object -First 1
-    if ($owner -and ([string]$owner.CommandLine -match $ownedNextPathPattern) -and ([string]$owner.CommandLine -match '(?i)(?:^|\s)start(?:\s|$)')) {
+    if ($owner -and ([string]$owner.CommandLine -match $ownedNextPathPattern) -and ([string]$owner.CommandLine -match '(?i)(?:^|\s)(?:start|dev)(?:\s|$)')) {
       $targets += $owner
     }
   }
@@ -90,14 +90,14 @@ if (-not $targets) {
 $targets = @($targets | Sort-Object ProcessId -Unique)
 foreach ($target in $targets) {
   if ($DryRun) {
-    Write-Host "Would stop PID $($target.ProcessId) on port $(Get-NextStartPort ([string]$target.CommandLine)): $([string]$target.CommandLine)"
+    Write-Host "Would stop PID $($target.ProcessId) on port $(Get-NextServerPort ([string]$target.CommandLine)): $([string]$target.CommandLine)"
     continue
   }
 
   & taskkill.exe /PID ([int]$target.ProcessId) /T /F 2>$null | Out-Null
 }
 
-$portsToVerify = @($healthyPorts) + @($targets | ForEach-Object { Get-NextStartPort ([string]$_.CommandLine) })
+$portsToVerify = @($healthyPorts) + @($targets | ForEach-Object { Get-NextServerPort ([string]$_.CommandLine) })
 $portsToVerify = @($portsToVerify | Where-Object { [int]$_ -gt 0 } | Select-Object -Unique)
 $remainingPorts = @()
 for ($i = 0; $i -lt 50 -and $portsToVerify.Count -gt 0; $i++) {

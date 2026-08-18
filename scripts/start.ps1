@@ -79,7 +79,10 @@ function Get-SanmaoNextProcessesAtPort([int]$port) {
     $absolutePath = $commandLine -match $absoluteNextPathPattern
     $relativePath = $commandLine -match $relativeNextPathPattern
     if (-not $absolutePath -and -not $relativePath) { continue }
-    if ($commandLine -notmatch '(?i)(?:^|\s)start(?:\s|$)') { continue }
+    # A previous development run can keep the same Next.js native binaries
+    # locked and occupy the launcher's port range. Treat both production and
+    # development servers as owned by this project so they can be cleaned up.
+    if ($commandLine -notmatch '(?i)(?:^|\s)(?:start|dev)(?:\s|$)') { continue }
     if ($commandLine -notmatch $portPattern) { continue }
     if ($relativePath -and -not $absolutePath) {
       if ($null -eq $healthy) { $healthy = Test-SanmaoServerAtPort $port }
