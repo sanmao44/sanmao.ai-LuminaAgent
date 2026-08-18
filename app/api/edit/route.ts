@@ -4,6 +4,7 @@ import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { getPublicState, getRuntimeImageModelForCapability } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { referenceRecordsForLog } from '@/lib/reference-images';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
     const prompt = String(body.prompt || '').trim();
     promptForLog = prompt;
     const references: string[] = Array.isArray(body.references) ? body.references.filter((v: unknown): v is string => typeof v === 'string').slice(0, 16) : [];
+    const referenceRecords = referenceRecordsForLog(body.referenceImages);
     const mask = typeof body.mask === 'string' && body.mask.startsWith('data:image/png') ? body.mask : undefined;
     const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
     const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
       background,
     };
     aspectRatioForLog = input.aspectRatio;
-    logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count }, String(body.taskId || ''));
+    logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const images = await editImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();

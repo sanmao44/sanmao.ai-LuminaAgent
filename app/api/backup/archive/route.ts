@@ -2,7 +2,9 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import path from 'node:path';
 import { isAdminRequest } from '@/lib/auth';
 import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from '@/lib/backup-archive';
+import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validateBackupPassword } from '@/lib/backup-crypto';
 import { getDefaultStoragePath, getStorageRoots } from '@/lib/image-storage';
+import { createLocalSnapshot } from '@/lib/local-snapshots';
 
 export const runtime = 'nodejs';
 
@@ -114,6 +116,11 @@ async function restoreArchive(archive: Buffer) {
   if (manifest.format !== 'sanmao-ai-local-backup-archive' || manifest.version !== 2) throw new Error('不支持的备份版本');
   manifestEntries(entries, manifest);
   const state = validateState(stateEntry.data);
+  const clientEntry = byName.get('client/client.json');
+  if (clientEntry) {
+    const client = JSON.parse(clientEntry.data.toString('utf8')) as { gallery?: unknown; chatSessions?: unknown };
+    if (!Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份中的浏览器历史格式无效');
+  }
   state.settings!.imageStoragePath = '';
   await mkdir(dataDir, { recursive: true });
   await writeAtomic(statePath, jsonBuffer(state));
@@ -136,7 +143,6 @@ async function restoreArchive(archive: Buffer) {
     await writeFile(target, entry.data);
     restoredImages += 1;
   }
-  const clientEntry = byName.get('client/client.json');
   return { client: clientEntry ? JSON.parse(clientEntry.data.toString('utf8')) : {}, manifest, restoredImages, externalMasterKey: Boolean(manifest.externalMasterKey) };
 }
 
@@ -147,12 +153,16 @@ export async function POST(request: Request) {
     const client = body?.client;
     const clientBytes = Buffer.byteLength(JSON.stringify(client || {}), 'utf8');
     if (clientBytes > maxClientBytes) throw new Error('浏览器历史过大，无法生成备份');
+    const backupPassword = String(body?.backupPassword || '');
+    validateBackupPassword(backupPassword);
     const result = await exportArchive(client);
-    return new Response(result.archive, {
+    const encrypted = encryptBackupPayload(result.archive, backupPassword);
+    return new Response(encrypted, {
       headers: {
-        'Content-Type': 'application/gzip',
-        'Content-Disposition': `attachment; filename="SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup.tar.gz"`,
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup"`,
         'X-SANMAO-Backup-Version': '2',
+        'X-SANMAO-Backup-Encrypted': '1',
       },
     });
   } catch (error) {
@@ -163,12 +173,17 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   try {
+    const backupPassword = request.headers.get('x-sanmao-backup-password') || '';
     const contentLength = Number(request.headers.get('content-length') || 0);
     if (contentLength > maxArchiveBytes) throw new Error('备份归档超过 2GB，无法恢复');
-    const archive = Buffer.from(await request.arrayBuffer());
+    const uploaded = Buffer.from(await request.arrayBuffer());
+    if (uploaded.byteLength > maxArchiveBytes) throw new Error('备份归档超过 2GB，无法恢复');
+    const encrypted = isEncryptedBackup(uploaded);
+    const archive = encrypted ? decryptBackupPayload(uploaded, backupPassword) : uploaded;
     if (archive.byteLength > maxArchiveBytes) throw new Error('备份归档超过 2GB，无法恢复');
+    await createLocalSnapshot('before-restore');
     const result = await restoreArchive(archive);
-    return Response.json({ ok: true, ...result });
+    return Response.json({ ok: true, legacyUnencrypted: !encrypted, ...result });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '恢复完整备份失败' }, { status: 400 });
   }

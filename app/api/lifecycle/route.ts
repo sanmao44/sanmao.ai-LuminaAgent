@@ -1,5 +1,6 @@
 import { isLocalLifecycleEnabled, releaseLocalSession, touchLocalSession } from '@/lib/local-lifecycle';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { ensureLocalSnapshot } from '@/lib/local-snapshots';
 
 export const runtime = 'nodejs';
 
@@ -22,7 +23,10 @@ export async function POST(request: Request) {
     if (!validSessionId(body.sessionId)) return Response.json({ error: '无效的生命周期会话' }, { status: 400, headers: noStoreHeaders });
 
     const sessionId = body.sessionId.trim();
-    if (body.event === 'heartbeat') touchLocalSession(sessionId);
+    if (body.event === 'heartbeat') {
+      touchLocalSession(sessionId);
+      await ensureLocalSnapshot();
+    }
     else if (body.event === 'close') releaseLocalSession(sessionId);
     else return Response.json({ error: '无效的生命周期事件' }, { status: 400, headers: noStoreHeaders });
 

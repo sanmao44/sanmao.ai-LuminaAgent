@@ -4,6 +4,7 @@ import { resolveStoredImageReference } from '@/lib/image-storage';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { getPublicState, getRuntimeImageModelForCapability } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { referenceRecordsForLog } from '@/lib/reference-images';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -22,6 +23,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     promptForLog = String(body.prompt || '').trim() || 'Upscale this image';
     const reference = String(body.reference || '').trim();
+    const referenceRecords = referenceRecordsForLog(body.referenceImages);
     if (!reference) { errorStatus = 400; throw new Error('请先选择一张需要超分的图片。'); }
     const publicState = await getPublicState();
     const resolvedReference = await resolveStoredImageReference(reference, publicState.settings.imageStoragePath);
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
     const resizeMethod = String(body.resizeMethod || '') === 'bicubic' ? 'bicubic' : 'lanczos';
     const longEdge = Math.max(width, height);
     const resolution = longEdge <= 1536 ? '1K' : longEdge <= 3072 ? '2K' : '4K';
-    logId = await startGenerationLog({ mode: 'upscale', source: 'workspace', prompt: promptForLog, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, resolution, outputSize: `${width}×${height}`, count: 1 }, String(body.taskId || ''));
+    logId = await startGenerationLog({ mode: 'upscale', source: 'workspace', prompt: promptForLog, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, resolution, outputSize: `${width}×${height}`, count: 1, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const images = await upscaleImage(runtime.provider, runtime.model.rawId, { reference: resolvedReference, size, seed, colorCorrection, resizeMethod, prompt: String(body.prompt || '') }, requestController.signal);
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();

@@ -204,6 +204,8 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
 
 本地源码运行时，更新提示会显示“立即更新并重启”：下载包会先校验 SHA-256，然后只替换程序文件，并保留 `.data`、`.env.local`、API Key、历史记录和图片。Docker 环境默认关闭此按钮，应通过更新镜像完成升级。没有 `packageUrl` 或 SHA-256 时，按钮只会打开 GitHub Release 下载页。
 
-设置页面的“导出本地备份”会生成包含服务端配置、主密钥、日志、浏览器历史和图片文件的 `.sanmao-backup.tar.gz`。备份文件包含 API Key 恢复所需信息，请勿上传 GitHub 或发送给他人。
+设置页面的“导出本地备份”会生成包含服务端配置、主密钥、日志、浏览器历史和图片文件的加密 `.sanmao-backup`。每次导出都需输入至少 12 位的备份密码；密码不会保存，恢复时也必须输入。备份文件仍包含 API Key 恢复所需信息，请勿上传 GitHub 或发送给他人。
+
+应用会每天创建一次本机自动快照，并保留最近 7 份；恢复完整备份或自动快照前也会先创建保护快照。自动快照用于本机误操作恢复，不替代带独立密码、可移动到其他设备的完整备份。
 
 默认图片目录为 `.data/images`。旧版本项目同级的 `image_generation_records` 会保留读取兼容；确认迁移完成前不要删除旧目录。

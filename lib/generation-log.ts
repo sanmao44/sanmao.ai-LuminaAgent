@@ -1,7 +1,8 @@
-import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
+import type { ReferenceImageRecord } from './types';
 
 export type GenerationLog = {
   id: string;
@@ -26,11 +27,14 @@ export type GenerationLog = {
   storageError?: string;
   error?: string;
   angle?: Record<string, unknown>;
+  references?: ReferenceImageRecord[];
 };
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const logPath = path.join(dataDir, 'generation-logs.jsonl');
+const trashDir = path.join(dataDir, 'trash', 'images');
 const LOG_ROTATION_BYTES = 10 * 1024 * 1024;
+const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 async function logFiles() {
   try {
@@ -101,7 +105,27 @@ function storedFileFromUrl(url: string, storagePath?: string) {
   }
 }
 
-export async function cleanupGenerationLogs(options: { before?: Date; deleteImages?: boolean } = {}) {
+export async function purgeExpiredImageTrash() {
+  try {
+    for (const entry of await readdir(trashDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const file = path.join(trashDir, entry.name);
+      if (Date.now() - (await stat(file)).mtimeMs > TRASH_RETENTION_MS) await rm(file, { force: true });
+    }
+  } catch {}
+}
+
+async function moveToTrash(file: string) {
+  await mkdir(trashDir, { recursive: true });
+  const target = path.join(trashDir, `${Date.now()}-${randomUUID()}-${path.basename(file)}`);
+  try { await rename(file, target); } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'EXDEV') throw error;
+    await copyFile(file, target);
+    await rm(file, { force: true });
+  }
+}
+
+export async function cleanupGenerationLogs(options: { before?: Date; deleteImages?: boolean; dryRun?: boolean } = {}) {
   const allLogs = await readAllGenerationLogs();
   const cutoff = options.before?.getTime();
   const removedLogs = cutoff === undefined ? allLogs : allLogs.filter((log) => new Date(log.createdAt).getTime() < cutoff);
@@ -115,12 +139,16 @@ export async function cleanupGenerationLogs(options: { before?: Date; deleteImag
       if (file) files.add(file);
     }
     for (const file of files) {
-      try { await rm(file, { force: true }); deletedImages += 1; } catch {}
+      if (options.dryRun) { deletedImages += 1; continue; }
+      try { await moveToTrash(file); deletedImages += 1; } catch {}
     }
   }
+
+  if (options.dryRun) return { removedLogs: removedLogs.length, deletedImages, dryRun: true };
 
   await mkdir(dataDir, { recursive: true });
   for (const file of await logFiles()) if (file !== logPath) await rm(file, { force: true });
   await writeFile(logPath, keptLogs.length ? `${keptLogs.map((log) => JSON.stringify(log)).join('\n')}\n` : '', 'utf8');
-  return { removedLogs: removedLogs.length, deletedImages };
+  await purgeExpiredImageTrash();
+  return { removedLogs: removedLogs.length, deletedImages, dryRun: false };
 }

@@ -73,6 +73,13 @@ export type GeneratedImage = {
   revisedPrompt?: string;
 };
 
+/** A persisted reference image used by a generation request. */
+export type ReferenceImageRecord = {
+  id?: string;
+  name: string;
+  url: string;
+};
+
 export type ClientReferenceImage = {
   id: string;
   name: string;

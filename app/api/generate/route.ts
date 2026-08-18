@@ -6,6 +6,7 @@ import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, normalizeA
 import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { referenceRecordsForLog } from '@/lib/reference-images';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -97,6 +98,7 @@ export async function POST(request: Request) {
     const runtime = await getRuntimeImageGenerationModel(String(body.model || 'auto'));
     if (!runtime) return Response.json({ error: '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
     const references = Array.isArray(body.references) ? body.references.filter((v: unknown) => typeof v === 'string').slice(0, 16) : [];
+    const referenceRecords = referenceRecordsForLog(body.referenceImages);
     if (camera && body.angleGuide === true && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始人物参考和 3D 构图导引。' }, { status: 400 });
     const mask = typeof body.mask === 'string' && body.mask.startsWith('data:image/png') ? body.mask : undefined;
     if (body.mask && !mask) return Response.json({ error: '蒙版必须是 PNG 格式。' }, { status: 400 });
@@ -118,7 +120,7 @@ export async function POST(request: Request) {
     resolutionForLog = input.resolution;
     outputSizeForLog = input.width && input.height ? `${input.width}×${input.height}` : undefined;
     modeForLog = references.length ? 'edit' : 'generate';
-    logId = await startGenerationLog({ mode: modeForLog, source: 'workspace', prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload }, String(body.taskId || ''));
+    logId = await startGenerationLog({ mode: modeForLog, source: 'workspace', prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const providerImages = references.length
       ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references, mask, fidelity: camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
       : await generateImage(runtime.provider, runtime.model.rawId, input, requestController.signal);

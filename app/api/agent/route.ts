@@ -6,6 +6,7 @@ import { persistGenerationResult } from '@/lib/generation-persistence';
 import { searchWeb, type SearchResponse } from '@/lib/web-search';
 import { ONE_TAKE_VIDEO_PROMPT_INSTRUCTIONS } from '@/lib/one-take-video-prompt';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { referenceRecordsForLog } from '@/lib/reference-images';
 
 export const runtime = 'nodejs';
 
@@ -218,6 +219,7 @@ export async function POST(request: Request) {
     const imageModelText = imageModels.length ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n') : '- 当前没有可用生图模型';
     const latest = latestUser(messages);
     const latestRefs = latest?.references || [];
+    const referenceRecords = referenceRecordsForLog(body.referenceImages);
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
       '你的任务是根据用户上传的图片，分析画面内容，并反推出最接近原图生成逻辑的高质量提示词，主要用于 GPT Image 2。',
@@ -370,7 +372,7 @@ export async function POST(request: Request) {
           storagePath: state.settings.imageStoragePath,
           startedAt,
           providerFinishedAt,
-          log: { mode, source: 'agent', prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count },
+          log: { mode, source: 'agent', prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, references: mode === 'edit' && referenceRecords.length ? referenceRecords : undefined },
         });
         generated.push(...stored.images);
         generations.push({ prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, mode });

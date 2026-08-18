@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const days = Number(body.days || 0);
     const before = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : undefined;
-    const result = await cleanupGenerationLogs({ before, deleteImages: body.deleteImages === true });
+    const result = await cleanupGenerationLogs({ before, deleteImages: body.deleteImages === true, dryRun: body.dryRun === true });
     return Response.json({ ok: true, ...result });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '清理日志失败' }, { status: 500 });

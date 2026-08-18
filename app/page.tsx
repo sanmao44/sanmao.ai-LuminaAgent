@@ -11,6 +11,7 @@ import { listChatSessions, listGallery, loadImageDirectoryHandle, patchGalleryIt
 import MaskEditor from '@/components/MaskEditor';
 import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
+import { normalizeReferenceRecords } from '@/lib/reference-images';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -575,6 +576,119 @@ async function downloadUrl(url, filename) {
         a.click();
         a.remove();
     }
+}
+function galleryReferences(item) {
+    const references = normalizeReferenceRecords(item?.references, { keepDataUrls: true });
+    if (references.length) return references;
+    if (item?.compareReferenceUrl) return [{
+        id: `reference-${item.id}`,
+        name: item.compareReferenceName || '上传参考图',
+        url: item.compareReferenceUrl
+    }];
+    return [];
+}
+function referenceCount(item) {
+    return galleryReferences(item).length;
+}
+function truncateCanvasText(value, max = 28) {
+    const text = String(value || '').trim();
+    return text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text;
+}
+function loadCanvasImage(url) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        if (/^https?:\/\//i.test(url)) image.crossOrigin = 'anonymous';
+        image.onload = () => image.naturalWidth > 0 && image.naturalHeight > 0 ? resolve(image) : reject(new Error('图片尺寸无效'));
+        image.onerror = () => reject(new Error('参考图读取失败'));
+        image.src = url;
+    });
+}
+function containCanvasRect(sourceWidth, sourceHeight, x, y, width, height) {
+    const scale = Math.min(width / Math.max(1, sourceWidth), height / Math.max(1, sourceHeight));
+    const drawWidth = Math.max(1, Math.round(sourceWidth * scale));
+    const drawHeight = Math.max(1, Math.round(sourceHeight * scale));
+    return {
+        x: Math.round(x + (width - drawWidth) / 2),
+        y: Math.round(y + (height - drawHeight) / 2),
+        width: drawWidth,
+        height: drawHeight
+    };
+}
+function roundCanvasRect(context, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    context.beginPath();
+    context.moveTo(x + r, y);
+    context.arcTo(x + width, y, x + width, y + height, r);
+    context.arcTo(x + width, y + height, x, y + height, r);
+    context.arcTo(x, y + height, x, y, r);
+    context.arcTo(x, y, x + width, y, r);
+    context.closePath();
+}
+async function downloadShareImage(item) {
+    const references = galleryReferences(item);
+    if (!references.length) throw new Error('这张图片没有保存参考图，无法生成分享版');
+    const images = await Promise.all([
+        loadCanvasImage(item.url),
+        ...references.map((reference) => loadCanvasImage(reference.url))
+    ]);
+    const resultImage = images[0];
+    const referenceImages = images.slice(1);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('浏览器不支持分享版图片生成');
+    const canvasWidth = 1400;
+    const mainArea = { x: 56, y: 112, width: canvasWidth - 112, height: 980 };
+    const tileWidth = 196;
+    const tileHeight = 164;
+    const tileGap = 16;
+    const tileColumns = Math.min(6, Math.max(1, references.length));
+    const tileRows = Math.ceil(references.length / tileColumns);
+    const referenceStartY = mainArea.y + mainArea.height + 76;
+    canvas.width = canvasWidth;
+    canvas.height = referenceStartY + tileRows * tileHeight + Math.max(0, tileRows - 1) * tileGap + 64;
+    context.fillStyle = '#f3f5f9';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#192338';
+    context.font = '700 30px "Segoe UI", "Microsoft YaHei", sans-serif';
+    context.fillText('SANMAO.AI · 生成结果', 56, 52);
+    context.fillStyle = '#68758a';
+    context.font = '500 19px "Segoe UI", "Microsoft YaHei", sans-serif';
+    context.fillText(`${truncateCanvasText(item.modelName || '图片模型', 42)}  ·  ${new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}`, 56, 82);
+    context.fillStyle = '#ffffff';
+    roundCanvasRect(context, mainArea.x, mainArea.y, mainArea.width, mainArea.height, 20);
+    context.fill();
+    const resultRect = containCanvasRect(resultImage.naturalWidth, resultImage.naturalHeight, mainArea.x + 16, mainArea.y + 16, mainArea.width - 32, mainArea.height - 32);
+    context.drawImage(resultImage, resultRect.x, resultRect.y, resultRect.width, resultRect.height);
+    context.fillStyle = '#192338';
+    context.font = '700 23px "Segoe UI", "Microsoft YaHei", sans-serif';
+    context.fillText(`参考图（按提交顺序 · ${references.length} 张）`, 56, referenceStartY - 28);
+    references.forEach((reference, index) => {
+        const column = index % tileColumns;
+        const row = Math.floor(index / tileColumns);
+        const x = 56 + column * (tileWidth + tileGap);
+        const y = referenceStartY + row * (tileHeight + tileGap);
+        context.fillStyle = '#ffffff';
+        roundCanvasRect(context, x, y, tileWidth, tileHeight, 14);
+        context.fill();
+        const referenceImage = referenceImages[index];
+        const imageRect = containCanvasRect(referenceImage.naturalWidth, referenceImage.naturalHeight, x + 9, y + 9, tileWidth - 18, 112);
+        context.drawImage(referenceImage, imageRect.x, imageRect.y, imageRect.width, imageRect.height);
+        context.fillStyle = '#526075';
+        context.font = '700 16px "Segoe UI", "Microsoft YaHei", sans-serif';
+        context.fillText(`图 ${index + 1}`, x + 12, y + 141);
+        context.fillStyle = '#7b8798';
+        context.font = '500 14px "Segoe UI", "Microsoft YaHei", sans-serif';
+        context.fillText(truncateCanvasText(reference.name, 18), x + 58, y + 141);
+    });
+    const blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('分享版图片导出失败')), 'image/png'));
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `SANMAO-${item.id}-分享版.png`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
 }
 async function downloadChatFile(file) {
     const blob = file.encoding === 'base64' ? new Blob([
@@ -1198,8 +1312,8 @@ function Dropdown({ value, options, onChange, placeholder = '请选择', classNa
                             onChange(item.value);
                             setOpen(false);
                         },
-                        children: [
-                            /*#__PURE__*/ _jsxs("span", {
+                                                     children: [
+                                                         /*#__PURE__*/ _jsxs("span", {
                                 children: [
                                     /*#__PURE__*/ _jsx("strong", {
                                         children: item.label
@@ -1340,11 +1454,11 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                 editor.item.outputSize || '尺寸未记录',
                                                 " \xb7 ",
                                                 editor.item.aspectRatio || ratio
-                                            ]
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsxs("div", {
+                                                             ]
+                                                         })
+                                                     ]
+                                                 }),
+                                                 /*#__PURE__*/ _jsxs("div", {
                                     className: "editor-size-summary",
                                     children: [
                                         /*#__PURE__*/ _jsx("span", {
@@ -1378,8 +1492,8 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                         }),
                                         /*#__PURE__*/ _jsxs("div", {
                                             className: "editor-mask-actions",
-                                            children: [
-                                                /*#__PURE__*/ _jsx("button", {
+                                                             children: [
+                                                             /*#__PURE__*/ _jsx("button", {
                                                     type: "button",
                                                     className: "ghost-button",
                                                     onClick: onMaskEdit,
@@ -1580,10 +1694,10 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                                                 })
                                                                         })
                                                                     ]
-                                                                })
-                                                            ]
-                                                        }),
-                                                        /*#__PURE__*/ _jsx("small", {
+                                                             })
+                                                         ]
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("small", {
                                                             children: "输入自定义尺寸后自动切换为自定义模式。"
                                                         })
                                                     ]
@@ -1955,7 +2069,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
         ]
     });
 }
-function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSource: passedComparisonSource, previousItem, priority = false, onSelect, onPreview, onEdit, onUpscale, onReuse, onReference, onCompare, onReversePrompt, onFavorite, onDownload, onDelete }) {
+function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSource: passedComparisonSource, previousItem, priority = false, onSelect, onPreview, onEdit, onUpscale, onReuse, onReference, onCompare, onReversePrompt, onFavorite, onDownload, onDownloadShare, onDelete }) {
     const [menu, setMenu] = useState(false);
     const [imageState, setImageState] = useState('loading');
     const [retryToken, setRetryToken] = useState(0);
@@ -1973,6 +2087,7 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
         kind: previousItem.id.startsWith('reference-') ? 'reference' : 'parent',
         label: previousItem.id.startsWith('reference-') ? '参考图' : '前一版'
     } : null);
+    const references = galleryReferences(item);
     return /*#__PURE__*/ _jsxs("article", {
         className: `image-card ${selected ? 'selected' : ''}`,
         children: [
@@ -2051,6 +2166,31 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                             })
                         ]
                     }),
+                    references.length ? /*#__PURE__*/ _jsxs("div", {
+                        className: "image-card-references",
+                        title: references.map((reference, index) => `图 ${index + 1} · ${reference.name}`).join('\n'),
+                        children: [
+                            /*#__PURE__*/ _jsx("span", {
+                                className: "image-card-reference-label",
+                                children: "参考图"
+                            }),
+                            references.slice(0, 4).map((reference, index) => /*#__PURE__*/ _jsxs("span", {
+                                className: "image-card-reference-thumb",
+                                children: [
+                                    /*#__PURE__*/ _jsx("img", {
+                                        src: reference.url,
+                                        alt: `参考图 ${index + 1}`
+                                    }),
+                                    /*#__PURE__*/ _jsx("i", {
+                                        children: index + 1
+                                    })
+                                ]
+                            }, `${reference.url}-${index}`)),
+                            references.length > 4 ? /*#__PURE__*/ _jsx("small", {
+                                children: `+${references.length - 4}`
+                            }) : null
+                        ]
+                    }) : null,
                     /*#__PURE__*/ _jsxs("div", {
                         className: "image-actions",
                         children: [
@@ -2202,9 +2342,23 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                     "用此参数再生成"
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("button", {
-                                                onClick: ()=>{
-                                                    onFavorite();
+                                             /*#__PURE__*/ _jsxs("button", {
+                                                 onClick: ()=>{
+                                                     void onDownloadShare?.();
+                                                     setMenu(false);
+                                                 },
+                                                 disabled: !references.length,
+                                                 children: [
+                                                     /*#__PURE__*/ _jsx(Icon, {
+                                                         name: "download",
+                                                         size: 15
+                                                     }),
+                                                     "下载分享版"
+                                                 ]
+                                             }),
+                                             /*#__PURE__*/ _jsxs("button", {
+                                                 onClick: ()=>{
+                                                     onFavorite();
                                                     setMenu(false);
                                                 },
                                                 children: [
@@ -4272,6 +4426,8 @@ export default function Page() {
     const [localDirectoryHandle, setLocalDirectoryHandle] = useState(null);
     const [localDirectoryName, setLocalDirectoryName] = useState('');
     const [storagePath, setStoragePath] = useState('');
+    const [storageUsage, setStorageUsage] = useState(null);
+    const [localSnapshots, setLocalSnapshots] = useState([]);
     const [storageBusy, setStorageBusy] = useState(false);
     const [cleanupBusy, setCleanupBusy] = useState(false);
     const [backupBusy, setBackupBusy] = useState(false);
@@ -4416,6 +4572,7 @@ export default function Page() {
     const viewerItems = section === 'history' ? pagedGallery : resultItems.length ? resultItems : gallery;
     const viewerIndex = viewerId ? viewerItems.findIndex((item)=>item.id === viewerId) : -1;
     const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : null;
+    const viewerReferences = viewerItem ? galleryReferences(viewerItem) : [];
     const viewerComparisonSource = viewerItem ? getComparisonSource(viewerItem) : null;
     const viewerParentItem = viewerComparisonSource?.item || null;
     const effectiveAutoRatio = ratio === '自动' && generateRefs.length === 1 && generateAutoReferenceSize ? exactRatioFromDimensions(generateAutoReferenceSize.width, generateAutoReferenceSize.height) : '自动';
@@ -4615,6 +4772,7 @@ export default function Page() {
         void refreshGallery();
         void refreshChatSessions();
         void refreshGenerationLogs();
+        void refreshStorageMaintenance();
         void loadLocalDirectory();
     }, []);
     useEffect(()=>{
@@ -5217,12 +5375,13 @@ export default function Page() {
                 label: '前一版'
             };
         }
-        if (item.compareReferenceUrl) {
+        const firstReference = galleryReferences(item)[0];
+        if (firstReference?.url) {
             return {
                 item: {
                     id: `reference-${item.id}`,
-                    url: item.compareReferenceUrl,
-                    prompt: item.compareReferenceName || '上传参考图',
+                    url: firstReference.url,
+                    prompt: firstReference.name || '上传参考图',
                     source: item.source,
                     createdAt: item.createdAt,
                     favorite: false
@@ -5263,6 +5422,48 @@ export default function Page() {
             syncLogErrorNotice(logs);
         } catch  {}
     }
+    async function refreshStorageMaintenance() {
+        try {
+            const [usageResponse, snapshotResponse] = await Promise.all([
+                fetch('/api/storage/usage', { cache: 'no-store' }),
+                fetch('/api/storage/snapshots', { cache: 'no-store' })
+            ]);
+            const usageData = await usageResponse.json().catch(()=>({}));
+            const snapshotData = await snapshotResponse.json().catch(()=>({}));
+            if (usageResponse.ok) setStorageUsage(usageData.usage || null);
+            if (snapshotResponse.ok) setLocalSnapshots(Array.isArray(snapshotData.snapshots) ? snapshotData.snapshots : []);
+        } catch {}
+    }
+    function formatStorageBytes(bytes) {
+        const value = Number(bytes || 0);
+        if (value < 1024) return `${value} B`;
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+        if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+    async function createManualSnapshot() {
+        setBackupBusy(true);
+        try {
+            const res = await fetch('/api/storage/snapshots', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '创建快照失败');
+            setLocalSnapshots(data.snapshots || []);
+            await refreshStorageMaintenance();
+            notify('本地快照已创建');
+        } catch (error) { notify(error instanceof Error ? error.message : '创建快照失败'); }
+        finally { setBackupBusy(false); }
+    }
+    async function restoreLocalSnapshotByName(name) {
+        setBackupBusy(true);
+        try {
+            const res = await fetch('/api/storage/snapshots', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '恢复快照失败');
+            notify(`快照恢复完成：${data.restoredImages || 0} 个图片文件，正在重新加载`);
+            window.setTimeout(()=>window.location.reload(), 700);
+        } catch (error) { notify(error instanceof Error ? error.message : '恢复快照失败'); }
+        finally { setBackupBusy(false); }
+    }
     useEffect(()=>{
         const pendingLogs = generationLogs.filter((log)=>!log.outputSize && log.imageUrls?.[0] && !logImageSpecs[log.id]);
         if (!pendingLogs.length) return;
@@ -5301,7 +5502,7 @@ export default function Page() {
         const scope = days ? `清理 90 天前的${deleteImages ? '日志和图片' : '日志'}` : `清空全部${deleteImages ? '日志和图片' : '日志'}`;
         setConfirmState({
             title: `${scope}？`,
-            text: deleteImages ? '将删除符合条件的服务端日志记录，并删除日志中关联的本地图片文件。此操作不可恢复。' : '只会删除服务端日志记录，生成图片会保留。此操作不可恢复。',
+             text: deleteImages ? '将清理符合条件的服务端日志记录，并把日志中关联的本地图片文件移入回收站；回收站会保留 7 天。' : '只会清理服务端日志记录，生成图片会保留。此操作不可恢复。',
             danger: true,
             confirmText: '确认清理',
             action: async ()=>{
@@ -5320,7 +5521,7 @@ export default function Page() {
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.error || '清理日志失败');
                     await refreshGenerationLogs();
-                    notify(`已清理 ${data.removedLogs || 0} 条日志${deleteImages ? `，删除 ${data.deletedImages || 0} 个图片文件` : ''}`);
+                     notify(`已清理 ${data.removedLogs || 0} 条日志${deleteImages ? `，${data.deletedImages || 0} 个图片文件已移入回收站` : ''}`);
                 } catch (error) {
                     notify(error instanceof Error ? error.message : '清理日志失败');
                 } finally{
@@ -5329,9 +5530,26 @@ export default function Page() {
             }
         });
     }
+    async function previewCleanupGenerationLogs(days, deleteImages) {
+        setCleanupBusy(true);
+        try {
+            const res = await fetch('/api/generation-logs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ days, deleteImages, dryRun: true })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '预览清理失败');
+            notify(`预计清理 ${data.removedLogs || 0} 条日志${deleteImages ? `，${data.deletedImages || 0} 个图片文件将移入回收站` : ''}`);
+        } catch (error) { notify(error instanceof Error ? error.message : '预览清理失败'); }
+        finally { setCleanupBusy(false); }
+    }
     async function exportLocalBackup() {
         setBackupBusy(true);
         try {
+            const backupPassword = window.prompt('请输入备份密码（至少 12 个字符；不会保存）：');
+            if (backupPassword === null) return;
+            if (backupPassword.length < 12) throw new Error('备份密码至少需要 12 个字符');
             const preferenceKeys = [
                 'sanmao-theme',
                 'sanmao-success-sound',
@@ -5354,7 +5572,7 @@ export default function Page() {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ client })
+                body: JSON.stringify({ client, backupPassword })
             });
             if (!res.ok) {
                 const data = await res.json().catch(()=>({}));
@@ -5364,12 +5582,12 @@ export default function Page() {
             const objectUrl = URL.createObjectURL(blob);
             const anchor = document.createElement('a');
             anchor.href = objectUrl;
-            anchor.download = `SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup.tar.gz`;
+            anchor.download = `SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup`;
             document.body.appendChild(anchor);
             anchor.click();
             anchor.remove();
             window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
-            notify(`完整备份完成：${client.gallery.length} 张图片索引、${client.chatSessions.length} 段对话，已包含服务端图片文件`);
+            notify(`加密备份完成：${client.gallery.length} 张图片索引、${client.chatSessions.length} 段对话，已包含服务端图片文件`);
         } catch (error) {
             notify(error instanceof Error ? error.message : '导出备份失败');
         } finally{
@@ -5392,19 +5610,21 @@ export default function Page() {
     }
     async function prepareRestoreBackup(file) {
         try {
-            if (/\.(?:sanmao-backup\.)?tar\.gz$/i.test(file.name) || file.type === 'application/gzip') {
+            if (/\.(?:sanmao-backup\.)?tar\.gz$/i.test(file.name) || /\.sanmao-backup$/i.test(file.name) || file.type === 'application/gzip' || file.type === 'application/octet-stream') {
                 setConfirmState({
                     title: '恢复完整本地备份？',
-                    text: '这会覆盖当前服务端配置、日志和浏览器历史，并把备份中的图片恢复到当前数据目录。原有图片文件不会自动删除。备份包含敏感密钥，请确认文件来源可信。',
+                     text: '这会覆盖当前服务端配置、日志和浏览器历史，并把备份中的图片恢复到当前数据目录。新格式备份已使用独立密码加密；旧版未加密备份仍可导入。',
                     danger: true,
                     confirmText: '确认恢复',
                     action: async ()=>{
                         setBackupBusy(true);
                         try {
+                            const backupPassword = window.prompt('请输入备份密码（至少 12 个字符）：') || '';
                             const res = await fetch('/api/backup/archive', {
                                 method: 'PUT',
                                 headers: {
-                                    'Content-Type': 'application/gzip'
+                                    'Content-Type': 'application/octet-stream',
+                                    'X-SANMAO-Backup-Password': backupPassword
                                 },
                                 body: file
                             });
@@ -6022,8 +6242,13 @@ export default function Page() {
             defaultImageModelId: model.id
         });
     }
-    async function persistComparisonReference(reference) {
-        if (!reference) return undefined;
+    async function persistReferenceImages(references) {
+        const source = (references || []).map((reference, index)=>({
+            reference,
+            index,
+            dataUrl: typeof reference?.dataUrl === 'string' ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : ''
+        })).filter((entry)=>entry.dataUrl && (entry.dataUrl.startsWith('data:image/') || /^https?:\/\//i.test(entry.dataUrl) || entry.dataUrl.startsWith('/api/storage/file?'))).slice(0, 16);
+        if (!source.length) return [];
         try {
             const response = await fetch('/api/storage/images', {
                 method: 'POST',
@@ -6031,23 +6256,21 @@ export default function Page() {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    images: [
-                        {
-                            url: reference.dataUrl
-                        }
-                    ]
+                    images: source.map((entry)=>({ url: entry.dataUrl }))
                 })
             });
-            const data = await response.json();
-            if (response.ok && typeof data.images?.[0]?.url === 'string') return {
-                url: data.images[0].url,
-                name: reference.name
-            };
+            const data = await response.json().catch(()=>({}));
+            if (response.ok && Array.isArray(data.images)) return source.map((reference, index)=>({
+                id: reference.reference?.id,
+                name: reference.reference?.name || `参考图 ${reference.index + 1}`,
+                url: typeof data.images[index]?.url === 'string' ? data.images[index].url : reference.dataUrl
+            }));
         } catch  {}
-        return {
-            url: reference.dataUrl,
-            name: reference.name
-        };
+        return source.map((reference, index)=>({
+            id: entry.reference?.id,
+            name: entry.reference?.name || `参考图 ${entry.index + 1}`,
+            url: entry.dataUrl
+        }));
     }
     async function persistHistoryImage(image) {
         if (!image?.url || (!image.url.startsWith('data:image/') && !/^https?:\/\//i.test(image.url))) return image;
@@ -6077,13 +6300,20 @@ export default function Page() {
         const normalized = [];
         for (const item of items) {
             const next = await persistHistoryImage(item);
-            const compareReference = item.compareReferenceUrl ? await persistHistoryImage({
-                url: item.compareReferenceUrl
-            }) : null;
+            const references = Array.isArray(item.references) ? await Promise.all(item.references.map(async (reference)=>{
+                const stored = await persistHistoryImage({ url: reference.url });
+                return {
+                    ...reference,
+                    url: stored.url
+                };
+            })) : [];
+            const compareReference = item.compareReferenceUrl ? await persistHistoryImage({ url: item.compareReferenceUrl }) : null;
             normalized.push({
                 ...item,
                 url: next.url,
-                compareReferenceUrl: compareReference?.url || item.compareReferenceUrl
+                references: references.length ? references : item.references,
+                compareReferenceUrl: references[0]?.url || compareReference?.url || item.compareReferenceUrl,
+                compareReferenceName: references[0]?.name || item.compareReferenceName
             });
         }
         return normalized;
@@ -6109,8 +6339,9 @@ export default function Page() {
                 createdAt: now + index,
                 favorite: false,
                 parentId: meta.parentId,
-                compareReferenceUrl: meta.compareReference?.url,
-                compareReferenceName: meta.compareReference?.name,
+                references: meta.references?.length ? meta.references : meta.compareReference ? [meta.compareReference] : undefined,
+                compareReferenceUrl: meta.references?.[0]?.url || meta.compareReference?.url,
+                compareReferenceName: meta.references?.[0]?.name || meta.compareReference?.name,
                 angle: meta.angle
             }));
         await saveGalleryItems(items);
@@ -6340,7 +6571,6 @@ export default function Page() {
                 }
             });
         };
-        const comparisonReferencePromise = isAngleGeneration && taskRefs[0] ? persistComparisonReference(taskRefs[0]) : taskRefs.length === 1 ? persistComparisonReference(taskRefs[0]) : Promise.resolve(undefined);
         const requestStartedAt = performance.now();
         primeSuccessSound();
         setGenerateTasks((old)=>[
@@ -6361,6 +6591,7 @@ export default function Page() {
         setGenerateClock(Date.now());
         setLastGenerateInfo('');
         try {
+            const referenceRecords = await persistReferenceImages(taskRefs);
             if (taskMode === 'upscale') {
                 if (!taskRefs.length) throw new Error('SeedVR2-7B 是图片超分模型，请先添加一张参考图，再点击生成。');
                 const sourceSize = await loadImageDimensions(taskRefs[0].dataUrl);
@@ -6375,6 +6606,7 @@ export default function Page() {
                         prompt: taskPrompt,
                         model: taskModelId === 'auto' ? taskModel?.id : taskModelId,
                         reference: taskRefs[0].dataUrl,
+                        referenceImages: referenceRecords,
                         scale: taskUpscaleScale,
                         size: `${targetSize.width}x${targetSize.height}`,
                         seed: taskUpscaleSeed,
@@ -6396,7 +6628,7 @@ export default function Page() {
                     outputFormat: 'png',
                     generationMs: durationMs,
                     source: 'edit',
-                    compareReference: await comparisonReferencePromise
+                    references: referenceRecords
                 });
                 const info = `${upscaleData.model?.name || '超分模型'} · ${taskUpscaleScale}× · 图片超分 · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
                 setResultItems((old)=>[
@@ -6451,6 +6683,7 @@ export default function Page() {
                                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                                     mask: taskMask,
                                     references: taskRefs.map((r)=>r.dataUrl),
+                                    referenceImages: referenceRecords,
                                     camera: isAngleGeneration ? taskRequest.angle : undefined,
                                     cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
                                     angleNote: isAngleGeneration ? taskRequest.angleNote : undefined,
@@ -6486,7 +6719,7 @@ export default function Page() {
                                 outputFormat: actualOutputFormat,
                                 generationMs: durationMs,
                                 source: taskRefs.length ? 'edit' : 'generate',
-                                compareReference: await comparisonReferencePromise,
+                                references: referenceRecords,
                                 angle: taskRequest.angle
                             });
                             completedCount += items.length;
@@ -6545,6 +6778,7 @@ export default function Page() {
                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                     mask: taskMask,
                     references: taskRefs.map((r)=>r.dataUrl),
+                    referenceImages: referenceRecords,
                     camera: isAngleGeneration ? taskRequest.angle : undefined,
                     cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
                     angleNote: isAngleGeneration ? taskRequest.angleNote : undefined,
@@ -6579,7 +6813,7 @@ export default function Page() {
                 outputFormat: actualOutputFormat,
                 generationMs: durationMs,
                 source: taskRefs.length ? 'edit' : 'generate',
-                compareReference: await comparisonReferencePromise,
+                references: referenceRecords,
                 angle: taskRequest.angle
             });
             const info = `${data.model?.name || '图片模型'} · ${outputSize || '自动分辨率'} · ${taskRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
@@ -6926,6 +7160,7 @@ export default function Page() {
                 ...contextMessages
             ].reverse().find((item)=>item.role === 'user' && item.references?.length);
             const referencesForRequest = await Promise.all((referenceSource?.references || []).slice(0, 16).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
             const payloadMessages = contextMessages.slice(-12).map((item)=>({
                     role: item.role,
                     content: item.content,
@@ -6951,6 +7186,7 @@ export default function Page() {
                 },
                 body: JSON.stringify({
                     messages: payloadMessages,
+                    referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     webSearch: agentWebSearchActive,
                     stream: true
@@ -6973,7 +7209,6 @@ export default function Page() {
             let images = [];
             if (Array.isArray(data.images) && data.images.length) {
                 const generation = Array.isArray(data.generations) ? data.generations[0] : null;
-                const comparisonReference = referenceSource?.references?.length === 1 ? await persistComparisonReference(referenceSource.references[0]) : undefined;
                 images = await recordImages(data.images, {
                     prompt: generation?.prompt || message.content,
                     modelId: generation?.modelId,
@@ -6981,7 +7216,7 @@ export default function Page() {
                     providerName: generation?.providerName,
                     aspectRatio: generation?.aspectRatio || '自动',
                     source: 'agent',
-                    compareReference: comparisonReference
+                    references: referenceRecords
                 });
                 if (images.length) playSuccessSound();
             }
@@ -7089,6 +7324,7 @@ export default function Page() {
                 ...nextMessages
             ].reverse().find((message)=>message.role === 'user' && message.references?.length);
             const referencesForRequest = await Promise.all((referenceSource?.references || []).slice(0, 16).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
             const payloadMessages = nextMessages.slice(-12).map((m)=>({
                     role: m.role,
                     content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : m.content,
@@ -7110,6 +7346,7 @@ export default function Page() {
                 },
                 body: JSON.stringify({
                     messages: payloadMessages,
+                    referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     task,
                     webSearch: agentWebSearchActive,
@@ -7150,7 +7387,6 @@ export default function Page() {
             let items = [];
             if (Array.isArray(data.images) && data.images.length) {
                 const gen = Array.isArray(data.generations) ? data.generations[0] : null;
-                const comparisonReference = referenceSource?.references?.length === 1 ? await persistComparisonReference(referenceSource.references[0]) : undefined;
                 items = await recordImages(data.images, {
                     prompt: gen?.prompt || requestContent,
                     modelId: gen?.modelId,
@@ -7158,7 +7394,7 @@ export default function Page() {
                     providerName: gen?.providerName,
                     aspectRatio: gen?.aspectRatio || '自动',
                     source: 'agent',
-                    compareReference: comparisonReference
+                    references: referenceRecords
                 });
                 if (items.length) playSuccessSound();
             }
@@ -7620,6 +7856,11 @@ export default function Page() {
     }
     async function processEditorTask(currentEditor, taskId) {
         const requestStartedAt = performance.now();
+        const editorReference = {
+            id: currentEditor.item.id,
+            name: `上一版-${currentEditor.item.id.slice(-6)}`,
+            url: currentEditor.item.url
+        };
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
             const targetSize = sourceSize ? seedVrTargetSize(sourceSize.width, sourceSize.height, currentEditor.scale, currentEditor.targetSize) : null;
@@ -7634,6 +7875,7 @@ export default function Page() {
                 taskId,
                 model: currentEditor.modelId,
                 reference: currentEditor.item.url,
+                referenceImages: [editorReference],
                 scale: currentEditor.scale,
                 size: upscaleSize,
                 seed: currentEditor.seed,
@@ -7654,6 +7896,7 @@ export default function Page() {
                 references: [
                     currentEditor.item.url
                 ],
+                referenceImages: [editorReference],
                 mask: currentEditor.mask || undefined
             };
             const res = await fetch(endpoint, {
@@ -7699,7 +7942,8 @@ export default function Page() {
                 outputSize: currentEditor.mode === 'upscale' ? `${currentEditor.scale}× 超分` : undefined,
                 source: 'edit',
                 parentId: currentEditor.item.id,
-                generationMs: durationMs
+                generationMs: durationMs,
+                references: [editorReference]
             });
             const info = `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${data.model?.name || '图片模型'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
@@ -8659,6 +8903,7 @@ export default function Page() {
                                                                             onReversePrompt: ()=>reversePrompt(item),
                                                                             onFavorite: ()=>void toggleFavorite(item),
                                                                             onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                                            onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                                             onDelete: ()=>askDeleteItems([
                                                                                     item.id
                                                                                 ])
@@ -9088,6 +9333,7 @@ export default function Page() {
                                 onOpenResult: (item)=>openViewer(item),
                                 onUseResult: openAngleConsole,
                                 onDownloadResult: (item)=>downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                onDownloadShare: (item)=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                 onNotify: notify
                             }),
                             section === 'generate' && /*#__PURE__*/ _jsxs("section", {
@@ -9998,6 +10244,7 @@ export default function Page() {
                                                                             onReversePrompt: ()=>reversePrompt(item),
                                                                             onFavorite: ()=>void toggleFavorite(item),
                                                                             onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                                            onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                                             onDelete: ()=>askDeleteItems([
                                                                                     item.id
                                                                                 ])
@@ -10085,6 +10332,7 @@ export default function Page() {
                                                         onReversePrompt: ()=>reversePrompt(item),
                                                         onFavorite: ()=>void toggleFavorite(item),
                                                         onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                        onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                         onDelete: ()=>askDeleteItems([
                                                                 item.id
                                                             ])
@@ -10271,6 +10519,7 @@ export default function Page() {
                                                         onReversePrompt: ()=>reversePrompt(item),
                                                         onFavorite: ()=>void toggleFavorite(item),
                                                         onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                        onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                         onDelete: ()=>askDeleteItems([
                                                                 item.id
                                                             ])
@@ -10595,6 +10844,13 @@ export default function Page() {
                                                                             " 张"
                                                                         ]
                                                                     }),
+                                                                    log.references?.length ? /*#__PURE__*/ _jsxs("span", {
+                                                                        className: "log-meta-chip log-reference-chip",
+                                                                        children: [
+                                                                            "参考图 ",
+                                                                            log.references.length
+                                                                        ]
+                                                                    }) : null,
                                                                     /*#__PURE__*/ _jsxs("span", {
                                                                         className: `log-meta-chip log-duration-chip ${log.status === 'pending' ? 'pending' : logDurationTone(log.durationMs)}`,
                                                                         children: [
@@ -11182,7 +11438,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                        children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数和服务端图片文件。备份文件非常敏感，请妥善保存。"
+                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数和服务端图片文件，并使用独立密码加密。密码不会保存，请务必妥善保管。"
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-backup-summary",
@@ -11213,8 +11469,41 @@ export default function Page() {
                                                             })
                                                         ]
                                                     }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "settings-backup-actions",
+                                                     /*#__PURE__*/ _jsxs("div", {
+                                                         className: "settings-backup-summary",
+                                                         children: [
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "图片 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.images?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "日志 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.logs?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "自动快照 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: localSnapshots.length
+                                                                     }),
+                                                                     " 份"
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("span", {
+                                                                 children: localSnapshots[0] ? `最近快照 ${new Date(localSnapshots[0].createdAt).toLocaleString()} · ${formatStorageBytes(localSnapshots[0].bytes)}` : '尚无自动快照'
+                                                             })
+                                                         ]
+                                                     }),
+                                                     /*#__PURE__*/ _jsxs("div", {
+                                                         className: "settings-backup-actions",
                                                         children: [
                                                             /*#__PURE__*/ _jsx("button", {
                                                                 type: "button",
@@ -11228,13 +11517,37 @@ export default function Page() {
                                                                 className: "ghost-button",
                                                                 disabled: backupBusy,
                                                                 onClick: ()=>backupInputRef.current?.click(),
-                                                                children: "从备份恢复"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("input", {
+                                                             children: "从备份恢复"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                                 type: "button",
+                                                                 className: "ghost-button",
+                                                                 disabled: backupBusy,
+                                                                 onClick: ()=>void createManualSnapshot(),
+                                                                 children: "立即创建快照"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                                 type: "button",
+                                                                 className: "ghost-button",
+                                                                 disabled: backupBusy || !localSnapshots.length,
+                                                                 onClick: ()=>{
+                                                                     const latest = localSnapshots[0];
+                                                                     if (!latest) return;
+                                                                     setConfirmState({
+                                                                         title: '恢复最近自动快照？',
+                                                                         text: '当前服务端配置和日志会被快照覆盖；现有图片文件不会自动删除。恢复前会再创建一个保护快照。',
+                                                                         danger: true,
+                                                                         confirmText: '确认恢复',
+                                                                         action: ()=>restoreLocalSnapshotByName(latest.name)
+                                                                     });
+                                                                 },
+                                                                 children: "恢复最近快照"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("input", {
                                                                 hidden: true,
                                                                 ref: backupInputRef,
                                                                 type: "file",
-                                                                accept: ".json,.sanmao.json,.tar.gz,.sanmao-backup.tar.gz,application/json,application/gzip",
+                                                                 accept: ".json,.sanmao.json,.tar.gz,.sanmao-backup.tar.gz,.sanmao-backup,application/json,application/gzip,application/octet-stream",
                                                                 onChange: (event)=>{
                                                                     const file = event.target.files?.[0];
                                                                     if (file) void prepareRestoreBackup(file);
@@ -11244,7 +11557,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
                                                         className: "settings-backup-warning",
-                                                        children: "备份文件包含 API Key 恢复所需信息和图片文件，请勿上传 GitHub 或发送给他人。"
+                                                         children: "备份文件包含 API Key 恢复所需信息和图片文件；即使已加密，也请勿上传 GitHub 或发送给他人。"
                                                     })
                                                 ]
                                             }),
@@ -11273,11 +11586,17 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                        children: "建议定期清理长期不用的服务端日志；只清理日志不会删除图片，删除日志及图片后无法恢复。"
+                                                         children: "建议定期清理长期不用的服务端日志；只清理日志不会删除图片，选择删除图片时会先移入本地回收站并保留 7 天。"
                                                     }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "settings-cleanup-actions",
-                                                        children: [
+                                                     /*#__PURE__*/ _jsxs("div", {
+                                                         className: "settings-cleanup-actions",
+                                                         children: [
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                                 className: "ghost-button",
+                                                                 disabled: cleanupBusy,
+                                                                 onClick: ()=>void previewCleanupGenerationLogs(90, true),
+                                                                 children: "预览清理占用"
+                                                             }),
                                                             /*#__PURE__*/ _jsx("button", {
                                                                 className: "ghost-button",
                                                                 disabled: cleanupBusy,
@@ -12038,6 +12357,42 @@ export default function Page() {
                                 })
                             ]
                         }),
+                        selectedLog.references?.length ? /*#__PURE__*/ _jsxs("section", {
+                            className: "log-detail-references",
+                            children: [
+                                /*#__PURE__*/ _jsx("h3", {
+                                    children: `本次参考图（按提交顺序 · ${selectedLog.references.length} 张）`
+                                }),
+                                /*#__PURE__*/ _jsx("div", {
+                                    className: "log-reference-list",
+                                    children: selectedLog.references.map((reference, index)=>/*#__PURE__*/ _jsxs("a", {
+                                        href: reference.url || undefined,
+                                        target: reference.url ? "_blank" : undefined,
+                                        rel: reference.url ? "noreferrer" : undefined,
+                                        className: reference.url ? '' : 'unavailable',
+                                        children: [
+                                            reference.url ? /*#__PURE__*/ _jsx("img", {
+                                                src: reference.url,
+                                                alt: `参考图 ${index + 1}`
+                                            }) : /*#__PURE__*/ _jsx("span", {
+                                                className: "log-reference-placeholder",
+                                                children: "—"
+                                            }),
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("b", {
+                                                        children: `图 ${index + 1}`
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: reference.name
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }, `${reference.url}-${index}`))
+                                })
+                            ]
+                        }) : null,
                         /*#__PURE__*/ _jsxs("dl", {
                             className: "log-detail-fields",
                             children: [
@@ -12326,6 +12681,47 @@ export default function Page() {
                                         })
                                     ]
                                 }),
+                                viewerReferences.length ? /*#__PURE__*/ _jsxs("section", {
+                                    className: "viewer-reference-panel",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "viewer-reference-head",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("strong", {
+                                                    children: `参考图（按提交顺序 · ${viewerReferences.length} 张）`
+                                                }),
+                                                /*#__PURE__*/ _jsx("small", {
+                                                    children: "分享版会包含全部参考图"
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsx("div", {
+                                            className: "viewer-reference-list",
+                                            children: viewerReferences.map((reference, index)=>/*#__PURE__*/ _jsxs("a", {
+                                                href: reference.url,
+                                                target: "_blank",
+                                                rel: "noreferrer",
+                                                title: reference.name,
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("img", {
+                                                        src: reference.url,
+                                                        alt: `参考图 ${index + 1}`
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("b", {
+                                                                children: `图 ${index + 1}`
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                children: reference.name
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }, `${reference.url}-${index}`))
+                                        })
+                                    ]
+                                }) : null,
                                 /*#__PURE__*/ _jsxs("div", {
                                     className: "viewer-actions",
                                     children: [
@@ -12407,6 +12803,17 @@ export default function Page() {
                                                 "下载原图"
                                             ]
                                         }),
+                                        viewerReferences.length ? /*#__PURE__*/ _jsxs("button", {
+                                            className: "download-share-primary",
+                                            onClick: ()=>void downloadShareImage(viewerItem).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "download",
+                                                    size: 15
+                                                }),
+                                                "下载分享版"
+                                            ]
+                                        }) : null,
                                         /*#__PURE__*/ _jsxs("button", {
                                             className: "danger",
                                             onClick: ()=>askDeleteItems([

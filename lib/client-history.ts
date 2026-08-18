@@ -1,4 +1,4 @@
-import type { ClientReferenceImage } from './types';
+import type { ClientReferenceImage, ReferenceImageRecord } from './types';
 import type { AngleCameraState } from './angle-control';
 
 export type GallerySource = 'generate' | 'agent' | 'edit';
@@ -19,6 +19,7 @@ export type GalleryItem = {
   createdAt: number;
   favorite: boolean;
   parentId?: string;
+  references?: ReferenceImageRecord[];
   compareReferenceUrl?: string;
   compareReferenceName?: string;
   angle?: AngleCameraState;

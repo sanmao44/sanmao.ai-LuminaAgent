@@ -1,6 +1,6 @@
 import { appendGenerationLog, finishGenerationLog } from './generation-log';
 import { persistGeneratedImages } from './image-storage';
-import type { GeneratedImage } from './types';
+import type { GeneratedImage, ReferenceImageRecord } from './types';
 
 type BackgroundGenerationLog = {
   mode: 'generate' | 'edit' | 'upscale' | 'agent';
@@ -13,6 +13,7 @@ type BackgroundGenerationLog = {
   aspectRatio?: string;
   outputSize?: string;
   count?: number;
+  references?: ReferenceImageRecord[];
 };
 
 type BackgroundPersistenceOptions = {

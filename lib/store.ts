@@ -22,7 +22,8 @@ const keyPath = path.join(dataDir, 'master.key');
 const CURRENT_SCHEMA_VERSION = 2;
 const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } };
 
-let writeChain: Promise<void> = Promise.resolve();
+let stateMutationChain: Promise<unknown> = Promise.resolve();
+let stateCorruptionError = '';
 
 async function ensureDir() {
   await mkdir(dataDir, { recursive: true });
@@ -39,9 +40,19 @@ async function getMasterKey(): Promise<Buffer> {
   try {
     const raw = (await readFile(keyPath, 'utf8')).trim();
     if (/^[a-f0-9]{64}$/i.test(raw)) return Buffer.from(raw, 'hex');
-  } catch {}
+    throw new Error('主密钥文件格式无效，请从备份恢复或删除损坏的 master.key 后重试');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+  }
   const key = randomBytes(32);
-  await writeFile(keyPath, key.toString('hex'), { mode: 0o600 });
+  try {
+    await writeFile(keyPath, `${key.toString('hex')}\n`, { mode: 0o600, flag: 'wx', flush: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+    const raw = (await readFile(keyPath, 'utf8')).trim();
+    if (/^[a-f0-9]{64}$/i.test(raw)) return Buffer.from(raw, 'hex');
+    throw new Error('主密钥文件格式无效');
+  }
   return key;
 }
 
@@ -67,6 +78,9 @@ async function readState(): Promise<StoreData> {
   await ensureDir();
   try {
     const parsed = JSON.parse(await readFile(statePath, 'utf8')) as Partial<StoreData>;
+    if (!parsed || typeof parsed !== 'object' || (!Array.isArray(parsed.providers) && parsed.providers !== undefined) || (!Array.isArray(parsed.models) && parsed.models !== undefined) || (parsed.settings !== undefined && (!parsed.settings || typeof parsed.settings !== 'object'))) {
+      throw new Error('state.json 数据结构无效');
+    }
     return {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       providers: Array.isArray(parsed.providers) ? parsed.providers : [],
@@ -76,19 +90,37 @@ async function readState(): Promise<StoreData> {
         ? { provider: 'baidu-qianfan', encryptedApiKey: parsed.webSearch.encryptedApiKey }
         : undefined,
     };
-  } catch {
-    return structuredClone(emptyState);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      if (stateCorruptionError) throw new Error(stateCorruptionError);
+      return structuredClone(emptyState);
+    }
+    if (error instanceof SyntaxError || (error instanceof Error && /state\.json 数据结构无效/.test(error.message))) {
+      const corruptPath = `${statePath.replace(/\.json$/i, '')}.corrupt-${Date.now()}.json`;
+      try { await rename(statePath, corruptPath); } catch {}
+      stateCorruptionError = `服务端配置已损坏，原文件已保留为 ${path.basename(corruptPath)}，请从备份恢复`;
+      throw new Error(stateCorruptionError);
+    }
+    throw error;
   }
 }
 
-async function writeState(data: StoreData) {
-  writeChain = writeChain.then(async () => {
-    await ensureDir();
-    const tmp = `${statePath}.tmp`;
-    await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
-    await rename(tmp, statePath);
+async function writeStateDirect(data: StoreData) {
+  await ensureDir();
+  const tmp = `${statePath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf8', flush: true });
+  await rename(tmp, statePath);
+}
+
+async function mutateState<T>(mutator: (state: StoreData) => Promise<T> | T): Promise<T> {
+  const operation = stateMutationChain.then(async () => {
+    const state = await readState();
+    const result = await mutator(state);
+    await writeStateDirect(state);
+    return result;
   });
-  await writeChain;
+  stateMutationChain = operation.then(() => undefined, () => undefined);
+  return operation;
 }
 
 function maskKey(secret: string) {
@@ -181,15 +213,13 @@ export async function getWebSearchApiConfig() {
 }
 
 export async function setWebSearchApiConfig(provider: WebSearchApiProvider, apiKey: string) {
-  const state = await readState();
-  state.webSearch = { provider, encryptedApiKey: await encryptSecret(apiKey.trim()) };
-  await writeState(state);
+  await mutateState(async (state) => {
+    state.webSearch = { provider, encryptedApiKey: await encryptSecret(apiKey.trim()) };
+  });
 }
 
 export async function clearWebSearchApiConfig() {
-  const state = await readState();
-  delete state.webSearch;
-  await writeState(state);
+  await mutateState((state) => { delete state.webSearch; });
 }
 
 type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; baseUrl: string; apiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; authHeader?: string; authPrefix?: string };
@@ -208,68 +238,68 @@ function normalizeOptionalEndpointPath(value: string | undefined) {
 }
 
 export async function addProvider(input: ProviderInput & { apiKey: string }) {
-  const state = await readState();
-  const provider: StoredProvider = {
-    id: randomUUID(),
-    name: input.name.trim(),
-    type: input.type,
-    platform: input.platform || (input.type === 'google-gemini' ? 'google-gemini' : 'custom'),
-    baseUrl: input.baseUrl.replace(/\/+$/, ''),
-    modelsPath: normalizeEndpointPath(input.modelsPath, '/models'),
-    chatPath: normalizeEndpointPath(input.chatPath, '/chat/completions'),
-    imageGenerationPath: normalizeEndpointPath(input.imageGenerationPath, '/images/generations'),
-    imageEditPath: normalizeEndpointPath(input.imageEditPath, '/images/edits'),
-    imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
-    imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
-    responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
-    authHeader: String(input.authHeader || 'Authorization').trim(),
-    authPrefix: input.authPrefix ?? 'Bearer ',
-    encryptedApiKey: await encryptSecret(input.apiKey.trim()),
-    status: 'idle',
-    lastSyncedAt: '未同步',
-    createdAt: new Date().toISOString(),
-  };
-  state.providers.push(provider);
-  await writeState(state);
-  return provider.id;
+  return mutateState(async (state) => {
+    const provider: StoredProvider = {
+      id: randomUUID(),
+      name: input.name.trim(),
+      type: input.type,
+      platform: input.platform || (input.type === 'google-gemini' ? 'google-gemini' : 'custom'),
+      baseUrl: input.baseUrl.replace(/\/+$/, ''),
+      modelsPath: normalizeEndpointPath(input.modelsPath, '/models'),
+      chatPath: normalizeEndpointPath(input.chatPath, '/chat/completions'),
+      imageGenerationPath: normalizeEndpointPath(input.imageGenerationPath, '/images/generations'),
+      imageEditPath: normalizeEndpointPath(input.imageEditPath, '/images/edits'),
+      imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
+      imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
+      responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
+      authHeader: String(input.authHeader || 'Authorization').trim(),
+      authPrefix: input.authPrefix ?? 'Bearer ',
+      encryptedApiKey: await encryptSecret(input.apiKey.trim()),
+      status: 'idle',
+      lastSyncedAt: '未同步',
+      createdAt: new Date().toISOString(),
+    };
+    state.providers.push(provider);
+    return provider.id;
+  });
 }
 
 export async function updateProvider(id: string, input: ProviderInput) {
-  const state = await readState();
-  const index = state.providers.findIndex((p) => p.id === id);
-  if (index < 0) throw new Error('服务商不存在');
-  const current = state.providers[index];
-  state.providers[index] = {
-    ...current,
-    name: input.name.trim(),
-    type: input.type,
-    platform: input.platform || (input.type === 'google-gemini' ? 'google-gemini' : 'custom'),
-    baseUrl: input.baseUrl.replace(/\/+$/, ''),
-    modelsPath: normalizeEndpointPath(input.modelsPath, '/models'),
-    chatPath: normalizeEndpointPath(input.chatPath, '/chat/completions'),
-    imageGenerationPath: normalizeEndpointPath(input.imageGenerationPath, '/images/generations'),
-    imageEditPath: normalizeEndpointPath(input.imageEditPath, '/images/edits'),
-    imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
-    imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
-    responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
-    authHeader: String(input.authHeader || 'Authorization').trim(),
-    authPrefix: input.authPrefix ?? 'Bearer ',
-    encryptedApiKey: input.apiKey?.trim() ? await encryptSecret(input.apiKey.trim()) : current.encryptedApiKey,
-    status: 'idle',
-    lastSyncedAt: '配置已更新，待同步',
-  };
-  state.models = state.models.map((m) => m.providerId === id ? { ...m, providerName: input.name.trim() } : m);
-  await writeState(state);
+  await mutateState(async (state) => {
+    const index = state.providers.findIndex((p) => p.id === id);
+    if (index < 0) throw new Error('服务商不存在');
+    const current = state.providers[index];
+    state.providers[index] = {
+      ...current,
+      name: input.name.trim(),
+      type: input.type,
+      platform: input.platform || (input.type === 'google-gemini' ? 'google-gemini' : 'custom'),
+      baseUrl: input.baseUrl.replace(/\/+$/, ''),
+      modelsPath: normalizeEndpointPath(input.modelsPath, '/models'),
+      chatPath: normalizeEndpointPath(input.chatPath, '/chat/completions'),
+      imageGenerationPath: normalizeEndpointPath(input.imageGenerationPath, '/images/generations'),
+      imageEditPath: normalizeEndpointPath(input.imageEditPath, '/images/edits'),
+      imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
+      imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
+      responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
+      authHeader: String(input.authHeader || 'Authorization').trim(),
+      authPrefix: input.authPrefix ?? 'Bearer ',
+      encryptedApiKey: input.apiKey?.trim() ? await encryptSecret(input.apiKey.trim()) : current.encryptedApiKey,
+      status: 'idle',
+      lastSyncedAt: '配置已更新，待同步',
+    };
+    state.models = state.models.map((m) => m.providerId === id ? { ...m, providerName: input.name.trim() } : m);
+  });
 }
 
 export async function removeProvider(id: string) {
-  const state = await readState();
-  state.providers = state.providers.filter((p) => p.id !== id);
-  state.models = state.models.filter((m) => m.providerId !== id);
-  if (state.settings.agentModelId && !state.models.some((m) => m.id === state.settings.agentModelId)) state.settings.agentModelId = null;
-  if (state.settings.defaultImageModelId && !state.models.some((m) => m.id === state.settings.defaultImageModelId)) state.settings.defaultImageModelId = null;
-  if (state.settings.defaultProviderId && !state.providers.some((provider) => provider.id === state.settings.defaultProviderId)) state.settings.defaultProviderId = null;
-  await writeState(state);
+  await mutateState((state) => {
+    state.providers = state.providers.filter((p) => p.id !== id);
+    state.models = state.models.filter((m) => m.providerId !== id);
+    if (state.settings.agentModelId && !state.models.some((m) => m.id === state.settings.agentModelId)) state.settings.agentModelId = null;
+    if (state.settings.defaultImageModelId && !state.models.some((m) => m.id === state.settings.defaultImageModelId)) state.settings.defaultImageModelId = null;
+    if (state.settings.defaultProviderId && !state.providers.some((provider) => provider.id === state.settings.defaultProviderId)) state.settings.defaultProviderId = null;
+  });
 }
 
 export async function getProviderWithKey(id: string) {
@@ -280,79 +310,77 @@ export async function getProviderWithKey(id: string) {
 }
 
 export async function setProviderStatus(id: string, status: ProviderStatus, lastSyncedAt?: string) {
-  const state = await readState();
-  state.providers = state.providers.map((p) => p.id === id ? { ...p, status, lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt } : p);
-  await writeState(state);
+  await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? { ...p, status, lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt } : p); });
 }
 
 export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ModelCapability[] }>) {
-  const state = await readState();
-  const existing = new Map(state.models.filter((m) => m.providerId === providerId).map((m) => [m.rawId, m]));
-  const next = rawModels.map((raw) => {
-    const previous = existing.get(raw.id);
-    if (previous) {
+  return mutateState((state) => {
+    const existing = new Map(state.models.filter((m) => m.providerId === providerId).map((m) => [m.rawId, m]));
+    const next = rawModels.map((raw) => {
+      const previous = existing.get(raw.id);
+      if (previous) {
+        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform);
+        return { ...previous, providerName, kind: previous.kind === 'unknown' ? inferred.kind : previous.kind, capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) };
+      }
       const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform);
-      return { ...previous, providerName, kind: previous.kind === 'unknown' ? inferred.kind : previous.kind, capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) };
-    }
-    const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform);
-    return {
-      id: randomUUID(), providerId, providerName, rawId: raw.id,
-      displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,
-      kind: inferred.kind, enabled: false, published: false, capabilities: Array.from(new Set([...(raw.capabilities || []), ...inferred.capabilities])),
-    } satisfies RegistryModel;
+      return {
+        id: randomUUID(), providerId, providerName, rawId: raw.id,
+        displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,
+        kind: inferred.kind, enabled: false, published: false, capabilities: Array.from(new Set([...(raw.capabilities || []), ...inferred.capabilities])),
+      } satisfies RegistryModel;
+    });
+    state.models = [...state.models.filter((m) => m.providerId !== providerId), ...next];
+    return next;
   });
-  state.models = [...state.models.filter((m) => m.providerId !== providerId), ...next];
-  await writeState(state);
-  return next;
 }
 
 export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 'displayName' | 'kind' | 'enabled' | 'published' | 'capabilities'>>) {
-  const state = await readState();
-  state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
-  state.models = state.models.map((m) => {
-    if (m.id !== id) return m;
-    const next = { ...m, ...patch };
-    if (patch.enabled === false) next.published = false;
-    if (patch.published === true) next.enabled = true;
-    return next;
+  return mutateState((state) => {
+    state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+    state.models = state.models.map((m) => {
+      if (m.id !== id) return m;
+      const next = { ...m, ...patch };
+      if (patch.enabled === false) next.published = false;
+      if (patch.published === true) next.enabled = true;
+      return next;
+    });
+    const model = state.models.find((m) => m.id === id);
+    if (!model) throw new Error('模型不存在');
+    if (model.kind !== 'chat' && state.settings.agentModelId === id) state.settings.agentModelId = null;
+    if (model.kind !== 'image' && state.settings.defaultImageModelId === id) state.settings.defaultImageModelId = null;
+    return model;
   });
-  const model = state.models.find((m) => m.id === id);
-  if (!model) throw new Error('模型不存在');
-  if (model.kind !== 'chat' && state.settings.agentModelId === id) state.settings.agentModelId = null;
-  if (model.kind !== 'image' && state.settings.defaultImageModelId === id) state.settings.defaultImageModelId = null;
-  await writeState(state);
-  return model;
 }
 
 export async function patchSettings(patch: Partial<AppSettings>) {
-  const state = await readState();
-  // 兼容旧配置：历史上部分带生图能力的模型可能仍保存为 chat/unknown，
-  // 但前端和运行时已经按能力把它们展示为 image。设置默认模型时必须使用同一套归类。
-  state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
-  if ('agentModelId' in patch) {
-    const id = patch.agentModelId;
-    if (id) {
-      const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'chat');
-      if (!model) throw new Error('请选择已启用、已发布的对话模型');
+  return mutateState((state) => {
+    // 兼容旧配置：历史上部分带生图能力的模型可能仍保存为 chat/unknown，
+    // 但前端和运行时已经按能力把它们展示为 image。设置默认模型时必须使用同一套归类。
+    state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+    if ('agentModelId' in patch) {
+      const id = patch.agentModelId;
+      if (id) {
+        const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'chat');
+        if (!model) throw new Error('请选择已启用、已发布的对话模型');
+      }
+      state.settings.agentModelId = id ?? null;
     }
-    state.settings.agentModelId = id ?? null;
-  }
-  if ('defaultImageModelId' in patch) {
-    const id = patch.defaultImageModelId;
-    if (id) {
-      const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'image');
-      if (!model) throw new Error('请选择已启用、已发布的生图模型');
+    if ('defaultImageModelId' in patch) {
+      const id = patch.defaultImageModelId;
+      if (id) {
+        const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'image');
+        if (!model) throw new Error('请选择已启用、已发布的生图模型');
+      }
+      state.settings.defaultImageModelId = id ?? null;
     }
-    state.settings.defaultImageModelId = id ?? null;
-  }
-  if ('defaultProviderId' in patch) {
-    const id = patch.defaultProviderId;
-    if (id && !state.providers.some((provider) => provider.id === id)) throw new Error('请选择已存在的默认厂商');
-    state.settings.defaultProviderId = id ?? null;
-  }
-  if ('imageStoragePath' in patch) state.settings.imageStoragePath = String(patch.imageStoragePath || '').trim();
-  await writeState(state);
-  return state.settings;
+    if ('defaultProviderId' in patch) {
+      const id = patch.defaultProviderId;
+      if (id && !state.providers.some((provider) => provider.id === id)) throw new Error('请选择已存在的默认厂商');
+      state.settings.defaultProviderId = id ?? null;
+    }
+    if ('imageStoragePath' in patch) state.settings.imageStoragePath = String(patch.imageStoragePath || '').trim();
+    return state.settings;
+  });
 }
 
 export async function getRuntimeModel(id: string | null | undefined, kind: ModelKind) {
