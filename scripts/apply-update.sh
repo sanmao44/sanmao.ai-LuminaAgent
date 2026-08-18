@@ -5,6 +5,7 @@ ARCHIVE_PATH=${1:?archive path is required}
 TARGET_PATH=${2:?target path is required}
 PROCESS_ID=${3:?process id is required}
 VERSION=${4:?version is required}
+RESTART_PORT=${7:-0}
 STAGING_PATH=$(CDPATH= cd -- "$(dirname "$ARCHIVE_PATH")" && pwd)
 EXTRACT_PATH="$STAGING_PATH/extract-$$"
 LOCK_PATH="$STAGING_PATH/update.lock"
@@ -46,15 +47,23 @@ done
 
 # 只替换程序文件；用户数据、环境变量和已安装依赖保留不动。
 find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
-  ! -name .data ! -name node_modules ! -name '.env*' \
+  ! -name .data ! -name node_modules ! -name .git ! -name '.env*' \
   -exec rm -rf {} +
 cp -R "$PACKAGE_ROOT"/. "$TARGET_PATH"/
 rm -rf "$TARGET_PATH/.next" "$ARCHIVE_PATH" "$EXTRACT_PATH"
 
 if [ "$(uname -s)" = "Darwin" ] && [ -f "$TARGET_PATH/scripts/start-macos.sh" ]; then
-  (cd "$TARGET_PATH" && nohup sh scripts/start-macos.sh >/dev/null 2>&1 &)
+  if [ "$RESTART_PORT" -ge 1024 ] 2>/dev/null && [ "$RESTART_PORT" -le 65525 ] 2>/dev/null; then
+    (cd "$TARGET_PATH" && SANMAO_PORT="$RESTART_PORT" nohup sh scripts/start-macos.sh >/dev/null 2>&1 &)
+  else
+    (cd "$TARGET_PATH" && nohup sh scripts/start-macos.sh >/dev/null 2>&1 &)
+  fi
 elif [ -f "$TARGET_PATH/start-linux.sh" ]; then
-  (cd "$TARGET_PATH" && nohup sh start-linux.sh >/dev/null 2>&1 &)
+  if [ "$RESTART_PORT" -ge 1024 ] 2>/dev/null && [ "$RESTART_PORT" -le 65525 ] 2>/dev/null; then
+    (cd "$TARGET_PATH" && SANMAO_PORT="$RESTART_PORT" nohup sh start-linux.sh >/dev/null 2>&1 &)
+  else
+    (cd "$TARGET_PATH" && nohup sh start-linux.sh >/dev/null 2>&1 &)
+  fi
 else
   printf '%s\n' '更新后找不到适用的启动器。' >&2
   exit 1

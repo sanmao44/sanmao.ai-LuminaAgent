@@ -1,4 +1,4 @@
-# SANMAO.AI 0.5.4
+# SANMAO.AI 0.5.2
 
 ## 启动器
 
@@ -15,6 +15,15 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 
 一个可运行的中文多模型 AI 生图平台：支持在网页内添加多个第三方 API 服务、读取模型列表、选择实际要使用的模型，并提供独立的智能助手、生图工作台、图片修改和本地生成历史。
 
+## 0.5.2 完整发布
+
+- GitHub Release 已包含完整项目源码，CI 测试与生产构建均通过。
+- 应用启动后会检查官方 `update.json`，发现新版本时显示轻量更新提示。
+- 本地源码运行环境在更新清单提供可信 `packageUrl` 与 SHA-256 后，可直接下载、校验并重启更新。
+
+## 0.5.1 构建修复
+
+修复 Windows 上 `npm run build` 在 `lib/providers.ts` 的 TypeScript 兼容错误。若你是从 0.5.0 升级，直接使用本版本即可。
 
 ## 0.5.1 重点升级
 

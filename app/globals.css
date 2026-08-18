@@ -1390,14 +1390,44 @@ html[data-theme="light"] .sidebar.expanded{
 /* A small, non-blocking celebration for send/generate actions. The burst is
    created by the page event delegate so existing button behavior stays intact. */
 .celebration-button-active{
-  animation:celebration-button-pop .48s cubic-bezier(.2,.8,.3,1);
+  position:relative;
+  z-index:1;
+  animation:celebration-button-pop .52s cubic-bezier(.2,.8,.3,1);
 }
 .celebration-burst{
   position:fixed;
   z-index:320;
   width:1px;
   height:1px;
+  display:block;
   pointer-events:none;
+}
+.celebration-burst::before{
+  content:'';
+  position:absolute;
+  left:-9px;
+  top:-9px;
+  width:18px;
+  height:18px;
+  border-radius:50%;
+  background:radial-gradient(circle,rgba(255,255,255,.95) 0 10%,rgba(255,220,140,.82) 22%,rgba(255,160,110,.24) 54%,transparent 72%);
+  opacity:0;
+  transform:scale(.3);
+  animation:celebration-core .42s ease-out forwards;
+}
+.celebration-burst::after{
+  content:'';
+  position:absolute;
+  left:-16px;
+  top:-16px;
+  width:32px;
+  height:32px;
+  border:1px solid rgba(255,190,120,.72);
+  border-radius:50%;
+  box-shadow:0 0 0 4px rgba(255,190,120,.08),0 0 18px rgba(255,150,110,.32);
+  opacity:0;
+  transform:scale(.28);
+  animation:celebration-ring .76s cubic-bezier(.16,.76,.34,1) forwards;
 }
 .celebration-particle{
   --burst-x:0px;
@@ -1414,18 +1444,31 @@ html[data-theme="light"] .sidebar.expanded{
   height:10px;
   border-radius:3px 3px 2px 2px;
   background:var(--burst-color);
+  box-shadow:0 0 8px rgba(255,255,255,.26);
   box-shadow:0 0 8px color-mix(in srgb,var(--burst-color) 60%,transparent);
   opacity:0;
+  will-change:transform,opacity;
   transform:translate(-50%,-50%) rotate(var(--burst-rotate)) scale(.2);
   animation:celebration-particle-fly .78s cubic-bezier(.16,.76,.34,1) var(--burst-delay) forwards;
 }
 .celebration-particle.ribbon{width:5px;height:12px;border-radius:2px;}
-.celebration-particle.spark{width:5px;height:5px;border-radius:50%;box-shadow:0 0 0 2px color-mix(in srgb,var(--burst-color) 35%,transparent),0 0 10px var(--burst-color);}
+.celebration-particle.dot{width:4px;height:4px;border-radius:50%;}
+.celebration-particle.spark{width:5px;height:5px;border-radius:50%;box-shadow:0 0 0 2px rgba(255,255,255,.28),0 0 10px var(--burst-color);}
 @keyframes celebration-button-pop{
   0%{transform:scale(1)}
   35%{transform:scale(.94)}
   72%{transform:scale(1.045)}
   100%{transform:scale(1)}
+}
+@keyframes celebration-core{
+  0%{opacity:0;transform:scale(.3)}
+  28%{opacity:1;transform:scale(1.15)}
+  100%{opacity:0;transform:scale(1.8)}
+}
+@keyframes celebration-ring{
+  0%{opacity:0;transform:scale(.28)}
+  20%{opacity:.9}
+  100%{opacity:0;transform:scale(1.8)}
 }
 @keyframes celebration-particle-fly{
   0%{opacity:0;transform:translate(-50%,-50%) rotate(var(--burst-rotate)) scale(.2)}
@@ -1434,8 +1477,19 @@ html[data-theme="light"] .sidebar.expanded{
   100%{opacity:0;transform:translate(calc(-50% + var(--burst-x)),calc(-50% + var(--burst-y))) rotate(calc(var(--burst-rotate) + 180deg)) scale(var(--burst-scale));}
 }
 @media (prefers-reduced-motion:reduce){
-  .celebration-button-active{animation:none;}
+  .celebration-button-active{
+    animation:none;
+    box-shadow:0 0 0 4px rgba(99,87,232,.22),0 6px 18px rgba(99,87,232,.18);
+  }
   .celebration-burst{display:none;}
+  .celebration-burst.celebration-burst-reduced{display:block;}
+  .celebration-burst.celebration-burst-reduced::before,
+  .celebration-burst.celebration-burst-reduced::after{
+    animation:none;
+    opacity:1;
+    transform:scale(1);
+  }
+  .celebration-burst.celebration-burst-reduced::after{opacity:.7;}
 }
  .agent-quick-button.one-take{border-color:color-mix(in srgb,#2f9b82 42%,var(--line));color:#2f9b82}
 
@@ -1771,3 +1825,9 @@ html[data-theme="light"] .sidebar.expanded{
     left:calc(var(--shell-content-left) + 22px);
   }
 }
+
+/* Chat history: single-row actions stay direct; batch mode keeps the title clear. */
+.chat-history-item.selecting .chat-history-open{padding-left:9px;padding-right:38px}
+.chat-history-check{left:auto;right:8px}
+.chat-history-check span{box-shadow:0 2px 6px rgb(0 0 0 / 12%)}
+.chat-history-delete:disabled{opacity:.38;cursor:not-allowed}

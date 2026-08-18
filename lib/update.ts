@@ -8,6 +8,7 @@ export type UpdateManifest = {
   releaseUrl: string;
   projectUrl?: string;
   packageUrl?: string;
+  mirrorUrls?: string[];
   sha256?: string;
   publishedAt?: string;
   notes?: string[];
@@ -21,6 +22,7 @@ export type UpdateStatus = {
   releaseUrl?: string;
   projectUrl?: string;
   packageUrl?: string;
+  mirrorUrls?: string[];
   sha256?: string;
   canApply: boolean;
   publishedAt?: string;
@@ -95,6 +97,9 @@ function statusFromManifest(raw: Partial<UpdateManifest>, checkedAt: string): Up
   const releaseUrl = String(raw.releaseUrl || '').trim();
   const projectUrl = typeof raw.projectUrl === 'string' && validHttpUrl(raw.projectUrl) ? raw.projectUrl.trim() : undefined;
   const packageUrl = typeof raw.packageUrl === 'string' && validPackageUrl(raw.packageUrl) ? raw.packageUrl.trim() : undefined;
+  const mirrorUrls = Array.isArray(raw.mirrorUrls)
+    ? [...new Set(raw.mirrorUrls.filter((value): value is string => typeof value === 'string' && validPackageUrl(value)).map((value) => value.trim()))].slice(0, 4)
+    : [];
   const sha256 = typeof raw.sha256 === 'string' && validSha256(raw.sha256) ? raw.sha256.trim().toLowerCase() : undefined;
 
   if (!latestVersion || !validHttpUrl(releaseUrl)) throw new Error('更新清单格式无效');
@@ -107,6 +112,7 @@ function statusFromManifest(raw: Partial<UpdateManifest>, checkedAt: string): Up
     releaseUrl,
     projectUrl,
     packageUrl,
+    mirrorUrls,
     sha256,
     canApply: hasUpdate && Boolean(packageUrl && sha256 && hasLocalUpdater()),
     publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : undefined,

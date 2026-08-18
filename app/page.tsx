@@ -4031,8 +4031,10 @@ function AssistantMarkdown({ content, onNotify }) {
 }
 export default function Page() {
     const [section, setSectionState] = useState('agent');
+    const sectionRef = useRef('agent');
     const lastNonAngleSectionRef = useRef('agent');
     function setSection(next) {
+        sectionRef.current = next;
         if (next !== 'angle') {
             lastNonAngleSectionRef.current = next;
             try {
@@ -4065,7 +4067,9 @@ export default function Page() {
     // Keep the feedback global so every send/generate entry point gets the same
     // lightweight celebration without touching its existing submit handler.
     useEffect(()=>{
-        const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const motionQuery = typeof window.matchMedia === 'function'
+            ? window.matchMedia('(prefers-reduced-motion: reduce)')
+            : { matches: false };
         const celebrationLabels = /^(发送|提交后台|按当前机位生成|开始生成|开始\d+×超分|基于参考图生成|测试并连接|测试并保存|发布到生图|保存处理版本|应用蒙版|重试|重新生成|用此参数再生成)/;
         const isCelebrationButton = (button)=>{
             if (button.matches('.send-button, .angle-submit .primary-action, .generate-submit-sticky .primary-action')) return true;
@@ -4073,11 +4077,11 @@ export default function Page() {
             return celebrationLabels.test(label);
         };
         const handleClick = (event)=>{
-            if (motionQuery.matches) return;
             const target = event.target;
             if (!(target instanceof Element)) return;
             const button = target.closest('button');
             if (!(button instanceof HTMLButtonElement) || button.disabled || !isCelebrationButton(button)) return;
+            const reducedMotion = motionQuery.matches;
             button.classList.remove('celebration-button-active');
             void button.offsetWidth;
             button.classList.add('celebration-button-active');
@@ -4085,7 +4089,7 @@ export default function Page() {
             const rect = button.getBoundingClientRect();
             if (!rect.width || !rect.height) return;
             const burst = document.createElement('span');
-            burst.className = 'celebration-burst';
+            burst.className = `celebration-burst ${reducedMotion ? 'celebration-burst-reduced' : ''}`;
             burst.setAttribute('aria-hidden', 'true');
             burst.style.left = `${rect.left + rect.width / 2}px`;
             burst.style.top = `${rect.top + rect.height / 2}px`;
@@ -4097,22 +4101,22 @@ export default function Page() {
                 '#d8a5ff',
                 '#ffffff'
             ];
-            const particleCount = 18;
+            const particleCount = reducedMotion ? 0 : 24;
             for(let index = 0; index < particleCount; index += 1){
                 const particle = document.createElement('i');
                 const angle = Math.PI * 2 * index / particleCount + (Math.random() - 0.5) * 0.32;
-                const distance = 24 + Math.random() * 34;
-                particle.className = `celebration-particle ${index % 3 === 0 ? 'spark' : 'ribbon'}`;
+                const distance = 28 + Math.random() * 46;
+                particle.className = `celebration-particle ${index % 4 === 0 ? 'spark' : index % 4 === 1 ? 'dot' : 'ribbon'}`;
                 particle.style.setProperty('--burst-x', `${Math.cos(angle) * distance}px`);
                 particle.style.setProperty('--burst-y', `${Math.sin(angle) * distance - 6}px`);
                 particle.style.setProperty('--burst-rotate', `${Math.round(angle * 180 / Math.PI + 90)}deg`);
-                particle.style.setProperty('--burst-delay', `${Math.round(Math.random() * 80)}ms`);
+                particle.style.setProperty('--burst-delay', `${Math.round(Math.random() * 100)}ms`);
                 particle.style.setProperty('--burst-color', colors[index % colors.length]);
-                particle.style.setProperty('--burst-scale', `${0.72 + Math.random() * 0.6}`);
+                particle.style.setProperty('--burst-scale', `${0.72 + Math.random() * 0.72}`);
                 burst.appendChild(particle);
             }
             document.body.appendChild(burst);
-            window.setTimeout(()=>burst.remove(), 920);
+            window.setTimeout(()=>burst.remove(), reducedMotion ? 720 : 1100);
         };
         document.addEventListener('click', handleClick, true);
         return ()=>document.removeEventListener('click', handleClick, true);
@@ -4537,6 +4541,7 @@ export default function Page() {
             const savedSection = localStorage.getItem(LAST_SECTION_STORAGE_KEY);
             if (isRememberedSection(savedSection)) {
                 lastNonAngleSectionRef.current = savedSection;
+                sectionRef.current = savedSection;
                 setSectionState(savedSection);
             }
             const saved = localStorage.getItem('sanmao-theme');
@@ -5159,6 +5164,9 @@ export default function Page() {
         setHistoryNotice(false);
         persistNavNoticeState();
     }
+    function markHistoryImageViewed(item) {
+        markHistoryNoticeSeen(item?.createdAt);
+    }
     function markLogErrorNoticeSeen(at = latestLogErrorCreatedAt(generationLogs)) {
         initializeNavNoticeState();
         navNoticeSeenRef.current.logErrorSeenAt = Math.max(Date.now(), at);
@@ -5179,11 +5187,11 @@ export default function Page() {
         if (section === 'logs') markLogErrorNoticeSeen(latest);
         else setLogErrorNotice(true);
     }
-    function registerHistorySuccess(items) {
+    function registerHistorySuccess(items, visibleNow = false) {
         if (!items.length) return;
         initializeNavNoticeState();
         const latest = latestGalleryCreatedAt(items);
-        if (section === 'history') markHistoryNoticeSeen(latest);
+        if (visibleNow || sectionRef.current === 'history') markHistoryNoticeSeen(latest);
         else setHistoryNotice(true);
     }
     function registerGenerationFailure() {
@@ -5228,9 +5236,15 @@ export default function Page() {
     function getGalleryParent(item) {
         return getComparisonSource(item)?.item || null;
     }
+    function openViewer(item) {
+        if (!item) return;
+        markHistoryImageViewed(item);
+        setViewerId(item.id);
+    }
     function openCompare(item) {
         const source = getComparisonSource(item);
         if (!source) return;
+        markHistoryImageViewed(item);
         setViewerId(null);
         setCompareState({
             item,
@@ -6104,7 +6118,7 @@ export default function Page() {
                 ...items,
                 ...old
             ]);
-        registerHistorySuccess(items);
+        registerHistorySuccess(items, sectionRef.current === 'generate' || (meta.source === 'agent' && sectionRef.current === 'agent'));
         void saveImagesToLocalDirectory(images);
         return items;
     }
@@ -6626,6 +6640,7 @@ export default function Page() {
     }
     function openAngleResultFromToast() {
         if (!angleResultToast) return;
+        markHistoryImageViewed(angleResultToast);
         setSection('angle');
         setAngleResultOpenRequest(angleResultToast.id);
         setAngleResultToast(null);
@@ -6742,6 +6757,22 @@ export default function Page() {
             setAgentFollowUp(null);
             resetMessageSelection();
         }
+    }
+    function askDeleteChatSession(session) {
+        if (busyChatIdsRef.current.has(session.id)) {
+            notify('当前对话正在回答，完成后再删除');
+            return;
+        }
+        setConfirmState({
+            title: '删除这段对话？',
+            text: `将从本机助手历史中删除“${session.title || '未命名对话'}”，此操作不可恢复。`,
+            danger: true,
+            confirmText: '确认删除',
+            action: async ()=>{
+                await deleteChatSessions([session.id]);
+                notify('对话已删除');
+            }
+        });
     }
     function toggleChatSelectionMode() {
         setChatSelectionMode((old)=>!old);
@@ -7191,6 +7222,7 @@ export default function Page() {
     }
     async function reversePrompt(item) {
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        markHistoryImageViewed(item);
         try {
             let ref;
             if (item.url.startsWith('data:image/')) ref = {
@@ -7343,6 +7375,7 @@ export default function Page() {
         });
     }
     async function openAngleConsole(item) {
+        markHistoryImageViewed(item);
         const requestId = uid('angle-open');
         const hasImmediateImage = item.url.startsWith('data:image/');
         const optimisticRef = {
@@ -7390,6 +7423,7 @@ export default function Page() {
         }
     }
     async function useAsReference(item, target = 'generate') {
+        markHistoryImageViewed(item);
         const optimisticRef = {
             id: uid('ref'),
             name: `历史-${item.id.slice(-6)}.png`,
@@ -7430,6 +7464,7 @@ export default function Page() {
     function openEdit(item) {
         setEditorMaskOpen(false);
         if (!availableEditModels.length) return notify('还没有支持图片修改的模型，请先到模型库启用带“修改”能力的图片模型。');
+        markHistoryImageViewed(item);
         const lastCall = getLastModelCall('edit');
         const saved = lastCall?.params || {};
         const dimensions = outputDimensions(item.outputSize);
@@ -7462,6 +7497,7 @@ export default function Page() {
     function openUpscale(item) {
         setEditorMaskOpen(false);
         if (!availableUpscaleModels.length) return notify('还没有可用的超分模型。请到模型库重新读取并启用 SeedVR2-7B。');
+        markHistoryImageViewed(item);
         const lastCall = getLastModelCall('upscale');
         const saved = lastCall?.params || {};
         const rememberedModel = lastCall?.mode === 'manual' && lastCall.modelId && availableUpscaleModels.some((model)=>model.id === lastCall.modelId) ? lastCall.modelId : 'auto';
@@ -7495,6 +7531,7 @@ export default function Page() {
         if (lastCall) notify('已恢复上次图片超分设置');
     }
     function openOutpaintEditor(item) {
+        markHistoryImageViewed(item);
         setViewerId(null);
         setOutpaintEditor({
             item
@@ -8017,19 +8054,6 @@ export default function Page() {
                                     return /*#__PURE__*/ _jsxs("div", {
                                         className: `chat-history-item ${activeChatId === session.id ? 'active' : ''} ${chatSelectionMode ? 'selecting' : ''} ${renaming ? 'renaming' : ''}`,
                                         children: [
-                                            chatSelectionMode && /*#__PURE__*/ _jsxs("label", {
-                                                className: "chat-history-check",
-                                                title: busy ? '正在回答，暂不能删除' : '选择这段对话',
-                                                children: [
-                                                    /*#__PURE__*/ _jsx("input", {
-                                                        type: "checkbox",
-                                                        checked: selectedChatSessions.has(session.id),
-                                                        disabled: busy,
-                                                        onChange: ()=>toggleChatSessionSelection(session.id)
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("span", {})
-                                                ]
-                                            }),
                                             renaming ? /*#__PURE__*/ _jsx("input", {
                                                 className: "chat-history-rename",
                                                 value: renamingChatTitle,
@@ -8067,10 +8091,24 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
+                                            chatSelectionMode && /*#__PURE__*/ _jsxs("label", {
+                                                className: "chat-history-check",
+                                                title: busy ? '正在回答，暂不能删除' : '选择这段对话',
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("input", {
+                                                        type: "checkbox",
+                                                        checked: selectedChatSessions.has(session.id),
+                                                        disabled: busy,
+                                                        onChange: ()=>toggleChatSessionSelection(session.id)
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("span", {})
+                                                ]
+                                            }),
                                             !chatSelectionMode && !renaming && /*#__PURE__*/ _jsx("button", {
                                                 className: "chat-history-delete",
-                                                title: "进入批量删除",
-                                                onClick: toggleChatSelectionMode,
+                                                title: busy ? '正在回答，暂不能删除' : '删除这段对话',
+                                                disabled: busy,
+                                                onClick: ()=>askDeleteChatSession(session),
                                                 children: /*#__PURE__*/ _jsx(Icon, {
                                                     name: "trash",
                                                     size: 13
@@ -8612,7 +8650,7 @@ export default function Page() {
                                                                     children: message.images.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                                             item: item,
                                                                             previousItem: getGalleryParent(item),
-                                                                            onPreview: ()=>setViewerId(item.id),
+                                                                            onPreview: ()=>openViewer(item),
                                                                             onEdit: ()=>openEdit(item),
                                                                             onUpscale: ()=>openUpscale(item),
                                                                             onReuse: ()=>reuseItem(item),
@@ -9027,6 +9065,7 @@ export default function Page() {
                                 openResultId: angleResultOpenRequest,
                                 suppressAutoOpenId: angleSuppressAutoOpenId,
                                 onResultOpened: (id)=>{
+                                    markHistoryNoticeSeen();
                                     setAngleResultOpenRequest(null);
                                     setAngleResultToast((current)=>current?.id === id ? null : current);
                                 },
@@ -9046,7 +9085,7 @@ export default function Page() {
                                 },
                                 onBrowseHistory: ()=>setSection('history'),
                                 onGenerate: submitAngleGeneration,
-                                onOpenResult: (item)=>setViewerId(item.id),
+                                onOpenResult: (item)=>openViewer(item),
                                 onUseResult: openAngleConsole,
                                 onDownloadResult: (item)=>downloadUrl(item.url, `SANMAO-${item.id}.png`),
                                 onNotify: notify
@@ -9950,7 +9989,7 @@ export default function Page() {
                                                                     task.items.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                                             item: item,
                                                                             previousItem: getGalleryParent(item),
-                                                                            onPreview: ()=>setViewerId(item.id),
+                                                                            onPreview: ()=>openViewer(item),
                                                                             onEdit: ()=>openEdit(item),
                                                                             onUpscale: ()=>openUpscale(item),
                                                                             onReuse: ()=>reuseItem(item),
@@ -10037,7 +10076,7 @@ export default function Page() {
                                                 children: resultItems.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                         item: item,
                                                         previousItem: getGalleryParent(item),
-                                                        onPreview: ()=>setViewerId(item.id),
+                                                        onPreview: ()=>openViewer(item),
                                                         onEdit: ()=>openEdit(item),
                                                         onUpscale: ()=>openUpscale(item),
                                                         onReuse: ()=>reuseItem(item),
@@ -10223,7 +10262,7 @@ export default function Page() {
                                                                 else next.add(item.id);
                                                                 return next;
                                                             }),
-                                                        onPreview: ()=>setViewerId(item.id),
+                                                        onPreview: ()=>openViewer(item),
                                                         onEdit: ()=>openEdit(item),
                                                         onUpscale: ()=>openUpscale(item),
                                                         onReuse: ()=>reuseItem(item),
@@ -10502,6 +10541,7 @@ export default function Page() {
                                                                         href: url,
                                                                         target: "_blank",
                                                                         rel: "noreferrer",
+                                                                        onClick: ()=>markHistoryNoticeSeen(),
                                                                         children: /*#__PURE__*/ _jsx("img", {
                                                                             src: url,
                                                                             alt: `生成结果 ${index + 1}`
@@ -11978,6 +12018,7 @@ export default function Page() {
                                     href: url,
                                     target: "_blank",
                                     rel: "noreferrer",
+                                    onClick: ()=>markHistoryNoticeSeen(),
                                     children: /*#__PURE__*/ _jsx("img", {
                                         src: url,
                                         alt: `生成结果 ${index + 1}`
@@ -12252,7 +12293,7 @@ export default function Page() {
                                         /*#__PURE__*/ _jsx("button", {
                                             className: "viewer-nav prev",
                                             disabled: viewerIndex <= 0,
-                                            onClick: ()=>setViewerId(viewerItems[Math.max(0, viewerIndex - 1)]?.id || viewerItem.id),
+                                            onClick: ()=>openViewer(viewerItems[Math.max(0, viewerIndex - 1)] || viewerItem),
                                             children: /*#__PURE__*/ _jsx(Icon, {
                                                 name: "left"
                                             })
@@ -12260,7 +12301,7 @@ export default function Page() {
                                         /*#__PURE__*/ _jsx("button", {
                                             className: "viewer-nav next",
                                             disabled: viewerIndex >= viewerItems.length - 1,
-                                            onClick: ()=>setViewerId(viewerItems[Math.min(viewerItems.length - 1, viewerIndex + 1)]?.id || viewerItem.id),
+                                            onClick: ()=>openViewer(viewerItems[Math.min(viewerItems.length - 1, viewerIndex + 1)] || viewerItem),
                                             children: /*#__PURE__*/ _jsx(Icon, {
                                                 name: "right"
                                             })

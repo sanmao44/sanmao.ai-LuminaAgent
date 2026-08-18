@@ -29,6 +29,45 @@ function discoveredModelCapabilities(item: any): ModelCapability[] {
 
 function trimSlash(value: string) { return value.replace(/\/+$/, ''); }
 
+const providerResponseMeta = Symbol('providerResponseMeta');
+
+type ProviderResponseMeta = {
+  contentType: string;
+  byteLength: number;
+  requestId?: string;
+};
+
+type ProviderFailureKind = 'http' | 'transport' | 'timeout';
+type ProviderFailure = Error & {
+  providerResponse?: boolean;
+  providerFailureKind?: ProviderFailureKind;
+  status?: number;
+  providerStatus?: number;
+  providerRequestId?: string;
+  providerUrl?: string;
+  providerMethod?: string;
+  providerPossiblyAccepted?: boolean;
+};
+
+function attachProviderResponseMeta(value: any, meta: ProviderResponseMeta) {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
+  try { Object.defineProperty(value, providerResponseMeta, { value: meta, enumerable: false }); } catch { /* best effort */ }
+  return value;
+}
+
+function imageMimeFromBytes(bytes: Uint8Array) {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp';
+  if (bytes.length >= 6 && (String.fromCharCode(...bytes.slice(0, 6)) === 'GIF87a' || String.fromCharCode(...bytes.slice(0, 6)) === 'GIF89a')) return 'image/gif';
+  return '';
+}
+
+function imageMimeFromContentType(contentType: string) {
+  const mime = String(contentType || '').split(';', 1)[0].trim().toLowerCase();
+  return /^image\/[a-z0-9.+-]+$/i.test(mime) ? mime : '';
+}
+
 export function runtimeBaseUrl(provider: RuntimeProvider) {
   if (provider.type === 'google-gemini') return 'https://generativelanguage.googleapis.com/v1beta/openai';
   return trimSlash(provider.baseUrl);
@@ -44,21 +83,40 @@ function is65535Provider(provider: RuntimeProvider) {
   return provider.platform === '65535' || /65535\.space/i.test(provider.baseUrl);
 }
 
-async function parseResponse(response: Response) {
-  const text = await response.text();
-  let data: any = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  if (!response.ok) {
-    throw providerResponseError(response.status, data, text);
-  }
-  return data;
+function requestIdFrom(data: any, text = '', headers?: Headers) {
+  const headerId = headers?.get('x-request-id') || headers?.get('request-id') || headers?.get('x-correlation-id') || '';
+  const dataId = data?.request_id || data?.requestId || data?.error?.request_id || data?.error?.requestId || '';
+  const textId = text.match(/\brequest\s*id\s*:\s*([A-Za-z0-9._-]+)/i)?.[1] || '';
+  return String(headerId || dataId || textId || '').trim();
 }
 
-function providerResponseError(status: number, data: any, text: string) {
+function decorateProviderFailure<T extends Error>(error: T, details: Partial<ProviderFailure>) {
+  Object.assign(error, details);
+  return error as T & ProviderFailure;
+}
+
+async function parseResponse(response: Response) {
+  const contentType = response.headers.get('content-type') || '';
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const requestId = requestIdFrom(null, '', response.headers);
+  const imageMime = imageMimeFromContentType(contentType) || imageMimeFromBytes(bytes);
+  if (response.ok && imageMime && bytes.length) {
+    return attachProviderResponseMeta(`data:${imageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, requestId });
+  }
+  const text = Buffer.from(bytes).toString('utf8');
+  let data: any = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  const responseRequestId = requestIdFrom(data, text, response.headers);
+  if (!response.ok) {
+    throw providerResponseError(response.status, data, text, responseRequestId);
+  }
+  return attachProviderResponseMeta(data, { contentType, byteLength: bytes.byteLength, requestId: responseRequestId });
+}
+
+function providerResponseError(status: number, data: any, text: string, requestId = '') {
   if (status === 413) {
     const error = new Error('请求内容过大：参考图片总大小超过服务商限制，请减少图片数量或重新上传后重试。');
-    Object.assign(error, { providerResponse: true, status });
-    return error;
+    return decorateProviderFailure(error, { providerResponse: true, providerFailureKind: 'http', status, providerStatus: status, providerRequestId: requestId });
   }
   const detail = data?.error?.message || data?.error || data?.message || text || `HTTP ${status}`;
   const detailText = typeof detail === 'string' ? detail.slice(0, 900) : JSON.stringify(detail).slice(0, 900);
@@ -67,9 +125,17 @@ function providerResponseError(status: number, data: any, text: string) {
     : status === 403
       ? 'API Key 没有访问该接口的权限'
       : `服务商接口返回 HTTP ${status}`;
-  const error = new Error(`${prefix}：${detailText}`);
-  Object.assign(error, { providerResponse: true, status });
-  return error;
+  const suffix = requestId ? `（request id: ${requestId}）` : '';
+  const error = new Error(`${prefix}：${detailText}${suffix}`);
+  return decorateProviderFailure(error, {
+    providerResponse: true,
+    providerFailureKind: 'http',
+    status,
+    providerStatus: status,
+    providerRequestId: requestId,
+    // A 5xx can be emitted after a gateway has already charged its upstream.
+    providerPossiblyAccepted: status >= 500,
+  });
 }
 
 function combineSignals(signal: AbortSignal | undefined, timeout: number) {
@@ -83,34 +149,62 @@ function combineSignals(signal: AbortSignal | undefined, timeout: number) {
   return controller.signal;
 }
 
-function connectionFailure(url: string, error: unknown) {
+function connectionFailure(url: string, error: unknown, method = 'GET') {
   const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+  const path = (() => { try { return new URL(url).pathname || '/'; } catch { return url; } })();
   const source = error instanceof Error ? error : new Error(String(error));
   const cause = source.cause && typeof source.cause === 'object' ? source.cause as { code?: unknown; message?: unknown } : undefined;
   const code = String(cause?.code || '').toUpperCase();
   const detail = String(cause?.message || source.message || '').trim();
+  const lowLevel = code || source.name || 'FETCH_FAILED';
+  const possiblyAccepted = method === 'POST';
 
   if (source.name === 'TimeoutError' || /TIMEOUT|TIMEDOUT/.test(code) || /timed out/i.test(detail)) {
-    return new Error(`无法连接 ${host}：连接超时。请检查服务商 API 地址是否可访问，或确认当前网络、DNS 和防火墙没有拦截该域名。`);
+    return decorateProviderFailure(new Error(`调用 ${method} ${host}${path} 超时。${possiblyAccepted ? '请求可能已被服务商接收并产生费用，请先查服务商任务/用量，再决定是否重试。' : '请检查服务商 API 地址、网络、DNS 和防火墙。'}（${lowLevel}）`), {
+      providerFailureKind: 'timeout', providerUrl: url, providerMethod: method, providerPossiblyAccepted: possiblyAccepted,
+    });
   }
   if (/ENOTFOUND|EAI_AGAIN|DNS/.test(code) || /getaddrinfo|dns/i.test(detail)) {
-    return new Error(`无法解析 ${host}：DNS 没有返回可用地址。请检查服务商域名是否已生效，或更换网络/DNS 后重试。`);
+    return decorateProviderFailure(new Error(`无法解析 ${host}：DNS 没有返回可用地址（${lowLevel}）。请检查服务商域名是否已生效，或更换网络/DNS 后重试。`), {
+      providerFailureKind: 'transport', providerUrl: url, providerMethod: method, providerPossiblyAccepted: possiblyAccepted,
+    });
   }
   if (/CERT|TLS|SSL/.test(code) || /certificate|tls|ssl/i.test(detail)) {
-    return new Error(`无法安全连接 ${host}：TLS/证书校验失败。请确认服务商 HTTPS 证书和系统时间正常。`);
+    return decorateProviderFailure(new Error(`无法安全连接 ${host}：TLS/证书校验失败（${lowLevel}）。请确认服务商 HTTPS 证书和系统时间正常。`), {
+      providerFailureKind: 'transport', providerUrl: url, providerMethod: method, providerPossiblyAccepted: possiblyAccepted,
+    });
   }
-  return new Error(`无法连接 ${host}：服务商没有返回响应。请检查 API 地址、服务商网络状态和本机网络。`);
+  return decorateProviderFailure(new Error(`调用 ${method} ${host}${path} 时上游连接中断，未收到完整响应（${lowLevel}）。${possiblyAccepted ? '请求可能已经被服务商接收并产生费用，请先查服务商后台，不要立即自动重试。' : '请检查服务商网络状态和本机网络。'}`), {
+    providerFailureKind: 'transport', providerUrl: url, providerMethod: method, providerPossiblyAccepted: possiblyAccepted,
+  });
+}
+
+function providerTimeoutFailure(url: string, timeout: number, method = 'GET') {
+  const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+  const minutes = Math.max(1, Math.round(timeout / 60000));
+  return decorateProviderFailure(new Error(`服务商 ${host} 在约 ${minutes} 分钟内没有返回结果。${method === 'POST' ? '生图请求可能仍在处理并已产生费用，请先查看服务商后台，确认任务状态后再决定是否重试。' : '请检查接口地址和网络。'}`), {
+    providerFailureKind: 'timeout', providerUrl: url, providerMethod: method, providerPossiblyAccepted: method === 'POST',
+  });
 }
 
 async function fetchJson(url: string, init: RequestInit, timeout = 120000, signal?: AbortSignal) {
+  const method = String(init.method || 'GET').toUpperCase();
   try {
     const response = await fetch(url, { ...init, cache: 'no-store', signal: combineSignals(signal || init.signal || undefined, timeout) });
-    return parseResponse(response);
+    return await parseResponse(response);
   } catch (error) {
     if (signal?.aborted) throw signal.reason || error;
     if (error instanceof Error && (error as Error & { providerResponse?: boolean }).providerResponse) throw error;
-    throw connectionFailure(url, error);
+    if (error instanceof Error && (error.name === 'TimeoutError' || /timed out/i.test(error.message))) throw providerTimeoutFailure(url, timeout, method);
+    throw connectionFailure(url, error, method);
   }
+}
+
+export function canRetryImageRequest(error: unknown) {
+  const failure = error as ProviderFailure | null;
+  // Retry only an explicit validation/compatibility rejection. Transport errors,
+  // timeouts, and 5xx responses may mean the provider already accepted the job.
+  return failure?.providerFailureKind === 'http' && [400, 415, 422].includes(Number(failure.providerStatus || (failure as any).status));
 }
 
 type ModelEndpointCandidate = { url: string; inferredBaseUrl?: string };
@@ -258,55 +352,164 @@ export function mapRatioToSize(ratio: string, width?: number, height?: number) {
   return `${targetWidth}x${targetHeight}`;
 }
 
-function extractImages(data: any): GeneratedImage[] {
-  const candidates = [
-    data?.data,
-    data?.images,
-    data?.output,
-    data?.result,
-    data?.result_urls,
-    data?.data?.images,
-    data?.data?.output,
-    data?.data?.result,
-    data?.result?.images,
-    data?.data?.result?.images,
-    data?.output?.images,
-    data?.result?.images,
-    data?.result?.data,
-  ];
-  let list: any[] = [];
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) { list = candidate; break; }
-    if (candidate && (typeof candidate === 'string' || candidate.url || candidate.image_url || candidate.output_url || candidate.b64_json || candidate.base64)) { list = [candidate]; break; }
+// Image generation providers can legitimately take much longer than chat APIs.
+// Keep the server-side wait long enough for slow-but-successful vendors such as APIQIK.
+const IMAGE_REQUEST_TIMEOUT = 30 * 60 * 1000;
+
+const imageFieldPattern = /(?:^|[_-])(image|images|img|picture|photo|base64|b64|inline[_-]?data|attachment|file|result[_-]?url|output[_-]?url|download[_-]?url)(?:$|[_-])/i;
+const imageBranchPattern = /^(?:data|images?|output|result|result[_-]?urls?|image[_-]?urls?|choices|message|content|parts|candidates|files|attachments|response|payload|body|raw)$/i;
+const imageUrlFieldPattern = /^(?:url|uri|href|image[_-]?url|output[_-]?url|result[_-]?url|download[_-]?url)$/i;
+
+function objectMimeType(value: any) {
+  if (!value || typeof value !== 'object') return 'image/png';
+  return imageMimeFromContentType(String(value.mime_type || value.mimeType || value.content_type || value.contentType || '')) || 'image/png';
+}
+
+function isRawBase64(value: string) {
+  const compact = value.replace(/\s/g, '');
+  return compact.length >= 16 && compact.length % 4 !== 1 && /^[A-Za-z0-9+/=_-]+$/.test(compact);
+}
+
+function embeddedImageReferences(value: string) {
+  const references: string[] = [];
+  const dataUrlPattern = /data:image\/[a-z0-9.+-]+(?:;[^,]*)?,[A-Za-z0-9+/=_%\s-]+/gi;
+  const markdownPattern = /!\[[^\]]*\]\((https?:\/\/[^\s)]+|data:image\/[^\s)]+)\)/gi;
+  const htmlPattern = /<img\b[^>]*\bsrc=["']([^"']+)["']/gi;
+  for (const match of value.matchAll(dataUrlPattern)) references.push(match[0]);
+  for (const match of value.matchAll(markdownPattern)) references.push(match[1]);
+  for (const match of value.matchAll(htmlPattern)) references.push(match[1]);
+  return references;
+}
+
+function imageReferenceFromString(value: string, key: string, parent: any, forceImage: boolean) {
+  const text = value.trim();
+  if (!text) return [];
+  const references = embeddedImageReferences(text);
+  if (references.length) return references;
+  if (/^data:image\//i.test(text)) return [text];
+  if (/^https?:\/\//i.test(text)) {
+    return forceImage || imageUrlFieldPattern.test(key) || imageFieldPattern.test(key) ? [text] : [];
   }
-  if (!list.length && (data?.url || data?.image_url || data?.output_url || data?.b64_json || data?.base64)) list = [data];
-  const images = list.map((item: any) => {
-    if (typeof item === 'string') {
-      if (item.startsWith('data:') || item.startsWith('http')) return { url: item };
-      return { url: `data:image/png;base64,${item}` };
+  const parentType = String(parent?.type || parent?.object || '').toLowerCase();
+  if (forceImage || /image[_-]?(generation|generation_call|data)|inline[_-]?data/.test(parentType)) {
+    if (isRawBase64(text)) return [`data:${objectMimeType(parent)};base64,${text.replace(/\s/g, '')}`];
+  }
+  return [];
+}
+
+function extractImages(data: any): GeneratedImage[] {
+  const images: GeneratedImage[] = [];
+  const seen = new Set<string>();
+  const add = (url: string, revisedPrompt?: unknown) => {
+    const normalized = String(url || '').trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    images.push({ url: normalized, ...(typeof revisedPrompt === 'string' && revisedPrompt ? { revisedPrompt } : {}) });
+  };
+  const walk = (value: any, key = '', parent: any = null, forceImage = false, depth = 0, inheritedPrompt?: unknown): void => {
+    if (value === null || value === undefined || depth > 10) return;
+    if (typeof value === 'string') {
+      for (const reference of imageReferenceFromString(value, key, parent, forceImage)) add(reference, inheritedPrompt);
+      return;
     }
-    if (item?.b64_json) return { url: `data:image/png;base64,${item.b64_json}`, revisedPrompt: item.revised_prompt };
-    if (item?.base64) return { url: `data:image/png;base64,${item.base64}`, revisedPrompt: item.revised_prompt };
-    const url = item?.url || item?.image_url || item?.output_url;
-    if (Array.isArray(url) && url[0]) return { url: String(url[0]), revisedPrompt: item.revised_prompt };
-    if (url) return { url: String(url), revisedPrompt: item.revised_prompt };
-    return null;
-  }).filter(Boolean) as GeneratedImage[];
+    if (typeof value !== 'object') return;
+    const revisedPrompt = value.revised_prompt || value.revisedPrompt || inheritedPrompt;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, key, parent, forceImage, depth + 1, revisedPrompt);
+      return;
+    }
+    const objectType = String(value.type || value.object || '').toLowerCase();
+    const objectIsImage = forceImage || imageFieldPattern.test(key) || /image[_-]?(generation|generation_call|data)|inline[_-]?data/.test(objectType);
+    for (const [childKey, childValue] of Object.entries(value)) {
+      if (/^(?:revised[_-]?prompt|mime[_-]?type|content[_-]?type|type|object|task[_-]?id|request[_-]?id|status|state|created(?:[_-]at)?|model|prompt)$/i.test(childKey)) continue;
+      const childIsImage = objectIsImage || imageUrlFieldPattern.test(childKey) || imageFieldPattern.test(childKey) || imageBranchPattern.test(childKey);
+      walk(childValue, childKey, value, childIsImage, depth + 1, revisedPrompt);
+    }
+  };
+  walk(data, '', null, typeof data === 'string');
+  return images;
+}
+
+function responseShape(value: any, depth = 0): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') {
+    if (/^data:image\//i.test(value)) return 'data:image';
+    if (/^https?:\/\//i.test(value)) return 'url';
+    if (isRawBase64(value)) return `base64(${value.length})`;
+    return `string(${value.length})`;
+  }
+  if (Array.isArray(value)) return `array(${value.length})`;
+  if (typeof value !== 'object') return typeof value;
+  const keys = Object.keys(value).filter((key) => !key.startsWith('__')).slice(0, 16);
+  if (depth >= 2) return `{${keys.join(',')}}`;
+  return `{${keys.map((key) => `${key}:${responseShape(value[key], depth + 1)}`).join(', ')}}`;
+}
+
+export function normalizeProviderImages(data: any): GeneratedImage[] {
+  const images = extractImages(data);
+  if (!images.length) {
+    const meta = data && typeof data === 'object' ? (data as any)[providerResponseMeta] as ProviderResponseMeta | undefined : undefined;
+    const typeHint = meta?.contentType ? `，响应类型 ${meta.contentType.split(';', 1)[0]}` : '';
+    throw new Error(`服务商已返回成功响应，但没有找到可显示的图片${typeHint}。响应结构：${responseShape(data)}。请确认模型支持图片接口，并检查服务商是否返回了 image_url、b64_json、二进制图片或异步任务结果。`);
+  }
   return images;
 }
 
 function normalizeImages(data: any): GeneratedImage[] {
-  const images = extractImages(data);
-  if (!images.length) throw new Error('服务商没有返回可识别的图片数据（需要 data[].url、data[].b64_json 或兼容字段）');
-  return images;
+  return normalizeProviderImages(data);
 }
 
 function taskIdFrom(data: any) {
-  return String(data?.task_id || data?.taskId || data?.data?.task_id || data?.data?.taskId || data?.data?.[0]?.task_id || data?.data?.[0]?.taskId || data?.id || '').trim();
+  const values = [
+    data?.task_id, data?.taskId, data?.request_id, data?.requestId, data?.id,
+    data?.data?.task_id, data?.data?.taskId, data?.data?.request_id, data?.data?.requestId, data?.data?.id,
+    data?.data?.[0]?.task_id, data?.data?.[0]?.taskId, data?.task?.id, data?.data?.task?.id,
+  ];
+  return String(values.find((value) => value !== undefined && value !== null && String(value).trim()) || '').trim();
 }
 
 function taskStatusFrom(data: any) {
-  return String(data?.status || data?.state || data?.data?.status || data?.data?.state || '').toLowerCase();
+  return String(data?.status || data?.state || data?.data?.status || data?.data?.state || data?.task?.status || data?.data?.task?.status || '').toLowerCase();
+}
+
+function taskStatusEndpoint(provider: RuntimeProvider, taskId: string, initial: any) {
+  const explicit = [
+    initial?.status_url, initial?.statusUrl, initial?.polling_url, initial?.pollingUrl,
+    initial?.result_url, initial?.resultUrl, initial?.data?.status_url, initial?.data?.statusUrl,
+    initial?.data?.polling_url, initial?.data?.pollingUrl, initial?.data?.result_url, initial?.data?.resultUrl,
+  ].find((value) => typeof value === 'string' && value.trim());
+  if (explicit) {
+    const path = String(explicit).trim().replaceAll('{taskId}', encodeURIComponent(taskId)).replaceAll('{task_id}', encodeURIComponent(taskId));
+    return providerEndpoint(provider, path, path);
+  }
+  if (provider.platform === '65535') return providerEndpoint(provider, `/v1/tasks/${encodeURIComponent(taskId)}`, `/v1/tasks/${encodeURIComponent(taskId)}`);
+  return '';
+}
+
+async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?: AbortSignal) {
+  const taskId = taskIdFrom(initial);
+  if (!taskId) return normalizeImages(initial);
+  const statusUrl = taskStatusEndpoint(provider, taskId, initial);
+  if (!statusUrl) {
+    throw new Error(`服务商已接受图片任务 ${taskId}，但没有在响应中提供图片或任务查询地址。请让服务商返回 image_url、b64_json、status_url/result_url，或在接口配置中提供任务查询路径。`);
+  }
+  const deadline = Date.now() + IMAGE_REQUEST_TIMEOUT;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw signal.reason || new Error('GENERATION_CANCELLED');
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 1800);
+      signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
+    });
+    const data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, signal);
+    const images = extractImages(data);
+    if (images.length) return images;
+    const status = taskStatusFrom(data);
+    if (/(fail|error|cancel|reject|expired)/.test(status)) {
+      throw new Error(String(data?.error?.message || data?.error_message || data?.error || data?.message || `图片任务失败：${status}`));
+    }
+  }
+  throw new Error(`图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`);
 }
 
 async function waitForApimartTask(provider: RuntimeProvider, initial: any, signal?: AbortSignal) {
@@ -341,7 +544,7 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   if (!taskId) return normalizeImages(initial);
   const statusUrl = upscaleStatusEndpoint(provider, taskId, initial);
   if (!statusUrl) throw new Error(`服务商返回了异步任务 ${taskId}，请在“接口服务 → 高级兼容设置”填写图片超分任务查询路径，例如 /tasks/{taskId}`);
-  const deadline = Date.now() + 240000;
+  const deadline = Date.now() + IMAGE_REQUEST_TIMEOUT;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw signal.reason || new Error('GENERATION_CANCELLED');
     await new Promise<void>((resolve, reject) => {
@@ -374,26 +577,43 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   const endpoint = providerEndpoint(provider, provider.imageGenerationPath, '/images/generations');
   const request = (payload: Record<string, unknown>) => fetchJson(endpoint, {
     method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  }, 240000, signal);
+  }, IMAGE_REQUEST_TIMEOUT, signal);
   if (isApimartProvider(provider)) {
     const batches = await Promise.all(Array.from({ length: count }, async () => waitForApimartTask(provider, await request({ ...body, n: 1 }), signal)));
     return batches.flat().slice(0, count);
   }
   const requestImages = async (payload: Record<string, unknown>) => {
-    try { return normalizeImages(await request(payload)); }
+    try {
+      const data = await request(payload);
+      const images = extractImages(data);
+      if (images.length) return images;
+      if (taskIdFrom(data)) {
+        try { return await waitForImageTask(provider, data, signal); }
+        catch (error) { Object.assign(error as object, { providerAcceptedTask: true }); throw error; }
+      }
+      return normalizeImages(data);
+    }
     catch (error) {
       if (signal?.aborted) throw signal.reason || error;
-      if (!payload.resolution) throw error;
+      if ((error as Error & { providerAcceptedTask?: boolean }).providerAcceptedTask) throw error;
+      if (!payload.resolution || !canRetryImageRequest(error)) throw error;
       const fallback = { ...payload };
       delete fallback.resolution;
-      return normalizeImages(await request(fallback));
+      const data = await request(fallback);
+      const images = extractImages(data);
+      if (images.length) return images;
+      if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
+      return normalizeImages(data);
     }
   };
   let images: GeneratedImage[];
   try { images = await requestImages(body); }
   catch (error) {
     if (signal?.aborted) throw signal.reason || error;
-    if (count <= 1) throw error;
+    // Never repeat an image POST after a transport error or timeout: a gateway
+    // may have accepted and charged the original job even if its response was
+    // lost. Only explicit 4xx validation failures are safe to retry with n=1.
+    if (count <= 1 || !canRetryImageRequest(error)) throw error;
     images = await requestImages({ ...body, n: 1 });
   }
   while (images.length < count) {
@@ -449,7 +669,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   try {
     const data = await fetchJson(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
       method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody),
-    }, 240000, signal);
+    }, IMAGE_REQUEST_TIMEOUT, signal);
     if (isApimartProvider(provider)) return waitForApimartTask(provider, data, signal);
     return normalizeImages(data);
   } catch (jsonError) {
@@ -474,7 +694,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
         form.append('mask', blob, 'mask.png');
       }
       const response = await fetch(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
-        method: 'POST', headers: authHeaders(provider), body: form, cache: 'no-store', signal: combineSignals(signal, 240000),
+        method: 'POST', headers: authHeaders(provider), body: form, cache: 'no-store', signal: combineSignals(signal, IMAGE_REQUEST_TIMEOUT),
       });
       const data = await parseResponse(response);
       return normalizeImages(data);
@@ -506,7 +726,7 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
       method: 'POST',
       headers: { ...authHeaders(provider), 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
       body: JSON.stringify({ kind: 'image', model: rawModelId, input: { prompt, image: reference, ...compactParameters } }),
-    }, 240000, signal);
+    }, IMAGE_REQUEST_TIMEOUT, signal);
     const images = extractImages(data);
     return images.length ? images : await waitForUpscaleTask(provider, data, signal);
   }
@@ -517,7 +737,7 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
   ];
   for (const body of jsonBodies) {
     try {
-      const data = await fetchJson(endpoint, { method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 240000, signal);
+      const data = await fetchJson(endpoint, { method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, IMAGE_REQUEST_TIMEOUT, signal);
       const images = extractImages(data);
       return images.length ? images : await waitForUpscaleTask(provider, data, signal);
     } catch (error) {
@@ -533,7 +753,7 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
     form.append('prompt', prompt);
     for (const [key, value] of Object.entries(compactParameters)) form.append(key, String(value));
     form.append('image', blob, filename);
-    const response = await fetch(endpoint, { method: 'POST', headers: authHeaders(provider), body: form, cache: 'no-store', signal: combineSignals(signal, 240000) });
+    const response = await fetch(endpoint, { method: 'POST', headers: authHeaders(provider), body: form, cache: 'no-store', signal: combineSignals(signal, IMAGE_REQUEST_TIMEOUT) });
     const data = await parseResponse(response);
     const images = extractImages(data);
     return images.length ? images : await waitForUpscaleTask(provider, data, signal);

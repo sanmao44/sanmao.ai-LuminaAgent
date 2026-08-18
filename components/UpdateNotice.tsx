@@ -20,7 +20,8 @@ type CheckNoticeTone = 'success' | 'error';
 
 const DISMISSED_KEY = 'sanmao-dismissed-update-version';
 const CHECKED_KEY = 'sanmao-update-checked-at';
-const CHECK_INTERVAL = 24 * 60 * 60 * 1000;
+const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
+const RESTART_TIMEOUT = 10 * 60 * 1000;
 const PROJECT_URL = 'https://github.com/sanmao44/sanmao.ai-LuminaAgent';
 
 function openExternal(url?: string) {
@@ -108,13 +109,13 @@ export default function UpdateNotice() {
       if (!response.ok || !data.started) throw new Error(data.error || '更新准备失败');
 
       setApplyState('started');
-      setApplyMessage('服务即将重启，请保持此页面打开。');
+       setApplyMessage('服务即将重启；首次更新可能需要安装依赖和重新构建，请保持此页面打开。');
       const startedAt = Date.now();
       const poll = window.setInterval(async () => {
-        if (Date.now() - startedAt > 90_000) {
+         if (Date.now() - startedAt > RESTART_TIMEOUT) {
           window.clearInterval(poll);
           setApplyState('error');
-          setApplyMessage('服务重启超时，请重新运行启动器完成更新。');
+           setApplyMessage('服务重启时间较长，请重新打开启动器或刷新页面检查版本；更新数据仍会保留。');
           return;
         }
         try {

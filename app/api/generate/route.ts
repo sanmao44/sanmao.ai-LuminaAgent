@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import { isTrustedAppRequest } from '@/lib/auth';
 
 export const runtime = 'nodejs';
+export const maxDuration = 1800;
 
 function readCameraNumber(value: unknown, field: string) {
   if (value === undefined) return undefined;

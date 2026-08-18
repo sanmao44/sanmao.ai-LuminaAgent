@@ -1,3 +1,7 @@
+param(
+  [int]$Port = 0
+)
+
 ﻿$ErrorActionPreference = 'Stop'
 $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -5,7 +9,11 @@ $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $requestedPort = 0
-if ($env:SANMAO_PORT -match '^\d+$') { $requestedPort = [int]$env:SANMAO_PORT }
+if ($Port -ge 1024 -and $Port -le 65525) {
+  $requestedPort = $Port
+} elseif ($env:SANMAO_PORT -match '^\d+$') {
+  $requestedPort = [int]$env:SANMAO_PORT
+}
 $portStart = if ($requestedPort -ge 1024 -and $requestedPort -le 65525) { $requestedPort } else { 3210 }
 $portEnd = $portStart + 10
 $portRange = $portStart..$portEnd
@@ -217,8 +225,21 @@ if (Test-Path '.\node_modules\next\package.json') {
   try { $installedNext = (& node -p "require('./node_modules/next/package.json').version").Trim() } catch { $installedNext = '' }
 }
 $nextCmdExists = Test-Path '.\node_modules\.bin\next.cmd'
-$installedLockPath = '.\node_modules\.package-lock.json'
-$packageLockChanged = (Test-Path '.\package-lock.json') -and ((-not (Test-Path $installedLockPath)) -or ((Get-Item '.\package-lock.json').LastWriteTimeUtc -gt (Get-Item $installedLockPath).LastWriteTimeUtc))
+$packageLockHashPath = '.\node_modules\.sanmao-package-lock.sha256'
+$packageLockChanged = $false
+if (Test-Path '.\package-lock.json') {
+  if (-not (Test-Path $packageLockHashPath)) {
+    $packageLockChanged = $true
+  } else {
+    try {
+      $expectedLockHash = (Get-FileHash -Algorithm SHA256 -LiteralPath '.\package-lock.json').Hash
+      $installedLockHash = (Get-Content -LiteralPath $packageLockHashPath -Raw -ErrorAction Stop).Trim()
+      $packageLockChanged = $expectedLockHash -ne $installedLockHash
+    } catch {
+      $packageLockChanged = $true
+    }
+  }
+}
 if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or $packageLockChanged) {
   Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
   # If a stale/legacy launcher escaped the existing-service check, stop only
@@ -235,6 +256,9 @@ if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or $packageLoc
     Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow
     Write-Host '你可以先在命令行运行：npm config get registry' -ForegroundColor Yellow
     Fail '依赖安装失败，请检查网络后再次运行启动器。'
+  }
+  if (Test-Path '.\package-lock.json') {
+    (Get-FileHash -Algorithm SHA256 -LiteralPath '.\package-lock.json').Hash | Set-Content -LiteralPath $packageLockHashPath -Encoding ASCII
   }
 } else {
   Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
