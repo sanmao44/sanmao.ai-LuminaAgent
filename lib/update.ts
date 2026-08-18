@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import packageInfo from '../package.json';
 
@@ -90,6 +90,39 @@ function validSha256(value: string) {
   return /^[a-f0-9]{64}$/i.test(value);
 }
 
+function statusFromManifest(raw: Partial<UpdateManifest>, checkedAt: string): UpdateStatus {
+  const latestVersion = String(raw.latestVersion || '').trim();
+  const releaseUrl = String(raw.releaseUrl || '').trim();
+  const projectUrl = typeof raw.projectUrl === 'string' && validHttpUrl(raw.projectUrl) ? raw.projectUrl.trim() : undefined;
+  const packageUrl = typeof raw.packageUrl === 'string' && validPackageUrl(raw.packageUrl) ? raw.packageUrl.trim() : undefined;
+  const sha256 = typeof raw.sha256 === 'string' && validSha256(raw.sha256) ? raw.sha256.trim().toLowerCase() : undefined;
+
+  if (!latestVersion || !validHttpUrl(releaseUrl)) throw new Error('更新清单格式无效');
+  const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+  return {
+    configured: true,
+    currentVersion,
+    latestVersion,
+    hasUpdate,
+    releaseUrl,
+    projectUrl,
+    packageUrl,
+    sha256,
+    canApply: hasUpdate && Boolean(packageUrl && sha256 && hasLocalUpdater()),
+    publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : undefined,
+    notes: Array.isArray(raw.notes) ? raw.notes.filter((note): note is string => typeof note === 'string').slice(0, 8) : [],
+    checkedAt,
+  };
+}
+
+function readLocalManifest(): Partial<UpdateManifest> | null {
+  try {
+    return JSON.parse(readFileSync(join(process.cwd(), 'update.json'), 'utf8')) as Partial<UpdateManifest>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
   const url = configuredManifestUrl();
   if (!url) return baseStatus();
@@ -107,31 +140,20 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
     if (!response.ok) throw new Error(`更新清单返回 HTTP ${response.status}`);
 
     const raw = await response.json() as Partial<UpdateManifest>;
-    const latestVersion = String(raw.latestVersion || '').trim();
-    const releaseUrl = String(raw.releaseUrl || '').trim();
-    const projectUrl = typeof raw.projectUrl === 'string' && validHttpUrl(raw.projectUrl) ? raw.projectUrl.trim() : undefined;
-    const packageUrl = typeof raw.packageUrl === 'string' && validPackageUrl(raw.packageUrl) ? raw.packageUrl.trim() : undefined;
-    const sha256 = typeof raw.sha256 === 'string' && validSha256(raw.sha256) ? raw.sha256.trim().toLowerCase() : undefined;
-
-    if (!latestVersion || !validHttpUrl(releaseUrl)) throw new Error('更新清单格式无效');
-    const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
-    const status: UpdateStatus = {
-      configured: true,
-      currentVersion,
-      latestVersion,
-      hasUpdate,
-      releaseUrl,
-      projectUrl,
-      packageUrl,
-      sha256,
-      canApply: hasUpdate && Boolean(packageUrl && sha256 && hasLocalUpdater()),
-      publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : undefined,
-      notes: Array.isArray(raw.notes) ? raw.notes.filter((note): note is string => typeof note === 'string').slice(0, 8) : [],
-      checkedAt,
-    };
+    const status = statusFromManifest(raw, checkedAt);
     cached = { expiresAt: Date.now() + cacheTtlMs, status };
     return status;
   } catch (error) {
+    const localManifest = readLocalManifest();
+    if (localManifest) {
+      try {
+        const status = statusFromManifest(localManifest, checkedAt);
+        cached = { expiresAt: Date.now() + 10 * 60 * 1000, status };
+        return status;
+      } catch {
+        // 本地清单无效时继续返回错误状态，让界面明确提示检查失败。
+      }
+    }
     const status = {
       ...baseStatus(checkedAt),
       configured: true,
