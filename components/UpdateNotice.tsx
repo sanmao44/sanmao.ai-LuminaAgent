@@ -166,7 +166,6 @@ export default function UpdateNotice() {
               type="button"
               className="version-card-check"
               aria-label={versionLabel}
-              data-tooltip={versionLabel}
               disabled={busy}
               onClick={() => {
                 if (hasUpdate) setShowModal(true);
