@@ -1,8 +1,8 @@
-param(
+﻿param(
   [int]$Port = 0
 )
 
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -268,12 +268,8 @@ if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
   Fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
 }
 
-# 3. Build production bundle（智能构建：代码没变就跳过，中文路径自动改用 webpack）
+# 3. Build production bundle（智能构建：代码没变就跳过，固定使用 webpack）
 Write-Step '检查构建产物是否最新'
-
-# 路径含中文等非 ASCII 字符时，Turbopack 会崩溃（start byte index is not a char boundary），自动改用 webpack
-$hasNonAscii = $false
-foreach ($ch in $root.ToCharArray()) { if ([int]$ch -gt 127) { $hasNonAscii = $true; break } }
 
 $nextCmd = Join-Path $root 'node_modules\.bin\next.cmd'
 $buildIdPath = Join-Path $root '.next\BUILD_ID'
@@ -299,12 +295,8 @@ if (-not $needBuild) {
 
 if ($needBuild) {
   Write-Host '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。' -ForegroundColor Yellow
-  if ($hasNonAscii) {
-    Write-Host '检测到路径含中文，已自动使用 webpack 构建（Turbopack 不支持中文路径）。' -ForegroundColor Yellow
-    & $nextCmd build --webpack
-  } else {
-    & $nextCmd build
-  }
+  Write-Host '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。' -ForegroundColor Yellow
+  & $nextCmd build --webpack
   if ($LASTEXITCODE -ne 0) {
     Fail '网页构建失败。请把本窗口中“构建失败”上方的报错截图发给我。'
   }

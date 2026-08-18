@@ -100,12 +100,6 @@ fi
 
 printf '\n==> 检查构建产物是否最新\n'
 
-# 路径含中文等非 ASCII 字符时，Turbopack 会崩溃（start byte index is not a char boundary），自动改用 webpack
-HAS_NON_ASCII=0
-if printf '%s' "$ROOT_DIR" | LC_ALL=C grep -q '[^ -~]'; then
-  HAS_NON_ASCII=1
-fi
-
 NEXT_BIN="$ROOT_DIR/node_modules/.bin/next"
 BUILD_ID="$ROOT_DIR/.next/BUILD_ID"
 
@@ -138,12 +132,8 @@ fi
 
 if [ "$NEED_BUILD" -eq 1 ]; then
   printf '%s\n' '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。'
-  if [ "$HAS_NON_ASCII" -eq 1 ]; then
-    printf '%s\n' '检测到路径含中文，已自动使用 webpack 构建（Turbopack 不支持中文路径）。'
-    "$NEXT_BIN" build --webpack || fail '网页构建失败。请查看终端中构建失败上方的报错。'
-  else
-    "$NEXT_BIN" build || fail '网页构建失败。请查看终端中构建失败上方的报错。'
-  fi
+  printf '%s\n' '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。'
+  "$NEXT_BIN" build --webpack || fail '网页构建失败。请查看终端中构建失败上方的报错。'
   printf '构建完成。\n'
 else
   printf '%s\n' '构建产物已是最新，跳过构建，直接启动。'

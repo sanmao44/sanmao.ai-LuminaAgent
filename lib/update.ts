@@ -82,7 +82,10 @@ function validHttpUrl(value: string) {
 function validPackageUrl(value: string) {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === 'https:' && ['github.com', 'codeload.github.com'].includes(parsed.hostname.toLowerCase());
+    // The manifest itself is fetched from the official project URL, while the
+    // package may be mirrored by Gitee, OSS, or a private CDN. Keep every
+    // mirror HTTPS-only and reject credential-bearing or fragment URLs.
+    return parsed.protocol === 'https:' && Boolean(parsed.hostname) && !parsed.username && !parsed.password && !parsed.hash;
   } catch {
     return false;
   }

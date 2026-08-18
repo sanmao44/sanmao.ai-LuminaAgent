@@ -1,3 +1,10 @@
+# 0.5.7 更新可靠性与进度提示
+
+- Windows 和 macOS 启动器固定使用 webpack，避免中文内容触发 Turbopack 字符边界崩溃。
+- 更新弹窗增加旋转加载指示、滚动进度条和“下载/重启”阶段提示，避免用户误以为更新卡住。
+- 延续 `Infinite-Canvas` 的下载源兜底、完整性校验、独立替换和原端口回连方案。
+- 更新清单支持 Gitee、OSS 和自有 CDN 等 HTTPS 镜像，并按镜像优先、GitHub 兜底的顺序尝试。
+
 # 0.5.6 Windows 启动器锁定修复
 
 - 修复 Windows 启动器无法识别 `node_modules\\.bin\\..\\next` 实际命令路径的问题。

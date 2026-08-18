@@ -109,7 +109,7 @@ export default function UpdateNotice() {
       if (!response.ok || !data.started) throw new Error(data.error || '更新准备失败');
 
       setApplyState('started');
-       setApplyMessage('服务即将重启；首次更新可能需要安装依赖和重新构建，请保持此页面打开。');
+      setApplyMessage('服务即将重启；首次更新可能需要安装依赖和重新构建，请保持此页面打开。');
       const startedAt = Date.now();
       const poll = window.setInterval(async () => {
          if (Date.now() - startedAt > RESTART_TIMEOUT) {
@@ -207,7 +207,17 @@ export default function UpdateNotice() {
               <h2 id="update-modal-title">发现新版本 v{status?.latestVersion}</h2>
               <p>当前版本 v{status?.currentVersion}。更新会保留本地配置、API Key、历史记录和图片。</p>
               {status?.notes?.length ? <ul>{status.notes.slice(0, 4).map((note) => <li key={note}>{note}</li>)}</ul> : null}
-              {applyState !== 'idle' ? <div className={`update-progress ${applyState}`} role="status">{applyMessage}</div> : null}
+              {applyState !== 'idle' ? (
+                <div className={`update-progress ${applyState}`} role="status" aria-live="polite">
+                  <div className="update-progress-head">
+                    {applyState !== 'error' ? <span className="update-progress-spinner" aria-hidden="true" /> : <span className="update-progress-error-mark" aria-hidden="true">!</span>}
+                    <strong>{applyState === 'working' ? '正在处理更新' : applyState === 'started' ? '正在重启服务' : '更新失败'}</strong>
+                    {applyState !== 'error' ? <span className="update-progress-dots" aria-hidden="true">...</span> : null}
+                  </div>
+                  <div className="update-progress-bar" aria-hidden="true"><span /></div>
+                  <p>{applyMessage}</p>
+                </div>
+              ) : null}
             </div>
             <div className="update-modal-actions">
               <button type="button" className="ghost-button" disabled={applyState === 'working'} onClick={dismissUpdate}>稍后提醒</button>

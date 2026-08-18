@@ -269,11 +269,14 @@ function safePackageSources(status: UpdateStatus) {
     .filter(Boolean);
   const mirrors = Array.isArray(status.mirrorUrls) ? status.mirrorUrls : [];
   const fallback = status.packageUrl ? githubArchiveFallback(status.packageUrl) : undefined;
-  const candidates = [status.packageUrl, fallback, ...mirrors, ...configuredMirrors].filter(Boolean) as string[];
+  // Prefer a configured domestic mirror/CDN, then fall back to the official
+  // GitHub package and its archive endpoint. Every source is still verified
+  // against the same SHA-256 before it can be applied.
+  const candidates = [...mirrors, ...configuredMirrors, status.packageUrl, fallback].filter(Boolean) as string[];
   return [...new Set(candidates)].filter((value) => {
     try {
       const parsed = new URL(value);
-      return parsed.protocol === 'https:' && ['github.com', 'codeload.github.com'].includes(parsed.hostname.toLowerCase());
+      return parsed.protocol === 'https:' && Boolean(parsed.hostname) && !parsed.username && !parsed.password && !parsed.hash;
     } catch {
       return false;
     }
@@ -337,7 +340,7 @@ export async function startLocalUpdate(status: UpdateStatus, options: LocalUpdat
     await copyFile(updaterSource, updaterPath);
     await copyFile(join(root, 'lib', 'local-update.ts'), runtimePatchPath);
     const sources = safePackageSources(status);
-    if (!sources.length) throw new Error('没有找到可用的 GitHub 更新源');
+    if (!sources.length) throw new Error('没有找到可用的更新源');
     setUpdateProgress(jobId, { stage: 'downloading', message: '正在连接更新源…', percent: 1, downloadedBytes: 0, totalBytes: null });
     let lastReportedAt = 0;
     const download = await downloadFromSources(
