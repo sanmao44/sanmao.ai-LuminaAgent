@@ -57,7 +57,7 @@ fi
 rm -f "$LEGACY_MARKER"
 
 printf '%s\n' '========================================'
-printf '%s\n' '        SANMAO.AI macOS 启动器 0.5.2'
+printf '%s\n' '        SANMAO.AI macOS 启动器 0.5.5'
 printf '%s\n' '========================================'
 
 printf '\n==> 检查 Node.js\n'
