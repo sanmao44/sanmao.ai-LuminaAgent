@@ -61,35 +61,41 @@ function Get-ListeningPortSnapshot {
   }
 }
 
-function Test-SanmaoProcessAtPort([int]$port) {
+function Get-SanmaoNextProcessesAtPort([int]$port) {
   $escapedRoot = [regex]::Escape($root.TrimEnd('\'))
   # npm's Windows shim starts Next through node_modules\.bin\..\next.
-  # Accept both that form and the direct node_modules\next path so a second
-  # launcher cannot mistake an already-running service for a stopped one.
-  $nextPathPattern = "(?i)$escapedRoot[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
+  # Older launchers may leave a relative node_modules path in CommandLine,
+  # while newer launchers use an absolute path. Accept both forms, but only
+  # trust the relative form when the port answers as a SANMAO service. This
+  # prevents a stale same-project process from locking next-swc during npm ci
+  # without stopping an unrelated Next app in the same port range.
+  $absoluteNextPathPattern = "(?i)$escapedRoot[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
+  $relativeNextPathPattern = '(?i)(?:^|["\s])(?:\.[\\/])?node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next(?=\s|["$]|$)'
   $portPattern = '(?i)(?:^|\s)(?:-p|--port)(?:\s+|=)' + [regex]::Escape("$port") + '(?=\s|$)'
+  $healthy = $null
   foreach ($processItem in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
     $commandLine = [string]$processItem.CommandLine
     if (-not $commandLine) { continue }
-    if ($commandLine -notmatch $nextPathPattern) { continue }
+    $absolutePath = $commandLine -match $absoluteNextPathPattern
+    $relativePath = $commandLine -match $relativeNextPathPattern
+    if (-not $absolutePath -and -not $relativePath) { continue }
     if ($commandLine -notmatch '(?i)(?:^|\s)start(?:\s|$)') { continue }
-    if ($commandLine -match $portPattern) { return $true }
+    if ($commandLine -notmatch $portPattern) { continue }
+    if ($relativePath -and -not $absolutePath) {
+      if ($null -eq $healthy) { $healthy = Test-SanmaoServerAtPort $port }
+      if (-not $healthy) { continue }
+    }
+    $processItem
   }
-  return $false
+}
+
+function Test-SanmaoProcessAtPort([int]$port) {
+  return @((Get-SanmaoNextProcessesAtPort $port)).Count -gt 0
 }
 
 function Stop-SanmaoProcessAtPort([int]$port) {
-  $escapedRoot = [regex]::Escape($root.TrimEnd('\'))
-  $nextPathPattern = "(?i)$escapedRoot[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
-  $portPattern = '(?i)(?:^|\s)(?:-p|--port)(?:\s+|=)' + [regex]::Escape("$port") + '(?=\s|$)'
-  foreach ($processItem in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
-    $commandLine = [string]$processItem.CommandLine
-    if (-not $commandLine) { continue }
-    if ($commandLine -notmatch $nextPathPattern) { continue }
-    if ($commandLine -notmatch '(?i)(?:^|\s)start(?:\s|$)') { continue }
-    if ($commandLine -match $portPattern) {
-      & taskkill.exe /PID ([int]$processItem.ProcessId) /T /F 2>$null | Out-Null
-    }
+  foreach ($processItem in @(Get-SanmaoNextProcessesAtPort $port)) {
+    & taskkill.exe /PID ([int]$processItem.ProcessId) /T /F 2>$null | Out-Null
   }
 }
 
@@ -154,7 +160,7 @@ if ($existingPort -gt 0) {
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.5.6' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.5.8' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js

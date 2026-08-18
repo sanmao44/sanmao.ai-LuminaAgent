@@ -1,3 +1,9 @@
+# 0.5.8 修复 Windows 更新后启动卡住
+
+- 兼容旧启动器使用相对 `node_modules` 路径启动 Next 的情况，避免残留服务锁定 `next-swc` 导致 `npm ci` 报 `EPERM`。
+- 启动器和停止脚本统一按 SANMAO 健康接口识别相对路径服务，更新后可可靠释放旧进程并重新监听原端口。
+- 统一 Windows、macOS 启动器和应用包显示版本号。
+
 # 0.5.7 更新可靠性与进度提示
 
 - Windows 和 macOS 启动器固定使用 webpack，避免中文内容触发 Turbopack 字符边界崩溃。

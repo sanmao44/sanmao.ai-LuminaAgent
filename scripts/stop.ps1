@@ -52,9 +52,13 @@ foreach ($processItem in $processes) {
   $port = Get-NextStartPort ([string]$processItem.CommandLine)
   if ($port -eq 0) { continue }
   $rootPattern = [regex]::Escape($root.TrimEnd('\'))
-  if ($healthyPorts.Count -eq 0 -or $healthyPorts -contains $port) {
-    $nextPathPattern = "(?i)$rootPattern[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
-    if ([string]$processItem.CommandLine -notmatch $nextPathPattern) { continue }
+  $nextPathPattern = "(?i)$rootPattern[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
+  $relativeNextPathPattern = '(?i)(?:^|["\s])(?:\.[\\/])?node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next(?=\s|["$]|$)'
+  $commandLine = [string]$processItem.CommandLine
+  $absolutePath = $commandLine -match $nextPathPattern
+  $relativePath = $commandLine -match $relativeNextPathPattern
+  if (-not $absolutePath -and -not $relativePath) { continue }
+  if ($absolutePath -or ($healthyPorts -contains $port -and (Test-SanmaoHealth $port))) {
     $targets += $processItem
   }
 }
