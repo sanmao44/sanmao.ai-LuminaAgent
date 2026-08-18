@@ -55,11 +55,15 @@ function Get-ListeningPortSnapshot {
 
 function Test-SanmaoProcessAtPort([int]$port) {
   $escapedRoot = [regex]::Escape($root.TrimEnd('\'))
+  # npm's Windows shim starts Next through node_modules\.bin\..\next.
+  # Accept both that form and the direct node_modules\next path so a second
+  # launcher cannot mistake an already-running service for a stopped one.
+  $nextPathPattern = "(?i)$escapedRoot[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
   $portPattern = '(?i)(?:^|\s)(?:-p|--port)(?:\s+|=)' + [regex]::Escape("$port") + '(?=\s|$)'
   foreach ($processItem in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
     $commandLine = [string]$processItem.CommandLine
     if (-not $commandLine) { continue }
-    if ($commandLine -notmatch "(?i)$escapedRoot[\\/]node_modules[\\/]next[\\/]dist[\\/]bin[\\/]next") { continue }
+    if ($commandLine -notmatch $nextPathPattern) { continue }
     if ($commandLine -notmatch '(?i)(?:^|\s)start(?:\s|$)') { continue }
     if ($commandLine -match $portPattern) { return $true }
   }
@@ -68,11 +72,12 @@ function Test-SanmaoProcessAtPort([int]$port) {
 
 function Stop-SanmaoProcessAtPort([int]$port) {
   $escapedRoot = [regex]::Escape($root.TrimEnd('\'))
+  $nextPathPattern = "(?i)$escapedRoot[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
   $portPattern = '(?i)(?:^|\s)(?:-p|--port)(?:\s+|=)' + [regex]::Escape("$port") + '(?=\s|$)'
   foreach ($processItem in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
     $commandLine = [string]$processItem.CommandLine
     if (-not $commandLine) { continue }
-    if ($commandLine -notmatch "(?i)$escapedRoot[\\/]node_modules[\\/]next[\\/]dist[\\/]bin[\\/]next") { continue }
+    if ($commandLine -notmatch $nextPathPattern) { continue }
     if ($commandLine -notmatch '(?i)(?:^|\s)start(?:\s|$)') { continue }
     if ($commandLine -match $portPattern) {
       & taskkill.exe /PID ([int]$processItem.ProcessId) /T /F 2>$null | Out-Null
@@ -141,7 +146,7 @@ if ($existingPort -gt 0) {
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.5.5' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.5.6' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js
@@ -216,6 +221,14 @@ $installedLockPath = '.\node_modules\.package-lock.json'
 $packageLockChanged = (Test-Path '.\package-lock.json') -and ((-not (Test-Path $installedLockPath)) -or ((Get-Item '.\package-lock.json').LastWriteTimeUtc -gt (Get-Item $installedLockPath).LastWriteTimeUtc))
 if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or $packageLockChanged) {
   Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
+  # If a stale/legacy launcher escaped the existing-service check, stop only
+  # this project's Next process before npm replaces native .node binaries.
+  # Otherwise Windows may reject npm's unlink with EPERM because next-swc is
+  # still loaded by the old server.
+  foreach ($repairPort in $portRange) {
+    if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
+  }
+  Start-Sleep -Milliseconds 500
   if (Test-Path '.\package-lock.json') { & npm ci --no-audit --no-fund } else { & npm install --no-audit --no-fund }
   if ($LASTEXITCODE -ne 0) {
     Write-Host ''
