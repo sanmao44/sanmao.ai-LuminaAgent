@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.6.0",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.0",
+  "latestVersion": "0.6.1",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.1",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.6.0",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.1/SANMAO.AI-0.6.1.zip",
   "mirrorUrls": [],
-  "sha256": "a888f06849f6738b439860ec1359599855fee667211eb43eeebe7ce23db5c772",
-  "publishedAt": "2026-08-19T01:38:00+08:00",
+  "sha256": "dd9de404f345a5eca05d4ee38c6d261f08a4f13d5332ff6b4b47f84c3fbd4064",
+  "publishedAt": "2026-08-19T12:00:00+08:00",
   "notes": [
-    "分享版新增用户实际提交的完整提示词，长提示词会自动换行和多栏排版。",
-    "主结果图按原图比例展示，并保留全部参考图的顺序、缩略图和文件名。",
-    "历史记录、结果查看器和生图日志继续兼容旧的单张参考图数据。",
-    "原图下载、备份恢复和本地数据保留逻辑不变。"
+    "完善 Windows 更新后的端口回连，升级后自动回到原服务端口。",
+    "增加 GitHub 更新归档兜底与可信来源校验。",
+    "改进残留开发/生产服务清理，减少端口占用和文件锁定。",
+    "应用内会自动提醒现有用户升级，并支持校验后安全更新。"
   ]
 }
