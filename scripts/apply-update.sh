@@ -6,6 +6,7 @@ TARGET_PATH=${2:?target path is required}
 PROCESS_ID=${3:?process id is required}
 VERSION=${4:?version is required}
 RESTART_PORT=${7:-0}
+PROGRESS_PATH=${8:-}
 STAGING_PATH=$(CDPATH= cd -- "$(dirname "$ARCHIVE_PATH")" && pwd)
 EXTRACT_PATH="$STAGING_PATH/extract-$$"
 LOCK_PATH="$STAGING_PATH/update.lock"
@@ -14,6 +15,13 @@ cleanup() {
   rm -f "$LOCK_PATH"
 }
 trap cleanup EXIT
+
+write_progress() {
+  [ -n "$PROGRESS_PATH" ] || return 0
+  PROGRESS_PATH="$PROGRESS_PATH" PROGRESS_STAGE="$1" PROGRESS_MESSAGE="$2" PROGRESS_PERCENT="$3" node -e "const fs=require('fs'); const path=process.env.PROGRESS_PATH; let value={}; try{value=JSON.parse(fs.readFileSync(path,'utf8'))}catch{} value.stage=process.env.PROGRESS_STAGE; value.message=process.env.PROGRESS_MESSAGE; value.percent=Number(process.env.PROGRESS_PERCENT); value.updatedAt=new Date().toISOString(); const tmp=path+'.'+process.pid+'.tmp'; fs.writeFileSync(tmp,JSON.stringify(value,null,2)); fs.renameSync(tmp,path);" 2>/dev/null || true
+}
+
+write_progress starting '正在替换程序文件并准备重启…' 98
 
 mkdir -p "$EXTRACT_PATH"
 if ! command -v unzip >/dev/null 2>&1; then
@@ -50,6 +58,7 @@ find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
   ! -name .data ! -name node_modules ! -name .git ! -name '.env*' \
   -exec rm -rf {} +
 cp -R "$PACKAGE_ROOT"/. "$TARGET_PATH"/
+write_progress starting '程序文件已替换，正在重新构建并启动…' 99
 rm -rf "$TARGET_PATH/.next" "$ARCHIVE_PATH" "$EXTRACT_PATH"
 
 if [ "$(uname -s)" = "Darwin" ] && [ -f "$TARGET_PATH/scripts/start-macos.sh" ]; then
@@ -68,3 +77,4 @@ else
   printf '%s\n' '更新后找不到适用的启动器。' >&2
   exit 1
 fi
+write_progress completed '更新完成，服务正在恢复…' 100

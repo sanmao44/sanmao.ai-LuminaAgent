@@ -1,5 +1,59 @@
 export type AgentWebMode = 'auto' | 'always' | 'off';
 
+export const DEFAULT_AGENT_DIRECTIONS = [
+  '强化构图层级：让主体更突出，优化元素大小、位置和留白。',
+  '优化光线色彩：保持主体与场景不变，调整光影、色温和对比度。',
+  '调整细节风格：保持当前构图与主体，尝试更统一、精致的材质和视觉风格。',
+] as const;
+
+const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
+const directionHeadingPattern = /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i;
+const visualTargetPattern = '(?:图|图片|画面|海报|封面|风格|构图|版式|布局|光线|色彩|视觉|细节|背景|主体|文字|标题|信息层级)';
+const editVerbPattern = '(?:修改|调整|改图|重绘|换|替换|优化|强化|弱化|增加|减少|去掉|删除|保持|延续|继续|尝试)';
+
+/** Extract the numbered/bulleted continuation choices from an assistant caption. */
+export function extractAgentDirections(content: string) {
+  const lines = String(content || '').replace(/\r/g, '').split('\n');
+  const headingIndex = lines.findIndex((line) => directionHeadingPattern.test(line));
+  if (headingIndex >= 0) {
+    const directions: string[] = [];
+    for (let index = headingIndex + 1; index < lines.length && directions.length < 3; index += 1) {
+      const line = lines[index];
+      if (/^\s*#{1,6}\s+/.test(line)) break;
+      if (!line.trim()) continue;
+      const match = line.match(directionItemPattern);
+      if (!match) break;
+      const value = match[1].replace(/^\*\*(.+)\*\*$/, '$1').trim();
+      if (value) directions.push(value);
+    }
+    if (directions.length) return directions;
+  }
+  return [...DEFAULT_AGENT_DIRECTIONS];
+}
+
+/** Identify a visual edit request that should be handled by image_edit. */
+export function isImageContinuationRequest(input: string) {
+  const text = String(input || '').trim();
+  if (!text) return false;
+  const actionThenTarget = new RegExp(`${editVerbPattern}.{0,32}${visualTargetPattern}`, 'i');
+  const targetThenAction = new RegExp(`${visualTargetPattern}.{0,32}${editVerbPattern}`, 'i');
+  return actionThenTarget.test(text) || targetThenAction.test(text);
+}
+
+/** Return the last image from the most recent assistant message containing images. */
+export function latestAssistantImage(messages: Array<{ role?: string; images?: unknown[] }> = []) {
+  for (const message of [...messages].reverse()) {
+    if (message?.role !== 'assistant' || !Array.isArray(message.images) || !message.images.length) continue;
+    return message.images[message.images.length - 1];
+  }
+  return null;
+}
+
+export function buildContinuationPrompt(direction: string) {
+  const value = String(direction || '').trim();
+  return value ? `请基于这张参考图继续修改：${value}` : '请基于这张参考图继续修改，保持主体和核心构图不变。';
+}
+
 /** Convert the legacy boolean preference without changing existing users' intent. */
 export function resolveAgentWebMode(value: unknown, legacy?: unknown): AgentWebMode {
   if (value === 'always' || value === 'off' || value === 'auto') return value;
@@ -25,6 +79,6 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string) {
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();
-  if (hasReferences && /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text)) return true;
+  if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
   return /(生成|画|做|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:导出|下载|保存|生成).{0,12}(?:文件|csv|json|markdown|文档|代码)/i.test(text);
 }

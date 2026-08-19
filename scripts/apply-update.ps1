@@ -4,7 +4,8 @@
   [Parameter(Mandatory = $true)][int]$ProcessId,
   [Parameter(Mandatory = $true)][string]$Version,
   [Parameter(Mandatory = $false)][string]$LogPath,
-  [Parameter(Mandatory = $false)][int]$Port = 0
+  [Parameter(Mandatory = $false)][int]$Port = 0,
+  [Parameter(Mandatory = $false)][string]$ProgressPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,22 @@ function Write-UpdateLog([string]$Message) {
   try {
     $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')] $Message"
     Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+  } catch {}
+}
+
+function Write-UpdateProgress([string]$Stage, [string]$Message, [int]$Percent) {
+  if (-not $ProgressPath) { return }
+  try {
+    $progress = if (Test-Path -LiteralPath $ProgressPath) {
+      Get-Content -LiteralPath $ProgressPath -Raw | ConvertFrom-Json
+    } else { [pscustomobject]@{} }
+    $progress.stage = $Stage
+    $progress.message = $Message
+    $progress.percent = $Percent
+    $progress.updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    $temporaryProgressPath = "$ProgressPath.$PID.tmp"
+    $progress | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporaryProgressPath -Encoding UTF8
+    Move-Item -LiteralPath $temporaryProgressPath -Destination $ProgressPath -Force
   } catch {}
 }
 
@@ -39,6 +56,7 @@ function Stop-CurrentServer {
 
 try {
   Write-UpdateLog "开始应用 SANMAO.AI $Version，目标目录：$TargetPath"
+  Write-UpdateProgress 'starting' '正在替换程序文件并准备重启…' 98
   New-Item -ItemType Directory -Force -Path $extractPath | Out-Null
   Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractPath -Force
   Write-UpdateLog '更新包已解压'
@@ -85,6 +103,7 @@ try {
     Write-UpdateLog '已保留本地更新运行时修复'
   }
   Write-UpdateLog '程序文件替换完成'
+  Write-UpdateProgress 'starting' '程序文件已替换，正在重新构建并启动…' 99
 
   # 让启动器重新构建生产产物，并根据 package-lock.json 检查依赖。
   Remove-Item -LiteralPath (Join-Path $TargetPath '.next') -Recurse -Force -ErrorAction SilentlyContinue
@@ -110,8 +129,10 @@ try {
     throw "更新后启动器异常退出（退出码 $($launcherProcess.ExitCode)）"
   }
   Write-UpdateLog '更新流程完成，等待新服务就绪'
+  Write-UpdateProgress 'completed' '更新完成，服务正在恢复…' 100
 } catch {
   Write-UpdateLog "更新失败：$($_.Exception.Message)"
+  Write-UpdateProgress 'failed' '更新失败，请检查更新日志后重试' 0
   Remove-Item -LiteralPath (Join-Path $stagingPath 'local-update-runtime.ts') -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
