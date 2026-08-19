@@ -4181,6 +4181,31 @@ function AssistantCodeBlock({ language, code, onNotify }) {
         ]
     });
 }
+function AgentImageLoadingCard({ activity }) {
+    const stage = activity?.stage || 'image_planning';
+    const message = activity?.message || (stage === 'image_generating' ? '正在生成图片…' : '正在构思画面…');
+    const details = [activity?.model, activity?.mode === 'edit' ? '编辑模式' : activity?.mode === 'generate' ? '生成模式' : '', activity?.count ? `${activity.count} 张` : ''].filter(Boolean).join(' · ');
+    return /*#__PURE__*/ _jsxs("div", {
+        className: "agent-image-loading-card",
+        role: "status",
+        "aria-live": "polite",
+        children: [
+            /*#__PURE__*/ _jsx("div", { className: "agent-image-loading-scan" }),
+            /*#__PURE__*/ _jsxs("div", {
+                className: "agent-image-loading-copy",
+                children: [
+                    /*#__PURE__*/ _jsx("strong", { children: message }),
+                    /*#__PURE__*/ _jsx("small", { children: details || (stage === 'caption' ? '马上展示图片与创作建议' : '正在处理本次创作请求') })
+                ]
+            }),
+            /*#__PURE__*/ _jsxs("div", {
+                className: "agent-image-loading-skeleton",
+                "aria-hidden": "true",
+                children: [/*#__PURE__*/ _jsx("i", {}), /*#__PURE__*/ _jsx("i", {}), /*#__PURE__*/ _jsx("i", {})]
+            })
+        ]
+    });
+}
 function AssistantMarkdown({ content, onNotify }) {
     const shouldCollapse = content.length > 2400 || content.split(/\n/).length > 36;
     const [expanded, setExpanded] = useState(false);
@@ -4359,7 +4384,8 @@ export default function Page() {
     const [messageReferencePreview, setMessageReferencePreview] = useState(null);
     const [agentFiles, setAgentFiles] = useState([]);
     const [agentModelId, setAgentModelId] = useState('auto');
-    const [agentWebSearchEnabled, setAgentWebSearchEnabled] = useState(true);
+    const [agentWebMode, setAgentWebMode] = useState('auto');
+    const [agentWebModeMenuOpen, setAgentWebModeMenuOpen] = useState(false);
     const [webSearchApiProvider, setWebSearchApiProvider] = useState('baidu-qianfan');
     const [webSearchProviderMenuOpen, setWebSearchProviderMenuOpen] = useState(false);
     const [webSearchApiKey, setWebSearchApiKey] = useState('');
@@ -4680,7 +4706,7 @@ export default function Page() {
     const generateBusy = activeGenerateTasks.length > 0;
     const agentWebSearchAvailable = Boolean(state.settings.webSearchConfigured) || Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
     const nativeWebSearchModelActive = Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
-    const agentWebSearchActive = agentWebSearchEnabled && agentWebSearchAvailable;
+    const agentWebSearchActive = agentWebMode !== 'off' && agentWebSearchAvailable;
     useEffect(()=>{
         let cancelled = false;
         let active = false;
@@ -4763,8 +4789,10 @@ export default function Page() {
             document.documentElement.dataset.theme = initial;
             document.documentElement.style.colorScheme = initial;
             setSuccessSoundEnabled(localStorage.getItem('sanmao-success-sound') === '1');
+            const savedWebMode = localStorage.getItem('sanmao-agent-web-mode');
             const savedWebSearch = localStorage.getItem('sanmao-agent-web-search');
-            if (savedWebSearch !== null) setAgentWebSearchEnabled(savedWebSearch !== '0');
+            if (savedWebMode === 'auto' || savedWebMode === 'always' || savedWebMode === 'off') setAgentWebMode(savedWebMode);
+            else if (savedWebSearch !== null) setAgentWebMode(savedWebSearch === '0' ? 'off' : 'auto');
             const savedSize = Number(localStorage.getItem('sanmao-history-page-size') || 24);
             if ([
                 12,
@@ -4883,7 +4911,8 @@ export default function Page() {
         const agentCall = getLastModelCall('agent');
         if (agentCall) {
             setAgentModelId(agentCall.mode === 'manual' && supports(agentCall.modelId, 'chat') ? agentCall.modelId : 'auto');
-            if (typeof agentCall.params.webSearch === 'boolean') setAgentWebSearchEnabled(agentCall.params.webSearch);
+            if (agentCall.params.webMode === 'auto' || agentCall.params.webMode === 'always' || agentCall.params.webMode === 'off') setAgentWebMode(agentCall.params.webMode);
+            else if (typeof agentCall.params.webSearch === 'boolean') setAgentWebMode(agentCall.params.webSearch ? 'auto' : 'off');
             restored.push('助手');
         }
         const generateCall = getLastModelCall('generate');
@@ -5302,17 +5331,13 @@ export default function Page() {
         } catch  {}
         if (enabled) primeSuccessSound();
     }
-    function setAgentWebSearchPreference(enabled) {
-        if (enabled && !agentWebSearchAvailable) {
-            setAgentWebSearchEnabled(false);
-            try {
-                localStorage.setItem('sanmao-agent-web-search', '0');
-            } catch  {}
-            return;
-        }
-        setAgentWebSearchEnabled(enabled);
+    function setAgentWebModePreference(mode) {
+        const nextMode = mode === 'always' || mode === 'off' ? mode : 'auto';
+        if (nextMode !== 'off' && !agentWebSearchAvailable) return notify('请先到设置里接入搜索 API，或选择支持联网的模型');
+        setAgentWebMode(nextMode);
         try {
-            localStorage.setItem('sanmao-agent-web-search', enabled ? '1' : '0');
+            localStorage.setItem('sanmao-agent-web-mode', nextMode);
+            localStorage.setItem('sanmao-agent-web-search', nextMode === 'off' ? '0' : '1');
         } catch  {}
     }
     function getSuccessAudioContext() {
@@ -5872,7 +5897,6 @@ export default function Page() {
             setState(data.state);
             setWebSearchApiKey('');
             setWebSearchApiResult(clear ? '已清除百度千帆本地配置；若设置了环境变量，仍会继续可用' : '百度千帆 API 已保存；AnySearch 环境变量存在时会优先使用 AnySearch，失败后自动切换百度千帆');
-            if (clear) setAgentWebSearchPreference(false);
         } catch (error) {
             setWebSearchApiResult(error instanceof Error ? error.message : '保存搜索 API 失败');
         } finally{
@@ -7244,7 +7268,8 @@ export default function Page() {
                     messages: payloadMessages,
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
-                    webSearch: agentWebSearchActive,
+                    webMode: agentWebMode,
+                    webSearch: agentWebMode !== 'off',
                     stream: true
                 })
             });
@@ -7329,6 +7354,7 @@ export default function Page() {
         ];
         const followUp = overrideRefs ? null : agentFollowUp;
         const requestContent = content || '请分析我上传的文件和参考图';
+        const likelyImageRequest = !task && /(?:生成|画|制作|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:改图|修图|重绘|换背景)/i.test(requestContent);
         const user = {
             id: uid('msg'),
             role: 'user',
@@ -7341,8 +7367,9 @@ export default function Page() {
         const pending = {
             id: pendingId,
             role: 'assistant',
-            content: '正在理解你的需求…',
-            pending: true
+            content: likelyImageRequest ? '正在构思画面…' : '正在准备回答…',
+            pending: true,
+            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' }
         };
         primeSuccessSound();
         const nextMessages = [
@@ -7373,6 +7400,13 @@ export default function Page() {
                             content: nextContent
                         } : message));
             };
+            const updatePendingActivity = (activity)=>{
+                if (activeChatIdRef.current === sessionId) setMessages((old)=>old.map((message)=>message.id === pendingId ? {
+                            ...message,
+                            content: activity?.message || message.content,
+                            activity
+                        } : message));
+            };
             const latestUserId = [
                 ...nextMessages
             ].reverse().find((message)=>message.role === 'user')?.id;
@@ -7393,8 +7427,7 @@ export default function Page() {
                             size: file.size
                         })) : []
                 }));
-            const searchMayBeUsed = agentWebSearchActive && !task;
-            updatePendingContent(searchMayBeUsed ? '正在判断是否需要联网…' : '正在连接对话模型…');
+            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' });
             const res = await fetch('/api/agent', {
                 method: 'POST',
                 headers: {
@@ -7405,7 +7438,8 @@ export default function Page() {
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     task,
-                    webSearch: agentWebSearchActive,
+                    webMode: agentWebMode,
+                    webSearch: agentWebMode !== 'off',
                     stream: true
                 })
             });
@@ -7413,7 +7447,13 @@ export default function Page() {
             if (res.headers.get('content-type')?.includes('text/event-stream')) {
                 let streamedText = '';
                 const final = await readAgentStream(res, (event)=>{
-                    if (event.type === 'status') updatePendingContent(event.message || '正在处理…');
+                    if (event.type === 'status') updatePendingActivity({
+                        stage: event.stage || 'answering',
+                        message: event.message || '正在处理…',
+                        model: event.model,
+                        mode: event.mode,
+                        count: event.count
+                    });
                     if (event.type === 'delta') {
                         streamedText += String(event.text || '');
                         updatePendingContent(streamedText);
@@ -7437,7 +7477,8 @@ export default function Page() {
                 providerId: usedChatModel?.providerId,
                 modelId: usedChatModel?.id,
                 params: {
-                    webSearch: agentWebSearchActive
+                    webMode: agentWebMode,
+                    webSearch: agentWebMode !== 'off'
                 }
             });
             let items = [];
@@ -7469,7 +7510,8 @@ export default function Page() {
                     role: 'assistant',
                     content: data.message || '已完成。',
                     images: items,
-                    files
+                    files,
+                    webSearch: data.webSearch || undefined
                 }
             ];
             pendingChatMessagesRef.current.delete(sessionId);
@@ -8885,6 +8927,14 @@ export default function Page() {
                                                                         message.role === 'assistant' && !message.pending && /*#__PURE__*/ _jsx("small", {
                                                                             children: "选中文字可一键推送生图或下载文件"
                                                                         }),
+                                                                        message.role === 'assistant' && !message.pending && message.webSearch && /*#__PURE__*/ _jsxs("small", {
+                                                                            className: "message-web-badge",
+                                                                            children: [
+                                                                                "已联网检索 · ",
+                                                                                message.webSearch.resultCount || 0,
+                                                                                " 条"
+                                                                            ]
+                                                                        }),
                                                                         message.role === 'assistant' && !message.pending && messageVersionsFor(message).length > 1 && /*#__PURE__*/ _jsxs("div", {
                                                                             className: "message-version-switch",
                                                                             children: [
@@ -8938,13 +8988,6 @@ export default function Page() {
                                                                             ]
                                                                         }, ref.id))
                                                                 }) : null,
-                                                                message.role === 'assistant' && !message.pending ? /*#__PURE__*/ _jsx(AssistantMarkdown, {
-                                                                    content: message.content,
-                                                                    onNotify: notify
-                                                                }) : /*#__PURE__*/ _jsx("p", {
-                                                                    className: message.pending ? 'pending' : '',
-                                                                    children: message.content
-                                                                }),
                                                                 message.images?.length ? /*#__PURE__*/ _jsx("div", {
                                                                     className: "message-images",
                                                                     children: message.images.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
@@ -8965,6 +9008,15 @@ export default function Page() {
                                                                                 ])
                                                                         }, item.id))
                                                                 }) : null,
+                                                                message.pending && /^(?:image_|caption)/.test(message.activity?.stage || '') ? /*#__PURE__*/ _jsx(AgentImageLoadingCard, {
+                                                                    activity: message.activity
+                                                                }) : message.role === 'assistant' && !message.pending ? /*#__PURE__*/ _jsx(AssistantMarkdown, {
+                                                                    content: message.content,
+                                                                    onNotify: notify
+                                                                }) : /*#__PURE__*/ _jsx("p", {
+                                                                    className: message.pending ? 'pending' : '',
+                                                                    children: message.content
+                                                                }),
                                                                 message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList, {
                                                                     files: message.files,
                                                                     onDownload: (file)=>{
@@ -9268,33 +9320,44 @@ export default function Page() {
                                                                     children: [
                                                                         /*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
-                                                                            className: `agent-web-toggle ${agentWebSearchActive ? 'active' : ''}`,
-                                                                            "aria-pressed": agentWebSearchActive,
+                                                                            className: `agent-web-mode-trigger ${agentWebMode}`,
+                                                                            onClick: ()=>setAgentWebModeMenuOpen((open)=>!open),
                                                                             "aria-describedby": "agent-web-toggle-tip",
-                                                                            onClick: ()=>setAgentWebSearchPreference(!agentWebSearchActive),
-                                                                            title: nativeWebSearchModelActive ? '当前模型自带联网能力' : undefined,
+                                                                            "aria-label": "联网模式",
+                                                                            "aria-expanded": agentWebModeMenuOpen,
                                                                             children: [
-                                                                                /*#__PURE__*/ _jsx("span", {
-                                                                                    className: `agent-native-web-dot ${nativeWebSearchModelActive ? 'active' : ''}`,
-                                                                                    "aria-label": nativeWebSearchModelActive ? '当前模型自带联网能力' : undefined
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsx(Icon, {
-                                                                                    name: "globe",
-                                                                                    size: 14
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsxs("span", {
-                                                                                    children: [
-                                                                                        "联网：",
-                                                                                        agentWebSearchActive ? '开' : '关'
-                                                                                    ]
-                                                                                })
+                                                                                /*#__PURE__*/ _jsx(Icon, { name: "globe", size: 14 }),
+                                                                                /*#__PURE__*/ _jsx("span", { children: `联网：${agentWebMode === 'auto' ? '智能' : agentWebMode === 'always' ? '始终' : '关闭'}` }),
+                                                                                /*#__PURE__*/ _jsx(Icon, { name: "down", size: 13 })
                                                                             ]
                                                                         }),
-                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                        agentWebModeMenuOpen && /*#__PURE__*/ _jsx("div", {
+                                                                            className: "agent-web-mode-menu",
+                                                                            role: "menu",
+                                                                            children: [
+                                                                                ['auto', '智能联网', '仅在需要最新或外部事实时搜索'],
+                                                                                ['always', '始终联网', '每轮都联网检索，回复可能较慢'],
+                                                                                ['off', '关闭联网', '最快的纯模型回复']
+                                                                            ].map(([mode, label, description])=>/*#__PURE__*/ _jsxs("button", {
+                                                                                type: "button",
+                                                                                role: "menuitemradio",
+                                                                                "aria-checked": agentWebMode === mode,
+                                                                                className: agentWebMode === mode ? 'active' : '',
+                                                                                onClick: ()=>{
+                                                                                    setAgentWebModePreference(mode);
+                                                                                    setAgentWebModeMenuOpen(false);
+                                                                                },
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsx("strong", { children: label }),
+                                                                                    /*#__PURE__*/ _jsx("small", { children: description })
+                                                                                ]
+                                                                            }, mode))
+                                                                        }),
+                                                                        !agentWebModeMenuOpen && /*#__PURE__*/ _jsx("span", {
                                                                             id: "agent-web-toggle-tip",
                                                                             className: "agent-web-tooltip",
                                                                             role: "tooltip",
-                                                                            children: nativeWebSearchModelActive ? agentWebSearchActive ? '当前模型支持原生联网搜索' : '当前模型自带联网能力，点击即可开启' : agentWebSearchActive ? '联网开关开启后，助手会根据问题自动判断是否需要搜索' : '请到设置里接入搜索 API，或选择支持原生联网的模型'
+                                                                            children: agentWebMode === 'auto' ? '仅在需要最新或外部事实时搜索，普通创作会立即回复' : agentWebMode === 'always' ? '每轮都会联网检索，回复可能较慢' : '不会联网，适合最快的纯模型回复'
                                                                         })
                                                                     ]
                                                                 }),

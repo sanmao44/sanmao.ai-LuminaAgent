@@ -58,6 +58,7 @@ export type ChatHistoryMessage = {
   versions?: ChatMessageVersion[];
   activeVersion?: number;
   followUp?: ChatFollowUp;
+  webSearch?: { provider?: string; query: string; resultCount: number; searchedAt?: string };
 };
 
 export type ChatSession = {

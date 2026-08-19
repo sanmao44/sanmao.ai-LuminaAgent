@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './agent-upgrades.css';
 
 export const viewport: Viewport = {
   colorScheme: 'light dark',
