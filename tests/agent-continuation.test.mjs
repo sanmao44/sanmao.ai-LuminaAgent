@@ -36,6 +36,23 @@ test('keeps compatibility with legacy bullet directions and provides a fallback'
   assert.ok(fallback.every((item) => typeof item === 'string' && item.length > 0));
 });
 
+test('removes the rendered direction section without removing the caption', () => {
+  const caption = [
+    '本次精修保持主体和构图不变。',
+    '',
+    '### 下一版可尝试方向',
+    '',
+    '1. 强化构图层级',
+    '2. 优化光线色彩',
+    '3. 调整细节风格',
+    '',
+    '补充说明。',
+  ].join('\n');
+
+  assert.equal(continuation.stripAgentDirectionSection(caption), '本次精修保持主体和构图不变。\n\n补充说明。');
+  assert.equal(continuation.stripAgentDirectionSection('没有方向列表的说明。'), '没有方向列表的说明。');
+});
+
 test('detects visual continuation requests without treating ordinary questions as edits', () => {
   assert.equal(continuation.isImageContinuationRequest('调整视觉风格，加入更简洁的线性图标'), true);
   assert.equal(continuation.isImageContinuationRequest('优化构图并强化信息层级'), true);

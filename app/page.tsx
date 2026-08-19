@@ -4208,42 +4208,34 @@ function AgentImageLoadingCard({ activity }) {
     });
 }
 function AgentDirectionPicker({ directions, disabled, onSelect }) {
-    return /*#__PURE__*/ _jsxs("div", {
-        className: "agent-direction-picker",
-        children: [
-            /*#__PURE__*/ _jsxs("div", {
-                className: "agent-direction-picker-head",
+    return /*#__PURE__*/ _jsx("div", {
+        className: "agent-direction-options",
+        children: directions.map((direction, index)=>/*#__PURE__*/ _jsxs("button", {
+                type: "button",
+                className: "agent-direction-option",
+                disabled: disabled,
+                title: direction,
+                "aria-label": `第${index + 1}项：${direction}`,
+                onClick: ()=>onSelect?.(direction),
                 children: [
-                    /*#__PURE__*/ _jsx("strong", {
-                        children: "下一版尝试方向"
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "agent-direction-option-number",
+                        children: index + 1
                     }),
-                    /*#__PURE__*/ _jsx("small", {
-                        children: "点击数字直接基于上一张图续生成"
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "agent-direction-option-copy",
+                        children: direction
+                    }),
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "agent-direction-option-arrow",
+                        "aria-hidden": "true",
+                        children: "›"
                     })
                 ]
-            }),
-            /*#__PURE__*/ _jsx("div", {
-                className: "agent-direction-picker-list",
-                children: directions.map((direction, index)=>/*#__PURE__*/ _jsxs("button", {
-                        type: "button",
-                        disabled: disabled,
-                        onClick: ()=>onSelect?.(direction),
-                        children: [
-                            /*#__PURE__*/ _jsx("span", {
-                                className: "agent-direction-number",
-                                children: index + 1
-                            }),
-                            /*#__PURE__*/ _jsx("span", {
-                                className: "agent-direction-text",
-                                children: direction
-                            })
-                        ]
-                    }, `${index}-${direction}`))
-            })
-        ]
+            }, `${index}-${direction}`))
     });
 }
-function AssistantMarkdown({ content, onNotify }) {
+function AssistantMarkdown({ content, onNotify, directionPicker }) {
     const shouldCollapse = content.length > 2400 || content.split(/\n/).length > 36;
     const [expanded, setExpanded] = useState(false);
     const lines = content.replace(/\r/g, '').split('\n');
@@ -4259,7 +4251,36 @@ function AssistantMarkdown({ content, onNotify }) {
             normalLines = [];
         }
     };
-    for (const line of lines){
+    let directionInserted = false;
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1){
+        const line = lines[lineIndex];
+        if (directionPicker && !directionInserted && /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line)) {
+            flushNormal();
+            blocks.push(/*#__PURE__*/ _jsxs("section", {
+                className: "agent-direction-section",
+                children: [
+                    /*#__PURE__*/ _jsx("h3", {
+                        children: line.replace(/^\s*#{1,6}\s*/, '').trim()
+                    }),
+                    /*#__PURE__*/ _jsx(AgentDirectionPicker, {
+                        directions: directionPicker.directions,
+                        disabled: directionPicker.disabled,
+                        onSelect: directionPicker.onSelect
+                    })
+                ]
+            }, `directions-${blocks.length}`));
+            directionInserted = true;
+            lineIndex += 1;
+            while (lineIndex < lines.length) {
+                if (!lines[lineIndex].trim() || /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)/.test(lines[lineIndex])) {
+                    lineIndex += 1;
+                    continue;
+                }
+                break;
+            }
+            lineIndex -= 1;
+            continue;
+        }
         const fence = line.match(/^\s*```\s*([^\s]*)\s*$/);
         if (fence) {
             if (codeLanguage === null) {
@@ -9081,16 +9102,16 @@ export default function Page() {
                                                                     activity: message.activity
                                                                 }) : message.role === 'assistant' && !message.pending ? /*#__PURE__*/ _jsx(AssistantMarkdown, {
                                                                     content: message.content,
-                                                                    onNotify: notify
+                                                                    onNotify: notify,
+                                                                    directionPicker: message.images?.length ? {
+                                                                        directions: extractAgentDirections(message.content),
+                                                                        disabled: activeAgentBusy || agentMessageSelectionMode || message.retrying,
+                                                                        onSelect: (direction)=>void continueAgentFromImage(message, direction)
+                                                                    } : null
                                                                 }) : /*#__PURE__*/ _jsx("p", {
                                                                     className: message.pending ? 'pending' : '',
                                                                     children: message.content
                                                                 }),
-                                                                message.role === 'assistant' && !message.pending && message.images?.length ? /*#__PURE__*/ _jsx(AgentDirectionPicker, {
-                                                                    directions: extractAgentDirections(message.content),
-                                                                    disabled: activeAgentBusy || agentMessageSelectionMode || message.retrying,
-                                                                    onSelect: (direction)=>void continueAgentFromImage(message, direction)
-                                                                }) : null,
                                                                 message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList, {
                                                                     files: message.files,
                                                                     onDownload: (file)=>{

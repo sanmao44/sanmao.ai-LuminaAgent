@@ -31,6 +31,27 @@ export function extractAgentDirections(content: string) {
   return [...DEFAULT_AGENT_DIRECTIONS];
 }
 
+/** Hide the textual direction list when the image message already renders it as buttons. */
+export function stripAgentDirectionSection(content: string) {
+  const lines = String(content || '').replace(/\r/g, '').split('\n');
+  const headingIndex = lines.findIndex((line) => directionHeadingPattern.test(line));
+  if (headingIndex < 0) return String(content || '');
+
+  let index = headingIndex + 1;
+  let directionCount = 0;
+  for (; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    if (!directionItemPattern.test(line)) break;
+    directionCount += 1;
+  }
+  if (!directionCount) return String(content || '');
+
+  const remaining = lines.slice(index);
+  while (remaining.length && !remaining[0].trim()) remaining.shift();
+  return [...lines.slice(0, headingIndex), ...remaining].join('\n').trim();
+}
+
 /** Identify a visual edit request that should be handled by image_edit. */
 export function isImageContinuationRequest(input: string) {
   const text = String(input || '').trim();
