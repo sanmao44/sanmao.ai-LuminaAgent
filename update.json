@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.6.1",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.1",
+  "latestVersion": "0.6.2",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.2",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.1/SANMAO.AI-0.6.1.zip",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.2/SANMAO.AI-0.6.2.zip",
   "mirrorUrls": [],
-  "sha256": "dd9de404f345a5eca05d4ee38c6d261f08a4f13d5332ff6b4b47f84c3fbd4064",
-  "publishedAt": "2026-08-19T12:00:00+08:00",
+  "sha256": "6e2ff2c36b356037c6fd8d986a313ee903872814ec16ef2f9167b563d1389e37",
+  "publishedAt": "2026-08-19T12:30:00+08:00",
   "notes": [
-    "完善 Windows 更新后的端口回连，升级后自动回到原服务端口。",
-    "增加 GitHub 更新归档兜底与可信来源校验。",
-    "改进残留开发/生产服务清理，减少端口占用和文件锁定。",
-    "应用内会自动提醒现有用户升级，并支持校验后安全更新。"
+    "修复 Roll 后处理造成的斜矩形、透明角和模糊背景拼接，改为无硬边放大裁切。",
+    "3D 构图导引提交时保持水平，Roll 仅在最终结果后处理阶段执行一次。",
+    "强化角度提示词，要求人物与场景随目标机位重建透视、可见面与遮挡关系。",
+    "增加大角度模型能力提示，并补充角度后处理与导引水平性的自动化测试。"
   ]
 }
