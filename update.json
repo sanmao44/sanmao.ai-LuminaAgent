@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.6.2",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.2",
+  "latestVersion": "0.6.3",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.3",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.2/SANMAO.AI-0.6.2.zip",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.3/SANMAO.AI-0.6.3.zip",
   "mirrorUrls": [],
-  "sha256": "6e2ff2c36b356037c6fd8d986a313ee903872814ec16ef2f9167b563d1389e37",
-  "publishedAt": "2026-08-19T12:30:00+08:00",
+  "sha256": "a3890f307f170c75c3c798f982f079b810364cd4d6e4122b341e9f337a81e6c8",
+  "publishedAt": "2026-08-19T13:30:00+08:00",
   "notes": [
-    "修复 Roll 后处理造成的斜矩形、透明角和模糊背景拼接，改为无硬边放大裁切。",
-    "3D 构图导引提交时保持水平，Roll 仅在最终结果后处理阶段执行一次。",
-    "强化角度提示词，要求人物与场景随目标机位重建透视、可见面与遮挡关系。",
-    "增加大角度模型能力提示，并补充角度后处理与导引水平性的自动化测试。"
+    "默认联网策略改为智能按需，普通创作、代码与聊天直接流式回复。",
+    "受控搜索空结果会回退至支持的模型原生联网，并明确搜索服务的权限、额度或来源问题。",
+    "对话出图增加构思、生成和创作建议加载卡，完成后优先展示图片与后续方向。",
+    "联网模式更换为深色界面一致的自定义菜单，提供智能、始终和关闭三种模式。"
   ]
 }
