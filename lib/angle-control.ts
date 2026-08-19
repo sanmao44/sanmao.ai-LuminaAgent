@@ -257,13 +257,13 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
   const userNote = note.trim();
   const referenceLine = options?.hasGuideReference
     ? cameraStart
-      ? '以图1作为人物和场景的唯一参考；图1当前视角对应已记录的起始机位，图2仅作为最终相机视角和构图参考，不复制灰模外观。'
-      : '以图1作为人物和场景的唯一参考；图2仅作为相机视角和构图参考，不复制灰模外观。'
+      ? '以图1作为人物、场景和光照的唯一视觉参考；图1当前视角对应已记录的起始机位。图2是水平的灰模机位/构图导引，只约束最终相机位置、可见面和裁切，不复制灰模外观或倾斜画面。'
+      : '以图1作为人物、场景和光照的唯一视觉参考；图2是水平的灰模机位/构图导引，只约束最终相机位置、可见面和裁切，不复制灰模外观或倾斜画面。'
     : '以图1作为人物和场景的唯一参考；按当前相机机位重新拍摄，不保留原始二维投影。';
   const cameraLine = `${cameraStart ? '把相机从已记录的起始机位移动到' : '把相机移到'}${compactYawDescription(yaw)}、${compactPitchDescription(target.pitch)}的位置${compactOpticsDescription(target)}重新拍摄同一个人物和同一个场景。`;
   const changeLine = options?.hasGuideReference
-    ? `场景和人物角度都要有变化，具体角度、画框内位置、人物比例和画幅裁切参考图2；保留和裁掉的区域按图2，不要自动居中或补全被裁区域；人物朝向、透视和遮挡按图2重建，不要把原图整体旋转或裁剪；保持人物身份和动作语义一致。${compactPerspectiveGuard(yaw)}`
-    : '场景和人物角度都要有变化，保持人物身份和动作语义一致。';
+    ? `这是一张从新机位真实重新拍摄的画面：人物和整个场景都必须按目标机位重建。按图2执行人物在画框内的位置、比例与裁切；按目标 yaw、pitch、焦段和距离改变脸部、身体、前景、中景、背景的透视、可见面、相对位移与遮挡关系。禁止复用图1的二维投影、整图旋转、只改裁切或把原始正面背景贴回去。镜头变化优先于逐像素身份稳定；大角度绕拍时允许少量细节漂移，以保证明显的侧面/背面与环境视差。${compactPerspectiveGuard(yaw)}`
+    : '这是一张从新机位真实重新拍摄的画面：人物和整个场景都必须随相机改变透视、可见面和遮挡关系；禁止复用原始二维投影、整图旋转或只改裁切。镜头变化优先于逐像素身份稳定。';
   const roll = compactRollDescription(target.roll);
   return [referenceLine, cameraLine, changeLine, roll, userNote ? `补充要求：${userNote}` : ''].filter(Boolean).join('\n');
 }

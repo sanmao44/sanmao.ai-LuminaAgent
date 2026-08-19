@@ -35,16 +35,16 @@ test('uses current yaw directly in the concise Chinese prompt', () => {
   });
   assert.equal(angle.relativeViewYaw(target), 51.6);
   assert.equal(angle.angleName(target.yaw), '右前');
-  assert.match(prompt, /图1作为人物和场景的唯一参考/);
-  assert.match(prompt, /图2仅作为相机视角和构图参考/);
+  assert.match(prompt, /图1作为人物、场景和光照的唯一视觉参考/);
+  assert.match(prompt, /图2是水平的灰模机位\/构图导引/);
   assert.match(prompt, /人物右前方约51\.6°/);
   assert.match(prompt, /低机位仰拍约22\.1°/);
   assert.match(prompt, /约62mm镜头/);
   assert.match(prompt, /约0\.9×距离/);
-  assert.match(prompt, /场景和人物角度都要有变化，具体角度、画框内位置、人物比例和画幅裁切参考图2/);
-  assert.match(prompt, /保留和裁掉的区域按图2，不要自动居中或补全被裁区域/);
-  assert.match(prompt, /人物朝向、透视和遮挡按图2重建/);
-  assert.match(prompt, /不要把原图整体旋转或裁剪/);
+  assert.match(prompt, /人物和整个场景都必须按目标机位重建/);
+  assert.match(prompt, /前景、中景、背景的透视、可见面、相对位移与遮挡关系/);
+  assert.match(prompt, /禁止复用图1的二维投影、整图旋转、只改裁切/);
+  assert.match(prompt, /镜头变化优先于逐像素身份稳定/);
   assert.match(prompt, /脸部、胸腔和肩部要呈明显右侧前遮挡关系/);
   assert.match(prompt, /不得保留原图正面平铺轮廓/);
   assert.doesNotMatch(prompt, /-16\.4°|subject-relative|RECONSTRUCTION|IMAGE 1|IMAGE 2/);
@@ -105,7 +105,7 @@ test('migrates legacy subject rotation into the final yaw once', () => {
 test('default parameters stay concise and optional parameters are dynamic', () => {
   const defaultPrompt = angle.compileAngleTargetPrompt('', camera({ yaw: 30 }), { hasGuideReference: true });
   assert.match(defaultPrompt, /人物右前方约30°/);
-  assert.doesNotMatch(defaultPrompt, /50mm|2\.2×距离|倾斜/);
+  assert.doesNotMatch(defaultPrompt, /50mm|2\.2×距离/);
 
   const prompt = angle.compileAngleTargetPrompt('保持原有表情', camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9, roll: 17, frameX: 2.1, frameY: -47.7 }), {
     hasGuideReference: true,
@@ -118,12 +118,12 @@ test('default parameters stay concise and optional parameters are dynamic', () =
   assert.doesNotMatch(prompt, /recorded start|Subject yaw|relative-view change|Δ|RECONSTRUCTION REQUIREMENTS|Do not crop/);
 });
 
-test('compiled prompt keeps the explicit reference reminder', () => {
+test('compiled prompt keeps one authoritative reconstruction instruction', () => {
   const prompt = angle.compileAngleTargetPrompt('', camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9, frameX: 2.1, frameY: -47.7 }), {
     hasGuideReference: true,
     output: { width: 720, height: 1280, aspectRatio: '9:16' },
   });
-  assert.equal(prompt.match(/场景和人物角度都要有变化，具体角度、画框内位置、人物比例和画幅裁切参考图2/g)?.length, 1);
+  assert.equal(prompt.match(/人物和整个场景都必须按目标机位重建/g)?.length, 1);
   assert.equal(prompt.split('\n').length, 3);
   assert.equal(prompt.match(/51\.6/g)?.length, 1);
   assert.equal(prompt.match(/22\.1/g)?.length, 1);
