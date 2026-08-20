@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.6.3",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.3",
+  "latestVersion": "0.6.4",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.4",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.3/SANMAO.AI-0.6.3.zip",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.4/SANMAO.AI-0.6.4.zip",
   "mirrorUrls": [],
-  "sha256": "a3890f307f170c75c3c798f982f079b810364cd4d6e4122b341e9f337a81e6c8",
-  "publishedAt": "2026-08-19T13:30:00+08:00",
+  "sha256": "7a158a4455a7323986f782b7cd8502fb48a3f1c1696de5f2d4d48bb0bd696815",
+  "publishedAt": "2026-08-20T00:00:00+08:00",
   "notes": [
-    "默认联网策略改为智能按需，普通创作、代码与聊天直接流式回复。",
-    "受控搜索空结果会回退至支持的模型原生联网，并明确搜索服务的权限、额度或来源问题。",
-    "对话出图增加构思、生成和创作建议加载卡，完成后优先展示图片与后续方向。",
-    "联网模式更换为深色界面一致的自定义菜单，提供智能、始终和关闭三种模式。"
+    "修复对话无法延续上一张助手生成图的问题，支持直接说“调整视觉风格”“优化构图”等修改意图。",
+    "图片助手消息新增 1、2、3 数字方向按钮，点击即可基于该消息最后一张图片续生成。",
+    "更新下载、替换和重启改为后台任务，更新弹窗与悬浮进度条持续展示阶段和进度。",
+    "显式上传的参考图优先，用户配置、API Key、历史记录和图片继续保留。"
   ]
 }

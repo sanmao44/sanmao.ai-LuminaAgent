@@ -17,11 +17,22 @@ type UpdateStatus = {
 
 type ApplyState = 'idle' | 'working' | 'started' | 'error';
 type CheckNoticeTone = 'success' | 'error';
+type UpdateProgress = {
+  jobId: string;
+  version: string;
+  stage: 'queued' | 'downloading' | 'verifying' | 'starting' | 'completed' | 'failed';
+  message: string;
+  percent: number | null;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  startedAt: string;
+  updatedAt: string;
+  error?: string;
+};
 
 const DISMISSED_KEY = 'sanmao-dismissed-update-version';
 const CHECKED_KEY = 'sanmao-update-checked-at';
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
-const RESTART_TIMEOUT = 10 * 60 * 1000;
 const PROJECT_URL = 'https://github.com/sanmao44/sanmao.ai-LuminaAgent';
 
 function openExternal(url?: string) {
@@ -35,6 +46,7 @@ export default function UpdateNotice() {
   const [showModal, setShowModal] = useState(false);
   const [applyState, setApplyState] = useState<ApplyState>('idle');
   const [applyMessage, setApplyMessage] = useState('');
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [checkNotice, setCheckNotice] = useState('');
   const [checkNoticeTone, setCheckNoticeTone] = useState<CheckNoticeTone>('success');
   const checkNoticeTimerRef = useRef<number | null>(null);
@@ -54,6 +66,59 @@ export default function UpdateNotice() {
   useEffect(() => () => {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
   }, []);
+
+  const readProgress = useCallback(async (jobId?: string) => {
+    try {
+      const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : '';
+      const response = await fetch(`/api/update/progress${query}`, { cache: 'no-store' });
+      if (!response.ok) return null;
+      const data = await response.json() as { progress?: UpdateProgress | null };
+      if (!data.progress) return null;
+      setUpdateProgress(data.progress);
+      setApplyMessage(data.progress.error || data.progress.message);
+      setApplyState(data.progress.stage === 'failed' ? 'error' : data.progress.stage === 'completed' ? 'started' : 'started');
+      return data.progress;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    void readProgress();
+  }, [readProgress]);
+
+  useEffect(() => {
+    if (!updateProgress || updateProgress.stage === 'failed') return;
+    if (updateProgress.stage === 'completed' && status?.currentVersion === updateProgress.version) {
+      setUpdateProgress(null);
+      setApplyState('idle');
+      return;
+    }
+    let cancelled = false;
+    const poll = window.setInterval(async () => {
+      const progress = await readProgress(updateProgress.jobId);
+      if (cancelled || !progress) return;
+      if ((progress.stage === 'starting' || progress.stage === 'completed') && status?.currentVersion !== progress.version) {
+        try {
+          const checkResponse = await fetch('/api/update?force=1', { cache: 'no-store' });
+          if (checkResponse.ok) {
+            const next = await checkResponse.json() as UpdateStatus;
+            setStatus(next);
+            if (next.currentVersion === progress.version) {
+              window.clearInterval(poll);
+              window.location.reload();
+            }
+          }
+        } catch {
+          // 服务重启期间短暂不可访问，继续保留进度条并重试。
+        }
+      }
+    }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [readProgress, status?.currentVersion, updateProgress?.jobId, updateProgress?.stage]);
 
   const check = useCallback(async (force = false) => {
     setBusy(true);
@@ -84,8 +149,8 @@ export default function UpdateNotice() {
   }, [check]);
 
   const updateLabel = useMemo(() => {
-    if (applyState === 'working') return '正在准备更新…';
-    if (applyState === 'started') return '更新已开始，等待重启…';
+    if (applyState === 'working') return '正在启动更新…';
+    if (applyState === 'started') return '更新进行中…';
     return status?.canApply ? '立即更新并重启' : '前往下载';
   }, [applyState, status?.canApply]);
 
@@ -94,7 +159,7 @@ export default function UpdateNotice() {
     setShowModal(false);
   }
 
-  async function applyUpdate() {
+  async function applyUpdate(runInBackground = false) {
     if (!status?.hasUpdate) return;
     if (!status.canApply) {
       openExternal(status.releaseUrl);
@@ -102,39 +167,31 @@ export default function UpdateNotice() {
     }
 
     setApplyState('working');
-    setApplyMessage('正在下载并校验更新包，用户数据不会被覆盖。');
+    setApplyMessage('正在启动后台更新任务，用户数据不会被覆盖。');
     try {
       const response = await fetch('/api/update/apply', { method: 'POST', cache: 'no-store' });
-      const data = await response.json() as { started?: boolean; error?: string };
+      const data = await response.json() as { started?: boolean; jobId?: string; error?: string };
       if (!response.ok || !data.started) throw new Error(data.error || '更新准备失败');
 
       setApplyState('started');
-      setApplyMessage('服务即将重启；首次更新可能需要安装依赖和重新构建，请保持此页面打开。');
-      const startedAt = Date.now();
-      const poll = window.setInterval(async () => {
-         if (Date.now() - startedAt > RESTART_TIMEOUT) {
-          window.clearInterval(poll);
-          setApplyState('error');
-           setApplyMessage('服务重启时间较长，请重新打开启动器或刷新页面检查版本；更新数据仍会保留。');
-          return;
-        }
-        try {
-          const checkResponse = await fetch('/api/update?force=1', { cache: 'no-store' });
-          if (!checkResponse.ok) return;
-          const next = await checkResponse.json() as UpdateStatus;
-          if (next.currentVersion !== status.currentVersion) {
-            window.clearInterval(poll);
-            window.location.reload();
-          }
-        } catch {
-          // 更新器正在停止旧服务，短暂请求失败是预期情况。
-        }
-      }, 1500);
+      await readProgress(data.jobId);
+      if (runInBackground) setShowModal(false);
     } catch (error) {
       setApplyState('error');
       setApplyMessage(error instanceof Error ? error.message : '更新失败，请前往 GitHub 手动下载。');
     }
   }
+
+  const progressPercent = updateProgress?.percent;
+  const progressLabel = updateProgress
+    ? updateProgress.stage === 'downloading' ? '正在下载更新'
+      : updateProgress.stage === 'verifying' ? '正在校验更新'
+        : updateProgress.stage === 'starting' ? '正在安装并重启'
+          : updateProgress.stage === 'completed' ? '更新即将完成'
+            : updateProgress.stage === 'failed' ? '更新失败'
+              : '正在准备更新'
+    : '';
+  const updateInProgress = Boolean(updateProgress && !['failed', 'completed'].includes(updateProgress.stage));
 
   const hasUpdate = Boolean(status?.hasUpdate && status.latestVersion && status.releaseUrl);
   const projectUrl = status?.projectUrl || PROJECT_URL;
@@ -150,6 +207,21 @@ export default function UpdateNotice() {
 
   return (
     <>
+      {updateProgress ? (
+        <button
+          type="button"
+          className={`update-progress-tray ${updateProgress.stage === 'failed' ? 'error' : updateProgress.stage === 'completed' ? 'complete' : ''}`}
+          onClick={() => setShowModal(true)}
+          aria-label="查看更新进度"
+        >
+          <span className="update-progress-tray-orb" aria-hidden="true" />
+          <span className="update-progress-tray-copy">
+            <strong>{progressLabel}</strong>
+            <small>{updateProgress.message}</small>
+          </span>
+          <span className="update-progress-tray-value">{progressPercent === null ? '…' : `${progressPercent}%`}</span>
+        </button>
+      ) : null}
       <aside className={`version-card ${hasUpdate ? 'has-update' : ''}`} aria-label="SANMAO.AI 版本信息">
         <div className="version-card-anchor">
           <div className="version-card-head">
@@ -207,20 +279,21 @@ export default function UpdateNotice() {
               <h2 id="update-modal-title">发现新版本 v{status?.latestVersion}</h2>
               <p>当前版本 v{status?.currentVersion}。更新会保留本地配置、API Key、历史记录和图片。</p>
               {status?.notes?.length ? <ul>{status.notes.slice(0, 4).map((note) => <li key={note}>{note}</li>)}</ul> : null}
-              {applyState !== 'idle' ? (
-                <div className={`update-progress ${applyState}`} role="status" aria-live="polite">
+              {applyState !== 'idle' || updateProgress ? (
+                <div className={`update-progress ${applyState} ${progressPercent !== null ? 'is-determinate' : ''}`} role="status" aria-live="polite">
                   <div className="update-progress-head">
-                    {applyState !== 'error' ? <span className="update-progress-spinner" aria-hidden="true" /> : <span className="update-progress-error-mark" aria-hidden="true">!</span>}
-                    <strong>{applyState === 'working' ? '正在处理更新' : applyState === 'started' ? '正在重启服务' : '更新失败'}</strong>
-                    {applyState !== 'error' ? <span className="update-progress-dots" aria-hidden="true">...</span> : null}
+                    {updateProgress?.stage === 'failed' || applyState === 'error' ? <span className="update-progress-error-mark" aria-hidden="true">!</span> : <span className="update-progress-spinner" aria-hidden="true" />}
+                    <strong>{updateProgress ? progressLabel : applyState === 'working' ? '正在启动更新' : applyState === 'started' ? '更新进行中' : '更新失败'}</strong>
+                    {updateProgress?.stage !== 'failed' && applyState !== 'error' ? <span className="update-progress-dots" aria-hidden="true">...</span> : null}
                   </div>
-                  <div className="update-progress-bar" aria-hidden="true"><span /></div>
-                  <p>{applyMessage}</p>
+                  <div className="update-progress-bar" aria-hidden="true"><span style={progressPercent === null || progressPercent === undefined ? undefined : { width: `${Math.max(0, Math.min(100, progressPercent))}%` }} /></div>
+                  <p>{updateProgress?.error || updateProgress?.message || applyMessage}</p>
                 </div>
               ) : null}
             </div>
             <div className="update-modal-actions">
               <button type="button" className="ghost-button" disabled={applyState === 'working'} onClick={dismissUpdate}>稍后提醒</button>
+              {status?.canApply && applyState === 'idle' ? <button type="button" className="ghost-button update-background-button" onClick={() => void applyUpdate(true)}>后台更新</button> : null}
               <button type="button" className="primary-small" disabled={applyState === 'working' || applyState === 'started'} onClick={() => void applyUpdate()}>
                 {applyState === 'working' ? <span className="mini-loader" /> : null}
                 {updateLabel}

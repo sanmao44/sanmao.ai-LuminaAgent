@@ -13,6 +13,7 @@ import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorit
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
+import { buildContinuationPrompt, extractAgentDirections, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -4206,7 +4207,35 @@ function AgentImageLoadingCard({ activity }) {
         ]
     });
 }
-function AssistantMarkdown({ content, onNotify }) {
+function AgentDirectionPicker({ directions, disabled, onSelect }) {
+    return /*#__PURE__*/ _jsx("div", {
+        className: "agent-direction-options",
+        children: directions.map((direction, index)=>/*#__PURE__*/ _jsxs("button", {
+                type: "button",
+                className: "agent-direction-option",
+                disabled: disabled,
+                title: direction,
+                "aria-label": `第${index + 1}项：${direction}`,
+                onClick: ()=>onSelect?.(direction),
+                children: [
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "agent-direction-option-number",
+                        children: index + 1
+                    }),
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "agent-direction-option-copy",
+                        children: direction
+                    }),
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "agent-direction-option-arrow",
+                        "aria-hidden": "true",
+                        children: "›"
+                    })
+                ]
+            }, `${index}-${direction}`))
+    });
+}
+function AssistantMarkdown({ content, onNotify, directionPicker }) {
     const shouldCollapse = content.length > 2400 || content.split(/\n/).length > 36;
     const [expanded, setExpanded] = useState(false);
     const lines = content.replace(/\r/g, '').split('\n');
@@ -4222,7 +4251,36 @@ function AssistantMarkdown({ content, onNotify }) {
             normalLines = [];
         }
     };
-    for (const line of lines){
+    let directionInserted = false;
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1){
+        const line = lines[lineIndex];
+        if (directionPicker && !directionInserted && /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line)) {
+            flushNormal();
+            blocks.push(/*#__PURE__*/ _jsxs("section", {
+                className: "agent-direction-section",
+                children: [
+                    /*#__PURE__*/ _jsx("h3", {
+                        children: line.replace(/^\s*#{1,6}\s*/, '').trim()
+                    }),
+                    /*#__PURE__*/ _jsx(AgentDirectionPicker, {
+                        directions: directionPicker.directions,
+                        disabled: directionPicker.disabled,
+                        onSelect: directionPicker.onSelect
+                    })
+                ]
+            }, `directions-${blocks.length}`));
+            directionInserted = true;
+            lineIndex += 1;
+            while (lineIndex < lines.length) {
+                if (!lines[lineIndex].trim() || /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)/.test(lines[lineIndex])) {
+                    lineIndex += 1;
+                    continue;
+                }
+                break;
+            }
+            lineIndex -= 1;
+            continue;
+        }
         const fence = line.match(/^\s*```\s*([^\s]*)\s*$/);
         if (fence) {
             if (codeLanguage === null) {
@@ -7200,6 +7258,24 @@ export default function Page() {
         setSection('generate');
         notify('已打开新的图片生成窗口，并带入原提示词和参数');
     }
+    async function continueAgentFromImage(message, direction) {
+        const image = latestAssistantImage([
+            message
+        ]);
+        if (!image) return;
+        const sessionId = activeChatIdRef.current;
+        if (sessionId && busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，请等本轮完成后再续图');
+        markHistoryImageViewed(image);
+        try {
+            const reference = await galleryItemToReference(image);
+            setSection('agent');
+            await sendAgent(buildContinuationPrompt(direction), undefined, [
+                reference
+            ]);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取上一张生成图片失败，暂时不能续图');
+        }
+    }
     async function retryAgentMessage(message) {
         if (message.images?.length) return retryAgentImage(message);
         if (message.retrying) return;
@@ -7343,18 +7419,32 @@ export default function Page() {
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
         const sessionId = activeChatId || uid('chat');
         if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，可点击左侧“新对话”并行进行');
-        const refs = overrideRefs ? [
+        let refs = overrideRefs ? [
             ...overrideRefs
         ] : [
             ...agentRefs
         ];
+        let autoContinuation = false;
+        if (!overrideRefs && !refs.length && isImageContinuationRequest(content)) {
+            const previousImage = latestAssistantImage(messages);
+            if (previousImage) {
+                try {
+                    refs = [
+                        await galleryItemToReference(previousImage)
+                    ];
+                    autoContinuation = true;
+                } catch (error) {
+                    return notify(error instanceof Error ? error.message : '无法读取上一张生成图片，暂时不能续图');
+                }
+            }
+        }
         if (refs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再发送');
         const files = overrideRefs ? [] : [
             ...agentFiles
         ];
         const followUp = overrideRefs ? null : agentFollowUp;
-        const requestContent = content || '请分析我上传的文件和参考图';
-        const likelyImageRequest = !task && /(?:生成|画|制作|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:改图|修图|重绘|换背景)/i.test(requestContent);
+        const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
+        const likelyImageRequest = !task && (isImageContinuationRequest(requestContent) || /(?:生成|画|制作|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:改图|修图|重绘|换背景)/i.test(requestContent));
         const user = {
             id: uid('msg'),
             role: 'user',
@@ -9012,7 +9102,12 @@ export default function Page() {
                                                                     activity: message.activity
                                                                 }) : message.role === 'assistant' && !message.pending ? /*#__PURE__*/ _jsx(AssistantMarkdown, {
                                                                     content: message.content,
-                                                                    onNotify: notify
+                                                                    onNotify: notify,
+                                                                    directionPicker: message.images?.length ? {
+                                                                        directions: extractAgentDirections(message.content),
+                                                                        disabled: activeAgentBusy || agentMessageSelectionMode || message.retrying,
+                                                                        onSelect: (direction)=>void continueAgentFromImage(message, direction)
+                                                                    } : null
                                                                 }) : /*#__PURE__*/ _jsx("p", {
                                                                     className: message.pending ? 'pending' : '',
                                                                     children: message.content

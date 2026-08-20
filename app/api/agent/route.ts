@@ -387,7 +387,7 @@ export async function POST(request: Request) {
       if (!preparedCaption) {
         preparedCaption = chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
           messages: [
-            { role: 'system', content: '只根据用户意图和已确认的图片提示词，写一段简短中文创作说明，并列出 2—3 个下一版可尝试方向。不要假装逐像素看到了图片，不要重复已完成生成。使用自然、精炼的 Markdown。' },
+            { role: 'system', content: '只根据用户意图和已确认的图片提示词，写一段简短中文创作说明。末尾必须添加“下一版可尝试方向”小标题，并使用 1.、2.、3. 的有序列表列出 2—3 个可直接用于基于当前图片继续修改的方向，每项一句话。不要假装逐像素看到了图片，不要重复已完成生成。使用自然、精炼的 Markdown。' },
             { role: 'user', content: `用户意图：${String(latest?.content || '').slice(0, 1200)}\n已确认的图片提示词：${prompt.slice(0, 4000)}` },
           ],
           tool_choice: 'none',
