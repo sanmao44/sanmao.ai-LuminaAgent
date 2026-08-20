@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.6.9",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.9",
+  "latestVersion": "0.7.0",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.0",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.9/SANMAO.AI-0.6.9.zip",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.0/SANMAO.AI-0.7.0.zip",
   "mirrorUrls": [],
-  "sha256": "7882808b574f12b1ffc0724d8985969b03025bdb6ded8cf8dc4ef2d69325e4ba",
-  "publishedAt": "2026-08-20T21:32:52+08:00",
+  "sha256": "e5712e961bc0eda54e18f5c91e73af3a160840b9a871ff699d28d5f324b5d8aa",
+  "publishedAt": "2026-08-21T02:34:48+08:00",
   "notes": [
-    "Agent 面板和对话消息区采用轻卡片层级，区分用户消息、助手正文、辅助信息和操作按钮。",
-    "增加兼容亮色与暗色主题的消息专用颜色变量，优化正文、Markdown 内容、联网状态和版本信息的阅读层级。",
-    "保留现有图片、文件、联网、版本切换、批量选择和移动端操作逻辑。",
-    "继续保留 0.6.8 的中文、英文和口语化绘图意图识别与图片工具路由能力。"
+    "分享入口并入 Agent 固定顶部栏，普通状态只显示紧凑按钮，不再挤压对话内容。",
+    "支持按问答组选择分享内容，默认空选，并提供全选、清空、取消和预览操作。",
+    "分享 PNG 保留 Markdown、生成图片、参考图、文件卡片、Logo、二维码和本地生成逻辑。",
+    "继续保留 0.6.9 的对话工作区视觉优化、中文英文绘图意图识别和图片工具路由能力。"
   ]
 }
