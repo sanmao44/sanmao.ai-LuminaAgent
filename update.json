@@ -5,12 +5,13 @@
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
   "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.4/SANMAO.AI-0.6.4.zip",
   "mirrorUrls": [],
-  "sha256": "7a158a4455a7323986f782b7cd8502fb48a3f1c1696de5f2d4d48bb0bd696815",
-  "publishedAt": "2026-08-20T00:00:00+08:00",
+  "sha256": "3969e825de04da4e60ffee9770025a8fad3403aa75596b0ac9871b03b6503ad5",
+  "publishedAt": "2026-08-20T03:00:00+08:00",
   "notes": [
     "修复对话无法延续上一张助手生成图的问题，支持直接说“调整视觉风格”“优化构图”等修改意图。",
     "图片助手消息新增 1、2、3 数字方向按钮，点击即可基于该消息最后一张图片续生成。",
     "更新下载、替换和重启改为后台任务，更新弹窗与悬浮进度条持续展示阶段和进度。",
-    "显式上传的参考图优先，用户配置、API Key、历史记录和图片继续保留。"
+    "显式上传的参考图优先，用户配置、API Key、历史记录和图片继续保留。",
+    "优化图片续图方向按钮的主题色表现，亮暗主题均保持柔和清晰。"
   ]
 }

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, copyFile, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, copyFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { UpdateStatus } from '@/lib/update';
 
@@ -29,9 +29,34 @@ type LocalUpdateOptions = {
 };
 
 const progressJobs = new Map<string, UpdateProgress>();
+const progressFilePath = join(process.cwd(), '.data', 'update-staging', 'update-progress.json');
+let progressWriteQueue: Promise<void> = Promise.resolve();
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function persistUpdateProgress(progress: UpdateProgress) {
+  const temporaryPath = `${progressFilePath}.${progress.jobId}.tmp`;
+  progressWriteQueue = progressWriteQueue.then(async () => {
+    try {
+      await mkdir(dirname(progressFilePath), { recursive: true });
+      await writeFile(temporaryPath, JSON.stringify(progress, null, 2), 'utf8');
+      await rename(temporaryPath, progressFilePath);
+    } catch {
+      // The in-memory progress remains authoritative while this process lives.
+    }
+  });
+}
+
+async function readPersistedUpdateProgress() {
+  try {
+    const parsed = JSON.parse(await readFile(progressFilePath, 'utf8')) as Partial<UpdateProgress>;
+    if (!parsed.jobId || !parsed.version || !parsed.stage || !parsed.updatedAt) return null;
+    return parsed as UpdateProgress;
+  } catch {
+    return null;
+  }
 }
 
 export function createUpdateJob(version: string) {
@@ -49,6 +74,7 @@ export function createUpdateJob(version: string) {
     updatedAt: now,
   };
   progressJobs.set(jobId, progress);
+  persistUpdateProgress(progress);
   return progress;
 }
 
@@ -62,10 +88,24 @@ export function getActiveUpdateProgress() {
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
 }
 
+export async function getLatestUpdateProgress(jobId?: string) {
+  const memoryProgress = jobId
+    ? progressJobs.get(jobId) || null
+    : [...progressJobs.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
+  const persistedProgress = await readPersistedUpdateProgress();
+  const candidates = [memoryProgress, persistedProgress].filter((progress): progress is UpdateProgress => {
+    if (!progress) return false;
+    return !jobId || progress.jobId === jobId;
+  });
+  return candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
+}
+
 function setUpdateProgress(jobId: string, patch: Partial<UpdateProgress>) {
   const current = progressJobs.get(jobId);
   if (!current) return;
-  progressJobs.set(jobId, { ...current, ...patch, updatedAt: nowIso() });
+  const next = { ...current, ...patch, updatedAt: nowIso() };
+  progressJobs.set(jobId, next);
+  persistUpdateProgress(next);
 }
 
 function formatBytes(value: number) {
@@ -93,7 +133,7 @@ function powershellLiteral(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function updaterArguments(scriptPath: string, archivePath: string, targetPath: string, version: string, logPath: string, port: number) {
+function updaterArguments(scriptPath: string, archivePath: string, targetPath: string, version: string, logPath: string, port: number, progressPath: string) {
   if (process.platform === 'win32') {
     // Windows PowerShell started directly with detached:true can exit with
     // code 0 without executing -File. Use a short foreground trampoline;
@@ -116,11 +156,13 @@ function updaterArguments(scriptPath: string, archivePath: string, targetPath: s
       logPath,
       '-Port',
       String(port),
+      '-ProgressPath',
+      progressPath,
     ].map(powershellLiteral).join(', ');
     const command = `Start-Process -FilePath 'powershell.exe' -ArgumentList @(${scriptArgs}) -WorkingDirectory ${powershellLiteral(targetPath)} -WindowStyle Hidden`;
     return ['-NoProfile', '-Command', command];
   }
-  return [scriptPath, archivePath, targetPath, String(process.pid), version, logPath, String(port)];
+  return [scriptPath, archivePath, targetPath, String(process.pid), version, logPath, String(port), progressPath];
 }
 
 /**
@@ -280,7 +322,7 @@ function safePackageSources(status: UpdateStatus) {
   });
 }
 
-export async function startLocalUpdate(status: UpdateStatus, options: LocalUpdateOptions = {}) {
+export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateOptions = {}) {
   const jobId = options.jobId || createUpdateJob(status.latestVersion || 'unknown').jobId;
   const port = Number.isInteger(options.port) && Number(options.port) >= 1024 && Number(options.port) <= 65525
     ? Number(options.port)
@@ -379,7 +421,7 @@ export async function startLocalUpdate(status: UpdateStatus, options: LocalUpdat
     }, null, 2), 'utf8');
 
     setUpdateProgress(jobId, { stage: 'starting', message: '更新包已校验，正在启动更新程序…', percent: 98 });
-    const child = spawn(updaterCommand(), updaterArguments(updaterPath, archivePath, root, status.latestVersion, logPath, port), {
+    const child = spawn(updaterCommand(), updaterArguments(updaterPath, archivePath, root, status.latestVersion, logPath, port, progressFilePath), {
       cwd: root,
       detached: process.platform !== 'win32',
       stdio: 'ignore',
@@ -403,4 +445,14 @@ export async function startLocalUpdate(status: UpdateStatus, options: LocalUpdat
     await rm(lockPath, { force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+/** Start the update without holding the HTTP request open during download/restart. */
+export async function startLocalUpdate(status: UpdateStatus, options: Omit<LocalUpdateOptions, 'jobId'> = {}) {
+  const job = createUpdateJob(status.latestVersion || 'unknown');
+  const port = Number.isInteger(options.port) && Number(options.port) >= 1024 && Number(options.port) <= 65525
+    ? Number(options.port)
+    : 0;
+  void runLocalUpdate(status, { ...options, port, jobId: job.jobId }).catch(() => undefined);
+  return { started: true, jobId: job.jobId, version: status.latestVersion, port };
 }
