@@ -7,7 +7,7 @@ import { searchWeb, type SearchResponse } from '@/lib/web-search';
 import { ONE_TAKE_VIDEO_PROMPT_INSTRUCTIONS } from '@/lib/one-take-video-prompt';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { likelyAgentToolRequest, resolveAgentWebMode, shouldUseAgentWebSearch } from '@/lib/agent-web';
+import { isImageContinuationRequest, likelyAgentToolRequest, likelyImageGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch } from '@/lib/agent-web';
 
 export const runtime = 'nodejs';
 
@@ -125,6 +125,40 @@ function modelIdentityReply(input: { actualModel: string | null; requestedModel:
     : `当前上游响应未返回 \`model\` 字段；本次请求发送的模型 ID 是 **${input.requestedModel}**。`;
   const upstreamId = input.actualModel || `未返回（本次请求：${input.requestedModel}）`;
   return `我是 SANMAO.AI 智能助手，支持问答、代码编写、文档处理、图文创意、逻辑推演等各类任务。\n\n${modelLine}\n\n- 上游模型 ID：${upstreamId}\n- 服务商：${input.providerName}\n- 服务商平台：${input.platform}\n\n如果你有具体需求，可以直接提出来。`;
+}
+
+function parseTextualImageArguments(content: unknown, fallbackPrompt: string) {
+  const text = typeof content === 'string' ? content.trim() : '';
+  const candidates = [text];
+  const objectMatch = text.match(/\{[\s\S]*\}/);
+  if (objectMatch && objectMatch[0] !== text) candidates.push(objectMatch[0]);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== 'object') continue;
+      return {
+        prompt: typeof parsed.prompt === 'string' && parsed.prompt.trim() ? parsed.prompt.trim() : fallbackPrompt,
+        // `model` is often the provider's raw ID (for example gpt-image-2),
+        // while getRuntimeImageGenerationModel expects SANMAO's internal ID.
+        // Keep the configured default unless the model explicitly returned an
+        // internal modelId.
+        modelId: typeof parsed.modelId === 'string' ? parsed.modelId : undefined,
+        aspectRatio: typeof parsed.aspectRatio === 'string' ? parsed.aspectRatio : undefined,
+        count: Number.isFinite(Number(parsed.count)) ? Number(parsed.count) : undefined,
+      };
+    } catch {}
+  }
+  return { prompt: fallbackPrompt };
+}
+
+function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; hasReferences: boolean }) {
+  const args = parseTextualImageArguments(input.content, input.prompt);
+  const name = input.hasReferences && isImageContinuationRequest(input.prompt) ? 'image_edit' : 'image_generate';
+  return {
+    id: 'sanmao-local-image-fallback',
+    type: 'function',
+    function: { name, arguments: JSON.stringify(args) },
+  };
 }
 
 function streamAgentResult(upstream: Response | null, metadata: { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; fallback?: string; webSearch?: (Omit<SearchResponse, 'results' | 'provider'> & { provider: string }) | null; statuses?: Array<Record<string, unknown>> }) {
@@ -298,6 +332,7 @@ export async function POST(request: Request) {
     // Search is selected locally before this point. Do not give ordinary
     // questions another model-side web_search planning round trip.
     const callableTools = tools.filter((tool: any) => tool.function.name !== 'web_search');
+    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && likelyImageGenerationRequest(latest?.content || '');
     const directStream = wantsStream && !identityQuestion && !likelyAgentToolRequest(latest?.content || '', latestRefs.length > 0);
     const streamStatuses = needsWebSearch
       ? [{ type: 'status', stage: 'web_search', message: webSearchData ? `已联网检索 ${webSearchData.resultCount} 条来源，正在整理回答…` : '联网检索未获得可靠结果，正在如实回答…' }]
@@ -318,14 +353,18 @@ export async function POST(request: Request) {
         : { messages: llmMessages });
     } catch (error) {
       if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
-      const fallback = await chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages });
-      const actualModel = extractUpstreamModel(fallback);
-      const fallbackMessage = identityQuestion
-        ? modelIdentityReply({ actualModel, requestedModel: agentRuntime.model.rawId, providerName: agentRuntime.provider.name, platform: providerPlatform })
-        : fallback?.choices?.[0]?.message?.content || '当前对话模型没有返回内容。';
-      return wantsStream
-        ? streamAgentResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: null })
-        : Response.json({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, toolSupport: false, webSearch: null });
+      if (imageGenerationRequest) {
+        first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: String(latest?.content || '').trim(), hasReferences: latestRefs.length > 0 })] } }] };
+      } else {
+        const fallback = await chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages });
+        const actualModel = extractUpstreamModel(fallback);
+        const fallbackMessage = identityQuestion
+          ? modelIdentityReply({ actualModel, requestedModel: agentRuntime.model.rawId, providerName: agentRuntime.provider.name, platform: providerPlatform })
+          : fallback?.choices?.[0]?.message?.content || '当前对话模型没有返回内容。';
+        return wantsStream
+          ? streamAgentResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: null })
+          : Response.json({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, toolSupport: false, webSearch: null });
+      }
     }
 
     const actualModel = extractUpstreamModel(first);
@@ -337,7 +376,10 @@ export async function POST(request: Request) {
     }
 
     const message = first?.choices?.[0]?.message;
-    const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    let toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    if (imageGenerationRequest && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
+      toolCalls = [...toolCalls, makeFallbackImageToolCall({ prompt: String(latest?.content || '').trim(), content: message?.content, hasReferences: latestRefs.length > 0 })];
+    }
     if (!toolCalls.length) {
       const plainMessage = message?.content || '当前对话模型没有返回内容。';
       return wantsStream ? streamAgentResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: null }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, toolSupport: true, webSearch: null });
