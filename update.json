@@ -1,15 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.6.5",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.5",
+  "latestVersion": "0.6.6",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.6",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.5/SANMAO.AI-0.6.5.zip",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.6/SANMAO.AI-0.6.6.zip",
   "mirrorUrls": [],
-  "sha256": "2da42fac1c2c92df84d7d086a293dc3905c5c6256f6c5de1d9159fb8e62759ea",
-  "publishedAt": "2026-08-20T10:30:00+08:00",
+  "sha256": "9e67915ef0de11527328f443201a0fa370be2644d0c9beb571e7fdbae6daf02e",
+  "publishedAt": "2026-08-20T14:00:00+08:00",
   "notes": [
-    "修复“生成一只狗”等自然语言生图请求被当作普通文字回答的问题，正确进入图片工具流程。",
-    "恢复对话生图加载卡的流光动态，生成过程中的状态反馈更清晰。",
-    "保留续图、后台更新、参考图优先和用户数据保留等 0.6.4 功能。"
+    "修复“画个猫”“帮我画一个猫”等短指令被对话模型当作普通文字返回的问题。",
+    "对话模型返回生图 JSON 而不是工具调用时，服务端自动转为已配置图片模型的真实生图请求。",
+    "“生成提示词”“画一张图的提示词”等提示词创作请求继续走文字回答，不会误调用图片模型。",
+    "保留 0.6.5 的自然语言生图触发、流光加载、续图和后台更新功能。"
   ]
 }
