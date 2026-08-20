@@ -100,6 +100,8 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string) {
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();
+  const naturalVisualGeneration = /^(?:请|帮我|给我|麻烦)?\s*(?:生成|画|绘制|画出|做|制作|创建|设计)\s*(?:一只|一张|一幅|几张|一组)\s*\S+/i;
+  if (naturalVisualGeneration.test(text)) return true;
   if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
   return /(生成|画|做|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:导出|下载|保存|生成).{0,12}(?:文件|csv|json|markdown|文档|代码)/i.test(text);
 }
