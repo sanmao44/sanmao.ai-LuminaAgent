@@ -13,7 +13,7 @@ import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorit
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
-import { buildContinuationPrompt, extractAgentDirections, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
+import { buildContinuationPrompt, extractAgentDirections, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -7444,7 +7444,7 @@ export default function Page() {
         ];
         const followUp = overrideRefs ? null : agentFollowUp;
         const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
-        const likelyImageRequest = !task && (isImageContinuationRequest(requestContent) || /(?:生成|画|制作|设计|创建|做成|变成|改成|排成|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:改图|修图|重绘|换背景)/i.test(requestContent));
+        const likelyImageRequest = !task && (isImageContinuationRequest(requestContent) || likelyImageGenerationRequest(requestContent));
         const user = {
             id: uid('msg'),
             role: 'user',
