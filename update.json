@@ -5,7 +5,7 @@
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
   "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.9/SANMAO.AI-0.6.9.zip",
   "mirrorUrls": [],
-  "sha256": "4d99f3fccab8af9b0732a685d83b7bea394b4005269decca2c2bb133e223e4fd",
+  "sha256": "7882808b574f12b1ffc0724d8985969b03025bdb6ded8cf8dc4ef2d69325e4ba",
   "publishedAt": "2026-08-20T21:32:52+08:00",
   "notes": [
     "Agent 面板和对话消息区采用轻卡片层级，区分用户消息、助手正文、辅助信息和操作按钮。",
