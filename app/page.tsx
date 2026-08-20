@@ -14,6 +14,7 @@ import { selectAutomaticModel } from '@/lib/model-selection';
 import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
+import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -4670,6 +4671,8 @@ export default function Page() {
     const [messageReferencePreview, setMessageReferencePreview] = useState(null);
     const [sharePreview, setSharePreview] = useState(null);
     const [shareBusy, setShareBusy] = useState(false);
+    const [shareSelectionMode, setShareSelectionMode] = useState(false);
+    const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
     const [agentFiles, setAgentFiles] = useState([]);
     const [agentModelId, setAgentModelId] = useState('auto');
     const [agentWebMode, setAgentWebMode] = useState('auto');
@@ -4704,6 +4707,12 @@ export default function Page() {
     const chatEndRef = useRef(null);
     const agentInputRef = useRef(null);
     const chatAutoFollowRef = useRef(false);
+    const chatScrollAfterCommitRef = useRef(false);
+    const chatScrollFramesRef = useRef({ first: 0, second: 0 });
+    const [conversationNavOpen, setConversationNavOpen] = useState(false);
+    const conversationNavigatorRef = useRef(null);
+    const conversationNavCloseTimerRef = useRef(0);
+    const conversationNavCloseAfterClickRef = useRef(false);
     const activeChatIdRef = useRef(null);
     const busyChatIdsRef = useRef(new Set());
     const pendingChatMessagesRef = useRef(new Map());
@@ -4929,6 +4938,32 @@ export default function Page() {
             })), [
         messages
     ]);
+    useEffect(()=>{
+        if (conversationItems.length > 0) return;
+        if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
+        conversationNavCloseTimerRef.current = 0;
+        conversationNavCloseAfterClickRef.current = false;
+        setConversationNavOpen(false);
+    }, [
+        conversationItems.length
+    ]);
+    const shareGroups = useMemo(()=>buildShareConversationGroups(messages), [
+        messages
+    ]);
+    const shareGroupByMessageId = useMemo(()=>new Map(shareGroups.flatMap((group)=>group.messageIds.map((id)=>[
+                id,
+                group
+            ]))), [
+        shareGroups
+    ]);
+    const selectableShareGroups = useMemo(()=>shareGroups.filter((group)=>group.selectable), [
+        shareGroups
+    ]);
+    const selectedShareMessages = useMemo(()=>flattenSelectedShareMessages(shareGroups, selectedShareGroups), [
+        shareGroups,
+        selectedShareGroups
+    ]);
+    const allShareGroupsSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
     const filteredChatSessions = useMemo(()=>{
         const query = chatHistorySearch.trim().toLowerCase();
         if (!query) return chatSessions;
@@ -4943,6 +4978,7 @@ export default function Page() {
     ]);
     const allChatSessionsSelected = selectableChatSessionIds.length > 0 && selectableChatSessionIds.every((id)=>selectedChatSessions.has(id));
     const activeAgentBusy = activeChatId ? busyChatIds.includes(activeChatId) : false;
+    const agentMessageSelectionActive = agentMessageSelectionMode || shareSelectionMode;
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const pagedGallery = useMemo(()=>filteredGallery.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), [
         filteredGallery,
@@ -5308,8 +5344,9 @@ export default function Page() {
     useEffect(()=>{
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();
-            setChatNearBottom(nearBottom);
-            if (!nearBottom) chatAutoFollowRef.current = false;
+            const pendingScroll = chatScrollAfterCommitRef.current;
+            setChatNearBottom(nearBottom || pendingScroll);
+            if (!nearBottom && !pendingScroll) chatAutoFollowRef.current = false;
         };
         updateChatScrollState();
         window.addEventListener('scroll', updateChatScrollState, {
@@ -5325,20 +5362,24 @@ export default function Page() {
         section
     ]);
     useEffect(()=>{
-        if (section !== 'agent' || !chatAutoFollowRef.current) return;
-        const timer = window.setTimeout(()=>{
-            chatEndRef.current?.scrollIntoView({
-                behavior: 'auto',
-                block: 'end'
-            });
-            window.requestAnimationFrame(()=>setChatNearBottom(isChatNearBottom()));
-        }, 0);
-        return ()=>window.clearTimeout(timer);
+        if (section !== 'agent') return;
+        const pendingScroll = chatScrollAfterCommitRef.current;
+        if (!chatAutoFollowRef.current && !pendingScroll) return;
+        if (pendingScroll) {
+            chatScrollAfterCommitRef.current = false;
+            chatAutoFollowRef.current = true;
+        }
+        scheduleChatScrollToEnd();
     }, [
         messages,
         section,
         activeChatId
     ]);
+    useEffect(()=>{
+        if (section === 'agent') return;
+        cancelScheduledChatScroll();
+        chatScrollAfterCommitRef.current = false;
+    }, [section]);
     useEffect(()=>{
         setPage(1);
     }, [
@@ -5577,13 +5618,38 @@ export default function Page() {
         const documentHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
         return documentHeight - window.scrollY - window.innerHeight < 120;
     }
+    function cancelScheduledChatScroll() {
+        const frames = chatScrollFramesRef.current;
+        if (frames.first) window.cancelAnimationFrame(frames.first);
+        if (frames.second) window.cancelAnimationFrame(frames.second);
+        chatScrollFramesRef.current = { first: 0, second: 0 };
+    }
+    function scheduleChatScrollToEnd() {
+        const frames = chatScrollFramesRef.current;
+        if (frames.first || frames.second) return;
+        frames.first = window.requestAnimationFrame(()=>{
+            frames.first = 0;
+            frames.second = window.requestAnimationFrame(()=>{
+                frames.second = 0;
+                if (!chatAutoFollowRef.current || sectionRef.current !== 'agent') return;
+                chatEndRef.current?.scrollIntoView({
+                    behavior: 'auto',
+                    block: 'end'
+                });
+                window.requestAnimationFrame(()=>setChatNearBottom(isChatNearBottom()));
+            });
+        });
+    }
     function followChatToEnd() {
         chatAutoFollowRef.current = true;
+        chatScrollAfterCommitRef.current = false;
         setChatNearBottom(true);
-        window.requestAnimationFrame(()=>chatEndRef.current?.scrollIntoView({
-                behavior: 'auto',
-                block: 'end'
-            }));
+        scheduleChatScrollToEnd();
+    }
+    function requestChatScrollAfterCommit() {
+        chatAutoFollowRef.current = true;
+        chatScrollAfterCommitRef.current = true;
+        setChatNearBottom(true);
     }
     function pauseChatAutoFollow() {
         chatAutoFollowRef.current = false;
@@ -5611,6 +5677,28 @@ export default function Page() {
                 behavior: 'smooth',
                 block: 'start'
             }), 0);
+    }
+    function clearConversationNavCloseTimer() {
+        if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
+        conversationNavCloseTimerRef.current = 0;
+    }
+    function openConversationNavigator() {
+        clearConversationNavCloseTimer();
+        conversationNavCloseAfterClickRef.current = false;
+        setConversationNavOpen(true);
+    }
+    function scheduleConversationNavClose(afterClick = false) {
+        if (afterClick) conversationNavCloseAfterClickRef.current = true;
+        clearConversationNavCloseTimer();
+        conversationNavCloseTimerRef.current = window.setTimeout(()=>{
+            conversationNavCloseTimerRef.current = 0;
+            const navigator = conversationNavigatorRef.current;
+            const pointerInside = Boolean(navigator?.matches(':hover'));
+            const focusInside = Boolean(navigator && navigator.contains(document.activeElement));
+            if (pointerInside || (!conversationNavCloseAfterClickRef.current && focusInside)) return;
+            conversationNavCloseAfterClickRef.current = false;
+            setConversationNavOpen(false);
+        }, 1000);
     }
     function setThemePreference(next) {
         setTheme(next);
@@ -7290,6 +7378,33 @@ export default function Page() {
         setAgentMessageSelectionMode(false);
         setSelectedAgentMessages(new Set());
     }
+    function resetShareSelection() {
+        setShareSelectionMode(false);
+        setSelectedShareGroups(new Set());
+    }
+    function beginShareSelection() {
+        if (!messages.length) return notify('当前对话还没有可分享的内容');
+        if (!selectableShareGroups.length) return notify('当前对话还没有可分享的已完成内容');
+        setShareSelectionMode(true);
+        setSelectedShareGroups(new Set());
+    }
+    function toggleShareGroupSelection(id) {
+        const group = shareGroups.find((item)=>item.id === id);
+        if (!group?.selectable) return;
+        setSelectedShareGroups((old)=>{
+            const next = new Set(old);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+    function toggleAllShareGroups() {
+        const allSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
+        setSelectedShareGroups(allSelected ? new Set() : new Set(selectableShareGroups.map((group)=>group.id)));
+    }
+    function clearShareGroupSelection() {
+        setSelectedShareGroups(new Set());
+    }
     function closeSidebarOnMobile() {
         if (window.matchMedia('(max-width: 780px)').matches) setSidebarOpen(false);
     }
@@ -7303,6 +7418,7 @@ export default function Page() {
         setAgentInput('');
         setAgentFollowUp(null);
         resetMessageSelection();
+        resetShareSelection();
         setSection('agent');
     }
     function openChatSession(session) {
@@ -7315,6 +7431,7 @@ export default function Page() {
         setAgentInput('');
         setAgentFollowUp(null);
         resetMessageSelection();
+        resetShareSelection();
         setSection('agent');
         followChatToEnd();
     }
@@ -7439,6 +7556,7 @@ export default function Page() {
         notify('已引用这条消息，可直接补充你的追问');
     }
     function beginAgentMessageSelection() {
+        if (shareSelectionMode) return notify('请先完成或取消分享选择');
         if (messages.some((message)=>message.pending)) return notify('请等当前消息生成完成后再批量删除');
         if (activeChatIdRef.current && busyChatIdsRef.current.has(activeChatIdRef.current)) return notify('当前对话正在回答，完成后再批量删除');
         setAgentMessageSelectionMode(true);
@@ -7662,6 +7780,7 @@ export default function Page() {
     }
     async function sendAgent(text = agentInput, task, overrideRefs) {
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
+        if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const content = text.trim();
         if (!content && !agentFiles.length && !agentRefs.length) return;
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
@@ -7724,7 +7843,7 @@ export default function Page() {
             ...nextMessages,
             pending
         ]);
-        followChatToEnd();
+        requestChatScrollAfterCommit();
         setAgentInput('');
         setAgentRefs([]);
         setAgentFiles([]);
@@ -8448,11 +8567,11 @@ export default function Page() {
     }
     async function shareConversation() {
         if (shareBusy) return;
-        if (!messages.length) return notify('当前对话还没有可分享的内容');
-        if (activeAgentBusy || messages.some((message)=>message.pending)) return notify('请等待当前回答完成后再分享');
+        if (!selectedShareMessages.length) return notify('请至少选择一组已完成的问答内容');
+        if (activeAgentBusy || selectedShareMessages.some((message)=>message.pending)) return notify('请等待当前回答完成后再分享');
         setShareBusy(true);
         try {
-            const result = await renderShareConversationImage(messages);
+            const result = await renderShareConversationImage(selectedShareMessages);
             const url = URL.createObjectURL(result.blob);
             setSharePreview({
                 url,
@@ -9258,49 +9377,89 @@ export default function Page() {
                                                     }, example))
                                             })
                                         ]
-                                    }) : /*#__PURE__*/ _jsxs("div", {
-                                        className: "message-list",
+                                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", {
-                                                className: "conversation-share-bar",
+                                                className: `conversation-share-bar ${shareSelectionMode ? 'is-selecting' : ''}`,
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "conversation-share-copy",
                                                         children: [
                                                             /*#__PURE__*/ _jsx("strong", {
-                                                                children: "把这段灵感分享出去"
+                                                                children: shareSelectionMode ? '挑选要分享的问答' : '把灵感分享出去'
                                                             }),
                                                             /*#__PURE__*/ _jsx("span", {
-                                                                children: "生成一张带品牌签名的 SANMAO.AI 对话长图"
+                                                                children: shareSelectionMode ? `已选择 ${selectedShareGroups.size} / ${selectableShareGroups.length} 组问答` : '先挑选问答组，再生成带品牌签名的 SANMAO.AI 对话长图'
                                                             })
                                                         ]
                                                     }),
-                                                    /*#__PURE__*/ _jsxs("button", {
+                                                    shareSelectionMode ? /*#__PURE__*/ _jsxs("div", {
+                                                        className: "conversation-share-actions",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "conversation-share-ghost",
+                                                                disabled: !selectableShareGroups.length,
+                                                                onClick: toggleAllShareGroups,
+                                                                children: allShareGroupsSelected ? '取消全选' : '全选已完成'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "conversation-share-ghost",
+                                                                disabled: !selectedShareGroups.size,
+                                                                onClick: clearShareGroupSelection,
+                                                                children: '清空选择'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "conversation-share-ghost",
+                                                                onClick: resetShareSelection,
+                                                                children: '取消'
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("button", {
+                                                                type: "button",
+                                                                className: "conversation-share-button",
+                                                                disabled: shareBusy || !selectedShareMessages.length || activeAgentBusy || messages.some((message)=>message.pending),
+                                                                onClick: ()=>void shareConversation(),
+                                                                title: !selectedShareMessages.length ? '请先选择要分享的问答组' : activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览选中的对话长图',
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                                        name: "share",
+                                                                        size: 15
+                                                                    }),
+                                                                    shareBusy ? '生成中…' : '生成预览'
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }) : /*#__PURE__*/ _jsxs("button", {
                                                         type: "button",
                                                         className: "conversation-share-button",
-                                                        disabled: shareBusy || activeAgentBusy || messages.some((message)=>message.pending),
-                                                        onClick: ()=>void shareConversation(),
-                                                        title: activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览分享对话长图',
+                                                        disabled: shareBusy || !selectableShareGroups.length,
+                                                        onClick: beginShareSelection,
+                                                        title: !selectableShareGroups.length ? '当前还没有可分享的已完成问答组' : '选择要分享的问答组',
                                                         children: [
                                                             /*#__PURE__*/ _jsx(Icon, {
                                                                 name: "share",
                                                                 size: 15
                                                             }),
-                                                            shareBusy ? '生成中…' : '分享对话'
+                                                            '分享对话'
                                                         ]
                                                     })
                                                 ]
                                             }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "message-list share-message-list",
+                                                children: [
                                             messages.map((message)=>/*#__PURE__*/ _jsxs("article", {
                                                     id: `message-${message.id}`,
-                                                    className: `message ${message.role} ${agentMessageSelectionMode ? 'selecting' : ''}`,
+                                                    className: `message ${message.role} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
                                                     children: [
                                                         /*#__PURE__*/ _jsx("div", {
                                                             className: "message-avatar",
                                                             children: message.role === 'user' ? '你' : 'S'
                                                         }),
                                                         /*#__PURE__*/ _jsxs("div", {
-                                                            className: `message-body ${agentMessageSelectionMode ? 'selecting' : ''}`,
+                                                            className: `message-body ${agentMessageSelectionActive ? 'selecting' : ''}`,
                                                             onMouseUp: (e)=>captureMessageSelection(e.currentTarget),
                                                             children: [
                                                                 agentMessageSelectionMode && /*#__PURE__*/ _jsxs("label", {
@@ -9312,6 +9471,19 @@ export default function Page() {
                                                                             checked: selectedAgentMessages.has(message.id),
                                                                             disabled: message.pending,
                                                                             onChange: ()=>toggleAgentMessageSelection(message.id)
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("span", {})
+                                                                    ]
+                                                                }),
+                                                                shareSelectionMode && shareGroupByMessageId.get(message.id)?.messageIds[0] === message.id && /*#__PURE__*/ _jsxs("label", {
+                                                                    className: "message-selection-toggle share-selection-toggle",
+                                                                    title: shareGroupByMessageId.get(message.id)?.label || '选择问答组',
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                            type: "checkbox",
+                                                                            checked: selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id),
+                                                                            disabled: !shareGroupByMessageId.get(message.id)?.selectable,
+                                                                            onChange: ()=>toggleShareGroupSelection(shareGroupByMessageId.get(message.id)?.id)
                                                                         }),
                                                                         /*#__PURE__*/ _jsx("span", {})
                                                                     ]
@@ -9414,12 +9586,12 @@ export default function Page() {
                                                                     directionPicker: message.images?.length ? {
                                                                         kind: 'image',
                                                                         directions: extractAgentDirections(message.content),
-                                                                        disabled: activeAgentBusy || agentMessageSelectionMode || message.retrying,
+                                                                         disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
                                                                         onSelect: (direction)=>void continueAgentFromImage(message, direction)
                                                                     } : {
                                                                         kind: 'chat',
                                                                         directions: extractChatDirections(message.content),
-                                                                        disabled: activeAgentBusy || agentMessageSelectionMode || message.retrying,
+                                                                         disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
                                                                         onSelect: (direction)=>void continueAgentFromChat(message, direction)
                                                                     }
                                                                 }) : /*#__PURE__*/ _jsx("p", {
@@ -9432,7 +9604,7 @@ export default function Page() {
                                                                         void downloadChatFile(file).catch(()=>notify('文件下载失败'));
                                                                     }
                                                                 }) : null,
-                                                                !message.pending && !agentMessageSelectionMode && /*#__PURE__*/ _jsxs("div", {
+                                                                 !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsxs("div", {
                                                                     className: `message-tools ${message.role === 'user' ? 'user-message-tools' : ''}`,
                                                                     children: [
                                                                         /*#__PURE__*/ _jsxs("button", {
@@ -9512,16 +9684,35 @@ export default function Page() {
                                                         })
                                                     ]
                                                 }, message.id)),
-                                            /*#__PURE__*/ _jsx("div", {
-                                                ref: chatEndRef
-                                            })
-                                        ]
-                                    }),
-                                    conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
-                                        className: "conversation-navigator",
+                                             /*#__PURE__*/ _jsx("div", {
+                                                 ref: chatEndRef
+                                             })
+                                         ]
+                                     }),
+                                     conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
+                                        ref: conversationNavigatorRef,
+                                        className: `conversation-navigator ${conversationNavOpen ? 'is-open' : ''}`,
+                                        onPointerEnter: openConversationNavigator,
+                                        onPointerLeave: ()=>scheduleConversationNavClose(),
+                                        onFocusCapture: openConversationNavigator,
+                                        onBlurCapture: (event)=>{
+                                            const nextTarget = event.relatedTarget;
+                                            if (!(nextTarget instanceof Node && event.currentTarget.contains(nextTarget))) scheduleConversationNavClose();
+                                        },
                                         children: [
                                             /*#__PURE__*/ _jsx("div", {
                                                 className: "conversation-nav-rail",
+                                                role: "button",
+                                                tabIndex: 0,
+                                                "aria-label": "打开本次对话导航",
+                                                "aria-expanded": conversationNavOpen,
+                                                onClick: ()=>conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator(),
+                                                onKeyDown: (event)=>{
+                                                    if (event.key === 'Enter' || event.key === ' ') {
+                                                        event.preventDefault();
+                                                        conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator();
+                                                    }
+                                                },
                                                 children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {}, item.id))
                                             }),
                                             !chatNearBottom && /*#__PURE__*/ _jsx("button", {
@@ -9548,13 +9739,20 @@ export default function Page() {
                                                     }),
                                                     conversationItems.map((item)=>/*#__PURE__*/ _jsx("button", {
                                                             type: "button",
-                                                            onClick: ()=>jumpToMessage(item.id),
+                                                            onClick: ()=>{
+                                                                jumpToMessage(item.id);
+                                                                scheduleConversationNavClose(true);
+                                                            },
                                                             title: item.text,
                                                             children: item.text
                                                         }, item.id))
                                                 ]
-                                            })
-                                        ]
+                                     })
+                                 ]
+                             }),
+                                 ]
+                             }),
+                             section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
                                     }),
                                     /*#__PURE__*/ _jsx("div", {
                                         className: "agent-composer-wrap",
@@ -9651,7 +9849,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("textarea", {
                                                     ref: agentInputRef,
                                                     value: agentInput,
-                                                    readOnly: agentMessageSelectionMode || promptOptimizing,
+                                                     readOnly: agentMessageSelectionActive || promptOptimizing,
                                                     onChange: (e)=>{
                                                         setAgentInput(e.target.value);
                                                         setAgentMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, agentRefs));
@@ -9679,7 +9877,7 @@ export default function Page() {
                                                     className: "agent-mention-menu",
                                                     onSelect: (index)=>insertReferenceMention(agentInput, setAgentInput, setAgentMentionOpen, agentInputRef, index)
                                                 }),
-                                                agentInput && !agentMessageSelectionMode && !promptOptimizing && /*#__PURE__*/ _jsx("button", {
+                                                agentInput && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsx("button", {
                                                     type: "button",
                                                     className: "agent-input-clear",
                                                     title: "清空输入内容",
@@ -9776,7 +9974,7 @@ export default function Page() {
                                                                         agentRefs.length > 0 && /*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
                                                                             className: `agent-quick-button ${agentRefs.length > 1 ? 'one-take' : 'reverse'}`,
-                                                                            disabled: activeAgentBusy || agentMessageSelectionMode || agentRefs.some((ref)=>ref.pending),
+                                                                             disabled: activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
                                                                             onClick: ()=>void reversePromptFromReferences(),
                                                                             "data-tooltip": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '按参考图顺序生成 15 秒一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
                                                                             "aria-label": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '按参考图顺序生成 15 秒一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
@@ -9791,7 +9989,7 @@ export default function Page() {
                                                                         agentInput.trim() && /*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
                                                                             className: "agent-quick-button optimize",
-                                                                            disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionMode,
+                                                                             disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionActive,
                                                                             onClick: ()=>void optimizeAgentPrompt(),
                                                                             "data-tooltip": "润色并细写输入框中的文案，不会自动发送",
                                                                             "aria-label": "润色并细写输入框中的文案，不会自动发送",
@@ -9809,9 +10007,9 @@ export default function Page() {
                                                         }),
                                                         /*#__PURE__*/ _jsx("button", {
                                                             className: "send-button",
-                                                            disabled: !agentInput.trim() && !agentFiles.length && !agentRefs.length || activeAgentBusy || agentMessageSelectionMode || agentRefs.some((ref)=>ref.pending),
+                                                            disabled: !agentInput.trim() && !agentFiles.length && !agentRefs.length || activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
                                                             onClick: ()=>void sendAgent(),
-                                                            title: agentMessageSelectionMode ? '请先完成或取消删除选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : activeAgentBusy ? '当前对话正在回答，可新建对话继续' : '发送',
+                                                            title: agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : activeAgentBusy ? '当前对话正在回答，可新建对话继续' : '发送',
                                                             children: /*#__PURE__*/ _jsx(Icon, {
                                                                 name: "send",
                                                                 size: 18
