@@ -7444,7 +7444,7 @@ export default function Page() {
         ];
         const followUp = overrideRefs ? null : agentFollowUp;
         const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
-        const likelyImageRequest = !task && (isImageContinuationRequest(requestContent) || /(?:生成|画|制作|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:改图|修图|重绘|换背景)/i.test(requestContent));
+        const likelyImageRequest = !task && (isImageContinuationRequest(requestContent) || /(?:生成|画|制作|设计|创建|做成|变成|改成|排成|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:改图|修图|重绘|换背景)/i.test(requestContent));
         const user = {
             id: uid('msg'),
             role: 'user',

@@ -200,7 +200,7 @@ if ($existingPort -gt 0) {
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.6.6' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.6.7' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js
