@@ -242,7 +242,7 @@ export default function UpdateNotice() {
               disabled={busy}
               onClick={() => {
                 if (hasUpdate) setShowModal(true);
-                else announceCheckResult(status?.error ? '暂时无法获取更新状态' : status ? '当前已是最新版本' : '正在获取版本状态…', status?.error ? 'error' : 'success');
+                else announceCheckResult(status?.error || (status ? '当前已是最新版本' : '正在获取版本状态…'), status?.error ? 'error' : 'success');
               }}
             >
               <div>
