@@ -37,6 +37,11 @@ test('tool requests stay on planner path while ordinary text can stream directly
   assert.equal(web.likelyImageGenerationRequest('帮我画一个猫'), true);
   assert.equal(web.likelyImageGenerationRequest('画宇宙飞船'), true);
   assert.equal(web.likelyImageGenerationRequest('我想画一个不存在的生物'), true);
+  assert.equal(web.likelyImageGenerationRequest('枯藤老树昏鸦，夕阳西下。生成一幅画!'), true);
+  assert.equal(web.likelyImageGenerationRequest('帮我生成一个 JSON 文件'), false);
+  assert.equal(web.likelyImageGenerationRequest('帮我生成一段生图提示词'), false);
+  assert.equal(web.likelyImageGenerationRequest('写一个画猫的提示词'), false);
+  assert.equal(web.likelyImageGenerationRequest('画一张图的提示词'), false);
   assert.equal(web.likelyAgentToolRequest('请换背景并保留人物', true), true);
   assert.equal(web.likelyAgentToolRequest('解释这段代码', false), false);
 });

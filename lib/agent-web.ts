@@ -101,10 +101,15 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string) {
 export function likelyImageGenerationRequest(input: string) {
   const text = String(input || '').trim();
   if (!text) return false;
+  const fileRequest = /(?:导出|下载|保存|生成).{0,12}(?:文件|csv|json|markdown|文档|代码)/i;
+  if (fileRequest.test(text)) return false;
+  const promptRequest = /(?:生成|制作|创建|设计|优化|改写|润色|写).{0,20}(?:提示词|prompt)/i;
+  if (promptRequest.test(text) && !/(?:画|绘制|画出)\s*(?:(?:一只|一张|一幅|几张|一组|个|一个)\s*)?(?:图|图片|画面|海报|封面|插画)/i.test(text)) return false;
+  if (/(?:提示词|prompt)\s*[：:，,。.!！?？]?\s*$/i.test(text)) return false;
   const drawRequest = /^(?:请|帮我|给我|麻烦|我想|我要|能不能|可以)?\s*(?:画|绘制|画出)\s*(?:(?:一下|个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)?\S+/i;
   const explicitGeneration = /^(?:请|帮我|给我|麻烦)?\s*(?:生成|制作|创建|设计)\s*(?:(?:个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)\S+/i;
-  return drawRequest.test(text) || explicitGeneration.test(text)
-    || /(?:生成|画|做|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)/i.test(text);
+  const embeddedVisualRequest = /(?:画|绘制|画出|生成|制作|创建|设计)\s*(?:(?:一下|个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)?(?:画|图|图片|画面|海报|封面|插画|logo|图标|\S+)/i;
+  return drawRequest.test(text) || explicitGeneration.test(text) || embeddedVisualRequest.test(text);
 }
 
 /** Requests that need the model's tool planner rather than direct text streaming. */
