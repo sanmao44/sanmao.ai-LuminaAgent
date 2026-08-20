@@ -5,7 +5,7 @@
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
   "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.5/SANMAO.AI-0.6.5.zip",
   "mirrorUrls": [],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "2da42fac1c2c92df84d7d086a293dc3905c5c6256f6c5de1d9159fb8e62759ea",
   "publishedAt": "2026-08-20T10:30:00+08:00",
   "notes": [
     "修复“生成一只狗”等自然语言生图请求被当作普通文字回答的问题，正确进入图片工具流程。",
