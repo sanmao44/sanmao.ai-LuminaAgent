@@ -9314,22 +9314,82 @@ export default function Page() {
                             }),
                             /*#__PURE__*/ _jsx("div", {
                                 className: "top-actions",
-                                children: /*#__PURE__*/ _jsxs("button", {
-                                    className: "theme-toggle",
-                                    onClick: toggleTheme,
-                                    children: [
-                                        theme === 'light' ? /*#__PURE__*/ _jsx(Icon, {
-                                            name: "moon",
-                                            size: 16
-                                        }) : /*#__PURE__*/ _jsx(Icon, {
-                                            name: "sun",
-                                            size: 16
-                                        }),
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: theme === 'light' ? '深色' : '浅色'
-                                        })
-                                    ]
-                                })
+                                children: [
+                                    section === 'agent' && messages.length > 0 && (shareSelectionMode ? /*#__PURE__*/ _jsxs("div", {
+                                        className: "conversation-share-controls",
+                                        role: "toolbar",
+                                        "aria-label": "分享内容选择",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                className: "conversation-share-count",
+                                                children: [
+                                                    selectedShareGroups.size,
+                                                    "/",
+                                                    selectableShareGroups.length
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control",
+                                                disabled: !selectableShareGroups.length,
+                                                onClick: toggleAllShareGroups,
+                                                children: allShareGroupsSelected ? '取消全选' : '全选'
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control",
+                                                disabled: !selectedShareGroups.size,
+                                                onClick: clearShareGroupSelection,
+                                                children: '清空'
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control",
+                                                onClick: resetShareSelection,
+                                                children: '取消'
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control primary",
+                                                disabled: shareBusy || !selectedShareMessages.length || activeAgentBusy || messages.some((message)=>message.pending),
+                                                onClick: ()=>void shareConversation(),
+                                                title: !selectedShareMessages.length ? '请先选择要分享的问答组' : activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览选中的对话长图',
+                                                children: shareBusy ? '生成中…' : '预览'
+                                            })
+                                        ]
+                                    }) : /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "conversation-share-entry",
+                                        disabled: shareBusy || !selectableShareGroups.length,
+                                        onClick: beginShareSelection,
+                                        title: !selectableShareGroups.length ? '当前还没有可分享的已完成问答组' : '选择要分享的问答组',
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "share",
+                                                size: 14
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: '分享'
+                                            })
+                                        ]
+                                    })),
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        className: "theme-toggle",
+                                        onClick: toggleTheme,
+                                        children: [
+                                            theme === 'light' ? /*#__PURE__*/ _jsx(Icon, {
+                                                name: "moon",
+                                                size: 16
+                                            }) : /*#__PURE__*/ _jsx(Icon, {
+                                                name: "sun",
+                                                size: 16
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: theme === 'light' ? '深色' : '浅色'
+                                            })
+                                        ]
+                                    })
+                                ]
                             })
                         ]
                     }),
@@ -9377,78 +9437,8 @@ export default function Page() {
                                                     }, example))
                                             })
                                         ]
-                                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
-                                        children: [
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                className: `conversation-share-bar ${shareSelectionMode ? 'is-selecting' : ''}`,
-                                                children: [
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "conversation-share-copy",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("strong", {
-                                                                children: shareSelectionMode ? '挑选要分享的问答' : '把灵感分享出去'
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: shareSelectionMode ? `已选择 ${selectedShareGroups.size} / ${selectableShareGroups.length} 组问答` : '先挑选问答组，再生成带品牌签名的 SANMAO.AI 对话长图'
-                                                            })
-                                                        ]
-                                                    }),
-                                                    shareSelectionMode ? /*#__PURE__*/ _jsxs("div", {
-                                                        className: "conversation-share-actions",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                type: "button",
-                                                                className: "conversation-share-ghost",
-                                                                disabled: !selectableShareGroups.length,
-                                                                onClick: toggleAllShareGroups,
-                                                                children: allShareGroupsSelected ? '取消全选' : '全选已完成'
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                type: "button",
-                                                                className: "conversation-share-ghost",
-                                                                disabled: !selectedShareGroups.size,
-                                                                onClick: clearShareGroupSelection,
-                                                                children: '清空选择'
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                type: "button",
-                                                                className: "conversation-share-ghost",
-                                                                onClick: resetShareSelection,
-                                                                children: '取消'
-                                                            }),
-                                                            /*#__PURE__*/ _jsxs("button", {
-                                                                type: "button",
-                                                                className: "conversation-share-button",
-                                                                disabled: shareBusy || !selectedShareMessages.length || activeAgentBusy || messages.some((message)=>message.pending),
-                                                                onClick: ()=>void shareConversation(),
-                                                                title: !selectedShareMessages.length ? '请先选择要分享的问答组' : activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览选中的对话长图',
-                                                                children: [
-                                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                                        name: "share",
-                                                                        size: 15
-                                                                    }),
-                                                                    shareBusy ? '生成中…' : '生成预览'
-                                                                ]
-                                                            })
-                                                        ]
-                                                    }) : /*#__PURE__*/ _jsxs("button", {
-                                                        type: "button",
-                                                        className: "conversation-share-button",
-                                                        disabled: shareBusy || !selectableShareGroups.length,
-                                                        onClick: beginShareSelection,
-                                                        title: !selectableShareGroups.length ? '当前还没有可分享的已完成问答组' : '选择要分享的问答组',
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx(Icon, {
-                                                                name: "share",
-                                                                size: 15
-                                                            }),
-                                                            '分享对话'
-                                                        ]
-                                                    })
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                className: "message-list share-message-list",
+                                    }) : /*#__PURE__*/ _jsxs("div", {
+                                        className: "message-list",
                                                 children: [
                                             messages.map((message)=>/*#__PURE__*/ _jsxs("article", {
                                                     id: `message-${message.id}`,
