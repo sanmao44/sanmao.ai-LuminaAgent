@@ -4705,6 +4705,7 @@ export default function Page() {
     const [selectionPush, setSelectionPush] = useState(null);
     const [chatNearBottom, setChatNearBottom] = useState(true);
     const chatEndRef = useRef(null);
+    const agentComposerRef = useRef(null);
     const agentInputRef = useRef(null);
     const chatAutoFollowRef = useRef(false);
     const chatScrollAfterCommitRef = useRef(false);
@@ -5606,6 +5607,22 @@ export default function Page() {
     }, [
         agentInput
     ]);
+    useEffect(()=>{
+        const composer = agentComposerRef.current;
+        if (!composer || typeof ResizeObserver === 'undefined') return;
+        const updateComposerHeight = ()=>{
+            document.documentElement.style.setProperty('--agent-composer-height', `${composer.getBoundingClientRect().height}px`);
+        };
+        updateComposerHeight();
+        const observer = new ResizeObserver(updateComposerHeight);
+        observer.observe(composer);
+        return ()=>{
+            observer.disconnect();
+            document.documentElement.style.removeProperty('--agent-composer-height');
+        };
+    }, [
+        section
+    ]);
     function notify(text) {
         if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
         setToast(text);
@@ -5614,9 +5631,23 @@ export default function Page() {
             toastTimerRef.current = null;
         }, 3000);
     }
+    function lastChatMessageElement() {
+        const lastMessage = messages[messages.length - 1];
+        return lastMessage ? document.getElementById(`message-${lastMessage.id}`) : null;
+    }
+    function chatComposerTop() {
+        const top = agentComposerRef.current?.getBoundingClientRect().top;
+        return typeof top === 'number' && Number.isFinite(top) ? Math.min(window.innerHeight, top) : window.innerHeight;
+    }
     function isChatNearBottom() {
         const documentHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
-        return documentHeight - window.scrollY - window.innerHeight < 120;
+        if (documentHeight - window.scrollY - window.innerHeight < 120) return true;
+        const lastMessage = lastChatMessageElement();
+        if (lastMessage) {
+            const targetBottom = Math.max(0, chatComposerTop() - 20);
+            return Math.abs(lastMessage.getBoundingClientRect().bottom - targetBottom) < 120;
+        }
+        return false;
     }
     function cancelScheduledChatScroll() {
         const frames = chatScrollFramesRef.current;
@@ -5636,7 +5667,17 @@ export default function Page() {
                     behavior: 'auto',
                     block: 'end'
                 });
-                window.requestAnimationFrame(()=>setChatNearBottom(isChatNearBottom()));
+                window.requestAnimationFrame(()=>{
+                    const lastMessage = lastChatMessageElement();
+                    if (lastMessage) {
+                        const overlap = lastMessage.getBoundingClientRect().bottom - (chatComposerTop() - 20);
+                        if (overlap > 0) window.scrollBy({
+                            top: overlap,
+                            behavior: 'auto'
+                        });
+                    }
+                    setChatNearBottom(isChatNearBottom());
+                });
             });
         });
     }
@@ -9437,8 +9478,10 @@ export default function Page() {
                                                     }, example))
                                             })
                                         ]
-                                    }) : /*#__PURE__*/ _jsxs("div", {
-                                        className: "message-list",
+                                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "message-list",
                                                 children: [
                                             messages.map((message)=>/*#__PURE__*/ _jsxs("article", {
                                                     id: `message-${message.id}`,
@@ -9737,14 +9780,15 @@ export default function Page() {
                                                             children: item.text
                                                         }, item.id))
                                                 ]
-                                     })
+                                     }),
                                  ]
-                             }),
-                                 ]
-                             }),
-                             section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
+                             })
+                             ]
+                              }),
+                              section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
                                     }),
                                     /*#__PURE__*/ _jsx("div", {
+                                        ref: agentComposerRef,
                                         className: "agent-composer-wrap",
                                         children: /*#__PURE__*/ _jsxs("div", {
                                             className: "agent-composer",
