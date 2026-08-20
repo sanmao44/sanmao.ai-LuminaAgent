@@ -1,119 +1,61 @@
-param([switch]$DryRun)
+﻿param(
+  [switch]$DryRun,
+  [int]$Port = 0
+)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $PSScriptRoot
 $legacyMarkerPath = Join-Path $env:TEMP 'sanmao-ai-studio-instance.lock'
-$portRange = @(3000..3010) + @(3210..3220)
 
-function Test-SanmaoHealth([int]$port) {
-  try {
-    $response = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/state" -UseBasicParsing -TimeoutSec 1
-    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 500) { return $false }
-    $data = $response.Content | ConvertFrom-Json
-    return $null -ne $data.providers -and $null -ne $data.models -and $null -ne $data.settings
-  } catch {
-    return $false
-  }
+$requestedPort = 0
+if ($Port -ge 1024 -and $Port -le 65525) {
+  $requestedPort = $Port
+} elseif ($env:SANMAO_PORT -match '^\d+$') {
+  $requestedPort = [int]$env:SANMAO_PORT
 }
+$portStart = if ($requestedPort -ge 1024 -and $requestedPort -le 65525) { $requestedPort } else { 3210 }
+$portEnd = $portStart + 10
+$portRange = $portStart..$portEnd
+$legacyPortRange = 3000..3010
 
-function Get-NextServerPort([string]$commandLine) {
-  if (-not $commandLine) { return 0 }
-  if ($commandLine -notmatch '(?i)next[\\/]dist[\\/]bin[\\/]next') { return 0 }
-  if ($commandLine -notmatch '(?i)(?:^|\s)(?:start|dev)(?:\s|$)') { return 0 }
-  if ($commandLine -match '(?i)(?:^|\s)(?:-p|--port)(?:\s+|=)(?<port>\d+)(?=\s|$)') {
-    $port = [int]$Matches.port
-    if ($portRange -contains $port) { return $port }
-  }
-  return 0
-}
+. (Join-Path $PSScriptRoot 'launcher-common.ps1')
+Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
+Write-SanmaoLauncherLog "停止器开始运行，端口范围：$portStart..$portEnd" 'INFO'
 
-function Get-ListeningPorts {
-  try {
-    return @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Select-Object -ExpandProperty LocalPort -Unique)
-  } catch {
-    try {
-      return @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Select-Object -ExpandProperty Port -Unique)
-    } catch {
-      return @()
-    }
-  }
-}
-
-$processes = @(Get-CimInstance Win32_Process)
-$listeningPorts = @(Get-ListeningPorts | Where-Object { $portRange -contains [int]$_ })
-$healthyPorts = @($listeningPorts | Where-Object { Test-SanmaoHealth ([int]$_) })
-$targets = @()
-
-# The launcher starts Next with a relative node_modules path. Therefore the
-# project root is not always present in CommandLine. A healthy /api/state on
-# the configured port is the authoritative ownership signal; the command-line
-# check prevents unrelated web processes from being stopped.
-foreach ($processItem in $processes) {
-  $port = Get-NextServerPort ([string]$processItem.CommandLine)
-  if ($port -eq 0) { continue }
-  $rootPattern = [regex]::Escape($root.TrimEnd('\'))
-  $nextPathPattern = "(?i)$rootPattern[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
-  $relativeNextPathPattern = '(?i)(?:^|["\s])(?:\.[\\/])?node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next(?=\s|["$]|$)'
-  $commandLine = [string]$processItem.CommandLine
-  $absolutePath = $commandLine -match $nextPathPattern
-  $relativePath = $commandLine -match $relativeNextPathPattern
-  if (-not $absolutePath -and -not $relativePath) { continue }
-  if ($absolutePath -or ($healthyPorts -contains $port -and (Test-SanmaoHealth $port))) {
-    $targets += $processItem
-  }
-}
-
-# Fallback: when Windows exposes a different node command line, use the
-# healthy SANMAO API port plus this project's Next path to identify the owner.
-$rootPattern = [regex]::Escape($root.TrimEnd('\'))
-$ownedNextPathPattern = "(?i)$rootPattern[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
-foreach ($port in $healthyPorts) {
-  try {
-    $ownerIds = @(Get-NetTCPConnection -State Listen -LocalPort ([int]$port) -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique)
-  } catch {
-    $ownerIds = @()
-  }
-  foreach ($ownerId in $ownerIds) {
-    $owner = $processes | Where-Object { [int]$_.ProcessId -eq [int]$ownerId } | Select-Object -First 1
-    if ($owner -and ([string]$owner.CommandLine -match $ownedNextPathPattern) -and ([string]$owner.CommandLine -match '(?i)(?:^|\s)(?:start|dev)(?:\s|$)')) {
-      $targets += $owner
-    }
-  }
-}
+$targets = @(Get-SanmaoOwnedServerProcesses -Ports @($legacyPortRange + $portRange))
 
 if (-not $targets) {
   Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
   Write-Host 'SANMAO.AI local service is not running.' -ForegroundColor Yellow
+  Write-SanmaoLauncherLog '没有发现正在运行的 SANMAO.AI 本地服务。' 'INFO'
   exit 0
 }
 
 $targets = @($targets | Sort-Object ProcessId -Unique)
 foreach ($target in $targets) {
   if ($DryRun) {
-    Write-Host "Would stop PID $($target.ProcessId) on port $(Get-NextServerPort ([string]$target.CommandLine)): $([string]$target.CommandLine)"
+    Write-Host "Would stop PID $($target.ProcessId) on port $($target.Port): $($target.CommandLine)"
     continue
   }
 
-  & taskkill.exe /PID ([int]$target.ProcessId) /T /F 2>$null | Out-Null
+  Write-SanmaoLauncherLog "停止 PID $($target.ProcessId) 端口 $($target.Port) 命令 $($target.CommandLine)" 'INFO'
+  Stop-SanmaoOwnedProcess -Process $target | Out-Null
 }
 
-$portsToVerify = @($healthyPorts) + @($targets | ForEach-Object { Get-NextServerPort ([string]$_.CommandLine) })
-$portsToVerify = @($portsToVerify | Where-Object { [int]$_ -gt 0 } | Select-Object -Unique)
-$remainingPorts = @()
-for ($i = 0; $i -lt 50 -and $portsToVerify.Count -gt 0; $i++) {
-  $listeningPorts = @(Get-ListeningPorts)
-  $remainingPorts = @($portsToVerify | Where-Object { $listeningPorts -contains [int]$_ })
-  if ($remainingPorts.Count -eq 0) { break }
-  Start-Sleep -Milliseconds 200
+$portsToVerify = @($targets | Select-Object -ExpandProperty Port -Unique)
+if ($DryRun) {
+  Write-Host 'Dry run complete; no process was stopped.' -ForegroundColor Yellow
+  exit 0
+}
+
+if ($portsToVerify.Count -gt 0 -and -not (Wait-SanmaoPortsReleased -Ports $portsToVerify -TimeoutMs 10000)) {
+  Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
+  $remaining = @($portsToVerify | Where-Object { @(Get-SanmaoOwningPidsByPort -Port $_).Count -gt 0 })
+  Write-SanmaoLauncherLog ("停止失败，端口仍被占用：" + ($remaining -join ', ')) 'ERROR'
+  Write-Host ("停止失败：端口仍被占用：" + ($remaining -join ', ')) -ForegroundColor Red
+  exit 1
 }
 
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
-if ($DryRun) {
-  Write-Host 'Dry run complete; no process was stopped.' -ForegroundColor Yellow
-} else {
-  if ($remainingPorts.Count -gt 0) {
-    Write-Host ("停止失败：端口仍被占用：" + ($remainingPorts -join ', ')) -ForegroundColor Red
-    exit 1
-  }
-  Write-Host ("SANMAO.AI local service stopped. PID(s): " + (($targets | Select-Object -ExpandProperty ProcessId) -join ', ')) -ForegroundColor Green
-}
+Write-Host ("SANMAO.AI local service stopped. PID(s): " + (($targets | Select-Object -ExpandProperty ProcessId) -join ', ')) -ForegroundColor Green
+Write-SanmaoLauncherLog ("已停止 SANMAO.AI 本地服务 PID(s): " + (($targets | Select-Object -ExpandProperty ProcessId) -join ', ')) 'INFO'

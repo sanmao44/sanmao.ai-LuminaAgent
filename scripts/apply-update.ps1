@@ -105,31 +105,53 @@ try {
   Write-UpdateLog '程序文件替换完成'
   Write-UpdateProgress 'starting' '程序文件已替换，正在重新构建并启动…' 99
 
-  # 让启动器重新构建生产产物，并根据 package-lock.json 检查依赖。
+    # 让启动器重新构建生产产物，并根据 package-lock.json 检查依赖。
   Remove-Item -LiteralPath (Join-Path $TargetPath '.next') -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $runtimePatchPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
 
+  # Use the newly installed launcher helpers for the readiness probe.
+  . (Join-Path $TargetPath 'scripts\launcher-common.ps1')
+  Initialize-SanmaoLauncher -Root $TargetPath -PortStart 3210 -PortEnd 3220 -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $TargetPath '.data\logs\launcher.log')
+
   $launcher = Join-Path $TargetPath 'scripts\start.ps1'
   if (-not (Test-Path -LiteralPath $launcher)) { throw '更新后找不到 Windows 启动器' }
-  $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcher)
+  $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcher, '-NonInteractive')
   if ($Port -ge 1024 -and $Port -le 65525) {
     # Keep this compatible with older releases whose start.ps1 did not yet
     # declare a -Port parameter; all supported launchers already honor the
     # SANMAO_PORT environment variable.
-    $launcherCommand = "`$env:SANMAO_PORT=$(PowerShellLiteral ([string]$Port)); & $(PowerShellLiteral $launcher)"
+    $launcherCommand = "`$env:SANMAO_PORT=$(PowerShellLiteral ([string]$Port)); & $(PowerShellLiteral $launcher) -NonInteractive"
     $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $launcherCommand)
   }
   $launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $launcherArguments -WorkingDirectory $TargetPath -WindowStyle Hidden -PassThru
   Write-UpdateLog "已启动更新后启动器 PID $($launcherProcess.Id)"
-  Start-Sleep -Milliseconds 1200
-  if ($launcherProcess.HasExited -and $launcherProcess.ExitCode -ne 0) {
-    throw "更新后启动器异常退出（退出码 $($launcherProcess.ExitCode)）"
+
+  $restartPorts = @()
+  if ($Port -ge 1024 -and $Port -le 65525) {
+    $restartPorts = @($Port)
+  } else {
+    $restartPorts = 3210..3220
   }
-  Write-UpdateLog '更新流程完成，等待新服务就绪'
-  Write-UpdateProgress 'completed' '更新完成，服务正在恢复…' 100
+  $deadline = (Get-Date).AddSeconds(180)
+  $ready = $false
+  while ((Get-Date) -lt $deadline) {
+    foreach ($probePort in $restartPorts) {
+      if (Test-SanmaoHealthEndpoint -Port $probePort) { $ready = $true; break }
+    }
+    if ($ready) { break }
+    if ($launcherProcess.HasExited -and $launcherProcess.ExitCode -ne 0) {
+      throw "更新后启动器异常退出（退出码 $($launcherProcess.ExitCode)）"
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $ready) {
+    throw '更新后服务未在 180 秒内就绪，请查看 .data/logs/launcher.log 与更新日志后重试。'
+  }
+  Write-UpdateLog '更新流程完成，新服务已就绪'
+  Write-UpdateProgress 'completed' '更新完成，服务已恢复。' 100
 } catch {
   Write-UpdateLog "更新失败：$($_.Exception.Message)"
   Write-UpdateProgress 'failed' '更新失败，请检查更新日志后重试' 0
