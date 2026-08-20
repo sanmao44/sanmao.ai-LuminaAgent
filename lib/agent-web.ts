@@ -97,11 +97,20 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string) {
   return explicit.test(text) || changingFact.test(text) || sourceNeed.test(text);
 }
 
+/** Identify a new image request before allowing the chat model to stream text. */
+export function likelyImageGenerationRequest(input: string) {
+  const text = String(input || '').trim();
+  if (!text) return false;
+  const drawRequest = /^(?:请|帮我|给我|麻烦|我想|我要|能不能|可以)?\s*(?:画|绘制|画出)\s*(?:(?:一下|个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)?\S+/i;
+  const explicitGeneration = /^(?:请|帮我|给我|麻烦)?\s*(?:生成|制作|创建|设计)\s*(?:(?:个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)\S+/i;
+  return drawRequest.test(text) || explicitGeneration.test(text)
+    || /(?:生成|画|做|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)/i.test(text);
+}
+
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();
-  const naturalVisualGeneration = /^(?:请|帮我|给我|麻烦)?\s*(?:生成|画|绘制|画出|做|制作|创建|设计)\s*(?:一只|一张|一幅|几张|一组)\s*\S+/i;
-  if (naturalVisualGeneration.test(text)) return true;
+  if (likelyImageGenerationRequest(text)) return true;
   if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
-  return /(生成|画|做|设计|创建|出).{0,14}(?:图|图片|海报|封面|插画|logo|图标)|(?:导出|下载|保存|生成).{0,12}(?:文件|csv|json|markdown|文档|代码)/i.test(text);
+  return /(?:导出|下载|保存|生成).{0,12}(?:文件|csv|json|markdown|文档|代码)/i.test(text);
 }

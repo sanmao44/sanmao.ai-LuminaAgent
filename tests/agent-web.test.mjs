@@ -33,6 +33,10 @@ test('smart mode searches changing facts and explicit source checks only', () =>
 test('tool requests stay on planner path while ordinary text can stream directly', () => {
   assert.equal(web.likelyAgentToolRequest('生成一张赛博朋克海报', false), true);
   assert.equal(web.likelyAgentToolRequest('生成一只狗', false), true);
+  assert.equal(web.likelyImageGenerationRequest('画个猫'), true);
+  assert.equal(web.likelyImageGenerationRequest('帮我画一个猫'), true);
+  assert.equal(web.likelyImageGenerationRequest('画宇宙飞船'), true);
+  assert.equal(web.likelyImageGenerationRequest('我想画一个不存在的生物'), true);
   assert.equal(web.likelyAgentToolRequest('请换背景并保留人物', true), true);
   assert.equal(web.likelyAgentToolRequest('解释这段代码', false), false);
 });
