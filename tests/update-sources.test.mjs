@@ -17,7 +17,7 @@ async function loadTs(fileUrl, replacements = []) {
 }
 
 const update = await loadTs(new URL('../lib/update.ts', import.meta.url), [
-  ["import packageInfo from '../package.json';", "const packageInfo = { version: '0.6.9' };"],
+  ["import packageInfo from '../package.json';", "const packageInfo = { version: '0.7.0' };"],
 ]);
 const local = await loadTs(new URL('../lib/local-update.ts', import.meta.url), [
   ["import type { UpdateStatus } from '@/lib/update';", ''],
