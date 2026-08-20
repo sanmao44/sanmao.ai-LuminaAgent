@@ -9,7 +9,7 @@ export const DEFAULT_AGENT_DIRECTIONS = [
 const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
 const directionHeadingPattern = /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i;
 const visualTargetPattern = '(?:图|图片|画面|海报|封面|风格|构图|版式|布局|光线|色彩|视觉|细节|背景|主体|文字|标题|信息层级)';
-const editVerbPattern = '(?:修改|调整|改图|重绘|换|替换|优化|强化|弱化|增加|减少|去掉|删除|保持|延续|继续|尝试)';
+const editVerbPattern = '(?:修改|调整|改图|重绘|换|替换|做成|变成|改成|排成|优化|强化|弱化|增加|减少|去掉|删除|保持|延续|继续|尝试)';
 
 /** Extract the numbered/bulleted continuation choices from an assistant caption. */
 export function extractAgentDirections(content: string) {
@@ -107,8 +107,8 @@ export function likelyImageGenerationRequest(input: string) {
   if (promptRequest.test(text) && !/(?:画|绘制|画出)\s*(?:(?:一只|一张|一幅|几张|一组|个|一个)\s*)?(?:图|图片|画面|海报|封面|插画)/i.test(text)) return false;
   if (/(?:提示词|prompt)\s*[：:，,。.!！?？]?\s*$/i.test(text)) return false;
   const drawRequest = /^(?:请|帮我|给我|麻烦|我想|我要|能不能|可以)?\s*(?:画|绘制|画出)\s*(?:(?:一下|个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)?\S+/i;
-  const explicitGeneration = /^(?:请|帮我|给我|麻烦)?\s*(?:生成|制作|创建|设计)\s*(?:(?:个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)\S+/i;
-  const embeddedVisualRequest = /(?:画|绘制|画出|生成|制作|创建|设计)\s*(?:(?:一下|个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)?(?:画|图|图片|画面|海报|封面|插画|logo|图标|\S+)/i;
+  const explicitGeneration = /^(?:请|帮我|给我|麻烦)?\s*(?:生成|制作|创建|设计|做成|变成|改成|排成)\s*(?:(?:个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)\S+/i;
+  const embeddedVisualRequest = /(?:画|绘制|画出|生成|制作|创建|设计|做成|变成|改成|排成)\s*(?:(?:一下|个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\s*)?(?:画|图|图片|画面|海报|封面|插画|logo|图标|\S+)/i;
   return drawRequest.test(text) || explicitGeneration.test(text) || embeddedVisualRequest.test(text);
 }
 
