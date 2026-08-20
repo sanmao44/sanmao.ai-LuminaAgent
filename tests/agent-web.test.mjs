@@ -51,3 +51,56 @@ test('tool requests stay on planner path while ordinary text can stream directly
   assert.equal(web.likelyAgentToolRequest('请换背景并保留人物', true), true);
   assert.equal(web.likelyAgentToolRequest('解释这段代码', false), false);
 });
+
+test('covers common Chinese and English drawing expressions', () => {
+  for (const input of [
+    '请画一只戴墨镜的猫',
+    '帮我绘制一幅山水画',
+    '请直接出图：未来城市',
+    '来一张海边日落',
+    '我要一张猫咪头像',
+    '我想要一个游戏角色立绘',
+    '帮我制作一张宣传海报',
+    '设计一个品牌 logo',
+    '做一张公众号封面',
+    '给这篇文章配图',
+    '给故事配一张插画',
+    '把这段内容转成信息图',
+    '将文字排成海报',
+    '生成一个机器人',
+    '创建一个不存在的生物',
+    '做个猫',
+    '来个宇宙飞船',
+    'draw a cat',
+    'create an image of a fox',
+    'make a poster',
+  ]) {
+    assert.equal(web.likelyImageGenerationRequest(input), true, input);
+  }
+});
+
+test('keeps text, file, tutorial and prompt-only requests out of image generation', () => {
+  for (const input of [
+    '请生成一段生图提示词',
+    '写一个画猫的提示词',
+    '帮我优化海报提示词',
+    '帮我写海报文案',
+    '制作一个海报方案',
+    '生成一个报告',
+    '生成一个视频',
+    '生成一张表格',
+    '我要一张表格',
+    '帮我生成一个 JSON 文件',
+    '怎么画一只猫',
+    '教我画海报',
+    '画图软件怎么用',
+    '给我解释这张图',
+    '分析这张海报',
+    '做海报的步骤',
+    '海报制作方法',
+    '生成一张海报的文案',
+    '导出一张图片文件',
+  ]) {
+    assert.equal(web.likelyImageGenerationRequest(input), false, input);
+  }
+});
