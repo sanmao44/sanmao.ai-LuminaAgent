@@ -1325,10 +1325,13 @@ function Dropdown({ value, options, onChange, placeholder = '请选择', classNa
         const next = !open;
         if (next && triggerRef.current) {
             const rect = triggerRef.current.getBoundingClientRect();
+            const viewportPadding = 8;
             const height = Math.min(300, options.length * 52 + 10);
+            const width = Math.min(rect.width, Math.max(0, window.innerWidth - viewportPadding * 2));
+            const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
             setMenuStyle({
-                left: rect.left,
-                width: rect.width,
+                left: Math.min(Math.max(viewportPadding, rect.left), maxLeft),
+                width,
                 top: rect.bottom + 6,
                 maxHeight: height,
                 ...rect.bottom + height + 12 > window.innerHeight ? {
@@ -1803,6 +1806,7 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                             children: "随机种子"
                                                         }),
                                                         /*#__PURE__*/ _jsx("input", {
+                                                            className: "editor-seed-input",
                                                             type: "number",
                                                             min: "0",
                                                             max: "2147483647",
