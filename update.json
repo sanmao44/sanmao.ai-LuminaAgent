@@ -5,7 +5,7 @@
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
   "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.6/SANMAO.AI-0.6.6.zip",
   "mirrorUrls": [],
-  "sha256": "e507540dcf8f262389fd545282240a3a7eb8e582562028e3548ea55f33fe17b8",
+  "sha256": "9e67915ef0de11527328f443201a0fa370be2644d0c9beb571e7fdbae6daf02e",
   "publishedAt": "2026-08-20T14:00:00+08:00",
   "notes": [
     "修复“画个猫”“帮我画一个猫”等短指令被对话模型当作普通文字返回的问题。",
