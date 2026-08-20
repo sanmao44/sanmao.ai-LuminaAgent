@@ -6,8 +6,15 @@ export const DEFAULT_AGENT_DIRECTIONS = [
   '调整细节风格：保持当前构图与主体，尝试更统一、精致的材质和视觉风格。',
 ] as const;
 
+export const DEFAULT_CHAT_DIRECTIONS = [
+  '请结合当前上下文举一个具体例子，帮助我更好理解。',
+  '请换一个角度分析这个问题，并说明利弊或适用场景。',
+  '请把上面的内容整理成一份可以直接执行的步骤清单。',
+] as const;
+
 const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
 const directionHeadingPattern = /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i;
+const chatDirectionHeadingPattern = /(?:你还可以继续|还可以继续|接下来(?:可以|还能)|继续聊什么|进一步(?:了解|讨论|展开))/i;
 const visualTargetPattern = '(?:图|图片|图像|画面|海报|封面|风格|构图|版式|布局|光线|色彩|视觉|细节|背景|主体|文字|标题|信息层级|插画|插图|漫画|头像|壁纸|表情包|图标|logo|徽标|banner|横幅|配图|信息图|流程图|概念图|效果图|渲染图|视觉稿|主视觉|宣传图|广告图|缩略图|写真|艺术图|绘画|素描|草图|分镜)';
 const editVerbPattern = '(?:修改|调整|改图|修图|重绘|重制|重做|换|替换|做成|变成|改成|画成|转成|转为|排成|扩图|补图|抠图|上色|着色|换风格|换色|优化|强化|弱化|增加|减少|去掉|删除|保持|延续|继续|尝试)';
 const imageTargetPattern = '(?:图|图片|图像|画|画面|海报|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|徽标|banner|横幅|配图|信息图|流程图|概念图|效果图|渲染图|视觉稿|主视觉|宣传图|广告图|缩略图|写真|艺术图|绘画|素描|草图|分镜|立绘|人设|场景图|原画|美术图|image|picture|photo|poster|cover|illustration|avatar|wallpaper|icon)';
@@ -33,6 +40,30 @@ export function extractAgentDirections(content: string) {
     if (directions.length) return directions;
   }
   return [...DEFAULT_AGENT_DIRECTIONS];
+}
+
+/** Extract clickable follow-up prompts from a normal assistant reply. */
+export function extractChatDirections(content: string) {
+  const lines = String(content || '').replace(/\r/g, '').split('\n');
+  const headingIndex = lines.findIndex((line) => chatDirectionHeadingPattern.test(line));
+  if (headingIndex >= 0) {
+    const directions: string[] = [];
+    for (let index = headingIndex + 1; index < lines.length && directions.length < 3; index += 1) {
+      const line = lines[index];
+      if (/^\s*#{1,6}\s+/.test(line)) break;
+      if (!line.trim()) continue;
+      const match = line.match(directionItemPattern);
+      if (!match) break;
+      const value = match[1].replace(/^\*\*(.+)\*\*$/, '$1').trim();
+      if (value) directions.push(value);
+    }
+    if (directions.length) return directions;
+  }
+  return [...DEFAULT_CHAT_DIRECTIONS];
+}
+
+export function isChatDirectionHeading(line: string) {
+  return chatDirectionHeadingPattern.test(String(line || ''));
 }
 
 /** Hide the textual direction list when the image message already renders it as buttons. */
