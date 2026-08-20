@@ -1,20 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.6.8",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.8",
+  "latestVersion": "0.6.9",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.6.9",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.8/SANMAO.AI-0.6.8.zip",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.6.9/SANMAO.AI-0.6.9.zip",
   "mirrorUrls": [],
-  "sha256": "338cf9fa4d849e5ab7997a8109a681e57a5b704cdf9ebf8fdfd6bada75635f50",
-  "publishedAt": "2026-08-20T20:00:00+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-20T21:32:52+08:00",
   "notes": [
-    "扩展中文、英文和口语化绘图意图识别，覆盖画、绘制、出图、配图、海报、封面、插画、头像、壁纸、Logo、信息图、立绘、场景图等表达。",
-    "“来一张”“给我做个”“把内容转成信息图”等自然语言请求会进入图片生成流程。",
-    "提示词、文案、文件、报告、表格、教程、步骤、分析等文字需求继续排除。",
-    "带有参考图时，“做成/变成/改成”会继续按图片编辑流程处理。",
-    "“做成海报图的提示词”等提示词创作请求仍保持文字回答。",
-    "对话模型返回生图 JSON 而不是工具调用时，服务端自动转为已配置图片模型的真实生图请求。",
-    "“生成提示词”“画一张图的提示词”等提示词创作请求继续走文字回答，不会误调用图片模型。",
-    "保留 0.6.5 的自然语言生图触发、流光加载、续图和后台更新功能。"
+    "Agent 面板和对话消息区采用轻卡片层级，区分用户消息、助手正文、辅助信息和操作按钮。",
+    "增加兼容亮色与暗色主题的消息专用颜色变量，优化正文、Markdown 内容、联网状态和版本信息的阅读层级。",
+    "保留现有图片、文件、联网、版本切换、批量选择和移动端操作逻辑。",
+    "继续保留 0.6.8 的中文、英文和口语化绘图意图识别与图片工具路由能力。"
   ]
 }
