@@ -760,7 +760,7 @@ function drawShareInlineText(context, value, x, baseline, fontSize, color) {
     while(match = pattern.exec(String(value || ''))){
         if (match.index > cursor) tokens.push({ text: String(value).slice(cursor, match.index), kind: 'normal' });
         const token = match[0];
-        tokens.push({ text: token.slice(token.startsWith('**') || token.startsWith('__') ? 2 : 1, -2), kind: token.startsWith('`') ? 'code' : token.startsWith('**') || token.startsWith('__') ? 'bold' : 'italic' });
+        tokens.push({ text: token.slice(token.startsWith('**') || token.startsWith('__') ? 2 : 1, -1), kind: token.startsWith('`') ? 'code' : token.startsWith('**') || token.startsWith('__') ? 'bold' : 'italic' });
         cursor = match.index + token.length;
     }
     if (cursor < String(value || '').length) tokens.push({ text: String(value).slice(cursor), kind: 'normal' });
@@ -811,9 +811,9 @@ function drawShareConversationBlock(context, block, x, y, width) {
 }
 
 async function renderShareConversationImage(messages) {
+    if (messages.some((message)=>message.pending)) throw new Error('请等待当前回答完成后再分享');
     const completedMessages = messages.filter((message)=>!message.pending && (message.content?.trim() || message.images?.length || message.references?.length || message.files?.length));
     if (!completedMessages.length) throw new Error('当前对话还没有可分享的已完成内容');
-    if (completedMessages.some((message)=>message.pending)) throw new Error('请等待当前回答完成后再分享');
     const imageEntries = [];
     completedMessages.forEach((message, messageIndex)=>{
         (message.images || []).forEach((item, imageIndex)=>imageEntries.push({ messageIndex, imageIndex, item }));
