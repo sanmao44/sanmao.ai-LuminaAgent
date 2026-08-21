@@ -5,8 +5,8 @@
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
   "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.1/SANMAO.AI-0.7.1.zip",
   "mirrorUrls": [],
-  "sha256": "e5712e961bc0eda54e18f5c91e73af3a160840b9a871ff699d28d5f324b5d8aa",
-  "publishedAt": "2026-08-21T00:00:00+08:00",
+  "sha256": "9d425c663fd28c11cfcfa58ed3695fc09741133104c674fd31552454a28b63fb",
+  "publishedAt": "2026-08-21T13:45:00+08:00",
   "notes": [
     "原生联网搜索优先，支持 OpenAI Responses、Gemini grounding、Perplexity/Sonar 等原生搜索模型。",
     "智能联网优先识别事实提问、状态核验、时效性问题和上下文追问。",
