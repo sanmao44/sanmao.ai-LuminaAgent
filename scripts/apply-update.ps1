@@ -14,6 +14,6 @@ if (-not (Test-Path -LiteralPath $corePath)) {
   throw 'Updater core file is missing. Please download the complete package and try again.'
 }
 
-# Keep this entry point tiny so start.ps1 can restore it after an upgrade from
-# an old updater that overwrote this file with its own legacy implementation.
+# This stable entry point is restored by start.ps1 after migrations from old
+# releases, whose updater used to overwrite scripts/apply-update.ps1.
 & $corePath @PSBoundParameters

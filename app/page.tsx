@@ -4808,6 +4808,8 @@ export default function Page() {
     const [modelSearch, setModelSearch] = useState('');
     const [modelProviderFilter, setModelProviderFilter] = useState('all');
     const [modelKindFilter, setModelKindFilter] = useState('all');
+    const [expandedModelProviders, setExpandedModelProviders] = useState(new Set());
+    const modelGroupsInitializedRef = useRef(false);
     const [modelFavorites, setModelFavorites] = useState([]);
     const [messages, setMessages] = useState([]);
     const [chatSessions, setChatSessions] = useState([]);
@@ -4964,6 +4966,7 @@ export default function Page() {
     const navNoticeStateReadyRef = useRef(false);
     const [logImageSpecs, setLogImageSpecs] = useState({});
     const [logFilter, setLogFilter] = useState('all');
+    const [logSearch, setLogSearch] = useState('');
     const [logPage, setLogPage] = useState(1);
     const [selectedLog, setSelectedLog] = useState(null);
     const [localDirectoryHandle, setLocalDirectoryHandle] = useState(null);
@@ -5066,6 +5069,14 @@ export default function Page() {
         visibleModels
     ]);
     useEffect(()=>{
+        if (section !== 'models' || modelGroupsInitializedRef.current || !modelProviderGroups.length) return;
+        setExpandedModelProviders(new Set(modelProviderGroups.map(([providerId])=>providerId)));
+        modelGroupsInitializedRef.current = true;
+    }, [
+        section,
+        modelProviderGroups
+    ]);
+    useEffect(()=>{
         const sync = ()=>setModelFavorites(getFavoriteModelIds());
         sync();
         return subscribeModelPreferences(sync);
@@ -5080,9 +5091,32 @@ export default function Page() {
         historySearch,
         historyFilter
     ]);
-    const filteredGenerationLogs = useMemo(()=>generationLogs.filter((log)=>logFilter === 'all' || log.status === logFilter), [
+    const logSummary = useMemo(()=>{
+        const completed = generationLogs.filter((log)=>log.status !== 'pending');
+        const success = generationLogs.filter((log)=>log.status === 'success').length;
+        const durations = completed.map((log)=>log.durationMs).filter((value)=>typeof value === 'number' && value > 0);
+        return {
+            total: generationLogs.length,
+            pending: generationLogs.filter((log)=>log.status === 'pending').length,
+            success,
+            error: generationLogs.filter((log)=>log.status === 'error').length,
+            successRate: completed.length ? Math.round(success / completed.length * 100) : 0,
+            averageDuration: durations.length ? `${(durations.reduce((sum, value)=>sum + value, 0) / durations.length / 1000).toFixed(1)}s` : '—'
+        };
+    }, [
+        generationLogs
+    ]);
+    const filteredGenerationLogs = useMemo(()=>{
+        const query = logSearch.trim().toLowerCase();
+        return generationLogs.filter((log)=>{
+            const matchesStatus = logFilter === 'all' || log.status === logFilter;
+            const matchesQuery = !query || `${log.prompt || ''} ${log.modelName || ''} ${log.providerName || ''} ${generationLogSourceLabel(log)}`.toLowerCase().includes(query);
+            return matchesStatus && matchesQuery;
+        });
+    }, [
         generationLogs,
-        logFilter
+        logFilter,
+        logSearch
     ]);
     const logTotalPages = Math.max(1, Math.ceil(filteredGenerationLogs.length / generationLogPageSize));
     const pagedGenerationLogs = useMemo(()=>filteredGenerationLogs.slice((Math.min(logPage, logTotalPages) - 1) * generationLogPageSize, Math.min(logPage, logTotalPages) * generationLogPageSize), [
@@ -5557,7 +5591,8 @@ export default function Page() {
     useEffect(()=>{
         setLogPage(1);
     }, [
-        logFilter
+        logFilter,
+        logSearch
     ]);
     useEffect(()=>{
         if (logPage > logTotalPages) setLogPage(logTotalPages);
@@ -6854,13 +6889,18 @@ export default function Page() {
     async function syncProvider(id) {
         setSyncingId(id);
         try {
+            const previousIds = new Set(state.models.filter((model)=>model.providerId === id).map((model)=>model.rawId || model.id));
             const res = await fetch(`/api/providers/${id}/sync`, {
                 method: 'POST'
             });
             const data = await applyReturnedState(res);
-            notify(`读取完成：${data.count} 个模型。现在勾选你想使用的模型。`);
+            const syncedModels = data.state?.models?.filter((model)=>model.providerId === id) || [];
+            const newCount = syncedModels.filter((model)=>!previousIds.has(model.rawId || model.id)).length;
+            const enabledCount = syncedModels.filter((model)=>model.enabled && model.published).length;
+            notify(`读取完成：${data.count} 个模型${newCount ? `，新增 ${newCount} 个` : ''}，已启用 ${enabledCount} 个。`);
             setModelProviderFilter(id);
             setModelSearch('');
+            setExpandedModelProviders(new Set([id]));
             setSection('models');
         } catch (error) {
             notify(error instanceof Error ? error.message : '读取模型失败');
@@ -6868,6 +6908,14 @@ export default function Page() {
         } finally{
             setSyncingId(null);
         }
+    }
+    function toggleModelProviderGroup(providerId) {
+        setExpandedModelProviders((current)=>{
+            const next = new Set(current);
+            if (next.has(providerId)) next.delete(providerId);
+            else next.add(providerId);
+            return next;
+        });
     }
     async function toggleProviderModelLibrary(provider) {
         try {
@@ -11634,10 +11682,15 @@ export default function Page() {
                                 className: "history-page logs-page",
                                 children: [
                                     /*#__PURE__*/ _jsxs("div", {
-                                        className: "history-toolbar surface",
+                                        className: "history-toolbar surface logs-toolbar",
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-toolbar-copy",
                                                 children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        className: "log-eyebrow",
+                                                        children: "RUN MONITOR"
+                                                    }),
                                                     /*#__PURE__*/ _jsx("strong", {
                                                         children: "生图日志"
                                                     }),
@@ -11646,40 +11699,148 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsx("div", {
-                                                className: "filter-chips log-filters",
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-toolbar-controls",
                                                 children: [
-                                                    [
-                                                        'all',
-                                                        '全部'
-                                                    ],
-                                                    [
-                                                        'pending',
-                                                        '进行中'
-                                                    ],
-                                                    [
-                                                        'success',
-                                                        '成功'
-                                                    ],
-                                                    [
-                                                        'error',
-                                                        '失败'
-                                                    ]
-                                                ].map(([value, label])=>/*#__PURE__*/ _jsxs("button", {
-                                                        className: logFilter === value ? 'active' : '',
-                                                        onClick: ()=>setLogFilter(value),
+                                                    /*#__PURE__*/ _jsxs("label", {
+                                                        className: "log-search-box",
                                                         children: [
-                                                            label,
-                                                            /*#__PURE__*/ _jsx("b", {
-                                                                children: value === 'all' ? generationLogs.length : generationLogs.filter((log)=>log.status === value).length
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "search",
+                                                                size: 14
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("input", {
+                                                                value: logSearch,
+                                                                onChange: (e)=>setLogSearch(e.target.value),
+                                                                placeholder: "搜索提示词、模型或服务商",
+                                                                "aria-label": "搜索生图日志"
+                                                            }),
+                                                            logSearch && /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "log-search-clear",
+                                                                onClick: ()=>setLogSearch(''),
+                                                                "aria-label": "清除搜索",
+                                                                children: "×"
                                                             })
                                                         ]
-                                                    }, value))
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("div", {
+                                                        className: "filter-chips log-filters",
+                                                        children: [
+                                                            [
+                                                                'all',
+                                                                '全部'
+                                                            ],
+                                                            [
+                                                                'pending',
+                                                                '进行中'
+                                                            ],
+                                                            [
+                                                                'success',
+                                                                '成功'
+                                                            ],
+                                                            [
+                                                                'error',
+                                                                '失败'
+                                                            ]
+                                                        ].map(([value, label])=>/*#__PURE__*/ _jsxs("button", {
+                                                                className: logFilter === value ? 'active' : '',
+                                                                onClick: ()=>setLogFilter(value),
+                                                                children: [
+                                                                    label,
+                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                        children: value === 'all' ? generationLogs.length : generationLogs.filter((log)=>log.status === value).length
+                                                                    })
+                                                                ]
+                                                            }, value))
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "ghost-button log-refresh-button",
+                                                        onClick: ()=>void refreshGenerationLogs(),
+                                                        children: "刷新"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "log-summary-grid",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card total",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "全部任务"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.total
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: "服务端日志"
+                                                    })
+                                                ]
                                             }),
-                                            /*#__PURE__*/ _jsx("button", {
-                                                className: "ghost-button",
-                                                onClick: ()=>void refreshGenerationLogs(),
-                                                children: "刷新"
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card pending",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "进行中"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.pending
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: logSummary.pending ? "后台持续生成" : "当前队列为空"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card success",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "成功率"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("strong", {
+                                                        children: [
+                                                            logSummary.successRate,
+                                                            "%"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("small", {
+                                                        children: [
+                                                            logSummary.success,
+                                                            " 次成功"
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card duration",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "平均耗时"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.averageDuration
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: "已完成任务"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card error",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "失败"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.error
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: logSummary.error ? "建议检查详情" : "状态很稳定"
+                                                    })
+                                                ]
                                             })
                                         ]
                                     }),
@@ -11863,16 +12024,9 @@ export default function Page() {
                                                                         className: "log-meta-chip log-count-chip",
                                                                         children: [
                                                                             log.status === 'pending' ? log.count ?? 1 : log.imageCount ?? 0,
-                                                                            " 张"
+                                                                            log.references?.length ? ` 张 · 参考图 ${log.references.length}` : " 张"
                                                                         ]
                                                                     }),
-                                                                    log.references?.length ? /*#__PURE__*/ _jsxs("span", {
-                                                                        className: "log-meta-chip log-reference-chip",
-                                                                        children: [
-                                                                            "参考图 ",
-                                                                            log.references.length
-                                                                        ]
-                                                                    }) : null,
                                                                     /*#__PURE__*/ _jsxs("span", {
                                                                         className: `log-meta-chip log-duration-chip ${log.status === 'pending' ? 'pending' : logDurationTone(log.durationMs)}`,
                                                                         children: [
@@ -11880,17 +12034,15 @@ export default function Page() {
                                                                             log.status === 'pending' ? `${Math.max(.1, (generateClock - new Date(log.createdAt).getTime()) / 1000).toFixed(1)}s` : log.durationMs ? `${(log.durationMs / 1000).toFixed(1)}s` : '—'
                                                                         ]
                                                                     }),
-                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                        className: "log-meta-chip log-resolution-chip",
-                                                                        children: logResolutionLabel(log, logImageSpecs[log.id])
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                    /*#__PURE__*/ _jsxs("span", {
                                                                         className: "log-meta-chip log-size-chip",
-                                                                        children: logOutputSizeLabel(log, logImageSpecs[log.id])
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                        className: "log-meta-chip log-ratio-chip",
-                                                                        children: logAspectRatioLabel(log, logImageSpecs[log.id])
+                                                                        children: [
+                                                                            logResolutionLabel(log, logImageSpecs[log.id]),
+                                                                            " · ",
+                                                                            logOutputSizeLabel(log, logImageSpecs[log.id]),
+                                                                            " · ",
+                                                                            logAspectRatioLabel(log, logImageSpecs[log.id])
+                                                                        ]
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("time", {
                                                                         children: new Date(log.createdAt).toLocaleString('zh-CN', {
@@ -13279,11 +13431,23 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                 ]
                                             }) : /*#__PURE__*/ _jsx("div", {
                                                 className: "model-groups",
-                                                children: modelProviderGroups.map(([providerId, group])=>/*#__PURE__*/ _jsxs("section", {
-                                                        className: "model-group",
+                                                children: modelProviderGroups.map(([providerId, group])=>{
+                                                    const expanded = Boolean(modelSearch.trim()) || expandedModelProviders.has(providerId);
+                                                    return /*#__PURE__*/ _jsxs("section", {
+                                                        className: `model-group ${expanded ? 'expanded' : ''}`,
                                                         children: [
                                                             /*#__PURE__*/ _jsxs("div", {
                                                                 className: "model-group-head",
+                                                                role: "button",
+                                                                tabIndex: 0,
+                                                                "aria-expanded": expanded,
+                                                                onClick: ()=>toggleModelProviderGroup(providerId),
+                                                                onKeyDown: (event)=>{
+                                                                    if (event.key === 'Enter' || event.key === ' ') {
+                                                                        event.preventDefault();
+                                                                        toggleModelProviderGroup(providerId);
+                                                                    }
+                                                                },
                                                                 children: [
                                                                     /*#__PURE__*/ _jsxs("div", {
                                                                         children: [
@@ -13312,10 +13476,11 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                             }),
                                                             /*#__PURE__*/ _jsx("div", {
                                                                 className: "model-cards",
-                                                                children: group.map(renderModelCard)
+                                                                children: expanded && group.map(renderModelCard)
                                                             })
                                                         ]
-                                                    }, providerId))
+                                                    }, providerId);
+                                                })
                                             })
                                         ]
                                     })
