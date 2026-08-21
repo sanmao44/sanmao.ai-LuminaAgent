@@ -2178,6 +2178,45 @@ html[data-theme="dark"] .agent-page{
   .logs-page .log-meta{gap:4px}
 }
 
+/* Keep the log toolbar in the page flow so it cannot cover the first row. */
+@media(min-width:781px){
+  .logs-page{
+    padding-top:16px!important;
+  }
+
+  .logs-page .history-toolbar{
+    position:relative!important;
+    inset:auto!important;
+    width:auto;
+    margin:0 0 18px;
+  }
+
+  .logs-page .log-list{
+    padding-top:0!important;
+    gap:14px;
+  }
+
+  .logs-page .log-meta{
+    flex-wrap:wrap;
+    align-items:center;
+    row-gap:8px;
+    column-gap:7px;
+  }
+}
+
+@media(max-width:780px){
+  .logs-page{
+    padding-top:12px;
+  }
+
+  .logs-page .history-toolbar{
+    position:static!important;
+    margin-bottom:14px;
+  }
+
+  .logs-page .log-list{gap:12px}
+}
+
 /* Model browsing: keep the common path short, then reveal the full registry on demand. */
 .model-picker-search{position:relative}
 .model-picker-search input{font-size:10px}

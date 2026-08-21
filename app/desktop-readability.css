@@ -61,7 +61,7 @@
   .history-page:not(.logs-page) .pagination,
   .history-page:not(.logs-page) .pagination button { font-size: 11px; }
 
-  .logs-page { padding-top: 220px; }
+  .logs-page { padding-top: 16px !important; }
   .logs-page .logs-toolbar { min-height: 76px; padding: 12px 16px; }
   .log-eyebrow { font-size: 9px; }
   .log-toolbar-copy strong { font-size: 18px; }
