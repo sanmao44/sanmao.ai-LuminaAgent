@@ -27,6 +27,25 @@ $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 
 . (Join-Path $PSScriptRoot 'launcher-common.ps1')
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
+
+# Releases before 0.7.5 overwrote apply-update.ps1 with their running updater
+# after copying a new archive. Restore the versioned bootstrap from the new
+# archive as soon as the restarted launcher runs, so the following update uses
+# the fixed core updater instead of the legacy one.
+try {
+  $updaterBootstrap = Join-Path $PSScriptRoot 'apply-update-bootstrap.ps1'
+  $updaterEntry = Join-Path $PSScriptRoot 'apply-update.ps1'
+  if (Test-Path -LiteralPath $updaterBootstrap) {
+    $bootstrapHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $updaterBootstrap).Hash
+    $entryHash = if (Test-Path -LiteralPath $updaterEntry) { (Get-FileHash -Algorithm SHA256 -LiteralPath $updaterEntry).Hash } else { '' }
+    if ($bootstrapHash -ne $entryHash) {
+      Copy-Item -LiteralPath $updaterBootstrap -Destination $updaterEntry -Force
+      Write-SanmaoLauncherLog '已恢复当前版本的更新器入口。' 'INFO'
+    }
+  }
+} catch {
+  Write-SanmaoLauncherLog "恢复更新器入口失败：$($_.Exception.Message)" 'WARN'
+}
 Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，端口范围：$portStart..$portEnd" 'INFO'
 
 function Test-SanmaoServerAtPort([int]$port) {
@@ -195,7 +214,7 @@ if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
 }
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.7.4' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.7.5' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js

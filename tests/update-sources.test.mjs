@@ -30,6 +30,27 @@ test('completed progress is stale after the app reaches the recorded version', (
   assert.equal(local.isCompletedUpdateProgressStale({ stage: 'starting', version: '0.7.0' }, '0.7.2'), false);
 });
 
+test('update archives remain the single source of installed updater code', async () => {
+  const [localUpdate, windowsUpdater, windowsUpdaterCore, windowsUpdaterBootstrap, launcher, progressRoute] = await Promise.all([
+    readFile(new URL('../lib/local-update.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update-core.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update-bootstrap.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/start.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../app/api/update/progress/route.ts', import.meta.url), 'utf8'),
+  ]);
+
+  assert.doesNotMatch(localUpdate, /local-update-runtime\.ts/);
+  assert.doesNotMatch(windowsUpdater, /local-update-runtime\.ts/);
+  assert.doesNotMatch(windowsUpdaterCore, /local-update-runtime\.ts/);
+  assert.doesNotMatch(windowsUpdaterCore, /Copy-Item\s+-LiteralPath\s+\$PSCommandPath/);
+  assert.match(windowsUpdater, /apply-update-core\.ps1/);
+  assert.match(windowsUpdaterBootstrap, /apply-update-core\.ps1/);
+  assert.match(launcher, /apply-update-bootstrap\.ps1/);
+  assert.match(progressRoute, /getLatestUpdateProgress\(jobId\)/);
+  assert.doesNotMatch(progressRoute, /getLatestUpdateProgress\(jobId,/);
+});
+
 const originalFetch = globalThis.fetch;
 const originalManifestUrl = process.env.SANMAO_UPDATE_MANIFEST_URL;
 const originalManifestMirrors = process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;

@@ -82,11 +82,10 @@ export default function UpdateNotice() {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
   }, []);
 
-  const readProgress = useCallback(async (jobId?: string, currentVersion?: string) => {
+  const readProgress = useCallback(async (jobId?: string) => {
     try {
       const params = new URLSearchParams();
       if (jobId) params.set('jobId', jobId);
-      if (currentVersion) params.set('currentVersion', currentVersion);
       const query = params.toString() ? `?${params.toString()}` : '';
       const response = await fetch(`/api/update/progress${query}`, { cache: 'no-store' });
       if (!response.ok) return null;
@@ -106,8 +105,8 @@ export default function UpdateNotice() {
   }, []);
 
   useEffect(() => {
-    void readProgress(undefined, status?.currentVersion);
-  }, [readProgress, status?.currentVersion]);
+    void readProgress();
+  }, [readProgress]);
 
   useEffect(() => {
     if (!updateProgress || updateProgress.stage === 'failed') return;
@@ -118,7 +117,7 @@ export default function UpdateNotice() {
     }
     let cancelled = false;
     const poll = window.setInterval(async () => {
-      const progress = await readProgress(updateProgress.jobId, status?.currentVersion);
+      const progress = await readProgress(updateProgress.jobId);
       if (cancelled || !progress) return;
       if ((progress.stage === 'starting' || progress.stage === 'completed') && !isVersionAtLeast(status?.currentVersion, progress.version)) {
         try {

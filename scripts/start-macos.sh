@@ -97,7 +97,7 @@ sanmao_clear_stale 3000 3010
 sanmao_clear_stale "$PORT_START" "$PORT_END"
 
 printf '%s\n' '========================================'
-printf '%s\n' '        SANMAO.AI macOS 启动器 0.7.4'
+printf '%s\n' '        SANMAO.AI macOS 启动器 0.7.5'
 printf '%s\n' '========================================'
 
 printf '\n==> 检查 Node.js\n'
