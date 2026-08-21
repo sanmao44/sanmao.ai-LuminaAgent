@@ -7,6 +7,10 @@ import type { UpdateStatus } from '@/lib/update';
 
 const MAX_UPDATE_BYTES = 150 * 1024 * 1024;
 const STALE_LOCK_MS = 10 * 60 * 1000;
+const MAX_PACKAGE_SOURCES = 6;
+const OFFICIAL_DOWNLOAD_TIMEOUT_MS = 120_000;
+const MIRROR_DOWNLOAD_TIMEOUT_MS = 60_000;
+const DEFAULT_GITHUB_PROXIES = ['https://ghfast.top/', 'https://ghproxy.net/'];
 
 export type UpdateProgressStage = 'queued' | 'downloading' | 'verifying' | 'starting' | 'completed' | 'failed';
 
@@ -226,11 +230,12 @@ async function downloadToFile(
   destination: string,
   expectedSha256: string,
   onProgress?: (downloadedBytes: number, totalBytes: number | null) => void,
+  timeoutMs = OFFICIAL_DOWNLOAD_TIMEOUT_MS,
 ) {
   const response = await fetch(url, {
     redirect: 'follow',
     headers: { Accept: 'application/zip, application/octet-stream', 'User-Agent': 'SANMAO.AI local updater' },
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok || !response.body) throw new Error(`更新包下载失败：HTTP ${response.status}`);
 
@@ -265,22 +270,24 @@ async function downloadToFile(
   return { bytes: total, sha256: actualSha256 };
 }
 
-async function downloadFromSources(
+export async function downloadFromSources(
   sources: string[],
   destination: string,
   expectedSha256: string,
   onAttempt: (index: number, total: number) => void,
   onProgress?: (downloadedBytes: number, totalBytes: number | null) => void,
+  officialUrls: ReadonlySet<string> = new Set<string>(),
 ) {
   let lastError: unknown;
   const totalAttempts = sources.length * 2;
   let attemptIndex = 0;
   for (const source of sources) {
+    const timeoutMs = officialUrls.has(source) ? OFFICIAL_DOWNLOAD_TIMEOUT_MS : MIRROR_DOWNLOAD_TIMEOUT_MS;
     for (let retry = 0; retry < 2; retry += 1) {
       onAttempt(attemptIndex, totalAttempts);
       attemptIndex += 1;
       try {
-        return await downloadToFile(source, destination, expectedSha256, onProgress);
+        return await downloadToFile(source, destination, expectedSha256, onProgress, timeoutMs);
       } catch (error) {
         lastError = error;
         await rm(destination, { force: true }).catch(() => undefined);
@@ -288,10 +295,10 @@ async function downloadFromSources(
       }
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('更新包下载失败，请检查网络后重试');
+  throw lastError instanceof Error ? lastError : new Error('更新包下载失败，已尝试多个更新源，请检查网络后重试');
 }
 
-function githubArchiveFallback(url: string) {
+export function githubArchiveFallback(url: string) {
   try {
     const parsed = new URL(url);
     if (parsed.hostname.toLowerCase() !== 'codeload.github.com') return undefined;
@@ -304,22 +311,52 @@ function githubArchiveFallback(url: string) {
   }
 }
 
-function safePackageSources(status: UpdateStatus) {
-  const configuredMirrors = (process.env.SANMAO_UPDATE_MIRRORS || '')
+function configuredPackageMirrors() {
+  return (process.env.SANMAO_UPDATE_MIRRORS || '')
     .split(/[\r\n,]+/)
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function configuredGitHubProxies() {
+  const configured = (process.env.SANMAO_UPDATE_GITHUB_PROXIES || '')
+    .split(/[\r\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return configured.length ? configured : DEFAULT_GITHUB_PROXIES;
+}
+
+function isValidPackageSource(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && Boolean(parsed.hostname) && !parsed.username && !parsed.password && !parsed.hash;
+  } catch {
+    return false;
+  }
+}
+
+function githubProxyVariants(url: string) {
+  try {
+    const parsed = new URL(url);
+    if (!['github.com', 'codeload.github.com'].includes(parsed.hostname.toLowerCase())) return [];
+    return configuredGitHubProxies().map((proxy) => `${proxy.endsWith('/') ? proxy : `${proxy}/`}${url}`);
+  } catch {
+    return [];
+  }
+}
+
+export function packageSourceCandidates(status: UpdateStatus) {
   const mirrors = Array.isArray(status.mirrorUrls) ? status.mirrorUrls : [];
   const fallback = status.packageUrl ? githubArchiveFallback(status.packageUrl) : undefined;
-  const candidates = [status.packageUrl, fallback, ...mirrors, ...configuredMirrors].filter(Boolean) as string[];
-  return [...new Set(candidates)].filter((value) => {
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === 'https:' && ['github.com', 'codeload.github.com'].includes(parsed.hostname.toLowerCase());
-    } catch {
-      return false;
-    }
-  });
+  const officialSources = [status.packageUrl, fallback].filter(Boolean) as string[];
+  const candidates = [
+    status.packageUrl,
+    fallback,
+    ...mirrors,
+    ...configuredPackageMirrors(),
+    ...officialSources.flatMap(githubProxyVariants),
+  ].filter(Boolean) as string[];
+  return [...new Set(candidates)].filter(isValidPackageSource).slice(0, MAX_PACKAGE_SOURCES);
 }
 
 export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateOptions = {}) {
@@ -378,8 +415,8 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
     await rm(runtimePatchPath, { force: true });
     await copyFile(updaterSource, updaterPath);
     await copyFile(join(root, 'lib', 'local-update.ts'), runtimePatchPath);
-    const sources = safePackageSources(status);
-    if (!sources.length) throw new Error('没有找到可用的 GitHub 更新源');
+    const sources = packageSourceCandidates(status);
+    if (!sources.length) throw new Error('没有找到可用的更新源');
     setUpdateProgress(jobId, { stage: 'downloading', message: '正在连接更新源…', percent: 1, downloadedBytes: 0, totalBytes: null });
     let lastReportedAt = 0;
     const download = await downloadFromSources(
@@ -406,6 +443,7 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
           totalBytes,
         });
       },
+      new Set([status.packageUrl, status.packageUrl ? githubArchiveFallback(status.packageUrl) : undefined].filter(Boolean) as string[]),
     );
     setUpdateProgress(jobId, { stage: 'verifying', message: '正在校验更新包完整性…', percent: 96, downloadedBytes: download.bytes, totalBytes: download.bytes });
     await writeFile(metadataPath, JSON.stringify({
@@ -435,7 +473,7 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
   } catch (error) {
     setUpdateProgress(jobId, {
       stage: 'failed',
-      message: '更新失败，请检查网络后重试',
+      message: '更新失败，已尝试多个更新源，请检查网络后重试',
       error: error instanceof Error ? error.message : '本地更新失败',
     });
     await rm(archivePath, { force: true }).catch(() => undefined);

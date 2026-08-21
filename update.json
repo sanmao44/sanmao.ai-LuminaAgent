@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "latestVersion": "0.7.0",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.0",
+  "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
+  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.0/SANMAO.AI-0.7.0.zip",
+  "mirrorUrls": [],
+  "sha256": "e5712e961bc0eda54e18f5c91e73af3a160840b9a871ff699d28d5f324b5d8aa",
+  "publishedAt": "2026-08-21T02:34:48+08:00",
+  "notes": [
+    "分享入口并入 Agent 固定顶部栏，普通状态只显示紧凑按钮，不再挤压对话内容。",
+    "支持按问答组选择分享内容，默认空选，并提供全选、清空、取消和预览操作。",
+    "分享 PNG 保留 Markdown、生成图片、参考图、文件卡片、Logo、二维码和本地生成逻辑。",
+    "继续保留 0.6.9 的对话工作区视觉优化、中文英文绘图意图识别和图片工具路由能力。"
+  ]
+}
