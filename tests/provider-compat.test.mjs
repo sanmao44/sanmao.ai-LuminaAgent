@@ -66,6 +66,28 @@ test('adds the standard v1 model endpoint for a provider website root', () => {
   ]);
 });
 
+test('recognizes provider-native search for standard OpenAI and Gemini model ids', () => {
+  const openAiModels = providers.normalizeDiscoveredModels({ data: [{ id: 'gpt-5' }] }, { platform: 'openai' });
+  const geminiModels = providers.normalizeDiscoveredModels({ data: [{ id: 'gemini-2.5-pro' }] }, { platform: 'google-gemini' });
+  const browserModels = providers.normalizeDiscoveredModels({ data: [{ id: 'custom-browser-model', metadata: { browser: true } }] }, { platform: 'custom' });
+  assert.equal(openAiModels[0].nativeSearchProtocol, 'openai-responses');
+  assert.equal(geminiModels[0].nativeSearchProtocol, 'gemini-grounding');
+  assert.equal(browserModels[0].nativeSearchProtocol, 'openai-responses');
+});
+
+test('adds the standard v1 model endpoint for a provider website root', () => {
+  const candidates = providers.modelEndpointCandidates({
+    type: 'openai-compatible',
+    baseUrl: 'https://api.apiqik.com',
+    modelsPath: '/models',
+    apiKey: 'test',
+  });
+  assert.deepEqual(candidates, [
+    { url: 'https://api.apiqik.com/models' },
+    { url: 'https://api.apiqik.com/v1/models', inferredBaseUrl: 'https://api.apiqik.com/v1' },
+  ]);
+});
+
 test('does not override an explicitly versioned base URL', () => {
   const candidates = providers.modelEndpointCandidates({
     type: 'openai-compatible',

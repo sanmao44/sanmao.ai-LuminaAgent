@@ -6880,6 +6880,20 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '保存默认模型失败');
         }
     }
+    async function patchSettings(patch) {
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(patch)
+            });
+            await applyReturnedState(res);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '保存默认模型失败');
+        }
+    }
     async function toggleModelUse(model) {
         if (model.kind === 'unknown') return notify('先把这个模型标记为“对话模型”或“图片模型”');
         const nextUse = !(model.enabled && model.published);
@@ -7899,6 +7913,200 @@ export default function Page() {
                     messages: payloadMessages,
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
+                    webMode: agentWebMode,
+                    webSearch: agentWebMode !== 'off',
+                    stream: true
+                })
+            });
+            let data;
+            if (res.headers.get('content-type')?.includes('text/event-stream')) {
+                let streamedText = '';
+                const final = await readAgentStream(res, (event)=>{
+                    if (event.type === 'status') updatePendingActivity({
+                        stage: event.stage || 'answering',
+                        message: event.message || '正在处理…',
+                        model: event.model,
+                        mode: event.mode,
+                        count: event.count
+                    });
+                    if (event.type === 'delta') streamedText += String(event.text || '');
+                    if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
+                });
+                data = {
+                    ...final,
+                    message: final.message || streamedText
+                };
+            } else data = await res.json();
+            if (!res.ok) throw new Error(data.error || '助手请求失败');
+            void refreshGenerationLogs();
+            let images = [];
+            if (Array.isArray(data.images) && data.images.length) {
+                const generation = Array.isArray(data.generations) ? data.generations[0] : null;
+                images = await recordImages(data.images, {
+                    prompt: generation?.prompt || message.content,
+                    modelId: generation?.modelId,
+                    modelName: generation?.modelName,
+                    providerName: generation?.providerName,
+                    aspectRatio: generation?.aspectRatio || '自动',
+                    source: 'agent',
+                    references: referenceRecords
+                });
+                if (images.length) playSuccessSound();
+            }
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && typeof file.content === 'string').map((file)=>({
+                    id: uid('file'),
+                    name: file.name,
+                    mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
+                    content: file.content,
+                    encoding: file.encoding === 'base64' ? 'base64' : 'utf8',
+                    size: typeof file.size === 'number' ? file.size : undefined
+                })) : [];
+            const completedMessages = workingMessages.map((item)=>{
+                if (item.id !== message.id) return item;
+                const versions = messageVersionsFor(item).map((version)=>version.id === retryVersionId ? {
+                        ...version,
+                        content: data.message || '已完成。',
+                        images,
+                        files,
+                        webSearch: data.webSearch || undefined,
+                        webSearchDecision: data.webSearchDecision || undefined
+                    } : version);
+                return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
+            });
+            pendingChatMessagesRef.current.delete(sessionId);
+            if (activeChatIdRef.current === sessionId) {
+                setMessages(completedMessages);
+                restoreMessageViewport(message.id, beforeTop);
+            }
+            await persistAgentSession(sessionId, completedMessages);
+            notify(`已生成第 ${workingVersions.length} 个文本版本`);
+        } catch (error) {
+            const restoredMessages = messages.map((item)=>item.id === message.id ? applyMessageVersion(item, originalVersions, originalActiveVersion) : item);
+            pendingChatMessagesRef.current.delete(sessionId);
+            if (activeChatIdRef.current === sessionId) setMessages(restoredMessages);
+            notify(error instanceof Error ? error.message : '重新生成失败');
+            void refreshGenerationLogs();
+        } finally{
+            setChatBusy(sessionId, false);
+        }
+    }
+    async function sendAgent(text = agentInput, task, overrideRefs) {
+        if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
+        if (shareSelectionMode) return notify('请先完成或取消分享选择');
+        const content = text.trim();
+        if (!content && !agentFiles.length && !agentRefs.length) return;
+        if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        const sessionId = activeChatId || uid('chat');
+        if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，可点击左侧“新对话”并行进行');
+        let refs = overrideRefs ? [
+            ...overrideRefs
+        ] : [
+            ...agentRefs
+        ];
+        let autoContinuation = false;
+        if (!overrideRefs && !refs.length && isImageContinuationRequest(content)) {
+            const previousImage = latestAssistantImage(messages);
+            if (previousImage) {
+                try {
+                    refs = [
+                        await galleryItemToReference(previousImage)
+                    ];
+                    autoContinuation = true;
+                } catch (error) {
+                    return notify(error instanceof Error ? error.message : '无法读取上一张生成图片，暂时不能续图');
+                }
+            }
+        }
+        if (refs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再发送');
+        const files = overrideRefs ? [] : [
+            ...agentFiles
+        ];
+        const followUp = overrideRefs ? null : agentFollowUp;
+        const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
+        const likelyImageRequest = !task && (isImageContinuationRequest(requestContent) || likelyImageGenerationRequest(requestContent));
+        const user = {
+            id: uid('msg'),
+            role: 'user',
+            content: requestContent,
+            references: refs,
+            files,
+            followUp: followUp || undefined
+        };
+        const pendingId = uid('msg');
+        const pending = {
+            id: pendingId,
+            role: 'assistant',
+            content: likelyImageRequest ? '正在构思画面…' : '正在判断是否需要联网…',
+            pending: true,
+            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' }
+        };
+        primeSuccessSound();
+        const nextMessages = [
+            ...messages.filter((message)=>!message.pending),
+            user
+        ];
+        activeChatIdRef.current = sessionId;
+        pendingChatMessagesRef.current.set(sessionId, [
+            ...nextMessages,
+            pending
+        ]);
+        setActiveChatId(sessionId);
+        setMessages([
+            ...nextMessages,
+            pending
+        ]);
+        requestChatScrollAfterCommit();
+        setAgentInput('');
+        setAgentRefs([]);
+        setAgentFiles([]);
+        setAgentFollowUp(null);
+        setChatBusy(sessionId, true);
+        await persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
+        try {
+            const updatePendingContent = (nextContent)=>{
+                if (activeChatIdRef.current === sessionId) setMessages((old)=>old.map((message)=>message.id === pendingId ? {
+                            ...message,
+                            content: nextContent
+                        } : message));
+            };
+            const updatePendingActivity = (activity)=>{
+                if (activeChatIdRef.current === sessionId) setMessages((old)=>old.map((message)=>message.id === pendingId ? {
+                            ...message,
+                            content: activity?.message || message.content,
+                            activity
+                        } : message));
+            };
+            const latestUserId = [
+                ...nextMessages
+            ].reverse().find((message)=>message.role === 'user')?.id;
+            const referenceSource = [
+                ...nextMessages
+            ].reverse().find((message)=>message.role === 'user' && message.references?.length);
+            const referencesForRequest = await Promise.all((referenceSource?.references || []).slice(0, 16).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
+            const payloadMessages = nextMessages.slice(-12).map((m)=>({
+                    role: m.role,
+                    content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : m.content,
+                    references: m.id === latestUserId ? referencesForRequest : [],
+                    files: m.id === latestUserId ? (m.files || []).map((file)=>({
+                            name: file.name,
+                            mimeType: file.mimeType,
+                            content: file.content,
+                            encoding: file.encoding,
+                            size: file.size
+                        })) : []
+                }));
+            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
+            const res = await fetch('/api/agent', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    messages: payloadMessages,
+                    referenceImages: referenceRecords,
+                    model: activeAgentModelId,
+                    task,
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     stream: true
