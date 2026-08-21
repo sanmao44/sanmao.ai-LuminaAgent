@@ -81,11 +81,18 @@ try {
 
   # 只替换程序文件；用户数据、环境变量和已安装依赖保留不动。
   Get-ChildItem -LiteralPath $TargetPath -Force |
-    Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -notlike '.env*' } |
+    # Keep the staged updater executable until it has finished. It is an old
+    # trusted script that is already running outside the signed archive; every
+    # other program file is replaced from the verified archive below.
+    Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -notlike '.env*' -and $_.FullName -ne $PSCommandPath } |
     Remove-Item -Recurse -Force
 
   Get-ChildItem -LiteralPath $packageRoot -Force | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $TargetPath $_.Name) -Recurse -Force
+    $destination = Join-Path $TargetPath $_.Name
+    # Copying a file onto the process' executing script aborts PowerShell.
+    # The restarted launcher restores the tiny fixed bootstrap immediately.
+    if ($destination -eq $PSCommandPath) { return }
+    Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force
   }
   # The verified archive is the only source of installed program files.
   # Do not copy the running updater or any old runtime back into this version.

@@ -44,6 +44,8 @@ test('update archives remain the single source of installed updater code', async
   assert.doesNotMatch(windowsUpdater, /local-update-runtime\.ts/);
   assert.doesNotMatch(windowsUpdaterCore, /local-update-runtime\.ts/);
   assert.doesNotMatch(windowsUpdaterCore, /Copy-Item\s+-LiteralPath\s+\$PSCommandPath/);
+  assert.match(windowsUpdaterCore, /\$_\.FullName -ne \$PSCommandPath/);
+  assert.match(windowsUpdaterCore, /if \(\$destination -eq \$PSCommandPath\) \{ return \}/);
   assert.match(windowsUpdater, /apply-update-core\.ps1/);
   assert.match(windowsUpdaterBootstrap, /apply-update-core\.ps1/);
   assert.match(launcher, /apply-update-bootstrap\.ps1/);
