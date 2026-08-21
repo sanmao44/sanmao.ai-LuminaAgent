@@ -64,26 +64,6 @@ export type ChatHistoryMessage = {
   webSearchDecision?: WebSearchDecisionMeta;
 };
 
-export type ChatFollowUp = {
-  messageId: string;
-  role: 'user' | 'assistant';
-  content: string;
-};
-
-export type ChatHistoryMessage = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  images?: GalleryItem[];
-  files?: ChatFile[];
-  references?: ClientReferenceImage[];
-  versions?: ChatMessageVersion[];
-  activeVersion?: number;
-  followUp?: ChatFollowUp;
-  webSearch?: WebSearchMeta;
-  webSearchDecision?: WebSearchDecisionMeta;
-};
-
 export type ChatSession = {
   id: string;
   title: string;

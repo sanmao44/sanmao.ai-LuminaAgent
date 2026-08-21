@@ -28,26 +28,6 @@ export type WebSearchMeta = {
   searchedAt: string;
 };
 
-export type WebSearchDecisionStatus = 'searched' | 'not-needed' | 'disabled' | 'failed';
-
-export type WebSearchDecisionMeta = {
-  mode: 'auto' | 'always' | 'off';
-  status: WebSearchDecisionStatus;
-  reason?: string;
-  query?: string;
-};
-
-export type WebSearchMeta = {
-  source: WebSearchSource;
-  protocol?: NativeSearchProtocol;
-  modelId?: string;
-  provider?: string;
-  query: string;
-  resultCount: number;
-  fallbackFrom?: 'native';
-  searchedAt: string;
-};
-
 export type ProviderConnection = {
   id: string;
   name: string;
