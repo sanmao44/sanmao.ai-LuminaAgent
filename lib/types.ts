@@ -33,6 +33,7 @@ export type ProviderConnection = {
   name: string;
   type: ProviderType;
   platform?: ProviderPlatform;
+  modelLibraryEnabled: boolean;
   baseUrl: string;
   modelsPath?: string;
   chatPath?: string;

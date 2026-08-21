@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './provider-library.css';
 import './agent-upgrades.css';
 
 export const viewport: Viewport = {

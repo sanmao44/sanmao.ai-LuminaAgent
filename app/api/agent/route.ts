@@ -1,5 +1,6 @@
 import { chatCompletion, chatCompletionStream, editImage, generateImage, type ChatContentPart, type ChatMessage } from '@/lib/providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeModel } from '@/lib/store';
+import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
 import { appendGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
@@ -280,7 +281,8 @@ export async function POST(request: Request) {
 
     const state = await getPublicState();
     const nativeWebSearch = nativeSearchIsEnabled(agentRuntime.model);
-    const imageModels = state.models.filter((m) => m.kind === 'image' && m.enabled && m.published && m.capabilities.includes('generate'));
+    const imageModels = filterModelsByActiveProviders(state.models, state.providers)
+      .filter((m) => m.kind === 'image' && m.enabled && m.published && m.capabilities.includes('generate'));
     const imageModelText = imageModels.length ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n') : '- 当前没有可用生图模型';
     const latest = latestUser(messages);
     const latestRefs = latest?.references || [];

@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol } from './types';
 import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
+import { isProviderModelLibraryEnabled } from './provider-availability';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -179,9 +180,10 @@ export async function getPublicState(): Promise<PublicState> {
     return {
       id: p.id,
       name: p.name,
-      type: p.type,
-      platform: p.platform || (p.type === 'google-gemini' ? 'google-gemini' : 'custom'),
-      baseUrl: p.baseUrl,
+        type: p.type,
+        platform: p.platform || (p.type === 'google-gemini' ? 'google-gemini' : 'custom'),
+        modelLibraryEnabled: isProviderModelLibraryEnabled(p),
+        baseUrl: p.baseUrl,
       modelsPath: p.modelsPath || '/models',
       chatPath: p.chatPath || '/chat/completions',
       imageGenerationPath: p.imageGenerationPath || '/images/generations',
@@ -236,7 +238,7 @@ export async function clearWebSearchApiConfig() {
   await mutateState((state) => { delete state.webSearch; });
 }
 
-type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; baseUrl: string; apiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; authHeader?: string; authPrefix?: string };
+type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; authHeader?: string; authPrefix?: string };
 
 function normalizeEndpointPath(value: string | undefined, fallback: string) {
   const clean = String(value || fallback).trim();
@@ -258,6 +260,7 @@ export async function addProvider(input: ProviderInput & { apiKey: string }) {
       name: input.name.trim(),
       type: input.type,
       platform: input.platform || (input.type === 'google-gemini' ? 'google-gemini' : 'custom'),
+      modelLibraryEnabled: input.modelLibraryEnabled !== false,
       baseUrl: input.baseUrl.replace(/\/+$/, ''),
       modelsPath: normalizeEndpointPath(input.modelsPath, '/models'),
       chatPath: normalizeEndpointPath(input.chatPath, '/chat/completions'),
@@ -288,6 +291,7 @@ export async function updateProvider(id: string, input: ProviderInput) {
       name: input.name.trim(),
       type: input.type,
       platform: input.platform || (input.type === 'google-gemini' ? 'google-gemini' : 'custom'),
+      modelLibraryEnabled: input.modelLibraryEnabled ?? isProviderModelLibraryEnabled(current),
       baseUrl: input.baseUrl.replace(/\/+$/, ''),
       modelsPath: normalizeEndpointPath(input.modelsPath, '/models'),
       chatPath: normalizeEndpointPath(input.chatPath, '/chat/completions'),
@@ -325,6 +329,15 @@ export async function getProviderWithKey(id: string) {
 
 export async function setProviderStatus(id: string, status: ProviderStatus, lastSyncedAt?: string) {
   await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? { ...p, status, lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt } : p); });
+}
+
+export async function setProviderModelLibraryEnabled(id: string, enabled: boolean) {
+  return mutateState((state) => {
+    const provider = state.providers.find((item) => item.id === id);
+    if (!provider) throw new Error('服务商不存在');
+    provider.modelLibraryEnabled = enabled;
+    return enabled;
+  });
 }
 
 export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection }>) {
@@ -404,8 +417,11 @@ export async function getRuntimeModel(id: string | null | undefined, kind: Model
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
   const explicitId = id && id !== 'auto' ? id : null;
-  const compatible = models.filter((m) => m.kind === kind && m.enabled && m.published);
-  let model = explicitId ? models.find((m) => m.id === explicitId) : undefined;
+  const compatible = models.filter((m) => {
+    const provider = state.providers.find((item) => item.id === m.providerId);
+    return isProviderModelLibraryEnabled(provider) && m.kind === kind && m.enabled && m.published;
+  });
+  let model = explicitId ? compatible.find((m) => m.id === explicitId) : undefined;
   if (!explicitId) {
     const configuredDefaultId = kind === 'chat' ? state.settings.agentModelId : state.settings.defaultImageModelId;
     const providerModels = state.settings.defaultProviderId ? compatible.filter((m) => m.providerId === state.settings.defaultProviderId) : [];
@@ -423,9 +439,12 @@ export async function getRuntimeImageModelForCapability(id: string | null | unde
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
   const targetId = id && id !== 'auto' ? id : undefined;
-  const compatible = models.filter((item) => item.kind === 'image' && item.enabled && item.published && item.capabilities.includes(capability));
+  const compatible = models.filter((item) => {
+    const provider = state.providers.find((candidate) => candidate.id === item.providerId);
+    return isProviderModelLibraryEnabled(provider) && item.kind === 'image' && item.enabled && item.published && item.capabilities.includes(capability);
+  });
   const model = targetId
-    ? models.find((item) => item.id === targetId)
+    ? compatible.find((item) => item.id === targetId)
     : selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultImageModelId);
   if (!model || !model.enabled || !model.published || model.kind !== 'image' || !model.capabilities.includes(capability)) return null;
   const provider = state.providers.find((item) => item.id === model!.providerId);
@@ -436,8 +455,11 @@ export async function getRuntimeImageModelForCapability(id: string | null | unde
 export async function getRuntimeImageGenerationModel(id: string | null | undefined) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
-  const explicit = id && id !== 'auto' ? models.find((item) => item.id === id) : undefined;
-  const compatible = models.filter((item) => item.kind === 'image' && item.enabled && item.published && item.capabilities.includes('generate'));
+  const compatible = models.filter((item) => {
+    const provider = state.providers.find((candidate) => candidate.id === item.providerId);
+    return isProviderModelLibraryEnabled(provider) && item.kind === 'image' && item.enabled && item.published && item.capabilities.includes('generate');
+  });
+  const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
   const model = explicit || selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultImageModelId);
   if (!model || !model.enabled || !model.published || model.kind !== 'image' || !model.capabilities.includes('generate')) return null;
   const provider = state.providers.find((item) => item.id === model.providerId);

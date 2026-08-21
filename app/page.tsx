@@ -11,6 +11,7 @@ import { listChatSessions, listGallery, loadImageDirectoryHandle, patchGalleryIt
 import MaskEditor from '@/components/MaskEditor';
 import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
+import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
 import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
@@ -2263,7 +2264,7 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
         })
     });
 }
-function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClick, label = '参考图' }) {
+function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClick, onLocalUpscale, localUpscaleActive = false, label = '参考图' }) {
     const inputRef = useRef(null);
     const [dragIndex, setDragIndex] = useState(null);
     const [preview, setPreview] = useState(null);
@@ -2300,6 +2301,20 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                     }),
                     /*#__PURE__*/ _jsxs("div", {
                         children: [
+                            onLocalUpscale && /*#__PURE__*/ _jsxs("button", {
+                                type: "button",
+                                className: `local-upscale-reference ${localUpscaleActive ? 'active' : ''}`,
+                                disabled: !localUpscaleActive && (refs.length !== 1 || refs.some((ref)=>ref.pending)),
+                                title: localUpscaleActive ? '返回普通生图模式' : refs.length !== 1 ? '本地超分需要恰好 1 张图片' : refs.some((ref)=>ref.pending) ? '参考图准备完成后才能超分' : '使用本地上传图片进行超分',
+                                onClick: onLocalUpscale,
+                                children: [
+                                    /*#__PURE__*/ _jsx(Icon, {
+                                        name: "upscale",
+                                        size: 12
+                                    }),
+                                    localUpscaleActive ? '返回生图' : '超分'
+                                ]
+                            }),
                             onPasteClick && /*#__PURE__*/ _jsx("button", {
                                 type: "button",
                                 className: "paste-reference",
@@ -4880,6 +4895,8 @@ export default function Page() {
     const generatePromptRef = useRef(null);
     const [generateMentionOpen, setGenerateMentionOpen] = useState(false);
     const [generateModelId, setGenerateModelId] = useState('auto');
+    const [generateUpscaleModelId, setGenerateUpscaleModelId] = useState('auto');
+    const [generateWorkflow, setGenerateWorkflow] = useState('generate');
     const [ratio, setRatio] = useState('1:1');
     const [customRatioWidth, setCustomRatioWidth] = useState(16);
     const [customRatioHeight, setCustomRatioHeight] = useState(9);
@@ -4991,11 +5008,15 @@ export default function Page() {
     const [editor, setEditor] = useState(null);
     const [upscaleSourceSize, setUpscaleSourceSize] = useState(null);
     const [outpaintEditor, setOutpaintEditor] = useState(null);
-    const availableChatModels = useMemo(()=>state.models.filter((m)=>m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
-        state.models
+    const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
+        state.models,
+        state.providers
     ]);
-    const availableImageModels = useMemo(()=>state.models.filter((m)=>m.enabled && m.published && (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('upscale'))), [
-        state.models
+    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
+        activeProviderModels
+    ]);
+    const availableImageModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('upscale'))), [
+        activeProviderModels
     ]);
     const availableGenerationModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('generate')), [
         availableImageModels
@@ -5008,13 +5029,15 @@ export default function Page() {
     ]);
     const agentModel = availableChatModels.find((m)=>m.id === state.settings.agentModelId) || availableChatModels[0];
     const defaultImageModel = selectAutomaticModel(availableGenerationModels, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-    const defaultProvider = state.providers.find((provider)=>provider.id === state.settings.defaultProviderId);
-    const selectedGenerateModel = generateModelId !== 'auto' ? state.models.find((m)=>m.id === generateModelId) : defaultImageModel;
-    const generateUpscaleMode = Boolean(selectedGenerateModel?.capabilities.includes('upscale') && !selectedGenerateModel.capabilities.includes('generate'));
+    const defaultUpscaleModel = selectAutomaticModel(availableUpscaleModels, state.settings.defaultProviderId);
+    const defaultProvider = state.providers.find((provider)=>provider.id === state.settings.defaultProviderId && isProviderModelLibraryEnabled(provider));
+    const selectedGenerateModel = generateModelId !== 'auto' ? activeProviderModels.find((m)=>m.id === generateModelId) : defaultImageModel;
+    const selectedUpscaleModel = generateUpscaleModelId !== 'auto' ? activeProviderModels.find((m)=>m.id === generateUpscaleModelId) : defaultUpscaleModel;
+    const generateUpscaleMode = generateWorkflow === 'upscale';
     const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
     const activeAgentChatModel = activeAgentModelId === 'auto' ? agentModel : availableChatModels.find((model)=>model.id === activeAgentModelId);
-    const matchingModels = useMemo(()=>state.models.filter((model)=>(modelProviderFilter === 'all' || model.providerId === modelProviderFilter) && (!modelSearch.trim() || `${model.displayName} ${model.rawId}`.toLowerCase().includes(modelSearch.trim().toLowerCase()))), [
-        state.models,
+    const matchingModels = useMemo(()=>activeProviderModels.filter((model)=>(modelProviderFilter === 'all' || model.providerId === modelProviderFilter) && (!modelSearch.trim() || `${model.displayName} ${model.rawId}`.toLowerCase().includes(modelSearch.trim().toLowerCase()))), [
+        activeProviderModels,
         modelProviderFilter,
         modelSearch
     ]);
@@ -5277,6 +5300,7 @@ export default function Page() {
             const savedGeneration = JSON.parse(localStorage.getItem('sanmao-generate-settings') || 'null');
             if (savedGeneration) {
                 // 模型选择由提交后的统一偏好记录恢复；不能因为旧版参数缓存而覆盖“自动”模式。
+                if (typeof savedGeneration.upscaleModelId === 'string') setGenerateUpscaleModelId(savedGeneration.upscaleModelId);
                 if (typeof savedGeneration.ratio === 'string' && ratios.includes(savedGeneration.ratio)) setRatio(savedGeneration.ratio);
                 if (typeof savedGeneration.customRatioWidth === 'number' && savedGeneration.customRatioWidth > 0) setCustomRatioWidth(Math.round(savedGeneration.customRatioWidth));
                 if (typeof savedGeneration.customRatioHeight === 'number' && savedGeneration.customRatioHeight > 0) setCustomRatioHeight(Math.round(savedGeneration.customRatioHeight));
@@ -5337,6 +5361,7 @@ export default function Page() {
         if (!generateSettingsReady) return;
         const settings = {
             modelId: generateModelId,
+            upscaleModelId: generateUpscaleModelId,
             ratio,
             customRatioWidth,
             customRatioHeight,
@@ -5360,6 +5385,7 @@ export default function Page() {
     }, [
         generateSettingsReady,
         generateModelId,
+        generateUpscaleModelId,
         ratio,
         customRatioWidth,
         customRatioHeight,
@@ -5380,7 +5406,7 @@ export default function Page() {
     useEffect(()=>{
         if (modelPreferencesRestoredRef.current || !state.models.length) return;
         modelPreferencesRestoredRef.current = true;
-        const supports = (modelId, capability)=>Boolean(modelId && state.models.some((model)=>model.id === modelId && model.enabled && model.published && model.capabilities.includes(capability)));
+        const supports = (modelId, capability)=>Boolean(modelId && activeProviderModels.some((model)=>model.id === modelId && model.enabled && model.published && model.capabilities.includes(capability)));
         const restored = [];
         const agentCall = getLastModelCall('agent');
         if (agentCall) {
@@ -5416,9 +5442,11 @@ export default function Page() {
             if (params.upscaleAlgorithm === 'lanczos' || params.upscaleAlgorithm === 'bicubic' || params.upscaleAlgorithm === 'nearest') setGenerateUpscaleAlgorithm(params.upscaleAlgorithm);
             restored.push('生图');
         }
+        const upscaleCall = getLastModelCall('upscale');
+        if (upscaleCall) setGenerateUpscaleModelId(upscaleCall.mode === 'manual' && supports(upscaleCall.modelId, 'upscale') ? upscaleCall.modelId : 'auto');
         if (restored.length) notify(`已恢复上次${restored.join('、')}设置`);
     }, [
-        state.models,
+        activeProviderModels,
         notify
     ]);
     useEffect(()=>{
@@ -6563,7 +6591,7 @@ export default function Page() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '读取配置失败');
             setState(data);
-            const selectedChat = data.models?.find((model)=>model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || data.models?.find((model)=>model.enabled && model.published && model.kind === 'chat');
+            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.enabled && model.published && model.kind === 'chat');
             if (!data.settings?.webSearchConfigured && !selectedChat?.capabilities.includes('web-search')) {
                 setAgentWebSearchEnabled(false);
                 try {
@@ -6586,6 +6614,22 @@ export default function Page() {
         if (!res.ok) throw new Error(data.error || '操作失败');
         if (data.state) setState(data.state);
         return data;
+    }
+    function toggleLocalUpscaleMode() {
+        if (generateUpscaleMode) {
+            setGenerateWorkflow('generate');
+            notify('已返回普通生图模式');
+            return;
+        }
+        if (generateRefs.length !== 1) return notify('本地超分需要恰好 1 张参考图');
+        if (generateRefs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再超分');
+        if (!availableUpscaleModels.length) return notify('还没有可用的超分模型。请到模型库重新读取并启用 SeedVR2-7B。');
+        const lastCall = getLastModelCall('upscale');
+        const rememberedModel = lastCall?.mode === 'manual' && lastCall.modelId && availableUpscaleModels.some((model)=>model.id === lastCall.modelId) ? lastCall.modelId : 'auto';
+        setGenerateUpscaleModelId(rememberedModel);
+        setGeneratePromptBeforeOptimization(null);
+        setGenerateWorkflow('upscale');
+        notify(lastCall ? '已进入本地图片超分模式，并恢复上次设置' : '已进入本地图片超分模式');
     }
     async function addReferences(files, target) {
         try {
@@ -6825,6 +6869,23 @@ export default function Page() {
             setSyncingId(null);
         }
     }
+    async function toggleProviderModelLibrary(provider) {
+        try {
+            const res = await fetch(`/api/providers/${provider.id}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    modelLibraryEnabled: !isProviderModelLibraryEnabled(provider)
+                })
+            });
+            await applyReturnedState(res);
+            notify(isProviderModelLibraryEnabled(provider) ? '已从模型库隐藏该服务商' : '已将该服务商加入模型库');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '更新服务商模型库状态失败');
+        }
+    }
     function askDeleteProvider(id) {
         setConfirmState({
             title: '删除接口服务？',
@@ -7041,7 +7102,14 @@ export default function Page() {
         }
         setGeneratePrompt(task.prompt === 'Upscale this image' ? '' : task.prompt);
         setGeneratePromptBeforeOptimization(null);
-        setGenerateModelId(request.modelId || 'auto');
+        const restoringUpscale = task.mode === 'upscale';
+        if (restoringUpscale) {
+            setGenerateWorkflow('upscale');
+            setGenerateUpscaleModelId(request.modelId && availableUpscaleModels.some((model)=>model.id === request.modelId) ? request.modelId : 'auto');
+        } else {
+            setGenerateWorkflow('generate');
+            setGenerateModelId(request.modelId && availableGenerationModels.some((model)=>model.id === request.modelId) ? request.modelId : 'auto');
+        }
         setRatio(request.ratio || '1:1');
         setCustomRatioWidth(Math.max(1, Math.round(request.customRatioWidth || 16)));
         setCustomRatioHeight(Math.max(1, Math.round(request.customRatioHeight || 9)));
@@ -7101,21 +7169,23 @@ export default function Page() {
         ] : [
             ...generateRefs
         ];
-        const submittedModelId = savedRequest?.modelId || overrides?.modelId || generateModelId;
-        const submittedModel = submittedModelId !== 'auto' ? state.models.find((model)=>model.id === submittedModelId) : defaultImageModel;
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
+        const submittedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
+        const submittedModel = submittedModelId !== 'auto' ? activeProviderModels.find((model)=>model.id === submittedModelId) : submittedUpscaleMode ? selectedUpscaleModel : defaultImageModel;
         const submittedSizeMode = savedRequest?.sizeMode || sizeMode;
         const submittedCustomWidth = savedRequest?.customWidth || customWidth;
         const submittedCustomHeight = savedRequest?.customHeight || customHeight;
         if (submittedRefs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再提交');
         if (!submittedUpscaleMode && !submittedPrompt) return notify('先描述你想生成什么');
         if (!submittedUpscaleMode && !isAngleGeneration && submittedSizeMode === 'custom' && (submittedCustomWidth < 1 || submittedCustomHeight < 1)) return notify('请输入有效的自定义宽高');
-        if (isAngleGeneration ? !availableGenerationModels.length : !availableImageModels.length) return notify('还没有可用图片模型，请先到模型库启用模型');
+        const hasAvailableModel = isAngleGeneration ? availableGenerationModels.length > 0 : submittedUpscaleMode ? availableUpscaleModels.length > 0 : availableGenerationModels.length > 0;
+        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : '还没有可用图片模型，请先到模型库启用模型');
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
         const taskReferenceBytes = taskRefs.reduce((total, reference)=>total + reference.dataUrl.length, 0) + (isAngleGeneration ? 0 : savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0);
         if (taskReferenceBytes > 7000000) return notify('参考图和蒙版总大小过大，已停止提交；请减少图片数量或重新上传后再试');
+        if (submittedUpscaleMode && taskRefs.length !== 1) return notify('本地超分需要恰好 1 张参考图');
         const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : taskRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : taskRefs.length ? 'edit' : 'generate';
         const taskCount = savedRequest ? Math.max(1, Math.min(8, savedRequest.count || 1)) : submittedUpscaleMode || isAngleGeneration ? 1 : count;
         const taskModelId = submittedModelId;
@@ -7195,7 +7265,7 @@ export default function Page() {
             angleOutput: overrides?.angleOutput
         };
         const preferenceContext = taskMode === 'upscale' ? 'upscale' : taskRefs.length ? 'edit' : 'generate';
-        const manualImageModel = taskModelId !== 'auto' ? state.models.find((model)=>model.id === taskModelId) : undefined;
+        const manualImageModel = taskModelId !== 'auto' ? activeProviderModels.find((model)=>model.id === taskModelId) : undefined;
         const recordImagePreference = (actualModelId)=>{
             if (isAngleGeneration) return;
             const actualModel = actualModelId ? state.models.find((model)=>model.id === actualModelId) : undefined;
@@ -8304,7 +8374,8 @@ export default function Page() {
     function reuseItem(item) {
         setGeneratePrompt(item.prompt);
         setGeneratePromptBeforeOptimization(null);
-        setGenerateModelId(item.modelId && availableImageModels.some((m)=>m.id === item.modelId) ? item.modelId : 'auto');
+        setGenerateWorkflow('generate');
+        setGenerateModelId(item.modelId && availableGenerationModels.some((m)=>m.id === item.modelId) ? item.modelId : 'auto');
         setRatio(item.aspectRatio === '自定义' ? '1:1' : item.aspectRatio || '自动');
         setGenerateRefs([]);
         const dimensions = item.outputSize?.split('×').map(Number);
@@ -8539,6 +8610,7 @@ export default function Page() {
                 ref,
                 ...old.filter((existing)=>existing.id !== ref.id)
             ].slice(0, 16));
+        setGenerateWorkflow('generate');
         setGeneratePrompt('Remove white area and fill the scene');
         setGeneratePromptBeforeOptimization(null);
         setSizeMode('custom');
@@ -10413,6 +10485,8 @@ export default function Page() {
                                                 refs: generateRefs,
                                                 onAdd: (files)=>void addReferences(files, 'generate'),
                                                 onPasteClick: ()=>void pasteClipboardImages('generate'),
+                                                onLocalUpscale: toggleLocalUpscaleMode,
+                                                localUpscaleActive: generateUpscaleMode,
                                                 onRemove: (id)=>{
                                                     setGenerateRefs((old)=>old.filter((x)=>x.id !== id));
                                                     if (generateMask?.referenceId === id) setGenerateMask(null);
@@ -10463,7 +10537,7 @@ export default function Page() {
                                                                 children: "图片超分参数"
                                                             }),
                                                             /*#__PURE__*/ _jsx("small", {
-                                                                children: "当前选择的是 SeedVR2 超分模型，将使用第一张参考图作为输入。"
+                                                                children: `${selectedUpscaleModel?.displayName || '超分模型'} 将使用第一张本地图片作为输入。`
                                                             })
                                                         ]
                                                     }),
@@ -10477,13 +10551,12 @@ export default function Page() {
                                                                         children: "模型"
                                                                     }),
                                                                     /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                        models: availableGenerationModels,
-                                                                        value: generateModelId,
-                                                                        capability: "generate",
+                                                                        models: availableUpscaleModels,
+                                                                        value: generateUpscaleModelId,
+                                                                        capability: "upscale",
                                                                         defaultProviderId: state.settings.defaultProviderId,
                                                                         defaultProviderName: defaultProvider?.name,
-                                                                        defaultModelId: state.settings.defaultImageModelId,
-                                                                        onChange: setGenerateModelId
+                                                                        onChange: setGenerateUpscaleModelId
                                                                     })
                                                                 ]
                                                             }),
@@ -12894,6 +12967,21 @@ export default function Page() {
                                                                         className: `provider-status ${provider.status}`,
                                                                         children: provider.status === 'healthy' ? '连接正常' : provider.status === 'error' ? '连接异常' : '待读取'
                                                                     }),
+                                                                    /*#__PURE__*/ _jsxs("label", {
+                                                                        className: "provider-library-toggle",
+                                                                        title: isProviderModelLibraryEnabled(provider) ? '取消后隐藏并停用该服务商模型；不会清除模型勾选状态' : '加入模型库并恢复该服务商模型的上次勾选状态',
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx("input", {
+                                                                                type: "checkbox",
+                                                                                "aria-label": `${isProviderModelLibraryEnabled(provider) ? '隐藏' : '加入'} ${provider.name} 的模型库`,
+                                                                                checked: isProviderModelLibraryEnabled(provider),
+                                                                                onChange: ()=>void toggleProviderModelLibrary(provider)
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("span", {
+                                                                                children: isProviderModelLibraryEnabled(provider) ? '已加入模型库' : '已隐藏'
+                                                                            })
+                                                                        ]
+                                                                    }),
                                                                     providerEditId === provider.id && /*#__PURE__*/ _jsxs("span", {
                                                                         className: "provider-editing-badge",
                                                                         children: [
@@ -13050,10 +13138,10 @@ export default function Page() {
                                                                         label: '自动 · 不指定厂商',
                                                                         meta: '按可用模型自动回退'
                                                                     },
-                                                                    ...state.providers.map((provider)=>({
+...state.providers.filter((provider)=>isProviderModelLibraryEnabled(provider)).map((provider)=>({
                                                                             value: provider.id,
                                                                             label: provider.name,
-                                                                            meta: `${state.models.filter((model)=>model.providerId === provider.id && model.enabled && model.published).length} 个可用模型`
+meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id && model.enabled && model.published).length} 个可用模型`
                                                                         }))
                                                                 ],
                                                                 onChange: (value)=>void patchSettings({
@@ -13094,11 +13182,11 @@ export default function Page() {
                                                         value: 'all',
                                                         label: '全部接口服务'
                                                     },
-                                                    ...state.providers.map((p)=>({
-                                                            value: p.id,
-                                                            label: p.name,
-                                                            meta: `${state.models.filter((m)=>m.providerId === p.id).length} 个模型`
-                                                        }))
+                                                     ...state.providers.filter((p)=>isProviderModelLibraryEnabled(p)).map((p)=>({
+                                                             value: p.id,
+                                                             label: p.name,
+                                                             meta: `${activeProviderModels.filter((m)=>m.providerId === p.id).length} 个模型`
+                                                         }))
                                                 ],
                                                 onChange: setModelProviderFilter,
                                                 className: "provider-filter"
@@ -13111,12 +13199,12 @@ export default function Page() {
                                                         children: availableChatModels.length + availableImageModels.length
                                                     }),
                                                     " / ",
-                                                    state.models.length
+                                                     activeProviderModels.length
                                                 ]
                                             })
                                         ]
                                     }),
-                                    !state.models.length ? /*#__PURE__*/ _jsxs("div", {
+                                    !activeProviderModels.length ? /*#__PURE__*/ _jsxs("div", {
                                         className: "history-empty",
                                         children: [
                                             /*#__PURE__*/ _jsx("div", {
@@ -13127,10 +13215,10 @@ export default function Page() {
                                                 })
                                             }),
                                             /*#__PURE__*/ _jsx("h2", {
-                                                children: "还没有读取模型"
+                                                 children: state.models.length ? "还没有加入模型库的模型" : "还没有读取模型"
                                             }),
                                             /*#__PURE__*/ _jsx("p", {
-                                                children: "先添加接口服务，再读取它提供的模型列表。"
+                                                 children: state.models.length ? "请先在接口服务中勾选要加入模型库的服务商。" : "先添加接口服务，再读取它提供的模型列表。"
                                             }),
                                             /*#__PURE__*/ _jsx("button", {
                                                 className: "primary-action compact",
