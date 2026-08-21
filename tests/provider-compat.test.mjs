@@ -5,7 +5,10 @@ import ts from 'typescript';
 
 const sourceUrl = new URL('../lib/providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
+const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
+const detection = await readFile(detectionUrl, 'utf8');
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '')}`;
+const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
     target: ts.ScriptTarget.ES2022,
@@ -26,6 +29,28 @@ test('normalizes common model list response shapes', () => {
   assert.deepEqual(providers.normalizeDiscoveredModels({ data: { models: [{ model: 'e' }] } }), [
     { id: 'e', name: 'e', capabilities: [] },
   ]);
+});
+
+test('detects native search protocols from model metadata', () => {
+  const models = providers.normalizeDiscoveredModels({ data: [
+    { id: 'gpt-search-preview', tools: [{ type: 'web_search' }] },
+    { id: 'gemini-grounded', supported_tools: ['google_search'] },
+    { id: 'sonar-pro' },
+  ] }, { platform: 'openai' });
+  assert.equal(models[0].nativeSearchProtocol, 'openai-responses');
+  assert.equal(models[0].capabilities.includes('web-search'), true);
+  assert.equal(models[1].nativeSearchProtocol, 'gemini-grounding');
+  assert.equal(models[2].nativeSearchProtocol, 'native-chat');
+  assert.equal(models[0].capabilities.includes('chat'), true);
+});
+
+test('recognizes provider-native search for standard OpenAI and Gemini model ids', () => {
+  const openAiModels = providers.normalizeDiscoveredModels({ data: [{ id: 'gpt-5' }] }, { platform: 'openai' });
+  const geminiModels = providers.normalizeDiscoveredModels({ data: [{ id: 'gemini-2.5-pro' }] }, { platform: 'google-gemini' });
+  const browserModels = providers.normalizeDiscoveredModels({ data: [{ id: 'custom-browser-model', metadata: { browser: true } }] }, { platform: 'custom' });
+  assert.equal(openAiModels[0].nativeSearchProtocol, 'openai-responses');
+  assert.equal(geminiModels[0].nativeSearchProtocol, 'gemini-grounding');
+  assert.equal(browserModels[0].nativeSearchProtocol, 'openai-responses');
 });
 
 test('adds the standard v1 model endpoint for a provider website root', () => {

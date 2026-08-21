@@ -15,17 +15,14 @@ if [ "$PORT_START" -lt 1024 ] || [ "$PORT_START" -gt 65525 ]; then PORT_START=32
 PORT_END=$((PORT_START + 10))
 
 LEGACY_MARKER="${TMPDIR:-/tmp}/sanmao-ai-studio-instance.lock"
+LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
+
+. "$SCRIPT_DIR/launcher-common.sh"
+sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
+sanmao_log "启动器开始运行，根目录：$ROOT_DIR，端口范围：$PORT_START..$PORT_END" INFO
 
 server_is_ready() {
-  PORT_TO_CHECK=$1
-  if command -v lsof >/dev/null 2>&1 && ! lsof -nP -iTCP:$PORT_TO_CHECK -sTCP:LISTEN >/dev/null 2>&1; then
-    return 1
-  fi
-  STATUS=`curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 0.2 --max-time 1 "http://127.0.0.1:$PORT_TO_CHECK/api/state" 2>/dev/null || true`
-  case $STATUS in
-    2??|3??|4??) return 0 ;;
-  esac
-  return 1
+  sanmao_server_health "$1"
 }
 
 find_existing_server() {
@@ -41,10 +38,44 @@ find_existing_server() {
 }
 
 fail() {
-  printf '\n启动失败：%s\n\n' $1
-  printf '按回车键关闭窗口...'
-  read -r _ || true
+  sanmao_log "启动失败：$1" ERROR
+  printf '\n启动失败：%s\n\n' "$1"
+  if [ -n "${SERVER_STDERR:-}" ] && [ -s "$SERVER_STDERR" ]; then
+    printf '服务端最后的错误：\n'
+    tail -n 12 "$SERVER_STDERR" || true
+    printf '\n'
+  fi
+  if [ -t 0 ]; then
+    printf '按回车键关闭窗口...'
+    read -r _ || true
+  fi
   exit 1
+}
+
+acquire_lock() {
+  TRIES=0
+  while [ $TRIES -lt 450 ]; do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      printf '%s\n' $$ > "$LOCK_DIR/pid"
+      trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
+      return 0
+    fi
+
+    if [ -f "$LOCK_DIR/pid" ]; then
+      LOCK_PID=`cat "$LOCK_DIR/pid" 2>/dev/null || true`
+      if [ -n "$LOCK_PID" ] && ! kill -0 "$LOCK_PID" 2>/dev/null; then
+        rm -rf "$LOCK_DIR"
+        continue
+      fi
+    else
+      rm -rf "$LOCK_DIR"
+      continue
+    fi
+
+    TRIES=$((TRIES + 1))
+    sleep 0.2
+  done
+  return 1
 }
 
 EXISTING_PORT=`find_existing_server`
@@ -56,8 +87,17 @@ if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null; then
 fi
 rm -f "$LEGACY_MARKER"
 
+if ! acquire_lock; then
+  fail '另一个启动器正在运行，请稍候再试。'
+fi
+sanmao_log '已获取启动预检锁' INFO
+
+printf '\n==> 清理旧的 SANMAO.AI 后台服务\n'
+sanmao_clear_stale 3000 3010
+sanmao_clear_stale "$PORT_START" "$PORT_END"
+
 printf '%s\n' '========================================'
-printf '%s\n' '        SANMAO.AI macOS 启动器 0.6.9'
+printf '%s\n' '        SANMAO.AI macOS 启动器 0.7.0'
 printf '%s\n' '========================================'
 
 printf '\n==> 检查 Node.js\n'
@@ -103,14 +143,12 @@ printf '\n==> 检查构建产物是否最新\n'
 NEXT_BIN="$ROOT_DIR/node_modules/.bin/next"
 BUILD_ID="$ROOT_DIR/.next/BUILD_ID"
 
-# 需要重新构建：强制构建（SANMAO_FORCE_BUILD=1）、没有构建产物、或源码比构建产物新
 NEED_BUILD=0
 if [ "${SANMAO_FORCE_BUILD:-0}" = "1" ]; then
   NEED_BUILD=1
 elif [ ! -f "$BUILD_ID" ]; then
   NEED_BUILD=1
 else
-  # 源码里只要有文件的修改时间 >= 构建产物时间（即构建产物并非严格更新），就重新构建
   BUILD_MTIME=$(stat -f '%m' "$BUILD_ID" 2>/dev/null) || true
   NEWEST_MTIME=$(find "$ROOT_DIR/app" "$ROOT_DIR/components" "$ROOT_DIR/lib" "$ROOT_DIR/public" -type f -exec stat -f '%m' {} \; 2>/dev/null | sort -rn | head -n 1) || true
   ENV_MTIME=$(find "$ROOT_DIR" -maxdepth 1 -type f -name '.env*' -exec stat -f '%m' {} \; 2>/dev/null | sort -rn | head -n 1) || true
@@ -138,7 +176,11 @@ if [ "$NEED_BUILD" -eq 1 ]; then
 else
   printf '%s\n' '构建产物已是最新，跳过构建，直接启动。'
 fi
+
 printf '\n==> 启动 SANMAO.AI\n'
+sanmao_clear_stale 3000 3010
+sanmao_clear_stale "$PORT_START" "$PORT_END"
+
 PORT=$PORT_START
 if command -v lsof >/dev/null 2>&1; then
   while [ $PORT -le $PORT_END ] && lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; do
@@ -146,7 +188,7 @@ if command -v lsof >/dev/null 2>&1; then
   done
 fi
 if [ $PORT -gt $PORT_END ]; then
-  fail '3000～3010 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。'
+  fail "$PORT_START～$PORT_END 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
 fi
 
 URL=http://localhost:$PORT
@@ -157,10 +199,11 @@ NEXT_CLI="$ROOT_DIR/node_modules/next/dist/bin/next"
 unset SANMAO_LIFECYCLE
 node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" &
 SERVER_PID=$!
+sanmao_log "已启动服务进程 PID $SERVER_PID，等待端口 $PORT 就绪。" INFO
 
 READY=0
 ATTEMPT=0
-while [ $ATTEMPT -lt 60 ]; do
+while [ $ATTEMPT -lt 150 ]; do
   ATTEMPT=$((ATTEMPT + 1))
   sleep 0.2
   if ! kill -0 $SERVER_PID 2>/dev/null; then
@@ -179,5 +222,6 @@ fi
 
 printf 'SANMAO.AI 已启动：%s\n' $URL
 printf '%s\n' '本地服务会保持运行，下一次启动会直接打开已有服务。'
+sanmao_log "服务已就绪：$URL" INFO
 open $URL
 wait $SERVER_PID

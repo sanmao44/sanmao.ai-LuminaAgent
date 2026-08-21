@@ -1,4 +1,4 @@
-# SANMAO.AI 0.6.9
+# SANMAO.AI 0.7.0
 
 ## 启动器
 
@@ -14,6 +14,12 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 启动器会自动检查 Node.js 20.9+、安装依赖、构建项目、使用 SANMAO.AI 专用的 3210～3220 端口段并打开浏览器。重复双击不会启动第二个后台服务，而是打开已有网页；关闭最后一个网页后后台服务会自动退出。
 
 一个可运行的中文多模型 AI 生图平台：支持在网页内添加多个第三方 API 服务、读取模型列表、选择实际要使用的模型，并提供独立的智能助手、生图工作台、图片修改和本地生成历史。
+
+## 0.7.0 可挑选式对话分享
+
+- 分享入口并入固定顶部栏，普通状态只占用一个紧凑按钮，不再挤压对话内容。
+- 支持按问答组选择分享内容，默认空选，并提供全选、清空、取消和预览操作。
+- 分享长图保留 Markdown、图片、参考图、文件、Logo、二维码和本地 PNG 下载流程。
 
 ## 0.6.9 对话工作区视觉优化
 
@@ -52,9 +58,10 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 
 ## 0.6.3 Agent 联网与对话体验升级
 
-- 默认使用“智能联网”：本地规则只为实时资讯、价格、版本、政策和事实核验触发检索，普通创作、代码和聊天首字流式回复。
+- 默认使用“智能联网”：本地多信号判断会优先为事实提问、人物/机构/事件状态核验、实时资讯、价格、版本和政策触发检索；普通创作、代码、稳定概念解释和聊天首字流式回复。上下文追问会补充必要实体，但不会把完整对话发送给搜索服务。
 - 联网模式改为无原生白底下拉的自定义菜单，提供智能、始终和关闭三种模式。
-- 受控搜索返回空来源时，会尝试支持联网能力的模型原生搜索；失败状态会明确说明服务、权限或额度问题。
+- 支持原生联网的模型优先调用自身搜索（OpenAI Responses、Gemini grounding、Perplexity/Sonar 等），失败后自动回退 AnySearch/百度千帆；消息徽标会区分“模型原生联网”和“外部搜索 API”。
+- 模型库会显示“原生联网”标签，并提供自动识别、强制启用、禁用三种校正方式，兼容没有完整模型元数据的自定义平台。
 - 对话出图增加构思、生成与创作建议加载卡，成图优先显示，并保存实际检索元数据。
 
 ## 0.6.2 角度控制台优化
@@ -244,6 +251,14 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
 ```
 
 应用启动后会定期检查更新。侧栏会显示当前版本，发现新版本后弹出更新提示；检查失败不会影响本地使用。
+
+无梯子环境会自动做多源回退：更新清单先请求 GitHub，失败后尝试 jsDelivr；安装包先请求官方 GitHub Release，失败后尝试清单 `mirrorUrls`、`SANMAO_UPDATE_MIRRORS` 以及内置的 `ghfast.top`/`ghproxy.net` 公共加速。安装包下载后仍会强制校验 SHA-256，校验失败不会执行更新。也可以自定义镜像：
+
+```env
+SANMAO_UPDATE_MANIFEST_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/raw/main/update.json
+SANMAO_UPDATE_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.0/SANMAO.AI-0.7.0.zip
+SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://ghproxy.net/
+```
 
 如果 `update.json` 同时提供可信的 GitHub 源码压缩包地址和 SHA-256：
 

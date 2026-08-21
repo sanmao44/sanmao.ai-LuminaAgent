@@ -1,8 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderType, PublicState, RegistryModel, WebSearchApiProvider } from './types';
+import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol } from './types';
 import { selectAutomaticModel } from './model-selection';
+import { inferNativeSearch } from './native-search-detection';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -128,7 +129,7 @@ function maskKey(secret: string) {
   return `${secret.slice(0, 3)}••••${secret.slice(-4)}`;
 }
 
-export function inferModel(rawId: string, platform?: ProviderPlatform): { kind: ModelKind; capabilities: ModelCapability[] } {
+export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSearchProtocol?: NativeSearchProtocol): { kind: ModelKind; capabilities: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection } {
   const id = rawId.toLowerCase();
   const upscaleish = /(seed[-_ ]?vr2?|real[-_ ]?esrgan|swinir|upscal|super[-_ ]?resolution)/.test(id);
   if (upscaleish) return { kind: 'image', capabilities: ['edit', 'reference', 'upscale'] };
@@ -139,21 +140,34 @@ export function inferModel(rawId: string, platform?: ProviderPlatform): { kind: 
     if (/(gpt-image|gemini.*image|ideogram|recraft)/.test(id)) capabilities.push('typography');
     return { kind: 'image', capabilities };
   }
-  const chatish = /(gpt|gemini|claude|deepseek|qwen|llama|mistral|glm|kimi|command-r|o[134]|sonar)/.test(id);
+  const chatish = /(gpt|gemini|claude|deepseek|qwen|llama|mistral|glm|kimi|command-r|o[134]|sonar|perplexity)/.test(id);
   if (chatish) {
     const capabilities: ModelCapability[] = ['chat', 'vision'];
-    if ((platform === 'deepseek' && /deepseek.*v4.*(?:flash|pro)/.test(id)) || /web[-_ ]?search|search[-_ ]?enabled/.test(id)) capabilities.push('web-search');
-    return { kind: 'chat', capabilities };
+    const inferredNative = inferNativeSearch(rawId, platform);
+    const protocol = nativeSearchProtocol || inferredNative.protocol;
+    if (protocol || inferredNative.detected) capabilities.push('web-search');
+    return { kind: 'chat', capabilities, ...(protocol ? { nativeSearchProtocol: protocol } : {}), ...(inferredNative.detection ? { nativeSearchDetection: inferredNative.detection } : {}) };
   }
   return { kind: 'unknown', capabilities: [] };
 }
 
 function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): RegistryModel {
-  const inferred = inferModel(model.rawId, platform);
-  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search' || inferred.capabilities.includes('web-search'));
-  const capabilities = Array.from(new Set([...retained, ...inferred.capabilities]));
+  const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol);
+  const legacyNative = !model.nativeSearchOverride && model.capabilities?.includes('web-search');
+  const nativeEnabled = model.nativeSearchOverride === 'enabled' || (model.nativeSearchOverride !== 'disabled' && (inferred.capabilities.includes('web-search') || Boolean(legacyNative)));
+  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search');
+  const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : [])]));
   const imageLike = inferred.kind === 'image' || capabilities.includes('generate') || capabilities.includes('upscale');
-  return { ...model, kind: imageLike ? 'image' : model.kind === 'unknown' ? inferred.kind : model.kind, capabilities };
+  const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
+  const nativeSearchDetection = model.nativeSearchOverride === 'enabled' || model.nativeSearchOverride === 'disabled'
+    ? 'manual' as const
+    : model.nativeSearchDetection || inferred.nativeSearchDetection;
+  const normalizedKind = imageLike
+    ? 'image'
+    : model.kind === 'unknown'
+      ? inferred.kind !== 'unknown' ? inferred.kind : capabilities.includes('chat') ? 'chat' : 'unknown'
+      : model.kind;
+  return { ...model, kind: normalizedKind, capabilities, ...(nativeSearchProtocol ? { nativeSearchProtocol } : {}), ...(nativeSearchDetection ? { nativeSearchDetection } : {}) };
 }
 
 export async function getPublicState(): Promise<PublicState> {
@@ -313,28 +327,31 @@ export async function setProviderStatus(id: string, status: ProviderStatus, last
   await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? { ...p, status, lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt } : p); });
 }
 
-export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ModelCapability[] }>) {
+export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection }>) {
   return mutateState((state) => {
     const existing = new Map(state.models.filter((m) => m.providerId === providerId).map((m) => [m.rawId, m]));
     const next = rawModels.map((raw) => {
       const previous = existing.get(raw.id);
       if (previous) {
-        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform);
-        return { ...previous, providerName, kind: previous.kind === 'unknown' ? inferred.kind : previous.kind, capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) };
+        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform, raw.nativeSearchProtocol);
+        return normalizeModel({ ...previous, providerName, ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, state.providers.find((provider) => provider.id === providerId)?.platform);
       }
-      const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform);
-      return {
+      const platform = state.providers.find((provider) => provider.id === providerId)?.platform;
+      const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol);
+      return normalizeModel({
         id: randomUUID(), providerId, providerName, rawId: raw.id,
         displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,
         kind: inferred.kind, enabled: false, published: false, capabilities: Array.from(new Set([...(raw.capabilities || []), ...inferred.capabilities])),
-      } satisfies RegistryModel;
+        ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}),
+        ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}),
+      } satisfies RegistryModel, platform);
     });
     state.models = [...state.models.filter((m) => m.providerId !== providerId), ...next];
     return next;
   });
 }
 
-export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 'displayName' | 'kind' | 'enabled' | 'published' | 'capabilities'>>) {
+export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 'displayName' | 'kind' | 'enabled' | 'published' | 'capabilities' | 'nativeSearchOverride'>>) {
   return mutateState((state) => {
     state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
     state.models = state.models.map((m) => {

@@ -33,6 +33,8 @@ export type UpdateStatus = {
 
 const currentVersion = String(packageInfo.version || '0.0.0');
 const defaultManifestUrl = 'https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json';
+const defaultJsdelivrManifestUrl = 'https://cdn.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json';
+const manifestFetchTimeoutMs = 6_000;
 const cacheTtlMs = 6 * 60 * 60 * 1000;
 let cached: { expiresAt: number; status: UpdateStatus } | null = null;
 
@@ -54,6 +56,31 @@ function configuredManifestUrl() {
   return process.env.SANMAO_UPDATE_MANIFEST_URL?.trim() || defaultManifestUrl;
 }
 
+function configuredManifestMirrors() {
+  return (process.env.SANMAO_UPDATE_MANIFEST_MIRRORS || '')
+    .split(/[\r\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function validHttpUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return ['http:', 'https:'].includes(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+export function manifestUrlCandidates() {
+  const customManifestUrl = process.env.SANMAO_UPDATE_MANIFEST_URL?.trim();
+  const candidates = customManifestUrl
+    ? [customManifestUrl]
+    : [defaultManifestUrl, defaultJsdelivrManifestUrl];
+  candidates.push(...configuredManifestMirrors());
+  return [...new Set(candidates)].filter(validHttpUrl);
+}
+
 function hasLocalUpdater() {
   if (process.env.SANMAO_DISABLE_LOCAL_UPDATE === '1') return false;
   const script = process.platform === 'win32' ? 'apply-update.ps1' : 'apply-update.sh';
@@ -68,15 +95,6 @@ function baseStatus(checkedAt = new Date().toISOString()): UpdateStatus {
     canApply: false,
     checkedAt,
   };
-}
-
-function validHttpUrl(value: string) {
-  try {
-    const parsed = new URL(value);
-    return ['http:', 'https:'].includes(parsed.protocol);
-  } catch {
-    return false;
-  }
 }
 
 function validPackageUrl(value: string) {
@@ -133,25 +151,33 @@ function readLocalManifest(): Partial<UpdateManifest> | null {
 }
 
 export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
-  const url = configuredManifestUrl();
-  if (!url) return baseStatus();
+  const urls = manifestUrlCandidates();
+  if (!urls.length) return baseStatus();
   if (!force && cached && cached.expiresAt > Date.now()) return cached.status;
 
   const checkedAt = new Date().toISOString();
   try {
-    const parsedUrl = new URL(url);
-    if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('更新清单地址必须使用 HTTP 或 HTTPS');
-    const response = await fetch(parsedUrl, {
-      cache: 'no-store',
-      headers: { Accept: 'application/json', 'User-Agent': 'SANMAO.AI update checker' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) throw new Error(`更新清单返回 HTTP ${response.status}`);
+    let lastError: unknown;
+    for (const url of urls) {
+      try {
+        const parsedUrl = new URL(url);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) continue;
+        const response = await fetch(parsedUrl, {
+          cache: 'no-store',
+          headers: { Accept: 'application/json', 'User-Agent': 'SANMAO.AI update checker' },
+          signal: AbortSignal.timeout(manifestFetchTimeoutMs),
+        });
+        if (!response.ok) throw new Error(`更新清单返回 HTTP ${response.status}`);
 
-    const raw = await response.json() as Partial<UpdateManifest>;
-    const status = statusFromManifest(raw, checkedAt);
-    cached = { expiresAt: Date.now() + cacheTtlMs, status };
-    return status;
+        const raw = await response.json() as Partial<UpdateManifest>;
+        const status = statusFromManifest(raw, checkedAt);
+        cached = { expiresAt: Date.now() + cacheTtlMs, status };
+        return status;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('更新检查失败');
   } catch (error) {
     const localManifest = readLocalManifest();
     if (localManifest) {
@@ -166,7 +192,7 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
     const status = {
       ...baseStatus(checkedAt),
       configured: true,
-      error: error instanceof Error ? error.message : '更新检查失败',
+      error: '无法连接 GitHub 更新源，已尝试多个镜像；请检查网络或稍后重试',
     };
     cached = { expiresAt: Date.now() + 10 * 60 * 1000, status };
     return status;

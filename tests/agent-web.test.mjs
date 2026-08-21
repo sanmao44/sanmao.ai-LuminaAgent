@@ -21,13 +21,46 @@ test('migrates legacy web preference and accepts explicit modes', () => {
 
 test('smart mode searches changing facts and explicit source checks only', () => {
   for (const input of ['今天 AI 行业有什么新闻？', 'OpenAI 最新 API 版本是多少？', '帮我核验这个消息是否属实', '请搜索这个问题的来源']) {
-    assert.equal(web.shouldUseAgentWebSearch('auto', input), true, input);
+    assert.equal(web.shouldUseAgentWebSearch('auto', input).shouldSearch, true, input);
   }
   for (const input of ['写一段国风海报提示词', '解释这段 TypeScript', '给我总结这段内容', '你好']) {
-    assert.equal(web.shouldUseAgentWebSearch('auto', input), false, input);
+    assert.equal(web.shouldUseAgentWebSearch('auto', input).shouldSearch, false, input);
   }
-  assert.equal(web.shouldUseAgentWebSearch('always', '你好'), true);
-  assert.equal(web.shouldUseAgentWebSearch('off', '今天有什么新闻'), false);
+  assert.equal(web.shouldUseAgentWebSearch('always', '你好').shouldSearch, true);
+  assert.equal(web.shouldUseAgentWebSearch('off', '今天有什么新闻').shouldSearch, false);
+});
+
+test('prioritizes factual questions and status verification in smart mode', () => {
+  const death = web.shouldUseAgentWebSearch('auto', '朱镕基去世了吗？');
+  assert.equal(death.shouldSearch, true);
+  assert.equal(death.reason, 'fact-verification');
+  assert.match(death.query, /朱镕基去世了吗/);
+
+  const rumor = web.shouldUseAgentWebSearch('auto', '这个消息是真的吗？', [
+    { role: 'user', content: '有人说朱镕基已经去世了。' },
+  ]);
+  assert.equal(rumor.shouldSearch, true);
+  assert.equal(rumor.reason, 'fact-verification');
+});
+
+test('builds a minimal query for context follow-ups without sending the full transcript', () => {
+  const decision = web.shouldUseAgentWebSearch('auto', '他现在怎么样？', [
+    { role: 'user', content: '朱镕基最近怎么样？' },
+    { role: 'assistant', content: '这里是上一轮很长的回答，包含了很多不应被直接发送给搜索服务的无关细节。' },
+  ]);
+  assert.equal(decision.shouldSearch, true);
+  assert.equal(decision.reason, 'context-follow-up');
+  assert.match(decision.query, /朱镕基/);
+  assert.match(decision.query, /他现在怎么样/);
+  assert.ok(decision.query.length <= 320);
+});
+
+test('keeps stable explanations, creative work and code out of smart search', () => {
+  for (const input of ['什么是光合作用？', '解释这段 Python 代码', '帮我写一段产品文案']) {
+    const decision = web.shouldUseAgentWebSearch('auto', input);
+    assert.equal(decision.shouldSearch, false, input);
+    assert.equal(decision.reason, 'ordinary-chat', input);
+  }
 });
 
 test('tool requests stay on planner path while ordinary text can stream directly', () => {

@@ -9,7 +9,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const { id } = await context.params;
     const body = await request.json();
     const allowed: Record<string, unknown> = {};
-    for (const key of ['displayName', 'kind', 'enabled', 'published', 'capabilities']) if (key in body) allowed[key] = body[key];
+    for (const key of ['displayName', 'kind', 'enabled', 'published', 'capabilities', 'nativeSearchOverride']) if (key in body) allowed[key] = body[key];
     await patchModel(id, allowed as any);
     return Response.json({ ok: true, state: await getPublicState() });
   } catch (error) {

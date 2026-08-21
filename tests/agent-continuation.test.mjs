@@ -36,6 +36,22 @@ test('keeps compatibility with legacy bullet directions and provides a fallback'
   assert.ok(fallback.every((item) => typeof item === 'string' && item.length > 0));
 });
 
+test('extracts clickable follow-ups from ordinary assistant replies', () => {
+  const directions = continuation.extractChatDirections([
+    '## 结论',
+    '这是对当前问题的回答。',
+    '',
+    '### 你还可以继续',
+    '1. 请举一个具体例子',
+    '2. 请比较两种常见方案',
+    '3. 请整理成执行清单',
+  ].join('\n'));
+
+  assert.deepEqual(directions, ['请举一个具体例子', '请比较两种常见方案', '请整理成执行清单']);
+  assert.equal(continuation.isChatDirectionHeading('### 你还可以继续'), true);
+  assert.equal(continuation.extractChatDirections('只有普通回答').length, 3);
+});
+
 test('removes the rendered direction section without removing the caption', () => {
   const caption = [
     '本次精修保持主体和构图不变。',

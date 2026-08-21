@@ -13,7 +13,9 @@ import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorit
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
-import { buildContinuationPrompt, extractAgentDirections, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
+import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
+import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
+import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -626,15 +628,41 @@ function roundCanvasRect(context, x, y, width, height, radius) {
     context.arcTo(x, y, x + width, y, r);
     context.closePath();
 }
+function drawCanvasPill(context, x, y, width, height, fill, stroke) {
+    roundCanvasRect(context, x, y, width, height, height / 2);
+    context.fillStyle = fill;
+    context.fill();
+    if (stroke) {
+        roundCanvasRect(context, x, y, width, height, height / 2);
+        context.strokeStyle = stroke;
+        context.lineWidth = 1;
+        context.stroke();
+    }
+}
+function drawCanvasImageContain(context, image, x, y, width, height, radius = 0) {
+    const imageRect = containCanvasRect(image.naturalWidth, image.naturalHeight, x, y, width, height);
+    context.save();
+    if (radius > 0) {
+        roundCanvasRect(context, x, y, width, height, radius);
+        context.clip();
+    }
+    context.drawImage(image, imageRect.x, imageRect.y, imageRect.width, imageRect.height);
+    context.restore();
+    return imageRect;
+}
 async function downloadShareImage(item) {
     const references = galleryReferences(item);
     if (!references.length) throw new Error('这张图片没有保存参考图，无法生成分享版');
     const images = await Promise.all([
         loadCanvasImage(item.url),
-        ...references.map((reference) => loadCanvasImage(reference.url))
+        ...references.map((reference) => loadCanvasImage(reference.url)),
+        loadCanvasImage('/brand-mark.png'),
+        loadCanvasImage('/share-qr.png')
     ]);
     const resultImage = images[0];
-    const referenceImages = images.slice(1);
+    const referenceImages = images.slice(1, references.length + 1);
+    const brandImage = images[references.length + 1];
+    const qrImage = images[references.length + 2];
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     if (!context) throw new Error('浏览器不支持分享版图片生成');
@@ -653,14 +681,55 @@ async function downloadShareImage(item) {
     if (layout.overflow) throw new Error('提示词过长，无法在单张分享 PNG 中完整排版；请在应用内复制提示词后分享。');
     canvas.width = layout.canvasWidth;
     canvas.height = layout.canvasHeight;
-    context.fillStyle = '#f3f5f9';
+    context.fillStyle = '#eef1f6';
     context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = '#192338';
-    context.font = `700 30px ${shareFont}`;
-    context.fillText('SANMAO.AI · 生成结果', layout.padding, 52);
+    const backgroundGlow = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    backgroundGlow.addColorStop(0, 'rgba(117, 104, 245, .08)');
+    backgroundGlow.addColorStop(.42, 'rgba(255, 255, 255, 0)');
+    backgroundGlow.addColorStop(1, 'rgba(53, 193, 151, .08)');
+    context.fillStyle = backgroundGlow;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = 'rgba(117, 104, 245, .08)';
+    context.beginPath();
+    context.arc(canvas.width - 18, 30, 180, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = 'rgba(53, 193, 151, .06)';
+    context.beginPath();
+    context.arc(35, layout.footerY + 100, 180, 0, Math.PI * 2);
+    context.fill();
+
+    const logoSize = 60;
+    context.shadowColor = 'rgba(25,35,56,.16)';
+    context.shadowBlur = 18;
+    context.shadowOffsetY = 6;
+    roundCanvasRect(context, layout.padding, 28, logoSize, logoSize, 16);
+    context.fillStyle = '#08090d';
+    context.fill();
+    context.shadowColor = 'transparent';
+    context.shadowBlur = 0;
+    context.shadowOffsetY = 0;
+    drawCanvasImageContain(context, brandImage, layout.padding, 28, logoSize, logoSize, 16);
+    context.fillStyle = '#182238';
+    context.font = `800 30px ${shareFont}`;
+    context.fillText('SANMAO.AI', layout.padding + 80, 54);
     context.fillStyle = '#68758a';
-    context.font = `500 19px ${shareFont}`;
-    context.fillText(`${truncateCanvasText(item.modelName || '图片模型', 42)}  ·  ${new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}`, layout.padding, 82);
+    context.font = `500 15px ${shareFont}`;
+    context.fillText('AI 创作工作台  ·  IMAGE SHARE', layout.padding + 82, 80);
+    const headerPillWidth = 270;
+    const headerPillX = canvas.width - layout.padding - headerPillWidth;
+    drawCanvasPill(context, headerPillX, 34, headerPillWidth, 42, 'rgba(255,255,255,.78)', '#d9deea');
+    context.fillStyle = '#7568f5';
+    context.font = `800 11px ${shareFont}`;
+    context.fillText('IMAGE / RESULT', headerPillX + 18, 52);
+    context.fillStyle = '#7d8798';
+    context.font = `500 11px ${shareFont}`;
+    context.textAlign = 'right';
+    context.fillText(new Date(item.createdAt).toLocaleDateString('zh-CN'), headerPillX + headerPillWidth - 18, 52);
+    context.textAlign = 'left';
+    context.fillStyle = '#9aa3b1';
+    context.font = `500 11px ${shareFont}`;
+    context.fillText('GENERATIVE IMAGE  ·  SANMAO.AI', headerPillX + 18, 67);
+
     context.fillStyle = '#ffffff';
     context.shadowColor = 'rgba(25,35,56,.12)';
     context.shadowBlur = 24;
@@ -670,8 +739,19 @@ async function downloadShareImage(item) {
     context.shadowColor = 'transparent';
     context.shadowBlur = 0;
     context.shadowOffsetY = 0;
-    const resultRect = containCanvasRect(resultImage.naturalWidth, resultImage.naturalHeight, layout.resultContent.x, layout.resultContent.y, layout.resultContent.width, layout.resultContent.height);
-    context.drawImage(resultImage, resultRect.x, resultRect.y, resultRect.width, resultRect.height);
+    context.fillStyle = '#192338';
+    context.font = `800 12px ${shareFont}`;
+    context.fillText('GENERATED IMAGE', layout.resultFrame.x + 28, layout.resultFrame.y + 18);
+    context.fillStyle = '#9aa3b1';
+    context.font = `500 12px ${shareFont}`;
+    context.textAlign = 'right';
+    context.fillText(`${truncateCanvasText(item.modelName || '图片模型', 42)}  ·  ${new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}`, layout.resultFrame.x + layout.resultFrame.width - 28, layout.resultFrame.y + 18);
+    context.textAlign = 'left';
+    drawCanvasImageContain(context, resultImage, layout.resultContent.x, layout.resultContent.y, layout.resultContent.width, layout.resultContent.height, 12);
+    context.strokeStyle = '#e4e7ef';
+    context.lineWidth = 1;
+    roundCanvasRect(context, layout.resultContent.x, layout.resultContent.y, layout.resultContent.width, layout.resultContent.height, 12);
+    context.stroke();
     context.fillStyle = '#ffffff';
     context.shadowColor = 'rgba(25,35,56,.08)';
     context.shadowBlur = 18;
@@ -728,8 +808,11 @@ async function downloadShareImage(item) {
         context.shadowBlur = 0;
         context.shadowOffsetY = 0;
         const referenceImage = referenceImages[index];
-        const imageRect = containCanvasRect(referenceImage.naturalWidth, referenceImage.naturalHeight, x + 12, y + 12, tileWidth - 24, 132);
-        context.drawImage(referenceImage, imageRect.x, imageRect.y, imageRect.width, imageRect.height);
+        drawCanvasImageContain(context, referenceImage, x + 12, y + 12, tileWidth - 24, 132, 10);
+        context.strokeStyle = '#e6e9f0';
+        context.lineWidth = 1;
+        roundCanvasRect(context, x + 12, y + 12, tileWidth - 24, 132, 10);
+        context.stroke();
         context.fillStyle = '#526075';
         context.font = `700 16px ${shareFont}`;
         context.fillText(`图 ${index + 1}`, x + 12, y + 163);
@@ -737,6 +820,60 @@ async function downloadShareImage(item) {
         context.font = `500 14px ${shareFont}`;
         context.fillText(truncateCanvasText(reference.name, 18), x + 58, y + 163);
     });
+
+    const footerX = layout.padding;
+    const footerY = layout.footerY;
+    const footerWidth = layout.contentWidth;
+    context.fillStyle = '#ffffff';
+    context.shadowColor = 'rgba(25,35,56,.10)';
+    context.shadowBlur = 22;
+    context.shadowOffsetY = 7;
+    roundCanvasRect(context, footerX, footerY, footerWidth, layout.footerHeight, 22);
+    context.fill();
+    context.shadowColor = 'transparent';
+    context.shadowBlur = 0;
+    context.shadowOffsetY = 0;
+    const footerAccent = context.createLinearGradient(footerX, footerY, footerX + footerWidth, footerY);
+    footerAccent.addColorStop(0, '#7568f5');
+    footerAccent.addColorStop(1, '#35c197');
+    context.fillStyle = footerAccent;
+    roundCanvasRect(context, footerX, footerY, footerWidth, 6, 3);
+    context.fill();
+    const footerLogoSize = 76;
+    context.fillStyle = '#08090d';
+    roundCanvasRect(context, footerX + 30, footerY + 40, footerLogoSize, footerLogoSize, 18);
+    context.fill();
+    drawCanvasImageContain(context, brandImage, footerX + 30, footerY + 40, footerLogoSize, footerLogoSize, 18);
+    context.fillStyle = '#182238';
+    context.font = `800 25px ${shareFont}`;
+    context.fillText('让灵感落地，把想法变成作品', footerX + 132, footerY + 72);
+    context.fillStyle = '#7568f5';
+    context.font = `800 15px ${shareFont}`;
+    context.fillText('SANMAO.AI  ·  AI 创作工作台', footerX + 132, footerY + 101);
+    context.fillStyle = '#68758a';
+    context.font = `500 14px ${shareFont}`;
+    context.fillText('从提示词到成片，让每一次创作都有迹可循。', footerX + 132, footerY + 130);
+    context.fillStyle = '#9aa3b1';
+    context.font = `500 12px ${shareFont}`;
+    context.fillText('内容由 SANMAO.AI 生成，仅供参考', footerX + 30, footerY + layout.footerHeight - 24);
+
+    const qrPanelWidth = layout.footerQrSize + 28;
+    const qrPanelHeight = layout.footerHeight - 28;
+    const qrPanelX = footerX + footerWidth - qrPanelWidth - 24;
+    const qrPanelY = footerY + 14;
+    roundCanvasRect(context, qrPanelX, qrPanelY, qrPanelWidth, qrPanelHeight, 18);
+    context.fillStyle = '#f7f8fb';
+    context.fill();
+    context.strokeStyle = '#e2e6ef';
+    context.lineWidth = 1;
+    roundCanvasRect(context, qrPanelX, qrPanelY, qrPanelWidth, qrPanelHeight, 18);
+    context.stroke();
+    context.fillStyle = '#182238';
+    context.font = `800 13px ${shareFont}`;
+    context.textAlign = 'center';
+    context.fillText('扫码访问 SANMAO.AI', qrPanelX + qrPanelWidth / 2, qrPanelY + 20);
+    drawCanvasImageContain(context, qrImage, qrPanelX + 14, qrPanelY + 27, layout.footerQrSize, qrPanelHeight - 36, 8);
+    context.textAlign = 'left';
     const blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('分享版图片导出失败')), 'image/png'));
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -746,6 +883,207 @@ async function downloadShareImage(item) {
     anchor.click();
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+}
+const SHARE_FONT = '"Segoe UI", "Microsoft YaHei", sans-serif';
+const SHARE_TITLE = '让灵感落地，把想法变成作品';
+const SHARE_DISCLAIMER = '内容由 SANMAO.AI 生成，仅供参考';
+
+function drawShareInlineText(context, value, x, baseline, fontSize, color) {
+    const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*]+\*|_[^_]+_)/g;
+    const tokens = [];
+    let cursor = 0;
+    let match;
+    while(match = pattern.exec(String(value || ''))){
+        if (match.index > cursor) tokens.push({ text: String(value).slice(cursor, match.index), kind: 'normal' });
+        const token = match[0];
+        tokens.push({ text: token.slice(token.startsWith('**') || token.startsWith('__') ? 2 : 1, -1), kind: token.startsWith('`') ? 'code' : token.startsWith('**') || token.startsWith('__') ? 'bold' : 'italic' });
+        cursor = match.index + token.length;
+    }
+    if (cursor < String(value || '').length) tokens.push({ text: String(value).slice(cursor), kind: 'normal' });
+    let drawX = x;
+    tokens.forEach((token)=>{
+        const weight = token.kind === 'bold' ? 800 : 500;
+        context.font = `${weight} ${fontSize}px ${SHARE_FONT}`;
+        const width = context.measureText(token.text).width;
+        if (token.kind === 'code') {
+            context.fillStyle = '#eef0ff';
+            roundCanvasRect(context, drawX - 5, baseline - fontSize - 4, width + 10, fontSize + 10, 5);
+            context.fill();
+            context.fillStyle = '#5b50bc';
+            context.font = `500 ${fontSize}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+        } else {
+            context.fillStyle = token.kind === 'bold' ? '#182238' : color;
+            if (token.kind === 'italic') context.font = `italic 500 ${fontSize}px ${SHARE_FONT}`;
+        }
+        context.fillText(token.text, drawX, baseline);
+        drawX += width;
+    });
+}
+
+function drawShareConversationBlock(context, block, x, y, width) {
+    const blockHeight = Math.max(1, block.lines.length) * block.lineHeight + block.gapAfter;
+    if (block.type === 'code') {
+        context.fillStyle = '#f1f3f8';
+        roundCanvasRect(context, x, y - 20, width, blockHeight - 4, 10);
+        context.fill();
+    }
+    if (block.type === 'quote') {
+        context.fillStyle = '#8c80f6';
+        roundCanvasRect(context, x, y - 18, 5, Math.max(30, block.lines.length * block.lineHeight), 3);
+        context.fill();
+    }
+    block.lines.forEach((line, index)=>{
+        const baseline = y + index * block.lineHeight + block.fontSize;
+        const indent = block.type === 'list' ? 25 : block.type === 'quote' ? 17 : 0;
+        if (block.type === 'list') {
+            context.fillStyle = '#7568f5';
+            context.font = `800 ${block.fontSize}px ${SHARE_FONT}`;
+            context.fillText('•', x, baseline);
+        }
+        const color = block.type === 'heading' ? '#182238' : block.type === 'code' ? '#4e5b70' : block.type === 'quote' ? '#68758a' : '#465268';
+        drawShareInlineText(context, line, x + indent, baseline, block.fontSize, color);
+    });
+    return blockHeight;
+}
+
+async function renderShareConversationImage(messages) {
+    if (messages.some((message)=>message.pending)) throw new Error('请等待当前回答完成后再分享');
+    const completedMessages = messages.filter((message)=>!message.pending && (message.content?.trim() || message.images?.length || message.references?.length || message.files?.length));
+    if (!completedMessages.length) throw new Error('当前对话还没有可分享的已完成内容');
+    const imageEntries = [];
+    completedMessages.forEach((message, messageIndex)=>{
+        (message.images || []).forEach((item, imageIndex)=>imageEntries.push({ messageIndex, imageIndex, item }));
+    });
+    const loaded = await Promise.all([
+        ...imageEntries.map((entry)=>loadCanvasImage(entry.item.url)),
+        loadCanvasImage('/brand-mark.png'),
+        loadCanvasImage('/share-qr.png')
+    ]);
+    const generatedImages = loaded.slice(0, imageEntries.length);
+    const brandImage = loaded[imageEntries.length];
+    const qrImage = loaded[imageEntries.length + 1];
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('浏览器不支持分享长图生成');
+    const measureText = (value, fontSize)=>{
+        context.font = `500 ${fontSize}px ${SHARE_FONT}`;
+        return context.measureText(value).width;
+    };
+    const layout = buildShareConversationLayout(completedMessages.map((message, index)=>({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        imageDimensions: (message.images || []).map((item, imageIndex)=>{
+            const entry = imageEntries.find((candidate)=>candidate.messageIndex === index && candidate.imageIndex === imageIndex);
+            const image = entry ? generatedImages[imageEntries.indexOf(entry)] : null;
+            return { width: image?.naturalWidth || 1, height: image?.naturalHeight || 1 };
+        }),
+        referenceCount: message.references?.length || 0,
+        fileCount: message.files?.length || 0
+    })), measureText);
+    if (layout.overflow) throw new Error('对话内容过长，暂时无法生成单张分享 PNG；请分段分享。');
+    canvas.width = layout.canvasWidth;
+    canvas.height = layout.canvasHeight;
+    context.fillStyle = '#eef1f6';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = 'rgba(122, 108, 245, .08)';
+    context.beginPath();
+    context.arc(canvas.width - 30, 24, 170, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = 'rgba(53, 193, 151, .06)';
+    context.beginPath();
+    context.arc(45, layout.footerY - 70, 150, 0, Math.PI * 2);
+    context.fill();
+
+    const { padding } = layout;
+    context.fillStyle = '#7568f5';
+    context.font = `800 16px ${SHARE_FONT}`;
+    context.fillText('SANMAO.AI  /  CONVERSATION', padding, 66);
+    context.fillStyle = '#182238';
+    context.font = `800 40px ${SHARE_FONT}`;
+    context.fillText(SHARE_TITLE, padding, 126);
+    context.fillStyle = '#7d8798';
+    context.font = `500 17px ${SHARE_FONT}`;
+    context.fillText(`${new Date().toLocaleDateString('zh-CN')}  ·  ${completedMessages.length} 条对话内容`, padding, 164);
+    context.fillStyle = '#d8dce5';
+    context.fillRect(padding, 198, layout.contentWidth, 1);
+
+    layout.messageLayouts.forEach((messageLayout, messageIndex)=>{
+        const message = completedMessages[messageIndex];
+        context.fillStyle = messageLayout.role === 'user' ? '#e7e9ef' : '#ffffff';
+        context.shadowColor = messageLayout.role === 'user' ? 'rgba(25,35,56,.05)' : 'rgba(25,35,56,.10)';
+        context.shadowBlur = messageLayout.role === 'user' ? 14 : 22;
+        context.shadowOffsetY = 7;
+        roundCanvasRect(context, messageLayout.x, messageLayout.y, messageLayout.width, messageLayout.height, messageLayout.role === 'user' ? 22 : 20);
+        context.fill();
+        context.shadowColor = 'transparent';
+        context.shadowBlur = 0;
+        context.shadowOffsetY = 0;
+        context.fillStyle = messageLayout.role === 'user' ? '#5e687a' : '#7568f5';
+        context.font = `800 15px ${SHARE_FONT}`;
+        context.fillText(messageLayout.role === 'user' ? '你' : 'SANMAO.AI', messageLayout.textX, messageLayout.y + 38);
+        context.fillStyle = '#a0a8b6';
+        context.font = `500 12px ${SHARE_FONT}`;
+        context.fillText(messageLayout.role === 'user' ? '提问' : '智能回复', messageLayout.textX + (messageLayout.role === 'user' ? 27 : 93), messageLayout.y + 38);
+        let blockY = messageLayout.textY;
+        messageLayout.blocks.forEach((block)=>{
+            blockY += drawShareConversationBlock(context, block, messageLayout.textX, blockY, messageLayout.textWidth);
+        });
+        messageLayout.media.forEach((slot)=>{
+            const entry = imageEntries.find((candidate)=>candidate.messageIndex === messageIndex && candidate.imageIndex === slot.index);
+            const image = entry ? generatedImages[imageEntries.indexOf(entry)] : null;
+            context.fillStyle = '#f3f5f9';
+            roundCanvasRect(context, slot.x, slot.y, slot.width, slot.height, 14);
+            context.fill();
+            if (image) {
+                const imageRect = containCanvasRect(image.naturalWidth, image.naturalHeight, slot.x + 12, slot.y + 12, slot.width - 24, slot.height - 24);
+                context.drawImage(image, imageRect.x, imageRect.y, imageRect.width, imageRect.height);
+            }
+            context.fillStyle = '#ffffff';
+            roundCanvasRect(context, slot.x + 12, slot.y + 12, 42, 24, 8);
+            context.fill();
+            context.fillStyle = '#596579';
+            context.font = `700 12px ${SHARE_FONT}`;
+            context.fillText(`图 ${slot.index + 1}`, slot.x + 21, slot.y + 29);
+        });
+        if (messageLayout.metaY) {
+            const meta = [];
+            if (message.references?.length) meta.push(`参考图 ${message.references.length} 张`);
+            if (message.files?.length) meta.push(`附件 ${message.files.length} 个`);
+            context.fillStyle = '#8a94a5';
+            context.font = `500 13px ${SHARE_FONT}`;
+            context.fillText(meta.join('   ·   '), messageLayout.textX, messageLayout.metaY);
+        }
+    });
+
+    context.fillStyle = '#ffffff';
+    context.shadowColor = 'rgba(25,35,56,.08)';
+    context.shadowBlur = 20;
+    context.shadowOffsetY = 5;
+    roundCanvasRect(context, padding, layout.footerY, layout.contentWidth, layout.footerHeight, 22);
+    context.fill();
+    context.shadowColor = 'transparent';
+    context.shadowBlur = 0;
+    context.shadowOffsetY = 0;
+    context.drawImage(brandImage, padding + 28, layout.footerY + 45, 76, 76);
+    context.fillStyle = '#182238';
+    context.font = `800 23px ${SHARE_FONT}`;
+    context.fillText('SANMAO.AI', padding + 126, layout.footerY + 77);
+    context.fillStyle = '#68758a';
+    context.font = `500 16px ${SHARE_FONT}`;
+    context.fillText('让创作更快一步，让灵感有迹可循', padding + 126, layout.footerY + 108);
+    context.fillStyle = '#9aa3b1';
+    context.font = `500 13px ${SHARE_FONT}`;
+    context.fillText(SHARE_DISCLAIMER, padding + 28, layout.footerY + 173);
+    const qrSize = 122;
+    context.drawImage(qrImage, padding + layout.contentWidth - qrSize - 30, layout.footerY + 42, qrSize, qrSize);
+    context.fillStyle = '#7d8798';
+    context.font = `500 12px ${SHARE_FONT}`;
+    context.textAlign = 'right';
+    context.fillText('扫码了解 SANMAO.AI', padding + layout.contentWidth - 30, layout.footerY + 181);
+    context.textAlign = 'left';
+    const blob = await new Promise((resolve, reject)=>canvas.toBlob((value)=>value ? resolve(value) : reject(new Error('分享长图导出失败')), 'image/png'));
+    return { blob, width: canvas.width, height: canvas.height };
 }
 async function downloadChatFile(file) {
     const blob = file.encoding === 'base64' ? new Blob([
@@ -1018,6 +1356,14 @@ function Icon({ name, size = 18 }) {
                 /*#__PURE__*/ _jsx("path", {
                     d: "M4 19h16"
                 })
+            ]
+        }),
+        share: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", { cx: "18", cy: "5", r: "2.5" }),
+                /*#__PURE__*/ _jsx("circle", { cx: "6", cy: "12", r: "2.5" }),
+                /*#__PURE__*/ _jsx("circle", { cx: "18", cy: "19", r: "2.5" }),
+                /*#__PURE__*/ _jsx("path", { d: "m8.3 10.8 7.4-4.3M8.3 13.2l7.4 4.3" })
             ]
         }),
         trash: /*#__PURE__*/ _jsx(_Fragment, {
@@ -4258,7 +4604,8 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
     let directionInserted = false;
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1){
         const line = lines[lineIndex];
-        if (directionPicker && !directionInserted && /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line)) {
+        const isDirectionHeading = directionPicker && (directionPicker.kind === 'chat' ? isChatDirectionHeading(line) : /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line));
+        if (isDirectionHeading && !directionInserted) {
             flushNormal();
             blocks.push(/*#__PURE__*/ _jsxs("section", {
                 className: "agent-direction-section",
@@ -4309,6 +4656,19 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
         onNotify: onNotify
     }, `code-${blocks.length}`));
     flushNormal();
+    if (directionPicker?.kind === 'chat' && !directionInserted) {
+        blocks.push(/*#__PURE__*/ _jsxs("section", {
+            className: "agent-direction-section chat-direction-section",
+            children: [
+                /*#__PURE__*/ _jsx("h3", { children: "你还可以继续" }),
+                /*#__PURE__*/ _jsx(AgentDirectionPicker, {
+                    directions: directionPicker.directions,
+                    disabled: directionPicker.disabled,
+                    onSelect: directionPicker.onSelect
+                })
+            ]
+        }, `directions-${blocks.length}`));
+    }
     return /*#__PURE__*/ _jsxs("div", {
         className: `assistant-markdown ${shouldCollapse && !expanded ? 'is-collapsed' : ''}`,
         children: [
@@ -4444,6 +4804,10 @@ export default function Page() {
     const [busyChatIds, setBusyChatIds] = useState([]);
     const [agentRefs, setAgentRefs] = useState([]);
     const [messageReferencePreview, setMessageReferencePreview] = useState(null);
+    const [sharePreview, setSharePreview] = useState(null);
+    const [shareBusy, setShareBusy] = useState(false);
+    const [shareSelectionMode, setShareSelectionMode] = useState(false);
+    const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
     const [agentFiles, setAgentFiles] = useState([]);
     const [agentModelId, setAgentModelId] = useState('auto');
     const [agentWebMode, setAgentWebMode] = useState('auto');
@@ -4476,8 +4840,15 @@ export default function Page() {
     const [selectionPush, setSelectionPush] = useState(null);
     const [chatNearBottom, setChatNearBottom] = useState(true);
     const chatEndRef = useRef(null);
+    const agentComposerRef = useRef(null);
     const agentInputRef = useRef(null);
     const chatAutoFollowRef = useRef(false);
+    const chatScrollAfterCommitRef = useRef(false);
+    const chatScrollFramesRef = useRef({ first: 0, second: 0 });
+    const [conversationNavOpen, setConversationNavOpen] = useState(false);
+    const conversationNavigatorRef = useRef(null);
+    const conversationNavCloseTimerRef = useRef(0);
+    const conversationNavCloseAfterClickRef = useRef(false);
     const activeChatIdRef = useRef(null);
     const busyChatIdsRef = useRef(new Set());
     const pendingChatMessagesRef = useRef(new Map());
@@ -4492,6 +4863,17 @@ export default function Page() {
     }, [
         messageReferencePreview
     ]);
+    useEffect(()=>{
+        if (!sharePreview) return;
+        const onKeyDown = (event)=>{
+            if (event.key === 'Escape') setSharePreview(null);
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return ()=>{
+            window.removeEventListener('keydown', onKeyDown);
+            URL.revokeObjectURL(sharePreview.url);
+        };
+    }, [sharePreview]);
     const [generatePrompt, setGeneratePrompt] = useState('');
     const [generatePromptOptimizing, setGeneratePromptOptimizing] = useState(false);
     const [generatePromptBeforeOptimization, setGeneratePromptBeforeOptimization] = useState(null);
@@ -4692,6 +5074,32 @@ export default function Page() {
             })), [
         messages
     ]);
+    useEffect(()=>{
+        if (conversationItems.length > 0) return;
+        if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
+        conversationNavCloseTimerRef.current = 0;
+        conversationNavCloseAfterClickRef.current = false;
+        setConversationNavOpen(false);
+    }, [
+        conversationItems.length
+    ]);
+    const shareGroups = useMemo(()=>buildShareConversationGroups(messages), [
+        messages
+    ]);
+    const shareGroupByMessageId = useMemo(()=>new Map(shareGroups.flatMap((group)=>group.messageIds.map((id)=>[
+                id,
+                group
+            ]))), [
+        shareGroups
+    ]);
+    const selectableShareGroups = useMemo(()=>shareGroups.filter((group)=>group.selectable), [
+        shareGroups
+    ]);
+    const selectedShareMessages = useMemo(()=>flattenSelectedShareMessages(shareGroups, selectedShareGroups), [
+        shareGroups,
+        selectedShareGroups
+    ]);
+    const allShareGroupsSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
     const filteredChatSessions = useMemo(()=>{
         const query = chatHistorySearch.trim().toLowerCase();
         if (!query) return chatSessions;
@@ -4706,6 +5114,7 @@ export default function Page() {
     ]);
     const allChatSessionsSelected = selectableChatSessionIds.length > 0 && selectableChatSessionIds.every((id)=>selectedChatSessions.has(id));
     const activeAgentBusy = activeChatId ? busyChatIds.includes(activeChatId) : false;
+    const agentMessageSelectionActive = agentMessageSelectionMode || shareSelectionMode;
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const pagedGallery = useMemo(()=>filteredGallery.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), [
         filteredGallery,
@@ -4769,6 +5178,9 @@ export default function Page() {
     const agentWebSearchAvailable = Boolean(state.settings.webSearchConfigured) || Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
     const nativeWebSearchModelActive = Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
     const agentWebSearchActive = agentWebMode !== 'off' && agentWebSearchAvailable;
+    const nativeWebSearchHint = nativeWebSearchModelActive
+        ? '当前模型自带联网搜索，将优先使用模型原生能力；失败时自动回退外部搜索 API'
+        : '当前使用外部搜索 API；切换到带“原生联网”标签的模型后会优先使用模型自身搜索';
     useEffect(()=>{
         let cancelled = false;
         let active = false;
@@ -5071,8 +5483,9 @@ export default function Page() {
     useEffect(()=>{
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();
-            setChatNearBottom(nearBottom);
-            if (!nearBottom) chatAutoFollowRef.current = false;
+            const pendingScroll = chatScrollAfterCommitRef.current;
+            setChatNearBottom(nearBottom || pendingScroll);
+            if (!nearBottom && !pendingScroll) chatAutoFollowRef.current = false;
         };
         updateChatScrollState();
         window.addEventListener('scroll', updateChatScrollState, {
@@ -5088,20 +5501,24 @@ export default function Page() {
         section
     ]);
     useEffect(()=>{
-        if (section !== 'agent' || !chatAutoFollowRef.current) return;
-        const timer = window.setTimeout(()=>{
-            chatEndRef.current?.scrollIntoView({
-                behavior: 'auto',
-                block: 'end'
-            });
-            window.requestAnimationFrame(()=>setChatNearBottom(isChatNearBottom()));
-        }, 0);
-        return ()=>window.clearTimeout(timer);
+        if (section !== 'agent') return;
+        const pendingScroll = chatScrollAfterCommitRef.current;
+        if (!chatAutoFollowRef.current && !pendingScroll) return;
+        if (pendingScroll) {
+            chatScrollAfterCommitRef.current = false;
+            chatAutoFollowRef.current = true;
+        }
+        scheduleChatScrollToEnd();
     }, [
         messages,
         section,
         activeChatId
     ]);
+    useEffect(()=>{
+        if (section === 'agent') return;
+        cancelScheduledChatScroll();
+        chatScrollAfterCommitRef.current = false;
+    }, [section]);
     useEffect(()=>{
         setPage(1);
     }, [
@@ -5328,6 +5745,22 @@ export default function Page() {
     }, [
         agentInput
     ]);
+    useEffect(()=>{
+        const composer = agentComposerRef.current;
+        if (!composer || typeof ResizeObserver === 'undefined') return;
+        const updateComposerHeight = ()=>{
+            document.documentElement.style.setProperty('--agent-composer-height', `${composer.getBoundingClientRect().height}px`);
+        };
+        updateComposerHeight();
+        const observer = new ResizeObserver(updateComposerHeight);
+        observer.observe(composer);
+        return ()=>{
+            observer.disconnect();
+            document.documentElement.style.removeProperty('--agent-composer-height');
+        };
+    }, [
+        section
+    ]);
     function notify(text) {
         if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
         setToast(text);
@@ -5336,17 +5769,66 @@ export default function Page() {
             toastTimerRef.current = null;
         }, 3000);
     }
+    function lastChatMessageElement() {
+        const lastMessage = messages[messages.length - 1];
+        return lastMessage ? document.getElementById(`message-${lastMessage.id}`) : null;
+    }
+    function chatComposerTop() {
+        const top = agentComposerRef.current?.getBoundingClientRect().top;
+        return typeof top === 'number' && Number.isFinite(top) ? Math.min(window.innerHeight, top) : window.innerHeight;
+    }
     function isChatNearBottom() {
         const documentHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
-        return documentHeight - window.scrollY - window.innerHeight < 120;
+        if (documentHeight - window.scrollY - window.innerHeight < 120) return true;
+        const lastMessage = lastChatMessageElement();
+        if (lastMessage) {
+            const targetBottom = Math.max(0, chatComposerTop() - 20);
+            return Math.abs(lastMessage.getBoundingClientRect().bottom - targetBottom) < 120;
+        }
+        return false;
+    }
+    function cancelScheduledChatScroll() {
+        const frames = chatScrollFramesRef.current;
+        if (frames.first) window.cancelAnimationFrame(frames.first);
+        if (frames.second) window.cancelAnimationFrame(frames.second);
+        chatScrollFramesRef.current = { first: 0, second: 0 };
+    }
+    function scheduleChatScrollToEnd() {
+        const frames = chatScrollFramesRef.current;
+        if (frames.first || frames.second) return;
+        frames.first = window.requestAnimationFrame(()=>{
+            frames.first = 0;
+            frames.second = window.requestAnimationFrame(()=>{
+                frames.second = 0;
+                if (!chatAutoFollowRef.current || sectionRef.current !== 'agent') return;
+                chatEndRef.current?.scrollIntoView({
+                    behavior: 'auto',
+                    block: 'end'
+                });
+                window.requestAnimationFrame(()=>{
+                    const lastMessage = lastChatMessageElement();
+                    if (lastMessage) {
+                        const overlap = lastMessage.getBoundingClientRect().bottom - (chatComposerTop() - 20);
+                        if (overlap > 0) window.scrollBy({
+                            top: overlap,
+                            behavior: 'auto'
+                        });
+                    }
+                    setChatNearBottom(isChatNearBottom());
+                });
+            });
+        });
     }
     function followChatToEnd() {
         chatAutoFollowRef.current = true;
+        chatScrollAfterCommitRef.current = false;
         setChatNearBottom(true);
-        window.requestAnimationFrame(()=>chatEndRef.current?.scrollIntoView({
-                behavior: 'auto',
-                block: 'end'
-            }));
+        scheduleChatScrollToEnd();
+    }
+    function requestChatScrollAfterCommit() {
+        chatAutoFollowRef.current = true;
+        chatScrollAfterCommitRef.current = true;
+        setChatNearBottom(true);
     }
     function pauseChatAutoFollow() {
         chatAutoFollowRef.current = false;
@@ -5374,6 +5856,28 @@ export default function Page() {
                 behavior: 'smooth',
                 block: 'start'
             }), 0);
+    }
+    function clearConversationNavCloseTimer() {
+        if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
+        conversationNavCloseTimerRef.current = 0;
+    }
+    function openConversationNavigator() {
+        clearConversationNavCloseTimer();
+        conversationNavCloseAfterClickRef.current = false;
+        setConversationNavOpen(true);
+    }
+    function scheduleConversationNavClose(afterClick = false) {
+        if (afterClick) conversationNavCloseAfterClickRef.current = true;
+        clearConversationNavCloseTimer();
+        conversationNavCloseTimerRef.current = window.setTimeout(()=>{
+            conversationNavCloseTimerRef.current = 0;
+            const navigator = conversationNavigatorRef.current;
+            const pointerInside = Boolean(navigator?.matches(':hover'));
+            const focusInside = Boolean(navigator && navigator.contains(document.activeElement));
+            if (pointerInside || (!conversationNavCloseAfterClickRef.current && focusInside)) return;
+            conversationNavCloseAfterClickRef.current = false;
+            setConversationNavOpen(false);
+        }, 1000);
     }
     function setThemePreference(next) {
         setTheme(next);
@@ -5981,6 +6485,8 @@ export default function Page() {
                 content: message.content,
                 images: message.images,
                 files: message.files,
+                webSearch: message.webSearch,
+                webSearchDecision: message.webSearchDecision,
                 createdAt: 0
             }
         ];
@@ -5996,6 +6502,8 @@ export default function Page() {
             content: version.content,
             images: version.images,
             files: version.files,
+            webSearch: version.webSearch ?? message.webSearch,
+            webSearchDecision: version.webSearchDecision ?? message.webSearchDecision,
             versions,
             activeVersion,
             retrying
@@ -6353,6 +6861,10 @@ export default function Page() {
             kind
         });
         if (data?.state) notify(`已归类为${kindLabel(kind)}`);
+    }
+    async function setNativeSearchOverride(model, override) {
+        const data = await patchModel(model, { nativeSearchOverride: override });
+        if (data?.state) notify(override === 'enabled' ? '已强制启用模型原生搜索' : override === 'disabled' ? '已禁用模型原生搜索，将使用外部搜索 API' : '已恢复自动识别模型原生搜索');
     }
     async function patchSettings(patch) {
         try {
@@ -7053,6 +7565,33 @@ export default function Page() {
         setAgentMessageSelectionMode(false);
         setSelectedAgentMessages(new Set());
     }
+    function resetShareSelection() {
+        setShareSelectionMode(false);
+        setSelectedShareGroups(new Set());
+    }
+    function beginShareSelection() {
+        if (!messages.length) return notify('当前对话还没有可分享的内容');
+        if (!selectableShareGroups.length) return notify('当前对话还没有可分享的已完成内容');
+        setShareSelectionMode(true);
+        setSelectedShareGroups(new Set());
+    }
+    function toggleShareGroupSelection(id) {
+        const group = shareGroups.find((item)=>item.id === id);
+        if (!group?.selectable) return;
+        setSelectedShareGroups((old)=>{
+            const next = new Set(old);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+    function toggleAllShareGroups() {
+        const allSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
+        setSelectedShareGroups(allSelected ? new Set() : new Set(selectableShareGroups.map((group)=>group.id)));
+    }
+    function clearShareGroupSelection() {
+        setSelectedShareGroups(new Set());
+    }
     function closeSidebarOnMobile() {
         if (window.matchMedia('(max-width: 780px)').matches) setSidebarOpen(false);
     }
@@ -7066,6 +7605,7 @@ export default function Page() {
         setAgentInput('');
         setAgentFollowUp(null);
         resetMessageSelection();
+        resetShareSelection();
         setSection('agent');
     }
     function openChatSession(session) {
@@ -7078,6 +7618,7 @@ export default function Page() {
         setAgentInput('');
         setAgentFollowUp(null);
         resetMessageSelection();
+        resetShareSelection();
         setSection('agent');
         followChatToEnd();
     }
@@ -7202,6 +7743,7 @@ export default function Page() {
         notify('已引用这条消息，可直接补充你的追问');
     }
     function beginAgentMessageSelection() {
+        if (shareSelectionMode) return notify('请先完成或取消分享选择');
         if (messages.some((message)=>message.pending)) return notify('请等当前消息生成完成后再批量删除');
         if (activeChatIdRef.current && busyChatIdsRef.current.has(activeChatIdRef.current)) return notify('当前对话正在回答，完成后再批量删除');
         setAgentMessageSelectionMode(true);
@@ -7280,6 +7822,13 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '读取上一张生成图片失败，暂时不能续图');
         }
     }
+    async function continueAgentFromChat(message, direction) {
+        if (!direction?.trim()) return;
+        const sessionId = activeChatIdRef.current;
+        if (sessionId && busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，请等本轮完成后再继续');
+        setSection('agent');
+        await sendAgent(direction);
+    }
     async function retryAgentMessage(message) {
         if (message.images?.length) return retryAgentImage(message);
         if (message.retrying) return;
@@ -7301,6 +7850,8 @@ export default function Page() {
             content: message.content,
             images: message.images,
             files: message.files,
+            webSearch: message.webSearch,
+            webSearchDecision: message.webSearchDecision,
             createdAt: Date.now()
         };
         const workingVersions = [
@@ -7357,6 +7908,13 @@ export default function Page() {
             if (res.headers.get('content-type')?.includes('text/event-stream')) {
                 let streamedText = '';
                 const final = await readAgentStream(res, (event)=>{
+                    if (event.type === 'status') updatePendingActivity({
+                        stage: event.stage || 'answering',
+                        message: event.message || '正在处理…',
+                        model: event.model,
+                        mode: event.mode,
+                        count: event.count
+                    });
                     if (event.type === 'delta') streamedText += String(event.text || '');
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
                 });
@@ -7395,7 +7953,9 @@ export default function Page() {
                         ...version,
                         content: data.message || '已完成。',
                         images,
-                        files
+                        files,
+                        webSearch: data.webSearch || undefined,
+                        webSearchDecision: data.webSearchDecision || undefined
                     } : version);
                 return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
             });
@@ -7418,6 +7978,7 @@ export default function Page() {
     }
     async function sendAgent(text = agentInput, task, overrideRefs) {
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
+        if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const content = text.trim();
         if (!content && !agentFiles.length && !agentRefs.length) return;
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
@@ -7461,9 +8022,9 @@ export default function Page() {
         const pending = {
             id: pendingId,
             role: 'assistant',
-            content: likelyImageRequest ? '正在构思画面…' : '正在准备回答…',
+            content: likelyImageRequest ? '正在构思画面…' : '正在判断是否需要联网…',
             pending: true,
-            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' }
+            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' }
         };
         primeSuccessSound();
         const nextMessages = [
@@ -7480,7 +8041,7 @@ export default function Page() {
             ...nextMessages,
             pending
         ]);
-        followChatToEnd();
+        requestChatScrollAfterCommit();
         setAgentInput('');
         setAgentRefs([]);
         setAgentFiles([]);
@@ -7521,7 +8082,7 @@ export default function Page() {
                             size: file.size
                         })) : []
                 }));
-            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' });
+            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
             const res = await fetch('/api/agent', {
                 method: 'POST',
                 headers: {
@@ -7605,7 +8166,8 @@ export default function Page() {
                     content: data.message || '已完成。',
                     images: items,
                     files,
-                    webSearch: data.webSearch || undefined
+                    webSearch: data.webSearch || undefined,
+                    webSearchDecision: data.webSearchDecision || undefined
                 }
             ];
             pendingChatMessagesRef.current.delete(sessionId);
@@ -8202,6 +8764,36 @@ export default function Page() {
             notify('复制失败');
         }
     }
+    async function shareConversation() {
+        if (shareBusy) return;
+        if (!selectedShareMessages.length) return notify('请至少选择一组已完成的问答内容');
+        if (activeAgentBusy || selectedShareMessages.some((message)=>message.pending)) return notify('请等待当前回答完成后再分享');
+        setShareBusy(true);
+        try {
+            const result = await renderShareConversationImage(selectedShareMessages);
+            const url = URL.createObjectURL(result.blob);
+            setSharePreview({
+                url,
+                width: result.width,
+                height: result.height,
+                filename: `SANMAO-对话分享-${new Date().toISOString().slice(0, 10)}.png`
+            });
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '分享长图生成失败');
+        } finally {
+            setShareBusy(false);
+        }
+    }
+    function downloadSharePreview() {
+        if (!sharePreview) return;
+        const anchor = document.createElement('a');
+        anchor.href = sharePreview.url;
+        anchor.download = sharePreview.filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        notify('分享长图已下载');
+    }
     async function copyAuthorWechat() {
         try {
             await navigator.clipboard.writeText('wcsanmao');
@@ -8369,13 +8961,40 @@ export default function Page() {
                         })
                     ]
                 }),
-                /*#__PURE__*/ _jsx("div", {
-                    className: "capability-tags",
-                    children: model.capabilities.slice(0, 5).map((cap)=>/*#__PURE__*/ _jsx("span", {
-                            className: `capability-tag-${cap}`,
-                            children: capabilityLabel(cap)
-                        }, cap))
-                })
+                 /*#__PURE__*/ _jsx("div", {
+                     className: "capability-tags",
+                     children: model.capabilities.slice(0, 5).map((cap)=>/*#__PURE__*/ _jsx("span", {
+                             className: `capability-tag-${cap}`,
+                             children: capabilityLabel(cap)
+                         }, cap))
+                 }),
+                 model.kind === 'chat' && /*#__PURE__*/ _jsxs("div", {
+                     className: "native-search-control",
+                     title: "控制这个模型是否使用自身联网搜索；自动模式由模型元数据和服务商规则识别",
+                     children: [
+                         /*#__PURE__*/ _jsx("span", { children: "原生搜索" }),
+                         /*#__PURE__*/ _jsxs("div", {
+                             className: "segmented mini",
+                             children: [
+                                 /*#__PURE__*/ _jsx("button", {
+                                     className: (model.nativeSearchOverride || 'auto') === 'auto' ? 'active' : '',
+                                     onClick: ()=>void setNativeSearchOverride(model, 'auto'),
+                                     children: "自动"
+                                 }),
+                                 /*#__PURE__*/ _jsx("button", {
+                                     className: model.nativeSearchOverride === 'enabled' ? 'active' : '',
+                                     onClick: ()=>void setNativeSearchOverride(model, 'enabled'),
+                                     children: "启用"
+                                 }),
+                                 /*#__PURE__*/ _jsx("button", {
+                                     className: model.nativeSearchOverride === 'disabled' ? 'active' : '',
+                                     onClick: ()=>void setNativeSearchOverride(model, 'disabled'),
+                                     children: "禁用"
+                                 })
+                             ]
+                         })
+                     ]
+                 })
             ]
         }, model.id);
     }
@@ -8921,22 +9540,82 @@ export default function Page() {
                             }),
                             /*#__PURE__*/ _jsx("div", {
                                 className: "top-actions",
-                                children: /*#__PURE__*/ _jsxs("button", {
-                                    className: "theme-toggle",
-                                    onClick: toggleTheme,
-                                    children: [
-                                        theme === 'light' ? /*#__PURE__*/ _jsx(Icon, {
-                                            name: "moon",
-                                            size: 16
-                                        }) : /*#__PURE__*/ _jsx(Icon, {
-                                            name: "sun",
-                                            size: 16
-                                        }),
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: theme === 'light' ? '深色' : '浅色'
-                                        })
-                                    ]
-                                })
+                                children: [
+                                    section === 'agent' && messages.length > 0 && (shareSelectionMode ? /*#__PURE__*/ _jsxs("div", {
+                                        className: "conversation-share-controls",
+                                        role: "toolbar",
+                                        "aria-label": "分享内容选择",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                className: "conversation-share-count",
+                                                children: [
+                                                    selectedShareGroups.size,
+                                                    "/",
+                                                    selectableShareGroups.length
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control",
+                                                disabled: !selectableShareGroups.length,
+                                                onClick: toggleAllShareGroups,
+                                                children: allShareGroupsSelected ? '取消全选' : '全选'
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control",
+                                                disabled: !selectedShareGroups.size,
+                                                onClick: clearShareGroupSelection,
+                                                children: '清空'
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control",
+                                                onClick: resetShareSelection,
+                                                children: '取消'
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-share-control primary",
+                                                disabled: shareBusy || !selectedShareMessages.length || activeAgentBusy || messages.some((message)=>message.pending),
+                                                onClick: ()=>void shareConversation(),
+                                                title: !selectedShareMessages.length ? '请先选择要分享的问答组' : activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览选中的对话长图',
+                                                children: shareBusy ? '生成中…' : '预览'
+                                            })
+                                        ]
+                                    }) : /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "conversation-share-entry",
+                                        disabled: shareBusy || !selectableShareGroups.length,
+                                        onClick: beginShareSelection,
+                                        title: !selectableShareGroups.length ? '当前还没有可分享的已完成问答组' : '选择要分享的问答组',
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "share",
+                                                size: 14
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: '分享'
+                                            })
+                                        ]
+                                    })),
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        className: "theme-toggle",
+                                        onClick: toggleTheme,
+                                        children: [
+                                            theme === 'light' ? /*#__PURE__*/ _jsx(Icon, {
+                                                name: "moon",
+                                                size: 16
+                                            }) : /*#__PURE__*/ _jsx(Icon, {
+                                                name: "sun",
+                                                size: 16
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: theme === 'light' ? '深色' : '浅色'
+                                            })
+                                        ]
+                                    })
+                                ]
                             })
                         ]
                     }),
@@ -8984,19 +9663,21 @@ export default function Page() {
                                                     }, example))
                                             })
                                         ]
-                                    }) : /*#__PURE__*/ _jsxs("div", {
-                                        className: "message-list",
+                                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "message-list",
+                                                children: [
                                             messages.map((message)=>/*#__PURE__*/ _jsxs("article", {
                                                     id: `message-${message.id}`,
-                                                    className: `message ${message.role} ${agentMessageSelectionMode ? 'selecting' : ''}`,
+                                                    className: `message ${message.role} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
                                                     children: [
                                                         /*#__PURE__*/ _jsx("div", {
                                                             className: "message-avatar",
                                                             children: message.role === 'user' ? '你' : 'S'
                                                         }),
                                                         /*#__PURE__*/ _jsxs("div", {
-                                                            className: `message-body ${agentMessageSelectionMode ? 'selecting' : ''}`,
+                                                            className: `message-body ${agentMessageSelectionActive ? 'selecting' : ''}`,
                                                             onMouseUp: (e)=>captureMessageSelection(e.currentTarget),
                                                             children: [
                                                                 agentMessageSelectionMode && /*#__PURE__*/ _jsxs("label", {
@@ -9012,6 +9693,19 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("span", {})
                                                                     ]
                                                                 }),
+                                                                shareSelectionMode && shareGroupByMessageId.get(message.id)?.messageIds[0] === message.id && /*#__PURE__*/ _jsxs("label", {
+                                                                    className: "message-selection-toggle share-selection-toggle",
+                                                                    title: shareGroupByMessageId.get(message.id)?.label || '选择问答组',
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                            type: "checkbox",
+                                                                            checked: selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id),
+                                                                            disabled: !shareGroupByMessageId.get(message.id)?.selectable,
+                                                                            onChange: ()=>toggleShareGroupSelection(shareGroupByMessageId.get(message.id)?.id)
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("span", {})
+                                                                    ]
+                                                                }),
                                                                 /*#__PURE__*/ _jsxs("div", {
                                                                     className: "message-label",
                                                                     children: [
@@ -9021,14 +9715,13 @@ export default function Page() {
                                                                         message.role === 'assistant' && !message.pending && /*#__PURE__*/ _jsx("small", {
                                                                             children: "选中文字可一键推送生图或下载文件"
                                                                         }),
-                                                                        message.role === 'assistant' && !message.pending && message.webSearch && /*#__PURE__*/ _jsxs("small", {
-                                                                            className: "message-web-badge",
-                                                                            children: [
-                                                                                "已联网检索 · ",
-                                                                                message.webSearch.resultCount || 0,
-                                                                                " 条"
-                                                                            ]
-                                                                        }),
+                                                                         message.role === 'assistant' && !message.pending && (message.webSearch || message.webSearchDecision) && /*#__PURE__*/ _jsxs("small", {
+                                                                             className: "message-web-badge",
+                                                                             children: [
+                                                                                 message.webSearchDecision?.status === 'disabled' ? '联网已关闭' : message.webSearchDecision?.status === 'failed' ? '联网搜索失败，已如实回答' : message.webSearch ? message.webSearch.source === 'native' ? '模型原生联网' : message.webSearch.fallbackFrom === 'native' ? '外部搜索 API（原生搜索失败后回退）' : '外部搜索 API' : '智能联网：本轮未触发',
+                                                                                 message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
+                                                                             ]
+                                                                         }),
                                                                         message.role === 'assistant' && !message.pending && messageVersionsFor(message).length > 1 && /*#__PURE__*/ _jsxs("div", {
                                                                             className: "message-version-switch",
                                                                             children: [
@@ -9108,10 +9801,16 @@ export default function Page() {
                                                                     content: message.content,
                                                                     onNotify: notify,
                                                                     directionPicker: message.images?.length ? {
+                                                                        kind: 'image',
                                                                         directions: extractAgentDirections(message.content),
-                                                                        disabled: activeAgentBusy || agentMessageSelectionMode || message.retrying,
+                                                                         disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
                                                                         onSelect: (direction)=>void continueAgentFromImage(message, direction)
-                                                                    } : null
+                                                                    } : {
+                                                                        kind: 'chat',
+                                                                        directions: extractChatDirections(message.content),
+                                                                         disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
+                                                                        onSelect: (direction)=>void continueAgentFromChat(message, direction)
+                                                                    }
                                                                 }) : /*#__PURE__*/ _jsx("p", {
                                                                     className: message.pending ? 'pending' : '',
                                                                     children: message.content
@@ -9122,7 +9821,7 @@ export default function Page() {
                                                                         void downloadChatFile(file).catch(()=>notify('文件下载失败'));
                                                                     }
                                                                 }) : null,
-                                                                !message.pending && !agentMessageSelectionMode && /*#__PURE__*/ _jsxs("div", {
+                                                                 !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsxs("div", {
                                                                     className: `message-tools ${message.role === 'user' ? 'user-message-tools' : ''}`,
                                                                     children: [
                                                                         /*#__PURE__*/ _jsxs("button", {
@@ -9202,16 +9901,35 @@ export default function Page() {
                                                         })
                                                     ]
                                                 }, message.id)),
-                                            /*#__PURE__*/ _jsx("div", {
-                                                ref: chatEndRef
-                                            })
-                                        ]
-                                    }),
-                                    conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
-                                        className: "conversation-navigator",
+                                             /*#__PURE__*/ _jsx("div", {
+                                                 ref: chatEndRef
+                                             })
+                                         ]
+                                     }),
+                                     conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
+                                        ref: conversationNavigatorRef,
+                                        className: `conversation-navigator ${conversationNavOpen ? 'is-open' : ''}`,
+                                        onPointerEnter: openConversationNavigator,
+                                        onPointerLeave: ()=>scheduleConversationNavClose(),
+                                        onFocusCapture: openConversationNavigator,
+                                        onBlurCapture: (event)=>{
+                                            const nextTarget = event.relatedTarget;
+                                            if (!(nextTarget instanceof Node && event.currentTarget.contains(nextTarget))) scheduleConversationNavClose();
+                                        },
                                         children: [
                                             /*#__PURE__*/ _jsx("div", {
                                                 className: "conversation-nav-rail",
+                                                role: "button",
+                                                tabIndex: 0,
+                                                "aria-label": "打开本次对话导航",
+                                                "aria-expanded": conversationNavOpen,
+                                                onClick: ()=>conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator(),
+                                                onKeyDown: (event)=>{
+                                                    if (event.key === 'Enter' || event.key === ' ') {
+                                                        event.preventDefault();
+                                                        conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator();
+                                                    }
+                                                },
                                                 children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {}, item.id))
                                             }),
                                             !chatNearBottom && /*#__PURE__*/ _jsx("button", {
@@ -9238,15 +9956,23 @@ export default function Page() {
                                                     }),
                                                     conversationItems.map((item)=>/*#__PURE__*/ _jsx("button", {
                                                             type: "button",
-                                                            onClick: ()=>jumpToMessage(item.id),
+                                                            onClick: ()=>{
+                                                                jumpToMessage(item.id);
+                                                                scheduleConversationNavClose(true);
+                                                            },
                                                             title: item.text,
                                                             children: item.text
                                                         }, item.id))
                                                 ]
-                                            })
-                                        ]
+                                     }),
+                                 ]
+                             })
+                             ]
+                              }),
+                              section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
                                     }),
                                     /*#__PURE__*/ _jsx("div", {
+                                        ref: agentComposerRef,
                                         className: "agent-composer-wrap",
                                         children: /*#__PURE__*/ _jsxs("div", {
                                             className: "agent-composer",
@@ -9341,7 +10067,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("textarea", {
                                                     ref: agentInputRef,
                                                     value: agentInput,
-                                                    readOnly: agentMessageSelectionMode || promptOptimizing,
+                                                     readOnly: agentMessageSelectionActive || promptOptimizing,
                                                     onChange: (e)=>{
                                                         setAgentInput(e.target.value);
                                                         setAgentMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, agentRefs));
@@ -9369,7 +10095,7 @@ export default function Page() {
                                                     className: "agent-mention-menu",
                                                     onSelect: (index)=>insertReferenceMention(agentInput, setAgentInput, setAgentMentionOpen, agentInputRef, index)
                                                 }),
-                                                agentInput && !agentMessageSelectionMode && !promptOptimizing && /*#__PURE__*/ _jsx("button", {
+                                                agentInput && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsx("button", {
                                                     type: "button",
                                                     className: "agent-input-clear",
                                                     title: "清空输入内容",
@@ -9434,8 +10160,8 @@ export default function Page() {
                                                                             className: "agent-web-mode-menu",
                                                                             role: "menu",
                                                                             children: [
-                                                                                ['auto', '智能联网', '仅在需要最新或外部事实时搜索'],
-                                                                                ['always', '始终联网', '每轮都联网检索，回复可能较慢'],
+                                                                                 ['auto', '智能联网', nativeWebSearchModelActive ? '需要最新事实时优先使用模型原生搜索，失败回退外部 API' : '仅在需要最新或外部事实时使用外部搜索 API'],
+                                                                                 ['always', '始终联网', nativeWebSearchModelActive ? '每轮优先使用模型原生搜索，失败回退外部 API' : '每轮使用外部搜索 API，回复可能较慢'],
                                                                                 ['off', '关闭联网', '最快的纯模型回复']
                                                                             ].map(([mode, label, description])=>/*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
@@ -9452,13 +10178,18 @@ export default function Page() {
                                                                                 ]
                                                                             }, mode))
                                                                         }),
-                                                                        !agentWebModeMenuOpen && /*#__PURE__*/ _jsx("span", {
-                                                                            id: "agent-web-toggle-tip",
-                                                                            className: "agent-web-tooltip",
-                                                                            role: "tooltip",
-                                                                            children: agentWebMode === 'auto' ? '仅在需要最新或外部事实时搜索，普通创作会立即回复' : agentWebMode === 'always' ? '每轮都会联网检索，回复可能较慢' : '不会联网，适合最快的纯模型回复'
-                                                                        })
-                                                                    ]
+                                                                         !agentWebModeMenuOpen && /*#__PURE__*/ _jsx("span", {
+                                                                             id: "agent-web-toggle-tip",
+                                                                             className: "agent-web-tooltip",
+                                                                             role: "tooltip",
+                                                                             children: `${agentWebMode === 'auto' ? '仅在需要最新或外部事实时搜索，普通创作会立即回复。' : agentWebMode === 'always' ? '每轮都会联网检索，回复可能较慢。' : '不会联网，适合最快的纯模型回复。'} ${nativeWebSearchHint}`
+                                                                         }),
+                                                                         /*#__PURE__*/ _jsx("span", {
+                                                                             className: `agent-native-search-hint ${nativeWebSearchModelActive ? 'active' : ''}`,
+                                                                             title: nativeWebSearchHint,
+                                                                             children: nativeWebSearchModelActive ? '模型自带搜索 · 优先使用' : '外部搜索 API'
+                                                                         })
+                                                                     ]
                                                                 }),
                                                                 (agentRefs.length > 0 || agentInput.trim()) && /*#__PURE__*/ _jsxs("div", {
                                                                     className: "agent-quick-actions",
@@ -9466,7 +10197,7 @@ export default function Page() {
                                                                         agentRefs.length > 0 && /*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
                                                                             className: `agent-quick-button ${agentRefs.length > 1 ? 'one-take' : 'reverse'}`,
-                                                                            disabled: activeAgentBusy || agentMessageSelectionMode || agentRefs.some((ref)=>ref.pending),
+                                                                             disabled: activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
                                                                             onClick: ()=>void reversePromptFromReferences(),
                                                                             "data-tooltip": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '按参考图顺序生成 15 秒一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
                                                                             "aria-label": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '按参考图顺序生成 15 秒一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
@@ -9481,7 +10212,7 @@ export default function Page() {
                                                                         agentInput.trim() && /*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
                                                                             className: "agent-quick-button optimize",
-                                                                            disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionMode,
+                                                                             disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionActive,
                                                                             onClick: ()=>void optimizeAgentPrompt(),
                                                                             "data-tooltip": "润色并细写输入框中的文案，不会自动发送",
                                                                             "aria-label": "润色并细写输入框中的文案，不会自动发送",
@@ -9499,9 +10230,9 @@ export default function Page() {
                                                         }),
                                                         /*#__PURE__*/ _jsx("button", {
                                                             className: "send-button",
-                                                            disabled: !agentInput.trim() && !agentFiles.length && !agentRefs.length || activeAgentBusy || agentMessageSelectionMode || agentRefs.some((ref)=>ref.pending),
+                                                            disabled: !agentInput.trim() && !agentFiles.length && !agentRefs.length || activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
                                                             onClick: ()=>void sendAgent(),
-                                                            title: agentMessageSelectionMode ? '请先完成或取消删除选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : activeAgentBusy ? '当前对话正在回答，可新建对话继续' : '发送',
+                                                            title: agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : activeAgentBusy ? '当前对话正在回答，可新建对话继续' : '发送',
                                                             children: /*#__PURE__*/ _jsx(Icon, {
                                                                 name: "send",
                                                                 size: 18
@@ -11371,7 +12102,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                        children: "联网搜索支持 AnySearch 和百度千帆：AnySearch 默认可直接使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；AnySearch 失败、限流或无结果时自动切换百度千帆。百度千帆 Key 会加密保存在本机服务端，也可使用环境变量 QIANFAN_API_KEY。联网开关开启后，助手会根据问题自主判断是否需要搜索，不再要求输入固定关键词。请以各平台当前免费额度和计费规则为准。"
+                                                         children: "联网搜索支持模型原生搜索、AnySearch 和百度千帆。当前模型带“原生联网”能力时会优先调用模型自身搜索；原生搜索失败、限流或无结果时自动回退外部搜索 API。没有原生搜索能力的模型直接使用 AnySearch/百度千帆。AnySearch 默认可使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；百度千帆 Key 会加密保存在本机服务端，也可使用 QIANFAN_API_KEY。"
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-api-grid",
@@ -13313,6 +14044,88 @@ export default function Page() {
                                     type: "button",
                                     onClick: ()=>void copyAuthorWechat(),
                                     children: "联系作者 · 微信 wcsanmao"
+                                })
+                            ]
+                        })
+                    ]
+                })
+            }), document.body),
+            sharePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
+                className: "share-preview-backdrop",
+                role: "presentation",
+                onMouseDown: (event)=>{
+                    if (event.target === event.currentTarget) setSharePreview(null);
+                },
+                children: /*#__PURE__*/ _jsxs("section", {
+                    className: "share-preview-modal",
+                    role: "dialog",
+                    "aria-modal": "true",
+                    "aria-labelledby": "share-preview-title",
+                    children: [
+                        /*#__PURE__*/ _jsxs("header", {
+                            className: "share-preview-head",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("small", {
+                                            children: "SANMAO.AI SHARE"
+                                        }),
+                                        /*#__PURE__*/ _jsx("h2", {
+                                            id: "share-preview-title",
+                                            children: "分享对话预览"
+                                        }),
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "确认内容后下载 PNG，完整对话仅在本地生成"
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "share-preview-close",
+                                    onClick: ()=>setSharePreview(null),
+                                    "aria-label": "关闭分享预览",
+                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                        name: "close",
+                                        size: 18
+                                    })
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsx("div", {
+                            className: "share-preview-stage",
+                            children: /*#__PURE__*/ _jsx("img", {
+                                src: sharePreview.url,
+                                alt: "SANMAO.AI 对话分享长图预览",
+                                style: { aspectRatio: `${sharePreview.width} / ${sharePreview.height}` }
+                            })
+                        }),
+                        /*#__PURE__*/ _jsxs("footer", {
+                            className: "share-preview-foot",
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: `${sharePreview.width} × ${sharePreview.height} PNG`
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: "secondary-action",
+                                            onClick: ()=>setSharePreview(null),
+                                            children: "继续编辑"
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "primary-action compact share-preview-download",
+                                            onClick: downloadSharePreview,
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "download",
+                                                    size: 15
+                                                }),
+                                                "下载 PNG"
+                                            ]
+                                        })
+                                    ]
                                 })
                             ]
                         })

@@ -1,10 +1,12 @@
 ﻿param(
-  [int]$Port = 0
+  [int]$Port = 0,
+  [switch]$NonInteractive = $false
 )
 
 $ErrorActionPreference = 'Stop'
-$Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$script:NonInteractive = $NonInteractive.IsPresent
+try { $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器' } catch {}
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -23,13 +25,12 @@ $script:serverProcess = $null
 $serverStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
 $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 
+. (Join-Path $PSScriptRoot 'launcher-common.ps1')
+Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
+Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，端口范围：$portStart..$portEnd" 'INFO'
+
 function Test-SanmaoServerAtPort([int]$port) {
-  try {
-    $response = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/state" -UseBasicParsing -TimeoutSec 1
-    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 500) { return $false }
-    $data = $response.Content | ConvertFrom-Json
-    return $null -ne $data.providers -and $null -ne $data.models -and $null -ne $data.settings
-  } catch { return $false }
+  return Test-SanmaoHealthEndpoint -Port $port
 }
 
 function Test-LocalPortOpen([int]$port) {
@@ -62,34 +63,7 @@ function Get-ListeningPortSnapshot {
 }
 
 function Get-SanmaoNextProcessesAtPort([int]$port) {
-  $escapedRoot = [regex]::Escape($root.TrimEnd('\'))
-  # npm's Windows shim starts Next through node_modules\.bin\..\next.
-  # Older launchers may leave a relative node_modules path in CommandLine,
-  # while newer launchers use an absolute path. Accept both forms, but only
-  # trust the relative form when the port answers as a SANMAO service. This
-  # prevents a stale same-project process from locking next-swc during npm ci
-  # without stopping an unrelated Next app in the same port range.
-  $absoluteNextPathPattern = "(?i)$escapedRoot[\\/]node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next"
-  $relativeNextPathPattern = '(?i)(?:^|["\s])(?:\.[\\/])?node_modules[\\/](?:\.bin[\\/]+\.\.[\\/]+)?next[\\/]dist[\\/]bin[\\/]next(?=\s|["$]|$)'
-  $portPattern = '(?i)(?:^|\s)(?:-p|--port)(?:\s+|=)' + [regex]::Escape("$port") + '(?=\s|$)'
-  $healthy = $null
-  foreach ($processItem in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
-    $commandLine = [string]$processItem.CommandLine
-    if (-not $commandLine) { continue }
-    $absolutePath = $commandLine -match $absoluteNextPathPattern
-    $relativePath = $commandLine -match $relativeNextPathPattern
-    if (-not $absolutePath -and -not $relativePath) { continue }
-    # A previous development run can keep the same Next.js native binaries
-    # locked and occupy the launcher's port range. Treat both production and
-    # development servers as owned by this project so they can be cleaned up.
-    if ($commandLine -notmatch '(?i)(?:^|\s)(?:start|dev)(?:\s|$)') { continue }
-    if ($commandLine -notmatch $portPattern) { continue }
-    if ($relativePath -and -not $absolutePath) {
-      if ($null -eq $healthy) { $healthy = Test-SanmaoServerAtPort $port }
-      if (-not $healthy) { continue }
-    }
-    $processItem
-  }
+  return @(Get-SanmaoOwnedServerProcesses -Ports @($port))
 }
 
 function Test-SanmaoProcessAtPort([int]$port) {
@@ -98,17 +72,12 @@ function Test-SanmaoProcessAtPort([int]$port) {
 
 function Stop-SanmaoProcessAtPort([int]$port) {
   foreach ($processItem in @(Get-SanmaoNextProcessesAtPort $port)) {
-    & taskkill.exe /PID ([int]$processItem.ProcessId) /T /F 2>$null | Out-Null
+    Stop-SanmaoOwnedProcess -Process $processItem | Out-Null
   }
 }
 
 function Wait-SanmaoPortReleased([int]$port) {
-  for ($i = 0; $i -lt 50; $i++) {
-    $listeningPorts = Get-ListeningPortSnapshot
-    if ($null -eq $listeningPorts -or $listeningPorts -notcontains $port) { return $true }
-    Start-Sleep -Milliseconds 200
-  }
-  return $false
+  return Wait-SanmaoPortsReleased -Ports @($port) -TimeoutMs 10000
 }
 
 function Test-SanmaoBuildStale {
@@ -132,13 +101,11 @@ function Test-SanmaoBuildStale {
 }
 
 # The running service itself is the source of truth. There is deliberately no
-# lock file: a stale launcher PID must not prevent a later launch.
+# lock file for service lifetime: a stale launcher PID must not prevent a later
+# launch. The preflight mutex below only serializes setup and startup.
 function Find-ExistingServer {
   $listeningPorts = Get-ListeningPortSnapshot
   for ($port = $portStart; $port -le $portEnd; $port++) {
-    # A closed localhost port can make Invoke-WebRequest wait for its full
-    # timeout on some Windows installations. Check TCP first so unused ports
-    # are skipped immediately instead of costing roughly one second each.
     if ($null -ne $listeningPorts) {
       if ($listeningPorts -notcontains $port) { continue }
     } elseif (-not (Test-LocalPortOpen $port)) {
@@ -160,6 +127,7 @@ function Stop-StartedServer {
 }
 function Fail([string]$text) {
   Stop-StartedServer
+  Write-SanmaoLauncherLog "启动失败：$text" 'ERROR'
   Write-Host ""
   Write-Host "启动失败：$text" -ForegroundColor Red
   if (Test-Path -LiteralPath $serverStderrPath) {
@@ -171,16 +139,35 @@ function Fail([string]$text) {
     }
   }
   Write-Host "服务端日志：$serverStderrPath" -ForegroundColor DarkGray
-  Write-Host ""
-  Read-Host '按回车键关闭窗口'
+  if (-not $script:NonInteractive) {
+    Write-Host ""
+    Read-Host '按回车键关闭窗口'
+  }
   exit 1
 }
 
-# Migrate a service started by the old launcher so it cannot keep occupying
-# the common 3000 port after this version switches to its dedicated range.
-foreach ($legacyPort in $legacyPortRange) {
-  if (Test-SanmaoProcessAtPort $legacyPort) { Stop-SanmaoProcessAtPort $legacyPort }
+function Release-LauncherMutex {
+  if ($script:LauncherMutex) {
+    try { $script:LauncherMutex.ReleaseMutex() } catch {}
+    try { $script:LauncherMutex.Dispose() } catch {}
+    $script:LauncherMutex = $null
+  }
 }
+
+# Serialize preflight only. If a previous hidden updater launcher is still
+# building/starting, a second double-click waits and then reuses the service.
+$script:LauncherMutex = New-Object System.Threading.Mutex($false, 'SanmaoAILauncherPreflight')
+$acquired = $false
+try {
+  $acquired = $script:LauncherMutex.WaitOne(90000)
+} catch {
+  # An abandoned mutex is still acquired by the current process.
+  $acquired = $true
+}
+if (-not $acquired) {
+  Fail '另一个启动器正在运行，请稍候再试。'
+}
+
 
 $existingPort = Find-ExistingServer
 if ($existingPort -gt 0) {
@@ -193,14 +180,22 @@ if ($existingPort -gt 0) {
   } else {
     Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
     Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
-    Start-Process "http://localhost:$existingPort"
+    Release-LauncherMutex
+    if (-not $script:NonInteractive) { Start-Process "http://localhost:$existingPort" }
     exit 0
   }
 }
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 
+# Clean stale project-owned Next services before dependency install and again
+# before choosing a port. This reclaims hung/legacy/relative-path servers that
+# used to make the port range look occupied.
+if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
+  Write-SanmaoLauncherLog '部分旧服务端口未能释放，将继续使用可用端口。' 'WARN'
+}
+
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.6.9' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.7.0' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js
@@ -292,10 +287,6 @@ if (Test-Path '.\package-lock.json') {
 }
 if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or $packageLockChanged) {
   Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
-  # If a stale/legacy launcher escaped the existing-service check, stop only
-  # this project's Next process before npm replaces native .node binaries.
-  # Otherwise Windows may reject npm's unlink with EPERM because next-swc is
-  # still loaded by the old server.
   foreach ($repairPort in $portRange) {
     if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
   }
@@ -324,7 +315,6 @@ Write-Step '检查构建产物是否最新'
 $nextCmd = Join-Path $root 'node_modules\.bin\next.cmd'
 $buildIdPath = Join-Path $root '.next\BUILD_ID'
 
-# 需要重新构建的情况：强制构建（SANMAO_FORCE_BUILD=1）、没有构建产物、或源码比构建产物新
 $needBuild = ($env:SANMAO_FORCE_BUILD -eq '1') -or (-not (Test-Path -LiteralPath $buildIdPath))
 if (-not $needBuild) {
   $buildTime = (Get-Item -LiteralPath $buildIdPath).LastWriteTimeUtc
@@ -354,18 +344,33 @@ if ($needBuild) {
 } else {
   Write-Host '构建产物已是最新，跳过构建，直接启动。' -ForegroundColor Green
 }
-# 4. Choose a free port
+
+# 4. Choose a free port after reclaiming any owned stale listeners again.
 Write-Step '启动 SANMAO.AI'
+if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
+  Write-SanmaoLauncherLog '启动前仍有旧服务端口未释放。' 'WARN'
+}
 function Test-Port([int]$port) {
   return Test-LocalPortOpen $port
 }
 
 $port = $portStart
 while (($port -le $portEnd) -and (Test-Port $port)) { $port++ }
-if ($port -gt $portEnd) { Fail "$($portStart)～$($portEnd) 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。" }
+if ($port -gt $portEnd) {
+  $details = @()
+  foreach ($p in $portRange) {
+    $pids = @(Get-SanmaoOwningPidsByPort -Port $p)
+    if ($pids.Count -gt 0) {
+      $details += "端口 $p：PID $($pids -join ', ')"
+    }
+  }
+  if ($details.Count -gt 0) {
+    Fail ("$($portStart)～$($portEnd) 端口都被占用。" + ($details -join '；') + '。请关闭对应进程后重试。')
+  } else {
+    Fail "$($portStart)～$($portEnd) 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
+  }
+}
 
-# Keep the service independent of browser tabs. The launcher only starts it
-# once and reuses it on later runs; this avoids stale PID/heartbeat state.
 Remove-Item Env:SANMAO_LIFECYCLE -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
@@ -380,15 +385,13 @@ $script:serverProcess = Start-Process `
   -PassThru
 
 Write-Host "正在等待 http://localhost:$port 启动..." -ForegroundColor Yellow
+Write-SanmaoLauncherLog "已启动服务进程 PID $($script:serverProcess.Id)，等待端口 $port 就绪。" 'INFO'
 $ready = $false
-for ($i = 0; $i -lt 60; $i++) {
+for ($i = 0; $i -lt 150; $i++) {
   Start-Sleep -Milliseconds 200
   if ($script:serverProcess.HasExited) { break }
   if (-not (Test-LocalPortOpen $port)) { continue }
-  try {
-    $response = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/state" -UseBasicParsing -TimeoutSec 1
-    if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) { $ready = $true; break }
-  } catch {}
+  if (Test-SanmaoHealthEndpoint -Port $port) { $ready = $true; break }
 }
 
 if (-not $ready) {
@@ -398,5 +401,7 @@ if (-not $ready) {
 $url = "http://localhost:$port"
 Write-Host "SANMAO.AI 已启动：$url" -ForegroundColor Green
 Write-Host '本地服务会保持运行，下一次启动会直接打开已有服务。' -ForegroundColor DarkGray
-Start-Process $url
+Write-SanmaoLauncherLog "服务已就绪：http://localhost:$port" 'INFO'
+Release-LauncherMutex
+if (-not $script:NonInteractive) { Start-Process $url }
 Start-Sleep -Milliseconds 300

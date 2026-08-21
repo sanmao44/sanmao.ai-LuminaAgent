@@ -14,6 +14,7 @@ export type WebSearchResult = {
 export type WebSearchProvider = 'anysearch' | 'baidu-qianfan';
 
 export type SearchResponse = {
+  source: 'external';
   provider: WebSearchProvider;
   query: string;
   resultCount: number;
@@ -418,6 +419,7 @@ export async function searchWeb(query: string): Promise<SearchResponse> {
   }
   const enriched = await Promise.all(results.slice(0, 3).map(enrichResult));
   const response: SearchResponse = {
+    source: 'external',
     provider: preferredProvider,
     query: normalized,
     resultCount: results.length,

@@ -77,4 +77,35 @@ else
   printf '%s\n' '更新后找不到适用的启动器。' >&2
   exit 1
 fi
-write_progress completed '更新完成，服务正在恢复…' 100
+
+if [ "$RESTART_PORT" -ge 1024 ] 2>/dev/null && [ "$RESTART_PORT" -le 65525 ] 2>/dev/null; then
+  PROBE_START=$RESTART_PORT
+  PROBE_END=$RESTART_PORT
+else
+  PROBE_START=3210
+  PROBE_END=3220
+fi
+
+. "$TARGET_PATH/scripts/launcher-common.sh"
+sanmao_init "$TARGET_PATH" "$PROBE_START" "$PROBE_END" 3000 3010 "$TARGET_PATH/.data/logs/launcher.log"
+
+write_progress starting '程序文件已替换，正在等待新服务就绪…' 99
+READY=0
+ATTEMPT=0
+while [ $ATTEMPT -lt 360 ]; do
+  PROBE_PORT=$PROBE_START
+  while [ $PROBE_PORT -le $PROBE_END ]; do
+    if sanmao_server_health "$PROBE_PORT"; then READY=1; break; fi
+    PROBE_PORT=$((PROBE_PORT + 1))
+  done
+  [ $READY -eq 1 ] && break
+  ATTEMPT=$((ATTEMPT + 1))
+  sleep 0.5
+done
+
+if [ $READY -ne 1 ]; then
+  printf '%s\n' '更新后服务未在 180 秒内就绪，请查看 .data/logs/launcher.log 与更新日志后重试。' >&2
+  exit 1
+fi
+
+write_progress completed '更新完成，服务已恢复。' 100

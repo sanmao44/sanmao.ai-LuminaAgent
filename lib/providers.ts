@@ -1,4 +1,5 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderType } from './types';
+import { inferNativeSearch } from './native-search-detection';
 
 export type RuntimeProvider = {
   id: string;
@@ -18,13 +19,18 @@ export type RuntimeProvider = {
   authPrefix?: string;
 };
 
-export type DiscoveredModel = { id: string; name?: string; capabilities?: ModelCapability[] };
+export type DiscoveredModel = {
+  id: string;
+  name?: string;
+  capabilities?: ModelCapability[];
+  nativeSearchProtocol?: 'openai-responses' | 'gemini-grounding' | 'native-chat';
+  nativeSearchDetection?: 'metadata' | 'model-id' | 'provider' | 'manual';
+};
 
-function discoveredModelCapabilities(item: any): ModelCapability[] {
+function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id = ''): ModelCapability[] {
   const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata]
     .filter(Boolean);
-  const text = JSON.stringify(raw).toLowerCase();
-  return /web[\s_-]?search|google[\s_-]?search|browser|grounding|search[\s_-]?parameters|search[\s_-]?enabled/.test(text) ? ['web-search'] : [];
+  return inferNativeSearch(id, provider?.platform, raw).detected ? ['chat', 'web-search'] : [];
 }
 
 function trimSlash(value: string) { return value.replace(/\/+$/, ''); }
@@ -280,17 +286,26 @@ function modelListFromResponse(data: any): { found: boolean; items: any[] } {
   return { found: Array.isArray(value), items: Array.isArray(value) ? value : [] };
 }
 
-export function normalizeDiscoveredModels(data: any): DiscoveredModel[] {
+export function normalizeDiscoveredModels(data: any, provider?: RuntimeProvider): DiscoveredModel[] {
   const { items } = modelListFromResponse(data);
   const normalized = items.map((item: any) => {
     if (typeof item === 'string' || typeof item === 'number') {
       const id = String(item).trim();
-      return id ? { id, name: id } : null;
+      const inferred = inferNativeSearch(id, provider?.platform);
+      return id ? { id, name: id, ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol, nativeSearchDetection: inferred.detection } : {}), ...(inferred.detected ? { capabilities: ['web-search' as const] } : {}) } : null;
     }
     const id = String(item?.id || item?.model || item?.model_id || item?.modelId || item?.name || item?.slug || '').trim();
     if (!id) return null;
     const name = String(item?.name || item?.display_name || item?.displayName || id).trim() || id;
-    return { id, name, capabilities: discoveredModelCapabilities(item) };
+    const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata].filter(Boolean);
+    const inferred = inferNativeSearch(id, provider?.platform, raw);
+    return {
+      id,
+      name,
+      capabilities: discoveredModelCapabilities(item, provider, id),
+      ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol } : {}),
+      ...(inferred.detection ? { nativeSearchDetection: inferred.detection } : {}),
+    };
   }).filter(Boolean) as DiscoveredModel[];
   return [...new Map(normalized.map((model) => [model.id, model])).values()];
 }
@@ -303,7 +318,8 @@ export async function discoverModels(provider: RuntimeProvider) {
     return (Array.isArray(data?.models) ? data.models : []).map((item: any) => ({
       id: String(item.name || '').replace(/^models\//, ''),
       name: String(item.displayName || item.name || ''),
-      capabilities: discoveredModelCapabilities(item),
+      capabilities: discoveredModelCapabilities(item, provider, String(item.name || '').replace(/^models\//, '')),
+      ...(() => { const id = String(item.name || '').replace(/^models\//, ''); const inferred = inferNativeSearch(id, provider.platform, item); return { ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol } : {}), ...(inferred.detection ? { nativeSearchDetection: inferred.detection } : {}) }; })(),
     })).filter((m: { id: string }) => m.id);
   }
   let lastUnrecognizedResponse: { contentType: string; text: string; url: string } | null = null;
@@ -320,7 +336,7 @@ export async function discoverModels(provider: RuntimeProvider) {
     const modelResponse = modelListFromResponse(response.data);
     if (modelResponse.found) {
       if (candidate.inferredBaseUrl) provider.baseUrl = candidate.inferredBaseUrl;
-      return normalizeDiscoveredModels(response.data);
+      return normalizeDiscoveredModels(response.data, provider);
     }
     lastUnrecognizedResponse = { contentType: response.contentType, text: response.text, url: candidate.url };
   }

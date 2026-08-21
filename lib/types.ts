@@ -3,6 +3,30 @@ export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
 export type ModelKind = 'chat' | 'image' | 'unknown';
 export type WebSearchApiProvider = 'anysearch' | 'baidu-qianfan';
+export type NativeSearchProtocol = 'openai-responses' | 'gemini-grounding' | 'native-chat';
+export type NativeSearchOverride = 'auto' | 'enabled' | 'disabled';
+export type NativeSearchDetection = 'metadata' | 'model-id' | 'provider' | 'manual';
+export type WebSearchSource = 'native' | 'external';
+
+export type WebSearchDecisionStatus = 'searched' | 'not-needed' | 'disabled' | 'failed';
+
+export type WebSearchDecisionMeta = {
+  mode: 'auto' | 'always' | 'off';
+  status: WebSearchDecisionStatus;
+  reason?: string;
+  query?: string;
+};
+
+export type WebSearchMeta = {
+  source: WebSearchSource;
+  protocol?: NativeSearchProtocol;
+  modelId?: string;
+  provider?: string;
+  query: string;
+  resultCount: number;
+  fallbackFrom?: 'native';
+  searchedAt: string;
+};
 
 export type ProviderConnection = {
   id: string;
@@ -48,6 +72,9 @@ export type RegistryModel = {
   enabled: boolean;
   published: boolean;
   capabilities: ModelCapability[];
+  nativeSearchProtocol?: NativeSearchProtocol;
+  nativeSearchOverride?: NativeSearchOverride;
+  nativeSearchDetection?: NativeSearchDetection;
 };
 
 export type AppSettings = {

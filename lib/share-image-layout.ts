@@ -19,6 +19,7 @@ export type ShareImageLayout = {
   canvasHeight: number;
   padding: number;
   contentWidth: number;
+  headerHeight: number;
   resultFrame: { x: number; y: number; width: number; height: number };
   resultContent: { x: number; y: number; width: number; height: number };
   promptFrame: { x: number; y: number; width: number; height: number };
@@ -29,11 +30,16 @@ export type ShareImageLayout = {
   referenceTileGap: number;
   referenceColumns: number;
   referenceRows: number;
+  referenceBottomY: number;
+  footerY: number;
+  footerHeight: number;
+  footerQrSize: number;
   overflow: boolean;
 };
 
 const DEFAULT_CANVAS_WIDTH = 1400;
 const DEFAULT_PADDING = 56;
+const HEADER_HEIGHT = 132;
 const RESULT_FRAME_GAP = 48;
 const RESULT_MAX_HEIGHT = 980;
 const PROMPT_COLUMN_GAP = 24;
@@ -43,6 +49,8 @@ const REFERENCE_TILE_WIDTH = 196;
 const REFERENCE_TILE_HEIGHT = 190;
 const REFERENCE_TILE_GAP = 16;
 const MAX_REFERENCE_COLUMNS = 6;
+const FOOTER_HEIGHT = 238;
+const FOOTER_QR_SIZE = 164;
 const MAX_CANVAS_HEIGHT = 30_000;
 
 const PROMPT_STYLES = [
@@ -166,7 +174,7 @@ export function buildShareImageLayout(options: {
   };
   const resultFrame = {
     x: Math.round((canvasWidth - resultContent.width - RESULT_FRAME_GAP) / 2),
-    y: 112,
+    y: HEADER_HEIGHT,
     width: resultContent.width + RESULT_FRAME_GAP,
     height: resultContent.height + RESULT_FRAME_GAP,
   };
@@ -182,12 +190,15 @@ export function buildShareImageLayout(options: {
   const referenceRows = Math.ceil(Math.max(0, options.referenceCount) / referenceColumns);
   const referenceHeadingY = promptFrame.y + promptFrame.height + 48;
   const referenceTilesY = referenceHeadingY + 36;
-  const canvasHeight = referenceTilesY + (referenceRows ? referenceRows * REFERENCE_TILE_HEIGHT + Math.max(0, referenceRows - 1) * REFERENCE_TILE_GAP : 0) + 56;
+  const referenceBottomY = referenceTilesY + (referenceRows ? referenceRows * REFERENCE_TILE_HEIGHT + Math.max(0, referenceRows - 1) * REFERENCE_TILE_GAP : 0);
+  const footerY = referenceBottomY + 56;
+  const canvasHeight = footerY + FOOTER_HEIGHT + padding;
   return {
     canvasWidth,
     canvasHeight,
     padding,
     contentWidth,
+    headerHeight: HEADER_HEIGHT,
     resultFrame,
     resultContent,
     promptFrame,
@@ -198,6 +209,10 @@ export function buildShareImageLayout(options: {
     referenceTileGap: REFERENCE_TILE_GAP,
     referenceColumns,
     referenceRows,
+    referenceBottomY,
+    footerY,
+    footerHeight: FOOTER_HEIGHT,
+    footerQrSize: FOOTER_QR_SIZE,
     overflow: canvasHeight > MAX_CANVAS_HEIGHT || options.promptPlan.overflow,
   };
 }
