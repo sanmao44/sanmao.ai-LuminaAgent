@@ -2133,7 +2133,7 @@ html[data-theme="dark"] .agent-page{
 .logs-page .log-source-line b{color:var(--text-2);font-weight:850}
 .logs-page .log-meta{max-width:430px;align-content:center;row-gap:6px;column-gap:5px;white-space:normal}
 .logs-page .log-size-chip{max-width:170px;overflow:hidden;text-overflow:ellipsis}
-.logs-page .log-count-chip{max-width:92px;overflow:hidden;text-overflow:ellipsis}
+.logs-page .log-count-chip{max-width:132px;overflow:hidden;text-overflow:ellipsis}
 .logs-page .log-meta time{font-variant-numeric:tabular-nums}
 .logs-page .log-detail-button{height:28px;padding:0 9px;font-weight:800}
 @media(max-width:1200px){
