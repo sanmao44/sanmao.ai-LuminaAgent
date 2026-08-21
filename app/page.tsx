@@ -4964,6 +4964,7 @@ export default function Page() {
     const navNoticeStateReadyRef = useRef(false);
     const [logImageSpecs, setLogImageSpecs] = useState({});
     const [logFilter, setLogFilter] = useState('all');
+    const [logSearch, setLogSearch] = useState('');
     const [logPage, setLogPage] = useState(1);
     const [selectedLog, setSelectedLog] = useState(null);
     const [localDirectoryHandle, setLocalDirectoryHandle] = useState(null);
@@ -5080,9 +5081,17 @@ export default function Page() {
         historySearch,
         historyFilter
     ]);
-    const filteredGenerationLogs = useMemo(()=>generationLogs.filter((log)=>logFilter === 'all' || log.status === logFilter), [
+    const filteredGenerationLogs = useMemo(()=>{
+        const query = logSearch.trim().toLowerCase();
+        return generationLogs.filter((log)=>{
+            const matchesStatus = logFilter === 'all' || log.status === logFilter;
+            const matchesQuery = !query || `${log.prompt || ''} ${log.modelName || ''} ${log.providerName || ''} ${generationLogSourceLabel(log)}`.toLowerCase().includes(query);
+            return matchesStatus && matchesQuery;
+        });
+    }, [
         generationLogs,
-        logFilter
+        logFilter,
+        logSearch
     ]);
     const logTotalPages = Math.max(1, Math.ceil(filteredGenerationLogs.length / generationLogPageSize));
     const pagedGenerationLogs = useMemo(()=>filteredGenerationLogs.slice((Math.min(logPage, logTotalPages) - 1) * generationLogPageSize, Math.min(logPage, logTotalPages) * generationLogPageSize), [
@@ -5557,7 +5566,8 @@ export default function Page() {
     useEffect(()=>{
         setLogPage(1);
     }, [
-        logFilter
+        logFilter,
+        logSearch
     ]);
     useEffect(()=>{
         if (logPage > logTotalPages) setLogPage(logTotalPages);
@@ -11634,10 +11644,15 @@ export default function Page() {
                                 className: "history-page logs-page",
                                 children: [
                                     /*#__PURE__*/ _jsxs("div", {
-                                        className: "history-toolbar surface",
+                                        className: "history-toolbar surface logs-toolbar",
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-toolbar-copy",
                                                 children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        className: "log-eyebrow",
+                                                        children: "RUN MONITOR"
+                                                    }),
                                                     /*#__PURE__*/ _jsx("strong", {
                                                         children: "生图日志"
                                                     }),
@@ -11646,40 +11661,67 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsx("div", {
-                                                className: "filter-chips log-filters",
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-toolbar-controls",
                                                 children: [
-                                                    [
-                                                        'all',
-                                                        '全部'
-                                                    ],
-                                                    [
-                                                        'pending',
-                                                        '进行中'
-                                                    ],
-                                                    [
-                                                        'success',
-                                                        '成功'
-                                                    ],
-                                                    [
-                                                        'error',
-                                                        '失败'
-                                                    ]
-                                                ].map(([value, label])=>/*#__PURE__*/ _jsxs("button", {
-                                                        className: logFilter === value ? 'active' : '',
-                                                        onClick: ()=>setLogFilter(value),
+                                                    /*#__PURE__*/ _jsxs("label", {
+                                                        className: "log-search-box",
                                                         children: [
-                                                            label,
-                                                            /*#__PURE__*/ _jsx("b", {
-                                                                children: value === 'all' ? generationLogs.length : generationLogs.filter((log)=>log.status === value).length
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "search",
+                                                                size: 14
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("input", {
+                                                                value: logSearch,
+                                                                onChange: (e)=>setLogSearch(e.target.value),
+                                                                placeholder: "搜索提示词、模型或服务商",
+                                                                "aria-label": "搜索生图日志"
+                                                            }),
+                                                            logSearch && /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "log-search-clear",
+                                                                onClick: ()=>setLogSearch(''),
+                                                                "aria-label": "清除搜索",
+                                                                children: "×"
                                                             })
                                                         ]
-                                                    }, value))
-                                            }),
-                                            /*#__PURE__*/ _jsx("button", {
-                                                className: "ghost-button",
-                                                onClick: ()=>void refreshGenerationLogs(),
-                                                children: "刷新"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("div", {
+                                                        className: "filter-chips log-filters",
+                                                        children: [
+                                                            [
+                                                                'all',
+                                                                '全部'
+                                                            ],
+                                                            [
+                                                                'pending',
+                                                                '进行中'
+                                                            ],
+                                                            [
+                                                                'success',
+                                                                '成功'
+                                                            ],
+                                                            [
+                                                                'error',
+                                                                '失败'
+                                                            ]
+                                                        ].map(([value, label])=>/*#__PURE__*/ _jsxs("button", {
+                                                                className: logFilter === value ? 'active' : '',
+                                                                onClick: ()=>setLogFilter(value),
+                                                                children: [
+                                                                    label,
+                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                        children: value === 'all' ? generationLogs.length : generationLogs.filter((log)=>log.status === value).length
+                                                                    })
+                                                                ]
+                                                            }, value))
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "ghost-button log-refresh-button",
+                                                        onClick: ()=>void refreshGenerationLogs(),
+                                                        children: "刷新"
+                                                    })
+                                                ]
                                             })
                                         ]
                                     }),
@@ -11863,16 +11905,9 @@ export default function Page() {
                                                                         className: "log-meta-chip log-count-chip",
                                                                         children: [
                                                                             log.status === 'pending' ? log.count ?? 1 : log.imageCount ?? 0,
-                                                                            " 张"
+                                                                            log.references?.length ? ` 张 · 参考图 ${log.references.length}` : " 张"
                                                                         ]
                                                                     }),
-                                                                    log.references?.length ? /*#__PURE__*/ _jsxs("span", {
-                                                                        className: "log-meta-chip log-reference-chip",
-                                                                        children: [
-                                                                            "参考图 ",
-                                                                            log.references.length
-                                                                        ]
-                                                                    }) : null,
                                                                     /*#__PURE__*/ _jsxs("span", {
                                                                         className: `log-meta-chip log-duration-chip ${log.status === 'pending' ? 'pending' : logDurationTone(log.durationMs)}`,
                                                                         children: [
@@ -11881,16 +11916,8 @@ export default function Page() {
                                                                         ]
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("span", {
-                                                                        className: "log-meta-chip log-resolution-chip",
-                                                                        children: logResolutionLabel(log, logImageSpecs[log.id])
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsx("span", {
                                                                         className: "log-meta-chip log-size-chip",
-                                                                        children: logOutputSizeLabel(log, logImageSpecs[log.id])
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                        className: "log-meta-chip log-ratio-chip",
-                                                                        children: logAspectRatioLabel(log, logImageSpecs[log.id])
+                                                                        children: `${logResolutionLabel(log, logImageSpecs[log.id])} · ${logOutputSizeLabel(log, logImageSpecs[log.id])} · ${logAspectRatioLabel(log, logImageSpecs[log.id])}`
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("time", {
                                                                         children: new Date(log.createdAt).toLocaleString('zh-CN', {
