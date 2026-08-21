@@ -1,4 +1,4 @@
-import type { ClientReferenceImage, ReferenceImageRecord } from './types';
+import type { ClientReferenceImage, ReferenceImageRecord, WebSearchDecisionMeta, WebSearchMeta } from './types';
 import type { AngleCameraState } from './angle-control';
 
 export type GallerySource = 'generate' | 'agent' | 'edit';
@@ -39,6 +39,8 @@ export type ChatMessageVersion = {
   content: string;
   images?: GalleryItem[];
   files?: ChatFile[];
+  webSearch?: WebSearchMeta;
+  webSearchDecision?: WebSearchDecisionMeta;
   createdAt: number;
 };
 
@@ -58,7 +60,8 @@ export type ChatHistoryMessage = {
   versions?: ChatMessageVersion[];
   activeVersion?: number;
   followUp?: ChatFollowUp;
-  webSearch?: { provider?: string; query: string; resultCount: number; searchedAt?: string };
+  webSearch?: WebSearchMeta;
+  webSearchDecision?: WebSearchDecisionMeta;
 };
 
 export type ChatSession = {

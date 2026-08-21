@@ -5178,6 +5178,9 @@ export default function Page() {
     const agentWebSearchAvailable = Boolean(state.settings.webSearchConfigured) || Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
     const nativeWebSearchModelActive = Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
     const agentWebSearchActive = agentWebMode !== 'off' && agentWebSearchAvailable;
+    const nativeWebSearchHint = nativeWebSearchModelActive
+        ? '当前模型自带联网搜索，将优先使用模型原生能力；失败时自动回退外部搜索 API'
+        : '当前使用外部搜索 API；切换到带“原生联网”标签的模型后会优先使用模型自身搜索';
     useEffect(()=>{
         let cancelled = false;
         let active = false;
@@ -6482,6 +6485,8 @@ export default function Page() {
                 content: message.content,
                 images: message.images,
                 files: message.files,
+                webSearch: message.webSearch,
+                webSearchDecision: message.webSearchDecision,
                 createdAt: 0
             }
         ];
@@ -6497,6 +6502,8 @@ export default function Page() {
             content: version.content,
             images: version.images,
             files: version.files,
+            webSearch: version.webSearch ?? message.webSearch,
+            webSearchDecision: version.webSearchDecision ?? message.webSearchDecision,
             versions,
             activeVersion,
             retrying
@@ -6854,6 +6861,10 @@ export default function Page() {
             kind
         });
         if (data?.state) notify(`已归类为${kindLabel(kind)}`);
+    }
+    async function setNativeSearchOverride(model, override) {
+        const data = await patchModel(model, { nativeSearchOverride: override });
+        if (data?.state) notify(override === 'enabled' ? '已强制启用模型原生搜索' : override === 'disabled' ? '已禁用模型原生搜索，将使用外部搜索 API' : '已恢复自动识别模型原生搜索');
     }
     async function patchSettings(patch) {
         try {
@@ -7839,6 +7850,8 @@ export default function Page() {
             content: message.content,
             images: message.images,
             files: message.files,
+            webSearch: message.webSearch,
+            webSearchDecision: message.webSearchDecision,
             createdAt: Date.now()
         };
         const workingVersions = [
@@ -7895,6 +7908,13 @@ export default function Page() {
             if (res.headers.get('content-type')?.includes('text/event-stream')) {
                 let streamedText = '';
                 const final = await readAgentStream(res, (event)=>{
+                    if (event.type === 'status') updatePendingActivity({
+                        stage: event.stage || 'answering',
+                        message: event.message || '正在处理…',
+                        model: event.model,
+                        mode: event.mode,
+                        count: event.count
+                    });
                     if (event.type === 'delta') streamedText += String(event.text || '');
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
                 });
@@ -7933,7 +7953,9 @@ export default function Page() {
                         ...version,
                         content: data.message || '已完成。',
                         images,
-                        files
+                        files,
+                        webSearch: data.webSearch || undefined,
+                        webSearchDecision: data.webSearchDecision || undefined
                     } : version);
                 return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
             });
@@ -8000,9 +8022,9 @@ export default function Page() {
         const pending = {
             id: pendingId,
             role: 'assistant',
-            content: likelyImageRequest ? '正在构思画面…' : '正在准备回答…',
+            content: likelyImageRequest ? '正在构思画面…' : '正在判断是否需要联网…',
             pending: true,
-            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' }
+            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' }
         };
         primeSuccessSound();
         const nextMessages = [
@@ -8060,7 +8082,7 @@ export default function Page() {
                             size: file.size
                         })) : []
                 }));
-            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' });
+            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
             const res = await fetch('/api/agent', {
                 method: 'POST',
                 headers: {
@@ -8144,7 +8166,8 @@ export default function Page() {
                     content: data.message || '已完成。',
                     images: items,
                     files,
-                    webSearch: data.webSearch || undefined
+                    webSearch: data.webSearch || undefined,
+                    webSearchDecision: data.webSearchDecision || undefined
                 }
             ];
             pendingChatMessagesRef.current.delete(sessionId);
@@ -8938,13 +8961,40 @@ export default function Page() {
                         })
                     ]
                 }),
-                /*#__PURE__*/ _jsx("div", {
-                    className: "capability-tags",
-                    children: model.capabilities.slice(0, 5).map((cap)=>/*#__PURE__*/ _jsx("span", {
-                            className: `capability-tag-${cap}`,
-                            children: capabilityLabel(cap)
-                        }, cap))
-                })
+                 /*#__PURE__*/ _jsx("div", {
+                     className: "capability-tags",
+                     children: model.capabilities.slice(0, 5).map((cap)=>/*#__PURE__*/ _jsx("span", {
+                             className: `capability-tag-${cap}`,
+                             children: capabilityLabel(cap)
+                         }, cap))
+                 }),
+                 model.kind === 'chat' && /*#__PURE__*/ _jsxs("div", {
+                     className: "native-search-control",
+                     title: "控制这个模型是否使用自身联网搜索；自动模式由模型元数据和服务商规则识别",
+                     children: [
+                         /*#__PURE__*/ _jsx("span", { children: "原生搜索" }),
+                         /*#__PURE__*/ _jsxs("div", {
+                             className: "segmented mini",
+                             children: [
+                                 /*#__PURE__*/ _jsx("button", {
+                                     className: (model.nativeSearchOverride || 'auto') === 'auto' ? 'active' : '',
+                                     onClick: ()=>void setNativeSearchOverride(model, 'auto'),
+                                     children: "自动"
+                                 }),
+                                 /*#__PURE__*/ _jsx("button", {
+                                     className: model.nativeSearchOverride === 'enabled' ? 'active' : '',
+                                     onClick: ()=>void setNativeSearchOverride(model, 'enabled'),
+                                     children: "启用"
+                                 }),
+                                 /*#__PURE__*/ _jsx("button", {
+                                     className: model.nativeSearchOverride === 'disabled' ? 'active' : '',
+                                     onClick: ()=>void setNativeSearchOverride(model, 'disabled'),
+                                     children: "禁用"
+                                 })
+                             ]
+                         })
+                     ]
+                 })
             ]
         }, model.id);
     }
@@ -9665,14 +9715,13 @@ export default function Page() {
                                                                         message.role === 'assistant' && !message.pending && /*#__PURE__*/ _jsx("small", {
                                                                             children: "选中文字可一键推送生图或下载文件"
                                                                         }),
-                                                                        message.role === 'assistant' && !message.pending && message.webSearch && /*#__PURE__*/ _jsxs("small", {
-                                                                            className: "message-web-badge",
-                                                                            children: [
-                                                                                "已联网检索 · ",
-                                                                                message.webSearch.resultCount || 0,
-                                                                                " 条"
-                                                                            ]
-                                                                        }),
+                                                                         message.role === 'assistant' && !message.pending && (message.webSearch || message.webSearchDecision) && /*#__PURE__*/ _jsxs("small", {
+                                                                             className: "message-web-badge",
+                                                                             children: [
+                                                                                 message.webSearchDecision?.status === 'disabled' ? '联网已关闭' : message.webSearchDecision?.status === 'failed' ? '联网搜索失败，已如实回答' : message.webSearch ? message.webSearch.source === 'native' ? '模型原生联网' : message.webSearch.fallbackFrom === 'native' ? '外部搜索 API（原生搜索失败后回退）' : '外部搜索 API' : '智能联网：本轮未触发',
+                                                                                 message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
+                                                                             ]
+                                                                         }),
                                                                         message.role === 'assistant' && !message.pending && messageVersionsFor(message).length > 1 && /*#__PURE__*/ _jsxs("div", {
                                                                             className: "message-version-switch",
                                                                             children: [
@@ -10111,8 +10160,8 @@ export default function Page() {
                                                                             className: "agent-web-mode-menu",
                                                                             role: "menu",
                                                                             children: [
-                                                                                ['auto', '智能联网', '仅在需要最新或外部事实时搜索'],
-                                                                                ['always', '始终联网', '每轮都联网检索，回复可能较慢'],
+                                                                                 ['auto', '智能联网', nativeWebSearchModelActive ? '需要最新事实时优先使用模型原生搜索，失败回退外部 API' : '仅在需要最新或外部事实时使用外部搜索 API'],
+                                                                                 ['always', '始终联网', nativeWebSearchModelActive ? '每轮优先使用模型原生搜索，失败回退外部 API' : '每轮使用外部搜索 API，回复可能较慢'],
                                                                                 ['off', '关闭联网', '最快的纯模型回复']
                                                                             ].map(([mode, label, description])=>/*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
@@ -10129,13 +10178,18 @@ export default function Page() {
                                                                                 ]
                                                                             }, mode))
                                                                         }),
-                                                                        !agentWebModeMenuOpen && /*#__PURE__*/ _jsx("span", {
-                                                                            id: "agent-web-toggle-tip",
-                                                                            className: "agent-web-tooltip",
-                                                                            role: "tooltip",
-                                                                            children: agentWebMode === 'auto' ? '仅在需要最新或外部事实时搜索，普通创作会立即回复' : agentWebMode === 'always' ? '每轮都会联网检索，回复可能较慢' : '不会联网，适合最快的纯模型回复'
-                                                                        })
-                                                                    ]
+                                                                         !agentWebModeMenuOpen && /*#__PURE__*/ _jsx("span", {
+                                                                             id: "agent-web-toggle-tip",
+                                                                             className: "agent-web-tooltip",
+                                                                             role: "tooltip",
+                                                                             children: `${agentWebMode === 'auto' ? '仅在需要最新或外部事实时搜索，普通创作会立即回复。' : agentWebMode === 'always' ? '每轮都会联网检索，回复可能较慢。' : '不会联网，适合最快的纯模型回复。'} ${nativeWebSearchHint}`
+                                                                         }),
+                                                                         /*#__PURE__*/ _jsx("span", {
+                                                                             className: `agent-native-search-hint ${nativeWebSearchModelActive ? 'active' : ''}`,
+                                                                             title: nativeWebSearchHint,
+                                                                             children: nativeWebSearchModelActive ? '模型自带搜索 · 优先使用' : '外部搜索 API'
+                                                                         })
+                                                                     ]
                                                                 }),
                                                                 (agentRefs.length > 0 || agentInput.trim()) && /*#__PURE__*/ _jsxs("div", {
                                                                     className: "agent-quick-actions",
@@ -12048,7 +12102,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                        children: "联网搜索支持 AnySearch 和百度千帆：AnySearch 默认可直接使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；AnySearch 失败、限流或无结果时自动切换百度千帆。百度千帆 Key 会加密保存在本机服务端，也可使用环境变量 QIANFAN_API_KEY。联网开关开启后，助手会根据问题自主判断是否需要搜索，不再要求输入固定关键词。请以各平台当前免费额度和计费规则为准。"
+                                                         children: "联网搜索支持模型原生搜索、AnySearch 和百度千帆。当前模型带“原生联网”能力时会优先调用模型自身搜索；原生搜索失败、限流或无结果时自动回退外部搜索 API。没有原生搜索能力的模型直接使用 AnySearch/百度千帆。AnySearch 默认可使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；百度千帆 Key 会加密保存在本机服务端，也可使用 QIANFAN_API_KEY。"
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-api-grid",
