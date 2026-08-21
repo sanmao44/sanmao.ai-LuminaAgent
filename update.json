@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.3",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.3",
+  "latestVersion": "0.7.4",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.4",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip"
   ],
-  "sha256": "f28f5ac117da1d6410af4cd66822ba1fd71530270cfa183681f47e68db31e591",
-  "publishedAt": "2026-08-21T15:10:00+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-21T15:35:00+08:00",
   "notes": [
+    "修复更新完成、应用重启后仍可能残留“正在重启”提示的问题。",
+    "新安装包已包含本轮全部页面、联网、分享、首次使用和无代理更新修改。",
+    "无代理网络已真实验证本地 0.7.2 升级时的下载、SHA-256 校验、替换、重建与重启。",
     "修复无代理网络更新时，可能长时间等待 GitHub 官方下载源的问题。",
     "更新包现在优先从已验证镜像下载，并继续执行 SHA-256 完整性校验。",
     "修复新用户首次使用时，Agent 和图片模式可能显示页面加载失败的问题。",

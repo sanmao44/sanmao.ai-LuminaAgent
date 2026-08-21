@@ -1,4 +1,4 @@
-# SANMAO.AI 0.7.3
+# SANMAO.AI 0.7.4
 
 ## 启动器
 
@@ -14,6 +14,11 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 启动器会自动检查 Node.js 20.9+、安装依赖、构建项目、使用 SANMAO.AI 专用的 3210～3220 端口段并打开浏览器。重复双击不会启动第二个后台服务，而是打开已有网页；关闭最后一个网页后后台服务会自动退出。
 
 一个可运行的中文多模型 AI 生图平台：支持在网页内添加多个第三方 API 服务、读取模型列表、选择实际要使用的模型，并提供独立的智能助手、生图工作台、图片修改和本地生成历史。
+
+## 0.7.4 更新完成状态与安装包修复
+
+- 更新成功、应用重启后会自动清除遗留的“正在重启”进度，不再错误地停留在完成提示。
+- 新安装包包含本轮全部页面、联网、分享、首次使用和无代理更新修复；已在无代理网络完成本地 `0.7.2 → 0.7.3` 真实升级验证。
 
 ## 0.7.3 无代理更新链路修复
 
@@ -268,11 +273,11 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
 
 应用启动后会定期检查更新。侧栏会显示当前版本，发现新版本后弹出更新提示；检查失败不会影响本地使用。
 
-无梯子环境会自动做多源回退：更新清单先请求 GitHub，失败后尝试 jsDelivr；安装包先请求官方 GitHub Release，失败后尝试清单 `mirrorUrls`、`SANMAO_UPDATE_MIRRORS` 以及内置的 `ghfast.top`/`ghproxy.net` 公共加速。安装包下载后仍会强制校验 SHA-256，校验失败不会执行更新。也可以自定义镜像：
+无梯子环境会自动做多源回退：更新清单先请求 GitHub，失败后尝试 jsDelivr；安装包优先尝试清单 `mirrorUrls`、`SANMAO_UPDATE_MIRRORS` 以及内置的 `ghfast.top`/`ghproxy.net` 公共加速，GitHub 官方 Release 保留为备用。安装包下载后仍会强制校验 SHA-256，校验失败不会执行更新。也可以自定义镜像：
 
 ```env
 SANMAO_UPDATE_MANIFEST_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/raw/main/update.json
-SANMAO_UPDATE_MIRRORS=https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip
+SANMAO_UPDATE_MIRRORS=https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip
 SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://ghproxy.net/
 ```
 
