@@ -49,6 +49,16 @@ test('detects native protocols from metadata and model ids', async () => {
   assert.equal(nativeSearch.inferNativeSearch('deepseek-v4-pro', 'deepseek').protocol, 'openai-responses');
 });
 
+test('uses native search only when the normalized model exposes the capability', () => {
+  assert.equal(nativeSearch.nativeSearchIsEnabled({ capabilities: ['chat', 'web-search'], nativeSearchOverride: 'disabled' }), true);
+  assert.equal(nativeSearch.nativeSearchIsEnabled({ capabilities: ['chat'], nativeSearchOverride: 'enabled' }), false);
+  assert.equal(nativeSearch.resolveNativeSearchProtocol(provider, {
+    rawId: 'gpt-5',
+    capabilities: ['chat'],
+    nativeSearchOverride: 'enabled',
+  }), null);
+});
+
 test('uses OpenAI Responses web_search and extracts citations', async () => {
   const calls = [];
   globalThis.fetch = async (url, init) => {

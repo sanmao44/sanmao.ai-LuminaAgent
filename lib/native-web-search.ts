@@ -13,7 +13,7 @@ type NativeSearchProvider = {
   authPrefix?: string;
 };
 
-type NativeSearchModel = Pick<RegistryModel, 'rawId' | 'displayName' | 'capabilities' | 'nativeSearchProtocol' | 'nativeSearchOverride'>;
+type NativeSearchModel = Pick<RegistryModel, 'rawId' | 'displayName' | 'capabilities' | 'nativeSearchProtocol'>;
 
 export type NativeSearchCitation = { title: string; url: string; snippet?: string };
 
@@ -89,20 +89,15 @@ function cleanCitations(value: unknown, text = '') {
 }
 
 export function resolveNativeSearchProtocol(provider: NativeSearchProvider, model: NativeSearchModel): NativeSearchProtocol | null {
-  if (model.nativeSearchOverride === 'disabled') return null;
+  if (!model.capabilities.includes('web-search')) return null;
   if (model.nativeSearchProtocol && NATIVE_PROTOCOLS.has(model.nativeSearchProtocol)) return model.nativeSearchProtocol;
   const inferred = inferNativeSearch(model.rawId, provider.platform);
   if (inferred.protocol) return inferred.protocol;
-  if (model.nativeSearchOverride === 'enabled') {
-    if (provider.platform === 'google-gemini' || provider.type === 'google-gemini') return 'gemini-grounding';
-    if (/(?:sonar|perplexity)/i.test(model.rawId)) return 'native-chat';
-    return 'openai-responses';
-  }
   return model.capabilities.includes('web-search') ? (provider.platform === 'google-gemini' ? 'gemini-grounding' : 'openai-responses') : null;
 }
 
 export function nativeSearchIsEnabled(model: NativeSearchModel) {
-  return model.nativeSearchOverride === 'enabled' || (model.nativeSearchOverride !== 'disabled' && model.capabilities.includes('web-search'));
+  return model.capabilities.includes('web-search');
 }
 
 function endpoint(provider: NativeSearchProvider, configured: string | undefined, fallback: string) {

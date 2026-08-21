@@ -32,18 +32,17 @@
   .models-page .model-library-default-provider > span,
   .models-page .model-toolbar .search-box input,
   .models-page .model-count,
-  .models-page .model-kind-tabs button { font-size: 12px; }
-  .models-page .model-library-default-provider small { font-size: 10px; }
-  .models-page .model-group-head h2 { font-size: 17px; }
+  .models-page .model-kind-tabs button { font-size: 10px; }
+  .models-page .model-library-default-provider small { font-size: 8px; }
+  .models-page .model-group-head h2 { font-size: 14px; }
   .models-page .model-group-head p,
   .models-page .model-group-head > span { font-size: 11px; }
-  .models-page .model-card-title strong { font-size: 14px; }
+  .models-page .model-card-title strong { font-size: 12px; }
   .models-page .model-card-title .kind-badge,
   .models-page .model-type-control > span,
-  .models-page .native-search-control > span,
-  .models-page .capability-tags span { font-size: 10px; }
+  .models-page .capability-tags span { font-size: 8px; }
   .models-page .model-card-main p,
-  .models-page .model-card-main small { font-size: 11px; }
+  .models-page .model-card-main small { font-size: 9px; }
 
   .generate-page .panel-title span { font-size: 15px; }
   .generate-page .panel-title small,

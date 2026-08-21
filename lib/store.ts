@@ -154,15 +154,12 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
 
 function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): RegistryModel {
   const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol);
-  const legacyNative = !model.nativeSearchOverride && model.capabilities?.includes('web-search');
-  const nativeEnabled = model.nativeSearchOverride === 'enabled' || (model.nativeSearchOverride !== 'disabled' && (inferred.capabilities.includes('web-search') || Boolean(legacyNative)));
+  const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
   const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search');
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : [])]));
   const imageLike = inferred.kind === 'image' || capabilities.includes('generate') || capabilities.includes('upscale');
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
-  const nativeSearchDetection = model.nativeSearchOverride === 'enabled' || model.nativeSearchOverride === 'disabled'
-    ? 'manual' as const
-    : model.nativeSearchDetection || inferred.nativeSearchDetection;
+  const nativeSearchDetection = model.nativeSearchDetection || inferred.nativeSearchDetection;
   const normalizedKind = imageLike
     ? 'image'
     : model.kind === 'unknown'

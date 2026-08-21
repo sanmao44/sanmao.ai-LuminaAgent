@@ -6976,10 +6976,6 @@ export default function Page() {
         });
         if (data?.state) notify(`已归类为${kindLabel(kind)}`);
     }
-    async function setNativeSearchOverride(model, override) {
-        const data = await patchModel(model, { nativeSearchOverride: override });
-        if (data?.state) notify(override === 'enabled' ? '已强制启用模型原生搜索' : override === 'disabled' ? '已禁用模型原生搜索，将使用外部搜索 API' : '已恢复自动识别模型原生搜索');
-    }
     async function patchSettings(patch) {
         try {
             const res = await fetch('/api/settings', {
@@ -9093,33 +9089,6 @@ export default function Page() {
                              children: capabilityLabel(cap)
                          }, cap))
                  }),
-                 model.kind === 'chat' && /*#__PURE__*/ _jsxs("div", {
-                     className: "native-search-control",
-                     title: "控制这个模型是否使用自身联网搜索；自动模式由模型元数据和服务商规则识别",
-                     children: [
-                         /*#__PURE__*/ _jsx("span", { children: "原生搜索" }),
-                         /*#__PURE__*/ _jsxs("div", {
-                             className: "segmented mini",
-                             children: [
-                                 /*#__PURE__*/ _jsx("button", {
-                                     className: (model.nativeSearchOverride || 'auto') === 'auto' ? 'active' : '',
-                                     onClick: ()=>void setNativeSearchOverride(model, 'auto'),
-                                     children: "自动"
-                                 }),
-                                 /*#__PURE__*/ _jsx("button", {
-                                     className: model.nativeSearchOverride === 'enabled' ? 'active' : '',
-                                     onClick: ()=>void setNativeSearchOverride(model, 'enabled'),
-                                     children: "启用"
-                                 }),
-                                 /*#__PURE__*/ _jsx("button", {
-                                     className: model.nativeSearchOverride === 'disabled' ? 'active' : '',
-                                     onClick: ()=>void setNativeSearchOverride(model, 'disabled'),
-                                     children: "禁用"
-                                 })
-                             ]
-                         })
-                     ]
-                 })
             ]
         }, model.id);
     }
