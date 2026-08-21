@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.5",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.5",
+  "latestVersion": "0.7.6",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.6",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.5/SANMAO.AI-0.7.5.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.5/SANMAO.AI-0.7.5.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.5/SANMAO.AI-0.7.5.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.5/SANMAO.AI-0.7.5.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip"
   ],
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "publishedAt": "2026-08-21T16:30:00+08:00",
+  "publishedAt": "2026-08-22T00:28:50+08:00",
   "notes": [
+    "模型库默认设置栏和模型卡片改为更紧凑的响应式排版。",
+    "移除逐模型原生搜索开关：具备原生联网能力的模型自动调用，否则回退系统搜索。",
+    "修复旧版本强制启用配置可能让无搜索能力模型进入原生搜索链路的问题。",
     "修复 0.7.3 升级 0.7.4 时旧更新运行时覆盖新版本、导致重建失败且无法自动重启的问题。",
     "更新后只使用 SHA-256 已校验安装包内的程序文件，进度接口兼容旧版运行时。",
     "修复更新完成、应用重启后仍可能残留“正在重启”提示的问题。",
