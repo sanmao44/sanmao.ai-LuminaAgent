@@ -10,6 +10,7 @@ import type { GalleryItem } from '@/lib/client-history';
 import ModelPicker from '@/components/ModelPicker';
 import { getLastModelCall, recordModelCall } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { ANGLE_DEFAULTS, ANGLE_PRESETS, angleName, buildAnglePayload, clampAngleValue, compileAngleTargetPrompt, deriveAngleDelta, normalizeAngleState, shouldWarnLiteForAngle, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec } from '@/lib/angle-control';
 
 type AngleConsoleProps = {
@@ -853,6 +854,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
   const [panelTab, setPanelTab] = useState<'controls' | 'backend'>('controls');
   const [resultMode, setResultMode] = useState<ResultMode>('single');
   const [resultModalOpen, setResultModalOpen] = useState(false);
+  useBodyScrollLock(resultModalOpen);
   const [viewedResult, setViewedResult] = useState<GalleryItem | null>(null);
   const [resultNoticeId, setResultNoticeId] = useState<string | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);

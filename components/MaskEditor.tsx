@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 
 export type MaskEditorProps = {
   imageUrl: string;
@@ -11,6 +12,7 @@ export type MaskEditorProps = {
 
 /** Draws an OpenAI-compatible mask. Transparent pixels are the editable area. */
 export default function MaskEditor({ imageUrl, initialMaskDataUrl, onApply, onCancel }: MaskEditorProps) {
+  useBodyScrollLock(true);
   const imageCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);

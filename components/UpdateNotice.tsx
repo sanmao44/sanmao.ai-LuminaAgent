@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 
 type UpdateStatus = {
   configured?: boolean;
@@ -59,6 +60,7 @@ export default function UpdateNotice() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  useBodyScrollLock(showModal);
   const [applyState, setApplyState] = useState<ApplyState>('idle');
   const [applyMessage, setApplyMessage] = useState('');
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);

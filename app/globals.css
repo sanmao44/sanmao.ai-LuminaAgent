@@ -2594,3 +2594,43 @@ html[data-theme="dark"] .agent-page{
   .models-page .model-group-head>span{padding:5px 8px}
   .models-page .model-group .model-cards{grid-template-columns:1fr;padding:9px}
 }
+
+/* Overlay interaction boundaries: wheel/touch input stays inside the active surface. */
+:where(
+  .model-picker-scroll,
+  .model-picker-provider-filter,
+  .model-picker-dialog-list,
+  .compare-stage,
+  .compare-stage-wrap,
+  .viewer-stage,
+  .share-preview-stage,
+  .reference-preview-stage,
+  .log-detail,
+  .editor-modal,
+  .outpaint-editor,
+  .mask-editor,
+  .support-modal,
+  .update-modal,
+  .size-drawer
+){
+  overscroll-behavior:contain;
+}
+
+:where(
+  .compare-backdrop,
+  .model-picker-dialog-backdrop,
+  .viewer-backdrop,
+  .reference-preview-backdrop,
+  .share-preview-backdrop,
+  .log-detail-backdrop,
+  .editor-modal-backdrop,
+  .outpaint-editor-backdrop,
+  .mask-editor-backdrop,
+  .support-modal-backdrop,
+  .update-modal-backdrop,
+  .dialog-backdrop,
+  .size-drawer-backdrop,
+  .angle-result-modal
+){
+  overscroll-behavior:none;
+}

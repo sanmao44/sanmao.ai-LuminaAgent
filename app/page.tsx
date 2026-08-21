@@ -17,6 +17,7 @@ import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-l
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -2268,6 +2269,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
     const inputRef = useRef(null);
     const [dragIndex, setDragIndex] = useState(null);
     const [preview, setPreview] = useState(null);
+    useBodyScrollLock(Boolean(preview));
     useEffect(()=>{
         if (!preview) return;
         const onKeyDown = (event)=>{
@@ -2817,6 +2819,7 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
     });
 }
 function CompareViewer({ item, source, parent, onClose }) {
+    useBodyScrollLock(true);
     const [mode, setMode] = useState('slider');
     const [position, setPosition] = useState(50);
     const [zoom, setZoom] = useState(1);
@@ -3041,6 +3044,7 @@ function CompareViewer({ item, source, parent, onClose }) {
     const heading = comparisonSource.kind === 'reference' ? '当前版本与参考图' : '当前版本与直接上一版';
     return /*#__PURE__*/ _jsx("div", {
         className: "compare-backdrop",
+        onWheel: (event)=>event.preventDefault(),
         onClick: onClose,
         children: /*#__PURE__*/ _jsxs("section", {
             className: "compare-viewer",
@@ -5011,6 +5015,7 @@ export default function Page() {
     const [editor, setEditor] = useState(null);
     const [upscaleSourceSize, setUpscaleSourceSize] = useState(null);
     const [outpaintEditor, setOutpaintEditor] = useState(null);
+    useBodyScrollLock(Boolean(supportOpen || confirmState || messageReferencePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor));
     const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
         state.models,
         state.providers

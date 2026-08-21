@@ -7,6 +7,7 @@ import type { ModelCapability, RegistryModel } from '@/lib/types';
 import { getFavoriteModelIds, getRecentModelIds, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, takeUniqueModelSlice } from '@/lib/model-picker';
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 
 type ModelPickerProps = {
   models: RegistryModel[];
@@ -41,6 +42,8 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const dialogSearchRef = useRef<HTMLInputElement | null>(null);
+
+  useBodyScrollLock(quickOpen || dialogOpen);
 
   const availableModels = useMemo(() => models.filter((model) => model.enabled && model.published && model.capabilities.includes(capability)), [models, capability]);
   const selected = value !== 'auto' ? availableModels.find((model) => model.id === value) : null;
