@@ -40,6 +40,21 @@ function openExternal(url?: string) {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+function versionParts(value: string) {
+  const match = String(value || '').trim().replace(/^v/i, '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  return match ? [Number(match[1]), Number(match[2] || 0), Number(match[3] || 0)] : [0, 0, 0];
+}
+
+function isVersionAtLeast(currentVersion: string | undefined, targetVersion: string | undefined) {
+  if (!currentVersion || !targetVersion) return false;
+  const current = versionParts(currentVersion);
+  const target = versionParts(targetVersion);
+  for (let index = 0; index < 3; index += 1) {
+    if (current[index] !== target[index]) return current[index] > target[index];
+  }
+  return true;
+}
+
 export default function UpdateNotice() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -67,13 +82,20 @@ export default function UpdateNotice() {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
   }, []);
 
-  const readProgress = useCallback(async (jobId?: string) => {
+  const readProgress = useCallback(async (jobId?: string, currentVersion?: string) => {
     try {
-      const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : '';
+      const params = new URLSearchParams();
+      if (jobId) params.set('jobId', jobId);
+      if (currentVersion) params.set('currentVersion', currentVersion);
+      const query = params.toString() ? `?${params.toString()}` : '';
       const response = await fetch(`/api/update/progress${query}`, { cache: 'no-store' });
       if (!response.ok) return null;
       const data = await response.json() as { progress?: UpdateProgress | null };
-      if (!data.progress) return null;
+      if (!data.progress) {
+        setUpdateProgress(null);
+        setApplyState('idle');
+        return null;
+      }
       setUpdateProgress(data.progress);
       setApplyMessage(data.progress.error || data.progress.message);
       setApplyState(data.progress.stage === 'failed' ? 'error' : data.progress.stage === 'completed' ? 'started' : 'started');
@@ -84,27 +106,27 @@ export default function UpdateNotice() {
   }, []);
 
   useEffect(() => {
-    void readProgress();
-  }, [readProgress]);
+    void readProgress(undefined, status?.currentVersion);
+  }, [readProgress, status?.currentVersion]);
 
   useEffect(() => {
     if (!updateProgress || updateProgress.stage === 'failed') return;
-    if (updateProgress.stage === 'completed' && status?.currentVersion === updateProgress.version) {
+    if (updateProgress.stage === 'completed' && isVersionAtLeast(status?.currentVersion, updateProgress.version)) {
       setUpdateProgress(null);
       setApplyState('idle');
       return;
     }
     let cancelled = false;
     const poll = window.setInterval(async () => {
-      const progress = await readProgress(updateProgress.jobId);
+      const progress = await readProgress(updateProgress.jobId, status?.currentVersion);
       if (cancelled || !progress) return;
-      if ((progress.stage === 'starting' || progress.stage === 'completed') && status?.currentVersion !== progress.version) {
+      if ((progress.stage === 'starting' || progress.stage === 'completed') && !isVersionAtLeast(status?.currentVersion, progress.version)) {
         try {
           const checkResponse = await fetch('/api/update?force=1', { cache: 'no-store' });
           if (checkResponse.ok) {
             const next = await checkResponse.json() as UpdateStatus;
             setStatus(next);
-            if (next.currentVersion === progress.version) {
+            if (isVersionAtLeast(next.currentVersion, progress.version)) {
               window.clearInterval(poll);
               window.location.reload();
             }
