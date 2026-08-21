@@ -5,6 +5,11 @@
 - 选择条适配桌面端与 390px 窄屏，滚动消息时始终保持可见，不增加消息区顶部留白。
 - 分享 PNG 继续保留 Markdown、生成图片、参考图、文件卡片、平台 Logo、二维码和本地生成逻辑。
 
+# 0.7.2 首次使用页面修复
+
+- 修复新用户尚未配置模型时，进入 Agent 或图片模式会显示 “This page couldn’t load” 的问题。
+- 模型选择器现在会安全忽略空的自动推荐模型。
+
 # 0.7.1 原生联网与智能事实联网
 
 - 支持 OpenAI Responses、Gemini grounding、Perplexity/Sonar 等模型原生搜索协议。

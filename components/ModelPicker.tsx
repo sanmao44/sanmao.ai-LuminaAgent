@@ -41,8 +41,12 @@ function modelMatches(model: RegistryModel, query: string) {
   return `${model.displayName} ${model.rawId} ${model.providerName}`.toLowerCase().includes(query.toLowerCase());
 }
 
-function uniqueModels(models: RegistryModel[]) {
-  return [...new Map(models.map((model) => [model.id, model])).values()];
+export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
+  return [...new Map(
+    models
+      .filter((model): model is RegistryModel => Boolean(model))
+      .map((model) => [model.id, model]),
+  ).values()];
 }
 
 export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '' }: ModelPickerProps) {
