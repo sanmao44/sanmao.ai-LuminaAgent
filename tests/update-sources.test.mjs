@@ -23,6 +23,13 @@ const local = await loadTs(new URL('../lib/local-update.ts', import.meta.url), [
   ["import type { UpdateStatus } from '@/lib/update';", ''],
 ]);
 
+test('completed progress is stale after the app reaches the recorded version', () => {
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'completed', version: '0.7.0' }, '0.7.2'), true);
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'completed', version: '0.7.2' }, '0.7.2'), true);
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'completed', version: '0.7.3' }, '0.7.2'), false);
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'starting', version: '0.7.0' }, '0.7.2'), false);
+});
+
 const originalFetch = globalThis.fetch;
 const originalManifestUrl = process.env.SANMAO_UPDATE_MANIFEST_URL;
 const originalManifestMirrors = process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;

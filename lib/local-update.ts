@@ -40,6 +40,24 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function versionParts(value: string) {
+  const match = String(value || '').trim().replace(/^v/i, '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  return match ? [Number(match[1]), Number(match[2] || 0), Number(match[3] || 0)] : [0, 0, 0];
+}
+
+function compareVersions(left: string, right: string) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
+  }
+  return 0;
+}
+
+export function isCompletedUpdateProgressStale(progress: Pick<UpdateProgress, 'stage' | 'version'>, currentVersion: string) {
+  return progress.stage === 'completed' && Boolean(currentVersion) && compareVersions(currentVersion, progress.version) >= 0;
+}
+
 function persistUpdateProgress(progress: UpdateProgress) {
   const temporaryPath = `${progressFilePath}.${progress.jobId}.tmp`;
   progressWriteQueue = progressWriteQueue.then(async () => {
@@ -61,6 +79,11 @@ async function readPersistedUpdateProgress() {
   } catch {
     return null;
   }
+}
+
+async function clearPersistedUpdateProgress() {
+  await progressWriteQueue;
+  await rm(progressFilePath, { force: true }).catch(() => undefined);
 }
 
 export function createUpdateJob(version: string) {
@@ -92,7 +115,7 @@ export function getActiveUpdateProgress() {
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
 }
 
-export async function getLatestUpdateProgress(jobId?: string) {
+export async function getLatestUpdateProgress(jobId?: string, currentVersion?: string) {
   const memoryProgress = jobId
     ? progressJobs.get(jobId) || null
     : [...progressJobs.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
@@ -101,7 +124,13 @@ export async function getLatestUpdateProgress(jobId?: string) {
     if (!progress) return false;
     return !jobId || progress.jobId === jobId;
   });
-  return candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
+  const latest = candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
+  if (latest && currentVersion && isCompletedUpdateProgressStale(latest, currentVersion)) {
+    progressJobs.delete(latest.jobId);
+    await clearPersistedUpdateProgress();
+    return null;
+  }
+  return latest;
 }
 
 function setUpdateProgress(jobId: string, patch: Partial<UpdateProgress>) {

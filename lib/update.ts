@@ -31,7 +31,7 @@ export type UpdateStatus = {
   error?: string;
 };
 
-const currentVersion = String(packageInfo.version || '0.0.0');
+export const currentVersion = String(packageInfo.version || '0.0.0');
 const defaultManifestUrl = 'https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json';
 const defaultJsdelivrManifestUrl = 'https://cdn.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json';
 const manifestFetchTimeoutMs = 6_000;
