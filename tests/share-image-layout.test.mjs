@@ -47,6 +47,28 @@ test('adapts result card to image ratio and accounts for prompt and references',
   assert.equal(portrait.overflow, false);
 });
 
+test('reserves a branded footer and keeps the QR area inside the canvas', () => {
+  const promptPlan = layout.buildSharePromptPlan('短提示词', measure, 1232);
+  const share = layout.buildShareImageLayout({ resultWidth: 1024, resultHeight: 1024, promptPlan, referenceCount: 1 });
+  assert.equal(share.resultFrame.y, share.headerHeight);
+  assert.ok(share.footerY > share.referenceBottomY);
+  assert.ok(share.footerHeight > share.footerQrSize);
+  assert.equal(share.canvasHeight, share.footerY + share.footerHeight + share.padding);
+  assert.ok(share.footerY + share.footerHeight < share.canvasHeight);
+});
+
+test('brand assets are loaded by the image share export and the reward QR is excluded', async () => {
+  const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const start = pageSource.indexOf('async function downloadShareImage');
+  const end = pageSource.indexOf('async function downloadChatFile', start);
+  const shareSource = pageSource.slice(start, end);
+  assert.match(shareSource, /loadCanvasImage\('\/brand-mark\.png'\)/);
+  assert.match(shareSource, /loadCanvasImage\('\/share-qr\.png'\)/);
+  assert.match(shareSource, /让灵感落地，把想法变成作品/);
+  assert.match(shareSource, /扫码访问 SANMAO\.AI/);
+  assert.doesNotMatch(shareSource, /mm-reward-qrcode/);
+});
+
 test('share export uses submitted prompt and does not rewrite the original URL', async () => {
   const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const start = pageSource.indexOf('async function downloadShareImage');
