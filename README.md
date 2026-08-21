@@ -1,4 +1,4 @@
-# SANMAO.AI 0.7.0
+# SANMAO.AI 0.7.1
 
 ## 启动器
 
@@ -14,6 +14,12 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 启动器会自动检查 Node.js 20.9+、安装依赖、构建项目、使用 SANMAO.AI 专用的 3210～3220 端口段并打开浏览器。重复双击不会启动第二个后台服务，而是打开已有网页；关闭最后一个网页后后台服务会自动退出。
 
 一个可运行的中文多模型 AI 生图平台：支持在网页内添加多个第三方 API 服务、读取模型列表、选择实际要使用的模型，并提供独立的智能助手、生图工作台、图片修改和本地生成历史。
+
+## 0.7.1 原生联网与智能事实联网
+
+- 模型原生联网搜索优先，失败后回退 AnySearch/百度千帆。
+- 智能联网对事实提问、状态核验、时效性问题和上下文追问优先联网。
+- 原生搜索结果经过中文最终回答整理，过滤搜索规划、推理和工具调用过程。
 
 ## 0.7.0 可挑选式对话分享
 
@@ -256,7 +262,7 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
 
 ```env
 SANMAO_UPDATE_MANIFEST_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/raw/main/update.json
-SANMAO_UPDATE_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.0/SANMAO.AI-0.7.0.zip
+SANMAO_UPDATE_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.1/SANMAO.AI-0.7.1.zip
 SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://ghproxy.net/
 ```
 
