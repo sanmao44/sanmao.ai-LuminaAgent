@@ -96,7 +96,7 @@ test('manifest check returns an error status when every source fails', async () 
   assert.ok(status.error || typeof status.latestVersion === 'string');
 });
 
-test('package sources keep non-GitHub HTTPS mirrors and cap the candidate list', () => {
+test('package sources prefer declared mirrors and cap the candidate list', () => {
   process.env.SANMAO_UPDATE_MIRRORS = 'https://mirror.example.com/sanmao/releases/download/v1/app.zip';
   process.env.SANMAO_UPDATE_GITHUB_PROXIES = 'https://proxy.example/';
   const status = {
@@ -110,12 +110,12 @@ test('package sources keep non-GitHub HTTPS mirrors and cap the candidate list',
   };
 
   assert.deepEqual(local.packageSourceCandidates(status), [
-    'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
-    'https://github.com/o/r/archive/refs/tags/v1.zip',
     'https://gitee.com/o/r/releases/download/v1/app.zip',
     'https://oss.example.com/sanmao-v1.zip',
     'https://mirror.example.com/sanmao/releases/download/v1/app.zip',
     'https://proxy.example/https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+    'https://proxy.example/https://github.com/o/r/archive/refs/tags/v1.zip',
+    'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
   ]);
 });
 

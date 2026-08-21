@@ -1,13 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.2",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.2",
+  "latestVersion": "0.7.3",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.3",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.2/SANMAO.AI-0.7.2.zip",
-  "mirrorUrls": [],
-  "sha256": "5c8b395ccb007b91e3e55e5a89543af46307c5c1edac6888b5b54de7f1898e47",
-  "publishedAt": "2026-08-21T14:45:00+08:00",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip",
+  "mirrorUrls": [
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.3/SANMAO.AI-0.7.3.zip"
+  ],
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-21T15:10:00+08:00",
   "notes": [
+    "修复无代理网络更新时，可能长时间等待 GitHub 官方下载源的问题。",
+    "更新包现在优先从已验证镜像下载，并继续执行 SHA-256 完整性校验。",
     "修复新用户首次使用时，Agent 和图片模式可能显示页面加载失败的问题。",
     "未配置模型时可安全进入页面，并引导先配置服务商和模型。",
     "原生联网搜索优先，支持 OpenAI Responses、Gemini grounding、Perplexity/Sonar 等原生搜索模型。",

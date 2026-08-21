@@ -350,11 +350,10 @@ export function packageSourceCandidates(status: UpdateStatus) {
   const fallback = status.packageUrl ? githubArchiveFallback(status.packageUrl) : undefined;
   const officialSources = [status.packageUrl, fallback].filter(Boolean) as string[];
   const candidates = [
-    status.packageUrl,
-    fallback,
     ...mirrors,
     ...configuredPackageMirrors(),
     ...officialSources.flatMap(githubProxyVariants),
+    ...officialSources,
   ].filter(Boolean) as string[];
   return [...new Set(candidates)].filter(isValidPackageSource).slice(0, MAX_PACKAGE_SOURCES);
 }
