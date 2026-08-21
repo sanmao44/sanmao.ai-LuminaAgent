@@ -9,7 +9,7 @@
     "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "80f01a7356434dc162c48b6e43d9dc8b9bd49aa23b7eada802350c6773307572",
   "publishedAt": "2026-08-21T15:35:00+08:00",
   "notes": [
     "修复更新完成、应用重启后仍可能残留“正在重启”提示的问题。",
