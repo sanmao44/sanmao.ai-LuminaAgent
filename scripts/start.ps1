@@ -1,11 +1,11 @@
-﻿param(
+param(
   [int]$Port = 0,
   [switch]$NonInteractive = $false
 )
 
 $ErrorActionPreference = 'Stop'
 $script:NonInteractive = $NonInteractive.IsPresent
-try { $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器' } catch {}
+try { $Host.UI.RawUI.WindowTitle = 'SANMAO.AI ???' } catch {}
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -27,7 +27,7 @@ $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 
 . (Join-Path $PSScriptRoot 'launcher-common.ps1')
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
-Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，端口范围：$portStart..$portEnd" 'INFO'
+Write-SanmaoLauncherLog "????????????$root??????$portStart..$portEnd" 'INFO'
 
 function Test-SanmaoServerAtPort([int]$port) {
   return Test-SanmaoHealthEndpoint -Port $port
@@ -127,21 +127,21 @@ function Stop-StartedServer {
 }
 function Fail([string]$text) {
   Stop-StartedServer
-  Write-SanmaoLauncherLog "启动失败：$text" 'ERROR'
+  Write-SanmaoLauncherLog "?????$text" 'ERROR'
   Write-Host ""
-  Write-Host "启动失败：$text" -ForegroundColor Red
+  Write-Host "?????$text" -ForegroundColor Red
   if (Test-Path -LiteralPath $serverStderrPath) {
     $details = Get-Content -LiteralPath $serverStderrPath -Tail 12 -ErrorAction SilentlyContinue
     if ($details) {
       Write-Host ""
-      Write-Host '服务端最后的错误：' -ForegroundColor Yellow
+      Write-Host '?????????' -ForegroundColor Yellow
       $details | Write-Host
     }
   }
-  Write-Host "服务端日志：$serverStderrPath" -ForegroundColor DarkGray
+  Write-Host "??????$serverStderrPath" -ForegroundColor DarkGray
   if (-not $script:NonInteractive) {
     Write-Host ""
-    Read-Host '按回车键关闭窗口'
+    Read-Host '????????'
   }
   exit 1
 }
@@ -165,20 +165,20 @@ try {
   $acquired = $true
 }
 if (-not $acquired) {
-  Fail '另一个启动器正在运行，请稍候再试。'
+  Fail '?????????????????'
 }
 
 
 $existingPort = Find-ExistingServer
 if ($existingPort -gt 0) {
   if (Test-SanmaoBuildStale) {
-    Write-Host "检测到源码比当前构建更新，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
+    Write-Host "?????????????????????http://localhost:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {
-      Fail "旧服务仍占用端口 $existingPort，已停止启动以避免继续使用旧页面。请运行停止 SANMAO.AI - Windows.cmd 后重试。"
+      Fail "???????? $existingPort?????????????????????? SANMAO.AI - Windows.cmd ????"
     }
   } else {
-    Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
+    Write-Host "SANMAO.AI ?????http://localhost:$existingPort" -ForegroundColor Green
     Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
     Release-LauncherMutex
     if (-not $script:NonInteractive) { Start-Process "http://localhost:$existingPort" }
@@ -191,33 +191,33 @@ Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
 # before choosing a port. This reclaims hung/legacy/relative-path servers that
 # used to make the port range look occupied.
 if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
-  Write-SanmaoLauncherLog '部分旧服务端口未能释放，将继续使用可用端口。' 'WARN'
+  Write-SanmaoLauncherLog '??????????????????????' 'WARN'
 }
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.7.1' -ForegroundColor White
+Write-Host '        SANMAO.AI ????? 0.7.2' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js
-Write-Step '检查 Node.js'
+Write-Step '?? Node.js'
 try {
   $nodeVersionText = (& node --version 2>$null).Trim()
 } catch {
-  Fail '没有检测到 Node.js。请先安装 Node.js 20.9 或更高版本，然后重新双击启动。'
+  Fail '????? Node.js????? Node.js 20.9 ???????????????'
 }
 if (-not $nodeVersionText) {
-  Fail '没有检测到 Node.js。请先安装 Node.js 20.9 或更高版本。'
+  Fail '????? Node.js????? Node.js 20.9 ??????'
 }
 $ver = $nodeVersionText.TrimStart('v').Split('.')
 $major = [int]$ver[0]
 $minor = if ($ver.Length -gt 1) { [int]$ver[1] } else { 0 }
 if (($major -lt 20) -or ($major -eq 20 -and $minor -lt 9)) {
-  Fail "当前 Node.js 是 $nodeVersionText，SANMAO.AI 需要 Node.js 20.9 或更高版本。"
+  Fail "?? Node.js ? $nodeVersionText?SANMAO.AI ?? Node.js 20.9 ??????"
 }
-Write-Host "Node.js：$nodeVersionText" -ForegroundColor Green
+Write-Host "Node.js?$nodeVersionText" -ForegroundColor Green
 
-# Node.js 默认不读取 Windows“Internet 选项”的静态代理；部分网络下会因此让
-# 服务端接口请求超时。Node 22+ 支持读取 HTTP(S)_PROXY，启动时自动补齐即可。
+# Node.js ????? Windows?Internet ??????????????????
+# ??????????Node 22+ ???? HTTP(S)_PROXY???????????
 function Enable-NodeSystemProxy {
   if ($major -lt 22) { return }
   if (-not $env:NODE_USE_ENV_PROXY) { $env:NODE_USE_ENV_PROXY = '1' }
@@ -246,7 +246,7 @@ function Enable-NodeSystemProxy {
       $env:HTTPS_PROXY = $httpsProxy
       if ($httpsProxy -notmatch '^[a-z]+://') { $env:HTTPS_PROXY = "http://$httpsProxy" }
     }
-    if ($env:HTTPS_PROXY -or $env:HTTP_PROXY) { Write-Host '已启用系统代理，服务端接口请求会使用当前网络设置。' -ForegroundColor Green }
+    if ($env:HTTPS_PROXY -or $env:HTTP_PROXY) { Write-Host '?????????????????????????' -ForegroundColor Green }
   } catch {}
 }
 Enable-NodeSystemProxy
@@ -254,12 +254,12 @@ Enable-NodeSystemProxy
 try {
   $npmVersion = (& npm --version 2>$null).Trim()
 } catch {
-  Fail '没有检测到 npm。请重新安装 Node.js，并确保安装程序勾选 npm。'
+  Fail '????? npm?????? Node.js?????????? npm?'
 }
-Write-Host "npm：$npmVersion" -ForegroundColor Green
+Write-Host "npm?$npmVersion" -ForegroundColor Green
 
 # 2. Install/repair dependencies
-Write-Step '检查并安装程序依赖'
+Write-Step '?????????'
 $requiredNext = '16.2.12'
 $installedNext = ''
 if (Test-Path '.\node_modules\next\package.json') {
@@ -286,7 +286,7 @@ if (Test-Path '.\package-lock.json') {
   }
 }
 if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or $packageLockChanged) {
-  Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
+  Write-Host '??????????????? npm install????????? 1?5 ???' -ForegroundColor Yellow
   foreach ($repairPort in $portRange) {
     if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
   }
@@ -294,23 +294,23 @@ if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $type
   if (Test-Path '.\package-lock.json') { & npm ci --include=dev --no-audit --no-fund } else { & npm install --include=dev --no-audit --no-fund }
   if ($LASTEXITCODE -ne 0) {
     Write-Host ''
-    Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow
-    Write-Host '你可以先在命令行运行：npm config get registry' -ForegroundColor Yellow
-    Fail '依赖安装失败，请检查网络后再次运行启动器。'
+    Write-Host 'npm ????????????? npm ?????' -ForegroundColor Yellow
+    Write-Host '???????????npm config get registry' -ForegroundColor Yellow
+    Fail '?????????????????????'
   }
   if (Test-Path '.\package-lock.json') {
     (Get-FileHash -Algorithm SHA256 -LiteralPath '.\package-lock.json').Hash | Set-Content -LiteralPath $packageLockHashPath -Encoding ASCII
   }
 } else {
-  Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
+  Write-Host "??????Next.js?$installedNext" -ForegroundColor Green
 }
 
 if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
-  Fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
+  Fail '??????????? Next.js???? node_modules ????????????'
 }
 
-# 3. Build production bundle（智能构建：代码没变就跳过，固定使用 webpack）
-Write-Step '检查构建产物是否最新'
+# 3. Build production bundle?????????????????? webpack?
+Write-Step '??????????'
 
 $nextCmd = Join-Path $root 'node_modules\.bin\next.cmd'
 $buildIdPath = Join-Path $root '.next\BUILD_ID'
@@ -334,21 +334,21 @@ if (-not $needBuild) {
 }
 
 if ($needBuild) {
-  Write-Host '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。' -ForegroundColor Yellow
-  Write-Host '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。' -ForegroundColor Yellow
+  Write-Host '??????????????????????????????????????' -ForegroundColor Yellow
+  Write-Host '?? webpack ????? Turbopack ??????????????' -ForegroundColor Yellow
   & $nextCmd build --webpack
   if ($LASTEXITCODE -ne 0) {
-    Fail '网页构建失败。请把本窗口中“构建失败”上方的报错截图发给我。'
+    Fail '??????????????????????????????'
   }
-  Write-Host '构建完成。' -ForegroundColor Green
+  Write-Host '?????' -ForegroundColor Green
 } else {
-  Write-Host '构建产物已是最新，跳过构建，直接启动。' -ForegroundColor Green
+  Write-Host '???????????????????' -ForegroundColor Green
 }
 
 # 4. Choose a free port after reclaiming any owned stale listeners again.
-Write-Step '启动 SANMAO.AI'
+Write-Step '?? SANMAO.AI'
 if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
-  Write-SanmaoLauncherLog '启动前仍有旧服务端口未释放。' 'WARN'
+  Write-SanmaoLauncherLog '??????????????' 'WARN'
 }
 function Test-Port([int]$port) {
   return Test-LocalPortOpen $port
@@ -361,13 +361,13 @@ if ($port -gt $portEnd) {
   foreach ($p in $portRange) {
     $pids = @(Get-SanmaoOwningPidsByPort -Port $p)
     if ($pids.Count -gt 0) {
-      $details += "端口 $p：PID $($pids -join ', ')"
+      $details += "?? $p?PID $($pids -join ', ')"
     }
   }
   if ($details.Count -gt 0) {
-    Fail ("$($portStart)～$($portEnd) 端口都被占用。" + ($details -join '；') + '。请关闭对应进程后重试。')
+    Fail ("$($portStart)?$($portEnd) ???????" + ($details -join '?') + '????????????')
   } else {
-    Fail "$($portStart)～$($portEnd) 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
+    Fail "$($portStart)?$($portEnd) ???????????? SANMAO.AI/?????????"
   }
 }
 
@@ -384,8 +384,8 @@ $script:serverProcess = Start-Process `
   -RedirectStandardError $serverStderrPath `
   -PassThru
 
-Write-Host "正在等待 http://localhost:$port 启动..." -ForegroundColor Yellow
-Write-SanmaoLauncherLog "已启动服务进程 PID $($script:serverProcess.Id)，等待端口 $port 就绪。" 'INFO'
+Write-Host "???? http://localhost:$port ??..." -ForegroundColor Yellow
+Write-SanmaoLauncherLog "??????? PID $($script:serverProcess.Id)????? $port ???" 'INFO'
 $ready = $false
 for ($i = 0; $i -lt 150; $i++) {
   Start-Sleep -Milliseconds 200
@@ -395,13 +395,13 @@ for ($i = 0; $i -lt 150; $i++) {
 }
 
 if (-not $ready) {
-  Fail '服务器没有在预期时间内启动。'
+  Fail '??????????????'
 }
 
 $url = "http://localhost:$port"
-Write-Host "SANMAO.AI 已启动：$url" -ForegroundColor Green
-Write-Host '本地服务会保持运行，下一次启动会直接打开已有服务。' -ForegroundColor DarkGray
-Write-SanmaoLauncherLog "服务已就绪：http://localhost:$port" 'INFO'
+Write-Host "SANMAO.AI ????$url" -ForegroundColor Green
+Write-Host '?????????????????????????' -ForegroundColor DarkGray
+Write-SanmaoLauncherLog "??????http://localhost:$port" 'INFO'
 Release-LauncherMutex
 if (-not $script:NonInteractive) { Start-Process $url }
 Start-Sleep -Milliseconds 300

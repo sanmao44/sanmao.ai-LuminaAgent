@@ -19,14 +19,14 @@ type ModelPickerProps = {
 };
 
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
-  chat: '对话',
-  generate: '生图',
-  edit: '改图',
-  upscale: '超分',
-  reference: '参考图',
-  vision: '视觉',
-  typography: '文字',
-  'web-search': '联网',
+  chat: '??',
+  generate: '??',
+  edit: '??',
+  upscale: '??',
+  reference: '???',
+  vision: '??',
+  typography: '??',
+  'web-search': '??',
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = {
@@ -41,11 +41,15 @@ function modelMatches(model: RegistryModel, query: string) {
   return `${model.displayName} ${model.rawId} ${model.providerName}`.toLowerCase().includes(query.toLowerCase());
 }
 
-function uniqueModels(models: RegistryModel[]) {
-  return [...new Map(models.map((model) => [model.id, model])).values()];
+export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
+  return [...new Map(
+    models
+      .filter((model): model is RegistryModel => Boolean(model))
+      .map((model) => [model.id, model]),
+  ).values()];
 }
 
-export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '' }: ModelPickerProps) {
+export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '????', className = '' }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -116,32 +120,32 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     const isSelected = model.id === value;
     return <div className={`model-picker-option ${isSelected ? 'selected' : ''}`} key={model.id}>
       <button type="button" className="model-picker-option-main" onClick={() => choose(model.id)} role="option" aria-selected={isSelected}>
-        <span className="model-picker-option-copy"><strong>{model.displayName}</strong><small>{model.providerName} · {model.rawId}</small><span className="model-picker-capabilities">{model.capabilities.filter((item) => capabilityLabels[item]).slice(0, 4).map((item) => <em className={capabilityClasses[item] || ''} key={item}>{capabilityLabels[item]}</em>)}</span></span>
-        {isSelected && <b className="model-picker-check">✓</b>}
+        <span className="model-picker-option-copy"><strong>{model.displayName}</strong><small>{model.providerName} ? {model.rawId}</small><span className="model-picker-capabilities">{model.capabilities.filter((item) => capabilityLabels[item]).slice(0, 4).map((item) => <em className={capabilityClasses[item] || ''} key={item}>{capabilityLabels[item]}</em>)}</span></span>
+        {isSelected && <b className="model-picker-check">?</b>}
       </button>
-      <button type="button" className={`model-picker-favorite ${isFavorite ? 'active' : ''}`} aria-label={isFavorite ? `取消收藏 ${model.displayName}` : `收藏 ${model.displayName}`} onClick={() => toggleFavorite(model.id)}>★</button>
+      <button type="button" className={`model-picker-favorite ${isFavorite ? 'active' : ''}`} aria-label={isFavorite ? `???? ${model.displayName}` : `?? ${model.displayName}`} onClick={() => toggleFavorite(model.id)}>?</button>
     </div>;
   }
 
   const triggerLabel = selected
-    ? `手动 · ${selected.providerName} · ${selected.displayName}`
+    ? `?? ? ${selected.providerName} ? ${selected.displayName}`
     : autoModel
-      ? `自动 · ${defaultProviderName || '默认厂商'} · ${autoModel.displayName}`
+      ? `?? ? ${defaultProviderName || '????'} ? ${autoModel.displayName}`
       : placeholder;
 
   return <div className={`model-picker ${className}`} ref={rootRef}>
     <button ref={triggerRef} type="button" className={`model-picker-trigger ${open ? 'open' : ''}`} onClick={toggle} aria-haspopup="dialog" aria-expanded={open} data-tooltip={triggerLabel}>
-      <span className="model-picker-trigger-copy"><b>{value === 'auto' ? '自动' : '手动'}</b><span>{triggerLabel.replace(/^(自动|手动) · /, '')}</span></span><i aria-hidden="true"/>
+      <span className="model-picker-trigger-copy"><b>{value === 'auto' ? '??' : '??'}</b><span>{triggerLabel.replace(/^(??|??) ? /, '')}</span></span><i aria-hidden="true"/>
     </button>
-    {open && <div className="model-picker-panel" style={menuStyle} role="dialog" aria-label="选择模型">
-      <div className="model-picker-panel-head"><div><strong>选择模型</strong><small>{capabilityLabels[capability] || '当前能力'} · 自动模式会优先使用默认厂商</small></div><button type="button" onClick={() => setOpen(false)} aria-label="关闭">×</button></div>
-      <label className="model-picker-search"><span>⌕</span><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型、原始 ID 或服务商…"/><kbd>Esc</kbd></label>
+    {open && <div className="model-picker-panel" style={menuStyle} role="dialog" aria-label="????">
+      <div className="model-picker-panel-head"><div><strong>????</strong><small>{capabilityLabels[capability] || '????'} ? ?????????????</small></div><button type="button" onClick={() => setOpen(false)} aria-label="??">?</button></div>
+      <label className="model-picker-search"><span>?</span><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="??????? ID ?????"/><kbd>Esc</kbd></label>
       <div className="model-picker-scroll">
-        <section className="model-picker-section model-picker-auto-section"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div><button type="button" className={`model-picker-auto ${value === 'auto' ? 'selected' : ''}`} onClick={() => choose('auto')}><span><strong>自动选择</strong><small>{defaultProviderName ? `默认厂商：${defaultProviderName}` : '使用默认厂商，失败时自动回退'}{autoModel ? ` · 当前推荐 ${autoModel.displayName}` : ''}</small></span>{value === 'auto' && <b className="model-picker-check">✓</b>}</button>{recommendedModels.filter((model) => model.id !== autoModel?.id).map(renderModel)}</section>
-        {recentModels.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>最近调用</span><small>提交成功后自动记录</small></div>{recentModels.map(renderModel)}</section>}
-        {favoriteModels.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>收藏模型</span><small>跨功能共用</small></div>{favoriteModels.map(renderModel)}</section>}
-        {providerGroups.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>按服务商浏览</span><small>{filteredModels.length} 个可用模型</small></div>{providerGroups.map(([providerId, group]) => <div className="model-picker-provider" key={providerId}><div className="model-picker-provider-title"><b>{group[0].providerName}</b><small>{group.length} 个模型</small></div>{group.map(renderModel)}</div>)}</section>}
-        {!filteredModels.length && <div className="model-picker-empty">没有找到支持“{capabilityLabels[capability] || '当前任务'}”的模型</div>}
+        <section className="model-picker-section model-picker-auto-section"><div className="model-picker-section-title"><span>????</span><small>?????????</small></div><button type="button" className={`model-picker-auto ${value === 'auto' ? 'selected' : ''}`} onClick={() => choose('auto')}><span><strong>????</strong><small>{defaultProviderName ? `?????${defaultProviderName}` : '??????????????'}{autoModel ? ` ? ???? ${autoModel.displayName}` : ''}</small></span>{value === 'auto' && <b className="model-picker-check">?</b>}</button>{recommendedModels.filter((model) => model.id !== autoModel?.id).map(renderModel)}</section>
+        {recentModels.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>????</span><small>?????????</small></div>{recentModels.map(renderModel)}</section>}
+        {favoriteModels.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>????</span><small>?????</small></div>{favoriteModels.map(renderModel)}</section>}
+        {providerGroups.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>??????</span><small>{filteredModels.length} ?????</small></div>{providerGroups.map(([providerId, group]) => <div className="model-picker-provider" key={providerId}><div className="model-picker-provider-title"><b>{group[0].providerName}</b><small>{group.length} ???</small></div>{group.map(renderModel)}</div>)}</section>}
+        {!filteredModels.length && <div className="model-picker-empty">???????{capabilityLabels[capability] || '????'}????</div>}
       </div>
     </div>}
   </div>;

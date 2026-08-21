@@ -19,7 +19,7 @@ LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
 
 . "$SCRIPT_DIR/launcher-common.sh"
 sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
-sanmao_log "启动器开始运行，根目录：$ROOT_DIR，端口范围：$PORT_START..$PORT_END" INFO
+sanmao_log "????????????$ROOT_DIR??????$PORT_START..$PORT_END" INFO
 
 server_is_ready() {
   sanmao_server_health "$1"
@@ -38,15 +38,15 @@ find_existing_server() {
 }
 
 fail() {
-  sanmao_log "启动失败：$1" ERROR
-  printf '\n启动失败：%s\n\n' "$1"
+  sanmao_log "?????$1" ERROR
+  printf '\n?????%s\n\n' "$1"
   if [ -n "${SERVER_STDERR:-}" ] && [ -s "$SERVER_STDERR" ]; then
-    printf '服务端最后的错误：\n'
+    printf '?????????\n'
     tail -n 12 "$SERVER_STDERR" || true
     printf '\n'
   fi
   if [ -t 0 ]; then
-    printf '按回车键关闭窗口...'
+    printf '????????...'
     read -r _ || true
   fi
   exit 1
@@ -80,7 +80,7 @@ acquire_lock() {
 
 EXISTING_PORT=`find_existing_server`
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null; then
-  printf 'SANMAO.AI 已在运行：http://localhost:%s\n' $EXISTING_PORT
+  printf 'SANMAO.AI ?????http://localhost:%s\n' $EXISTING_PORT
   rm -f "$LEGACY_MARKER"
   open "http://localhost:$EXISTING_PORT"
   exit 0
@@ -88,21 +88,21 @@ fi
 rm -f "$LEGACY_MARKER"
 
 if ! acquire_lock; then
-  fail '另一个启动器正在运行，请稍候再试。'
+  fail '?????????????????'
 fi
-sanmao_log '已获取启动预检锁' INFO
+sanmao_log '????????' INFO
 
-printf '\n==> 清理旧的 SANMAO.AI 后台服务\n'
+printf '\n==> ???? SANMAO.AI ????\n'
 sanmao_clear_stale 3000 3010
 sanmao_clear_stale "$PORT_START" "$PORT_END"
 
 printf '%s\n' '========================================'
-printf '%s\n' '        SANMAO.AI macOS 启动器 0.7.1'
+printf '%s\n' '        SANMAO.AI macOS ??? 0.7.2'
 printf '%s\n' '========================================'
 
-printf '\n==> 检查 Node.js\n'
+printf '\n==> ?? Node.js\n'
 if ! command -v node >/dev/null 2>&1; then
-  fail '没有检测到 Node.js。请先安装 Node.js 20.9 或更高版本，然后重新双击启动器。'
+  fail '????? Node.js????? Node.js 20.9 ????????????????'
 fi
 
 NODE_VERSION=`node --version 2>/dev/null || true`
@@ -110,35 +110,35 @@ NODE_VERSION=`printf '%s' $NODE_VERSION | sed 's/^v//'`
 NODE_MAJOR=`printf '%s' $NODE_VERSION | cut -d. -f1`
 NODE_MINOR=`printf '%s' $NODE_VERSION | cut -d. -f2`
 if [ $NODE_MAJOR -lt 20 ]; then
-  fail 'SANMAO.AI 需要 Node.js 20.9 或更高版本。'
+  fail 'SANMAO.AI ?? Node.js 20.9 ??????'
 fi
 if [ $NODE_MAJOR -eq 20 ] && [ $NODE_MINOR -lt 9 ]; then
-  fail 'SANMAO.AI 需要 Node.js 20.9 或更高版本。'
+  fail 'SANMAO.AI ?? Node.js 20.9 ??????'
 fi
-printf 'Node.js：v%s\n' $NODE_VERSION
+printf 'Node.js?v%s\n' $NODE_VERSION
 
 if ! command -v npm >/dev/null 2>&1; then
-  fail '没有检测到 npm。请重新安装 Node.js，并确保 npm 已安装。'
+  fail '????? npm?????? Node.js???? npm ????'
 fi
-printf 'npm：%s\n' `npm --version`
+printf 'npm?%s\n' `npm --version`
 
-printf '\n==> 检查并安装程序依赖\n'
+printf '\n==> ?????????\n'
 NEED_INSTALL=0
 if [ ! -x node_modules/.bin/next ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
   NEED_INSTALL=1
 fi
 if [ "$NEED_INSTALL" -eq 1 ]; then
-  printf '%s\n' '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。'
-  if [ -f package-lock.json ]; then npm ci --include=dev --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; else npm install --include=dev --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; fi
+  printf '%s\n' '??????????????? npm install????????? 1?5 ???'
+  if [ -f package-lock.json ]; then npm ci --include=dev --no-audit --no-fund || fail '?????????????????????'; else npm install --include=dev --no-audit --no-fund || fail '?????????????????????'; fi
 else
-  printf '%s\n' '依赖已安装。'
+  printf '%s\n' '??????'
 fi
 
 if [ ! -x node_modules/.bin/next ]; then
-  fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
+  fail '??????????? Next.js???? node_modules ????????????'
 fi
 
-printf '\n==> 检查构建产物是否最新\n'
+printf '\n==> ??????????\n'
 
 NEXT_BIN="$ROOT_DIR/node_modules/.bin/next"
 BUILD_ID="$ROOT_DIR/.next/BUILD_ID"
@@ -169,15 +169,15 @@ else
 fi
 
 if [ "$NEED_BUILD" -eq 1 ]; then
-  printf '%s\n' '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。'
-  printf '%s\n' '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。'
-  "$NEXT_BIN" build --webpack || fail '网页构建失败。请查看终端中构建失败上方的报错。'
-  printf '构建完成。\n'
+  printf '%s\n' '??????????????????????????????????????'
+  printf '%s\n' '?? webpack ????? Turbopack ??????????????'
+  "$NEXT_BIN" build --webpack || fail '???????????????????????'
+  printf '?????\n'
 else
-  printf '%s\n' '构建产物已是最新，跳过构建，直接启动。'
+  printf '%s\n' '???????????????????'
 fi
 
-printf '\n==> 启动 SANMAO.AI\n'
+printf '\n==> ?? SANMAO.AI\n'
 sanmao_clear_stale 3000 3010
 sanmao_clear_stale "$PORT_START" "$PORT_END"
 
@@ -188,7 +188,7 @@ if command -v lsof >/dev/null 2>&1; then
   done
 fi
 if [ $PORT -gt $PORT_END ]; then
-  fail "$PORT_START～$PORT_END 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
+  fail "$PORT_START?$PORT_END ???????????? SANMAO.AI/?????????"
 fi
 
 URL=http://localhost:$PORT
@@ -199,7 +199,7 @@ NEXT_CLI="$ROOT_DIR/node_modules/next/dist/bin/next"
 unset SANMAO_LIFECYCLE
 node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" &
 SERVER_PID=$!
-sanmao_log "已启动服务进程 PID $SERVER_PID，等待端口 $PORT 就绪。" INFO
+sanmao_log "??????? PID $SERVER_PID????? $PORT ???" INFO
 
 READY=0
 ATTEMPT=0
@@ -213,15 +213,15 @@ while [ $ATTEMPT -lt 150 ]; do
 done
 
 if [ $READY -ne 1 ]; then
-  printf '\n服务器没有在预期时间内启动。服务端错误日志：%s\n' "$SERVER_STDERR"
+  printf '\n??????????????????????%s\n' "$SERVER_STDERR"
   if [ -s "$SERVER_STDERR" ]; then tail -n 12 "$SERVER_STDERR"; fi
   kill $SERVER_PID 2>/dev/null || true
   wait $SERVER_PID 2>/dev/null || true
-  fail '启动超时。'
+  fail '?????'
 fi
 
-printf 'SANMAO.AI 已启动：%s\n' $URL
-printf '%s\n' '本地服务会保持运行，下一次启动会直接打开已有服务。'
-sanmao_log "服务已就绪：$URL" INFO
+printf 'SANMAO.AI ????%s\n' $URL
+printf '%s\n' '?????????????????????????'
+sanmao_log "??????$URL" INFO
 open $URL
 wait $SERVER_PID
