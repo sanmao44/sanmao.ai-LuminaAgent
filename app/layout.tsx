@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import './provider-library.css';
 import './agent-upgrades.css';
+import './desktop-readability.css';
 
 export const viewport: Viewport = {
   colorScheme: 'light dark',

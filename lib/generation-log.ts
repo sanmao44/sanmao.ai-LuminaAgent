@@ -35,6 +35,10 @@ const logPath = path.join(dataDir, 'generation-logs.jsonl');
 const trashDir = path.join(dataDir, 'trash', 'images');
 const LOG_ROTATION_BYTES = 10 * 1024 * 1024;
 const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+// The API routes allow long-running provider calls, but a task cannot remain
+// pending forever when the process or client disappears before the final
+// event is written. Reconcile those orphaned records when logs are read.
+const STALE_PENDING_MS = 2 * 60 * 60 * 1000;
 
 async function logFiles() {
   try {
@@ -91,7 +95,25 @@ export async function finishGenerationLog(id: string, patch: Partial<Omit<Genera
 }
 
 export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> {
-  return (await readAllGenerationLogs()).reverse().slice(0, limit);
+  const logs = await readAllGenerationLogs();
+  const now = Date.now();
+  const staleLogs = logs.filter((log) => log.status === 'pending' && now - new Date(log.createdAt).getTime() > STALE_PENDING_MS);
+  if (staleLogs.length) {
+    const error = '任务超时或服务中断，未收到服务商完成回执';
+    await Promise.all(staleLogs.map((log) => finishGenerationLog(log.id, {
+      status: 'error',
+      durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
+      error,
+    }).catch(() => undefined)));
+    const staleIds = new Set(staleLogs.map((log) => log.id));
+    return logs.map((log): GenerationLog => staleIds.has(log.id) ? {
+      ...log,
+      status: 'error',
+      durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
+      error,
+    } : log).reverse().slice(0, limit);
+  }
+  return logs.reverse().slice(0, limit);
 }
 
 function storedFileFromUrl(url: string, storagePath?: string) {
