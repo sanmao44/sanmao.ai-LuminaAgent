@@ -78,3 +78,12 @@ export async function updateVideoTask(id: string, patch: Partial<VideoTask>) {
     return tasks[index];
   });
 }
+
+export async function removeVideoTask(id: string) {
+  return mutate((tasks) => {
+    const index = tasks.findIndex((task) => task.id === id);
+    if (index < 0) return null;
+    const [removed] = tasks.splice(index, 1);
+    return removed;
+  });
+}

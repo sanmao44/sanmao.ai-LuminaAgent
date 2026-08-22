@@ -6202,6 +6202,30 @@ export default function Page() {
             setVideoTasks(Array.isArray(data.tasks) ? data.tasks : []);
         } catch  {}
     }
+    async function deleteVideoTask(task) {
+        try {
+            const res = await fetch(`/api/video/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
+            const data = await res.json().catch(()=>({}));
+            if (!res.ok) throw new Error(data.error || '删除视频任务失败');
+            setVideoTasks((old)=>old.filter((item)=>item.id !== task.id));
+            notify(task.status === 'failed' ? '失败视频任务已删除' : '视频作品已删除');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '删除视频任务失败');
+        }
+    }
+    function askDeleteVideoTask(task) {
+        if (task.status === 'pending' || task.status === 'running') {
+            notify('视频正在生成，完成或失败后才能删除');
+            return;
+        }
+        setConfirmState({
+            title: task.status === 'failed' ? '删除这条失败任务？' : '删除这段视频？',
+            text: '删除后会从本机创作记录中移除，并清理已保存的视频文件，此操作不可恢复。',
+            danger: true,
+            confirmText: '确认删除',
+            action: async ()=>{ await deleteVideoTask(task); }
+        });
+    }
     async function refreshStorageMaintenance() {
         try {
             const [usageResponse, snapshotResponse] = await Promise.all([
@@ -11687,7 +11711,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: "已完成的视频会自动保存在这里" })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${visibleVideoTasks.length} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify }, task.id)) })
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onDelete: ()=>askDeleteVideoTask(task) }, task.id)) })
                                         ]
                                     }),
                                     filteredGallery.length ? /*#__PURE__*/ _jsxs(_Fragment, {

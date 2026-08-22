@@ -100,7 +100,7 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
   const installed = auth.installed || Boolean(auth.version);
   return <article className="jimeng-provider-card surface">
     <div className="jimeng-provider-card-main">
-      <div className="jimeng-provider-mark">即</div>
+      <div className="jimeng-provider-mark"><img src="/brand/jimeng-official.ico" alt="即梦官方 Logo" /></div>
       <div className="jimeng-provider-copy">
         <div className="jimeng-provider-title"><strong>即梦 CLI · 本地图片与视频</strong><span className={`jimeng-provider-status ${connected ? 'success' : installed ? 'ready' : 'muted'}`}>{connected ? '已连接' : installed ? '已安装，待授权' : '等待检测'}</span></div>
         <p>连接一次即梦账号，图片和视频工作台都可以直接使用。不需要 API Key，也不需要填写接口路径。</p>

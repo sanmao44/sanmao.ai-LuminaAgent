@@ -6,6 +6,7 @@ import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submi
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import { getVideoModelLimits, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
 import { is65535Provider, isJimengProvider } from './video-platform';
+import { prepareVideoInputMedia } from './video-input-media';
 
 function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGenerationInput {
   const prompt = String(input.prompt || '').trim();
@@ -157,7 +158,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
   assertGenericInputLimits(options.input);
   const modelLimits = getVideoModelLimits(runtime.model, runtime.provider);
-  const input = cleanInput(options.input, modelLimits.fixedSeconds || 5);
+  const input = await prepareVideoInputMedia(cleanInput(options.input, modelLimits.fixedSeconds || 5));
   if (!input.prompt) throw new Error('请输入视频提示词');
   if (is65535Provider(runtime.provider) || isJimengProvider(runtime.provider)) validateModelInput(input, options.input, modelLimits, isJimengProvider(runtime.provider) ? '即梦' : '65535');
   if (isNativeTaskProvider(runtime.provider)) {

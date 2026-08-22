@@ -30,6 +30,8 @@ type Props = {
 type UploadSlot = { name: string; url: string; kind: 'image' | 'video' | 'audio' };
 type VideoOperation = 'generate' | 'edit' | 'extend';
 const MAX_65535_INLINE_BYTES = 64 * 1024 * 1024;
+const MAX_VIDEO_IMAGE_EDGE = 2048;
+const MAX_VIDEO_IMAGE_BYTES = 4 * 1024 * 1024;
 
 function readFile(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -46,6 +48,77 @@ function dataUriBytes(value: string) {
   if (comma < 0) return 0;
   const payload = value.slice(comma + 1);
   return /;base64/i.test(value.slice(0, comma)) ? Math.floor(payload.replace(/\s/g, '').length * 3 / 4) : new TextEncoder().encode(decodeURIComponent(payload)).byteLength;
+}
+
+function loadImage(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('读取图片尺寸失败'));
+    image.src = dataUrl;
+  });
+}
+
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('压缩图片失败')), type, quality);
+  });
+}
+
+function blobDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('读取压缩图片失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function compressVideoImageDataUrl(dataUrl: string) {
+  if (!dataUrl.startsWith('data:image/')) return { value: dataUrl, changed: false, originalBytes: 0, outputBytes: 0 };
+  const source = await loadImage(dataUrl);
+  const originalBytes = dataUriBytes(dataUrl);
+  const sourceMaxEdge = Math.max(source.naturalWidth, source.naturalHeight);
+  if (originalBytes <= MAX_VIDEO_IMAGE_BYTES && sourceMaxEdge <= MAX_VIDEO_IMAGE_EDGE) return { value: dataUrl, changed: false, originalBytes, outputBytes: originalBytes };
+
+  let maxEdge = Math.min(MAX_VIDEO_IMAGE_EDGE, sourceMaxEdge);
+  let quality = 0.82;
+  let flatten = false;
+  let output: Blob | null = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const scale = Math.min(1, maxEdge / sourceMaxEdge);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return { value: dataUrl, changed: false, originalBytes, outputBytes: originalBytes };
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+    let hasTransparency = false;
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < pixels.length; index += 16) {
+      if (pixels[index] < 255) { hasTransparency = true; break; }
+    }
+    if (hasTransparency && !flatten) {
+      output = await canvasBlob(canvas, 'image/png');
+      if (output.size <= MAX_VIDEO_IMAGE_BYTES) break;
+      flatten = true;
+      continue;
+    }
+    if (flatten) {
+      context.globalCompositeOperation = 'destination-over';
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.globalCompositeOperation = 'source-over';
+    }
+    output = await canvasBlob(canvas, 'image/jpeg', quality);
+    if (output.size <= MAX_VIDEO_IMAGE_BYTES) break;
+    quality = Math.max(0.52, quality - 0.06);
+    maxEdge = Math.max(1024, Math.round(maxEdge * 0.88));
+  }
+  if (!output) return { value: dataUrl, changed: false, originalBytes, outputBytes: originalBytes };
+  return { value: await blobDataUrl(output), changed: true, originalBytes, outputBytes: output.size };
 }
 
 function formatBytes(bytes: number) {
@@ -226,11 +299,6 @@ export default function VideoStudio({ models, providers, defaultModelId, onOpenM
     if (referenceImages.length > modelLimits.maxReferenceImages) return onNotify(`当前模型最多接收 ${modelLimits.maxReferenceImages} 张参考图`);
     if (audios.length > modelLimits.maxAudios) return onNotify(`当前模型最多接收 ${modelLimits.maxAudios} 段音频`);
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
-    if (nativeTask) {
-      const localMedia = [firstFrame?.url, lastFrame?.url, ...referenceImages.map((item) => item.url), referenceVideo?.url, ...audios.map((item) => item.url)].filter((value): value is string => Boolean(value));
-      const inlineBytes = localMedia.reduce((total, value) => total + dataUriBytes(value), 0);
-      if (inlineBytes > MAX_65535_INLINE_BYTES) return onNotify(`${uses65535Policy ? '65535 原生接口' : '当前原生异步接口'}的本地素材请求不能超过 64 MiB（当前约 ${formatBytes(inlineBytes)}）。请换用更小的视频/图片；已阻止提交，不会扣费。`);
-    }
     const mentionedReferenceNumbers = Array.from(prompt.matchAll(/(?:^|\s)@(\d+)\b/g), (match) => Number(match[1]));
     if (mentionedReferenceNumbers.length && inputMode !== 'reference') return onNotify('提示词中有 @引用，请先切换到参考图输入方式');
     if (mentionedReferenceNumbers.some((number) => number < 1 || number > referenceImages.length)) return onNotify('提示词中的 @编号没有对应参考图，请重新选择或清除引用');
@@ -250,10 +318,29 @@ export default function VideoStudio({ models, providers, defaultModelId, onOpenM
         audios: audios.map((item) => item.url),
         audio: audios[0]?.url,
       };
+      const [compressedFirstFrame, compressedLastFrame, compressedReferences] = await Promise.all([
+        input.firstFrame ? compressVideoImageDataUrl(input.firstFrame) : null,
+        input.lastFrame ? compressVideoImageDataUrl(input.lastFrame) : null,
+        Promise.all((input.referenceImages || []).map((value) => compressVideoImageDataUrl(value))),
+      ]);
+      const compressedInput: VideoGenerationInput = {
+        ...input,
+        firstFrame: compressedFirstFrame?.value,
+        lastFrame: compressedLastFrame?.value,
+        referenceImages: compressedReferences.map((result) => result.value),
+      };
+      const compressionResults = [compressedFirstFrame, compressedLastFrame, ...compressedReferences].filter((result): result is NonNullable<typeof result> => Boolean(result));
+      const compressedCount = compressionResults.filter((result) => result.changed).length;
+      if (compressedCount) onNotify(`已自动压缩 ${compressedCount} 张视频参考图，保留原图比例后提交`);
+      if (nativeTask) {
+        const localMedia = [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || []), compressedInput.referenceVideo, ...(compressedInput.audios || [])].filter((value): value is string => Boolean(value));
+        const inlineBytes = localMedia.reduce((total, value) => total + dataUriBytes(value), 0);
+        if (inlineBytes > MAX_65535_INLINE_BYTES) throw new Error(`${uses65535Policy ? '65535 原生接口' : '当前原生异步接口'}的本地素材请求不能超过 64 MiB（当前约 ${formatBytes(inlineBytes)}）。请换用更小的视频/图片；已阻止提交，不会扣费。`);
+      }
       const response = await fetch('/api/video/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({ model: modelId, ...input }),
+        body: JSON.stringify({ model: modelId, ...compressedInput }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok && !data.task) throw new Error(data.error || '提交视频任务失败');

@@ -2814,6 +2814,8 @@ html[data-theme="dark"] .agent-page{
 .creative-video-actions{display:flex;gap:6px;margin-top:2px}
 .creative-video-actions a,.creative-video-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:27px;padding:0 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--accent-text);font-size:9px;font-weight:800;text-decoration:none;cursor:pointer}
 .creative-video-actions a:hover,.creative-video-actions button:hover{border-color:var(--accent);background:var(--accent-soft)}
+.creative-video-actions .creative-video-delete{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,var(--line))}
+.creative-video-actions .creative-video-delete:hover{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
 .log-video-preview{display:grid;place-items:center;overflow:hidden;background:var(--bg-2)}
 .log-video-preview video{width:100%;height:100%;max-height:94px;object-fit:contain;background:#000;border-radius:11px}
 .log-detail-video{overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--bg-2)}
