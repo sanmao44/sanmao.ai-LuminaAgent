@@ -19,7 +19,7 @@ export const jimengImageModels = [
   {
     id: 'jimeng-cli-image',
     name: '即梦 · CLI 自动选择',
-    capabilities: ['generate', 'edit', 'reference'] as const,
+    capabilities: ['generate', 'edit', 'reference', 'upscale'] as const,
   },
   {
     id: 'seedream5.0pro',
@@ -63,6 +63,18 @@ export function buildJimengImageCliArgs(operation: 'text2image' | 'image2image',
 
 function mimeExtension(mime: string) {
   return mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';
+}
+
+function upscaleResolution(size: string) {
+  const [width, height] = String(size || '').split('x').map(Number);
+  const longEdge = Math.max(width || 0, height || 0);
+  if (longEdge > 4096) return '8k';
+  if (longEdge > 2048) return '4k';
+  return '2k';
+}
+
+export function buildJimengImageUpscaleCliArgs(image: string, size: string) {
+  return ['image_upscale', '--image', image, '--resolution_type', upscaleResolution(size), '--poll', '30'];
 }
 
 async function materialize(reference: string, directory: string, index: number) {
@@ -150,6 +162,23 @@ export async function runJimengImage(provider: RuntimeProvider, rawModelId: stri
     if (parsed.images.length) return parsed.images.slice(0, Math.max(1, Math.min(10, Number(input.count || 1))));
     if (parsed.taskId) return waitForResult(command, parsed.taskId, Date.now() + 30 * 60 * 1000, signal);
     throw new Error('即梦 CLI 已响应，但没有解析到图片结果');
+  } finally {
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+export async function runJimengImageUpscale(provider: RuntimeProvider, input: { reference: string; size: string }, signal?: AbortSignal) {
+  const command = resolveJimengCliCommand(provider.jimengCliPath);
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-upscale-'));
+  try {
+    const file = await materialize(input.reference, directory, 0);
+    const result = await runJimengCli(command, buildJimengImageUpscaleCliArgs(file, input.size), 90_000, signal);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || '即梦图片超清失败');
+    const parsed = imagesFrom(`${result.stdout}\n${result.stderr}`);
+    if (parsed.failed) throw new Error(parsed.failed);
+    if (parsed.images.length) return parsed.images.slice(0, 1);
+    if (parsed.taskId) return waitForResult(command, parsed.taskId, Date.now() + 30 * 60 * 1000, signal);
+    throw new Error('即梦 CLI 已响应，但没有解析到超清图片结果');
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }

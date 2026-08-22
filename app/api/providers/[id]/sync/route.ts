@@ -1,5 +1,6 @@
 import { isAdminRequest } from '@/lib/auth';
 import { jimengImageModels } from '@/lib/jimeng-image';
+import { jimengVideoModels } from '@/lib/jimeng-video';
 import { discoverModels } from '@/lib/providers';
 import { enableProviderModels, getProviderWithKey, getPublicState, replaceProviderModels, setProviderStatus, updateProvider } from '@/lib/store';
 
@@ -14,11 +15,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const originalBaseUrl = provider.baseUrl;
     const originalVideoTransport = provider.videoTransport;
     const models = provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli'
-      ? [...jimengImageModels, {
-          id: 'jimeng-cli-video',
-          name: '即梦 · CLI 视频自动选择',
-          capabilities: ['video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-audio'],
-        }]
+      ? [...jimengImageModels, ...jimengVideoModels]
       : await discoverModels(provider);
     if (provider.baseUrl !== originalBaseUrl || provider.videoTransport !== originalVideoTransport) {
       await updateProvider(provider.id, {

@@ -35,3 +35,13 @@ test('passes the selected image model version to text2image and image2image', ()
     'image2image', '--model_version', 'seedream4.7', '--prompt', 'make it cinematic', '--resolution_type', '4k', '--generate_num', '1', '--images', 'reference.png',
   ]);
 });
+
+test('exposes and maps the installed Jimeng image upscale command', () => {
+  assert.equal(image.jimengImageModels.find((model) => model.id === 'jimeng-cli-image').capabilities.includes('upscale'), true);
+  assert.deepEqual(image.buildJimengImageUpscaleCliArgs('input.png', '2048x1536'), [
+    'image_upscale', '--image', 'input.png', '--resolution_type', '2k', '--poll', '30',
+  ]);
+  assert.deepEqual(image.buildJimengImageUpscaleCliArgs('input.png', '3840x2160'), [
+    'image_upscale', '--image', 'input.png', '--resolution_type', '4k', '--poll', '30',
+  ]);
+});

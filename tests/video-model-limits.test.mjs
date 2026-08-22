@@ -63,9 +63,14 @@ test('uses the official Jimeng parameter profile instead of generic defaults', (
   assert.equal(seedance25.allowedSeconds.length, 27);
 
   const mini = limits.getVideoModelLimits({ rawId: 'seedance2.0mini' }, { platform: 'custom', videoTransport: 'jimeng-cli' });
-  assert.equal(mini.minSeconds, 5);
+  assert.equal(mini.minSeconds, 4);
   assert.equal(mini.maxSeconds, 15);
   assert.deepEqual(mini.resolutions, ['720p']);
+
+  const vip = limits.getVideoModelLimits({ rawId: 'seedance2.0_vip' }, { platform: 'custom', videoTransport: 'jimeng-cli' });
+  assert.equal(vip.minSeconds, 4);
+  assert.equal(vip.maxSeconds, 15);
+  assert.deepEqual(vip.resolutions, ['720p', '1080p', '4k']);
 
   const other = limits.getVideoModelLimits({ rawId: 'seedance-2.5' }, { platform: 'custom', videoTransport: 'openai-videos' });
   assert.equal(other.allowedSeconds, undefined);

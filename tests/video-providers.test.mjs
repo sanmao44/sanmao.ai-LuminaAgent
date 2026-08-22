@@ -132,6 +132,9 @@ test('passes the selected Jimeng model version and resolution', () => {
   ]);
   assert.equal(video.jimengModelVersion('seedance2.0_vip'), 'seedance2.0_vip');
   assert.equal(video.jimengModelVersion('seedance2.0mini'), 'seedance2.0mini');
+  assert.equal(video.jimengModelVersion('seedance2.0fast'), 'seedance2.0fast');
+  assert.equal(video.jimengModelVersion('seedance2.0fast_vip'), 'seedance2.0fast_vip');
+  assert.equal(video.jimengModelVersion('jimeng-cli-video'), undefined);
 });
 
 test('preserves native 65535 multi-video and multi-audio inputs', async () => {
@@ -155,6 +158,22 @@ test('maps Dreamina array media to repeated multimodal flags', () => {
     prompt: 'blend the sources', referenceVideos: ['a.mp4', 'b.mp4'], audios: ['a.mp3', 'b.mp3'], seconds: 5, aspectRatio: '16:9', resolution: '720p',
   }), [
     'multimodal2video', '--video', 'a.mp4', '--video', 'b.mp4', '--audio', 'a.mp3', '--audio', 'b.mp3', '--prompt', 'blend the sources', '--duration', '5', '--ratio', '16:9', '--video_resolution', '720p',
+  ]);
+});
+
+test('matches the official Dreamina multi-frame image list format', () => {
+  assert.deepEqual(video.buildJimengCliArgs({
+    prompt: 'from day to night', referenceImages: ['a.png', 'b.png'], seconds: 5, aspectRatio: '16:9', resolution: '720p',
+  }), [
+    'multiframe2video', '--images', 'a.png,b.png', '--prompt', 'from day to night', '--duration', '5', '--video_resolution', '720p',
+  ]);
+});
+
+test('does not send unsupported model and ratio flags to multi-frame CLI', () => {
+  assert.deepEqual(video.buildJimengCliArgs({
+    prompt: 'transition', referenceImages: ['a.png', 'b.png', 'c.png'], seconds: 5, aspectRatio: '16:9', resolution: '1080p',
+  }, 'seedance2.5'), [
+    'multiframe2video', '--images', 'a.png,b.png,c.png', '--transition-prompt', 'transition', '--transition-prompt', 'transition', '--video_resolution', '1080p',
   ]);
 });
 

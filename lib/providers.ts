@@ -826,6 +826,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
 }
 
 export async function upscaleImage(provider: RuntimeProvider, rawModelId: string, input: { reference: string; size: string; prompt?: string; seed?: number; colorCorrection?: string; resizeMethod?: string }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImageUpscale(provider, input, signal);
   const reference = normalizeReference(input.reference);
   if (!/^\d+x\d+$/i.test(input.size)) throw new Error('SeedVR2 必须提供 WIDTHxHEIGHT 格式的目标尺寸，例如 2048x2048');
   const prompt = input.prompt?.trim() || 'Upscale this image';

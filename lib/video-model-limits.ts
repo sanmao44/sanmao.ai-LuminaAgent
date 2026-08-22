@@ -41,46 +41,36 @@ function jimengLimits(rawId: string): VideoModelLimits {
   const base: VideoModelLimits = {
     ...defaults,
     minSeconds: 4,
-    maxSeconds: 30,
-    allowedSeconds: jimengDurations(4, 30),
-    resolutions: ['480p', '720p'],
-    notes: ['即梦 CLI：4–30 秒', '支持 480p/720p', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
+    maxSeconds: 15,
+    allowedSeconds: jimengDurations(4, 15),
+    resolutions: ['720p'],
+    notes: ['即梦 CLI：4–15 秒', '当前模型支持 720p', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
   };
   if (/seedance[-_. ]?2\.5/.test(rawId)) {
     return {
       ...base,
+      maxSeconds: 30,
+      allowedSeconds: jimengDurations(4, 30),
       resolutions: ['480p', '720p', '1080p'],
       notes: ['Seedance 2.5：4–30 秒', '支持 480p/720p/1080p', '多模态参考音视频和纯音频需使用 2–30 秒素材', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
     };
   }
-  if (/seedance[-_. ]?2\.0.*mini|seedance[-_. ]?2\.0mini/.test(rawId)) {
-    return {
-      ...base,
-      minSeconds: 5,
-      maxSeconds: 15,
-      allowedSeconds: jimengDurations(5, 15),
-      resolutions: ['720p'],
-      notes: ['Seedance 2.0 Mini：5–15 秒', '仅支持 720p', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
-    };
-  }
-  if (/seedance[-_. ]?2\.0.*vip|seedance[-_. ]?2\.0vip/.test(rawId)) {
-    return {
-      ...base,
-      minSeconds: 5,
-      maxSeconds: 15,
-      allowedSeconds: jimengDurations(5, 15),
-      resolutions: ['720p', '1080p', '4k'],
-      notes: ['Seedance 2.0 VIP：5–15 秒', '支持 720p/1080p/4K', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
-    };
-  }
   if (/seedance[-_. ]?2\.0/.test(rawId)) {
+    const vip = /seedance[-_. ]?2\.0(?:.*_vip|.*vip)/.test(rawId);
+    const mini = /seedance[-_. ]?2\.0(?:.*mini|mini)/.test(rawId);
     return {
       ...base,
-      minSeconds: 5,
-      maxSeconds: 15,
-      allowedSeconds: jimengDurations(5, 15),
-      resolutions: ['720p'],
-      notes: ['Seedance 2.0：5–15 秒', '仅支持 720p', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
+      maxReferenceImages: 9,
+      maxReferenceVideos: 3,
+      maxAudios: 3,
+      resolutions: vip ? ['720p', '1080p', '4k'] : ['720p'],
+      notes: [
+        mini ? 'Seedance 2.0 Mini：4–15 秒' : 'Seedance 2.0 系列：4–15 秒',
+        vip ? '支持 720p/1080p/4K' : '仅支持 720p',
+        '图片最多 9 张、视频最多 3 个、音频最多 3 段',
+        '视频生成需要明确指定模型版本和分辨率',
+        '首次使用视频前需先在即梦网页端完成一次生成授权',
+      ],
     };
   }
   return base;

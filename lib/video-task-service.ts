@@ -73,6 +73,20 @@ function validateModelInput(input: VideoGenerationInput, rawInput: VideoGenerati
   }
 }
 
+function effectiveJimengLimits(input: VideoGenerationInput, limits: ReturnType<typeof getVideoModelLimits>) {
+  const hasReferenceVideo = effectiveMediaCount(input.referenceVideos, input.referenceVideo) > 0;
+  const hasAudio = effectiveMediaCount(input.audios, input.audio) > 0;
+  const isMultiframe = !input.firstFrame && !input.lastFrame && !hasReferenceVideo && !hasAudio && (input.referenceImages?.length || 0) > 1;
+  if (!isMultiframe) return limits;
+  return {
+    ...limits,
+    minSeconds: 1,
+    maxSeconds: 8,
+    allowedSeconds: Array.from({ length: 8 }, (_, index) => index + 1),
+    resolutions: ['720p', '1080p'],
+  };
+}
+
 function isNativeTaskProvider(provider: { videoTransport?: string; platform?: string }) {
   return provider.videoTransport === 'native-task' || provider.platform === '65535';
 }
@@ -157,8 +171,9 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
   assertGenericInputLimits(options.input);
-  const modelLimits = getVideoModelLimits(runtime.model, runtime.provider);
-  const input = await prepareVideoInputMedia(cleanInput(options.input, modelLimits.fixedSeconds || 5));
+  const baseModelLimits = getVideoModelLimits(runtime.model, runtime.provider);
+  const input = await prepareVideoInputMedia(cleanInput(options.input, baseModelLimits.fixedSeconds || 5));
+  const modelLimits = isJimengProvider(runtime.provider) ? effectiveJimengLimits(input, baseModelLimits) : baseModelLimits;
   if (!input.prompt) throw new Error('请输入视频提示词');
   if (is65535Provider(runtime.provider) || isJimengProvider(runtime.provider)) validateModelInput(input, options.input, modelLimits, isJimengProvider(runtime.provider) ? '即梦' : '65535');
   if (isNativeTaskProvider(runtime.provider)) {

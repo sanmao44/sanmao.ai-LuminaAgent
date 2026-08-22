@@ -243,9 +243,12 @@ export type JimengVideoCommand = 'text2video' | 'image2video' | 'frames2video' |
 
 export function jimengModelVersion(rawId?: string) {
   const value = String(rawId || '').trim().toLowerCase();
+  if (!value || value === 'auto' || value === 'jimeng-cli-video') return undefined;
   if (/seedance[-_. ]?2\.5/.test(value)) return 'seedance2.5';
   if (/seedance[-_. ]?2\.0.*mini|seedance[-_. ]?2\.0mini/.test(value)) return 'seedance2.0mini';
+  if (/seedance[-_. ]?2\.0.*fast.*vip|seedance[-_. ]?2\.0fastvip/.test(value)) return 'seedance2.0fast_vip';
   if (/seedance[-_. ]?2\.0.*vip|seedance[-_. ]?2\.0vip/.test(value)) return 'seedance2.0_vip';
+  if (/seedance[-_. ]?2\.0.*fast|seedance[-_. ]?2\.0fast/.test(value)) return 'seedance2.0fast';
   if (/seedance[-_. ]?2\.0/.test(value)) return 'seedance2.0';
   return String(rawId || '').trim() || undefined;
 }
@@ -270,22 +273,25 @@ export function buildJimengCliArgs(input: VideoGenerationInput, rawModelId?: str
   const add = (flag: string, value: string | number | undefined) => {
     if (value !== undefined && value !== null && String(value).trim()) args.push(flag, String(value));
   };
-  add('--model_version', jimengModelVersion(rawModelId));
+  const modelVersion = jimengModelVersion(rawModelId);
 
   switch (command) {
     case 'text2video':
+      add('--model_version', modelVersion);
       add('--prompt', input.prompt);
       add('--duration', input.seconds);
       add('--ratio', input.aspectRatio);
       add('--video_resolution', input.resolution);
       break;
     case 'image2video':
+      add('--model_version', modelVersion);
       add('--image', input.firstFrame || input.referenceImages?.[0]);
       add('--prompt', input.prompt);
       add('--duration', input.seconds);
       add('--video_resolution', input.resolution);
       break;
     case 'frames2video':
+      add('--model_version', modelVersion);
       add('--first', input.firstFrame);
       add('--last', input.lastFrame);
       add('--prompt', input.prompt);
@@ -293,13 +299,20 @@ export function buildJimengCliArgs(input: VideoGenerationInput, rawModelId?: str
       add('--video_resolution', input.resolution);
       break;
     case 'multiframe2video':
-      for (const image of input.referenceImages || []) add('--images', image);
-      add('--prompt', input.prompt);
-      add('--duration', input.seconds);
-      add('--ratio', input.aspectRatio);
+      // This command has a fixed backend model: it does not accept
+      // --model_version or --ratio. Its --images flag is one comma-separated
+      // list, and 3+ images require one transition prompt per segment.
+      add('--images', (input.referenceImages || []).filter(Boolean).join(','));
+      if ((input.referenceImages || []).length <= 2) {
+        add('--prompt', input.prompt);
+        add('--duration', input.seconds);
+      } else {
+        for (let index = 1; index < (input.referenceImages || []).length; index += 1) add('--transition-prompt', input.prompt);
+      }
       add('--video_resolution', input.resolution);
       break;
     case 'multimodal2video':
+      add('--model_version', modelVersion);
       add('--image', input.firstFrame || input.referenceImages?.[0]);
       for (const video of videoReferenceValues(input)) add('--video', video);
       for (const audio of audioValues(input)) add('--audio', audio);

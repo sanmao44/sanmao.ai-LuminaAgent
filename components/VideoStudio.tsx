@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
 import SelectMenu from '@/components/SelectMenu';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
-import { is65535Provider } from '@/lib/video-platform';
+import { is65535Provider, isJimengProvider } from '@/lib/video-platform';
 
 type VideoTask = {
   id: string;
@@ -23,6 +23,8 @@ type Props = {
   models: RegistryModel[];
   providers: ProviderConnection[];
   defaultModelId?: string | null;
+  promptPrefill?: string | null;
+  onPromptPrefillConsumed?: () => void;
   onOpenModels: () => void;
   onNotify: (message: string) => void;
 };
@@ -133,7 +135,7 @@ function statusLabel(status: VideoTask['status']) {
   return status === 'done' ? '已完成' : status === 'failed' ? '失败' : status === 'running' ? '生成中' : '排队中';
 }
 
-export default function VideoStudio({ models, providers, defaultModelId, onOpenModels, onNotify }: Props) {
+export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, onOpenModels, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState(defaultModelId || 'auto');
   const [operation, setOperation] = useState<VideoOperation>('generate');
@@ -153,11 +155,33 @@ export default function VideoStudio({ models, providers, defaultModelId, onOpenM
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
+  useEffect(() => {
+    const next = promptPrefill?.trim();
+    if (!next) return;
+    setPrompt((current) => {
+      const existing = current.trimEnd();
+      return existing ? `${existing}\n${next}` : next;
+    });
+    onPromptPrefillConsumed?.();
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  }, [promptPrefill]);
+
   const selectedModel = models.find((model) => model.id === modelId) || models.find((model) => model.id === defaultModelId) || models[0];
   const selectedProvider = providers.find((provider) => provider.id === selectedModel?.providerId);
   const nativeTask = selectedProvider?.videoTransport === 'native-task' || selectedProvider?.platform === '65535';
   const uses65535Policy = is65535Provider(selectedProvider);
-  const modelLimits = useMemo(() => getVideoModelLimits(selectedModel, selectedProvider), [selectedModel?.rawId, selectedModel?.displayName, selectedProvider?.platform, selectedProvider?.videoTransport, selectedProvider?.baseUrl, selectedProvider?.videoBaseUrl]);
+  const usesJimengCli = isJimengProvider(selectedProvider);
+  const supportsReferenceMentions = !usesJimengCli;
+  const baseModelLimits = useMemo(() => getVideoModelLimits(selectedModel, selectedProvider), [selectedModel?.rawId, selectedModel?.displayName, selectedProvider?.platform, selectedProvider?.videoTransport, selectedProvider?.baseUrl, selectedProvider?.videoBaseUrl]);
+  const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
+  const modelLimits = useMemo(() => usesJimengMultiframe ? {
+    ...baseModelLimits,
+    minSeconds: 1,
+    maxSeconds: 8,
+    allowedSeconds: Array.from({ length: 8 }, (_, index) => index + 1),
+    resolutions: ['720p', '1080p'],
+    notes: [...baseModelLimits.notes, '即梦多帧模式：2–20 张图片；3 张以上图片按转场提示处理', '多帧模式仅支持 720p/1080p'],
+  } : baseModelLimits, [baseModelLimits, usesJimengMultiframe]);
   const capabilities = selectedModel?.capabilities || [];
   const can = (name: string) => capabilities.includes(name as never);
   const supportsEdit = can('video-edit');
@@ -264,7 +288,7 @@ export default function VideoStudio({ models, providers, defaultModelId, onOpenM
   }
 
   function referenceMentionIsOpen(value: string, cursor: number) {
-    return inputMode === 'reference' && referenceImages.length > 0 && /@\d*$/.test(value.slice(0, cursor));
+    return supportsReferenceMentions && inputMode === 'reference' && referenceImages.length > 0 && /@\d*$/.test(value.slice(0, cursor));
   }
 
   function insertReferenceMention(index: number) {
@@ -369,7 +393,7 @@ export default function VideoStudio({ models, providers, defaultModelId, onOpenM
       <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
           <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className="video-live-pill">● 已连接</span></div>
-          <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder="描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图" maxLength={6000} />{referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
+          <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图'} maxLength={6000} />{supportsReferenceMentions && referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
         <div className={`video-fields-two ${operationOptions.length === 1 ? 'video-fields-single' : ''}`}>
           <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
           <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>
@@ -379,7 +403,7 @@ export default function VideoStudio({ models, providers, defaultModelId, onOpenM
         {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 支持图片 data URI；本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
         {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
         {operation !== 'generate' && !modelLimits.inheritVideoSettingsFor?.includes(operation) && modelLimits.omitAspectRatioResolutionFor?.includes(operation) && <div className="video-model-notice warning"><strong>比例与分辨率沿用原视频</strong><span>当前续写操作不提交自定义比例和分辨率，仅使用续写时长。</span></div>}
-        <div className="video-option-segment"><span>基础参数</span><div><label>时长<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel="视频时长" /></label><label>比例<SelectMenu value={ratio} onChange={setRatio} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>
+        <div className="video-option-segment"><span>基础参数</span><div><label>{usesJimengMultiframe ? '转场时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={usesJimengMultiframe ? '转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={ratio} onChange={setRatio} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>
         <div className="video-input-heading"><span>画面与素材</span><small>模型不支持的输入会自动收起</small></div>
           <div className="video-upload-grid">
           {(inputMode === 'first-frame' || inputMode === 'frames') && <UploadSlot label="首帧" value={firstFrame} onClick={() => inputRefs.current.first?.click()} onRemove={() => setFirstFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.first = node; }} accept="image/*" onChange={() => void selectFile('first', setFirstFrame, 'image')} />}

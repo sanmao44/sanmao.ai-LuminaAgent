@@ -4887,6 +4887,7 @@ export default function Page() {
     const [chatSelectionMode, setChatSelectionMode] = useState(false);
     const [selectedChatSessions, setSelectedChatSessions] = useState(new Set());
     const [selectionPush, setSelectionPush] = useState(null);
+    const [videoPromptPrefill, setVideoPromptPrefill] = useState(null);
     const [chatNearBottom, setChatNearBottom] = useState(true);
     const chatEndRef = useRef(null);
     const agentComposerRef = useRef(null);
@@ -5674,6 +5675,29 @@ export default function Page() {
         if (section !== 'agent') setSelectionPush(null);
     }, [
         section
+    ]);
+    useEffect(()=>{
+        if (!selectionPush) return;
+        const closeOnOutsidePointer = (event)=>{
+            const target = event.target;
+            if (!(target instanceof Element) || !target.closest('.selection-push')) setSelectionPush(null);
+        };
+        const closeOnEscape = (event)=>{
+            if (event.key === 'Escape') setSelectionPush(null);
+        };
+        const closeOnViewportChange = ()=>setSelectionPush(null);
+        document.addEventListener('pointerdown', closeOnOutsidePointer);
+        document.addEventListener('keydown', closeOnEscape);
+        window.addEventListener('scroll', closeOnViewportChange, true);
+        window.addEventListener('resize', closeOnViewportChange);
+        return ()=>{
+            document.removeEventListener('pointerdown', closeOnOutsidePointer);
+            document.removeEventListener('keydown', closeOnEscape);
+            window.removeEventListener('scroll', closeOnViewportChange, true);
+            window.removeEventListener('resize', closeOnViewportChange);
+        };
+    }, [
+        selectionPush
     ]);
     useEffect(()=>{
         if (section === 'history') markHistoryNoticeSeen();
@@ -9064,17 +9088,20 @@ export default function Page() {
     function captureMessageSelection(container) {
         const selection = window.getSelection();
         const text = selection?.toString().trim() || '';
-        if (!selection || selection.isCollapsed || !text || !selection.anchorNode || !container.contains(selection.anchorNode)) return setSelectionPush(null);
+        if (!selection || selection.isCollapsed || !text || !selection.anchorNode || !selection.focusNode || !selection.rangeCount || !container.contains(selection.anchorNode) || !container.contains(selection.focusNode)) return setSelectionPush(null);
         const rect = selection.getRangeAt(0).getBoundingClientRect();
-        // The action card is wider now that it contains two actions. Keep its
-        // center inside the viewport so it does not get clipped at either edge.
-        const halfCard = Math.min(168, Math.max(0, (window.innerWidth - 16) / 2));
+        const toolbarWidth = Math.min(360, Math.max(280, window.innerWidth - 24));
+        const toolbarHeight = window.innerWidth <= 520 ? 146 : 126;
+        const gap = 12;
+        const showBelow = rect.top < toolbarHeight + gap + 18 && window.innerHeight - rect.bottom > rect.top;
         const selectionCenter = rect.left + rect.width / 2;
-        const x = window.innerWidth <= halfCard * 2 + 16 ? window.innerWidth / 2 : Math.min(window.innerWidth - halfCard - 8, Math.max(halfCard + 8, selectionCenter));
+        const halfCard = toolbarWidth / 2;
+        const x = Math.min(window.innerWidth - halfCard - 12, Math.max(halfCard + 12, selectionCenter));
         setSelectionPush({
             text,
             x,
-            y: Math.max(64, rect.top - 12)
+            y: showBelow ? Math.min(window.innerHeight - gap, rect.bottom + gap) : Math.max(gap, rect.top - gap),
+            placement: showBelow ? 'below' : 'above'
         });
     }
     function pushTextToGenerate(text, navigate = true) {
@@ -9093,6 +9120,27 @@ export default function Page() {
             notify('已追加到生图提示词，并已跳转');
         } else {
             notify('已追加到生图提示词，可继续选择内容');
+        }
+    }
+    function pushTextToVideo(text, navigate = true) {
+        const nextText = text.trim();
+        if (!nextText) return;
+        if (!availableVideoModels.length) {
+            setSelectionPush(null);
+            notify('请先在模型库启用视频模型');
+            return;
+        }
+        setVideoPromptPrefill((current)=>{
+            const existing = current?.trimEnd() || '';
+            return existing ? `${existing}\n${nextText}` : nextText;
+        });
+        setSelectionPush(null);
+        window.getSelection()?.removeAllRanges();
+        if (navigate) {
+            setSection('video');
+            notify('已追加到视频提示词，并已跳转');
+        } else {
+            notify('已追加到视频提示词，可继续选择内容');
         }
     }
     function resetViewerView() {
@@ -10524,6 +10572,8 @@ export default function Page() {
                                 models: availableVideoModels,
                                 providers: state.providers,
                                 defaultModelId: state.settings.defaultVideoModelId,
+                                promptPrefill: videoPromptPrefill,
+                                onPromptPrefillConsumed: ()=>setVideoPromptPrefill(null),
                                 onOpenModels: ()=>setSection('models'),
                                 onNotify: notify
                             }),
@@ -14412,35 +14462,112 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 }
             }),
             selectionPush && section === 'agent' && /*#__PURE__*/ _jsxs("div", {
-                className: "selection-push",
+                className: `selection-push ${selectionPush.placement === 'below' ? 'below' : 'above'}`,
                 style: {
                     left: selectionPush.x,
                     top: selectionPush.y
                 },
                 onMouseDown: (e)=>e.preventDefault(),
                 children: [
-                    /*#__PURE__*/ _jsxs("button", {
-                        type: "button",
-                        className: "selection-push-jump",
-                        onClick: ()=>pushTextToGenerate(selectionPush.text, true),
+                    /*#__PURE__*/ _jsxs("section", {
+                        className: "selection-push-group image",
                         children: [
-                            /*#__PURE__*/ _jsx(Icon, {
-                                name: "image",
-                                size: 14
+                            /*#__PURE__*/ _jsxs("div", {
+                                className: "selection-push-group-title",
+                                children: [
+                                    /*#__PURE__*/ _jsx(Icon, {
+                                        name: "image",
+                                        size: 13
+                                    }),
+                                    /*#__PURE__*/ _jsx("span", {
+                                        children: "图片生成"
+                                    })
+                                ]
                             }),
-                            "推送到生图-并跳转"
+                            /*#__PURE__*/ _jsxs("div", {
+                                className: "selection-push-group-actions",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "selection-push-jump",
+                                        title: "带入图片提示词并跳转",
+                                        onClick: ()=>pushTextToGenerate(selectionPush.text, true),
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "send",
+                                                size: 12
+                                            }),
+                                            "送入并跳转"
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "selection-push-stay",
+                                        title: "追加到图片提示词，留在当前页面",
+                                        onClick: ()=>pushTextToGenerate(selectionPush.text, false),
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "plus",
+                                                size: 12
+                                            }),
+                                            "继续选择"
+                                        ]
+                                    })
+                                ]
+                            })
                         ]
                     }),
-                    /*#__PURE__*/ _jsxs("button", {
-                        type: "button",
-                        className: "selection-push-stay",
-                        onClick: ()=>pushTextToGenerate(selectionPush.text, false),
+                    /*#__PURE__*/ _jsxs("section", {
+                        className: "selection-push-group video",
                         children: [
-                            /*#__PURE__*/ _jsx(Icon, {
-                                name: "image",
-                                size: 14
+                            /*#__PURE__*/ _jsxs("div", {
+                                className: "selection-push-group-title",
+                                children: [
+                                    /*#__PURE__*/ _jsx(Icon, {
+                                        name: "video",
+                                        size: 13
+                                    }),
+                                    /*#__PURE__*/ _jsx("span", {
+                                        children: "视频生成"
+                                    }),
+                                    !availableVideoModels.length && /*#__PURE__*/ _jsx("small", {
+                                        children: "请先启用模型"
+                                    })
+                                ]
                             }),
-                            "推送到生图-挑选"
+                            /*#__PURE__*/ _jsxs("div", {
+                                className: "selection-push-group-actions",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "selection-push-jump",
+                                        title: availableVideoModels.length ? "带入视频提示词并跳转" : "请先在模型库启用视频模型",
+                                        disabled: !availableVideoModels.length,
+                                        onClick: ()=>pushTextToVideo(selectionPush.text, true),
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "send",
+                                                size: 12
+                                            }),
+                                            "送入并跳转"
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "selection-push-stay",
+                                        title: availableVideoModels.length ? "追加到视频提示词，留在当前页面" : "请先在模型库启用视频模型",
+                                        disabled: !availableVideoModels.length,
+                                        onClick: ()=>pushTextToVideo(selectionPush.text, false),
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "plus",
+                                                size: 12
+                                            }),
+                                            "继续选择"
+                                        ]
+                                    })
+                                ]
+                            })
                         ]
                     })
                 ]
