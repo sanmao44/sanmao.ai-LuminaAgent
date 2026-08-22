@@ -9,8 +9,8 @@
     "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "publishedAt": "2026-08-23T00:00:00+08:00",
+  "sha256": "c573eb828867e27e431985838fc70d619546eb3ed9185e0f2b4383ccb47b6faa",
+  "publishedAt": "2026-08-23T01:27:00+08:00",
   "notes": [
     "新增视频工作台和统一视频接口适配，普通服务商只需填写 API 地址与 API Key，即可自动识别并调用视频模型。",
     "新增即梦 CLI 独立接入，支持本地授权后的图片与视频创作。",
