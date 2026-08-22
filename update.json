@@ -1,17 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.6",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.6",
+  "latestVersion": "0.7.7",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.7",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.6/SANMAO.AI-0.7.6.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip"
   ],
-  "sha256": "cce9492849b1fc7c5e1a6ef235b620938e36748b062f0b170fc7d69f23140c81",
-  "publishedAt": "2026-08-22T00:28:50+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-23T00:00:00+08:00",
   "notes": [
+    "新增视频工作台和统一视频接口适配，普通服务商只需填写 API 地址与 API Key，即可自动识别并调用视频模型。",
+    "新增即梦 CLI 独立接入，支持本地授权后的图片与视频创作。",
+    "Agent 选中文本支持分别推送到图片生成或视频生成，提供继续选择和送入并跳转。",
+    "优化图片、视频生成记录与任务状态展示，完善亮暗主题、圆角卡片、下拉菜单和移动端布局。",
     "模型库默认设置栏和模型卡片改为更紧凑的响应式排版。",
     "移除逐模型原生搜索开关：具备原生联网能力的模型自动调用，否则回退系统搜索。",
     "修复旧版本强制启用配置可能让无搜索能力模型进入原生搜索链路的问题。",
