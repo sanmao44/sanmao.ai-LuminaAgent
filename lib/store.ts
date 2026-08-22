@@ -5,6 +5,7 @@ import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, Provi
 import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
+import { resolveModelKind } from './model-kind';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -161,17 +162,9 @@ function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): Regi
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
   const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search');
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
-  const videoLike = model.kind === 'video' || capabilities.some((capability) => capability.startsWith('video-'));
-  const imageLike = !videoLike && (inferred.kind === 'image' || capabilities.includes('generate') || capabilities.includes('upscale'));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
   const nativeSearchDetection = model.nativeSearchDetection || inferred.nativeSearchDetection;
-  const normalizedKind = videoLike
-    ? 'video'
-    : imageLike
-      ? 'image'
-    : model.kind === 'unknown'
-      ? inferred.kind !== 'unknown' ? inferred.kind : capabilities.includes('chat') ? 'chat' : 'unknown'
-      : model.kind;
+  const normalizedKind = resolveModelKind(model.kind, inferred.kind, capabilities);
   return { ...model, kind: normalizedKind, capabilities, ...(nativeSearchProtocol ? { nativeSearchProtocol } : {}), ...(nativeSearchDetection ? { nativeSearchDetection } : {}) };
 }
 

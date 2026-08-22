@@ -4839,6 +4839,8 @@ export default function Page() {
     const [modelProviderFilter, setModelProviderFilter] = useState('all');
     const [modelKindFilter, setModelKindFilter] = useState('all');
     const [expandedModelProviders, setExpandedModelProviders] = useState(new Set());
+    const modelKindBusyRef = useRef(new Set());
+    const [modelKindBusy, setModelKindBusy] = useState(new Set());
     const modelGroupsInitializedRef = useRef(false);
     const [modelFavorites, setModelFavorites] = useState([]);
     const [messages, setMessages] = useState([]);
@@ -7069,10 +7071,21 @@ export default function Page() {
     }
     async function setModelKind(model, kind) {
         if (model.kind === kind) return;
-        const data = await patchModel(model, {
-            kind
-        });
-        if (data?.state) notify(`已归类为${kindLabel(kind)}`);
+        if (modelKindBusyRef.current.has(model.id)) return;
+        modelKindBusyRef.current.add(model.id);
+        setModelKindBusy(new Set(modelKindBusyRef.current));
+        try {
+            const data = await patchModel(model, {
+                kind
+            });
+            if (data?.state) {
+                const saved = data.state.models?.find((item) => item.id === model.id);
+                notify(`已归类为${kindLabel(saved?.kind || kind)}`);
+            }
+        } finally {
+            modelKindBusyRef.current.delete(model.id);
+            setModelKindBusy(new Set(modelKindBusyRef.current));
+        }
     }
     async function patchSettings(patch) {
         try {
@@ -9105,6 +9118,13 @@ export default function Page() {
         setViewerDragging(false);
         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    function scrollModelLibrary(position) {
+        if (typeof window === 'undefined') return;
+        window.scrollTo({
+            top: position === 'bottom' ? document.documentElement.scrollHeight : 0,
+            behavior: 'smooth'
+        });
+    }
     function renderModelCard(model) {
         const inUse = model.enabled && model.published;
         const favorite = modelFavorites.includes(model.id);
@@ -9158,30 +9178,42 @@ export default function Page() {
                 /*#__PURE__*/ _jsxs("div", {
                     className: "model-type-control",
                     children: [
-                        /*#__PURE__*/ _jsx("span", {
-                            children: "归类到"
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "model-type-control-label",
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: "模型分类"
+                                }),
+                                /*#__PURE__*/ _jsx("em", {
+                                    className: `model-kind-status ${model.kind}`,
+                                    children: model.kind === 'unknown' ? '待分类' : kindLabel(model.kind).replace('模型', '')
+                                })
+                            ]
                         }),
                         /*#__PURE__*/ _jsxs("div", {
-                            className: "segmented mini",
+                            className: "segmented mini model-kind-segmented",
+                            "aria-label": "模型分类",
                             children: [
                                 /*#__PURE__*/ _jsx("button", {
-                                    className: model.kind === 'chat' ? 'active' : '',
+                                    type: "button",
+                                    className: `model-kind-option chat ${model.kind === 'chat' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
                                     onClick: ()=>void setModelKind(model, 'chat'),
                                     children: "对话"
                                 }),
                                 /*#__PURE__*/ _jsx("button", {
-                                    className: model.kind === 'image' ? 'active' : '',
+                                    type: "button",
+                                    className: `model-kind-option image ${model.kind === 'image' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
                                     onClick: ()=>void setModelKind(model, 'image'),
                                     children: "图片"
                                 }),
                                 /*#__PURE__*/ _jsx("button", {
-                                    className: model.kind === 'video' ? 'active' : '',
+                                    type: "button",
+                                    className: `model-kind-option video ${model.kind === 'video' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
                                     onClick: ()=>void setModelKind(model, 'video'),
                                     children: "视频"
-                                }),
-                                model.kind !== 'unknown' && /*#__PURE__*/ _jsx("button", {
-                                    onClick: ()=>void setModelKind(model, 'unknown'),
-                                    children: "未分类"
                                 })
                             ]
                         })
@@ -13712,6 +13744,42 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                         ]
                                                     }, providerId);
                                                 })
+                                            })
+                                        ]
+                                    }),
+                                    activeProviderModels.length > 0 && /*#__PURE__*/ _jsxs("nav", {
+                                        className: "model-page-scroll-nav",
+                                        "aria-label": "模型库页面导航",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("button", {
+                                                type: "button",
+                                                onClick: ()=>scrollModelLibrary('top'),
+                                                title: "跳到顶部",
+                                                "aria-label": "跳到模型库顶部",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("b", {
+                                                        "aria-hidden": "true",
+                                                        children: "↑"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "顶部"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("button", {
+                                                type: "button",
+                                                onClick: ()=>scrollModelLibrary('bottom'),
+                                                title: "跳到底部",
+                                                "aria-label": "跳到模型库底部",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("b", {
+                                                        "aria-hidden": "true",
+                                                        children: "↓"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "底部"
+                                                    })
+                                                ]
                                             })
                                         ]
                                     })

@@ -15,6 +15,32 @@ type ImageInput = {
   resolution?: string;
 };
 
+export const jimengImageModels = [
+  {
+    id: 'jimeng-cli-image',
+    name: '即梦 · CLI 自动选择',
+    capabilities: ['generate', 'edit', 'reference'] as const,
+  },
+  {
+    id: 'seedream5.0pro',
+    name: 'Seedream 5.0 Pro',
+    capabilities: ['generate', 'edit', 'reference'] as const,
+  },
+  {
+    id: 'seedream4.7',
+    name: 'Seedream 4.7',
+    capabilities: ['generate', 'edit', 'reference'] as const,
+  },
+];
+
+export function jimengImageModelVersion(rawId?: string) {
+  const value = String(rawId || '').trim().toLowerCase();
+  if (!value || value === 'jimeng-cli-image' || value === 'auto') return undefined;
+  if (/seedream[-_. ]?5\.0[-_. ]?pro/.test(value)) return 'seedream5.0pro';
+  if (/seedream[-_. ]?4\.7/.test(value)) return 'seedream4.7';
+  return String(rawId || '').trim() || undefined;
+}
+
 function resolutionValue(value?: string) {
   const normalized = String(value || '2K').toLowerCase();
   return normalized === '1k' || normalized === '1.5k' || normalized === '4k' ? normalized : '2k';
@@ -24,8 +50,11 @@ function validRatio(value?: string) {
   return /^\d+:\d+$/.test(String(value || '')) ? String(value) : '';
 }
 
-function commandArgs(operation: 'text2image' | 'image2image', input: ImageInput, references: string[]) {
-  const args = [operation, '--prompt', input.prompt, '--resolution_type', resolutionValue(input.resolution), '--generate_num', String(Math.max(1, Math.min(10, Number(input.count || 1))))];
+export function buildJimengImageCliArgs(operation: 'text2image' | 'image2image', input: ImageInput, references: string[], rawModelId?: string) {
+  const args: string[] = [operation];
+  const modelVersion = jimengImageModelVersion(rawModelId);
+  if (modelVersion) args.push('--model_version', modelVersion);
+  args.push('--prompt', input.prompt, '--resolution_type', resolutionValue(input.resolution), '--generate_num', String(Math.max(1, Math.min(10, Number(input.count || 1)))));
   if (input.width && input.height) args.push('--width', String(Math.round(input.width)), '--height', String(Math.round(input.height)));
   else if (validRatio(input.aspectRatio)) args.push('--ratio', String(input.aspectRatio));
   for (const reference of references) args.push('--images', reference);
@@ -108,13 +137,13 @@ async function waitForResult(command: string, taskId: string, deadline: number, 
   throw new Error('即梦图片任务等待超时，请稍后重试');
 }
 
-export async function runJimengImage(provider: RuntimeProvider, input: ImageInput, references: string[] = [], signal?: AbortSignal) {
+export async function runJimengImage(provider: RuntimeProvider, rawModelId: string, input: ImageInput, references: string[] = [], signal?: AbortSignal) {
   const command = resolveJimengCliCommand(provider.jimengCliPath);
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-'));
   try {
     const files = await Promise.all(references.slice(0, 10).map((reference, index) => materialize(reference, directory, index)));
     const operation = files.length ? 'image2image' : 'text2image';
-    const result = await runJimengCli(command, [...commandArgs(operation, input, files), '--poll', '30'], 90_000, signal);
+    const result = await runJimengCli(command, [...buildJimengImageCliArgs(operation, input, files, rawModelId), '--poll', '30'], 90_000, signal);
     if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || '即梦图片生成失败');
     const parsed = imagesFrom(`${result.stdout}\n${result.stderr}`);
     if (parsed.failed) throw new Error(parsed.failed);

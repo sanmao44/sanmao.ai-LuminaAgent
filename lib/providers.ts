@@ -678,7 +678,7 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
 }
 
 export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, input, [], signal);
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, [], signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   const body: Record<string, unknown> = {
     model: rawModelId,
@@ -766,7 +766,7 @@ async function refToBlob(ref: string, index: number) {
 export async function editImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   const references = input.references.map(normalizeReference).slice(0, 16);
   if (!references.length) throw new Error('修改图片至少需要一张参考图');
-  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, input, references, signal);
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   const size = mapRatioToSize(input.aspectRatio || '自动', input.width, input.height);
   const jsonBody: Record<string, unknown> = {
