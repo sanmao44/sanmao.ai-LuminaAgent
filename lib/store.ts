@@ -8,6 +8,7 @@ import { isProviderModelLibraryEnabled } from './provider-availability';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
+  encryptedVideoApiKey?: string;
 };
 
 type StoreData = {
@@ -22,7 +23,7 @@ const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data')
 const statePath = path.join(dataDir, 'state.json');
 const keyPath = path.join(dataDir, 'master.key');
 const CURRENT_SCHEMA_VERSION = 2;
-const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } };
+const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultVideoModelId: null, defaultProviderId: null, imageStoragePath: '', videoStoragePath: '' } };
 
 let stateMutationChain: Promise<unknown> = Promise.resolve();
 let stateCorruptionError = '';
@@ -69,7 +70,10 @@ export async function encryptSecret(secret: string) {
 
 export async function decryptSecret(payload: string) {
   const [ivRaw, tagRaw, dataRaw] = payload.split('.');
-  if (!ivRaw || !tagRaw || !dataRaw) throw new Error('访问密钥的加密数据格式无效');
+  // Empty secrets are valid for local-only providers such as the Jimeng CLI.
+  // encryptSecret('') intentionally produces an authenticated empty payload,
+  // so only a missing ciphertext segment is malformed.
+  if (!ivRaw || !tagRaw || dataRaw === undefined) throw new Error('访问密钥的加密数据格式无效');
   const key = await getMasterKey();
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivRaw, 'base64url'));
   decipher.setAuthTag(Buffer.from(tagRaw, 'base64url'));
@@ -156,12 +160,15 @@ function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): Regi
   const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol);
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
   const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search');
-  const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : [])]));
-  const imageLike = inferred.kind === 'image' || capabilities.includes('generate') || capabilities.includes('upscale');
+  const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
+  const videoLike = model.kind === 'video' || capabilities.some((capability) => capability.startsWith('video-'));
+  const imageLike = !videoLike && (inferred.kind === 'image' || capabilities.includes('generate') || capabilities.includes('upscale'));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
   const nativeSearchDetection = model.nativeSearchDetection || inferred.nativeSearchDetection;
-  const normalizedKind = imageLike
-    ? 'image'
+  const normalizedKind = videoLike
+    ? 'video'
+    : imageLike
+      ? 'image'
     : model.kind === 'unknown'
       ? inferred.kind !== 'unknown' ? inferred.kind : capabilities.includes('chat') ? 'chat' : 'unknown'
       : model.kind;
@@ -174,6 +181,7 @@ export async function getPublicState(): Promise<PublicState> {
   const providers: ProviderConnection[] = await Promise.all(state.providers.map(async (p) => {
     let key = '';
     try { key = await decryptSecret(p.encryptedApiKey); } catch {}
+    const legacy65535 = /65535\.space/i.test(p.baseUrl || '') || /65535\.space/i.test(p.videoBaseUrl || '');
     return {
       id: p.id,
       name: p.name,
@@ -188,6 +196,15 @@ export async function getPublicState(): Promise<PublicState> {
       imageUpscalePath: p.imageUpscalePath || p.imageEditPath || '/images/edits',
       imageUpscaleStatusPath: p.imageUpscaleStatusPath || '',
       responsesPath: p.responsesPath || (p.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
+      videoTransport: p.videoTransport || (legacy65535 ? 'native-task' : 'auto'),
+      videoBaseUrl: p.videoBaseUrl || (legacy65535 ? 'https://task-api-1-cn.65535.space' : ''),
+      videoTaskPath: p.videoTaskPath || '/v1/tasks',
+      videoTaskStatusPath: p.videoTaskStatusPath || '/v1/tasks/{id}',
+      videoGenerationPath: p.videoGenerationPath || '/v1/videos',
+      videoModelsPath: p.videoModelsPath || '/v1/models',
+      videoPricingPath: p.videoPricingPath || '/v1/pricing',
+      jimengCliPath: p.jimengCliPath || '',
+      jimengCliPollSeconds: p.jimengCliPollSeconds,
       authHeader: p.authHeader || 'Authorization',
       authPrefix: p.authPrefix ?? 'Bearer ',
       status: p.status,
@@ -195,6 +212,7 @@ export async function getPublicState(): Promise<PublicState> {
       createdAt: p.createdAt,
       enabledModelCount: state.models.filter((m) => m.providerId === p.id && m.enabled).length,
       maskedKey: key ? maskKey(key) : '••••••••',
+      videoApiKeyMasked: p.encryptedVideoApiKey && key ? '已配置独立视频 Key' : key ? '复用主 Key' : '••••••••',
     };
   }));
   let webSearchKey = '';
@@ -235,7 +253,7 @@ export async function clearWebSearchApiConfig() {
   await mutateState((state) => { delete state.webSearch; });
 }
 
-type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; authHeader?: string; authPrefix?: string };
+type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; videoApiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; videoTransport?: ProviderConnection['videoTransport']; videoBaseUrl?: string; videoTaskPath?: string; videoTaskStatusPath?: string; videoGenerationPath?: string; videoModelsPath?: string; videoPricingPath?: string; jimengCliPath?: string; jimengCliPollSeconds?: number; authHeader?: string; authPrefix?: string };
 
 function normalizeEndpointPath(value: string | undefined, fallback: string) {
   const clean = String(value || fallback).trim();
@@ -266,9 +284,19 @@ export async function addProvider(input: ProviderInput & { apiKey: string }) {
       imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
       imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
       responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
+      videoTransport: normalizeVideoTransport(input.videoTransport),
+      videoBaseUrl: String(input.videoBaseUrl || '').replace(/\/+$/, ''),
+      videoTaskPath: normalizeEndpointPath(input.videoTaskPath, '/v1/tasks'),
+      videoTaskStatusPath: normalizeEndpointPath(input.videoTaskStatusPath, '/v1/tasks/{id}'),
+      videoGenerationPath: normalizeEndpointPath(input.videoGenerationPath, '/v1/videos'),
+      videoModelsPath: normalizeEndpointPath(input.videoModelsPath, '/v1/models'),
+      videoPricingPath: normalizeEndpointPath(input.videoPricingPath, '/v1/pricing'),
+      jimengCliPath: String(input.jimengCliPath || '').trim(),
+      jimengCliPollSeconds: Number.isFinite(Number(input.jimengCliPollSeconds)) ? Math.max(1, Math.min(30, Number(input.jimengCliPollSeconds))) : undefined,
       authHeader: String(input.authHeader || 'Authorization').trim(),
       authPrefix: input.authPrefix ?? 'Bearer ',
       encryptedApiKey: await encryptSecret(input.apiKey.trim()),
+      ...(input.videoApiKey?.trim() ? { encryptedVideoApiKey: await encryptSecret(input.videoApiKey.trim()) } : {}),
       status: 'idle',
       lastSyncedAt: '未同步',
       createdAt: new Date().toISOString(),
@@ -297,9 +325,19 @@ export async function updateProvider(id: string, input: ProviderInput) {
       imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
       imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
       responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
+      videoTransport: normalizeVideoTransport(input.videoTransport ?? current.videoTransport),
+      videoBaseUrl: String(input.videoBaseUrl || current.videoBaseUrl || '').replace(/\/+$/, ''),
+      videoTaskPath: normalizeEndpointPath(input.videoTaskPath, current.videoTaskPath || '/v1/tasks'),
+      videoTaskStatusPath: normalizeEndpointPath(input.videoTaskStatusPath, current.videoTaskStatusPath || '/v1/tasks/{id}'),
+      videoGenerationPath: normalizeEndpointPath(input.videoGenerationPath, current.videoGenerationPath || '/v1/videos'),
+      videoModelsPath: normalizeEndpointPath(input.videoModelsPath, current.videoModelsPath || '/v1/models'),
+      videoPricingPath: normalizeEndpointPath(input.videoPricingPath, current.videoPricingPath || '/v1/pricing'),
+      jimengCliPath: String(input.jimengCliPath || current.jimengCliPath || '').trim(),
+      jimengCliPollSeconds: Number.isFinite(Number(input.jimengCliPollSeconds)) ? Math.max(1, Math.min(30, Number(input.jimengCliPollSeconds))) : current.jimengCliPollSeconds,
       authHeader: String(input.authHeader || 'Authorization').trim(),
       authPrefix: input.authPrefix ?? 'Bearer ',
       encryptedApiKey: input.apiKey?.trim() ? await encryptSecret(input.apiKey.trim()) : current.encryptedApiKey,
+      ...(input.videoApiKey?.trim() ? { encryptedVideoApiKey: await encryptSecret(input.videoApiKey.trim()) } : {}),
       status: 'idle',
       lastSyncedAt: '配置已更新，待同步',
     };
@@ -313,6 +351,7 @@ export async function removeProvider(id: string) {
     state.models = state.models.filter((m) => m.providerId !== id);
     if (state.settings.agentModelId && !state.models.some((m) => m.id === state.settings.agentModelId)) state.settings.agentModelId = null;
     if (state.settings.defaultImageModelId && !state.models.some((m) => m.id === state.settings.defaultImageModelId)) state.settings.defaultImageModelId = null;
+    if (state.settings.defaultVideoModelId && !state.models.some((m) => m.id === state.settings.defaultVideoModelId)) state.settings.defaultVideoModelId = null;
     if (state.settings.defaultProviderId && !state.providers.some((provider) => provider.id === state.settings.defaultProviderId)) state.settings.defaultProviderId = null;
   });
 }
@@ -321,11 +360,15 @@ export async function getProviderWithKey(id: string) {
   const state = await readState();
   const provider = state.providers.find((p) => p.id === id);
   if (!provider) return null;
-  return { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) };
+  return { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined };
 }
 
 export async function setProviderStatus(id: string, status: ProviderStatus, lastSyncedAt?: string) {
   await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? { ...p, status, lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt } : p); });
+}
+
+function normalizeVideoTransport(value: ProviderConnection['videoTransport']) {
+  return value === 'auto' || value === 'native-task' || value === 'openai-videos' || value === 'jimeng-cli' ? value : 'auto';
 }
 
 export async function setProviderModelLibraryEnabled(id: string, enabled: boolean) {
@@ -367,6 +410,7 @@ export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 
     state.models = state.models.map((m) => {
       if (m.id !== id) return m;
       const next = { ...m, ...patch };
+      if (patch.kind === 'video' && !next.capabilities.includes('video-generate')) next.capabilities = [...next.capabilities, 'video-generate'];
       if (patch.enabled === false) next.published = false;
       if (patch.published === true) next.enabled = true;
       return next;
@@ -375,6 +419,7 @@ export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 
     if (!model) throw new Error('模型不存在');
     if (model.kind !== 'chat' && state.settings.agentModelId === id) state.settings.agentModelId = null;
     if (model.kind !== 'image' && state.settings.defaultImageModelId === id) state.settings.defaultImageModelId = null;
+    if (model.kind !== 'video' && state.settings.defaultVideoModelId === id) state.settings.defaultVideoModelId = null;
     return model;
   });
 }
@@ -400,13 +445,29 @@ export async function patchSettings(patch: Partial<AppSettings>) {
       }
       state.settings.defaultImageModelId = id ?? null;
     }
+    if ('defaultVideoModelId' in patch) {
+      const id = patch.defaultVideoModelId;
+      if (id) {
+        const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'video');
+        if (!model) throw new Error('请选择已启用、已发布的视频模型');
+      }
+      state.settings.defaultVideoModelId = id ?? null;
+    }
     if ('defaultProviderId' in patch) {
       const id = patch.defaultProviderId;
       if (id && !state.providers.some((provider) => provider.id === id)) throw new Error('请选择已存在的默认厂商');
       state.settings.defaultProviderId = id ?? null;
     }
     if ('imageStoragePath' in patch) state.settings.imageStoragePath = String(patch.imageStoragePath || '').trim();
+    if ('videoStoragePath' in patch) state.settings.videoStoragePath = String(patch.videoStoragePath || '').trim();
     return state.settings;
+  });
+}
+
+export async function enableProviderModels(providerId: string) {
+  return mutateState((state) => {
+    state.models = state.models.map((model) => model.providerId === providerId ? { ...model, enabled: true, published: true } : model);
+    return state.models.filter((model) => model.providerId === providerId);
   });
 }
 
@@ -420,7 +481,7 @@ export async function getRuntimeModel(id: string | null | undefined, kind: Model
   });
   let model = explicitId ? compatible.find((m) => m.id === explicitId) : undefined;
   if (!explicitId) {
-    const configuredDefaultId = kind === 'chat' ? state.settings.agentModelId : state.settings.defaultImageModelId;
+    const configuredDefaultId = kind === 'chat' ? state.settings.agentModelId : kind === 'video' ? state.settings.defaultVideoModelId : state.settings.defaultImageModelId;
     const providerModels = state.settings.defaultProviderId ? compatible.filter((m) => m.providerId === state.settings.defaultProviderId) : [];
     model = providerModels.find((m) => m.id === configuredDefaultId) || providerModels[0]
       || compatible.find((m) => m.id === configuredDefaultId)
@@ -429,7 +490,22 @@ export async function getRuntimeModel(id: string | null | undefined, kind: Model
   if (!model || !model.enabled || !model.published || model.kind !== kind) return null;
   const provider = state.providers.find((p) => p.id === model!.providerId);
   if (!provider) return null;
-  return { model, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey) } };
+  return { model, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
+}
+
+export async function getRuntimeVideoModel(id: string | null | undefined) {
+  const state = await readState();
+  const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const compatible = models.filter((item) => {
+    const provider = state.providers.find((candidate) => candidate.id === item.providerId);
+    return isProviderModelLibraryEnabled(provider) && item.kind === 'video' && item.enabled && item.published && (item.capabilities.includes('video-generate') || item.capabilities.some((capability) => capability.startsWith('video-')));
+  });
+  const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
+  const model = explicit || selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultVideoModelId);
+  if (!model) return null;
+  const provider = state.providers.find((item) => item.id === model.providerId);
+  if (!provider) return null;
+  return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
 }
 
 export async function getRuntimeImageModelForCapability(id: string | null | undefined, capability: ModelCapability) {

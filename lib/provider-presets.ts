@@ -1,4 +1,4 @@
-import type { ProviderConnection, ProviderPlatform, ProviderType } from './types';
+import type { ProviderConnection, ProviderPlatform, ProviderType, VideoTransport } from './types';
 
 export type ProviderPreset = {
   value: ProviderPlatform;
@@ -13,6 +13,13 @@ export type ProviderPreset = {
   noticeTone?: 'success' | 'accent';
   recommended?: boolean;
   showInPicker?: boolean;
+  videoTransport?: VideoTransport;
+  videoBaseUrl?: string;
+  videoModelsPath?: string;
+  videoPricingPath?: string;
+  videoTaskPath?: string;
+  videoTaskStatusPath?: string;
+  videoGenerationPath?: string;
 };
 
 export type ResolvedProviderConfiguration = {
@@ -28,6 +35,13 @@ export type ResolvedProviderConfiguration = {
   responsesPath: string;
   authHeader: string;
   authPrefix: string;
+  videoTransport?: VideoTransport;
+  videoBaseUrl: string;
+  videoModelsPath: string;
+  videoPricingPath: string;
+  videoTaskPath: string;
+  videoTaskStatusPath: string;
+  videoGenerationPath: string;
 };
 
 const standardCompatibility = {
@@ -37,6 +51,11 @@ const standardCompatibility = {
   imageEditPath: '/images/edits',
   imageUpscalePath: '/images/edits',
   imageUpscaleStatusPath: '',
+  videoModelsPath: '/v1/models',
+  videoPricingPath: '/v1/pricing',
+  videoTaskPath: '/v1/tasks',
+  videoTaskStatusPath: '/v1/tasks/{id}',
+  videoGenerationPath: '/v1/videos',
   responsesPath: '/responses',
   authHeader: 'Authorization',
   authPrefix: 'Bearer ',
@@ -47,7 +66,7 @@ function defaultResponsesPath(platform: ProviderPlatform) {
 }
 
 export const providerPresets: ProviderPreset[] = [
-  { value: '65535', label: '65535', short: '65535', description: 'OpenAI 兼容平台，API 地址从 65535 控制台获取', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, apiKeyUrl: 'https://my.65535.space/register?aff=44291427', recommended: true },
+  { value: '65535', label: '65535', short: '65535', description: 'OpenAI 兼容平台，支持原生异步视频任务', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, apiKeyUrl: 'https://my.65535.space/register?aff=44291427', recommended: true, videoTransport: 'native-task', videoBaseUrl: 'https://task-api-1-cn.65535.space' },
   { value: 'new-api', label: 'New API / 中转站', short: 'New API', description: '已有连接的兼容标识；新建请使用“其他兼容平台”', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, showInPicker: false },
   { value: 'one-api', label: 'One API', short: 'One API', description: '已有连接的兼容标识；新建请使用“其他兼容平台”', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, showInPicker: false },
   { value: 'openai', label: 'OpenAI', short: 'OpenAI', description: '官方 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.openai.com/api-keys' },
@@ -59,6 +78,7 @@ export const providerPresets: ProviderPreset[] = [
   { value: 'deepseek', label: 'DeepSeek', short: 'DeepSeek', description: '官方 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.deepseek.com/api_keys' },
   { value: 'google-gemini', label: 'Google Gemini', short: 'Gemini', description: '官方地址和协议由系统处理', type: 'google-gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsBaseUrl: false, apiKeyUrl: 'https://aistudio.google.com/apikey' },
   { value: 'apimart', label: 'APIMart', short: 'APIMart', description: '内置余额校验、预置模型和异步图片任务适配', type: 'openai-compatible', baseUrl: 'https://api.apimart.ai/v1', needsBaseUrl: false, apiKeyUrl: 'https://apimart.ai/console', recommended: true },
+  { value: 'jimeng-cli', label: '即梦 CLI', short: '即梦 CLI', description: '本机调用即梦图片与视频能力', type: 'openai-compatible', baseUrl: '', needsBaseUrl: false, showInPicker: false, videoTransport: 'jimeng-cli' },
   { value: 'custom', label: '其他兼容平台', short: '其他平台', description: '适用于 New API、One API 和自建中转等 OpenAI 兼容地址', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, recommended: true },
 ];
 
@@ -87,11 +107,20 @@ export function resolveProviderConfiguration(
     responsesPath?: string;
     authHeader?: string;
     authPrefix?: string;
+    videoTransport?: VideoTransport;
+    videoBaseUrl?: string;
+    videoModelsPath?: string;
+    videoPricingPath?: string;
+    videoTaskPath?: string;
+    videoTaskStatusPath?: string;
+    videoGenerationPath?: string;
   },
   existing?: Partial<ProviderConnection> | null,
 ): ResolvedProviderConfiguration {
   const preset = getProviderPreset(input.platform);
   const preserveExisting = existing?.platform === preset.value;
+  const videoTransport = input.videoTransport || (preserveExisting ? existing?.videoTransport : undefined) || preset.videoTransport || 'auto';
+  const defaultVideoTaskStatusPath = videoTransport === 'native-task' || preset.value === '65535' ? '/v1/tasks/{id}' : '/v1/videos/{id}';
   const pick = (key: keyof Omit<ResolvedProviderConfiguration, 'platform' | 'type' | 'baseUrl'>, fallback: string) => {
     const value = input[key];
     if (typeof value === 'string') return value;
@@ -110,5 +139,12 @@ export function resolveProviderConfiguration(
     responsesPath: pick('responsesPath', defaultResponsesPath(preset.value)),
     authHeader: pick('authHeader', standardCompatibility.authHeader),
     authPrefix: pick('authPrefix', standardCompatibility.authPrefix),
+    videoTransport,
+    videoBaseUrl: String(input.videoBaseUrl || (preserveExisting ? existing?.videoBaseUrl : '') || preset.videoBaseUrl || '').replace(/\/+$/, ''),
+    videoModelsPath: pick('videoModelsPath', preset.videoModelsPath || standardCompatibility.videoModelsPath),
+    videoPricingPath: pick('videoPricingPath', preset.videoPricingPath || standardCompatibility.videoPricingPath),
+    videoTaskPath: pick('videoTaskPath', preset.videoTaskPath || standardCompatibility.videoTaskPath),
+    videoTaskStatusPath: pick('videoTaskStatusPath', preset.videoTaskStatusPath || defaultVideoTaskStatusPath),
+    videoGenerationPath: pick('videoGenerationPath', preset.videoGenerationPath || standardCompatibility.videoGenerationPath),
   };
 }

@@ -13,10 +13,11 @@ export async function POST(request: Request) {
     const saved = providerId ? await getProviderWithKey(providerId) : null;
     let apiKey = String(body.apiKey || '').trim();
     if (!apiKey && saved) apiKey = saved.apiKey;
-    if (!apiKey) return Response.json({ error: '请先填写访问密钥。' }, { status: 400 });
+    const localJimeng = String(body.videoTransport || saved?.videoTransport || '') === 'jimeng-cli' || String(body.platform || saved?.platform || '') === 'jimeng-cli';
+    if (!apiKey && !localJimeng) return Response.json({ error: '请先填写访问密钥。' }, { status: 400 });
     const configuration = resolveProviderConfiguration({ ...body, platform: body.platform || saved?.platform }, saved);
-    if (!configuration.baseUrl) return Response.json({ error: '请先填写服务商提供的 API 地址。' }, { status: 400 });
-    const result = await testProviderConnection({ id: providerId || 'test', name: saved?.name || '连接测试', apiKey, ...configuration });
+    if (!configuration.baseUrl && configuration.videoTransport !== 'jimeng-cli' && configuration.platform !== 'jimeng-cli') return Response.json({ error: '请先填写服务商提供的 API 地址。' }, { status: 400 });
+    const result = await testProviderConnection({ id: providerId || 'test', name: saved?.name || '连接测试', apiKey, videoApiKey: String(body.videoApiKey || '').trim() || saved?.videoApiKey, ...configuration });
     return Response.json({ ok: true, ...result });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '连接测试失败。' }, { status: 502 });

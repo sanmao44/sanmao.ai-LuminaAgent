@@ -11,8 +11,10 @@ export async function PATCH(request: Request) {
     await patchSettings({
       ...('agentModelId' in body ? { agentModelId: body.agentModelId || null } : {}),
       ...('defaultImageModelId' in body ? { defaultImageModelId: body.defaultImageModelId || null } : {}),
+      ...('defaultVideoModelId' in body ? { defaultVideoModelId: body.defaultVideoModelId || null } : {}),
       ...('defaultProviderId' in body ? { defaultProviderId: body.defaultProviderId || null } : {}),
       ...('imageStoragePath' in body ? { imageStoragePath: String(body.imageStoragePath || '') } : {}),
+      ...('videoStoragePath' in body ? { videoStoragePath: String(body.videoStoragePath || '') } : {}),
     });
     if (body.webSearchApi && typeof body.webSearchApi === 'object') {
       const provider = (String(body.webSearchApi.provider || 'baidu-qianfan') || 'baidu-qianfan') as WebSearchApiProvider;

@@ -18,8 +18,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const configuration = resolveProviderConfiguration({ ...body, platform: body.platform || existing.platform }, existing);
     const name = String(body.name || '').trim() || existing.name || getProviderPreset(configuration.platform).short;
     const apiKey = String(body.apiKey || '').trim();
-    if (!configuration.baseUrl) return Response.json({ error: '请填写服务商提供的 API 地址。' }, { status: 400 });
-    await updateProvider(id, { name, ...configuration, ...(apiKey ? { apiKey } : {}), ...(typeof body.modelLibraryEnabled === 'boolean' ? { modelLibraryEnabled: body.modelLibraryEnabled } : {}) });
+    const localJimeng = configuration.videoTransport === 'jimeng-cli' || configuration.platform === 'jimeng-cli';
+    if (!configuration.baseUrl && !localJimeng) return Response.json({ error: '请填写服务商提供的 API 地址。' }, { status: 400 });
+    await updateProvider(id, { name, ...configuration, videoApiKey: String(body.videoApiKey || '').trim(), ...(apiKey ? { apiKey } : {}), ...(typeof body.modelLibraryEnabled === 'boolean' ? { modelLibraryEnabled: body.modelLibraryEnabled } : {}) });
     return Response.json({ ok: true, state: await getPublicState() });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '更新失败。' }, { status: 500 });

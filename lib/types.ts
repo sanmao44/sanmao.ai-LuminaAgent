@@ -1,7 +1,9 @@
 export type ProviderType = 'openai-compatible' | 'google-gemini';
-export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart';
+export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli';
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
-export type ModelKind = 'chat' | 'image' | 'unknown';
+export type ModelKind = 'chat' | 'image' | 'video' | 'unknown';
+export type MediaKind = 'image' | 'video' | 'audio';
+export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli';
 export type WebSearchApiProvider = 'anysearch' | 'baidu-qianfan';
 export type NativeSearchProtocol = 'openai-responses' | 'gemini-grounding' | 'native-chat';
 export type NativeSearchOverride = 'auto' | 'enabled' | 'disabled';
@@ -42,6 +44,16 @@ export type ProviderConnection = {
   imageUpscalePath?: string;
   imageUpscaleStatusPath?: string;
   responsesPath?: string;
+  videoTransport?: VideoTransport;
+  videoBaseUrl?: string;
+  videoTaskPath?: string;
+  videoTaskStatusPath?: string;
+  videoGenerationPath?: string;
+  videoModelsPath?: string;
+  videoPricingPath?: string;
+  videoApiKeyMasked?: string;
+  jimengCliPath?: string;
+  jimengCliPollSeconds?: number;
   authHeader?: string;
   authPrefix?: string;
   status: ProviderStatus;
@@ -61,7 +73,13 @@ export type ModelCapability =
   | 'transparent'
   | 'upscale'
   | 'fast'
-  | 'web-search';
+  | 'web-search'
+  | 'video-generate'
+  | 'video-edit'
+  | 'video-extend'
+  | 'video-first-frame'
+  | 'video-reference'
+  | 'video-audio';
 
 export type RegistryModel = {
   id: string;
@@ -81,8 +99,10 @@ export type RegistryModel = {
 export type AppSettings = {
   agentModelId: string | null;
   defaultImageModelId: string | null;
+  defaultVideoModelId?: string | null;
   defaultProviderId: string | null;
   imageStoragePath?: string;
+  videoStoragePath?: string;
   webSearchProvider?: WebSearchApiProvider | null;
   webSearchConfigured?: boolean;
   webSearchKeyMasked?: string;
@@ -99,6 +119,34 @@ export type PublicState = {
 export type GeneratedImage = {
   url: string;
   revisedPrompt?: string;
+};
+
+export type GeneratedVideo = {
+  url: string;
+  revisedPrompt?: string;
+  taskId?: string;
+  providerTaskId?: string;
+  model?: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  localPath?: string;
+};
+
+export type VideoGenerationInput = {
+  prompt: string;
+  model?: string;
+  operation?: 'generate' | 'edit' | 'extend';
+  seconds?: number;
+  aspectRatio?: string;
+  resolution?: string;
+  firstFrame?: string;
+  lastFrame?: string;
+  referenceImages?: string[];
+  referenceVideos?: string[];
+  referenceVideo?: string;
+  audios?: string[];
+  audio?: string;
 };
 
 /** A persisted reference image used by a generation request. */

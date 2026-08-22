@@ -17,9 +17,10 @@ export async function POST(request: Request) {
     const apiKey = String(body.apiKey || '').trim();
     const configuration = resolveProviderConfiguration(body);
     const name = String(body.name || '').trim() || getProviderPreset(configuration.platform).short;
-    if (!apiKey) return Response.json({ error: '访问密钥不能为空。' }, { status: 400 });
-    if (!configuration.baseUrl) return Response.json({ error: '请填写服务商提供的 API 地址。' }, { status: 400 });
-    const id = await addProvider({ name, apiKey, ...configuration });
+    const localJimeng = configuration.videoTransport === 'jimeng-cli' || configuration.platform === 'jimeng-cli';
+    if (!apiKey && !localJimeng) return Response.json({ error: '访问密钥不能为空。' }, { status: 400 });
+    if (!configuration.baseUrl && !localJimeng) return Response.json({ error: '请填写服务商提供的 API 地址。' }, { status: 400 });
+    const id = await addProvider({ name, apiKey, videoApiKey: String(body.videoApiKey || '').trim(), ...configuration });
     return Response.json({ ok: true, id, state: await getPublicState() });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '添加服务商失败。' }, { status: 500 });

@@ -1,5 +1,9 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderType } from './types';
 import { inferNativeSearch } from './native-search-detection';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 export type RuntimeProvider = {
   id: string;
@@ -15,6 +19,16 @@ export type RuntimeProvider = {
   imageUpscalePath?: string;
   imageUpscaleStatusPath?: string;
   responsesPath?: string;
+  videoTransport?: 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli';
+  videoBaseUrl?: string;
+  videoApiKey?: string;
+  videoTaskPath?: string;
+  videoTaskStatusPath?: string;
+  videoGenerationPath?: string;
+  videoModelsPath?: string;
+  videoPricingPath?: string;
+  jimengCliPath?: string;
+  jimengCliPollSeconds?: number;
   authHeader?: string;
   authPrefix?: string;
 };
@@ -27,10 +41,28 @@ export type DiscoveredModel = {
   nativeSearchDetection?: 'metadata' | 'model-id' | 'provider' | 'manual';
 };
 
+function jimengCommand(explicit?: string) {
+  const profile = process.env.USERPROFILE || os.homedir();
+  const candidates = [explicit, process.env.JIMENG_CLI_PATH, path.join(profile, 'bin', 'dreamina.exe'), path.join(profile, 'bin', 'dreamina.cmd'), path.join(profile, '.local', 'bin', 'dreamina.exe'), path.join(profile, '.local', 'bin', 'dreamina.cmd'), process.platform === 'win32' ? 'dreamina.exe' : 'dreamina', process.platform === 'win32' ? 'dreamina.cmd' : 'dreamina'].map((value) => String(value || '').trim()).filter(Boolean);
+  return candidates.find((value) => path.isAbsolute(value) ? existsSync(value) : value === explicit || value === process.env.JIMENG_CLI_PATH || /^(dreamina)(\.exe|\.cmd)?$/i.test(value)) || candidates[0] || 'dreamina';
+}
+
 function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id = ''): ModelCapability[] {
-  const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata]
+  const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata, item?.endpoints, item?.endpoint, item?.operations, item?.pricing, item?.pricing_info]
     .filter(Boolean);
-  return inferNativeSearch(id, provider?.platform, raw).detected ? ['chat', 'web-search'] : [];
+  const text = raw.length ? JSON.stringify(raw).toLowerCase() : '';
+  const capabilities: ModelCapability[] = [];
+  if (/(^|[\[\s,"':])video([_ -]|$)|\/videos?(?:[/?"'\s]|$)|text[-_ ]to[-_ ]video|image[-_ ]to[-_ ]video|video[-_ ]generation|video_generation|frames2video|multimodal2video/.test(text)) {
+    capabilities.push('video-generate');
+    if (/edit|modify|reference_video/.test(text)) capabilities.push('video-edit');
+    if (/extend|continu/.test(text)) capabilities.push('video-extend');
+    if (/first[_ -]?frame|image2video|first_frame/.test(text)) capabilities.push('video-first-frame');
+    if (/reference|multiframe|images/.test(text)) capabilities.push('video-reference');
+    if (/audio|sound/.test(text)) capabilities.push('video-audio');
+  }
+  const native = inferNativeSearch(id, provider?.platform, raw);
+  if (native.detected) capabilities.push('chat', 'web-search');
+  return capabilities;
 }
 
 function trimSlash(value: string) { return value.replace(/\/+$/, ''); }
@@ -85,8 +117,35 @@ function providerEndpoint(provider: RuntimeProvider, path: string | undefined, f
   return `${runtimeBaseUrl(provider)}${target.startsWith('/') ? target : `/${target}`}`;
 }
 
+function videoProviderEndpoint(provider: RuntimeProvider, path: string | undefined, fallback: string) {
+  const target = String(path || fallback).trim();
+  if (/^https?:\/\//i.test(target)) return target.replace(/\/+$/, '');
+  const base = trimSlash(provider.videoBaseUrl || (is65535Provider(provider) ? 'https://task-api-1-cn.65535.space' : runtimeBaseUrl(provider)));
+  const normalizedTarget = target.startsWith('/') ? target : `/${target}`;
+  const baseHasV1 = /\/v1$/i.test(base);
+  const targetHasV1 = /^\/v1(?:\/|$)/i.test(normalizedTarget);
+  return `${base}${baseHasV1 && targetHasV1 ? normalizedTarget.slice(3) || '/' : normalizedTarget}`;
+}
+
 function is65535Provider(provider: RuntimeProvider) {
-  return provider.platform === '65535' || /65535\.space/i.test(provider.baseUrl);
+  return provider.platform === '65535' || /65535\.space/i.test(provider.baseUrl || '') || /65535\.space/i.test(provider.videoBaseUrl || '');
+}
+
+export function inferVideoTransportFromMetadata(data: unknown, provider: RuntimeProvider): RuntimeProvider['videoTransport'] {
+  if (provider.videoTransport && provider.videoTransport !== 'auto') return provider.videoTransport;
+  if (is65535Provider(provider)) {
+    provider.videoTransport = 'native-task';
+    return provider.videoTransport;
+  }
+  const text = (() => {
+    try { return JSON.stringify(data).toLowerCase(); } catch { return ''; }
+  })();
+  if (/\/v1\/tasks(?:[\\/?:"'}]|$)|task_(?:path|status)|native[-_ ]?task/.test(text)) {
+    provider.videoTransport = 'native-task';
+  } else if (/\/v1\/videos?(?:[\\/?:"'}]|$)|video_(?:generation|task|status)_path/.test(text)) {
+    provider.videoTransport = 'openai-videos';
+  }
+  return provider.videoTransport || 'auto';
 }
 
 function requestIdFrom(data: any, text = '', headers?: Headers) {
@@ -242,10 +301,11 @@ async function fetchModelResponse(url: string, init: RequestInit, timeout = 2000
   }
 }
 
-function authHeaders(provider: RuntimeProvider) {
+function authHeaders(provider: RuntimeProvider, video = false) {
   const header = provider.authHeader?.trim() || 'Authorization';
   const prefix = provider.authPrefix ?? 'Bearer ';
-  return { [header]: `${prefix}${provider.apiKey}` };
+  const key = video ? provider.videoApiKey || provider.apiKey : provider.apiKey;
+  return { [header]: `${prefix}${key}` };
 }
 
 function isApimartProvider(provider: RuntimeProvider) {
@@ -297,7 +357,7 @@ export function normalizeDiscoveredModels(data: any, provider?: RuntimeProvider)
     const id = String(item?.id || item?.model || item?.model_id || item?.modelId || item?.name || item?.slug || '').trim();
     if (!id) return null;
     const name = String(item?.name || item?.display_name || item?.displayName || id).trim() || id;
-    const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata].filter(Boolean);
+    const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata, item?.endpoints, item?.endpoint, item?.operations, item?.pricing, item?.pricing_info].filter(Boolean);
     const inferred = inferNativeSearch(id, provider?.platform, raw);
     return {
       id,
@@ -336,7 +396,10 @@ export async function discoverModels(provider: RuntimeProvider) {
     const modelResponse = modelListFromResponse(response.data);
     if (modelResponse.found) {
       if (candidate.inferredBaseUrl) provider.baseUrl = candidate.inferredBaseUrl;
-      return normalizeDiscoveredModels(response.data, provider);
+      inferVideoTransportFromMetadata(response.data, provider);
+      const discovered = await mergeVideoDiscoveredModels(provider, normalizeDiscoveredModels(response.data, provider));
+      if (provider.videoTransport === 'auto' && discovered.some((item) => item.capabilities?.some((capability) => capability.startsWith('video-')))) provider.videoTransport = 'openai-videos';
+      return discovered;
     }
     lastUnrecognizedResponse = { contentType: response.contentType, text: response.text, url: candidate.url };
   }
@@ -346,7 +409,45 @@ export async function discoverModels(provider: RuntimeProvider) {
   throw new Error('服务商返回了成功响应，但其中没有识别到模型列表。支持 data、models、items、list 及其常见嵌套格式，请检查模型接口路径。');
 }
 
+async function mergeVideoDiscoveredModels(provider: RuntimeProvider, models: DiscoveredModel[]) {
+  if (provider.videoTransport === 'jimeng-cli' || !provider.videoModelsPath) return models;
+  const byId = new Map(models.map((item) => [item.id, item]));
+  const merge = (items: DiscoveredModel[]) => {
+    for (const model of items) {
+      const existing = byId.get(model.id);
+      byId.set(model.id, existing ? { ...existing, capabilities: Array.from(new Set([...(existing.capabilities || []), ...(model.capabilities || [])])) } : model);
+    }
+  };
+  const videoHeaders = authHeaders(provider, true);
+  try {
+    const data = await fetchJson(videoProviderEndpoint(provider, provider.videoModelsPath, '/v1/models'), { method: 'GET', headers: videoHeaders }, 20000);
+    inferVideoTransportFromMetadata(data, provider);
+    merge(normalizeDiscoveredModels(data, provider).filter((item) => item.capabilities?.some((capability) => capability.startsWith('video-'))));
+  } catch { /* Some vendors expose video only through pricing or the main model list. */ }
+  if (provider.videoPricingPath) {
+    try {
+      const data = await fetchJson(videoProviderEndpoint(provider, provider.videoPricingPath, '/v1/pricing'), { method: 'GET', headers: videoHeaders }, 20000);
+      inferVideoTransportFromMetadata(data, provider);
+      merge(normalizeDiscoveredModels(data, provider).filter((item) => item.capabilities?.some((capability) => capability.startsWith('video-'))));
+    } catch { /* Pricing is advisory; model discovery remains usable when it is absent. */ }
+  }
+  return [...byId.values()];
+}
+
 export async function testProviderConnection(provider: RuntimeProvider) {
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') {
+    const command = jimengCommand(provider.jimengCliPath);
+    const cli = await new Promise<{ installed: boolean; version: string; loginHint: string }>((resolve) => {
+      const child = spawn(command, ['--version'], { windowsHide: true, shell: command.toLowerCase().endsWith('.cmd') });
+      let output = '';
+      child.stdout.on('data', (chunk) => { output += String(chunk); });
+      child.stderr.on('data', (chunk) => { output += String(chunk); });
+      child.on('error', () => resolve({ installed: false, version: '', loginHint: '未检测到即梦 CLI，请按官方安装说明安装后重试' }));
+      child.on('close', (code) => resolve({ installed: code === 0, version: output.trim().split(/\r?\n/)[0] || '', loginHint: '请完成一次即梦网页授权后即可生成图片和视频' }));
+    });
+    if (!cli.installed) throw new Error(`${cli.loginHint}。官方安装命令：curl -fsSL https://jimeng.jianying.com/cli | bash`);
+    return { mode: 'cli' as const, count: 0, message: `即梦 CLI 已检测：${cli.version || '版本信息不可用'}；${cli.loginHint}` };
+  }
   if (isApimartProvider(provider)) {
     const data = await fetchJson(providerEndpoint(provider, '/balance', '/balance'), { method: 'GET', headers: authHeaders(provider) }, 20000);
     if (data?.success !== true) throw new Error(String(data?.message || 'APIMart 未确认此 API Key 有效'));
@@ -577,6 +678,7 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
 }
 
 export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, input, [], signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   const body: Record<string, unknown> = {
     model: rawModelId,
@@ -664,6 +766,7 @@ async function refToBlob(ref: string, index: number) {
 export async function editImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   const references = input.references.map(normalizeReference).slice(0, 16);
   if (!references.length) throw new Error('修改图片至少需要一张参考图');
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   const size = mapRatioToSize(input.aspectRatio || '自动', input.width, input.height);
   const jsonBody: Record<string, unknown> = {

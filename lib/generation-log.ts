@@ -2,13 +2,15 @@ import { appendFile, copyFile, mkdir, readFile, readdir, rename, rm, stat, write
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
-import type { ReferenceImageRecord } from './types';
+import type { MediaKind, ReferenceImageRecord } from './types';
 
 export type GenerationLog = {
   id: string;
   createdAt: string;
   status: 'pending' | 'success' | 'error';
-  mode: 'generate' | 'edit' | 'upscale' | 'agent';
+  mode: 'generate' | 'edit' | 'upscale' | 'agent' | 'video' | 'audio';
+  /** Stable cross-media label for future audio and other creative work. */
+  mediaKind?: MediaKind;
   source?: 'workspace' | 'agent';
   prompt: string;
   modelId?: string;
@@ -28,6 +30,13 @@ export type GenerationLog = {
   error?: string;
   angle?: Record<string, unknown>;
   references?: ReferenceImageRecord[];
+  operation?: 'generate' | 'edit' | 'extend';
+  videoUrls?: string[];
+  videoPath?: string;
+  providerTaskId?: string;
+  idempotencyKey?: string;
+  costUsd?: number;
+  errorCode?: string;
 };
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');

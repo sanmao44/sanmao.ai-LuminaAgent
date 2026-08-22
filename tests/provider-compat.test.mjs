@@ -16,6 +16,12 @@ const compiled = ts.transpileModule(bundledSource, {
   fileName: sourceUrl.pathname,
 }).outputText;
 const providers = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
+const presetCompiled = ts.transpileModule(presetSource, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  fileName: new URL('../lib/provider-presets.ts', import.meta.url).pathname,
+}).outputText;
+const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCompiled).toString('base64')}`);
 
 test('normalizes common model list response shapes', () => {
   assert.deepEqual(providers.normalizeDiscoveredModels({ data: [{ id: 'a' }, { id: 'b', name: '模型 B' }] }), [
@@ -42,6 +48,28 @@ test('detects native search protocols from model metadata', () => {
   assert.equal(models[1].nativeSearchProtocol, 'gemini-grounding');
   assert.equal(models[2].nativeSearchProtocol, 'native-chat');
   assert.equal(models[0].capabilities.includes('chat'), true);
+});
+
+test('detects video capability from endpoint and pricing metadata without using model names', () => {
+  const models = providers.normalizeDiscoveredModels({ data: [
+    { id: 'model-alpha', endpoints: ['/v1/videos'], pricing: { video_seconds: 0.08 } },
+  ] });
+  assert.equal(models[0].capabilities.includes('video-generate'), true);
+});
+
+test('detects native task transport from endpoint metadata', () => {
+  const provider = { platform: 'custom', baseUrl: 'https://video.example', videoTransport: 'auto' };
+  assert.equal(providers.inferVideoTransportFromMetadata({ endpoints: ['/v1/tasks', '/v1/tasks/{id}'] }, provider), 'native-task');
+  assert.equal(provider.videoTransport, 'native-task');
+});
+
+test('uses the OpenAI video task status default for a custom compatible provider', () => {
+  const config = presets.resolveProviderConfiguration({
+    platform: 'custom',
+    baseUrl: 'https://video.example/v1',
+    videoTransport: 'openai-videos',
+  });
+  assert.equal(config.videoTaskStatusPath, '/v1/videos/{id}');
 });
 
 test('recognizes provider-native search for standard OpenAI and Gemini model ids', () => {
