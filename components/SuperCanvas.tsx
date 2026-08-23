@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
-  addEdge, clone, createEmptyMedia, createGenerator, createGroup, createMedia, createPrompt,
+  addEdge, arrangeCanvas, clone, createEmptyMedia, createGenerator, createGroup, createMedia, createPrompt,
   edgePath, entityBounds, entityPortPoint, groupBounds, groupById, groupNodes, incomingContext, incomingReferences, mediaCardSizeForRatio,
   nodeById, nodeSize, normalizeDocument, removeEdge, removeNodes, reorderReferences, smartPrompt, snapshot, uid,
 } from '@/lib/canvas/model';
@@ -167,9 +167,11 @@ function createCanvasClipboardPayload(document: CanvasDocument, nodeIds: string[
 function CanvasEdgeVisual({ document, edge, animation, selected, onSelect, onCtrlClick }: { document: CanvasDocument; edge: CanvasEdge; animation: ConnectionAnimation; selected: boolean; onSelect: () => void; onCtrlClick: () => void }) {
   const path = edgePath(document, edge);
   const motionPathId = `canvas-edge-motion-${edge.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  const handlePointerDown = (event: ReactPointerEvent<SVGPathElement>) => { event.preventDefault(); event.stopPropagation(); if (event.button === 0 && (event.ctrlKey || event.metaKey)) onCtrlClick(); else if (event.button === 0) onSelect(); };
   return <g>
     <defs><path id={motionPathId} d={path} /></defs>
-    <path className={`canvas-edge canvas-edge-${animation} ${selected ? 'selected' : ''}`} d={path} markerEnd="url(#canvas-arrow)" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (event.button === 0 && (event.ctrlKey || event.metaKey)) onCtrlClick(); else if (event.button === 0) onSelect(); }} />
+    <path className="canvas-edge-hit" d={path} aria-hidden="true" onPointerDown={handlePointerDown} />
+    <path className={`canvas-edge canvas-edge-${animation} ${selected ? 'selected' : ''}`} d={path} markerEnd="url(#canvas-arrow)" onPointerDown={handlePointerDown} />
     {animation === 'flow' && <g className="canvas-edge-flow-light" aria-hidden="true">
       <animateMotion dur="1.85s" repeatCount="indefinite" rotate="auto"><mpath href={`#${motionPathId}`} /></animateMotion>
       <path className="canvas-edge-flow-shape" d="M -66 0 L 0 -6.5 L 66 0 L 0 6.5 Z" />
@@ -456,6 +458,21 @@ export default function SuperCanvas() {
   const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => { const point = stagePoint(clientX, clientY); const before = { x: (point.x - document.camera.x) / document.camera.zoom, y: (point.y - document.camera.y) / document.camera.zoom }; const zoom = clamp(document.camera.zoom * factor, .12, 3); updateDoc((value) => ({ ...value, camera: { x: point.x - before.x * zoom, y: point.y - before.y * zoom, zoom } })); }, [document.camera, stagePoint, updateDoc]);
   const panToWorld = useCallback((x: number, y: number) => { updateDoc((value) => ({ ...value, camera: { ...value.camera, x: stageSize.width / 2 - x * value.camera.zoom, y: stageSize.height / 2 - y * value.camera.zoom } })); }, [stageSize.height, stageSize.width, updateDoc]);
   const fitView = useCallback((ids?: string[]) => { const targets = ids?.length ? ids : docRef.current.nodes.map((node) => node.id); const rect = stageRef.current?.getBoundingClientRect(); const width = rect?.width || 1200; const height = rect?.height || 760; if (!targets.length) { updateDoc((value) => ({ ...value, camera: { x: width / 2, y: height / 2, zoom: 1 } })); return; } const bounds = targets.map((id) => entityBounds(docRef.current, id)); const minX = Math.min(...bounds.map((item) => item.x)); const minY = Math.min(...bounds.map((item) => item.y)); const maxX = Math.max(...bounds.map((item) => item.x + item.w)); const maxY = Math.max(...bounds.map((item) => item.y + item.h)); const zoom = clamp(Math.min((width - 180) / Math.max(1, maxX - minX), (height - 320) / Math.max(1, maxY - minY)), .12, 1.25); updateDoc((value) => ({ ...value, camera: { x: width / 2 - (minX + (maxX - minX) / 2) * zoom, y: (height - 120) / 2 - (minY + (maxY - minY) / 2) * zoom, zoom } })); }, [updateDoc]);
+
+  const arrangeCanvasAction = useCallback(() => {
+    const selected = selectedIds.size ? [...selectedIds] : undefined;
+    const result = arrangeCanvas(docRef.current, selected);
+    if (result.changed) {
+      setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60));
+      setRedoStack([]);
+      setDoc(result.document);
+      addLog(selected ? `已整理选中的 ${result.arrangedIds.length} 个节点` : `已整理全部 ${result.arrangedIds.length} 个节点`);
+      notify(selected ? `已整理选中的 ${result.arrangedIds.length} 个节点` : `已整理全部 ${result.arrangedIds.length} 个节点`);
+    } else {
+      notify(selected ? '选中节点无需重新整理' : '画布无需重新整理');
+    }
+    fitView(result.arrangedIds);
+  }, [addLog, fitView, notify, selectedIds, setDoc]);
 
   const undo = useCallback(() => { const previous = undoStack.at(-1); if (!previous) return; setRedoStack((items) => [...items, snapshot(docRef.current)]); setUndoStack((items) => items.slice(0, -1)); setDoc(normalizeDocument(previous)); clearSelection(); }, [clearSelection, setDoc, undoStack]);
   const redo = useCallback(() => { const next = redoStack.at(-1); if (!next) return; setUndoStack((items) => [...items, snapshot(docRef.current)]); setRedoStack((items) => items.slice(0, -1)); setDoc(normalizeDocument(next)); clearSelection(); }, [clearSelection, redoStack, setDoc]);

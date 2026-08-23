@@ -163,6 +163,183 @@ export function entityBounds(document: CanvasDocument, id: string) {
   return { x: node.x, y: node.y, w: size.w, h: size.h };
 }
 
+export type CanvasArrangeResult = {
+  document: CanvasDocument;
+  arrangedIds: string[];
+  changed: boolean;
+};
+
+type ArrangeEntity = {
+  id: string;
+  nodeIds: string[];
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+type ArrangePoint = { x: number; y: number };
+
+const ARRANGE_GAP_X = 120;
+const ARRANGE_GAP_Y = 72;
+
+function arrangeTypeRank(document: CanvasDocument, entity: ArrangeEntity) {
+  const node = nodeById(document, entity.nodeIds[0]);
+  if (!node) return 9;
+  if (node.type === 'prompt') return 0;
+  if (node.type === 'media') return 1;
+  return 2;
+}
+
+function arrangeEntityKey(document: CanvasDocument, entity: ArrangeEntity) {
+  return `${String(entity.y).padStart(16, '0')}:${arrangeTypeRank(document, entity)}:${entity.id}`;
+}
+
+function arrangeGrid(entities: ArrangeEntity[], origin: ArrangePoint) {
+  if (!entities.length) return { positions: new Map<string, ArrangePoint>(), width: 0, height: 0 };
+  const columns = Math.max(1, Math.ceil(Math.sqrt(entities.length)));
+  const rows = Math.ceil(entities.length / columns);
+  const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...entities.filter((_, index) => index % columns === column).map((entity) => entity.w)));
+  const rowHeights = Array.from({ length: rows }, (_, row) => Math.max(...entities.slice(row * columns, (row + 1) * columns).map((entity) => entity.h)));
+  const columnX = columnWidths.reduce<number[]>((result, width, index) => { result[index] = (result[index - 1] || origin.x - ARRANGE_GAP_X) + (index ? ARRANGE_GAP_X : 0) + width; return result; }, []);
+  const rowY = rowHeights.reduce<number[]>((result, height, index) => { result[index] = (result[index - 1] || origin.y - ARRANGE_GAP_Y) + (index ? ARRANGE_GAP_Y : 0) + height; return result; }, []);
+  const positions = new Map<string, ArrangePoint>();
+  entities.forEach((entity, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    positions.set(entity.id, { x: column ? columnX[column - 1] : origin.x, y: row ? rowY[row - 1] : origin.y });
+  });
+  return {
+    positions,
+    width: columnWidths.reduce((total, width) => total + width, 0) + ARRANGE_GAP_X * Math.max(0, columns - 1),
+    height: rowHeights.reduce((total, height) => total + height, 0) + ARRANGE_GAP_Y * Math.max(0, rows - 1),
+  };
+}
+
+function arrangeLayered(document: CanvasDocument, entities: ArrangeEntity[], edges: Array<{ source: string; target: string }>, origin: ArrangePoint) {
+  if (!entities.length) return { positions: new Map<string, ArrangePoint>(), width: 0, height: 0 };
+  const byId = new Map(entities.map((entity) => [entity.id, entity]));
+  const outgoing = new Map<string, string[]>();
+  const predecessors = new Map<string, string[]>();
+  const indegree = new Map<string, number>();
+  entities.forEach((entity) => { outgoing.set(entity.id, []); predecessors.set(entity.id, []); indegree.set(entity.id, 0); });
+  const edgeKeys = new Set<string>();
+  edges.forEach((edge) => {
+    if (!byId.has(edge.source) || !byId.has(edge.target) || edge.source === edge.target) return;
+    const key = `${edge.source}\u0000${edge.target}`;
+    if (edgeKeys.has(key)) return;
+    edgeKeys.add(key);
+    outgoing.get(edge.source)!.push(edge.target);
+    predecessors.get(edge.target)!.push(edge.source);
+    indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
+  });
+  const sortQueue = (left: string, right: string) => arrangeEntityKey(document, byId.get(left)!) .localeCompare(arrangeEntityKey(document, byId.get(right)!));
+  const queue = [...entities].filter((entity) => indegree.get(entity.id) === 0).map((entity) => entity.id).sort(sortQueue);
+  const levels = new Map<string, number>(entities.map((entity) => [entity.id, 0]));
+  const resolved = new Set<string>();
+  while (queue.length) {
+    const current = queue.shift()!;
+    resolved.add(current);
+    (outgoing.get(current) || []).forEach((target) => {
+      levels.set(target, Math.max(levels.get(target) || 0, (levels.get(current) || 0) + 1));
+      const nextDegree = (indegree.get(target) || 0) - 1;
+      indegree.set(target, nextDegree);
+      if (nextDegree === 0) {
+        queue.push(target);
+        queue.sort(sortQueue);
+      }
+    });
+  }
+  const cyclic = entities.filter((entity) => !resolved.has(entity.id));
+  if (cyclic.length) {
+    const cycleLevel = Math.max(0, ...[...resolved].map((id) => levels.get(id) || 0)) + (resolved.size ? 1 : 0);
+    cyclic.forEach((entity) => levels.set(entity.id, cycleLevel));
+  }
+  const layerIds = new Map<number, string[]>();
+  entities.forEach((entity) => { const level = levels.get(entity.id) || 0; layerIds.set(level, [...(layerIds.get(level) || []), entity.id]); });
+  const rowIndex = new Map<string, number>();
+  const orderedLayers = [...layerIds.keys()].sort((left, right) => left - right).map((level) => {
+    const ids = layerIds.get(level)!;
+    ids.sort((left, right) => {
+      const leftPreds = (predecessors.get(left) || []).map((id) => rowIndex.get(id)).filter((value): value is number => value !== undefined);
+      const rightPreds = (predecessors.get(right) || []).map((id) => rowIndex.get(id)).filter((value): value is number => value !== undefined);
+      const leftBarycenter = leftPreds.length ? leftPreds.reduce((total, value) => total + value, 0) / leftPreds.length : Number.POSITIVE_INFINITY;
+      const rightBarycenter = rightPreds.length ? rightPreds.reduce((total, value) => total + value, 0) / rightPreds.length : Number.POSITIVE_INFINITY;
+      if (leftBarycenter !== rightBarycenter) return leftBarycenter - rightBarycenter;
+      const leftEntity = byId.get(left)!;
+      const rightEntity = byId.get(right)!;
+      if (leftEntity.y !== rightEntity.y) return leftEntity.y - rightEntity.y;
+      return arrangeEntityKey(document, leftEntity).localeCompare(arrangeEntityKey(document, rightEntity));
+    });
+    ids.forEach((id, index) => rowIndex.set(id, index));
+    return ids;
+  });
+  const layerHeights = orderedLayers.map((ids) => ids.reduce((total, id, index) => total + byId.get(id)!.h + (index ? ARRANGE_GAP_Y : 0), 0));
+  const maxLayerHeight = Math.max(...layerHeights, 0);
+  const layerWidths = orderedLayers.map((ids) => Math.max(...ids.map((id) => byId.get(id)!.w), 0));
+  const positions = new Map<string, ArrangePoint>();
+  let x = origin.x;
+  orderedLayers.forEach((ids, layerIndex) => {
+    let y = origin.y + (maxLayerHeight - layerHeights[layerIndex]) / 2;
+    ids.forEach((id) => { positions.set(id, { x, y }); y += byId.get(id)!.h + ARRANGE_GAP_Y; });
+    x += layerWidths[layerIndex] + ARRANGE_GAP_X;
+  });
+  return { positions, width: layerWidths.reduce((total, width) => total + width, 0) + ARRANGE_GAP_X * Math.max(0, layerWidths.length - 1), height: maxLayerHeight };
+}
+
+export function arrangeCanvas(document: CanvasDocument, selectedIds?: string[]): CanvasArrangeResult {
+  const allNodes = document.nodes;
+  const selected = selectedIds?.length ? new Set(selectedIds.filter((id) => nodeById(document, id))) : new Set(allNodes.map((node) => node.id));
+  if (!selected.size) return { document: clone(document), arrangedIds: [], changed: false };
+  const fullGroupIds = new Set(document.groups.filter((group) => group.nodeIds.length >= 2 && group.nodeIds.every((id) => selected.has(id))).map((group) => group.id));
+  const coveredNodeIds = new Set<string>();
+  const entities: ArrangeEntity[] = [];
+  document.groups.forEach((group) => {
+    if (!fullGroupIds.has(group.id)) return;
+    const bounds = groupBounds(document, group.id);
+    entities.push({ id: group.id, nodeIds: group.nodeIds, ...bounds });
+    group.nodeIds.forEach((id) => coveredNodeIds.add(id));
+  });
+  allNodes.filter((node) => selected.has(node.id) && !coveredNodeIds.has(node.id)).forEach((node) => {
+    const bounds = entityBounds(document, node.id);
+    entities.push({ id: node.id, nodeIds: [node.id], ...bounds });
+  });
+  if (!entities.length) return { document: clone(document), arrangedIds: [...selected], changed: false };
+  const nodeToEntity = new Map<string, string>();
+  entities.forEach((entity) => entity.nodeIds.forEach((nodeId) => nodeToEntity.set(nodeId, entity.id)));
+  const entityIds = new Set(entities.map((entity) => entity.id));
+  const resolveEntity = (id: string) => {
+    if (entityIds.has(id)) return id;
+    const node = nodeById(document, id);
+    return node ? nodeToEntity.get(node.id) : undefined;
+  };
+  const graphEdges = document.edges.map((edge) => ({ source: resolveEntity(edge.source), target: resolveEntity(edge.target) })).filter((edge): edge is { source: string; target: string } => Boolean(edge.source && edge.target && edge.source !== edge.target));
+  const connectedIds = new Set(graphEdges.flatMap((edge) => [edge.source, edge.target]));
+  const connected = entities.filter((entity) => connectedIds.has(entity.id)).sort((left, right) => arrangeEntityKey(document, left).localeCompare(arrangeEntityKey(document, right)));
+  const isolated = entities.filter((entity) => !connectedIds.has(entity.id)).sort((left, right) => arrangeEntityKey(document, left).localeCompare(arrangeEntityKey(document, right)));
+  const minX = Math.min(...entities.map((entity) => entity.x));
+  const minY = Math.min(...entities.map((entity) => entity.y));
+  const positions = new Map<string, ArrangePoint>();
+  const isolatedLayout = arrangeGrid(isolated, { x: minX, y: minY });
+  isolatedLayout.positions.forEach((position, id) => positions.set(id, position));
+  const layeredLayout = arrangeLayered(document, connected, graphEdges, { x: minX + (isolated.length ? isolatedLayout.width + ARRANGE_GAP_X : 0), y: minY });
+  layeredLayout.positions.forEach((position, id) => positions.set(id, position));
+  const next = clone(document);
+  let changed = false;
+  next.nodes = next.nodes.map((node) => {
+    const entityId = nodeToEntity.get(node.id);
+    const target = entityId ? positions.get(entityId) : undefined;
+    if (!target) return node;
+    const entity = entities.find((item) => item.id === entityId)!;
+    const offset = { x: target.x - entity.x, y: target.y - entity.y };
+    const x = node.x + offset.x;
+    const y = node.y + offset.y;
+    if (x !== node.x || y !== node.y) changed = true;
+    return { ...node, x, y };
+  });
+  return { document: next, arrangedIds: [...selected], changed };
+}
+
 export function entityPortPoint(document: CanvasDocument, id: string, port: 'left' | 'right') {
   const bounds = entityBounds(document, id);
   return { x: bounds.x + (port === 'right' ? bounds.w : 0), y: bounds.y + bounds.h / 2 };
