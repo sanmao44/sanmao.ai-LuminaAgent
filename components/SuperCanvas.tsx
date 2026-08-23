@@ -640,6 +640,9 @@ export default function SuperCanvas() {
     nodeId: string;
     compare: boolean;
   } | null>(null);
+  const [textLightboxNodeId, setTextLightboxNodeId] = useState<string | null>(
+    null,
+  );
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("assets");
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -1244,7 +1247,7 @@ export default function SuperCanvas() {
       const target = event.target as HTMLElement;
       if (
         target.closest(
-          ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker",
+          ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
         )
       )
         return;
@@ -2475,7 +2478,11 @@ export default function SuperCanvas() {
     if (selectedSingle?.type === "prompt") {
       return {
         kind: "text" as const,
-        prompt: String(selectedSingle.data.text || ""),
+        // A completed Agent node displays its answer in `text`, but reruns
+        // must use the original request so the conversation is reproducible.
+        prompt: String(
+          selectedSingle.data.agentPrompt || selectedSingle.data.text || "",
+        ),
         params: normalizeCreationSettings(
           "text",
           selectedSingle.data.params,
@@ -2533,7 +2540,18 @@ export default function SuperCanvas() {
           ...documentValue,
           nodes: documentValue.nodes.map((node) =>
             node.id === selectedSingle.id
-              ? { ...node, data: { ...node.data, text: value } }
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    text: value,
+                    agentPrompt: value,
+                    agentResponse: undefined,
+                    role: "Agent 输入",
+                    status: "idle",
+                    statusLabel: undefined,
+                  },
+                }
               : node,
           ),
         }));
@@ -2796,6 +2814,8 @@ export default function SuperCanvas() {
           ...draft,
           data: {
             ...draft.data,
+            agentPrompt: prompt,
+            agentResponse: undefined,
             role: "Agent 输入",
             params: clone(effectiveSettings),
             status: "running",
@@ -2816,8 +2836,11 @@ export default function SuperCanvas() {
                   ...node,
                   data: {
                     ...node.data,
+                    agentPrompt: prompt,
+                    agentResponse: undefined,
+                    text: prompt,
                     params: clone(effectiveSettings),
-                    role: node.data.role || "Agent 输入",
+                    role: "Agent 输入",
                     status: "running",
                     statusLabel: "Agent 思考中",
                   },
@@ -2838,23 +2861,9 @@ export default function SuperCanvas() {
           })),
         });
         const parent = nodeById(docRef.current, inputId) || inputNode;
-        const output = createPrompt(
-          { x: parent.x + nodeSize(parent).w + 90, y: parent.y },
-          response.message || "Agent 没有返回文本。",
-        );
-        output.w = 340;
-        output.h = 230;
-        output.data = {
-          ...output.data,
-          role: "Agent 回复",
-          model:
-            response.model ||
-            resolved.model?.displayName ||
-            effectiveSettings.model,
-          params: clone(effectiveSettings),
-          status: "completed",
-          statusLabel: "Agent 已回复",
-        };
+        const responseText = response.message || "Agent 没有返回文本。";
+        const responseModel =
+          response.model || resolved.model?.displayName || effectiveSettings.model;
         const imageSettings = readSharedCreationSettings("image", runtime);
         const imageNodes = (response.images || []).map((image, index) =>
           createMedia(
@@ -2862,8 +2871,8 @@ export default function SuperCanvas() {
             image.url,
             `Agent 图片 ${index + 1}`,
             {
-              x: output.x + (index % 2) * 350,
-              y: output.y + output.h! + 70 + Math.floor(index / 2) * 280,
+              x: parent.x + nodeSize(parent).w + 90 + (index % 2) * 350,
+              y: parent.y + 240 + Math.floor(index / 2) * 280,
             },
             {
               role: "Agent 生成结果",
@@ -2873,7 +2882,7 @@ export default function SuperCanvas() {
                 prompt,
                 params: clone(imageSettings),
                 referenceIds: referenceNodes.map((node) => node.id),
-                parentNodeId: output.id,
+                parentNodeId: inputId,
                 createdAt: Date.now(),
               },
               referenceOrder: referenceNodes.map((node) => node.id),
@@ -2890,26 +2899,24 @@ export default function SuperCanvas() {
                       ...node,
                       data: {
                         ...node.data,
+                        text: responseText,
+                        agentPrompt: prompt,
+                        agentResponse: responseText,
+                        role: "Agent 回复",
+                        model: responseModel,
+                        params: clone(effectiveSettings),
                         status: "completed" as const,
-                        statusLabel: "已发送给 Agent",
+                        statusLabel: "Agent 已回复",
                       },
                     }
                   : node,
               )
-              .concat(output, imageNodes),
+              .concat(imageNodes),
           };
-          next = addEdge(
-            next,
-            inputId,
-            output.id,
-            "right",
-            "left",
-            "generated",
-          );
           imageNodes.forEach((node) => {
             next = addEdge(
               next,
-              output.id,
+              inputId,
               node.id,
               "right",
               "left",
@@ -2918,7 +2925,7 @@ export default function SuperCanvas() {
           });
           return next;
         });
-        setSelectedIds(new Set([output.id]));
+        setSelectedIds(new Set([inputId]));
         setSelectedGroupId(null);
         writeSharedCreationSettings(effectiveSettings);
         if (response.images?.length)
@@ -2929,9 +2936,9 @@ export default function SuperCanvas() {
             aspectRatio: imageSettings.aspect,
             outputSize: imageSettings.resolution,
             outputFormat: imageSettings.outputFormat,
-            parentId: output.id,
+            parentId: inputId,
           });
-        addLog(`Agent 回复完成：${response.model || effectiveSettings.model}`);
+        addLog(`Agent 回复完成：${responseModel}`);
         notify(
           response.images?.length
             ? `Agent 已回复并生成 ${response.images.length} 张图片`
@@ -3008,9 +3015,11 @@ export default function SuperCanvas() {
     generationKeysRef.current.add(activeKey);
     setGenerationKeys(new Set(generationKeysRef.current));
     try {
-      const pendingId =
-        sourceNode?.id ||
-        (source.target?.data.url ? undefined : source.target?.id);
+      // Draft and completed media cards both own their next generation. A
+      // completed card is updated in place so a simple retry does not grow a
+      // second branch node; lineage tools (mask/upscale) remain explicit
+      // branch operations below.
+      const pendingId = sourceNode?.id || source.target?.id;
       if (pendingId)
         updateDoc((value) => ({
           ...value,
@@ -3085,9 +3094,7 @@ export default function SuperCanvas() {
                 params: clone(imageParams),
                 referenceIds: linked.map((node) => node.id),
                 sourceGeneratorId: sourceNode?.id,
-                parentNodeId: source.target?.data.url
-                  ? source.target.id
-                  : undefined,
+                parentNodeId: undefined,
                 taskId,
                 createdAt: Date.now(),
               },
@@ -3095,13 +3102,13 @@ export default function SuperCanvas() {
             },
           ),
         );
-        const fillsDraft = Boolean(source.target && !source.target.data.url);
-        const selectedOutputIds = fillsDraft
+        const fillsTarget = Boolean(source.target);
+        const selectedOutputIds = fillsTarget
           ? [source.target!.id, ...outputs.slice(1).map((output) => output.id)]
           : outputs.map((output) => output.id);
         updateDoc((value) => {
           let next = value;
-          if (fillsDraft && source.target) {
+          if (fillsTarget && source.target) {
             next = {
               ...next,
               nodes: [
@@ -3111,6 +3118,9 @@ export default function SuperCanvas() {
                         ...node,
                         ...outputs[0],
                         id: node.id,
+                        x: node.x,
+                        y: node.y,
+                        groupId: node.groupId,
                         data: {
                           ...node.data,
                           ...outputs[0].data,
@@ -3130,7 +3140,7 @@ export default function SuperCanvas() {
                 output.id,
                 "right",
                 "left",
-                "lineage",
+                "variant",
               );
             });
           } else {
@@ -3199,14 +3209,14 @@ export default function SuperCanvas() {
       } else {
         const videoParams = effectiveParams as VideoCreationSettings;
         const parent = source.target || sourceNode;
-        const fillsDraft = Boolean(source.target && !source.target.data.url);
+        const fillsTarget = Boolean(source.target);
         const position = parent
           ? {
-              x: parent.x + (fillsDraft ? 0 : nodeSize(parent).w + 90),
+              x: parent.x + (fillsTarget ? 0 : nodeSize(parent).w + 90),
               y: parent.y,
             }
           : screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-        const target = fillsDraft
+        const target = fillsTarget
           ? source.target!
           : createMedia("video", "", "视频任务", position, {
               role: "生成结果",
@@ -3218,14 +3228,12 @@ export default function SuperCanvas() {
                 params: clone(videoParams),
                 referenceIds: linked.map((item) => item.id),
                 sourceGeneratorId: sourceNode?.id,
-                parentNodeId: source.target?.data.url
-                  ? source.target.id
-                  : undefined,
+                parentNodeId: undefined,
                 createdAt: Date.now(),
               },
             });
         targetId = target.id;
-        if (!fillsDraft)
+        if (!fillsTarget)
           commit((value) => ({
             ...value,
             nodes: [...value.nodes, target],
@@ -3289,9 +3297,7 @@ export default function SuperCanvas() {
                       params: clone(videoParams),
                       referenceIds: linked.map((item) => item.id),
                       sourceGeneratorId: sourceNode?.id,
-                      parentNodeId: source.target?.data.url
-                        ? source.target.id
-                        : undefined,
+                      parentNodeId: undefined,
                       taskId: task.id,
                       createdAt: Date.now(),
                     },
@@ -4266,6 +4272,7 @@ export default function SuperCanvas() {
                   onPreview={() =>
                     setLightbox({ nodeId: node.id, compare: false })
                   }
+                  onTextPreview={() => setTextLightboxNodeId(node.id)}
                   editing={editingNodeId === node.id}
                   onEdit={(value) => setEditingNodeId(value ? node.id : null)}
                   onNaturalSize={setMediaNaturalSize}
@@ -4466,7 +4473,7 @@ export default function SuperCanvas() {
                     ? `已连接 ${references.length} 个参考素材`
                     : selectedSingle?.type === "media" &&
                         selectedSingle.data.url
-                      ? "再次生成会创建右侧分支，不覆盖原结果"
+                      ? "再次生成会回写当前节点；蒙版、超分仍创建独立分支"
                       : "生成结果直接进入画布卡片"}
               </small>
             </div>
@@ -4528,7 +4535,11 @@ export default function SuperCanvas() {
                     ref={deckPromptRef}
                     value={
                       selectedSingle?.type === "prompt"
-                        ? String(selectedSingle.data.text || "")
+                        ? String(
+                            selectedSingle.data.agentPrompt ||
+                              selectedSingle.data.text ||
+                              "",
+                          )
                         : deck.prompt
                     }
                     onChange={updateDeckPrompt}
@@ -4702,6 +4713,13 @@ export default function SuperCanvas() {
               value ? { ...value, compare: !value.compare } : value,
             )
           }
+        />
+      )}
+      {textLightboxNodeId && (
+        <CanvasTextLightbox
+          node={nodeById(document, textLightboxNodeId)}
+          onClose={() => setTextLightboxNodeId(null)}
+          onNotify={notify}
         />
       )}
       {maskNode?.data.url && (
@@ -5204,6 +5222,7 @@ function CanvasNodeCard({
   onConnect,
   onSelect,
   onPreview,
+  onTextPreview,
   onNaturalSize,
   onPromptChange,
   onReorderReferences,
@@ -5222,6 +5241,7 @@ function CanvasNodeCard({
   ) => void;
   onSelect: (event: ReactPointerEvent) => void;
   onPreview: () => void;
+  onTextPreview: () => void;
   onNaturalSize: (nodeId: string, width: number, height: number) => void;
   onPromptChange: (value: string) => void;
   onReorderReferences: (
@@ -5238,6 +5258,11 @@ function CanvasNodeCard({
   const status = data.status || "idle";
   const pending = data.status === "queued" || data.status === "running";
   const failed = data.status === "failed" && !data.url;
+  const agentResponse =
+    node.type === "prompt" &&
+    (data.agentResponse || String(data.role || "").includes("回复"))
+      ? String(data.agentResponse || data.text || "")
+      : "";
   return (
     <article
       className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
@@ -5352,6 +5377,22 @@ function CanvasNodeCard({
                   ? `对话模型 · ${String(data.model)}`
                   : "可连接为对话上下文，也可作为图片或视频提示词"}
           </small>
+          {agentResponse && data.status === "completed" && (
+            <div className="canvas-agent-response-tools">
+              <span>{agentResponse.length.toLocaleString()} 字</span>
+              <button
+                type="button"
+                title="放大查看 Agent 回复"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onTextPreview();
+                }}
+              >
+                ⤢ 放大查看
+              </button>
+            </div>
+          )}
         </div>
       )}
       {node.type === "generator" && (
@@ -5903,6 +5944,82 @@ function CanvasMinimap({
         </button>
       </div>
     </aside>
+  );
+}
+
+function CanvasTextLightbox({
+  node,
+  onClose,
+  onNotify,
+}: {
+  node?: CanvasNode;
+  onClose: () => void;
+  onNotify: (message: string, kind?: "ok" | "error") => void;
+}) {
+  const text =
+    node?.type === "prompt"
+      ? String(node.data.agentResponse || node.data.text || "")
+      : "";
+
+  useEffect(() => {
+    if (!node) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [node, onClose]);
+
+  if (!node || node.type !== "prompt" || !text) return null;
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      onNotify("Agent 回复已复制");
+    } catch {
+      onNotify("复制失败，请检查浏览器剪贴板权限", "error");
+    }
+  };
+  return (
+    <div
+      className="canvas-modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Agent 回复"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="canvas-text-lightbox">
+        <header>
+          <div>
+            <b>Agent 回复</b>
+            <small>
+              {node.data.model ? `对话模型 · ${String(node.data.model)}` : "对话模型"}
+              {node.data.agentPrompt ? " · 已保留原始任务" : ""}
+            </small>
+          </div>
+          <div className="canvas-text-lightbox-actions">
+            <button type="button" onClick={() => void copyText()}>
+              复制全文
+            </button>
+            <button type="button" onClick={onClose} aria-label="关闭 Agent 回复">
+              ×
+            </button>
+          </div>
+        </header>
+        {node.data.agentPrompt && (
+          <div className="canvas-text-lightbox-prompt">
+            <span>任务</span>
+            <p>{String(node.data.agentPrompt)}</p>
+          </div>
+        )}
+        <div className="canvas-text-lightbox-body">{text}</div>
+        <footer>
+          <span>{text.length.toLocaleString()} 字</span>
+          <span>按 Esc 关闭</span>
+        </footer>
+      </div>
+    </div>
   );
 }
 

@@ -44,7 +44,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       const below = window.innerHeight - rect.bottom - gap;
       const above = rect.top - gap;
       const openAbove = below < 180 && above > below;
-      const available = Math.max(150, Math.min(maxHeight, openAbove ? above : below));
+      const available = Math.max(64, Math.min(maxHeight, openAbove ? above : below));
       setMenuStyle({
         position: 'fixed',
         visibility: 'visible',
@@ -144,7 +144,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       <span className="select-menu-trigger-copy">{selected?.label || '请选择'}</span>
       <span className="select-menu-chevron" aria-hidden="true">⌄</span>
     </button>
-    {open && typeof document !== 'undefined' && createPortal(<div ref={menuRef} id={menuId} style={menuStyle} className={`select-menu-popover ${menuClassName}`.trim()} role="listbox" aria-label={ariaLabel} tabIndex={-1} onKeyDown={handleMenuKeyDown}>
+    {open && typeof document !== 'undefined' && createPortal(<div ref={menuRef} id={menuId} style={menuStyle} className={`select-menu-popover ${menuClassName}`.trim()} role="listbox" aria-label={ariaLabel} tabIndex={-1} onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onPointerCancel={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} onKeyDown={handleMenuKeyDown}>
       {options.map((option) => <button
         type="button"
         role="option"

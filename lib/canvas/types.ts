@@ -33,6 +33,10 @@ export type CanvasNodeData = {
   progress?: number;
   jobId?: string;
   text?: string;
+  /** Original Agent request kept alongside the visible response for reruns/audit. */
+  agentPrompt?: string;
+  /** Latest Agent response rendered in the prompt card. */
+  agentResponse?: string;
   prompt?: string;
   params?: CanvasGenerationParams;
   assetId?: string;
