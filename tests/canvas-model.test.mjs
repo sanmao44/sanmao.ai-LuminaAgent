@@ -68,6 +68,34 @@ test('creates media, prompt, generator, groups, edges and reference order', () =
   assert.equal(model.edgePath(grouped, grouped.edges[0]).startsWith('M '), true);
 });
 
+test('supports group-level connections without expanding into member edges', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/group-first.png', '组内第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/group-second.png', '组内第二张', { x: 360, y: 0 });
+  const third = model.createMedia('image', '/other-first.png', '另一组第一张', { x: 0, y: 500 });
+  const fourth = model.createMedia('image', '/other-second.png', '另一组第二张', { x: 360, y: 500 });
+  const target = model.createGenerator('image', { x: 760, y: 180 });
+  let document = { ...empty, nodes: [first, second, third, fourth, target] };
+  document = model.createGroup(document, [first.id, second.id]);
+  document = model.createGroup(document, [third.id, fourth.id]);
+  const groups = document.groups;
+  const sourceGroup = groups.find((group) => group.nodeIds.includes(first.id));
+  const targetGroup = groups.find((group) => group.nodeIds.includes(third.id));
+  assert.ok(sourceGroup);
+  assert.ok(targetGroup);
+
+  document = model.addEdge(document, sourceGroup.id, target.id);
+  assert.equal(document.edges.length, 1);
+  assert.match(model.edgePath(document, document.edges[0]), /M /);
+  assert.deepEqual(model.incomingContext(document, target.id).map((node) => node.id), [first.id, second.id]);
+
+  document = model.addEdge(document, target.id, targetGroup.id);
+  document = model.addEdge(document, sourceGroup.id, targetGroup.id);
+  assert.equal(document.edges.length, 3);
+  assert.equal(model.addEdge(document, sourceGroup.id, targetGroup.id).edges.length, 3);
+  assert.equal(model.addEdge(document, sourceGroup.id, sourceGroup.id).edges.length, 3);
+});
+
 test('supports selectable canvas edge path styles', () => {
   const empty = model.normalizeDocument(null);
   const source = model.createPrompt({ x: 0, y: 0 }, '输入');

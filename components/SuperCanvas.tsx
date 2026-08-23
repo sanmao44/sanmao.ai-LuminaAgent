@@ -57,6 +57,11 @@ import {
   saveCanvasProjects,
 } from "@/lib/canvas/storage";
 import {
+  CANVAS_NODE_COLOR_KEYS,
+  canvasNodeColorKey,
+  canvasSourceColorKey,
+} from "@/lib/canvas/appearance";
+import {
   normalizeCreationSettings,
   imageModelOptions,
   readSharedCreationSettings,
@@ -180,6 +185,7 @@ type Interaction =
       start: Point;
     };
 type ConnectionPreview = {
+  sourceId: string;
   start: Point;
   end: Point;
   sourcePort: "left" | "right";
@@ -340,6 +346,12 @@ function nodeLabel(node: CanvasNode) {
   if (node.type === "generator")
     return node.data.kind === "video" ? "视频生成节点" : "图片生成节点";
   return node.data.kind === "video" ? "视频卡片" : "图片卡片";
+}
+
+function canvasConnectableId(target: EventTarget | null) {
+  return (target as HTMLElement | null)
+    ?.closest<HTMLElement>("[data-canvas-connectable-id]")
+    ?.dataset.canvasConnectableId;
 }
 
 function nodeStatus(node: CanvasNode) {
@@ -538,6 +550,7 @@ function CanvasEdgeVisual({
   onLeave: () => void;
 }) {
   const path = edgePath(document, edge, style);
+  const colorKey = canvasSourceColorKey(document, edge.source);
   const handlePointerDown = (event: ReactPointerEvent<SVGPathElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -552,7 +565,7 @@ function CanvasEdgeVisual({
     onLeave();
   };
   return (
-    <g>
+    <g className={`canvas-edge-visual node-color-${colorKey}`}>
       <path
         className="canvas-edge-hit"
         d={path}
@@ -564,7 +577,7 @@ function CanvasEdgeVisual({
       <path
         className={`canvas-edge canvas-edge-${animation} ${selected ? "selected" : ""}`}
         d={path}
-        markerEnd="url(#canvas-arrow)"
+        markerEnd={`url(#canvas-arrow-${colorKey})`}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
@@ -1437,7 +1450,12 @@ export default function SuperCanvas() {
       connectionHoverEdgeRef.current = null;
       const point = stagePoint(event.clientX, event.clientY);
       setConnectionNodePicker(null);
-      setConnection({ start: point, end: point, sourcePort: port });
+      setConnection({
+        sourceId: nodeId,
+        start: point,
+        end: point,
+        sourcePort: port,
+      });
       setConnectionTargetId(null);
       setSelectedEdgeId(null);
       interactionRef.current = {
@@ -1666,16 +1684,14 @@ export default function SuperCanvas() {
         const point = stagePoint(event.clientX, event.clientY);
         interaction.end = point;
         setConnection({
+          sourceId: interaction.sourceId,
           start: interaction.start,
           end: point,
           sourcePort: interaction.sourcePort,
         });
-        const target = (
-          window.document.elementFromPoint(
-            event.clientX,
-            event.clientY,
-          ) as HTMLElement | null
-        )?.closest<HTMLElement>("[data-canvas-node-id]")?.dataset.canvasNodeId;
+        const target = canvasConnectableId(
+          window.document.elementFromPoint(event.clientX, event.clientY),
+        );
         setConnectionTargetId(
           target && target !== interaction.sourceId ? target : null,
         );
@@ -1720,13 +1736,9 @@ export default function SuperCanvas() {
         const point = stagePoint(event.clientX, event.clientY);
         const target =
           connectionTargetId ||
-          (
-            window.document.elementFromPoint(
-              event.clientX,
-              event.clientY,
-            ) as HTMLElement | null
-          )?.closest<HTMLElement>("[data-canvas-node-id]")?.dataset
-            .canvasNodeId;
+          canvasConnectableId(
+            window.document.elementFromPoint(event.clientX, event.clientY),
+          );
         const moved =
           Math.hypot(
             point.x - interaction.start.x,
@@ -1973,7 +1985,10 @@ export default function SuperCanvas() {
   );
   const connectNewNode = useCallback(
     (kind: ConnectableNodeKind, picker: ConnectionNodePicker) => {
-      if (!nodeById(docRef.current, picker.sourceId)) {
+      if (
+        !nodeById(docRef.current, picker.sourceId) &&
+        !groupById(docRef.current, picker.sourceId)
+      ) {
         setConnectionNodePicker(null);
         return notify("源节点已不存在，请重新发起连线。", "error");
       }
@@ -3715,21 +3730,23 @@ export default function SuperCanvas() {
       h: Math.max(320, maxY - minY + 240),
     };
   }, [document]);
-  const connectionTargetNode = connectionTargetId
-    ? nodeById(document, connectionTargetId)
+  const connectionTargetEntity = connectionTargetId
+    ? nodeById(document, connectionTargetId) ||
+      groupById(document, connectionTargetId)
     : undefined;
-  const connectionTargetSize = connectionTargetNode
-    ? nodeSize(connectionTargetNode)
+  const connectionTargetBounds = connectionTargetId
+    ? entityBounds(document, connectionTargetId)
     : undefined;
   const draftConnection = connection
     ? {
+        sourceId: connection.sourceId,
         start: stageToWorld(connection.start),
         end: stageToWorld(connection.end),
         sourcePort: connection.sourcePort,
       }
     : null;
-  const connectionTargetScreen = connectionTargetNode
-    ? worldToScreen(connectionTargetNode.x, connectionTargetNode.y)
+  const connectionTargetScreen = connectionTargetBounds
+    ? worldToScreen(connectionTargetBounds.x, connectionTargetBounds.y)
     : null;
   const connectionCancelEdge = connectionCancelEdgeId
     ? document.edges.find((edge) => edge.id === connectionCancelEdgeId)
@@ -3791,7 +3808,19 @@ export default function SuperCanvas() {
           Math.max(96, stageSize.height - 248),
         ),
       }
-    : null;
+      : null;
+  const runButtonLabel = generationBusy
+    ? "处理中"
+    : mode === "text"
+      ? "运行"
+      : "生成";
+  const runButtonTitle = generationBusy
+    ? "正在处理中"
+    : mode === "text"
+      ? "运行 Agent"
+      : deck.target
+        ? "生成到此节点"
+        : "生成";
 
   if (!ready)
     return (
@@ -4018,16 +4047,22 @@ export default function SuperCanvas() {
                   <stop offset="0" stopColor="var(--accent)" />
                   <stop offset="1" stopColor="var(--accent-2)" />
                 </linearGradient>
-                <marker
-                  id="canvas-arrow"
-                  markerWidth="8"
-                  markerHeight="8"
-                  refX="7"
-                  refY="4"
-                  orient="auto"
-                >
-                  <path d="M0,0 L8,4 L0,8 z" fill="var(--accent)" />
-                </marker>
+                {CANVAS_NODE_COLOR_KEYS.map((colorKey) => (
+                  <marker
+                    key={colorKey}
+                    id={`canvas-arrow-${colorKey}`}
+                    markerWidth="8"
+                    markerHeight="8"
+                    refX="7"
+                    refY="4"
+                    orient="auto"
+                  >
+                    <path
+                      d="M0,0 L8,4 L0,8 z"
+                      fill={`var(--canvas-node-${colorKey})`}
+                    />
+                  </marker>
+                ))}
               </defs>
               {document.edges.map((edge) => (
                 <CanvasEdgeVisual
@@ -4055,7 +4090,8 @@ export default function SuperCanvas() {
               ))}
               {draftConnection && (
                 <path
-                  className="canvas-edge canvas-edge-draft"
+                  className={`canvas-edge canvas-edge-draft node-color-${canvasSourceColorKey(document, draftConnection.sourceId)}`}
+                  markerEnd={`url(#canvas-arrow-${canvasSourceColorKey(document, draftConnection.sourceId)})`}
                   d={(() => {
                     const dx =
                       Math.max(
@@ -4075,7 +4111,8 @@ export default function SuperCanvas() {
                 return (
                   <div
                     key={group.id}
-                    className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""}`}
+                    className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""} ${connection?.sourceId === group.id ? "connection-source" : ""} ${connectionTargetId === group.id ? "connection-target" : ""}`}
+                    data-canvas-connectable-id={group.id}
                     style={{
                       left: bounds.x,
                       top: bounds.y,
@@ -4084,6 +4121,24 @@ export default function SuperCanvas() {
                     }}
                     onPointerDown={(event) => startGroupDrag(event, group)}
                   >
+                    <button
+                      type="button"
+                      className="canvas-group-port left"
+                      aria-label={`从${group.name}左侧发起连线`}
+                      title={`从${group.name}左侧发起连线`}
+                      onPointerDown={(event) =>
+                        startConnection(event, group.id, "left")
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="canvas-group-port right"
+                      aria-label={`从${group.name}右侧发起连线`}
+                      title={`从${group.name}右侧发起连线`}
+                      onPointerDown={(event) =>
+                        startConnection(event, group.id, "right")
+                      }
+                    />
                     <button
                       type="button"
                       className="canvas-group-resize"
@@ -4132,16 +4187,16 @@ export default function SuperCanvas() {
             </div>
           </div>
         </div>
-        {connectionTargetNode &&
-          connectionTargetSize &&
+        {connectionTargetEntity &&
+          connectionTargetBounds &&
           connectionTargetScreen && (
             <div
               className="canvas-connection-target"
               style={{
                 left: connectionTargetScreen.x - 8,
                 top: connectionTargetScreen.y - 8,
-                width: connectionTargetSize.w * document.camera.zoom + 16,
-                height: connectionTargetSize.h * document.camera.zoom + 16,
+                width: connectionTargetBounds.w * document.camera.zoom + 16,
+                height: connectionTargetBounds.h * document.camera.zoom + 16,
               }}
             />
           )}
@@ -4431,18 +4486,12 @@ export default function SuperCanvas() {
                   className="canvas-run-button"
                   disabled={generationBusy}
                   aria-busy={generationBusy}
+                  aria-label={runButtonTitle}
+                  title={`${runButtonTitle}（Ctrl + Enter）`}
                   onClick={() => void runGeneration()}
                 >
-                  <span>✦</span>
-                  <b>
-                    {generationBusy
-                      ? "处理中…"
-                      : mode === "text"
-                        ? "运行 Agent"
-                        : deck.target
-                          ? "生成到此节点"
-                          : "生成"}
-                  </b>
+                  <span aria-hidden="true">✦</span>
+                  <b>{runButtonLabel}</b>
                   <small>Ctrl + Enter</small>
                 </button>
               </div>
@@ -5087,12 +5136,16 @@ function CanvasNodeCard({
 }) {
   const size = nodeSize(node);
   const data = node.data;
+  const colorKey = canvasNodeColorKey(node);
+  const status = data.status || "idle";
   const pending = data.status === "queued" || data.status === "running";
   const failed = data.status === "failed" && !data.url;
   return (
     <article
-      className={`canvas-node ${selected ? "selected" : ""}`}
+      className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
       data-canvas-node-id={node.id}
+      data-canvas-connectable-id={node.id}
+      data-node-color={colorKey}
       style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
       onPointerDown={(event) => onPointerDown(event, node)}
       onDoubleClick={() => {
@@ -5634,6 +5687,7 @@ function CanvasMinimap({
             const source = nodeById(document, edge.source);
             const target = nodeById(document, edge.target);
             if (!source || !target) return null;
+            const colorKey = canvasSourceColorKey(document, edge.source);
             const sourceSize = nodeSize(source);
             const targetSize = nodeSize(target);
             const start = mapPosition(
@@ -5648,6 +5702,7 @@ function CanvasMinimap({
             return (
               <path
                 key={edge.id}
+                className={`node-color-${colorKey}`}
                 d={`M ${start.x} ${start.y} C ${start.x + curve} ${start.y}, ${end.x - curve} ${end.y}, ${end.x} ${end.y}`}
               />
             );
@@ -5659,7 +5714,8 @@ function CanvasMinimap({
             key={node.id}
             aria-label={`${nodeLabel(node)}：${node.data.name || "未命名节点"}`}
             title={`${nodeLabel(node)} · 点击定位，拖动移动`}
-            className={`canvas-minimap-node type-${node.type} kind-${node.data.kind || "text"} status-${node.data.status || "idle"} ${node.groupId ? "grouped" : ""} ${selectedIds.has(node.id) ? "active" : ""}`}
+            className={`canvas-minimap-node node-color-${canvasNodeColorKey(node)} type-${node.type} kind-${node.data.kind || "text"} status-${node.data.status || "idle"} ${node.groupId ? "grouped" : ""} ${selectedIds.has(node.id) ? "active" : ""}`}
+            data-node-color={canvasNodeColorKey(node)}
             style={nodeStyle(node)}
             onPointerDown={(event) => startNodeDrag(event, node)}
           />
@@ -5700,10 +5756,15 @@ function CanvasMinimap({
         )}
       </div>
       <div className="canvas-minimap-foot">
-        <div className="canvas-minimap-legend" title="图片 · 视频 · 文本">
+        <div
+          className="canvas-minimap-legend"
+          title="图片 · 视频 · Agent · 图片生成 · 视频生成"
+        >
           <i className="image" />
           <i className="video" />
-          <i className="text" />
+          <i className="agent" />
+          <i className="image-generator" />
+          <i className="video-generator" />
         </div>
         <div className="canvas-minimap-zoom" role="group" aria-label="画布缩放">
           <button
