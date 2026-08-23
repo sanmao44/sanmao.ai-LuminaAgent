@@ -131,6 +131,29 @@ type WorkbenchTab =
   | "shortcuts"
   | "project"
   | "settings";
+type CanvasGenerationLog = {
+  id: string;
+  createdAt: string;
+  status: "pending" | "success" | "error";
+  mode: "generate" | "edit" | "upscale" | "agent" | "video" | "audio";
+  mediaKind?: "image" | "video" | "audio";
+  source?: "workspace" | "agent";
+  prompt: string;
+  modelName?: string;
+  providerName?: string;
+  resolution?: string;
+  aspectRatio?: string;
+  outputSize?: string;
+  count?: number;
+  durationMs?: number;
+  imageCount?: number;
+  imageUrls?: string[];
+  videoUrls?: string[];
+  error?: string;
+  references?: Array<{ name?: string; dataUrl?: string; url?: string }>;
+  operation?: "generate" | "edit" | "extend";
+  providerTaskId?: string;
+};
 type ConnectionAnimation = "none" | "flow" | "pulse" | "dash";
 type CanvasClipboardPayload = {
   type: "sanmao-canvas-nodes";
@@ -451,6 +474,32 @@ function nodeStatus(node: CanvasNode) {
   if (!node.data.url && node.data.status === "draft")
     return node.data.statusLabel || "选中后在下方生成";
   return node.data.role || "参考素材";
+}
+
+function generationLogKind(log: CanvasGenerationLog) {
+  if (log.mediaKind) return log.mediaKind;
+  if (log.mode === "video") return "video" as const;
+  if (log.mode === "audio") return "audio" as const;
+  return "image" as const;
+}
+
+function generationLogKindLabel(log: CanvasGenerationLog) {
+  const kind = generationLogKind(log);
+  return kind === "video" ? "视频" : kind === "audio" ? "音频" : "图片";
+}
+
+function generationLogStatusLabel(status: CanvasGenerationLog["status"]) {
+  return status === "pending" ? "进行中" : status === "success" ? "成功" : "失败";
+}
+
+function generationLogDuration(log: CanvasGenerationLog) {
+  if (log.status === "pending") return "进行中";
+  if (!log.durationMs) return "—";
+  return `${(log.durationMs / 1000).toFixed(1)}s`;
+}
+
+function generationLogOutputUrls(log: CanvasGenerationLog) {
+  return generationLogKind(log) === "video" ? log.videoUrls || [] : log.imageUrls || [];
 }
 
 function variantRequirementsFor(node: CanvasNode) {
@@ -800,6 +849,8 @@ export default function SuperCanvas() {
   const connectionCancelHideTimerRef = useRef<number | null>(null);
   const modifierHeldRef = useRef(false);
   const [logs, setLogs] = useState<string[]>([]);
+  const [generationLogs, setGenerationLogs] = useState<CanvasGenerationLog[]>([]);
+  const [generationLogsLoading, setGenerationLogsLoading] = useState(false);
   const [deckCollapsed, setDeckCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -934,6 +985,26 @@ export default function SuperCanvas() {
     (message: string) => setLogs((items) => [message, ...items].slice(0, 120)),
     [],
   );
+  const refreshGenerationLogs = useCallback(async () => {
+    setGenerationLogsLoading(true);
+    try {
+      const response = await fetch("/api/generation-logs?limit=200", {
+        cache: "no-store",
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        logs?: CanvasGenerationLog[];
+      };
+      if (!response.ok) throw new Error("任务日志读取失败");
+      setGenerationLogs(Array.isArray(body.logs) ? body.logs : []);
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : "任务日志读取失败",
+        "error",
+      );
+    } finally {
+      setGenerationLogsLoading(false);
+    }
+  }, [notify]);
   const notify = useCallback((message: string, kind: Notice["kind"] = "ok") => {
     setNotice({ message, kind });
     window.setTimeout(
@@ -6325,6 +6396,48 @@ function CanvasReferenceList({
   );
 }
 
+function progressValue(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return undefined;
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function CanvasProcessingIndicator({
+  label,
+  progress,
+  compact = false,
+}: {
+  label: string;
+  progress?: number;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`canvas-processing-indicator${compact ? " compact" : ""}`}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="canvas-processing-spinner" aria-hidden="true">
+        <i />
+      </span>
+      <span className="canvas-processing-copy">
+        <b>{label}</b>
+        {typeof progress === "number" && <small>{progress}%</small>}
+      </span>
+      <span className="canvas-processing-dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+      {typeof progress === "number" && (
+        <span className="canvas-processing-progress" aria-hidden="true">
+          <i style={{ width: `${progress}%` }} />
+        </span>
+      )}
+    </div>
+  );
+}
+
 function CanvasNodeCard({
   node,
   selected,
@@ -6382,6 +6495,28 @@ function CanvasNodeCard({
     node.type === "generator" ? variantRequirementsFor(node) : [];
   const variantStates =
     node.type === "generator" ? variantStatesFor(node) : [];
+  const processingProgress = progressValue(data.progress);
+  const generatorProgress = variantStates.length
+    ? progressValue(
+        variantStates.reduce(
+          (total, state) =>
+            total +
+            (state.status === "completed"
+              ? 100
+              : progressValue(state.progress) || 0),
+          0,
+        ) / variantStates.length,
+      )
+    : processingProgress;
+  const processingLabel =
+    data.status === "queued"
+      ? data.statusLabel || "排队等待中"
+      : data.statusLabel ||
+        (node.type === "prompt"
+          ? "Agent 正在思考"
+          : node.type === "generator"
+            ? "批量处理中"
+            : `${data.kind === "video" ? "视频" : "图片"}生成中`);
   const completedVariants = variantStates.filter(
     (state) => state.status === "completed",
   ).length;
@@ -6405,6 +6540,7 @@ function CanvasNodeCard({
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
+      aria-busy={pending}
       style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
       draggable={node.type === "media" && Boolean(data.url)}
       onDragStart={(event) => {
@@ -6429,9 +6565,11 @@ function CanvasNodeCard({
           <div className="canvas-media-stage">
             {pending ? (
               <div className="canvas-media-state pending">
-                <span>✦</span>
-                <b>{data.statusLabel || "生成中"}</b>
-                <small>{Number(data.progress || 0)}%</small>
+                <CanvasProcessingIndicator
+                  label={processingLabel}
+                  progress={processingProgress}
+                  compact
+                />
               </div>
             ) : failed ? (
               <div className="canvas-media-state failed">
@@ -6496,6 +6634,12 @@ function CanvasNodeCard({
             <span>✦</span>
             <b>{String(data.role || "Agent 节点")}</b>
           </div>
+          {pending && (
+            <CanvasProcessingIndicator
+              label={processingLabel}
+              progress={processingProgress}
+            />
+          )}
           {editing ? (
             <textarea
               value={agentInput}
@@ -6563,6 +6707,12 @@ function CanvasNodeCard({
               </small>
             </div>
           </div>
+          {pending && (
+            <CanvasProcessingIndicator
+              label={processingLabel}
+              progress={generatorProgress}
+            />
+          )}
           <div className="canvas-generator-summary">
             <span>参考素材 {referenceCount}</span>
             <span>变体 {variantRequirements.length}</span>
