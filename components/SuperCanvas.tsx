@@ -166,16 +166,13 @@ function createCanvasClipboardPayload(document: CanvasDocument, nodeIds: string[
 
 function CanvasEdgeVisual({ document, edge, animation, selected, onSelect, onCtrlClick }: { document: CanvasDocument; edge: CanvasEdge; animation: ConnectionAnimation; selected: boolean; onSelect: () => void; onCtrlClick: () => void }) {
   const path = edgePath(document, edge);
-  const motionPathId = `canvas-edge-motion-${edge.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   const handlePointerDown = (event: ReactPointerEvent<SVGPathElement>) => { event.preventDefault(); event.stopPropagation(); if (event.button === 0 && (event.ctrlKey || event.metaKey)) onCtrlClick(); else if (event.button === 0) onSelect(); };
   return <g>
-    <defs><path id={motionPathId} d={path} /></defs>
     <path className="canvas-edge-hit" d={path} aria-hidden="true" onPointerDown={handlePointerDown} />
     <path className={`canvas-edge canvas-edge-${animation} ${selected ? 'selected' : ''}`} d={path} markerEnd="url(#canvas-arrow)" onPointerDown={handlePointerDown} />
     {animation === 'flow' && <g className="canvas-edge-flow-light" aria-hidden="true">
-      <animateMotion dur="1.85s" repeatCount="indefinite" rotate="auto"><mpath href={`#${motionPathId}`} /></animateMotion>
-      <path className="canvas-edge-flow-shape" d="M -66 0 L 0 -6.5 L 66 0 L 0 6.5 Z" />
-      <path className="canvas-edge-flow-core" d="M -38 0 L 0 -3.4 L 38 0 L 0 3.4 Z" />
+      <path className="canvas-edge-flow-glow" d={path} pathLength="1000" />
+      <path className="canvas-edge-flow-core" d={path} pathLength="1000" />
     </g>}
   </g>;
 }
