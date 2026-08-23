@@ -177,7 +177,20 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
 
   const fullDialog = dialogOpen && typeof document !== 'undefined' ? createPortal(
-    <div className="model-picker-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setDialogOpen(false); }}>
+    <div
+      className="model-picker-dialog-backdrop"
+      role="presentation"
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerMove={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+      onPointerCancel={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        if (event.currentTarget === event.target) setDialogOpen(false);
+      }}
+    >
       <section className="model-picker-dialog" role="dialog" aria-modal="true" aria-label="浏览全部模型">
         <div className="model-picker-dialog-head"><div><strong>浏览全部模型</strong><small>{capabilityLabels[capability] || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" className="model-picker-dialog-close" onClick={() => setDialogOpen(false)} aria-label="关闭">×</button></div>
         <label className="model-picker-dialog-search"><span>⌕</span><input ref={dialogSearchRef} value={dialogQuery} onChange={(event) => setDialogQuery(event.target.value)} placeholder="搜索模型、原始 ID 或服务商…"/><kbd>Esc</kbd>{dialogQuery && <button type="button" aria-label="清空搜索" onClick={() => setDialogQuery('')}>×</button>}</label>
@@ -196,7 +209,19 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   ) : null;
 
   const quickPanel = quickOpen && typeof document !== 'undefined' ? createPortal(
-    <div ref={quickPanelRef} className="model-picker-panel model-picker-quick-panel" style={menuStyle} role="dialog" aria-label="快速选择模型">
+    <div
+      ref={quickPanelRef}
+      className="model-picker-panel model-picker-quick-panel"
+      style={menuStyle}
+      role="dialog"
+      aria-label="快速选择模型"
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerMove={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+      onPointerCancel={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
       <div className="model-picker-panel-head"><div><strong>快速选择</strong><small>{capabilityLabels[capability] || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" onClick={() => setQuickOpen(false)} aria-label="关闭">×</button></div>
       <div className="model-picker-scroll">
         <section className="model-picker-section model-picker-auto-section"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice()}{!quickShowsAll && quickModelGroups.recommended.map(renderModel)}</section>

@@ -2914,6 +2914,20 @@ html[data-theme="dark"] .agent-page{
   .models-page .model-group .model-cards{grid-template-columns:1fr;padding:8px}
 }
 
+/* ModelPicker is rendered through a portal inside the canvas event tree. Keep
+   wheel/touch scrolling inside its own list and never let the canvas zoom. */
+.model-picker-panel,
+.model-picker-dialog-backdrop{
+  touch-action:pan-y;
+}
+.model-picker-panel .model-picker-scroll,
+.model-picker-dialog-list,
+.model-picker-provider-filter{
+  overscroll-behavior:contain;
+  overscroll-behavior-y:contain;
+  touch-action:pan-y;
+}
+
 /* Overlay interaction boundaries: wheel/touch input stays inside the active surface. */
 :where(
   .model-picker-scroll,
