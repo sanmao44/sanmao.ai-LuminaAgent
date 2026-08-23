@@ -397,7 +397,10 @@ const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Ctrl", "C"], label: "复制选中的节点" },
   { keys: ["Ctrl", "V"], label: "粘贴节点或剪贴板图片" },
   { keys: ["Ctrl", "D"], label: "复制选中的节点" },
-  { keys: ["Delete"], label: "删除选中的节点或连线" },
+  {
+    keys: ["Delete"],
+    label: "删除选中的节点或连线；输入框内 Backspace 编辑文字",
+  },
   { keys: ["Alt"], label: "按住并拖动复制节点" },
   { keys: ["Alt", "Shift"], label: "复制节点并保留输入连线" },
   { keys: ["A"], label: "打开/关闭资产库" },
@@ -968,6 +971,9 @@ export default function SuperCanvas() {
     docRef.current = next;
     setDocument(next);
   }, []);
+  const focusCanvasStage = useCallback(() => {
+    stageRef.current?.focus({ preventScroll: true });
+  }, []);
   const updateDoc = useCallback(
     (updater: (value: CanvasDocument) => CanvasDocument) =>
       setDoc(updater(docRef.current)),
@@ -1526,6 +1532,7 @@ export default function SuperCanvas() {
         )
       )
         return;
+      focusCanvasStage();
       hideConnectionCancel();
       connectionHoverEdgeRef.current = null;
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
@@ -1581,6 +1588,7 @@ export default function SuperCanvas() {
     },
     [
       capture,
+      focusCanvasStage,
       hideConnectionCancel,
       selectNode,
       selectedGroupId,
@@ -1592,6 +1600,7 @@ export default function SuperCanvas() {
   const startGroupDrag = useCallback(
     (event: ReactPointerEvent, group: CanvasGroup) => {
       if (event.button !== 0) return;
+      focusCanvasStage();
       event.preventDefault();
       event.stopPropagation();
       hideConnectionCancel();
@@ -1633,7 +1642,7 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture, hideConnectionCancel, selectedIds, startMarquee],
+    [capture, focusCanvasStage, hideConnectionCancel, selectedIds, startMarquee],
   );
 
   const startGroupResize = useCallback(
@@ -5144,7 +5153,13 @@ export default function SuperCanvas() {
             aria-label="返回主界面"
             onClick={() => window.location.assign("/")}
           >
-            ← <span>主界面</span>
+            <span className="canvas-home-icon" aria-hidden="true">
+              <svg viewBox="0 0 18 18" focusable="false">
+                <path d="M8 4.5 4.5 8 8 11.5" />
+                <path d="M4.8 8H13.5" />
+              </svg>
+            </span>
+            <span className="canvas-home-label">主界面</span>
           </button>
           <span className="canvas-separator" />
           <button
@@ -5300,6 +5315,8 @@ export default function SuperCanvas() {
       <div
         ref={stageRef}
         className={`canvas-stage ${panActive ? "is-panning" : ""}`}
+        tabIndex={-1}
+        aria-keyshortcuts="Delete"
         onPointerDown={handleStagePointerDown}
         onPointerMove={moveInteraction}
         onPointerUp={finishInteraction}
@@ -5702,32 +5719,46 @@ export default function SuperCanvas() {
                       : "生成结果直接进入画布卡片"}
               </small>
             </div>
-            {selectedSingle?.type === "media" &&
-              selectedSingle.data.kind === "image" &&
-              selectedSingle.data.url && (
-                <div className="canvas-deck-node-tools" aria-label="图片工具">
-                  <button
-                    type="button"
-                    title="绘制蒙版；结果会创建新分支"
-                    onClick={() => setMaskNodeId(selectedSingle.id)}
-                  >
-                    <span>◌</span> 蒙版
-                  </button>
-                  <button
-                    type="button"
-                    title="超分；结果会创建新分支"
-                    disabled={generationKeys.has(
-                      `upscale:${selectedSingle.id}`,
-                    )}
-                    onClick={() => void runUpscale()}
-                  >
-                    <span>↗</span>{" "}
-                    {generationKeys.has(`upscale:${selectedSingle.id}`)
-                      ? "处理中"
-                      : "超分"}
-                  </button>
-                </div>
-              )}
+            {selectedSingle && (
+              <div className="canvas-deck-node-tools" aria-label="节点工具">
+                {selectedSingle.type === "media" &&
+                  selectedSingle.data.kind === "image" &&
+                  selectedSingle.data.url && (
+                    <div className="canvas-deck-image-tools" aria-label="图片工具">
+                      <button
+                        type="button"
+                        title="绘制蒙版；结果会创建新分支"
+                        onClick={() => setMaskNodeId(selectedSingle.id)}
+                      >
+                        <span className="canvas-deck-icon" aria-hidden="true">◌</span> 蒙版
+                      </button>
+                      <button
+                        type="button"
+                        title="超分；结果会创建新分支"
+                        disabled={generationKeys.has(
+                          `upscale:${selectedSingle.id}`,
+                        )}
+                        onClick={() => void runUpscale()}
+                      >
+                        <span className="canvas-deck-icon" aria-hidden="true">↗</span>{" "}
+                        {generationKeys.has(`upscale:${selectedSingle.id}`)
+                          ? "处理中"
+                          : "超分"}
+                      </button>
+                    </div>
+                  )}
+                <button
+                  type="button"
+                  className="canvas-deck-delete"
+                  aria-label="删除当前节点"
+                  title="删除当前节点（可用撤销恢复）"
+                  onClick={deleteSelection}
+                >
+                  <span className="canvas-deck-icon" aria-hidden="true">⌫</span>
+                  <span className="canvas-deck-delete-label">删除节点</span>
+                </button>
+              </div>
+            )}
             <button
               type="button"
               className="canvas-deck-collapse"
@@ -6525,22 +6556,35 @@ function CanvasAssetDrawer({
                     {asset.prompt && <p>{asset.prompt}</p>}
                   </div>
                   <div className="canvas-global-asset-actions">
-                    <button type="button" onClick={() => onAdd(asset)}>
+                    <button
+                      type="button"
+                      title="添加到画布"
+                      aria-label={`将${asset.name}添加到画布`}
+                      onClick={() => onAdd(asset)}
+                    >
                       ＋ 画布
                     </button>
                     <button
                       type="button"
                       disabled={!canReference}
+                      title={canReference ? "作为当前节点或对象组的参考素材" : "请先选中一个节点或对象组，再添加参考"}
+                      aria-label={canReference ? `将${asset.name}作为参考素材` : "添加参考前请先选择节点或对象组"}
                       onClick={() => onReference(asset)}
                     >
                       ⌁ 参考
                     </button>
-                    <button type="button" onClick={() => onLocate(asset)}>
+                    <button
+                      type="button"
+                      title="在画布中定位此资产"
+                      aria-label={`在画布中定位${asset.name}`}
+                      onClick={() => onLocate(asset)}
+                    >
                       ⌖
                     </button>
                     <button
                       type="button"
                       title="添加标签"
+                      aria-label={`给${asset.name}添加标签`}
                       onClick={async () => {
                         const tag = window.prompt("输入标签");
                         if (!tag?.trim()) return;
@@ -6551,16 +6595,20 @@ function CanvasAssetDrawer({
                     <button
                       type="button"
                       className={asset.favorite ? "active" : ""}
+                      title={asset.favorite ? "取消收藏" : "加入收藏"}
+                      aria-label={asset.favorite ? `取消收藏${asset.name}` : `收藏${asset.name}`}
                       onClick={() => void toggleFavorite(asset)}
                     >
                       ★
                     </button>
-                    <a href={asset.url} download={asset.name} title="下载">
+                    <a href={asset.url} download={asset.name} title="下载资产" aria-label={`下载${asset.name}`}>
                       ↓
                     </a>
                     <button
                       type="button"
                       className="danger"
+                      title="从资产中心隐藏（不会删除画布节点或磁盘文件）"
+                      aria-label={`隐藏${asset.name}`}
                       onClick={() => void hideAsset(asset)}
                     >
                       ×
