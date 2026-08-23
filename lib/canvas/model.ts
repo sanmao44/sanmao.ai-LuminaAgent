@@ -991,6 +991,56 @@ export function moveNodesToGroup(
   };
 }
 
+export function detachNodesFromGroups(
+  document: CanvasDocument,
+  ids: string[],
+): CanvasDocument {
+  const validIds = new Set(
+    [...new Set(ids)].filter((id) => nodeById(document, id)),
+  );
+  if (!validIds.size) return document;
+
+  const affectedGroups = document.groups.filter((group) =>
+    group.nodeIds.some((id) => validIds.has(id)),
+  );
+  if (!affectedGroups.length) return document;
+
+  const groups = document.groups
+    .map((group) => ({
+      ...group,
+      nodeIds: group.nodeIds.filter((id) => !validIds.has(id)),
+    }))
+    .filter((group) => group.nodeIds.length >= 2);
+  const survivingMembership = new Map(
+    groups.flatMap((group) =>
+      group.nodeIds.map((id) => [id, group.id] as const),
+    ),
+  );
+  const removedGroupIds = new Set(
+    document.groups
+      .filter((group) => !groups.some((item) => item.id === group.id))
+      .map((group) => group.id),
+  );
+
+  return {
+    ...document,
+    nodes: document.nodes.map((node) =>
+      validIds.has(node.id)
+        ? { ...node, groupId: undefined }
+        : node.groupId && survivingMembership.has(node.id)
+          ? { ...node, groupId: survivingMembership.get(node.id) }
+          : node.groupId && removedGroupIds.has(node.groupId)
+            ? { ...node, groupId: undefined }
+            : node,
+    ),
+    groups,
+    edges: document.edges.filter(
+      (edge) =>
+        !removedGroupIds.has(edge.source) && !removedGroupIds.has(edge.target),
+    ),
+  };
+}
+
 export function ungroup(document: CanvasDocument, groupId: string) {
   const group = groupById(document, groupId);
   if (!group) return document;

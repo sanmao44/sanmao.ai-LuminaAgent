@@ -22,6 +22,7 @@ import {
   createGroup,
   createMedia,
   createPrompt,
+  detachNodesFromGroups,
   edgePath,
   entityBounds,
   entityPortPoint,
@@ -161,6 +162,8 @@ type Interaction =
       nodeIds: string[];
       positions: Record<string, Point>;
       changed: boolean;
+      originGroupId?: string;
+      originGroupBounds?: { x: number; y: number; w: number; h: number };
       copyOnMove?: boolean;
       preserveInputConnections?: boolean;
     }
@@ -1390,8 +1393,12 @@ export default function SuperCanvas() {
               : selectedIds.has(node.id) && selectedIds.size > 1
                 ? [...selectedIds]
                 : [node.id];
+      const dragIds = node.groupId ? [node.id] : ids;
+      const originGroupBounds = node.groupId
+        ? groupBounds(docRef.current, node.groupId)
+        : undefined;
       const positions = Object.fromEntries(
-        ids.map((id) => {
+        dragIds.map((id) => {
           const item = nodeById(docRef.current, id);
           return [id, { x: item?.x || 0, y: item?.y || 0 }];
         }),
@@ -1401,9 +1408,11 @@ export default function SuperCanvas() {
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
-        nodeIds: ids,
+        nodeIds: dragIds,
         positions,
         changed: false,
+        originGroupId: node.groupId,
+        originGroupBounds,
         copyOnMove: event.altKey,
         preserveInputConnections: event.altKey && event.shiftKey,
       };
@@ -1632,6 +1641,8 @@ export default function SuperCanvas() {
             interaction.nodeIds = copies.ids;
             interaction.positions = positions;
             interaction.copyOnMove = false;
+            interaction.originGroupId = undefined;
+            interaction.originGroupBounds = undefined;
             setDoc({
               ...docRef.current,
               nodes: [...docRef.current.nodes, ...copies.nodes],
@@ -1872,31 +1883,77 @@ export default function SuperCanvas() {
               bottom: -Infinity,
             },
           );
-          const target = groupAtPoint(docRef.current, {
+          const dropPoint = {
             x: Number.isFinite(bounds.left)
               ? (bounds.left + bounds.right) / 2
               : point.x,
             y: Number.isFinite(bounds.top)
               ? (bounds.top + bounds.bottom) / 2
               : point.y,
-          });
-          if (target) {
-            const before = docRef.current;
-            const after = moveNodesToGroup(
+          };
+          const target = groupAtPoint(docRef.current, dropPoint);
+          const originBounds = interaction.originGroupBounds;
+          const insideOrigin = Boolean(
+            interaction.originGroupId &&
+              originBounds &&
+              dropPoint.x >= originBounds.x &&
+              dropPoint.x <= originBounds.x + originBounds.w &&
+              dropPoint.y >= originBounds.y &&
+              dropPoint.y <= originBounds.y + originBounds.h,
+          );
+          const dropTarget = interaction.originGroupId
+            ? insideOrigin
+              ? groupById(docRef.current, interaction.originGroupId)
+              : [...docRef.current.groups]
+                  .reverse()
+                  .find((group) => {
+                    if (group.id === interaction.originGroupId) return false;
+                    const targetBounds = groupBounds(docRef.current, group.id);
+                    return (
+                      dropPoint.x >= targetBounds.x &&
+                      dropPoint.x <= targetBounds.x + targetBounds.w &&
+                      dropPoint.y >= targetBounds.y &&
+                      dropPoint.y <= targetBounds.y + targetBounds.h
+                    );
+                  })
+            : target;
+          const before = docRef.current;
+          let after = before;
+          if (interaction.originGroupId && !insideOrigin) {
+            after = dropTarget
+              ? moveNodesToGroup(
+                  before,
+                  draggedNodes.map((node) => node.id),
+                  dropTarget.id,
+                )
+              : detachNodesFromGroups(
+                  before,
+                  draggedNodes.map((node) => node.id),
+                );
+          } else if (!interaction.originGroupId && dropTarget) {
+            after = moveNodesToGroup(
               before,
               draggedNodes.map((node) => node.id),
-              target.id,
+              dropTarget.id,
             );
-            if (after !== before) {
-              updateDoc(() => after);
-              setSelectedGroupId(target.id);
+          }
+          if (after !== before) {
+            updateDoc(() => after);
+            if (dropTarget) {
+              setSelectedGroupId(dropTarget.id);
               setSelectedIds(
                 new Set(
-                  after.groups.find((group) => group.id === target.id)
+                  after.groups.find((group) => group.id === dropTarget.id)
                     ?.nodeIds || [],
                 ),
               );
-              notify(`已将 ${draggedNodes.length} 个节点加入${target.name}`);
+              addLog(`已将 ${draggedNodes.length} 个节点加入${dropTarget.name}`);
+              notify(`已将 ${draggedNodes.length} 个节点加入${dropTarget.name}`);
+            } else {
+              setSelectedGroupId(null);
+              setSelectedIds(new Set(draggedNodes.map((node) => node.id)));
+              addLog("已将节点移出对象组");
+              notify("已将节点移出对象组");
             }
           }
         }
@@ -4936,8 +4993,14 @@ export default function SuperCanvas() {
         onPointerCancel={cancelPointerInteraction}
         onLostPointerCapture={cancelPointerInteraction}
         onDragStart={(event) => {
-          if (!(event.target as HTMLElement).closest(".canvas-reference-item"))
-            event.preventDefault();
+          const target = event.target as HTMLElement;
+          const isReferenceDrag = Boolean(
+            target.closest(".canvas-reference-item"),
+          );
+          const isCanvasNodeDrag =
+            event.dataTransfer.types.includes("application/x-sanmao-canvas-node") ||
+            Boolean(target.closest(".canvas-node"));
+          if (!isReferenceDrag && !isCanvasNodeDrag) event.preventDefault();
         }}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes("application/x-sanmao-asset")) {
@@ -5726,6 +5789,7 @@ function CanvasAssetDrawer({
   const [collection, setCollection] = useState("all");
   const [newCollectionName, setNewCollectionName] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [nodeDropActive, setNodeDropActive] = useState(false);
 
   useEffect(() => { void listAssetCollections().then(setCollections); }, []);
 
@@ -5739,8 +5803,51 @@ function CanvasAssetDrawer({
 
   useEffect(reload, [refresh, reload]);
 
+  useEffect(() => {
+    const clearNodeDropState = () => setNodeDropActive(false);
+    window.addEventListener("dragend", clearNodeDropState);
+    window.addEventListener("drop", clearNodeDropState);
+    return () => {
+      window.removeEventListener("dragend", clearNodeDropState);
+      window.removeEventListener("drop", clearNodeDropState);
+    };
+  }, []);
+
   const setDrawerCollapsed = (value: boolean) => {
     setCollapsed(value);
+  };
+
+  const handleCanvasNodeDragOver = (event: ReactDragEvent<HTMLElement>) => {
+    if (
+      !event.dataTransfer.types.includes("application/x-sanmao-canvas-node")
+    )
+      return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setNodeDropActive(true);
+  };
+
+  const handleCanvasNodeDragLeave = (event: ReactDragEvent<HTMLElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+      setNodeDropActive(false);
+  };
+
+  const handleCanvasNodeDrop = (event: ReactDragEvent<HTMLElement>) => {
+    if (
+      !event.dataTransfer.types.includes("application/x-sanmao-canvas-node")
+    )
+      return;
+    event.preventDefault();
+    const nodeId = event.dataTransfer.getData(
+      "application/x-sanmao-canvas-node",
+    );
+    setNodeDropActive(false);
+    if (!nodeId) return;
+    if (collection === "all") {
+      onNotify("请先选择一个具体资产集合，再放入节点。", "error");
+      return;
+    }
+    onAddNodeToCollection(nodeId, collection);
   };
 
   const filtered = useMemo(() => {
@@ -5826,7 +5933,13 @@ function CanvasAssetDrawer({
 
   return (
     <>
-      <aside className="canvas-asset-drawer" aria-label="全局资产中心">
+      <aside
+        className={`canvas-asset-drawer ${nodeDropActive ? "is-node-drop-target" : ""}`}
+        aria-label="全局资产中心"
+        onDragOver={handleCanvasNodeDragOver}
+        onDragLeave={handleCanvasNodeDragLeave}
+        onDrop={handleCanvasNodeDrop}
+      >
         <header>
           <div>
             <span>◈</span>
@@ -5924,12 +6037,7 @@ function CanvasAssetDrawer({
             要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。
           </div>
         )}
-        <div className="canvas-asset-collection-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
-          event.preventDefault();
-          const nodeId = event.dataTransfer.getData("application/x-sanmao-canvas-node");
-          if (nodeId && collection !== "all") onAddNodeToCollection(nodeId, collection);
-          else if (nodeId) onNotify("请先选择一个具体资产集合，再放入节点。", "error");
-        }}>
+        <div className="canvas-asset-collection-dropzone">
           <span>⌘</span><b>把画布节点拖到这里归类</b><small>节点不会从画布移除</small>
         </div>
         <div className="canvas-asset-new-collection"><input value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="新建集合…" onKeyDown={(event) => { if (event.key === "Enter") void createCollection(); }} /><button type="button" onClick={() => void createCollection()}>＋</button></div>

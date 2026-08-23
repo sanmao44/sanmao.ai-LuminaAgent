@@ -346,6 +346,49 @@ test('moving a node out of a two-node group removes the invalid old group cleanl
   assert.equal(next.nodes.find((node) => node.id === first.id)?.groupId, targetGroup.id);
 });
 
+test('detaches a node from a group without changing its position or own edges', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/detach-first.png', '第一张', { x: 40, y: 80 });
+  const second = model.createMedia('image', '/detach-second.png', '第二张', { x: 420, y: 80 });
+  const third = model.createMedia('image', '/detach-third.png', '第三张', { x: 800, y: 80 });
+  const target = model.createGenerator('image', { x: 1200, y: 80 });
+  let document = { ...empty, nodes: [first, second, third, target] };
+  document = model.createGroup(document, [first.id, second.id, third.id], '待脱组');
+  const group = document.groups[0];
+  document = model.addEdge(document, first.id, target.id);
+  document = model.addEdge(document, group.id, target.id);
+  const before = { x: first.x, y: first.y };
+
+  const next = model.detachNodesFromGroups(document, [first.id]);
+
+  assert.deepEqual({ x: next.nodes.find((node) => node.id === first.id).x, y: next.nodes.find((node) => node.id === first.id).y }, before);
+  assert.equal(next.nodes.find((node) => node.id === first.id)?.groupId, undefined);
+  assert.equal(next.nodes.find((node) => node.id === second.id)?.groupId, group.id);
+  assert.equal(next.nodes.find((node) => node.id === third.id)?.groupId, group.id);
+  assert.equal(next.edges.some((edge) => edge.source === first.id && edge.target === target.id), true);
+  assert.equal(next.edges.some((edge) => edge.source === group.id), true);
+});
+
+test('detaching one node from a two-node group removes the empty group and group edges', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/detach-two-first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/detach-two-second.png', '第二张', { x: 360, y: 0 });
+  const target = model.createGenerator('image', { x: 720, y: 0 });
+  let document = { ...empty, nodes: [first, second, target] };
+  document = model.createGroup(document, [first.id, second.id], '两节点组');
+  const group = document.groups[0];
+  document = model.addEdge(document, first.id, target.id);
+  document = model.addEdge(document, group.id, target.id);
+
+  const next = model.detachNodesFromGroups(document, [first.id]);
+
+  assert.equal(next.groups.some((item) => item.id === group.id), false);
+  assert.equal(next.nodes.find((node) => node.id === first.id)?.groupId, undefined);
+  assert.equal(next.nodes.find((node) => node.id === second.id)?.groupId, undefined);
+  assert.equal(next.edges.some((edge) => edge.source === first.id && edge.target === target.id), true);
+  assert.equal(next.edges.some((edge) => edge.source === group.id || edge.target === group.id), false);
+});
+
 function arrangeDocument(nodes, edges = [], groups = []) {
   const empty = model.normalizeDocument(null);
   return model.normalizeDocument({ ...empty, nodes, edges, groups });
