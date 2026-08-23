@@ -125,7 +125,7 @@ export function mergeAssetRecords(records: AssetRecord[], index: AssetIndexItem[
       ...record,
       id: existing?.id || record.id,
       name: overlay?.name || record.name || existing?.name || '未命名资产',
-      favorite: Boolean(overlay?.favorite || record.favorite || existing?.favorite),
+      favorite: overlay ? Boolean(overlay.favorite) : Boolean(record.favorite || existing?.favorite),
       projectIds: [...new Set([...(existing?.projectIds || []), ...record.projectIds, ...(overlay?.projectIds || [])])],
       galleryId: record.galleryId || existing?.galleryId,
       taskId: record.taskId || existing?.taskId,

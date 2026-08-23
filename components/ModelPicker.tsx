@@ -39,9 +39,10 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   const [dialogProviderId, setDialogProviderId] = useState('all');
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
-  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({ visibility: 'hidden' });
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const quickPanelRef = useRef<HTMLDivElement | null>(null);
   const dialogSearchRef = useRef<HTMLInputElement | null>(null);
 
   useBodyScrollLock(quickOpen || dialogOpen);
@@ -82,13 +83,14 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     const rect = trigger.getBoundingClientRect();
     const margin = 12;
     const gap = 8;
-    const width = Math.min(430, Math.max(300, window.innerWidth * 0.3));
-    const availableAbove = Math.max(240, rect.top - margin - gap);
-    const availableBelow = Math.max(240, window.innerHeight - rect.bottom - margin - gap);
-    const openAbove = availableAbove >= availableBelow;
-    const maxHeight = Math.min(420, openAbove ? availableAbove : availableBelow);
-    const left = Math.min(Math.max(margin, rect.left), Math.max(margin, window.innerWidth - width - margin));
-    setMenuStyle({ left, width, maxHeight, top: openAbove ? 'auto' : rect.bottom + gap, bottom: openAbove ? window.innerHeight - rect.top + gap : 'auto' });
+    const width = Math.min(window.innerWidth - margin * 2, Math.max(340, Math.min(420, rect.width)));
+    const availableAbove = Math.max(0, rect.top - margin - gap);
+    const availableBelow = Math.max(0, window.innerHeight - rect.bottom - margin - gap);
+    const openAbove = availableAbove >= 260 || availableAbove > availableBelow;
+    const maxHeight = Math.max(180, Math.min(420, openAbove ? availableAbove : availableBelow));
+    const preferredLeft = rect.left + width > window.innerWidth - margin ? rect.right - width : rect.left;
+    const left = Math.min(Math.max(margin, preferredLeft), Math.max(margin, window.innerWidth - width - margin));
+    setMenuStyle({ visibility: 'visible', left: Math.round(left), width: Math.round(width), maxHeight: Math.round(maxHeight), top: openAbove ? 'auto' : Math.round(rect.bottom + gap), bottom: openAbove ? Math.round(window.innerHeight - rect.top + gap) : 'auto' });
   }
 
   useEffect(() => {
@@ -113,7 +115,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     const closeQuickOnOutsidePointer = (event: PointerEvent) => {
       if (!quickOpen) return;
       const target = event.target as Node | null;
-      if (target && !rootRef.current?.contains(target)) setQuickOpen(false);
+      if (target && !rootRef.current?.contains(target) && !quickPanelRef.current?.contains(target)) setQuickOpen(false);
     };
     document.addEventListener('keydown', closeOnEscape);
     document.addEventListener('pointerdown', closeQuickOnOutsidePointer);
@@ -126,7 +128,11 @@ export default function ModelPicker({ models, value, onChange, capability, defau
 
   function toggleQuick() {
     setDialogOpen(false);
-    setQuickOpen((current) => !current);
+    setQuickOpen((current) => {
+      const next = !current;
+      if (next) setMenuStyle({ visibility: 'hidden' });
+      return next;
+    });
   }
 
   function openDialog(initialQuery = '') {
@@ -189,11 +195,8 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     document.body,
   ) : null;
 
-  return <div className={`model-picker ${className}`} ref={rootRef}>
-    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} data-tooltip={triggerLabel}>
-      <span className="model-picker-trigger-copy"><b>{value === 'auto' ? '自动' : '手动'}</b><span>{triggerLabel.replace(/^(自动|手动) · /, '')}</span></span><i aria-hidden="true"/>
-    </button>
-    {quickOpen && <div className="model-picker-panel model-picker-quick-panel" style={menuStyle} role="dialog" aria-label="快速选择模型">
+  const quickPanel = quickOpen && typeof document !== 'undefined' ? createPortal(
+    <div ref={quickPanelRef} className="model-picker-panel model-picker-quick-panel" style={menuStyle} role="dialog" aria-label="快速选择模型">
       <div className="model-picker-panel-head"><div><strong>快速选择</strong><small>{capabilityLabels[capability] || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" onClick={() => setQuickOpen(false)} aria-label="关闭">×</button></div>
       <div className="model-picker-scroll">
         <section className="model-picker-section model-picker-auto-section"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice()}{!quickShowsAll && quickModelGroups.recommended.map(renderModel)}</section>
@@ -203,7 +206,15 @@ export default function ModelPicker({ models, value, onChange, capability, defau
         </>}
         <button type="button" className="model-picker-browse-all" onClick={() => openDialog()}>浏览全部 {availableModels.length} 个模型 <span>→</span></button>
       </div>
-    </div>}
+    </div>,
+    document.body,
+  ) : null;
+
+  return <div className={`model-picker ${className}`} ref={rootRef}>
+    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} data-tooltip={triggerLabel}>
+      <span className="model-picker-trigger-copy"><b>{value === 'auto' ? '自动' : '手动'}</b><span>{triggerLabel.replace(/^(自动|手动) · /, '')}</span></span><i aria-hidden="true"/>
+    </button>
+    {quickPanel}
     {fullDialog}
   </div>;
 }

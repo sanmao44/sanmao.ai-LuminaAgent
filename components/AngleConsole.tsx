@@ -817,9 +817,9 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
     const host = hostRef.current;
     if (!runtime || !host || typeof window === 'undefined') return;
     const styles = getComputedStyle(host.closest('.angle-page') || document.documentElement);
-    const panel = cssColor(styles.getPropertyValue('--angle-stage-deep'), theme === 'dark' ? '#101b2a' : '#e5ebf4');
-    const accent = cssColor(styles.getPropertyValue('--angle-accent'), theme === 'dark' ? '#84adff' : '#586ff5');
-    const muted = cssColor(styles.getPropertyValue('--angle-muted'), theme === 'dark' ? '#7f91ad' : '#6f7d93');
+    const panel = cssColor(styles.getPropertyValue('--angle-stage-deep'), theme === 'dark' ? '#161820' : '#efeff8');
+    const accent = cssColor(styles.getPropertyValue('--angle-accent'), theme === 'dark' ? '#8c7fff' : '#6357e8');
+    const muted = cssColor(styles.getPropertyValue('--angle-muted'), theme === 'dark' ? '#858e9e' : '#8b92a2');
     const floorMaterial = runtime.floor.material as THREE.MeshStandardMaterial;
     const gridMaterials = Array.isArray(runtime.grid.material) ? runtime.grid.material : [runtime.grid.material];
     const helperMaterial = runtime.helper.material as THREE.LineBasicMaterial;

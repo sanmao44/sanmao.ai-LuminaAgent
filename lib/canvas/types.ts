@@ -3,19 +3,12 @@ import type { PublicState } from '../types';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator';
 export type CanvasMediaKind = 'image' | 'video';
+export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 
 export type CanvasImageGenerationParams = ImageCreationSettings;
 export type CanvasVideoGenerationParams = VideoCreationSettings;
-/** Canvas nodes still accept the legacy optional fields while using shared creation settings. */
-export type CanvasGenerationParams = CreationSettings & {
-  count?: number;
-  quality?: string;
-  duration?: number;
-  audio?: boolean;
-  operation?: VideoCreationSettings['operation'];
-  inputMode?: VideoCreationSettings['inputMode'];
-};
+export type CanvasGenerationParams = CreationSettings;
 
 export type CanvasGenerationMeta = {
   kind: CanvasMediaKind;

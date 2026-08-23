@@ -16,8 +16,14 @@ async function loadTypeScript(path) {
     const settingsCompiled = ts.transpileModule(settingsSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: settingsUrl.pathname,
-    }).outputText.replace("import { getLastModelCall } from '../model-preferences';", 'const getLastModelCall = () => null;');
-    const modelCompiled = compiled.replace("import { normalizeCreationSettings } from '../creation/settings';", '');
+    }).outputText.replace(
+      /^\s*import\s+\{\s*getLastModelCall\s*\}\s+from\s+["']\.\.\/model-preferences["'];?\s*$/m,
+      'const getLastModelCall = () => null;',
+    );
+    const modelCompiled = compiled.replace(
+      /^\s*import\s+\{\s*normalizeCreationSettings\s*\}\s+from\s+["']\.\.\/creation\/settings["'];?\s*$/m,
+      '',
+    );
     return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
@@ -60,6 +66,21 @@ test('creates media, prompt, generator, groups, edges and reference order', () =
   assert.equal(grouped.groups.length, 1);
   assert.equal(grouped.groups[0].nodeIds.length, 2);
   assert.equal(model.edgePath(grouped, grouped.edges[0]).startsWith('M '), true);
+});
+
+test('supports selectable canvas edge path styles', () => {
+  const empty = model.normalizeDocument(null);
+  const source = model.createPrompt({ x: 0, y: 0 }, '输入');
+  const target = model.createGenerator('image', { x: 480, y: 160 });
+  const document = model.addEdge(
+    { ...empty, nodes: [source, target] },
+    source.id,
+    target.id,
+  );
+  const edge = document.edges[0];
+  assert.match(model.edgePath(document, edge, 'curve'), / C /);
+  assert.match(model.edgePath(document, edge, 'straight'), / L /);
+  assert.match(model.edgePath(document, edge, 'orthogonal'), / H .* V .* H /);
 });
 
 test('expands a grouped source into all media references and preserves manual order', () => {
