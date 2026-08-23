@@ -296,21 +296,31 @@ const CONNECTION_NODE_OPTIONS: Array<{
   },
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
+  { keys: ["Esc"], label: "关闭弹层、取消当前操作并清除选择" },
   { keys: ["左键"], label: "拖动空白区域平移画布" },
   { keys: ["中键"], label: "拖动平移画布" },
   { keys: ["Space", "左键"], label: "按住 Space 拖动空白区域平移画布" },
+  { keys: ["Shift", "左键"], label: "追加选择节点或对象组" },
   { keys: ["Ctrl"], label: "按住并拖拽框选节点" },
   { keys: ["Ctrl"], label: "悬停连线显示取消按钮" },
   { keys: ["Ctrl", "G"], label: "合并选中的图片为组" },
   { keys: ["Ctrl", "Shift", "G"], label: "释放选中的分组" },
   { keys: ["Ctrl", "Z"], label: "撤销上一步操作" },
   { keys: ["Ctrl", "Shift", "Z"], label: "恢复上一步操作" },
+  { keys: ["Ctrl", "Y"], label: "恢复上一步操作（备用）" },
   { keys: ["Ctrl", "C"], label: "复制选中的节点" },
   { keys: ["Ctrl", "V"], label: "粘贴节点或剪贴板图片" },
+  { keys: ["Ctrl", "D"], label: "复制选中的节点" },
+  { keys: ["Delete"], label: "删除选中的节点或连线" },
   { keys: ["Alt"], label: "按住并拖动复制节点" },
   { keys: ["Alt", "Shift"], label: "复制节点并保留输入连线" },
   { keys: ["A"], label: "打开/关闭资产库" },
-  { keys: ["Z"], label: "缩小画布视图" },
+  { keys: ["Z"], label: "适应画布视图" },
+  { keys: ["F"], label: "适应画布视图（备用）" },
+  { keys: ["0"], label: "适应画布视图（备用）" },
+  { keys: ["+", "="], label: "放大画布视图" },
+  { keys: ["-"], label: "缩小画布视图" },
+  { keys: ["Ctrl", "Enter"], label: "执行当前生成任务" },
 ];
 
 function clamp(value: number, min: number, max: number) {
@@ -4354,6 +4364,8 @@ export default function SuperCanvas() {
       const modifier = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       const isKeyZ = key === "z" || event.code === "KeyZ";
+      const isKeyA = key === "a" || event.code === "KeyA";
+      const isKeyF = key === "f" || event.code === "KeyF";
       const stageRect = stageRef.current?.getBoundingClientRect();
       const centerX =
         (stageRect?.left || 0) + (stageRect?.width || stageSize.width) / 2;
@@ -4389,12 +4401,12 @@ export default function SuperCanvas() {
       } else if (!event.repeat && modifier && key === "g") {
         event.preventDefault();
         event.shiftKey ? breakGroup() : makeGroup();
-      } else if (!event.repeat && !modifier && key === "a") {
+      } else if (!event.repeat && !modifier && isKeyA) {
         event.preventDefault();
         toggleAssetLibrary();
-      } else if (!event.repeat && !modifier && key === "z") {
+      } else if (!event.repeat && !modifier && isKeyZ) {
         event.preventDefault();
-        zoomAt(centerX, centerY, 0.84);
+        fitView();
       } else if (
         !event.repeat &&
         (event.key === "Delete" || event.key === "Backspace")
@@ -4404,7 +4416,7 @@ export default function SuperCanvas() {
           commit((value) => removeEdge(value, selectedEdgeId));
           setSelectedEdgeId(null);
         } else deleteSelection();
-      } else if (!event.repeat && !modifier && key === "f") {
+      } else if (!event.repeat && !modifier && isKeyF) {
         event.preventDefault();
         fitView();
       } else if (!event.repeat && (event.key === "+" || event.key === "=")) {
@@ -4784,6 +4796,8 @@ export default function SuperCanvas() {
           <button
             type="button"
             className={`canvas-soft-button canvas-panel-button ${activePanel === "assets" ? "active" : ""}`}
+            aria-keyshortcuts="A"
+            title="资产库（A）"
             onClick={toggleAssetLibrary}
           >
             ◈ 资产
