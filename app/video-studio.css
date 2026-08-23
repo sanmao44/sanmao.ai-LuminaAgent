@@ -15,6 +15,13 @@
 @media(prefers-reduced-motion:reduce){.select-menu-trigger,.select-menu-option,.select-menu-chevron{transition:none}}
 .select-menu-popover{outline:none;z-index:300}
 
+/* Optional icons keep compact, canvas-specific SelectMenu options easy to scan. */
+.select-menu-trigger-icon,.select-menu-option-icon{display:grid;place-items:center;flex:none;color:var(--accent-text)}
+.select-menu-trigger-icon{width:17px;height:17px;padding:2px;border-radius:5px;background:var(--accent-soft)}
+.select-menu-trigger-icon svg,.select-menu-option-icon svg{display:block}
+.select-menu-option-icon{width:24px;height:24px;border-radius:7px;background:color-mix(in srgb,var(--accent-soft) 82%,var(--panel))}
+.select-menu-option-copy{flex:1}
+
 /* Video studio is viewport-locked: the form body and task list own their
    scroll positions, while the primary action remains visible. */
 html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height:0;overflow:hidden}

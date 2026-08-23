@@ -6,6 +6,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Keyb
 export type SelectMenuOption<T extends string | number> = {
   value: T;
   label: ReactNode;
+  icon?: ReactNode;
   description?: ReactNode;
   disabled?: boolean;
 };
@@ -141,6 +142,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       onClick={toggleMenu}
       onKeyDown={handleTriggerKeyDown}
     >
+      {selected?.icon && <span className="select-menu-trigger-icon" aria-hidden="true">{selected.icon}</span>}
       <span className="select-menu-trigger-copy">{selected?.label || '请选择'}</span>
       <span className="select-menu-chevron" aria-hidden="true">⌄</span>
     </button>
@@ -155,6 +157,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
         onMouseEnter={() => !option.disabled && setHighlighted(option.value)}
         onClick={() => choose(option.value)}
       >
+        {option.icon && <span className="select-menu-option-icon" aria-hidden="true">{option.icon}</span>}
         <span className="select-menu-option-copy"><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
         {option.value === value && <span className="select-menu-check" aria-hidden="true">✓</span>}
       </button>)}

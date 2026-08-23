@@ -531,15 +531,20 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     reorderReferences(index, index + direction);
   }
 
+  function referenceMentionRange(value: string, cursor: number) {
+    const safeCursor = Number.isFinite(cursor) ? Math.max(0, Math.min(cursor, value.length)) : value.length;
+    const match = /@[^\s@]*$/.exec(value.slice(0, safeCursor));
+    return match ? { start: safeCursor - match[0].length, end: safeCursor } : null;
+  }
+
   function referenceMentionIsOpen(value: string, cursor: number) {
-    return supportsReferenceMentions && inputMode === 'reference' && referenceImages.length > 0 && /@\d*$/.test(value.slice(0, cursor));
+    return supportsReferenceMentions && inputMode === 'reference' && referenceImages.length > 0 && Boolean(referenceMentionRange(value, cursor));
   }
 
   function insertReferenceMention(index: number) {
     const cursor = promptRef.current?.selectionStart ?? prompt.length;
-    const before = prompt.slice(0, cursor);
-    const match = before.match(/@\d*$/);
-    const start = match ? cursor - match[0].length : cursor;
+    const range = referenceMentionRange(prompt, cursor);
+    const start = range?.start ?? cursor;
     const mention = `@${index + 1} `;
     const next = `${prompt.slice(0, start)}${mention}${prompt.slice(cursor)}`;
     setPrompt(next);
@@ -607,7 +612,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (referenceImages.length > modelLimits.maxReferenceImages) return onNotify(`当前模型最多接收 ${modelLimits.maxReferenceImages} 张参考图`);
     if (audios.length > modelLimits.maxAudios) return onNotify(`当前模型最多接收 ${modelLimits.maxAudios} 段音频`);
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
-    const mentionedReferenceNumbers = Array.from(prompt.matchAll(/(?:^|\s)@(\d+)\b/g), (match) => Number(match[1]));
+    const mentionedReferenceNumbers = Array.from(prompt.matchAll(/@(\d+)\b/g), (match) => Number(match[1]));
     if (mentionedReferenceNumbers.length && inputMode !== 'reference') return onNotify('提示词中有 @引用，请先切换到参考图输入方式');
     if (mentionedReferenceNumbers.some((number) => number < 1 || number > referenceImages.length)) return onNotify('提示词中的 @编号没有对应参考图，请重新选择或清除引用');
     setBusy(true);
@@ -688,7 +693,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
           <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className="video-live-pill">● 已连接</span></div>
-          <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图'} maxLength={6000} />{supportsReferenceMentions && referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
+      <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onClick={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyUp={(event) => { if (event.key !== 'Escape') setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart)); }} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图'} maxLength={6000} />{supportsReferenceMentions && referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
         <div className={`video-fields-two ${operationOptions.length === 1 ? 'video-fields-single' : ''}`}>
           <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
           <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>

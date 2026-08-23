@@ -140,6 +140,67 @@ type CanvasClipboardPayload = {
   groups: CanvasGroup[];
 };
 type MentionState = { start: number; end: number; query: string } | null;
+
+function ConnectionOptionIcon({
+  kind,
+  value,
+}: {
+  kind: "style" | "animation";
+  value: ConnectionStyle | ConnectionAnimation;
+}) {
+  const isStyle = kind === "style";
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {isStyle ? (
+        value === "curve" ? (
+          <path d="M3 16c4 0 4-8 9-8s5 8 9 8" />
+        ) : value === "straight" ? (
+          <path d="m4 18 16-12" />
+        ) : (
+          <path d="M3 17h7V7h11" />
+        )
+      ) : value === "none" ? (
+        <>
+          <path d="M3 12h18" />
+          <path d="M9 8v8M15 8v8" />
+        </>
+      ) : value === "flow" ? (
+        <>
+          <path d="M3 12h18" />
+          <path d="m13 8 4 4-4 4" />
+        </>
+      ) : value === "pulse" ? (
+        <path d="M3 12h4l2-5 4 10 2-5h6" />
+      ) : (
+        <path d="M3 12h3m4 0h3m4 0h3" />
+      )}
+    </svg>
+  );
+}
+
+function mentionStateForValue(value: string, cursor: number): MentionState {
+  const safeCursor = Number.isFinite(cursor)
+    ? Math.max(0, Math.min(cursor, value.length))
+    : value.length;
+  const match = /@([^\s@]*)$/.exec(value.slice(0, safeCursor));
+  if (!match) return null;
+  return {
+    start: safeCursor - match[0].length,
+    end: safeCursor,
+    query: match[1],
+  };
+}
+
 type CanvasDrafts = {
   image: { prompt: string; params: ImageCreationSettings };
   video: { prompt: string; params: VideoCreationSettings };
@@ -4637,14 +4698,7 @@ export default function SuperCanvas() {
       const value = event.target.value;
       const cursor = event.target.selectionStart;
       updatePrompt(value);
-      const before = value.slice(0, cursor);
-      const match = before.match(/(?:^|[\s])@([^\s@]*)$/);
-      if (!match) return setMentionState(null);
-      setMentionState({
-        start: cursor - match[0].length + (match[0].startsWith(" ") ? 1 : 0),
-        end: cursor,
-        query: match[1],
-      });
+      setMentionState(mentionStateForValue(value, cursor));
     },
     [updatePrompt],
   );
@@ -5455,6 +5509,23 @@ export default function SuperCanvas() {
                         : deck.prompt
                     }
                     onChange={updateDeckPrompt}
+                    onClick={(event) =>
+                      setMentionState(
+                        mentionStateForValue(
+                          event.currentTarget.value,
+                          event.currentTarget.selectionStart,
+                        ),
+                      )
+                    }
+                    onKeyUp={(event) => {
+                      if (event.key === "Escape") return;
+                      setMentionState(
+                        mentionStateForValue(
+                          event.currentTarget.value,
+                          event.currentTarget.selectionStart,
+                        ),
+                      );
+                    }}
                     onKeyDown={(event) => {
                       if (event.key === "Escape") setMentionState(null);
                       if (
@@ -7315,8 +7386,8 @@ function CanvasActivityDrawer({ logs, onClose, onNotify }: { logs: string[]; onC
 function CanvasSettingsPanel({ theme, connectionAnimation, connectionStyle, onTheme, onConnectionAnimationChange, onConnectionStyleChange, onClose }: { theme: CanvasTheme; connectionAnimation: ConnectionAnimation; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionAnimationChange: (value: ConnectionAnimation) => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onClose: () => void }) {
   return <CanvasPanelShell title="画布设置" subtitle="只保留画布与应用配置" onClose={onClose} className="canvas-settings-panel">
     <section className="canvas-setting-section"><b>界面主题</b><button type="button" onClick={onTheme}>{theme === "light" ? "☾ 切换深色" : "☀ 切换浅色"}</button></section>
-    <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label }))} /></section>
-    <section className="canvas-setting-section"><b>连线动画</b><SelectMenu value={connectionAnimation} onChange={onConnectionAnimationChange} ariaLabel="连线动画" options={CONNECTION_ANIMATION_OPTIONS.map((item) => ({ value: item.value, label: item.label }))} /></section>
+    <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon kind="style" value={item.value} /> }))} /></section>
+    <section className="canvas-setting-section"><b>连线动画</b><SelectMenu value={connectionAnimation} onChange={onConnectionAnimationChange} ariaLabel="连线动画" options={CONNECTION_ANIMATION_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon kind="animation" value={item.value} /> }))} /></section>
     <p className="canvas-setting-note">快捷键、资产和活动日志均已移出设置，分别从顶部入口打开。</p>
   </CanvasPanelShell>;
 }
@@ -7579,7 +7650,7 @@ function CanvasWorkbench({
                         className="canvas-settings-option-icon"
                         data-animation={option.value}
                       >
-                        ⌁
+                        <ConnectionOptionIcon kind="animation" value={option.value} />
                       </span>
                       <span>
                         <b>{option.label}</b>
@@ -7612,11 +7683,7 @@ function CanvasWorkbench({
                         className="canvas-settings-option-icon"
                         data-style={option.value}
                       >
-                        {option.value === "curve"
-                          ? "⌒"
-                          : option.value === "straight"
-                            ? "╱"
-                            : "┘"}
+                        <ConnectionOptionIcon kind="style" value={option.value} />
                       </span>
                       <span>
                         <b>{option.label}</b>

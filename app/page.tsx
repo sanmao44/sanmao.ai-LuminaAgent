@@ -6786,15 +6786,19 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '读取文本文件失败');
         }
     }
+    function referenceMentionRange(value, cursor) {
+        const safeCursor = Number.isFinite(cursor) ? Math.max(0, Math.min(cursor, value.length)) : value.length;
+        const match = /@[^\s@]*$/.exec(value.slice(0, safeCursor));
+        return match ? { start: safeCursor - match[0].length, end: safeCursor } : null;
+    }
     function mentionIsOpen(value, cursor, refs) {
-        return refs.length > 0 && /@\d*$/.test(value.slice(0, cursor));
+        return refs.length > 0 && Boolean(referenceMentionRange(value, cursor));
     }
     function insertReferenceMention(value, setter, setOpen, inputRef, index) {
         const textarea = inputRef.current;
         const cursor = textarea?.selectionStart ?? value.length;
-        const before = value.slice(0, cursor);
-        const match = before.match(/@\d*$/);
-        const start = match ? cursor - match[0].length : cursor;
+        const range = referenceMentionRange(value, cursor);
+        const start = range?.start ?? cursor;
         const mention = `@${index + 1} `;
         const next = `${value.slice(0, start)}${mention}${value.slice(cursor)}`;
         setter(next);
@@ -10433,6 +10437,10 @@ export default function Page() {
                                                         setAgentMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, agentRefs));
                                                     },
                                                     onFocus: (e)=>setAgentMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs)),
+                                                    onClick: (e)=>setAgentMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs)),
+                                                    onKeyUp: (e)=>{
+                                                        if (e.key !== 'Escape') setAgentMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs));
+                                                    },
                                                     placeholder: "详细描述你想生成或修改的画面：主体外观与动作、场景环境、构图视角、光线色彩、风格材质、镜头感和需要避免的内容；也可以上传参考图让助手分析。",
                                                     onPaste: (e)=>{
                                                         const files = Array.from(e.clipboardData.files || []);
@@ -10758,6 +10766,10 @@ export default function Page() {
                                                             setGenerateMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, generateRefs));
                                                         },
                                                         onFocus: (e)=>setGenerateMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, generateRefs)),
+                                                        onClick: (e)=>setGenerateMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs)),
+                                                        onKeyUp: (e)=>{
+                                                            if (e.key !== 'Escape') setGenerateMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs));
+                                                        },
                                                         onKeyDown: (e)=>{
                                                             if (e.key === 'Escape') setGenerateMentionOpen(false);
                                                         },
