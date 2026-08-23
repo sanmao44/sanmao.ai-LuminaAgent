@@ -15,9 +15,16 @@ type Point = { x: number; y: number };
 type Notice = { message: string; kind: 'ok' | 'error' };
 type WorkbenchTab = 'assets' | 'workflow' | 'logs' | 'shortcuts' | 'project' | 'settings';
 type ConnectionAnimation = 'none' | 'flow' | 'pulse' | 'dash';
+type CanvasClipboardPayload = {
+  type: 'sanmao-canvas-nodes';
+  version: 1;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  groups: CanvasGroup[];
+};
 type Interaction =
   | { kind: 'pan'; pointerId: number; startX: number; startY: number; camera: CanvasCamera; changed: boolean }
-  | { kind: 'drag'; pointerId: number; startX: number; startY: number; nodeIds: string[]; positions: Record<string, Point>; changed: boolean }
+  | { kind: 'drag'; pointerId: number; startX: number; startY: number; nodeIds: string[]; positions: Record<string, Point>; changed: boolean; copyOnMove?: boolean; preserveInputConnections?: boolean }
   | { kind: 'resize'; pointerId: number; startX: number; startY: number; nodeId: string; width: number; height: number; changed: boolean }
   | { kind: 'resizeGroup'; pointerId: number; startX: number; startY: number; groupId: string; bounds: { x: number; y: number; w: number; h: number }; origin: Point; nodes: Record<string, { x: number; y: number; w: number; h: number }>; changed: boolean }
   | { kind: 'marquee'; pointerId: number; startX: number; startY: number; changed: boolean }
@@ -34,6 +41,19 @@ const CONNECTION_ANIMATION_OPTIONS: Array<{ value: ConnectionAnimation; label: s
   { value: 'flow', label: '流光', description: '沿连线方向持续流动' },
   { value: 'pulse', label: '呼吸', description: '连线亮度与光晕缓慢变化' },
   { value: 'dash', label: '行进', description: '短线段沿连线方向行进' },
+];
+const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
+  { keys: ['Ctrl'], label: '按住并拖拽框选节点' },
+  { keys: ['Ctrl', 'G'], label: '合并选中的图片为组' },
+  { keys: ['Ctrl', 'Shift', 'G'], label: '释放选中的分组' },
+  { keys: ['Ctrl', 'Z'], label: '撤销上一步操作' },
+  { keys: ['Ctrl', 'Shift', 'Z'], label: '恢复上一步操作' },
+  { keys: ['Ctrl', 'C'], label: '复制选中的节点' },
+  { keys: ['Ctrl', 'V'], label: '粘贴节点或剪贴板图片' },
+  { keys: ['Alt'], label: '按住并拖动复制节点' },
+  { keys: ['Alt', 'Shift'], label: '复制节点并保留输入连线' },
+  { keys: ['A'], label: '打开/关闭资产库' },
+  { keys: ['Z'], label: '缩小画布视图' },
 ];
 
 function clamp(value: number, min: number, max: number) { return Math.max(min, Math.min(max, value)); }
