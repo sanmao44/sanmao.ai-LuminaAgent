@@ -5010,12 +5010,22 @@ function CanvasAssetDrawer({
 
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
+    const matchesCollection = (asset: AssetRecord) => {
+      if (collection === "all") return true;
+      if (collection === "uncategorized") return !asset.collectionIds?.length;
+      if (collection === "favorite") return asset.favorite;
+      if (collection === "image" || collection === "video") return asset.kind === collection;
+      if (collection === "generated") return asset.source === "history" || asset.source === "video-task" || asset.source === "canvas-output";
+      if (collection === "reference") return asset.source === "canvas-upload" || asset.tags?.includes("参考");
+      if (collection === "recent") return asset.createdAt >= Date.now() - 7 * 24 * 60 * 60 * 1000;
+      return asset.collectionIds?.includes(collection);
+    };
     const result = assets.filter(
       (asset) =>
         (kind === "all" || asset.kind === kind) &&
         (source === "all" || asset.source === source) &&
         (!favoritesOnly || asset.favorite) &&
-        (collection === "all" || (collection === "uncategorized" ? !asset.collectionIds?.length : asset.collectionIds?.includes(collection))) &&
+        matchesCollection(asset) &&
         (!tagFilter.trim() || asset.tags?.some((tag) => tag.toLowerCase().includes(tagFilter.trim().toLowerCase()))) &&
         (!search ||
           `${asset.name} ${asset.prompt || ""} ${asset.modelName || ""}`
