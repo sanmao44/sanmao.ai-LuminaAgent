@@ -3472,8 +3472,8 @@ export default function SuperCanvas() {
     [commit, maskNodeId, notify, runtime],
   );
 
-  const runUpscale = useCallback(async () => {
-    const source = selectedSingle;
+  const runUpscale = useCallback(async (sourceOverride?: CanvasNode) => {
+    const source = sourceOverride || selectedSingle;
     if (
       !source ||
       source.type !== "media" ||
@@ -3874,6 +3874,32 @@ export default function SuperCanvas() {
     setSelectedIds(new Set([textNode.id]));
     notify("已创建新的文本节点");
   }, [commit, notify]);
+  const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
+    if (node.type !== "media" || !node.data.url) return null;
+    return {
+      id: `canvas:${activeProjectId}:${node.id}`,
+      kind: node.data.kind === "video" ? "video" : "image",
+      url: String(node.data.url),
+      name: String(node.data.name || "画布素材"),
+      source: node.data.generation ? "canvas-output" : "canvas-upload",
+      createdAt: Number(node.data.generation?.createdAt || Date.now()),
+      favorite: false,
+      prompt: node.data.generation?.prompt,
+      modelId: node.data.generation?.params.model,
+      modelName: typeof node.data.model === "string" ? node.data.model : undefined,
+      width: Number(node.data.nativeWidth) || undefined,
+      height: Number(node.data.nativeHeight) || undefined,
+      projectIds: activeProjectId ? [activeProjectId] : [],
+      collectionIds: [],
+      tags: [],
+    };
+  }, [activeProjectId]);
+  const addViewerAsset = useCallback(async (node: CanvasNode) => {
+    const asset = viewerAsset(node);
+    if (!asset) return;
+    try { await registerCanvasAsset(asset); setAssetRefresh((value) => value + 1); notify("已加入资产库"); }
+    catch (error) { notify(error instanceof Error ? error.message : "资产登记失败", "error"); }
+  }, [notify, viewerAsset]);
   const updateDeckPrompt = useCallback(
     (event: ReactChangeEvent<HTMLTextAreaElement>) => {
       const value = event.target.value;
@@ -4859,6 +4885,9 @@ export default function SuperCanvas() {
           onWritePrompt={writeViewerPrompt}
           onCreateTextNode={createViewerTextNode}
           onNotify={notify}
+          onUpscale={(node) => void runUpscale(node)}
+          onUseAsReference={(node) => { const asset = viewerAsset(node); if (asset) addAssetAsReference(asset); }}
+          onAddToAssets={(node) => void addViewerAsset(node)}
         />
       )}
       {textLightboxNodeId && (
@@ -6253,6 +6282,9 @@ function CanvasMediaViewer({
   onWritePrompt,
   onCreateTextNode,
   onNotify,
+  onUpscale,
+  onUseAsReference,
+  onAddToAssets,
 }: {
   node?: CanvasNode;
   compare: boolean;
@@ -6263,6 +6295,9 @@ function CanvasMediaViewer({
   onWritePrompt: (node: CanvasNode, value: string) => void;
   onCreateTextNode: (node: CanvasNode, value: string) => void;
   onNotify: (message: string, kind?: Notice["kind"]) => void;
+  onUpscale: (node: CanvasNode) => void;
+  onUseAsReference: (node: CanvasNode) => void;
+  onAddToAssets: (node: CanvasNode) => void;
 }) {
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -6342,8 +6377,9 @@ function CanvasMediaViewer({
         <div className="canvas-media-viewer-actions">
           {node.data.kind === "image" && <button type="button" disabled={busy} onClick={() => void runReverse()}>⌁ 反推提示词</button>}
           <button type="button" disabled={busy} onClick={() => void runOptimize()}>✦ AI 优化</button>
-          <button type="button" onClick={() => onNotify("已将素材标记为参考图，可在底部生成面板继续使用。")}>⌁ 作为参考图</button>
-          <button type="button" onClick={() => onNotify("已加入当前资产索引，集合归类可在资产抽屉完成。")}>＋ 加入资产库</button>
+          {node.data.kind === "image" && <button type="button" onClick={() => onUpscale(node)}>↗ 超分</button>}
+          <button type="button" onClick={() => onUseAsReference(node)}>⌁ 作为参考图</button>
+          <button type="button" onClick={() => onAddToAssets(node)}>＋ 加入资产库</button>
         </div>
         {result && (
           <section className="canvas-media-result-panel">
