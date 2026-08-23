@@ -2598,6 +2598,26 @@ export default function SuperCanvas() {
     [mode, runtime, selectedSingle, updateDoc],
   );
 
+  const useAgentResponseAsImagePrompt = useCallback(
+    (node: CanvasNode) => {
+      if (node.type !== "prompt") return;
+      const response = String(
+        node.data.agentResponse || node.data.text || "",
+      ).trim();
+      if (!response) return;
+      setSelectedIds(new Set());
+      setSelectedGroupId(null);
+      setMode("image");
+      setDrafts((current) => ({
+        ...current,
+        image: { ...current.image, prompt: response },
+      }));
+      window.requestAnimationFrame(() => deckPromptRef.current?.focus());
+      notify("已将 Agent 回复填入图片提示词");
+    },
+    [notify],
+  );
+
   const updateParams = useCallback(
     (settings: CreationSettings) => {
       const source = deckSource();
@@ -4273,6 +4293,7 @@ export default function SuperCanvas() {
                     setLightbox({ nodeId: node.id, compare: false })
                   }
                   onTextPreview={() => setTextLightboxNodeId(node.id)}
+                  onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
                   editing={editingNodeId === node.id}
                   onEdit={(value) => setEditingNodeId(value ? node.id : null)}
                   onNaturalSize={setMediaNaturalSize}
@@ -4281,7 +4302,18 @@ export default function SuperCanvas() {
                       ...valueDoc,
                       nodes: valueDoc.nodes.map((item) =>
                         item.id === node.id
-                          ? { ...item, data: { ...item.data, text: value } }
+                          ? {
+                              ...item,
+                              data: {
+                                ...item.data,
+                                text: value,
+                                agentPrompt: value,
+                                agentResponse: undefined,
+                                role: "Agent 输入",
+                                status: "idle",
+                                statusLabel: undefined,
+                              },
+                            }
                           : item,
                       ),
                     }))
@@ -5224,6 +5256,7 @@ function CanvasNodeCard({
   onSelect,
   onPreview,
   onTextPreview,
+  onUseAsImagePrompt,
   onNaturalSize,
   onPromptChange,
   onReorderReferences,
@@ -5243,6 +5276,7 @@ function CanvasNodeCard({
   onSelect: (event: ReactPointerEvent) => void;
   onPreview: () => void;
   onTextPreview: () => void;
+  onUseAsImagePrompt: () => void;
   onNaturalSize: (nodeId: string, width: number, height: number) => void;
   onPromptChange: (value: string) => void;
   onReorderReferences: (
@@ -5264,6 +5298,9 @@ function CanvasNodeCard({
     (data.agentResponse || String(data.role || "").includes("回复"))
       ? String(data.agentResponse || data.text || "")
       : "";
+  const agentInput = String(
+    agentResponse ? data.agentPrompt || data.text || "" : data.text || "",
+  );
   return (
     <article
       className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
@@ -5357,7 +5394,7 @@ function CanvasNodeCard({
           </div>
           {editing ? (
             <textarea
-              value={String(data.text || "")}
+              value={agentInput}
               placeholder="输入要交给 Agent 的任务…"
               autoFocus
               onChange={(event) => onPromptChange(event.target.value)}
@@ -5381,6 +5418,17 @@ function CanvasNodeCard({
           {agentResponse && data.status === "completed" && (
             <div className="canvas-agent-response-tools">
               <span>{agentResponse.length.toLocaleString()} 字</span>
+              <button
+                type="button"
+                title="将 Agent 回复填入图片提示词"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onUseAsImagePrompt();
+                }}
+              >
+                ✦ 转图片
+              </button>
               <button
                 type="button"
                 title="放大查看 Agent 回复"
