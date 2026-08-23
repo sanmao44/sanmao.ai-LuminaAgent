@@ -272,16 +272,26 @@ export function removeNodes(document: CanvasDocument, ids: string[]) {
   };
 }
 
-export function incomingReferences(document: CanvasDocument, entityId: string) {
+export function incomingContext(document: CanvasDocument, entityId: string) {
   const entity = nodeById(document, entityId) || groupById(document, entityId);
   if (!entity) return [];
   const direct = document.edges.filter((edge) => edge.target === entityId && !['generated', 'variant', 'lineage'].includes(edge.kind || ''))
-    .flatMap((edge) => groupById(document, edge.source)?.nodeIds.map((id) => nodeById(document, id)) || [nodeById(document, edge.source)])
-    .filter((node): node is CanvasNode => node?.type === 'media' && Boolean(node.data.url));
-  const virtualIds = 'nodeIds' in entity ? [] : [...(entity.data.generation?.referenceIds || []), ...(entity.data.referenceOrder || [])];
-  const virtual = virtualIds.map((id) => nodeById(document, id)).filter((node): node is CanvasNode => node?.type === 'media' && Boolean(node.data.url));
+    .flatMap((edge) => {
+      const sourceGroup = groupById(document, edge.source);
+      if (sourceGroup) return sourceGroup.nodeIds.map((id) => nodeById(document, id));
+      const source = nodeById(document, edge.source);
+      const sourceNodeGroup = source?.groupId ? groupById(document, source.groupId) : undefined;
+      return sourceNodeGroup ? sourceNodeGroup.nodeIds.map((id) => nodeById(document, id)) : [source];
+    })
+    .filter((node): node is CanvasNode => Boolean(node));
+  const storedOrder = 'nodeIds' in entity ? [] : entity.data.referenceOrder?.length ? entity.data.referenceOrder : entity.data.generation?.referenceIds || [];
+  const virtual = storedOrder.map((id) => nodeById(document, id)).filter((node): node is CanvasNode => node?.type === 'media' && Boolean(node.data.url));
   const seen = new Set<string>();
-  return [...direct, ...virtual].filter((node) => !seen.has(node.id) && Boolean(seen.add(node.id)));
+  return [...virtual, ...direct].filter((node) => !seen.has(node.id) && Boolean(seen.add(node.id)));
+}
+
+export function incomingReferences(document: CanvasDocument, entityId: string) {
+  return incomingContext(document, entityId).filter((node) => node.type === 'media' && Boolean(node.data.url));
 }
 
 export function reorderReferences(document: CanvasDocument, ownerId: string, ids: string[]) {

@@ -45,10 +45,24 @@ test('creates media, prompt, generator, groups, edges and reference order', () =
   document = model.addEdge(document, image.id, generator.id);
   document = model.addEdge(document, prompt.id, generator.id);
   assert.equal(model.incomingReferences(document, generator.id).length, 1);
+  assert.equal(model.incomingContext(document, generator.id).length, 2);
   const grouped = model.createGroup(document, [image.id, prompt.id]);
   assert.equal(grouped.groups.length, 1);
   assert.equal(grouped.groups[0].nodeIds.length, 2);
   assert.equal(model.edgePath(grouped, grouped.edges[0]).startsWith('M '), true);
+});
+
+test('expands a grouped source into all media references and preserves manual order', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/second.png', '第二张', { x: 360, y: 0 });
+  const generator = model.createGenerator('image', { x: 720, y: 0 });
+  let document = { ...empty, nodes: [first, second, generator] };
+  document = model.createGroup(document, [first.id, second.id]);
+  document = model.addEdge(document, first.id, generator.id);
+  assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第一张', '第二张']);
+  document = model.reorderReferences(document, generator.id, [second.id, first.id]);
+  assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第二张', '第一张']);
 });
 
 test('NOVA localStorage keys have a one-way migration target and no independent API config', () => {

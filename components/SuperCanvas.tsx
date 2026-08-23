@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   addEdge, clone, createEmptyMedia, createGenerator, createGroup, createMedia, createPrompt,
-  edgePath, entityBounds, groupBounds, groupById, groupNodes, incomingReferences, mediaCardSizeForRatio,
-  nodeById, nodeSize, normalizeDocument, removeEdge, removeNodes, smartPrompt, snapshot, uid,
+  edgePath, entityBounds, groupBounds, groupById, groupNodes, incomingContext, incomingReferences, mediaCardSizeForRatio,
+  nodeById, nodeSize, normalizeDocument, removeEdge, removeNodes, reorderReferences, smartPrompt, snapshot, uid,
 } from '@/lib/canvas/model';
 import { getCanvasVideoTask, generateCanvasImage, generateCanvasVideo, loadCanvasRuntime, uploadCanvasAsset } from '@/lib/canvas/api';
 import { canvasProjectFromDocument, deleteCanvasProject, ensureCanvasStorage, loadCanvasDocument, saveCanvasDocument, saveCanvasProjects } from '@/lib/canvas/storage';
@@ -22,12 +22,13 @@ type CanvasClipboardPayload = {
   edges: CanvasEdge[];
   groups: CanvasGroup[];
 };
+type MentionState = { start: number; end: number; query: string } | null;
 type Interaction =
   | { kind: 'pan'; pointerId: number; startX: number; startY: number; camera: CanvasCamera; changed: boolean }
   | { kind: 'drag'; pointerId: number; startX: number; startY: number; nodeIds: string[]; positions: Record<string, Point>; changed: boolean; copyOnMove?: boolean; preserveInputConnections?: boolean }
   | { kind: 'resize'; pointerId: number; startX: number; startY: number; nodeId: string; width: number; height: number; changed: boolean }
   | { kind: 'resizeGroup'; pointerId: number; startX: number; startY: number; groupId: string; bounds: { x: number; y: number; w: number; h: number }; origin: Point; nodes: Record<string, { x: number; y: number; w: number; h: number }>; changed: boolean }
-  | { kind: 'marquee'; pointerId: number; startX: number; startY: number; changed: boolean }
+  | { kind: 'marquee'; pointerId: number; startX: number; startY: number; changed: boolean; additive: boolean; baseSelection: string[] }
   | { kind: 'connect'; pointerId: number; sourceId: string; sourcePort: 'left' | 'right'; end: Point; start: Point };
 type ConnectionPreview = { start: Point; end: Point; sourcePort: 'left' | 'right' };
 
@@ -88,6 +89,80 @@ function rectanglesOverlap(a: { x: number; y: number; w: number; h: number }, b:
   return a.x < b.x + b.w + gap && a.x + a.w + gap > b.x && a.y < b.y + b.h + gap && a.y + a.h + gap > b.y;
 }
 
+function mentionLabel(node: CanvasNode, index: number) {
+  return `${index + 1}. ${node.data.name || (node.data.kind === 'video' ? '视频素材' : '图片素材')}`;
+}
+
+function mentionedMedia(prompt: string, candidates: CanvasNode[]) {
+  const ids = [...prompt.matchAll(/@([0-9]+)/g)].map((match) => Number(match[1]) - 1).filter((index) => Number.isInteger(index) && index >= 0 && index < candidates.length).map((index) => candidates[index].id);
+  return candidates.filter((node) => ids.includes(node.id));
+}
+
+function resolveMentionTokens(prompt: string, candidates: CanvasNode[]) {
+  return prompt.replace(/@([0-9]+)/g, (token, rawIndex: string) => {
+    const index = Number(rawIndex) - 1;
+    return index >= 0 && index < candidates.length ? `参考图${index + 1}` : token;
+  });
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest('input,textarea,select,[contenteditable="true"]'));
+}
+
+function isCanvasClipboardPayload(value: unknown): value is CanvasClipboardPayload {
+  if (!value || typeof value !== 'object') return false;
+  const payload = value as Partial<CanvasClipboardPayload>;
+  return payload.type === 'sanmao-canvas-nodes' && payload.version === 1 && Array.isArray(payload.nodes) && Array.isArray(payload.edges) && Array.isArray(payload.groups);
+}
+
+function remapNodeReferences(node: CanvasNode, idMap: Map<string, string>) {
+  const referenceOrder = node.data.referenceOrder?.map((id) => idMap.get(id) || id);
+  const generation = node.data.generation
+    ? { ...node.data.generation, referenceIds: node.data.generation.referenceIds?.map((id) => idMap.get(id) || id) }
+    : node.data.generation;
+  return { ...node, data: { ...node.data, ...(referenceOrder ? { referenceOrder } : {}), ...(generation ? { generation } : {}) } };
+}
+
+function duplicateNodes(document: CanvasDocument, nodeIds: string[], offset = { x: 48, y: 48 }, preserveInputConnections = false) {
+  const selected = document.nodes.filter((node) => nodeIds.includes(node.id));
+  const selectedIds = new Set(selected.map((node) => node.id));
+  const idMap = new Map(selected.map((node) => [node.id, uid('node')]));
+  const groupMap = new Map<string, string>();
+  const groups = document.groups
+    .filter((group) => group.nodeIds.length >= 2 && group.nodeIds.every((id) => selectedIds.has(id)))
+    .map((group) => {
+      const id = uid('group');
+      groupMap.set(group.id, id);
+      return { ...clone(group), id, nodeIds: group.nodeIds.map((nodeId) => idMap.get(nodeId)!).filter(Boolean) };
+    });
+  const copies = selected.map((node) => {
+    const copy = remapNodeReferences(clone(node), idMap);
+    return { ...copy, id: idMap.get(node.id)!, x: node.x + offset.x, y: node.y + offset.y, ...(node.groupId && groupMap.has(node.groupId) ? { groupId: groupMap.get(node.groupId) } : { groupId: undefined }) };
+  });
+  const edgeCandidates = preserveInputConnections
+    ? document.edges.filter((edge) => selectedIds.has(edge.target))
+    : document.edges.filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target));
+  const edges = edgeCandidates.map((edge) => ({
+    ...clone(edge),
+    id: uid('edge'),
+    source: groupMap.get(edge.source) || idMap.get(edge.source) || edge.source,
+    target: groupMap.get(edge.target) || idMap.get(edge.target) || edge.target,
+  }));
+  return { nodes: copies, edges, groups, ids: copies.map((node) => node.id), groupIds: groups.map((group) => group.id) };
+}
+
+function createCanvasClipboardPayload(document: CanvasDocument, nodeIds: string[]): CanvasClipboardPayload {
+  const selected = document.nodes.filter((node) => nodeIds.includes(node.id));
+  const selectedIds = new Set(selected.map((node) => node.id));
+  return {
+    type: 'sanmao-canvas-nodes',
+    version: 1,
+    nodes: clone(selected),
+    edges: clone(document.edges.filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target))),
+    groups: clone(document.groups.filter((group) => group.nodeIds.length >= 2 && group.nodeIds.every((id) => selectedIds.has(id)))),
+  };
+}
+
 function CanvasEdgeVisual({ document, edge, animation, selected, onSelect }: { document: CanvasDocument; edge: CanvasEdge; animation: ConnectionAnimation; selected: boolean; onSelect: () => void }) {
   const path = edgePath(document, edge);
   const motionPathId = `canvas-edge-motion-${edge.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
@@ -95,9 +170,9 @@ function CanvasEdgeVisual({ document, edge, animation, selected, onSelect }: { d
     <defs><path id={motionPathId} d={path} /></defs>
     <path className={`canvas-edge canvas-edge-${animation} ${selected ? 'selected' : ''}`} d={path} markerEnd="url(#canvas-arrow)" onPointerDown={(event) => { event.stopPropagation(); onSelect(); }} />
     {animation === 'flow' && <g className="canvas-edge-flow-light" aria-hidden="true">
-      <animateMotion dur="1.45s" repeatCount="indefinite" rotate="auto"><mpath href={`#${motionPathId}`} /></animateMotion>
-      <path className="canvas-edge-flow-shape" d="M -26 0 L 0 -6 L 26 0 L 0 6 Z" />
-      <path className="canvas-edge-flow-core" d="M -14 0 L 0 -3.2 L 14 0 L 0 3.2 Z" />
+      <animateMotion dur="1.7s" repeatCount="indefinite" rotate="auto"><mpath href={`#${motionPathId}`} /></animateMotion>
+      <path className="canvas-edge-flow-shape" d="M -58 0 L 0 -7.5 L 58 0 L 0 7.5 Z" />
+      <path className="canvas-edge-flow-core" d="M -34 0 L 0 -3.8 L 34 0 L 0 3.8 Z" />
     </g>}
   </g>;
 }
@@ -106,7 +181,9 @@ export default function SuperCanvas() {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workflowInputRef = useRef<HTMLInputElement | null>(null);
+  const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
+  const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
   const docRef = useRef<CanvasDocument>(normalizeDocument(null));
   const saveTimerRef = useRef<number | null>(null);
   const pollTimersRef = useRef<Set<number>>(new Set());
@@ -145,6 +222,7 @@ export default function SuperCanvas() {
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: 1200, height: 760 });
   const [connectionAnimation, setConnectionAnimation] = useState<ConnectionAnimation>('flow');
+  const [mentionState, setMentionState] = useState<MentionState>(null);
 
   const currentProject = projects.find((project) => project.id === activeProjectId);
   const selectedNodes = useMemo(() => document.nodes.filter((node) => selectedIds.has(node.id)), [document.nodes, selectedIds]);
@@ -154,6 +232,8 @@ export default function SuperCanvas() {
   const imageModels = useMemo(() => models.filter((model) => model.kind === 'image'), [models]);
   const videoModels = useMemo(() => models.filter((model) => model.kind === 'video'), [models]);
   const mediaNodes = useMemo(() => document.nodes.filter((node) => node.type === 'media'), [document.nodes]);
+  const referenceOwnerId = selectedGroupId || selectedSingle?.id;
+  const mentionCandidates = useMemo(() => selectedGroupId ? groupNodes(document, selectedGroupId).filter((node) => node.type === 'media' && Boolean(node.data.url)) : referenceOwnerId ? incomingReferences(document, referenceOwnerId) : mediaNodes.filter((node) => Boolean(node.data.url)), [document, mediaNodes, referenceOwnerId, selectedGroupId]);
 
   const setDoc = useCallback((next: CanvasDocument) => { docRef.current = next; setDocument(next); }, []);
   const updateDoc = useCallback((updater: (value: CanvasDocument) => CanvasDocument) => setDoc(updater(docRef.current)), [setDoc]);
@@ -227,19 +307,34 @@ export default function SuperCanvas() {
     setSelectedEdgeId(null);
     if (node.groupId) {
       const group = groupById(docRef.current, node.groupId);
-      if (group) { setSelectedIds(additive && selectedGroupId === group.id ? new Set() : new Set(group.nodeIds)); setSelectedGroupId(additive && selectedGroupId === group.id ? null : group.id); return; }
+      if (group) {
+        setSelectedIds((current) => {
+          if (!additive && current.has(node.id) && current.size >= group.nodeIds.length) return current;
+          if (!additive) return new Set(group.nodeIds);
+          const next = new Set(current);
+          const allSelected = group.nodeIds.every((id) => next.has(id));
+          group.nodeIds.forEach((id) => allSelected ? next.delete(id) : next.add(id));
+          return next;
+        });
+        setSelectedGroupId(additive ? null : group.id);
+        return;
+      }
     }
-    setSelectedGroupId(null); setSelectedIds((current) => { if (!additive) return new Set([node.id]); const next = new Set(current); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next; });
-  }, [selectedGroupId]);
+    setSelectedGroupId(null); setSelectedIds((current) => {
+      if (!additive && current.has(node.id) && current.size > 1) return current;
+      if (!additive) return new Set([node.id]);
+      const next = new Set(current); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next;
+    });
+  }, []);
 
   const startMarquee = useCallback((event: ReactPointerEvent) => {
     event.preventDefault();
     event.stopPropagation();
     const point = stagePoint(event.clientX, event.clientY);
     setMarquee({ x: point.x, y: point.y, w: 0, h: 0 });
-    interactionRef.current = { kind: 'marquee', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, changed: false };
+    interactionRef.current = { kind: 'marquee', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, changed: false, additive: event.shiftKey, baseSelection: event.shiftKey ? [...selectedIds] : [] };
     stageRef.current?.setPointerCapture(event.pointerId);
-  }, [stagePoint]);
+  }, [selectedIds, stagePoint]);
   const capture = useCallback((event: ReactPointerEvent) => { stageRef.current?.setPointerCapture(event.pointerId); }, []);
   const handleStagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
@@ -247,7 +342,7 @@ export default function SuperCanvas() {
     if (target.closest('.canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-minimap,.canvas-context-menu')) return;
     setContextMenu(null);
     if (event.button === 0 && (event.ctrlKey || event.metaKey)) return startMarquee(event);
-    clearSelection(); interactionRef.current = { kind: 'pan', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, camera: document.camera, changed: false };
+    if (!event.shiftKey) clearSelection(); interactionRef.current = { kind: 'pan', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, camera: document.camera, changed: false };
     capture(event);
   }, [capture, clearSelection, document.camera, startMarquee]);
 
@@ -255,16 +350,24 @@ export default function SuperCanvas() {
     if (event.button !== 0 || (event.target as HTMLElement).closest('textarea,button,.canvas-node-resize')) return;
     if (event.ctrlKey || event.metaKey) return startMarquee(event);
     event.preventDefault(); event.stopPropagation(); selectNode(node, event.shiftKey);
-    const ids = node.groupId && selectedGroupId === node.groupId ? groupNodes(docRef.current, node.groupId).map((item) => item.id) : selectedIds.has(node.id) && selectedIds.size > 1 ? [...selectedIds] : [node.id];
+    const group = node.groupId ? groupById(docRef.current, node.groupId) : undefined;
+    const ids = event.shiftKey && group
+      ? (() => { const allSelected = group.nodeIds.every((id) => selectedIds.has(id)); return allSelected ? [...selectedIds].filter((id) => !group.nodeIds.includes(id)) : [...new Set([...selectedIds, ...group.nodeIds])]; })()
+      : event.shiftKey
+        ? selectedIds.has(node.id) ? [...selectedIds].filter((id) => id !== node.id) : [...new Set([...selectedIds, node.id])]
+        : node.groupId && selectedGroupId === node.groupId ? groupNodes(docRef.current, node.groupId).map((item) => item.id) : selectedIds.has(node.id) && selectedIds.size > 1 ? [...selectedIds] : [node.id];
     const positions = Object.fromEntries(ids.map((id) => { const item = nodeById(docRef.current, id); return [id, { x: item?.x || 0, y: item?.y || 0 }]; }));
-    interactionRef.current = { kind: 'drag', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, nodeIds: ids, positions, changed: false }; capture(event);
+    interactionRef.current = { kind: 'drag', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, nodeIds: ids, positions, changed: false, copyOnMove: event.altKey, preserveInputConnections: event.altKey && event.shiftKey }; capture(event);
   }, [capture, selectNode, selectedGroupId, selectedIds, startMarquee]);
 
   const startGroupDrag = useCallback((event: ReactPointerEvent, group: CanvasGroup) => {
-    if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); setSelectedGroupId(group.id); setSelectedIds(new Set(group.nodeIds)); setSelectedEdgeId(null);
+    if (event.button !== 0) return; event.preventDefault(); event.stopPropagation();
     if (event.ctrlKey || event.metaKey) return startMarquee(event);
-    const positions = Object.fromEntries(group.nodeIds.map((id) => { const item = nodeById(docRef.current, id); return [id, { x: item?.x || 0, y: item?.y || 0 }]; })); interactionRef.current = { kind: 'drag', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, nodeIds: group.nodeIds, positions, changed: false }; capture(event);
-  }, [capture, startMarquee]);
+    const allSelected = group.nodeIds.every((id) => selectedIds.has(id));
+    const ids = event.shiftKey ? (() => { const next = new Set(selectedIds); group.nodeIds.forEach((id) => allSelected ? next.delete(id) : next.add(id)); setSelectedIds(next); setSelectedGroupId(null); return [...next]; })() : (() => { setSelectedGroupId(group.id); setSelectedIds(new Set(group.nodeIds)); return group.nodeIds; })();
+    setSelectedEdgeId(null);
+    const positions = Object.fromEntries(ids.map((id) => { const item = nodeById(docRef.current, id); return [id, { x: item?.x || 0, y: item?.y || 0 }]; })); interactionRef.current = { kind: 'drag', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, nodeIds: ids, positions, changed: false, copyOnMove: event.altKey, preserveInputConnections: event.altKey && event.shiftKey }; capture(event);
+  }, [capture, selectedIds, startMarquee]);
 
   const startGroupResize = useCallback((event: ReactPointerEvent, group: CanvasGroup) => {
     event.preventDefault(); event.stopPropagation();
@@ -288,19 +391,37 @@ export default function SuperCanvas() {
     const interaction = interactionRef.current; if (!interaction || interaction.pointerId !== event.pointerId) return;
     const dx = 'startX' in interaction ? event.clientX - interaction.startX : 0; const dy = 'startY' in interaction ? event.clientY - interaction.startY : 0; const zoom = docRef.current.camera.zoom;
     if (interaction.kind === 'pan') updateDoc((value) => ({ ...value, camera: { ...interaction.camera, x: interaction.camera.x + dx, y: interaction.camera.y + dy } }));
-    if (interaction.kind === 'drag') { if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) { interaction.changed = true; setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60)); setRedoStack([]); } if (interaction.changed) updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => interaction.nodeIds.includes(node.id) ? { ...node, x: interaction.positions[node.id].x + dx / zoom, y: interaction.positions[node.id].y + dy / zoom } : node) })); }
+    if (interaction.kind === 'drag') {
+      if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) {
+        setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60));
+        setRedoStack([]);
+        if (interaction.copyOnMove) {
+          const copies = duplicateNodes(docRef.current, interaction.nodeIds, { x: 0, y: 0 }, interaction.preserveInputConnections);
+          const positions = Object.fromEntries(copies.nodes.map((node) => [node.id, { x: node.x, y: node.y }]));
+          interaction.nodeIds = copies.ids;
+          interaction.positions = positions;
+          interaction.copyOnMove = false;
+          setDoc({ ...docRef.current, nodes: [...docRef.current.nodes, ...copies.nodes], edges: [...docRef.current.edges, ...copies.edges], groups: [...docRef.current.groups, ...copies.groups] });
+          setSelectedIds(new Set(copies.ids));
+          setSelectedGroupId(copies.groupIds.length === 1 ? copies.groupIds[0] : null);
+          notify(interaction.preserveInputConnections ? '已复制节点并保留输入连线' : `已复制 ${copies.nodes.length} 个节点`);
+        }
+        interaction.changed = true;
+      }
+      if (interaction.changed) updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => interaction.nodeIds.includes(node.id) ? { ...node, x: interaction.positions[node.id].x + dx / zoom, y: interaction.positions[node.id].y + dy / zoom } : node) }));
+    }
     if (interaction.kind === 'resize') { if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) { interaction.changed = true; setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60)); setRedoStack([]); } if (interaction.changed) updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === interaction.nodeId ? { ...node, w: Math.max(190, interaction.width + dx / zoom), h: Math.max(130, interaction.height + dy / zoom), data: { ...node.data, autoFit: false } } : node) })); }
     if (interaction.kind === 'resizeGroup') { if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) { interaction.changed = true; setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60)); setRedoStack([]); } if (interaction.changed) { const baseWidth = Math.max(1, interaction.bounds.w - 60); const baseHeight = Math.max(1, interaction.bounds.h - 78); const nextWidth = Math.max(240, baseWidth + dx / zoom); const nextHeight = Math.max(180, baseHeight + dy / zoom); const scaleX = nextWidth / baseWidth; const scaleY = nextHeight / baseHeight; updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => { const metric = interaction.nodes[node.id]; if (!metric) return node; return { ...node, x: interaction.origin.x + (metric.x - interaction.origin.x) * scaleX, y: interaction.origin.y + (metric.y - interaction.origin.y) * scaleY, w: Math.max(190, metric.w * scaleX), h: Math.max(130, metric.h * scaleY), data: { ...node.data, autoFit: false } }; }) })); } }
-    if (interaction.kind === 'marquee') { const start = stagePoint(interaction.startX, interaction.startY); const point = stagePoint(event.clientX, event.clientY); const left = Math.min(start.x, point.x); const right = Math.max(start.x, point.x); const top = Math.min(start.y, point.y); const bottom = Math.max(start.y, point.y); const camera = docRef.current.camera; const ids = docRef.current.nodes.filter((node) => { const x = node.x * camera.zoom + camera.x; const y = node.y * camera.zoom + camera.y; const size = nodeSize(node); return x < right && x + size.w * camera.zoom > left && y < bottom && y + size.h * camera.zoom > top; }).map((node) => node.id); interaction.changed = true; setSelectedIds(new Set(ids)); setSelectedGroupId(null); setMarquee({ x: start.x, y: start.y, w: point.x - start.x, h: point.y - start.y }); }
+    if (interaction.kind === 'marquee') { const start = stagePoint(interaction.startX, interaction.startY); const point = stagePoint(event.clientX, event.clientY); const left = Math.min(start.x, point.x); const right = Math.max(start.x, point.x); const top = Math.min(start.y, point.y); const bottom = Math.max(start.y, point.y); const camera = docRef.current.camera; const ids = docRef.current.nodes.filter((node) => { const x = node.x * camera.zoom + camera.x; const y = node.y * camera.zoom + camera.y; const size = nodeSize(node); return x < right && x + size.w * camera.zoom > left && y < bottom && y + size.h * camera.zoom > top; }).map((node) => node.id); interaction.changed = true; setSelectedIds(new Set(interaction.additive ? [...interaction.baseSelection, ...ids] : ids)); setSelectedGroupId(null); setMarquee({ x: start.x, y: start.y, w: point.x - start.x, h: point.y - start.y }); }
     if (interaction.kind === 'connect') { const point = stagePoint(event.clientX, event.clientY); interaction.end = point; setConnection({ start: interaction.start, end: point, sourcePort: interaction.sourcePort }); const target = (window.document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-canvas-node-id]')?.dataset.canvasNodeId; setConnectionTargetId(target && target !== interaction.sourceId ? target : null); }
-  }, [stagePoint, updateDoc]);
+  }, [notify, setDoc, stagePoint, updateDoc]);
 
   const finishInteraction = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const interaction = interactionRef.current; if (!interaction || interaction.pointerId !== event.pointerId) return;
     if (interaction.kind === 'marquee') {
       const start = stagePoint(interaction.startX, interaction.startY); const point = stagePoint(event.clientX, event.clientY);
       const left = Math.min(start.x, point.x); const right = Math.max(start.x, point.x); const top = Math.min(start.y, point.y); const bottom = Math.max(start.y, point.y); const camera = docRef.current.camera;
-      const ids = docRef.current.nodes.filter((node) => { const x = node.x * camera.zoom + camera.x; const y = node.y * camera.zoom + camera.y; const size = nodeSize(node); return x < right && x + size.w * camera.zoom > left && y < bottom && y + size.h * camera.zoom > top; }).map((node) => node.id); setSelectedIds(new Set(ids)); setSelectedGroupId(null);
+      const ids = docRef.current.nodes.filter((node) => { const x = node.x * camera.zoom + camera.x; const y = node.y * camera.zoom + camera.y; const size = nodeSize(node); return x < right && x + size.w * camera.zoom > left && y < bottom && y + size.h * camera.zoom > top; }).map((node) => node.id); setSelectedIds(new Set(interaction.additive ? [...interaction.baseSelection, ...ids] : ids)); setSelectedGroupId(null);
     }
     if (interaction.kind === 'connect') { const target = connectionTargetId || (window.document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-canvas-node-id]')?.dataset.canvasNodeId; if (target && target !== interaction.sourceId) { commit((value) => addEdge(value, interaction.sourceId, target, interaction.sourcePort, interaction.sourcePort === 'right' ? 'left' : 'right', 'manual')); addLog(`已连接 ${interaction.sourceId} → ${target}`); } setConnection(null); setConnectionTargetId(null); }
     interactionRef.current = null; setMarquee(null); try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
@@ -315,7 +436,7 @@ export default function SuperCanvas() {
 
   const addNode = useCallback((kind: 'image' | 'video' | 'text' | 'workflowImage' | 'workflowVideo', position?: Point) => { const mediaKind = kind === 'workflowVideo' || kind === 'video' ? 'video' : 'image'; const params = defaultParams(mediaKind, runtime); const seed = position || screenToWorld(stageSize.width / 2, stageSize.height / 2); const draft = kind === 'text' ? createPrompt(seed) : kind === 'workflowImage' || kind === 'workflowVideo' ? createGenerator(mediaKind, seed, params) : createEmptyMedia(mediaKind, seed, params); const point = position ? seed : openNodePosition(seed, draft); const node = { ...draft, x: point.x, y: point.y }; commit((value) => ({ ...value, nodes: [...value.nodes, node] })); setSelectedIds(new Set([node.id])); setSelectedGroupId(null); setMode(kind === 'text' ? 'text' : mediaKind); setContextMenu(null); notify(`已添加${kind === 'text' ? '文本' : mediaKind === 'video' ? '视频' : '图片'}节点`); }, [commit, notify, openNodePosition, runtime, screenToWorld, stageSize.height, stageSize.width]);
   const deleteSelection = useCallback(() => { if (!selectedIds.size) return; const count = selectedIds.size; commit((value) => removeNodes(value, [...selectedIds])); clearSelection(); notify(`已删除 ${count} 个对象`); }, [clearSelection, commit, notify, selectedIds]);
-  const duplicateSelection = useCallback(() => { if (!selectedIds.size) return; const selected = document.nodes.filter((node) => selectedIds.has(node.id)); const map = new Map(selected.map((node) => [node.id, uid('node')])); const copies = selected.map((node) => ({ ...clone(node), id: map.get(node.id)!, x: node.x + 48, y: node.y + 48, groupId: undefined })); commit((value) => ({ ...value, nodes: [...value.nodes, ...copies] })); setSelectedIds(new Set(copies.map((node) => node.id))); setSelectedGroupId(null); notify(`已复制 ${copies.length} 个对象`); }, [commit, document.nodes, notify, selectedIds]);
+  const duplicateSelection = useCallback(() => { if (!selectedIds.size) return; const copies = duplicateNodes(docRef.current, [...selectedIds]); commit((value) => ({ ...value, nodes: [...value.nodes, ...copies.nodes], edges: [...value.edges, ...copies.edges], groups: [...value.groups, ...copies.groups] })); setSelectedIds(new Set(copies.ids)); setSelectedGroupId(copies.groupIds.length === 1 ? copies.groupIds[0] : null); notify(`已复制 ${copies.nodes.length} 个对象`); }, [commit, notify, selectedIds]);
   const makeGroup = useCallback(() => { if (selectedIds.size < 2) return notify('请先选择至少 2 个对象再成组。', 'error'); const next = createGroup(docRef.current, [...selectedIds]); const group = next.groups.at(-1); commit(() => next); if (group) { setSelectedGroupId(group.id); setSelectedIds(new Set(group.nodeIds)); } notify('已创建对象组'); }, [commit, notify, selectedIds]);
   const breakGroup = useCallback(() => { if (!selectedGroupId) return; const id = selectedGroupId; commit((value) => { const group = groupById(value, id); if (!group) return value; return { ...value, nodes: value.nodes.map((node) => group.nodeIds.includes(node.id) ? { ...node, groupId: undefined } : node), groups: value.groups.filter((item) => item.id !== id), edges: value.edges.filter((edge) => edge.source !== id && edge.target !== id) }; }); clearSelection(); notify('已解散对象组'); }, [clearSelection, commit, notify, selectedGroupId]);
 
@@ -327,7 +448,77 @@ export default function SuperCanvas() {
   const exportWorkflow = useCallback(() => { const blob = new Blob([canvasProjectFromDocument(currentProject?.name || 'SANMAO 无限画布', document)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = window.document.createElement('a'); anchor.href = url; anchor.download = `${currentProject?.name || 'SANMAO画布'}.json`; anchor.click(); URL.revokeObjectURL(url); addLog('已导出工作流 JSON'); notify('工作流已导出'); }, [addLog, currentProject?.name, document, notify]);
   const importWorkflow = useCallback(async (file: File) => { try { const next = normalizeDocument(JSON.parse(await file.text())); commit(() => next); clearSelection(); fitView(); addLog(`已导入工作流：${file.name}`); notify('工作流已导入'); } catch (error) { notify(error instanceof Error ? error.message : '工作流 JSON 无效。', 'error'); } }, [addLog, clearSelection, commit, fitView, notify]);
 
-  const handleFiles = useCallback(async (files: FileList | File[], position?: Point) => { const list = [...files].filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/')); if (!list.length) return notify('请选择图片或视频素材。', 'error'); const base = position || screenToWorld(window.innerWidth / 2, window.innerHeight / 2); const nodes: CanvasNode[] = []; for (const [index, file] of list.entries()) { try { const asset = await uploadCanvasAsset(file); nodes.push(createMedia(asset.kind, asset.url, asset.name, { x: base.x + (index % 3) * 350, y: base.y + Math.floor(index / 3) * 270 }, { role: '参考素材' })); addLog(`已导入${asset.kind === 'video' ? '视频' : '图片'}：${file.name}`); } catch (error) { notify(error instanceof Error ? error.message : '素材上传失败。', 'error'); } } if (nodes.length) { commit((value) => ({ ...value, nodes: [...value.nodes, ...nodes] })); setSelectedIds(new Set(nodes.map((node) => node.id))); setSelectedGroupId(null); notify(`已导入 ${nodes.length} 个素材`); } }, [addLog, commit, notify, screenToWorld]);
+  const handleFiles = useCallback(async (files: FileList | File[], position?: Point) => { const list = [...files].filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/')); if (!list.length) return notify('请选择图片或视频素材。', 'error'); const rect = stageRef.current?.getBoundingClientRect(); const center = { x: (rect?.left || 0) + (rect?.width || stageSize.width) / 2, y: (rect?.top || 0) + (rect?.height || stageSize.height) / 2 }; const base = position || screenToWorld(center.x, center.y); const nodes: CanvasNode[] = []; for (const [index, file] of list.entries()) { try { const asset = await uploadCanvasAsset(file); nodes.push(createMedia(asset.kind, asset.url, asset.name, { x: base.x + (index % 3) * 350, y: base.y + Math.floor(index / 3) * 270 }, { role: '参考素材' })); addLog(`已导入${asset.kind === 'video' ? '视频' : '图片'}：${file.name}`); } catch (error) { notify(error instanceof Error ? error.message : '素材上传失败。', 'error'); } } if (nodes.length) { commit((value) => ({ ...value, nodes: [...value.nodes, ...nodes] })); setSelectedIds(new Set(nodes.map((node) => node.id))); setSelectedGroupId(null); notify(`已导入 ${nodes.length} 个素材`); } }, [addLog, commit, notify, screenToWorld, stageSize.height, stageSize.width]);
+
+  const copySelection = useCallback(async () => {
+    if (!selectedIds.size) return notify('请先选择要复制的节点。', 'error');
+    const payload = createCanvasClipboardPayload(docRef.current, [...selectedIds]);
+    canvasClipboardRef.current = payload;
+    try { await navigator.clipboard.writeText(JSON.stringify(payload)); } catch { /* 内部剪贴板仍可在当前画布中使用 */ }
+    notify(`已复制 ${payload.nodes.length} 个节点`);
+  }, [notify, selectedIds]);
+
+  const pasteCanvasPayload = useCallback((payload: CanvasClipboardPayload) => {
+    const source = payload.nodes;
+    if (!source.length) return notify('剪贴板中没有可粘贴的节点。', 'error');
+    const minX = Math.min(...source.map((node) => node.x));
+    const minY = Math.min(...source.map((node) => node.y));
+    const rect = stageRef.current?.getBoundingClientRect();
+    const center = { x: (rect?.left || 0) + (rect?.width || stageSize.width) / 2, y: (rect?.top || 0) + (rect?.height || stageSize.height) / 2 };
+    const target = screenToWorld(center.x, center.y);
+    const idMap = new Map(source.map((node) => [node.id, uid('node')]));
+    const groupMap = new Map(payload.groups.map((group) => [group.id, uid('group')]));
+    const nodes = source.map((node) => {
+      const copy = remapNodeReferences(clone(node), idMap);
+      return { ...copy, id: idMap.get(node.id)!, x: node.x + target.x - minX + 48, y: node.y + target.y - minY + 48, ...(node.groupId && groupMap.has(node.groupId) ? { groupId: groupMap.get(node.groupId) } : { groupId: undefined }) };
+    });
+    const groups = payload.groups.map((group) => ({ ...clone(group), id: groupMap.get(group.id)!, nodeIds: group.nodeIds.map((id) => idMap.get(id)!).filter(Boolean) }));
+    const nodeIds = new Set(source.map((node) => node.id));
+    const edges = payload.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)).map((edge) => ({ ...clone(edge), id: uid('edge'), source: idMap.get(edge.source)!, target: idMap.get(edge.target)! }));
+    commit((value) => ({ ...value, nodes: [...value.nodes, ...nodes], edges: [...value.edges, ...edges], groups: [...value.groups, ...groups] }));
+    setSelectedIds(new Set(nodes.map((node) => node.id)));
+    setSelectedGroupId(groups.length === 1 ? groups[0].id : null);
+    notify(`已粘贴 ${nodes.length} 个节点`);
+  }, [commit, notify, screenToWorld, stageSize.height, stageSize.width]);
+
+  const pasteFromClipboard = useCallback(async () => {
+    let clipboardText = '';
+    try {
+      if (navigator.clipboard?.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const imageType = item.types.find((type) => type.startsWith('image/'));
+          if (imageType) {
+            const blob = await item.getType(imageType);
+            await handleFiles([new File([blob], `剪贴板图片.${imageType.split('/')[1] || 'png'}`, { type: imageType })]);
+            return;
+          }
+        }
+        const textType = items.flatMap((item) => item.types).find((type) => type === 'text/plain');
+        if (textType) {
+          const blob = await items.find((item) => item.types.includes(textType))!.getType(textType);
+          clipboardText = await blob.text();
+          const parsed: unknown = JSON.parse(clipboardText);
+          if (isCanvasClipboardPayload(parsed)) return pasteCanvasPayload(parsed);
+        }
+      }
+      if (!clipboardText) clipboardText = await navigator.clipboard?.readText() || '';
+      if (clipboardText) {
+        const parsed: unknown = JSON.parse(clipboardText);
+        if (isCanvasClipboardPayload(parsed)) return pasteCanvasPayload(parsed);
+      }
+      if (canvasClipboardRef.current) pasteCanvasPayload(canvasClipboardRef.current);
+    } catch {
+      if (!clipboardText && canvasClipboardRef.current) pasteCanvasPayload(canvasClipboardRef.current);
+      else notify(clipboardText ? '剪贴板内容不是可粘贴的画布节点或图片。' : '无法读取剪贴板内容，请检查浏览器权限。', 'error');
+    }
+  }, [handleFiles, notify, pasteCanvasPayload]);
+
+  const toggleAssetLibrary = useCallback(() => {
+    if (workbenchOpen && workbenchTab === 'assets') return setWorkbenchOpen(false);
+    setWorkbenchTab('assets');
+    setWorkbenchOpen(true);
+  }, [workbenchOpen, workbenchTab]);
 
   const setMediaNaturalSize = useCallback((nodeId: string, width: number, height: number) => { if (!width || !height) return; updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => { if (node.id !== nodeId || node.type !== 'media') return node; if (node.data.autoFit === false) return { ...node, data: { ...node.data, nativeWidth: width, nativeHeight: height } }; return { ...node, ...mediaCardSizeForRatio(width / height, node.data.kind || 'image'), data: { ...node.data, nativeWidth: width, nativeHeight: height } }; }) })); }, [updateDoc]);
 
@@ -362,7 +553,7 @@ export default function SuperCanvas() {
 
   const runGeneration = useCallback(async () => {
     if (mode === 'text') { if (selectedSingle?.type === 'prompt') return notify('文本节点已保存'); addNode('text'); return; }
-    const source = deckSource(); const ownerId = source.node?.id || source.target?.id; const linked = ownerId ? incomingReferences(docRef.current, ownerId) : selectedNodes.filter((node) => node.type === 'media' && node.data.url); const context = [...linked, ...selectedNodes.filter((node) => node.type === 'prompt')]; const prompt = smartPrompt(source.prompt, context); if (!prompt.trim()) return notify('请输入生成提示词。', 'error'); const refs = linked.map((node) => ({ url: String(node.data.url || ''), name: String(node.data.name || '参考素材') })).filter((item) => item.url); const kind = source.kind as CanvasMediaKind; const sourceNode = source.node; let targetId = source.target?.id || '';
+    const source = deckSource(); const ownerId = source.node?.id || source.target?.id; const incoming = ownerId ? incomingContext(docRef.current, ownerId) : []; const baseLinked = ownerId ? incoming.filter((node) => node.type === 'media' && node.data.url) : selectedNodes.filter((node) => node.type === 'media' && node.data.url); const linked = [...new Map([...baseLinked, ...mentionedMedia(source.prompt, mentionCandidates)].map((node) => [node.id, node])).values()]; const context = [...incoming.filter((node) => node.type === 'prompt'), ...linked, ...selectedNodes.filter((node) => node.type === 'prompt')]; const prompt = smartPrompt(resolveMentionTokens(source.prompt, mentionCandidates), context); if (!prompt.trim()) return notify('请输入生成提示词。', 'error'); const refs = linked.map((node) => ({ url: String(node.data.url || ''), name: String(node.data.name || '参考素材') })).filter((item) => item.url); const kind = source.kind as CanvasMediaKind; const sourceNode = source.node; let targetId = source.target?.id || '';
     if (generationBusyRef.current) return notify('已有生成请求，请稍候。', 'error');
     generationBusyRef.current = true; setGenerationBusy(true);
     try {
@@ -377,12 +568,81 @@ export default function SuperCanvas() {
         const task = await generateCanvasVideo({ prompt, model: source.params.model, duration: source.params.duration, aspect: source.params.aspect, resolution: source.params.resolution, references: refs, audio: source.params.audio }); updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === targetId ? { ...node, data: { ...node.data, jobId: task.id, status: task.status === 'done' ? 'completed' : 'running', progress: Number(task.progress || 0), url: task.videoUrls?.[0] || node.data.url, statusLabel: task.status === 'done' ? '视频已完成' : '视频生成中', generation: { kind: 'video', prompt, params: source.params, referenceIds: linked.map((item) => item.id), sourceGeneratorId: sourceNode?.id, createdAt: Date.now() } } } : node) })); if (task.status === 'done') notify('视频生成完成'); else { void pollVideo(targetId, task.id); notify('视频任务已提交，结果会自动写入画布'); } addLog(`视频任务已提交：${task.id}`);
       }
       } catch (error) { const message = error instanceof Error ? error.message : '生成失败'; updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => (node.id === sourceNode?.id || node.id === targetId) ? { ...node, data: { ...node.data, status: 'failed', statusLabel: message } } : node) })); notify(message, 'error'); addLog(`生成失败：${message}`); } finally { generationBusyRef.current = false; setGenerationBusy(false); }
-  }, [addLog, addNode, commit, deckSource, mode, notify, pollVideo, screenToWorld, selectedNodes, selectedSingle, updateDoc]);
+  }, [addLog, addNode, commit, deckSource, mentionCandidates, mode, notify, pollVideo, screenToWorld, selectedNodes, selectedSingle, updateDoc]);
 
-  useEffect(() => { const handler = (event: KeyboardEvent) => { if ((event.target as HTMLElement | null)?.matches('input,textarea,select')) return; if (event.key === 'Escape') { setContextMenu(null); setLightbox(null); setWorkbenchOpen(false); interactionRef.current = null; setConnection(null); setConnectionTargetId(null); clearSelection(); } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); } else if (!event.repeat && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelection(); } else if (!event.repeat && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g') { event.preventDefault(); event.shiftKey ? breakGroup() : makeGroup(); } else if (!event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); if (selectedEdgeId) { commit((value) => removeEdge(value, selectedEdgeId)); setSelectedEdgeId(null); } else deleteSelection(); } else if (!event.repeat && event.key.toLowerCase() === 'f') { event.preventDefault(); fitView(); } else if (!event.repeat && (event.key === '+' || event.key === '=')) { event.preventDefault(); zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1.12); } else if (!event.repeat && event.key === '-') { event.preventDefault(); zoomAt(window.innerWidth / 2, window.innerHeight / 2, .88); } else if (!event.repeat && event.key === '0') { event.preventDefault(); fitView(); } else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void runGeneration(); } }; window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler); }, [breakGroup, clearSelection, commit, deleteSelection, duplicateSelection, fitView, makeGroup, redo, runGeneration, selectedEdgeId, undo, zoomAt]);
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+      const modifier = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      const stageRect = stageRef.current?.getBoundingClientRect();
+      const centerX = (stageRect?.left || 0) + (stageRect?.width || stageSize.width) / 2;
+      const centerY = (stageRect?.top || 0) + (stageRect?.height || stageSize.height) / 2;
+      if (event.key === 'Escape') {
+        setContextMenu(null); setLightbox(null); setWorkbenchOpen(false); interactionRef.current = null; setConnection(null); setConnectionTargetId(null); clearSelection();
+      } else if (!event.repeat && modifier && key === 'z') {
+        event.preventDefault(); event.shiftKey ? redo() : undo();
+      } else if (!event.repeat && modifier && key === 'y') {
+        event.preventDefault(); redo();
+      } else if (!event.repeat && modifier && key === 'c') {
+        event.preventDefault(); void copySelection();
+      } else if (!event.repeat && modifier && key === 'v') {
+        event.preventDefault(); void pasteFromClipboard();
+      } else if (!event.repeat && modifier && key === 'd') {
+        event.preventDefault(); duplicateSelection();
+      } else if (!event.repeat && modifier && key === 'g') {
+        event.preventDefault(); event.shiftKey ? breakGroup() : makeGroup();
+      } else if (!event.repeat && !modifier && key === 'a') {
+        event.preventDefault(); toggleAssetLibrary();
+      } else if (!event.repeat && !modifier && key === 'z') {
+        event.preventDefault(); zoomAt(centerX, centerY, .84);
+      } else if (!event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) {
+        event.preventDefault(); if (selectedEdgeId) { commit((value) => removeEdge(value, selectedEdgeId)); setSelectedEdgeId(null); } else deleteSelection();
+      } else if (!event.repeat && !modifier && key === 'f') {
+        event.preventDefault(); fitView();
+      } else if (!event.repeat && (event.key === '+' || event.key === '=')) {
+        event.preventDefault(); zoomAt(centerX, centerY, 1.12);
+      } else if (!event.repeat && event.key === '-') {
+        event.preventDefault(); zoomAt(centerX, centerY, .88);
+      } else if (!event.repeat && event.key === '0') {
+        event.preventDefault(); fitView();
+      } else if (modifier && event.key === 'Enter') {
+        event.preventDefault(); void runGeneration();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [breakGroup, clearSelection, commit, copySelection, deleteSelection, duplicateSelection, fitView, makeGroup, pasteFromClipboard, redo, runGeneration, selectedEdgeId, stageSize.height, stageSize.width, toggleAssetLibrary, undo, zoomAt]);
 
   const handleContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => { event.preventDefault(); const point = stagePoint(event.clientX, event.clientY); setContextMenu({ x: event.clientX, y: event.clientY, world: { x: (point.x - document.camera.x) / document.camera.zoom, y: (point.y - document.camera.y) / document.camera.zoom } }); }, [document.camera, stagePoint]);
-  const deck = deckSource(); const deckKind = deck.kind; const deckModels = deckKind === 'video' ? videoModels : imageModels; const referenceOwnerId = selectedGroupId || selectedSingle?.id; const references = referenceOwnerId ? incomingReferences(document, referenceOwnerId) : selectedNodes.filter((node) => node.type === 'media' && node.data.url);
+  const deck = deckSource(); const deckKind = deck.kind; const deckModels = deckKind === 'video' ? videoModels : imageModels; const references = referenceOwnerId ? incomingReferences(document, referenceOwnerId) : selectedNodes.filter((node) => node.type === 'media' && node.data.url);
+  const filteredMentionCandidates = mentionCandidates.filter((node, index) => !mentionState?.query || mentionLabel(node, index).toLowerCase().includes(mentionState.query.toLowerCase()));
+  const updateDeckPrompt = useCallback((event: ReactChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    const cursor = event.target.selectionStart;
+    updatePrompt(value);
+    const before = value.slice(0, cursor);
+    const match = before.match(/(?:^|[\s])@([^\s@]*)$/);
+    if (!match) return setMentionState(null);
+    setMentionState({ start: cursor - match[0].length + (match[0].startsWith(' ') ? 1 : 0), end: cursor, query: match[1] });
+  }, [updatePrompt]);
+  const chooseMention = useCallback((node: CanvasNode) => {
+    if (!mentionState) return;
+    const index = mentionCandidates.findIndex((item) => item.id === node.id);
+    if (index < 0) return;
+    const value = deck.prompt;
+    const next = `${value.slice(0, mentionState.start)}@${index + 1} ${value.slice(mentionState.end)}`;
+    updatePrompt(next); setMentionState(null);
+    window.requestAnimationFrame(() => deckPromptRef.current?.focus());
+  }, [deck.prompt, mentionCandidates, mentionState, updatePrompt]);
+  const reorderReference = useCallback((ownerId: string, draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const current = incomingReferences(docRef.current, ownerId).map((node) => node.id);
+    const from = current.indexOf(draggedId); const to = current.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    current.splice(from, 1); current.splice(to, 0, draggedId);
+    commit((value) => reorderReferences(value, ownerId, current));
+  }, [commit]);
   const minimapBounds = useMemo(() => { if (!document.nodes.length) return { x: -300, y: -200, w: 600, h: 400 }; const bounds = document.nodes.map((node) => entityBounds(document, node.id)); const minX = Math.min(...bounds.map((item) => item.x)); const minY = Math.min(...bounds.map((item) => item.y)); const maxX = Math.max(...bounds.map((item) => item.x + item.w)); const maxY = Math.max(...bounds.map((item) => item.y + item.h)); return { x: minX - 120, y: minY - 120, w: Math.max(480, maxX - minX + 240), h: Math.max(320, maxY - minY + 240) }; }, [document]);
   const connectionTargetNode = connectionTargetId ? nodeById(document, connectionTargetId) : undefined;
   const connectionTargetSize = connectionTargetNode ? nodeSize(connectionTargetNode) : undefined;
@@ -390,12 +650,11 @@ export default function SuperCanvas() {
   const connectionTargetScreen = connectionTargetNode ? worldToScreen(connectionTargetNode.x, connectionTargetNode.y) : null;
   const connectionCancelScreen = connection ? { x: (connection.start.x + connection.end.x) / 2, y: (connection.start.y + connection.end.y) / 2 } : null;
 
-  if (!ready) return <section className="canvas-workspace canvas-loading"><div className="canvas-loading-card"><span className="canvas-logo-mark">✦</span><strong>正在加载 SANMAO 无限画布</strong><small>恢复本地项目与模型库…</small></div></section>;
+  if (!ready) return <section className="canvas-workspace canvas-loading"><div className="canvas-loading-card"><span className="canvas-logo-mark"><img src="/brand-mark.png" alt="SANMAO.AI" /></span><strong>正在加载 SANMAO 无限画布</strong><small>恢复本地项目与模型库…</small></div></section>;
   return <section className="canvas-workspace" aria-label="SANMAO 无限画布" onClick={() => projectMenuOpen && setProjectMenuOpen(false)}>
-      <header className="canvas-topbar"><div className="canvas-topbar-main"><button type="button" className="canvas-brand" onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((value) => !value); }}><span className="canvas-logo-mark">✦</span><span><b>SANMAO.AI</b><small>{currentProject?.name || '无限画布'}</small></span><i>⌄</i></button><button type="button" className="canvas-soft-button canvas-home-button" aria-label="返回主界面" onClick={() => window.location.assign('/')}>← <span>主界面</span></button><span className="canvas-separator" /><button type="button" className="canvas-icon-button" onClick={undo} disabled={!undoStack.length}>↶</button><button type="button" className="canvas-icon-button" onClick={redo} disabled={!redoStack.length}>↷</button><span className="canvas-separator" /><button type="button" className="canvas-soft-button" onClick={() => fileInputRef.current?.click()}>＋ 导入素材</button><button type="button" className="canvas-soft-button canvas-shortcuts-button" onClick={() => { setWorkbenchTab('shortcuts'); setWorkbenchOpen(true); }}>⌨ 快捷键</button><button type="button" className="canvas-soft-button canvas-settings-button" onClick={() => { setWorkbenchTab('settings'); setWorkbenchOpen(true); }}>⚙ 设置</button><div className="canvas-topbar-spacer" /><span className={`canvas-save-state ${saving ? 'saving' : saveError ? 'error' : ''}`}><i />{saving ? '保存中…' : saveError ? '保存失败' : '已保存'}</span><button type="button" className="canvas-workbench-button" onClick={() => setWorkbenchOpen(true)}><span>◈</span><b>工作台</b><small>资产 · 工作流</small></button></div><div className="canvas-project-popover-wrap">{projectMenuOpen && <div className="canvas-project-popover" onClick={(event) => event.stopPropagation()}><div className="canvas-popover-title">我的画布项目</div>{projects.map((project) => <div className={`canvas-project-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><button type="button" onClick={() => openProject(project.id)}><span className="canvas-project-dot">✦</span><span><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</small></span></button>{project.id === activeProjectId && <i>✓</i>}</div>)}<div className="canvas-popover-actions"><button type="button" onClick={newProject}>＋ 新建画布</button><button type="button" onClick={() => { setProjectRenameValue(currentProject?.name || ''); setProjectRename(true); }}>重命名</button></div>{projectRename && <div className="canvas-rename-row"><input value={projectRenameValue} onChange={(event) => setProjectRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveProjectName(); if (event.key === 'Escape') setProjectRename(false); }} autoFocus /><button type="button" onClick={saveProjectName}>保存</button></div>}</div>}</div></header>
+      <header className="canvas-topbar"><div className="canvas-topbar-main"><button type="button" className="canvas-brand" onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((value) => !value); }}><span className="canvas-logo-mark"><img src="/brand-mark.png" alt="" /></span><span><b>SANMAO.AI</b><small>{currentProject?.name || '无限画布'}</small></span><i>⌄</i></button><button type="button" className="canvas-soft-button canvas-home-button" aria-label="返回主界面" onClick={() => window.location.assign('/')}>← <span>主界面</span></button><span className="canvas-separator" /><button type="button" className="canvas-icon-button" onClick={undo} disabled={!undoStack.length}>↶</button><button type="button" className="canvas-icon-button" onClick={redo} disabled={!redoStack.length}>↷</button><span className="canvas-separator" /><button type="button" className="canvas-soft-button" onClick={() => fileInputRef.current?.click()}>＋ 导入素材</button><button type="button" className="canvas-soft-button canvas-shortcuts-button" onClick={() => { setWorkbenchTab('shortcuts'); setWorkbenchOpen(true); }}>⌨ 快捷键</button><button type="button" className="canvas-soft-button canvas-settings-button" onClick={() => { setWorkbenchTab('settings'); setWorkbenchOpen(true); }}>⚙ 设置</button><div className="canvas-topbar-spacer" /><span className={`canvas-save-state ${saving ? 'saving' : saveError ? 'error' : ''}`}><i />{saving ? '保存中…' : saveError ? '保存失败' : '已保存'}</span><button type="button" className="canvas-workbench-button" onClick={() => setWorkbenchOpen(true)}><span>◈</span><b>工作台</b><small>资产 · 工作流</small></button></div><div className="canvas-project-popover-wrap">{projectMenuOpen && <div className="canvas-project-popover" onClick={(event) => event.stopPropagation()}><div className="canvas-popover-title">我的画布项目</div>{projects.map((project) => <div className={`canvas-project-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><button type="button" onClick={() => openProject(project.id)}><span className="canvas-project-dot">✦</span><span><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</small></span></button>{project.id === activeProjectId && <i>✓</i>}</div>)}<div className="canvas-popover-actions"><button type="button" onClick={newProject}>＋ 新建画布</button><button type="button" onClick={() => { setProjectRenameValue(currentProject?.name || ''); setProjectRename(true); }}>重命名</button></div>{projectRename && <div className="canvas-rename-row"><input value={projectRenameValue} onChange={(event) => setProjectRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveProjectName(); if (event.key === 'Escape') setProjectRename(false); }} autoFocus /><button type="button" onClick={saveProjectName}>保存</button></div>}</div>}</div></header>
      <div ref={stageRef} className="canvas-stage" onPointerDown={handleStagePointerDown} onPointerMove={moveInteraction} onPointerUp={finishInteraction} onPointerCancel={finishInteraction} onContextMenu={handleContextMenu} onWheel={(event) => { if ((event.target as HTMLElement).closest('.canvas-minimap')) return; event.preventDefault(); zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .0014)); }}>
-        <div className="canvas-grid" /><div className="canvas-world"><div className="canvas-world-content" style={{ transform: `translate3d(${document.camera.x}px,${document.camera.y}px,0) scale(${document.camera.zoom})` }}><svg className="canvas-edge-layer" viewBox="-5000 -5000 10000 10000"><defs><linearGradient id="canvas-edge-gradient" x1="0" x2="1"><stop offset="0" stopColor="var(--accent)" /><stop offset="1" stopColor="var(--accent-2)" /></linearGradient><marker id="canvas-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)" /></marker></defs>{document.edges.map((edge) => <path key={edge.id} className={`canvas-edge canvas-edge-${connectionAnimation} ${selectedEdgeId === edge.id ? 'selected' : ''}`} d={edgePath(document, edge)} markerEnd="url(#canvas-arrow)" onPointerDown={(event) => { event.stopPropagation(); setSelectedEdgeId(edge.id); setSelectedIds(new Set()); setSelectedGroupId(null); }} />)}{draftConnection && <path className="canvas-edge canvas-edge-draft" d={(() => { const dx = Math.max(72, Math.abs(draftConnection.end.x - draftConnection.start.x) * .42) * (draftConnection.sourcePort === 'right' ? 1 : -1); return `M ${draftConnection.start.x} ${draftConnection.start.y} C ${draftConnection.start.x + dx} ${draftConnection.start.y}, ${draftConnection.end.x - dx} ${draftConnection.end.y}, ${draftConnection.end.x} ${draftConnection.end.y}`; })()} />}</svg><div className="canvas-group-layer">{document.groups.map((group) => { const bounds = groupBounds(document, group.id); return <div key={group.id} className={`canvas-group ${selectedGroupId === group.id ? 'selected' : ''}`} style={{ left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h }} onPointerDown={(event) => startGroupDrag(event, group)}><button type="button" className="canvas-group-resize" aria-label="调整对象组大小" onPointerDown={(event) => startGroupResize(event, group)} /><div className="canvas-group-label"><span>⌘</span><b>{group.name}</b><small>{group.nodeIds.length} 个对象</small></div></div>; })}</div><div className="canvas-node-layer">{document.nodes.map((node) => <CanvasNodeCard key={node.id} node={node} selected={selectedIds.has(node.id)} document={document} onPointerDown={startNodeDrag} onResize={startResize} onConnect={startConnection} onSelect={(event) => selectNode(node, event.shiftKey)} onPreview={() => setLightbox({ nodeId: node.id, compare: false })} editing={editingNodeId === node.id} onEdit={(value) => setEditingNodeId(value ? node.id : null)} onNaturalSize={setMediaNaturalSize} onPromptChange={(value) => updateDoc((valueDoc) => ({ ...valueDoc, nodes: valueDoc.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, text: value } } : item) }))} />)}</div></div></div>{connectionTargetNode && connectionTargetSize && connectionTargetScreen && <div className="canvas-connection-target" style={{ left: connectionTargetScreen.x - 8, top: connectionTargetScreen.y - 8, width: connectionTargetSize.w * document.camera.zoom + 16, height: connectionTargetSize.h * document.camera.zoom + 16 }} />}{connectionCancelScreen && <button type="button" className="canvas-connection-cancel" aria-label="取消连线" title="取消连线" style={{ left: connectionCancelScreen.x, top: connectionCancelScreen.y }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); interactionRef.current = null; setConnection(null); setConnectionTargetId(null); try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ } }}>×</button>}{marquee && <div className="canvas-marquee" style={{ left: Math.min(marquee.x, marquee.x + marquee.w), top: Math.min(marquee.y, marquee.y + marquee.h), width: Math.abs(marquee.w), height: Math.abs(marquee.h) }}><b>{Math.round(Math.abs(marquee.w))} × {Math.round(Math.abs(marquee.h))} px</b></div>}
-        <div className="canvas-status-chip"><span className={runtimeError ? 'error' : 'online'} />{runtimeError || (runtime ? `${models.length} 个可用模型` : '正在读取模型库…')}</div>
+        <div className="canvas-grid" /><div className="canvas-world"><div className="canvas-world-content" style={{ transform: `translate3d(${document.camera.x}px,${document.camera.y}px,0) scale(${document.camera.zoom})` }}><svg className="canvas-edge-layer" viewBox="-5000 -5000 10000 10000"><defs><linearGradient id="canvas-edge-gradient" x1="0" x2="1"><stop offset="0" stopColor="var(--accent)" /><stop offset="1" stopColor="var(--accent-2)" /></linearGradient><marker id="canvas-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)" /></marker></defs>{document.edges.map((edge) => <CanvasEdgeVisual key={edge.id} document={document} edge={edge} animation={connectionAnimation} selected={selectedEdgeId === edge.id} onSelect={() => { setSelectedEdgeId(edge.id); setSelectedIds(new Set()); setSelectedGroupId(null); }} />)}{draftConnection && <path className="canvas-edge canvas-edge-draft" d={(() => { const dx = Math.max(72, Math.abs(draftConnection.end.x - draftConnection.start.x) * .42) * (draftConnection.sourcePort === 'right' ? 1 : -1); return `M ${draftConnection.start.x} ${draftConnection.start.y} C ${draftConnection.start.x + dx} ${draftConnection.start.y}, ${draftConnection.end.x - dx} ${draftConnection.end.y}, ${draftConnection.end.x} ${draftConnection.end.y}`; })()} />}</svg><div className="canvas-group-layer">{document.groups.map((group) => { const bounds = groupBounds(document, group.id); return <div key={group.id} className={`canvas-group ${selectedGroupId === group.id ? 'selected' : ''}`} style={{ left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h }} onPointerDown={(event) => startGroupDrag(event, group)}><button type="button" className="canvas-group-resize" aria-label="调整对象组大小" onPointerDown={(event) => startGroupResize(event, group)} /><div className="canvas-group-label"><span>⌘</span><b>{group.name}</b><small>{group.nodeIds.length} 个对象</small></div></div>; })}</div><div className="canvas-node-layer">{document.nodes.map((node) => <CanvasNodeCard key={node.id} node={node} selected={selectedIds.has(node.id)} document={document} onPointerDown={startNodeDrag} onResize={startResize} onConnect={startConnection} onSelect={(event) => selectNode(node, event.shiftKey)} onPreview={() => setLightbox({ nodeId: node.id, compare: false })} editing={editingNodeId === node.id} onEdit={(value) => setEditingNodeId(value ? node.id : null)} onNaturalSize={setMediaNaturalSize} onPromptChange={(value) => updateDoc((valueDoc) => ({ ...valueDoc, nodes: valueDoc.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, text: value } } : item) }))} onReorderReferences={reorderReference} />)}</div></div></div>{connectionTargetNode && connectionTargetSize && connectionTargetScreen && <div className="canvas-connection-target" style={{ left: connectionTargetScreen.x - 8, top: connectionTargetScreen.y - 8, width: connectionTargetSize.w * document.camera.zoom + 16, height: connectionTargetSize.h * document.camera.zoom + 16 }} />}{connectionCancelScreen && <button type="button" className="canvas-connection-cancel" aria-label="取消连线" title="取消连线" style={{ left: connectionCancelScreen.x, top: connectionCancelScreen.y }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); interactionRef.current = null; setConnection(null); setConnectionTargetId(null); try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ } }}>×</button>}{marquee && <div className="canvas-marquee" style={{ left: Math.min(marquee.x, marquee.x + marquee.w), top: Math.min(marquee.y, marquee.y + marquee.h), width: Math.abs(marquee.w), height: Math.abs(marquee.h) }}><b>{Math.round(Math.abs(marquee.w))} × {Math.round(Math.abs(marquee.h))} px</b></div>}
       {selectedNodes.length >= 2 && <div className="canvas-selection-toolbar"><b>{selectedGroupId ? '已选对象组' : `已选 ${selectedNodes.length} 个对象`}</b><span />{!selectedGroupId && <button type="button" onClick={makeGroup}>⌘ 成组</button>}{selectedGroupId && <button type="button" onClick={breakGroup}>解组</button>}<button type="button" onClick={duplicateSelection}>⧉ 复制</button><button type="button" onClick={() => fitView([...selectedIds])}>⌗ 聚焦</button><button type="button" className="danger" onClick={deleteSelection}>⌫ 删除</button></div>}
       <div className={`canvas-deck ${deckCollapsed ? 'collapsed' : ''}`}>
         <div className="canvas-deck-top">
@@ -406,8 +665,8 @@ export default function SuperCanvas() {
         {!deckCollapsed && <>
           <div className="canvas-deck-main">
             <button type="button" className="canvas-context-add" aria-label="导入参考素材" onClick={() => fileInputRef.current?.click()}>＋</button>
-            <div className="canvas-reference-preview">{references.slice(0, 6).map((node, index) => <div className="canvas-reference-chip" key={node.id}><span>{index + 1}</span>{node.data.kind === 'video' ? <video src={node.data.url} muted playsInline /> : <img src={node.data.url} alt="" />}</div>)}</div>
-            <textarea value={deck.prompt} onChange={(event) => updatePrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void runGeneration(); } }} placeholder={mode === 'video' ? '描述视频动作、镜头、节奏和声音…' : mode === 'text' ? '编辑文本节点或输入新的文本内容…' : '描述你想生成的画面…'} rows={2} />
+             <CanvasReferenceList document={document} ownerId={referenceOwnerId} nodes={references} onReorder={reorderReference} variant="deck" />
+             <div className="canvas-prompt-input-wrap"><textarea ref={deckPromptRef} value={deck.prompt} onChange={updateDeckPrompt} onKeyDown={(event) => { if (event.key === 'Escape') setMentionState(null); if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void runGeneration(); } }} placeholder={mode === 'video' ? '描述视频动作、镜头、节奏和声音… 输入 @ 可调用参考图' : mode === 'text' ? '编辑文本节点或输入新的文本内容…' : '描述你想生成的画面… 输入 @ 可调用参考图'} rows={2} />{mentionState && filteredMentionCandidates.length > 0 && <div className="canvas-mention-menu">{filteredMentionCandidates.slice(0, 8).map((node) => <button type="button" key={node.id} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseMention(node)}><b>@{mentionCandidates.findIndex((item) => item.id === node.id) + 1}</b><span>{mentionLabel(node, mentionCandidates.findIndex((item) => item.id === node.id))}</span></button>)}</div>}</div>
             <button type="button" className="canvas-run-button" disabled={generationBusy} aria-busy={generationBusy} onClick={() => void runGeneration()}><span>✦</span><b>{generationBusy ? '处理中…' : mode === 'text' ? '保存' : deck.target ? '生成到此节点' : '生成'}</b><small>Ctrl + Enter</small></button>
           </div>
           <div className="canvas-deck-params">{mode !== 'text' && <>
@@ -429,13 +688,25 @@ export default function SuperCanvas() {
   </section>;
 }
 
-function CanvasNodeCard({ node, selected, document, onPointerDown, onResize, onConnect, onSelect, onPreview, onNaturalSize, onPromptChange, editing, onEdit }: { node: CanvasNode; selected: boolean; document: CanvasDocument; onPointerDown: (event: ReactPointerEvent, node: CanvasNode) => void; onResize: (event: ReactPointerEvent, node: CanvasNode) => void; onConnect: (event: ReactPointerEvent, nodeId: string, port: 'left' | 'right') => void; onSelect: (event: ReactPointerEvent) => void; onPreview: () => void; onNaturalSize: (nodeId: string, width: number, height: number) => void; onPromptChange: (value: string) => void; editing: boolean; onEdit: (value: boolean) => void }) {
+function CanvasReferenceList({ document, ownerId, nodes, onReorder, variant = 'card' }: { document: CanvasDocument; ownerId?: string; nodes?: CanvasNode[]; onReorder: (ownerId: string, draggedId: string, targetId: string) => void; variant?: 'card' | 'deck' }) {
+  const references = ownerId ? incomingReferences(document, ownerId) : nodes || [];
+  if (!references.length) return <small className="canvas-reference-empty">连接素材后显示参考顺序</small>;
+  return <div className={`canvas-reference-list ${variant}`}>
+    {references.map((item, index) => <div className="canvas-reference-item" key={item.id} draggable={Boolean(ownerId)} title={ownerId ? '拖动调整参考顺序' : item.data.name || '参考素材'} onPointerDown={(event) => event.stopPropagation()} onDragStart={(event: ReactDragEvent<HTMLDivElement>) => { if (!ownerId) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', item.id); }} onDragOver={(event) => { if (ownerId) event.preventDefault(); }} onDrop={(event: ReactDragEvent<HTMLDivElement>) => { event.preventDefault(); const draggedId = event.dataTransfer.getData('text/plain'); if (ownerId && draggedId) onReorder(ownerId, draggedId, item.id); }}>
+      <span className="canvas-reference-index">{index + 1}</span>
+      {item.data.kind === 'video' ? <video src={item.data.url} muted playsInline /> : <img src={item.data.url} alt={item.data.name || '参考素材'} />}
+      <b>{item.data.name || (item.data.kind === 'video' ? '视频素材' : '图片素材')}</b>
+    </div>)}
+  </div>;
+}
+
+function CanvasNodeCard({ node, selected, document, onPointerDown, onResize, onConnect, onSelect, onPreview, onNaturalSize, onPromptChange, onReorderReferences, editing, onEdit }: { node: CanvasNode; selected: boolean; document: CanvasDocument; onPointerDown: (event: ReactPointerEvent, node: CanvasNode) => void; onResize: (event: ReactPointerEvent, node: CanvasNode) => void; onConnect: (event: ReactPointerEvent, nodeId: string, port: 'left' | 'right') => void; onSelect: (event: ReactPointerEvent) => void; onPreview: () => void; onNaturalSize: (nodeId: string, width: number, height: number) => void; onPromptChange: (value: string) => void; onReorderReferences: (ownerId: string, draggedId: string, targetId: string) => void; editing: boolean; onEdit: (value: boolean) => void }) {
   const size = nodeSize(node); const data = node.data; const pending = data.status === 'queued' || data.status === 'running'; const failed = data.status === 'failed' && !data.url;
   return <article className={`canvas-node ${selected ? 'selected' : ''}`} data-canvas-node-id={node.id} style={{ left: node.x, top: node.y, width: size.w, height: size.h }} onPointerDown={(event) => onPointerDown(event, node)} onDoubleClick={() => { if (node.type === 'prompt') onEdit(true); else if (node.type === 'media' && data.url) onPreview(); }}>
     <button type="button" className="canvas-port left" aria-label="左侧连接端口" onPointerDown={(event) => onConnect(event, node.id, 'left')} />
     {node.type === 'media' && <div className="canvas-media-card"><div className="canvas-media-stage">{pending ? <div className="canvas-media-state pending"><span>✦</span><b>{data.statusLabel || '生成中'}</b><small>{Number(data.progress || 0)}%</small></div> : failed ? <div className="canvas-media-state failed"><span>!</span><b>生成失败</b><small>{data.statusLabel}</small></div> : !data.url ? <div className="canvas-media-state draft"><span>{data.kind === 'video' ? '▶' : '▣'}</span><b>{data.kind === 'video' ? '空视频节点' : '空图片节点'}</b><small>选中后在下方生成</small></div> : data.kind === 'video' ? <video src={data.url} muted playsInline preload="metadata" onLoadedMetadata={(event) => onNaturalSize(node.id, event.currentTarget.videoWidth, event.currentTarget.videoHeight)} /> : <img src={data.url} alt={data.name || '画布素材'} draggable={false} onLoad={(event) => onNaturalSize(node.id, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} />}{data.kind === 'video' && data.url && <span className="canvas-video-mark">▶</span>}</div><div className="canvas-node-footer"><span className="canvas-type-icon">{data.kind === 'video' ? '▶' : '▣'}</span><span className="canvas-node-title"><b>{data.name || '素材'}</b><small>{data.model || nodeStatus(node)}</small></span><em>{nodeStatus(node)}</em></div></div>}
     {node.type === 'prompt' && <div className="canvas-prompt-card"><div className="canvas-node-kicker"><span>T</span><b>文本节点</b></div>{editing ? <textarea value={String(data.text || '')} placeholder="输入提示词或备注…" autoFocus onChange={(event) => onPromptChange(event.target.value)} onBlur={() => onEdit(false)} onPointerDown={(event) => event.stopPropagation()} /> : <div className="canvas-prompt-preview">{String(data.text || '双击编辑文本…')}</div>}<small>可连接到图片或视频生成节点</small></div>}
-    {node.type === 'generator' && <div className="canvas-generator-card"><div className="canvas-generator-head"><span>{data.kind === 'video' ? '▶' : '✦'}</span><div><b>{data.kind === 'video' ? '视频生成' : '图片生成'}</b><small>{data.status === 'running' ? '生成中…' : '高级工作流节点'}</small></div></div><div className="canvas-generator-refs">{incomingReferences(document, node.id).length ? incomingReferences(document, node.id).map((item, index) => <span key={item.id}>{index + 1}{item.data.kind === 'video' ? '▶' : '▣'}</span>) : <small>连接素材后显示参考顺序</small>}</div><div className="canvas-generator-prompt">{String(data.prompt || '点击选中，在下方编辑提示词')}</div><div className="canvas-generator-meta"><span>{String((data.params as CanvasGenerationParams | undefined)?.model || '自动模型')}</span><span>{String((data.params as CanvasGenerationParams | undefined)?.aspect || '自动比例')}</span></div></div>}
+     {node.type === 'generator' && <div className="canvas-generator-card"><div className="canvas-generator-head"><span>{data.kind === 'video' ? '▶' : '✦'}</span><div><b>{data.kind === 'video' ? '视频生成' : '图片生成'}</b><small>{data.status === 'running' ? '生成中…' : '高级工作流节点'}</small></div></div><CanvasReferenceList document={document} ownerId={node.id} onReorder={onReorderReferences} variant="card" /><div className="canvas-generator-prompt">{String(data.prompt || '点击选中，在下方编辑提示词')}</div><div className="canvas-generator-meta"><span>{String((data.params as CanvasGenerationParams | undefined)?.model || '自动模型')}</span><span>{String((data.params as CanvasGenerationParams | undefined)?.aspect || '自动比例')}</span></div></div>}
     <button type="button" className="canvas-port right" aria-label="右侧连接端口" onPointerDown={(event) => onConnect(event, node.id, 'right')} /><span className="canvas-node-resize" onPointerDown={(event) => onResize(event, node)} title="调整卡片大小" />
   </article>;
 }
@@ -460,7 +731,12 @@ function CanvasMinimap({ document, selectedIds, bounds, stageSize, zoomAt, fitVi
   const visible = { x: -document.camera.x / zoom, y: -document.camera.y / zoom, w: stageSize.width / zoom, h: stageSize.height / zoom };
   const viewportStyle: CSSProperties = mapStyle(visible);
   const navigate = (event: React.MouseEvent<HTMLDivElement>) => { const rect = event.currentTarget.getBoundingClientRect(); const px = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1); const py = clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1); const x = bounds.x + (px * mapWidth - mapOffsetX) / mapScale; const y = bounds.y + (py * mapHeight - mapOffsetY) / mapScale; onNavigate(x, y); };
-  return <div className="canvas-minimap" onWheel={(event) => event.stopPropagation()}><div className="canvas-minimap-head"><b>导航小地图</b><button type="button" onClick={fitView}>全览</button></div><div className="canvas-minimap-stage" onClick={navigate}><i className="canvas-minimap-viewport" style={viewportStyle} />{document.nodes.map((node) => <i key={node.id} className={selectedIds.has(node.id) ? 'active' : ''} style={style(node)} />)}</div><div className="canvas-minimap-foot"><span>{formatPercent(document.camera.zoom)}</span><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, .84)}>−</button><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, 1.18)}>＋</button><button type="button" onClick={fitView}>适应</button></div></div>;
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .0014));
+  };
+  return <div className="canvas-minimap" onWheel={handleWheel}><div className="canvas-minimap-head"><b>导航小地图</b><button type="button" onClick={fitView}>全览</button></div><div className="canvas-minimap-stage" onClick={navigate}><i className="canvas-minimap-viewport" style={viewportStyle} />{document.nodes.map((node) => <i key={node.id} className={selectedIds.has(node.id) ? 'active' : ''} style={style(node)} />)}</div><div className="canvas-minimap-foot"><span>{formatPercent(document.camera.zoom)}</span><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, .84)}>−</button><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, 1.18)}>＋</button><button type="button" onClick={fitView}>适应</button></div></div>;
 }
 
 function CanvasLightbox({ node, compare, references, onClose, onCompare }: { node?: CanvasNode; compare: boolean; references: CanvasNode[]; onClose: () => void; onCompare: () => void }) {
@@ -471,5 +747,5 @@ function CanvasLightbox({ node, compare, references, onClose, onCompare }: { nod
 function CanvasWorkbench({ tab, setTab, nodes, groups, edges, projects, activeProjectId, logs, connectionAnimation, onConnectionAnimationChange, onClose, onExport, onImport, onArrange, onDeleteProject }: { tab: WorkbenchTab; setTab: (tab: WorkbenchTab) => void; nodes: CanvasNode[]; groups: CanvasGroup[]; edges: CanvasEdge[]; projects: CanvasProject[]; activeProjectId: string; logs: string[]; connectionAnimation: ConnectionAnimation; onConnectionAnimationChange: (value: ConnectionAnimation) => void; onClose: () => void; onExport: () => void; onImport: () => void; onArrange: () => void; onDeleteProject: (id: string) => void }) {
   const media = nodes.filter((node) => node.type === 'media' && Boolean(node.data.url)); const tabs = ['assets', 'workflow', 'logs', 'shortcuts', 'project', 'settings'] as const;
   const tabLabels: Record<WorkbenchTab, string> = { assets: '资产', workflow: '工作流', logs: '日志', shortcuts: '快捷键', project: '项目', settings: '设置' };
-  return <div className="canvas-modal-backdrop workbench-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="canvas-workbench"><header><div><span className="canvas-logo-mark small">✦</span><span><b>统一工作台</b><small>资产、工作流与画布项目</small></span></div><button type="button" onClick={onClose}>×</button></header><nav>{tabs.map((item) => <button type="button" key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{tabLabels[item]}</button>)}</nav><div className="canvas-workbench-content">{tab === 'assets' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布资产</b><small>{media.length} 个媒体节点</small></span></div>{media.length ? <div className="canvas-asset-grid">{media.map((node) => <div className="canvas-asset-card" key={node.id}>{node.data.kind === 'video' ? <video src={node.data.url} muted /> : <img src={node.data.url} alt="" />}<span>{node.data.name || '素材'}</span></div>)}</div> : <div className="canvas-empty-panel">导入的图片和视频会集中显示在这里。</div>}</div>}{tab === 'workflow' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>工作流</b><small>{nodes.length} 个节点 · {edges.length} 条连线 · {groups.length} 个对象组</small></span></div><div className="canvas-workbench-actions"><button type="button" className="primary" onClick={onArrange}>⌗ 适应全部</button><button type="button" onClick={onExport}>↓ 导出 JSON</button><button type="button" onClick={onImport}>↑ 导入 JSON</button></div><div className="canvas-empty-panel">通过节点端口连接图片、视频和文本，生成结果会自动保留引用关系。</div></div>}{tab === 'logs' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>操作日志</b><small>最近 {logs.length} 条操作</small></span></div>{logs.length ? <div className="canvas-log-list">{logs.map((log, index) => <div key={`${log}-${index}`}><time>{index + 1}</time><span>{log}</span></div>)}</div> : <div className="canvas-empty-panel">还没有操作日志。</div>}</div>}{tab === 'shortcuts' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>快捷键</b><small>画布常用操作</small></span></div><div className="canvas-shortcut-list">{[['Ctrl + Z', '撤销'], ['Ctrl + Y', '恢复'], ['Ctrl + G', '创建对象组'], ['Ctrl + Shift + G', '解散对象组'], ['Ctrl + D', '复制选中对象'], ['Delete', '删除选中对象'], ['F', '适应全部画布'], ['Ctrl + Enter', '提交生成']].map(([key, label]) => <div key={key}><kbd>{key}</kbd><span>{label}</span></div>)}</div></div>}{tab === 'project' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>项目管理</b><small>本地优先保存 · 支持 JSON 备份</small></span></div>{projects.map((project) => <div className={`canvas-project-manage-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><span className="canvas-project-dot">✦</span><div><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleString('zh-CN')}</small></div>{projects.length > 1 && <button type="button" onClick={() => onDeleteProject(project.id)}>删除</button>}</div>)}</div>}{tab === 'settings' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布设置</b><small>调整画布交互与显示效果</small></span></div><div className="canvas-settings-card"><div><b>节点连线动态</b><small>选择连线在画布中的显示方式，设置会自动保存到本机。</small></div><div className="canvas-settings-options">{CONNECTION_ANIMATION_OPTIONS.map((option) => <button type="button" key={option.value} className={connectionAnimation === option.value ? 'active' : ''} aria-pressed={connectionAnimation === option.value} onClick={() => onConnectionAnimationChange(option.value)}><span className="canvas-settings-option-icon" data-animation={option.value}>⌁</span><span><b>{option.label}</b><small>{option.description}</small></span><i>{connectionAnimation === option.value ? '✓' : ''}</i></button>)}</div></div></div>}</div></aside></div>;
+  return <div className="canvas-modal-backdrop workbench-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="canvas-workbench"><header><div><span className="canvas-logo-mark small"><img src="/brand-mark.png" alt="" /></span><span><b>统一工作台</b><small>资产、工作流与画布项目</small></span></div><button type="button" onClick={onClose}>×</button></header><nav>{tabs.map((item) => <button type="button" key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{tabLabels[item]}</button>)}</nav><div className="canvas-workbench-content">{tab === 'assets' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布资产</b><small>{media.length} 个媒体节点</small></span></div>{media.length ? <div className="canvas-asset-grid">{media.map((node) => <div className="canvas-asset-card" key={node.id}>{node.data.kind === 'video' ? <video src={node.data.url} muted /> : <img src={node.data.url} alt="" />}<span>{node.data.name || '素材'}</span></div>)}</div> : <div className="canvas-empty-panel">导入的图片和视频会集中显示在这里。</div>}</div>}{tab === 'workflow' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>工作流</b><small>{nodes.length} 个节点 · {edges.length} 条连线 · {groups.length} 个对象组</small></span></div><div className="canvas-workbench-actions"><button type="button" className="primary" onClick={onArrange}>⌗ 适应全部</button><button type="button" onClick={onExport}>↓ 导出 JSON</button><button type="button" onClick={onImport}>↑ 导入 JSON</button></div><div className="canvas-empty-panel">通过节点端口连接图片、视频和文本，生成结果会自动保留引用关系。</div></div>}{tab === 'logs' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>操作日志</b><small>最近 {logs.length} 条操作</small></span></div>{logs.length ? <div className="canvas-log-list">{logs.map((log, index) => <div key={`${log}-${index}`}><time>{index + 1}</time><span>{log}</span></div>)}</div> : <div className="canvas-empty-panel">还没有操作日志。</div>}</div>}{tab === 'shortcuts' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>快捷键</b><small>这些按键可直接操作当前画布</small></span></div><div className="canvas-shortcut-list">{CANVAS_SHORTCUTS.map((shortcut) => <div key={shortcut.keys.join('+')}><kbd>{shortcut.keys.map((key) => <span key={key}>{key}</span>)}</kbd><span>{shortcut.label}</span></div>)}</div></div>}{tab === 'project' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>项目管理</b><small>本地优先保存 · 支持 JSON 备份</small></span></div>{projects.map((project) => <div className={`canvas-project-manage-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><span className="canvas-project-dot">✦</span><div><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleString('zh-CN')}</small></div>{projects.length > 1 && <button type="button" onClick={() => onDeleteProject(project.id)}>删除</button>}</div>)}</div>}{tab === 'settings' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布设置</b><small>调整画布交互与显示效果</small></span></div><div className="canvas-settings-card"><div><b>节点连线动态</b><small>选择连线在画布中的显示方式，设置会自动保存到本机。</small></div><div className="canvas-settings-options">{CONNECTION_ANIMATION_OPTIONS.map((option) => <button type="button" key={option.value} className={connectionAnimation === option.value ? 'active' : ''} aria-pressed={connectionAnimation === option.value} onClick={() => onConnectionAnimationChange(option.value)}><span className="canvas-settings-option-icon" data-animation={option.value}>⌁</span><span><b>{option.label}</b><small>{option.description}</small></span><i>{connectionAnimation === option.value ? '✓' : ''}</i></button>)}</div></div></div>}</div></aside></div>;
 }
