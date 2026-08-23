@@ -362,7 +362,7 @@ function dataUrlFile(dataUrl: string, name: string) {
 function nodeLabel(node: CanvasNode) {
   if (node.type === "prompt") return "Agent 节点";
   if (node.type === "generator")
-    return node.data.kind === "video" ? "视频生成节点" : "图片生成节点";
+    return node.data.kind === "video" ? "视频变体生成器" : "图片变体生成器";
   return node.data.kind === "video" ? "视频卡片" : "图片卡片";
 }
 
@@ -2101,7 +2101,7 @@ export default function SuperCanvas() {
       setMode(kind === "text" ? "text" : mediaKind);
       setContextMenu(null);
       notify(
-        `已添加${kind === "text" ? "Agent" : mediaKind === "video" ? "视频" : "图片"}节点`,
+        `已添加${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : "图片"}节点`,
       );
     },
     [
@@ -2155,7 +2155,7 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setMode(kind === "text" ? "text" : mediaKind);
       notify(
-        `已添加并连接${kind === "text" ? "Agent" : mediaKind === "video" ? "视频" : "图片"}节点`,
+        `已添加并连接${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : "图片"}节点`,
       );
     },
     [commit, notify, openNodePosition, runtime],
@@ -2943,8 +2943,493 @@ export default function SuperCanvas() {
     });
   }, [activeProjectId, document.nodes, pollVideo, ready]);
 
+  const runVariantBatch = useCallback(
+    async (generatorId: string, retryIndices?: number[]) => {
+      const generator = nodeById(docRef.current, generatorId);
+      if (!generator || generator.type !== "generator") {
+        notify("变体生成器已不存在，请重新选择节点。", "error");
+        return;
+      }
+      const kind = generator.data.kind === "video" ? "video" : "image";
+      const requirements = variantRequirementsFor(generator);
+      const currentStates = variantStatesFor(generator);
+      const requested = retryIndices
+        ? [...new Set(retryIndices)].filter(
+            (index) =>
+              index >= 0 &&
+              index < requirements.length &&
+              currentStates[index]?.status === "failed",
+          )
+        : requirements.map((_, index) => index);
+      const isRetry = Boolean(retryIndices);
+      if (!requested.length)
+        return notify(
+          isRetry ? "当前没有可重试的失败变体。" : "请至少填写一条变体要求。",
+          isRetry ? "ok" : "error",
+        );
+      const activeKey = generatorId;
+      if (generationKeysRef.current.has(activeKey))
+        return notify("这个变体生成器正在处理中，请稍候。", "error");
+      generationKeysRef.current.add(activeKey);
+      setGenerationKeys(new Set(generationKeysRef.current));
+
+      const batchId =
+        isRetry && generator.data.variantBatchId
+          ? String(generator.data.variantBatchId)
+          : uid("variant-batch");
+      const initialStates = currentStates.map((state, index) => {
+        if (!requested.includes(index)) return state;
+        return {
+          ...state,
+          instruction: requirements[index],
+          status: "pending" as const,
+          resultIds: isRetry ? state.resultIds : [],
+          taskIds: isRetry ? state.taskIds : undefined,
+          progress: 0,
+          error: undefined,
+          updatedAt: Date.now(),
+        };
+      });
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) =>
+          node.id === generatorId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  variantBatchId: batchId,
+                  variantStates: initialStates,
+                  status: "running" as const,
+                  statusLabel: `正在生成 ${kind === "video" ? "视频" : "图片"}变体`,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const sourceParams = copyParams(generator.data.params, kind, runtime);
+      const resolvedModel = resolveAvailableCreationModel(sourceParams, runtime);
+      const effectiveParams = {
+        ...sourceParams,
+        model: resolvedModel.model?.id || "auto",
+      } as ImageCreationSettings | VideoCreationSettings;
+      const incoming = incomingContext(docRef.current, generatorId);
+      const linked = [
+        ...new Map(
+          incoming
+            .filter((node) => node.type === "media" && node.data.url)
+            .map((node) => [node.id, node]),
+        ).values(),
+      ];
+      const context = [
+        ...incoming.filter((node) => node.type === "prompt"),
+        ...linked,
+      ];
+      const refs = linked
+        .map((node) => ({
+          url: String(node.data.url || ""),
+          name: String(node.data.name || "参考素材"),
+        }))
+        .filter((item) => item.url);
+      const commonPrompt = String(generator.data.prompt || "").trim();
+      const batchName = `${kind === "video" ? "视频" : "图片"}变体批次`;
+      const updateVariantState = (
+        value: CanvasDocument,
+        index: number,
+        patch: Partial<CanvasVariantState>,
+      ) => {
+        const nextNodes = value.nodes.map((node) => {
+          if (node.id !== generatorId) return node;
+          const states = variantStatesFor(node).map((state, stateIndex) =>
+            stateIndex === index
+              ? {
+                  ...state,
+                  ...patch,
+                  instruction: requirements[stateIndex],
+                  updatedAt: Date.now(),
+                }
+              : state,
+          );
+          const status = variantBatchStatus(states);
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              variantStates: states,
+              status,
+              statusLabel:
+                status === "completed"
+                  ? `${kind === "video" ? "视频" : "图片"}变体生成完成`
+                  : status === "failed"
+                    ? `部分${kind === "video" ? "视频" : "图片"}变体失败`
+                    : `${kind === "video" ? "视频" : "图片"}变体生成中`,
+            },
+          };
+        });
+        return { ...value, nodes: nextNodes };
+      };
+      const attachBatchGroup = (
+        value: CanvasDocument,
+        newResultIds: string[],
+      ) => {
+        const currentGenerator = nodeById(value, generatorId);
+        if (!currentGenerator) return value;
+        const allResultIds = variantStatesFor(currentGenerator).flatMap(
+          (state) => state.resultIds,
+        );
+        let next = value;
+        const existingGroup = currentGenerator.data.variantGroupId
+          ? groupById(next, String(currentGenerator.data.variantGroupId))
+          : undefined;
+        if (existingGroup) next = moveNodesToGroup(next, newResultIds, existingGroup.id);
+        else if (allResultIds.length >= 2)
+          next = createGroup(next, allResultIds, batchName);
+        const createdGroup = nodeById(next, generatorId)?.data.variantGroupId
+          ? groupById(next, String(nodeById(next, generatorId)?.data.variantGroupId))
+          : next.groups.find((group) =>
+              allResultIds.every((id) => group.nodeIds.includes(id)),
+            );
+        return createdGroup
+          ? {
+              ...next,
+              nodes: next.nodes.map((node) =>
+                node.id === generatorId
+                  ? {
+                      ...node,
+                      data: { ...node.data, variantGroupId: createdGroup.id },
+                    }
+                  : node,
+              ),
+            }
+          : next;
+      };
+      const promptFor = (index: number) => {
+        const instruction = requirements[index];
+        return smartPrompt(
+          [
+            commonPrompt,
+            instruction ? `变体要求：${instruction}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          context,
+        );
+      };
+      const positionFor = (index: number, outputIndex = 0) => ({
+        x:
+          generator.x +
+          nodeSize(generator).w +
+          110 +
+          (outputIndex % 2) * 350,
+        y: generator.y + index * 300 + Math.floor(outputIndex / 2) * 280,
+      });
+
+      const applyVideoTask = (
+        value: CanvasDocument,
+        targetId: string,
+        index: number,
+        task: {
+          status: string;
+          progress?: number;
+          videoUrls?: string[];
+          error?: string;
+        },
+      ) => {
+        const terminal = ["done", "failed", "cancelled", "canceled"].includes(
+          task.status,
+        );
+        const variantStatus =
+          task.status === "done"
+            ? ("completed" as const)
+            : terminal
+              ? ("failed" as const)
+              : ("running" as const);
+        let next = {
+          ...value,
+          nodes: value.nodes.map((node) =>
+            node.id === targetId
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    status:
+                      task.status === "done"
+                        ? ("completed" as const)
+                        : terminal
+                          ? ("failed" as const)
+                          : ("running" as const),
+                    progress: Number(
+                      task.progress || (task.status === "done" ? 100 : 0),
+                    ),
+                    url: task.videoUrls?.[0] || node.data.url,
+                    statusLabel:
+                      task.error ||
+                      (task.status === "done"
+                        ? "视频已完成"
+                        : terminal
+                          ? "视频任务已中断"
+                          : "视频生成中"),
+                  },
+                }
+              : node,
+          ),
+        };
+        next = updateVariantState(next, index, {
+          status: variantStatus,
+          progress: Number(task.progress || (task.status === "done" ? 100 : 0)),
+          ...(task.error ? { error: task.error } : {}),
+        });
+        return next;
+      };
+
+      try {
+        for (const index of requested) {
+          if (!mountedRef.current) return;
+          const prompt = promptFor(index);
+          if (!prompt.trim()) {
+            updateDoc((value) =>
+              updateVariantState(value, index, {
+                status: "failed",
+                error: "共同提示词和变体要求都为空",
+              }),
+            );
+            continue;
+          }
+          updateDoc((value) =>
+            updateVariantState(value, index, {
+              status: "running",
+              progress: 0,
+              error: undefined,
+            }),
+          );
+          try {
+            if (kind === "image") {
+              const imageParams = effectiveParams as ImageCreationSettings;
+              const result = await generateCanvasImage({
+                taskId: uid("image-task"),
+                prompt,
+                model: imageParams.model,
+                count: imageParams.count,
+                aspect:
+                  imageParams.aspect === "自定义"
+                    ? `${imageParams.customAspectWidth}:${imageParams.customAspectHeight}`
+                    : imageParams.aspect,
+                resolution: imageParams.resolution,
+                quality: imageParams.quality,
+                ...(imageParams.sizeMode === "custom"
+                  ? { width: imageParams.width, height: imageParams.height }
+                  : {}),
+                outputFormat: imageParams.outputFormat,
+                background:
+                  imageParams.backgroundMode === "api-transparent"
+                    ? "transparent"
+                    : imageParams.backgroundMode === "opaque"
+                      ? "opaque"
+                      : undefined,
+                maskUrl: imageParams.mask?.url,
+                references: refs,
+              });
+              if (!result.images?.length)
+                throw new Error("服务端没有返回图片结果。");
+              const outputs = result.images.map((image, outputIndex) =>
+                createMedia(
+                  "image",
+                  image.url,
+                  `图片变体 ${index + 1}-${outputIndex + 1}`,
+                  positionFor(index, outputIndex),
+                  {
+                    role: "变体结果",
+                    model: result.model?.name || imageParams.model,
+                    generation: {
+                      kind: "image",
+                      prompt,
+                      params: clone(imageParams),
+                      referenceIds: linked.map((item) => item.id),
+                      sourceGeneratorId: generatorId,
+                      variantBatchId: batchId,
+                      variantIndex: index,
+                      variantInstruction: requirements[index],
+                      createdAt: Date.now(),
+                    },
+                    referenceOrder: linked.map((item) => item.id),
+                  },
+                ),
+              );
+              updateDoc((value) => {
+                let next = {
+                  ...value,
+                  nodes: [...value.nodes, ...outputs],
+                };
+                outputs.forEach((output) => {
+                  next = addEdge(
+                    next,
+                    generatorId,
+                    output.id,
+                    "right",
+                    "left",
+                    "generated",
+                  );
+                });
+                next = updateVariantState(next, index, {
+                  status: "completed",
+                  progress: 100,
+                  resultIds: outputs.map((output) => output.id),
+                  error: undefined,
+                });
+                return attachBatchGroup(next, outputs.map((output) => output.id));
+              });
+              void recordCanvasImages(result.images, {
+                prompt,
+                modelId: imageParams.model,
+                modelName: result.model?.name,
+                providerName: result.model?.provider,
+                aspectRatio: imageParams.aspect,
+                outputSize:
+                  imageParams.sizeMode === "custom"
+                    ? `${imageParams.width}x${imageParams.height}`
+                    : imageParams.resolution,
+                outputFormat: imageParams.outputFormat,
+                parentId: generatorId,
+              }).catch(() => addLog("图片变体已生成，但写入历史失败"));
+            } else {
+              const videoParams = effectiveParams as VideoCreationSettings;
+              const task = await generateCanvasVideo({
+                prompt,
+                model: videoParams.model,
+                operation: videoParams.operation,
+                inputMode: videoParams.inputMode,
+                duration: videoParams.duration,
+                aspect: videoParams.aspect,
+                resolution: videoParams.resolution,
+                references: linked
+                  .filter((item) => item.data.kind === "image" && item.data.url)
+                  .map((item) => ({
+                    url: String(item.data.url),
+                    name: String(item.data.name || "参考图片"),
+                  })),
+                referenceVideo: linked.find(
+                  (item) => item.data.kind === "video" && item.data.url,
+                )?.data.url
+                  ? String(
+                      linked.find(
+                        (item) => item.data.kind === "video" && item.data.url,
+                      )?.data.url,
+                    )
+                  : undefined,
+                audio: videoParams.audio,
+              });
+              const target = createMedia(
+                "video",
+                task.videoUrls?.[0] || "",
+                `视频变体 ${index + 1}`,
+                positionFor(index),
+                {
+                  role: "变体结果",
+                  model: task.modelId || videoParams.model,
+                  jobId: task.id,
+                  status: task.status === "done" ? "completed" : "running",
+                  progress: Number(task.progress || (task.status === "done" ? 100 : 0)),
+                  statusLabel: task.status === "done" ? "视频已完成" : "视频生成中",
+                  generation: {
+                    kind: "video",
+                    prompt,
+                    params: clone(videoParams),
+                    referenceIds: linked.map((item) => item.id),
+                    sourceGeneratorId: generatorId,
+                    variantBatchId: batchId,
+                    variantIndex: index,
+                    variantInstruction: requirements[index],
+                    taskId: task.id,
+                    createdAt: Date.now(),
+                  },
+                  referenceOrder: linked.map((item) => item.id),
+                },
+              );
+              pollAttemptsRef.current.set(task.id, 1);
+              updateDoc((value) => {
+                let next = {
+                  ...value,
+                  nodes: [...value.nodes, target],
+                };
+                next = addEdge(
+                  next,
+                  generatorId,
+                  target.id,
+                  "right",
+                  "left",
+                  "generated",
+                );
+                next = updateVariantState(next, index, {
+                  status: task.status === "done" ? "completed" : "running",
+                  progress: Number(task.progress || (task.status === "done" ? 100 : 0)),
+                  resultIds: [target.id],
+                  taskIds: [task.id],
+                  ...(task.error ? { error: task.error } : {}),
+                });
+                return attachBatchGroup(next, [target.id]);
+              });
+              if (task.status !== "done") {
+                let finished = task;
+                let lastError: unknown;
+                for (let attempt = 0; attempt < 40; attempt += 1) {
+                  try {
+                    const latest = await getCanvasVideoTask(task.id);
+                    finished = latest.task;
+                    updateDoc((value) =>
+                      applyVideoTask(value, target.id, index, finished),
+                    );
+                    if (
+                      ["done", "failed", "cancelled", "canceled"].includes(
+                        finished.status,
+                      )
+                    )
+                      break;
+                    lastError = undefined;
+                  } catch (error) {
+                    lastError = error;
+                  }
+                  await new Promise((resolve) =>
+                    window.setTimeout(resolve, lastError ? 5000 : 3000),
+                  );
+                }
+                pollAttemptsRef.current.delete(task.id);
+                if (
+                  !["done", "failed", "cancelled", "canceled"].includes(
+                    finished.status,
+                  )
+                )
+                  throw new Error("视频任务查询超时，请稍后重试");
+                if (finished.status !== "done")
+                  throw new Error(finished.error || "视频变体生成失败");
+              } else pollAttemptsRef.current.delete(task.id);
+              writeSharedCreationSettings(videoParams);
+            }
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "变体生成失败";
+            updateDoc((value) =>
+              updateVariantState(value, index, {
+                status: "failed",
+                error: message,
+              }),
+            );
+            addLog(`${kind === "video" ? "视频" : "图片"}变体 ${index + 1} 失败：${message}`);
+          }
+        }
+        notify(`${kind === "video" ? "视频" : "图片"}变体批量处理完成`);
+      } finally {
+        generationKeysRef.current.delete(activeKey);
+        setGenerationKeys(new Set(generationKeysRef.current));
+      }
+    },
+    [addLog, notify, resolveAvailableCreationModel, runtime, updateDoc],
+  );
+
   const runGeneration = useCallback(async () => {
     const source = deckSource();
+    if (source.node?.type === "generator" && mode !== "text")
+      return runVariantBatch(source.node.id);
     if (mode === "text") {
       const prompt = source.prompt.trim();
       if (!prompt) return notify("请输入要交给 Agent 的内容。", "error");
@@ -3551,12 +4036,20 @@ export default function SuperCanvas() {
     mode,
     notify,
     pollVideo,
+    runVariantBatch,
     runtime,
     screenToWorld,
     selectedNodes,
     selectedSingle,
     updateDoc,
   ]);
+
+  const retryVariant = useCallback(
+    (generatorId: string, variantIndex: number) => {
+      void runVariantBatch(generatorId, [variantIndex]);
+    },
+    [runVariantBatch],
+  );
 
   const applyCanvasMask = useCallback(
     async (maskDataUrl: string) => {
@@ -4565,6 +5058,9 @@ export default function SuperCanvas() {
                   }
                   onTextPreview={() => setTextLightboxNodeId(node.id)}
                   onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
+                  onRetryVariant={(variantIndex) =>
+                    retryVariant(node.id, variantIndex)
+                  }
                   editing={editingNodeId === node.id}
                   onEdit={(value) => setEditingNodeId(value ? node.id : null)}
                   onNaturalSize={setMediaNaturalSize}
@@ -4976,13 +5472,13 @@ export default function SuperCanvas() {
               type="button"
               onClick={() => addNode("workflowImage", contextMenu.world)}
             >
-              ✦ 高级图片工作流节点
+              ✦ 图片变体生成器 <small>多行要求批量生成</small>
             </button>
             <button
               type="button"
               onClick={() => addNode("workflowVideo", contextMenu.world)}
             >
-              ▶ 高级视频工作流节点
+              ▶ 视频变体生成器 <small>多行要求串行生成</small>
             </button>
             <hr />
             <button
@@ -5591,6 +6087,7 @@ function CanvasNodeCard({
   onPreview,
   onTextPreview,
   onUseAsImagePrompt,
+  onRetryVariant,
   onNaturalSize,
   onPromptChange,
   onReorderReferences,
@@ -5611,6 +6108,7 @@ function CanvasNodeCard({
   onPreview: () => void;
   onTextPreview: () => void;
   onUseAsImagePrompt: () => void;
+  onRetryVariant: (variantIndex: number) => void;
   onNaturalSize: (nodeId: string, width: number, height: number) => void;
   onPromptChange: (value: string) => void;
   onReorderReferences: (
@@ -5635,6 +6133,15 @@ function CanvasNodeCard({
   const agentInput = String(
     agentResponse ? data.agentPrompt || data.text || "" : data.text || "",
   );
+  const variantRequirements =
+    node.type === "generator" ? variantRequirementsFor(node) : [];
+  const variantStates =
+    node.type === "generator" ? variantStatesFor(node) : [];
+  const completedVariants = variantStates.filter(
+    (state) => state.status === "completed",
+  ).length;
+  const referenceCount =
+    node.type === "generator" ? incomingReferences(document, node.id).length : 0;
   return (
     <article
       className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
@@ -5789,20 +6296,50 @@ function CanvasNodeCard({
           <div className="canvas-generator-head">
             <span>{data.kind === "video" ? "▶" : "✦"}</span>
             <div>
-              <b>{data.kind === "video" ? "视频生成" : "图片生成"}</b>
+              <b>{data.kind === "video" ? "视频变体生成器" : "图片变体生成器"}</b>
               <small>
-                {data.status === "running" ? "生成中…" : "高级工作流节点"}
+                {data.status === "running"
+                  ? "批量处理中…"
+                  : data.status === "failed"
+                    ? "有失败变体，可单独重试"
+                    : "共同提示词 + 多行变体要求"}
               </small>
             </div>
           </div>
-          <CanvasReferenceList
-            document={document}
-            ownerId={node.id}
-            onReorder={onReorderReferences}
-            variant="card"
-          />
+          <div className="canvas-generator-summary">
+            <span>参考素材 {referenceCount}</span>
+            <span>变体 {variantRequirements.length}</span>
+            <span>完成 {completedVariants}/{variantRequirements.length}</span>
+          </div>
           <div className="canvas-generator-prompt">
-            {String(data.prompt || "点击选中，在下方编辑提示词")}
+            <b>共同提示词</b>
+            <span>{String(data.prompt || "点击选中，在下方编辑提示词")}</span>
+          </div>
+          <div className="canvas-variant-state-list">
+            {variantRequirements.map((instruction, index) => {
+              const state = variantStates[index];
+              return (
+                <div className={`canvas-variant-state ${state?.status || "pending"}`} key={`${node.id}-variant-${index}`}>
+                  <span>{index + 1}</span>
+                  <p title={instruction || "默认变体"}>{instruction || "默认变体"}</p>
+                  <small>{variantStatusLabel(state?.status || "pending")}</small>
+                  {state?.status === "failed" && (
+                    <button
+                      type="button"
+                      title={`重试第 ${index + 1} 条变体`}
+                      aria-label={`重试第 ${index + 1} 条变体`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRetryVariant(index);
+                      }}
+                    >
+                      重试
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <div className="canvas-generator-meta">
             <span>
