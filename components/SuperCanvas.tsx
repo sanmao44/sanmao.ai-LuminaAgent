@@ -10,6 +10,7 @@ import {
   type ChangeEvent as ReactChangeEvent,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import {
   addEdge,
@@ -78,13 +79,25 @@ import {
 } from "@/lib/creation/settings";
 import { recordCanvasImages } from "@/lib/creation/history";
 import {
+  requestPromptOptimization,
+  runOneTakeVideoPrompt,
+  runReversePrompt,
+} from "@/lib/creation/agent";
+import {
   hideUnifiedAsset,
   listUnifiedAssets,
   registerCanvasAsset,
   setUnifiedAssetFavorite,
+  updateUnifiedAssetMetadata,
   type AssetRecord,
   type AssetSource,
 } from "@/lib/assets";
+import {
+  DEFAULT_ASSET_COLLECTIONS,
+  listAssetCollections,
+  saveAssetCollections,
+  type AssetCollection,
+} from "@/lib/client-history";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import MaskEditor from "@/components/MaskEditor";
 import SelectMenu from "@/components/SelectMenu";
@@ -643,8 +656,12 @@ export default function SuperCanvas() {
   const [textLightboxNodeId, setTextLightboxNodeId] = useState<string | null>(
     null,
   );
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("assets");
+  const [agentResult, setAgentResult] = useState<{ value: string; title: string } | null>(null);
+  const [activePanel, setActivePanel] = useState<"assets" | "activity" | "settings" | "shortcuts" | null>(null);
+  const [topbarCollapsed, setTopbarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return window.localStorage.getItem("sanmao.canvas.topbar.collapsed") === "true"; } catch { return false; }
+  });
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectRename, setProjectRename] = useState(false);
   const [projectRenameValue, setProjectRenameValue] = useState("");
@@ -763,6 +780,8 @@ export default function SuperCanvas() {
           width: Number(node.data.nativeWidth) || undefined,
           height: Number(node.data.nativeHeight) || undefined,
           projectIds: activeProjectId ? [activeProjectId] : [],
+          collectionIds: [],
+          tags: [],
         })),
     [activeProjectId, document.nodes],
   );
@@ -2445,11 +2464,8 @@ export default function SuperCanvas() {
   }, [handleFiles, notify, pasteCanvasPayload]);
 
   const toggleAssetLibrary = useCallback(() => {
-    if (workbenchOpen && workbenchTab === "assets")
-      return setWorkbenchOpen(false);
-    setWorkbenchTab("assets");
-    setWorkbenchOpen(true);
-  }, [workbenchOpen, workbenchTab]);
+    setActivePanel((value) => value === "assets" ? null : "assets");
+  }, []);
 
   const setMediaNaturalSize = useCallback(
     (nodeId: string, width: number, height: number) => {
@@ -3034,6 +3050,7 @@ export default function SuperCanvas() {
       return notify("这个节点正在生成，请稍候。", "error");
     generationKeysRef.current.add(activeKey);
     setGenerationKeys(new Set(generationKeysRef.current));
+    let pendingImageId = "";
     try {
       // Draft and completed media cards both own their next generation. A
       // completed card is updated in place so a simple retry does not grow a
@@ -3060,6 +3077,45 @@ export default function SuperCanvas() {
       if (kind === "image") {
         const imageParams = effectiveParams as ImageCreationSettings;
         const taskId = uid("image-task");
+        const base = source.target || sourceNode;
+        const position = base
+          ? {
+              x:
+                base.x +
+                (source.target && !source.target.data.url
+                  ? 0
+                  : nodeSize(base).w + 90),
+              y: base.y,
+            }
+          : screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        if (!base) {
+          const pending = createMedia(
+            "image",
+            "",
+            "图片生成中",
+            position,
+            {
+              role: "生成中",
+              status: "running",
+              progress: 0,
+              statusLabel: "图片生成中 · 等待结果",
+              generation: {
+                kind: "image",
+                prompt,
+                params: clone(imageParams),
+                referenceIds: linked.map((node) => node.id),
+                taskId,
+                createdAt: Date.now(),
+              },
+              referenceOrder: linked.map((node) => node.id),
+            },
+          );
+          pendingImageId = pending.id;
+          commit((value) => ({
+            ...value,
+            nodes: [...value.nodes, pending],
+          }));
+        }
         const result = await generateCanvasImage({
           taskId,
           prompt,
@@ -3085,17 +3141,6 @@ export default function SuperCanvas() {
           references: refs,
         });
         if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
-        const base = source.target || sourceNode;
-        const position = base
-          ? {
-              x:
-                base.x +
-                (source.target && !source.target.data.url
-                  ? 0
-                  : nodeSize(base).w + 90),
-              y: base.y,
-            }
-          : screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
         const outputs = result.images.map((image, index) =>
           createMedia(
             "image",
@@ -3122,22 +3167,23 @@ export default function SuperCanvas() {
             },
           ),
         );
-        const fillsTarget = Boolean(source.target);
+        const fillsTarget = Boolean(source.target) || Boolean(pendingImageId);
+        const fillId = source.target?.id || pendingImageId;
         const selectedOutputIds = fillsTarget
-          ? [source.target!.id, ...outputs.slice(1).map((output) => output.id)]
+          ? [fillId, ...outputs.slice(1).map((output) => output.id)]
           : outputs.map((output) => output.id);
         updateDoc((value) => {
           let next = value;
-          if (fillsTarget && source.target) {
+          if (fillsTarget && fillId) {
             next = {
               ...next,
               nodes: [
                 ...next.nodes.map((node) =>
-                  node.id === source.target!.id
+                  node.id === fillId
                     ? {
                         ...node,
                         ...outputs[0],
-                        id: node.id,
+                        id: fillId,
                         x: node.x,
                         y: node.y,
                         groupId: node.groupId,
@@ -3154,14 +3200,15 @@ export default function SuperCanvas() {
               ],
             };
             outputs.slice(1).forEach((output) => {
-              next = addEdge(
-                next,
-                source.target!.id,
-                output.id,
-                "right",
-                "left",
-                "variant",
-              );
+              if (source.target)
+                next = addEdge(
+                  next,
+                  source.target.id,
+                  output.id,
+                  "right",
+                  "left",
+                  "variant",
+                );
             });
           } else {
             next = { ...next, nodes: [...next.nodes, ...outputs] };
@@ -3339,7 +3386,9 @@ export default function SuperCanvas() {
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) =>
-          node.id === sourceNode?.id || node.id === targetId
+          node.id === sourceNode?.id ||
+          node.id === targetId ||
+          node.id === pendingImageId
             ? {
                 ...node,
                 data: { ...node.data, status: "failed", statusLabel: message },
@@ -3629,10 +3678,22 @@ export default function SuperCanvas() {
       setSelectedIds(new Set(matches.map((node) => node.id)));
       setSelectedGroupId(null);
       fitView(matches.map((node) => node.id));
-      setWorkbenchOpen(false);
+      setActivePanel(null);
     },
     [fitView, notify],
   );
+
+  const addNodeToCollection = useCallback(async (nodeId: string, collectionId: string) => {
+    const node = nodeById(docRef.current, nodeId);
+    if (!node || node.type !== "media" || !node.data.url) return;
+    const asset = canvasAssets.find((item) => item.url === node.data.url && item.kind === node.data.kind);
+    if (!asset) return notify("节点素材尚未登记到资产库。", "error");
+    try {
+      await updateUnifiedAssetMetadata(asset, { collectionIds: [...new Set([...(asset.collectionIds || []), collectionId])] });
+      setAssetRefresh((value) => value + 1);
+      notify("节点素材已加入资产集合");
+    } catch (error) { notify(error instanceof Error ? error.message : "资产集合保存失败", "error"); }
+  }, [canvasAssets, notify]);
 
   const handleAssetDrop = useCallback(
     (event: ReactDragEvent<HTMLDivElement>) => {
@@ -3666,7 +3727,7 @@ export default function SuperCanvas() {
       if (event.key === "Escape") {
         setContextMenu(null);
         setLightbox(null);
-        setWorkbenchOpen(false);
+        setActivePanel(null);
         interactionRef.current = null;
         setConnection(null);
         setConnectionNodePicker(null);
@@ -3784,6 +3845,35 @@ export default function SuperCanvas() {
         .toLowerCase()
         .includes(mentionState.query.toLowerCase()),
   );
+  const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
+    const kind = node.data.kind === "video" ? "video" : "image";
+    setDrafts((current) => ({ ...current, [kind]: { ...current[kind], prompt: value } }));
+    setMode(kind);
+    if (node.type === "media" && node.data.generation) {
+      updateDoc((valueDoc) => ({
+        ...valueDoc,
+        nodes: valueDoc.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, generation: item.data.generation ? { ...item.data.generation, prompt: value } : item.data.generation } } : item),
+      }));
+    }
+    notify("结果已写入创作面板，可确认后继续生成");
+  }, [notify, updateDoc]);
+  const runOneTakeFromSelection = useCallback(async () => {
+    const source = selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url);
+    if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
+    const model = runtime?.settings.agentModelId || undefined;
+    try {
+      const value = await runOneTakeVideoPrompt(source.map((node) => ({ url: String(node.data.url), name: String(node.data.name || "参考图") })), model);
+      setAgentResult({ value, title: "一镜到底提示词" });
+      addLog("Agent 已生成一镜到底提示词");
+    } catch (error) { notify(error instanceof Error ? error.message : "一镜到底生成失败", "error"); }
+  }, [addLog, notify, runtime?.settings.agentModelId, selectedNodes]);
+  const createViewerTextNode = useCallback((node: CanvasNode, value: string) => {
+    const draft = createPrompt({ x: node.x + nodeSize(node).w + 90, y: node.y });
+    const textNode = { ...draft, data: { ...draft.data, text: value, agentPrompt: value, role: "结果文本" } };
+    commit((current) => ({ ...current, nodes: [...current.nodes, textNode] }));
+    setSelectedIds(new Set([textNode.id]));
+    notify("已创建新的文本节点");
+  }, [commit, notify]);
   const updateDeckPrompt = useCallback(
     (event: ReactChangeEvent<HTMLTextAreaElement>) => {
       const value = event.target.value;
@@ -3954,7 +4044,7 @@ export default function SuperCanvas() {
       aria-label="SANMAO 无限画布"
       onClick={() => projectMenuOpen && setProjectMenuOpen(false)}
     >
-      <header className="canvas-topbar">
+      <header className={`canvas-topbar ${topbarCollapsed ? "collapsed" : ""}`}>
         <div className="canvas-topbar-main">
           <button
             type="button"
@@ -4006,27 +4096,41 @@ export default function SuperCanvas() {
           >
             ＋ 导入素材
           </button>
-          <button
+          {!topbarCollapsed && <button
             type="button"
             className="canvas-soft-button canvas-shortcuts-button"
             onClick={() => {
-              setWorkbenchTab("shortcuts");
-              setWorkbenchOpen(true);
+              setActivePanel("shortcuts");
             }}
           >
             ⌨ 快捷键
-          </button>
-          <button
+          </button>}
+          {!topbarCollapsed && <button
             type="button"
             className="canvas-soft-button canvas-settings-button"
             onClick={() => {
-              setWorkbenchTab("settings");
-              setWorkbenchOpen(true);
+              setActivePanel("settings");
             }}
           >
             ⚙ 设置
+          </button>}
+          {!topbarCollapsed && <>
+          <button
+            type="button"
+            className={`canvas-soft-button canvas-panel-button ${activePanel === "assets" ? "active" : ""}`}
+            onClick={toggleAssetLibrary}
+          >
+            ◈ 资产
           </button>
           <button
+            type="button"
+            className={`canvas-soft-button canvas-panel-button ${activePanel === "activity" ? "active" : ""}`}
+            onClick={() => setActivePanel((value) => value === "activity" ? null : "activity")}
+          >
+            ≡ 日志
+          </button>
+          </>}
+          {!topbarCollapsed && <button
             type="button"
             className="canvas-soft-button canvas-theme-button"
             onClick={toggleTheme}
@@ -4034,7 +4138,7 @@ export default function SuperCanvas() {
             title={theme === "light" ? "切换深色界面" : "切换浅色界面"}
           >
             {theme === "light" ? "☾ 深色" : "☀ 浅色"}
-          </button>
+          </button>}
           <div className="canvas-topbar-spacer" />
           <span
             className={`canvas-save-state ${saving ? "saving" : saveError ? "error" : ""}`}
@@ -4044,13 +4148,15 @@ export default function SuperCanvas() {
           </span>
           <button
             type="button"
-            className="canvas-workbench-button"
-            onClick={() => setWorkbenchOpen(true)}
-          >
-            <span>◈</span>
-            <b>工作台</b>
-            <small>资产 · 工作流</small>
-          </button>
+            className="canvas-topbar-collapse"
+            aria-label={topbarCollapsed ? "展开顶部栏" : "折叠顶部栏"}
+            title={topbarCollapsed ? "展开顶部栏" : "折叠顶部栏"}
+            onClick={() => setTopbarCollapsed((value) => {
+              const next = !value;
+              try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed", String(next)); } catch { /* optional */ }
+              return next;
+            })}
+          >{topbarCollapsed ? "⌄" : "⌃"}</button>
         </div>
         <div className="canvas-project-popover-wrap">
           {projectMenuOpen && (
@@ -4436,6 +4542,9 @@ export default function SuperCanvas() {
                 ⌘ 成组
               </button>
             )}
+            {selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url).length >= 2 && (
+              <button type="button" onClick={() => void runOneTakeFromSelection()}>🎬 一镜到底</button>
+            )}
             {selectedGroupId && (
               <button type="button" onClick={breakGroup}>
                 解组
@@ -4732,7 +4841,7 @@ export default function SuperCanvas() {
         )}
       </div>
       {lightbox && (
-        <CanvasLightbox
+        <CanvasMediaViewer
           node={nodeById(document, lightbox.nodeId)}
           compare={lightbox.compare}
           references={
@@ -4746,6 +4855,10 @@ export default function SuperCanvas() {
               value ? { ...value, compare: !value.compare } : value,
             )
           }
+          model={runtime?.settings.agentModelId || undefined}
+          onWritePrompt={writeViewerPrompt}
+          onCreateTextNode={createViewerTextNode}
+          onNotify={notify}
         />
       )}
       {textLightboxNodeId && (
@@ -4763,7 +4876,7 @@ export default function SuperCanvas() {
           onCancel={() => setMaskNodeId(null)}
         />
       )}
-      {workbenchOpen && workbenchTab === "assets" && (
+      {activePanel === "assets" && (
         <CanvasAssetDrawer
           extraAssets={canvasAssets}
           refresh={assetRefresh}
@@ -4771,31 +4884,35 @@ export default function SuperCanvas() {
           onAdd={addAssetToCanvas}
           onReference={addAssetAsReference}
           onLocate={locateAsset}
-          onClose={() => setWorkbenchOpen(false)}
-          onOpenWorkbench={() => setWorkbenchTab("workflow")}
+          onAddNodeToCollection={addNodeToCollection}
+          onClose={() => setActivePanel(null)}
+          onOpenWorkbench={() => { setActivePanel(null); notify("工作流整理、导入导出已移至画布操作菜单。", "ok"); }}
           onNotify={notify}
         />
       )}
-      {workbenchOpen && workbenchTab !== "assets" && (
-        <CanvasWorkbench
-          tab={workbenchTab}
-          setTab={setWorkbenchTab}
-          nodes={document.nodes}
-          groups={document.groups}
-          edges={document.edges}
-          projects={projects}
-          activeProjectId={activeProjectId}
-          logs={logs}
+      {activePanel === "activity" && <CanvasActivityDrawer logs={logs} onClose={() => setActivePanel(null)} onNotify={notify} />}
+      {activePanel === "settings" && (
+        <CanvasSettingsPanel
+          theme={theme}
           connectionAnimation={connectionAnimation}
-          onConnectionAnimationChange={setConnectionAnimation}
           connectionStyle={connectionStyle}
+          onTheme={toggleTheme}
+          onConnectionAnimationChange={setConnectionAnimation}
           onConnectionStyleChange={setConnectionStyle}
-          onClose={() => setWorkbenchOpen(false)}
-          onExport={exportWorkflow}
-          onImport={() => workflowInputRef.current?.click()}
-          onArrange={arrangeCanvasAction}
-          onDeleteProject={deleteProject}
+          onClose={() => setActivePanel(null)}
         />
+      )}
+      {activePanel === "shortcuts" && <CanvasShortcutsPanel onClose={() => setActivePanel(null)} />}
+      {agentResult && (
+        <div className="canvas-agent-result-float">
+          <header><b>{agentResult.title}</b><button type="button" onClick={() => setAgentResult(null)}>×</button></header>
+          <p>{agentResult.value}</p>
+          <footer>
+            <button type="button" onClick={() => { setDrafts((current) => ({ ...current, video: { ...current.video, prompt: agentResult.value } })); setMode("video"); notify("一镜到底提示词已写入视频生成面板"); }}>写入视频面板</button>
+            <button type="button" onClick={() => { const draft = createPrompt({ x: document.camera.x + 120, y: document.camera.y + 120 }); const node = { ...draft, data: { ...draft.data, text: agentResult.value, agentPrompt: agentResult.value, role: agentResult.title } }; commit((current) => ({ ...current, nodes: [...current.nodes, node] })); setAgentResult(null); notify("已创建新的文本节点"); }}>创建文本节点</button>
+            <button type="button" onClick={() => navigator.clipboard?.writeText(agentResult.value)}>复制</button>
+          </footer>
+        </div>
       )}
       {notice && (
         <div
@@ -4845,6 +4962,7 @@ function CanvasAssetDrawer({
   onAdd,
   onReference,
   onLocate,
+  onAddNodeToCollection,
   onClose,
   onOpenWorkbench,
   onNotify,
@@ -4855,6 +4973,7 @@ function CanvasAssetDrawer({
   onAdd: (asset: AssetRecord) => void;
   onReference: (asset: AssetRecord) => void;
   onLocate: (asset: AssetRecord) => void;
+  onAddNodeToCollection: (nodeId: string, collectionId: string) => void;
   onClose: () => void;
   onOpenWorkbench: () => void;
   onNotify: (message: string, kind?: Notice["kind"]) => void;
@@ -4868,6 +4987,12 @@ function CanvasAssetDrawer({
   const [sort, setSort] = useState<"newest" | "oldest" | "name">("newest");
   const [preview, setPreview] = useState<AssetRecord | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [collections, setCollections] = useState<AssetCollection[]>(DEFAULT_ASSET_COLLECTIONS);
+  const [collection, setCollection] = useState("all");
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+
+  useEffect(() => { void listAssetCollections().then(setCollections); }, []);
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -4890,6 +5015,8 @@ function CanvasAssetDrawer({
         (kind === "all" || asset.kind === kind) &&
         (source === "all" || asset.source === source) &&
         (!favoritesOnly || asset.favorite) &&
+        (collection === "all" || (collection === "uncategorized" ? !asset.collectionIds?.length : asset.collectionIds?.includes(collection))) &&
+        (!tagFilter.trim() || asset.tags?.some((tag) => tag.toLowerCase().includes(tagFilter.trim().toLowerCase()))) &&
         (!search ||
           `${asset.name} ${asset.prompt || ""} ${asset.modelName || ""}`
             .toLowerCase()
@@ -4902,7 +5029,17 @@ function CanvasAssetDrawer({
           ? left.name.localeCompare(right.name, "zh-CN")
           : right.createdAt - left.createdAt,
     );
-  }, [assets, favoritesOnly, kind, query, sort, source]);
+  }, [assets, collection, favoritesOnly, kind, query, sort, source, tagFilter]);
+
+  const createCollection = async () => {
+    const name = newCollectionName.trim();
+    if (!name) return;
+    const item: AssetCollection = { id: `collection_${Date.now().toString(36)}`, name, createdAt: Date.now(), updatedAt: Date.now() };
+    const next = [...collections, item];
+    setCollections(next); setNewCollectionName("");
+    await saveAssetCollections(next);
+    setCollection(item.id);
+  };
 
   const toggleFavorite = async (asset: AssetRecord) => {
     try {
@@ -4954,9 +5091,6 @@ function CanvasAssetDrawer({
             </span>
           </div>
           <div>
-            <button type="button" onClick={onOpenWorkbench}>
-              工作流
-            </button>
             <button
               type="button"
               onClick={() => setDrawerCollapsed(true)}
@@ -4984,6 +5118,7 @@ function CanvasAssetDrawer({
               </button>
             )}
           </label>
+          <label className="canvas-asset-search"><span>#</span><input value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} placeholder="按标签筛选…" /></label>
           <div className="canvas-asset-kind" role="group" aria-label="资产类型">
             <button
               type="button"
@@ -5015,6 +5150,7 @@ function CanvasAssetDrawer({
             </button>
           </div>
           <div className="canvas-asset-filters">
+            <SelectMenu value={collection} onChange={setCollection} ariaLabel="资产集合" options={collections.map((item) => ({ value: item.id, label: item.name }))} />
             <SelectMenu
               value={source}
               onChange={setSource}
@@ -5043,6 +5179,15 @@ function CanvasAssetDrawer({
             要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。
           </div>
         )}
+        <div className="canvas-asset-collection-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
+          event.preventDefault();
+          const nodeId = event.dataTransfer.getData("application/x-sanmao-canvas-node");
+          if (nodeId && collection !== "all") onAddNodeToCollection(nodeId, collection);
+          else if (nodeId) onNotify("请先选择一个具体资产集合，再放入节点。", "error");
+        }}>
+          <span>⌘</span><b>把画布节点拖到这里归类</b><small>节点不会从画布移除</small>
+        </div>
+        <div className="canvas-asset-new-collection"><input value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="新建集合…" onKeyDown={(event) => { if (event.key === "Enter") void createCollection(); }} /><button type="button" onClick={() => void createCollection()}>＋</button></div>
         <div className="canvas-asset-results">
           <div className="canvas-asset-summary">
             <b>{filtered.length} 个资产</b>
@@ -5108,6 +5253,16 @@ function CanvasAssetDrawer({
                     <button type="button" onClick={() => onLocate(asset)}>
                       ⌖
                     </button>
+                    <button
+                      type="button"
+                      title="添加标签"
+                      onClick={async () => {
+                        const tag = window.prompt("输入标签");
+                        if (!tag?.trim()) return;
+                        try { await updateUnifiedAssetMetadata(asset, { tags: [...new Set([...(asset.tags || []), tag.trim()])] }); reload(); }
+                        catch { onNotify("标签保存失败", "error"); }
+                      }}
+                    >#</button>
                     <button
                       type="button"
                       className={asset.favorite ? "active" : ""}
@@ -5308,6 +5463,12 @@ function CanvasNodeCard({
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
       style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
+      draggable={node.type === "media" && Boolean(data.url)}
+      onDragStart={(event) => {
+        if (node.type !== "media" || !data.url) return;
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("application/x-sanmao-canvas-node", node.id);
+      }}
       onPointerDown={(event) => onPointerDown(event, node)}
       onDoubleClick={() => {
         if (node.type === "prompt") onEdit(true);
@@ -6072,21 +6233,56 @@ function CanvasTextLightbox({
   );
 }
 
-function CanvasLightbox({
+function CanvasMediaViewer({
   node,
   compare,
   references,
   onClose,
   onCompare,
+  model,
+  onWritePrompt,
+  onCreateTextNode,
+  onNotify,
 }: {
   node?: CanvasNode;
   compare: boolean;
   references: CanvasNode[];
   onClose: () => void;
   onCompare: () => void;
+  model?: string;
+  onWritePrompt: (node: CanvasNode, value: string) => void;
+  onCreateTextNode: (node: CanvasNode, value: string) => void;
+  onNotify: (message: string, kind?: Notice["kind"]) => void;
 }) {
+  const [result, setResult] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   if (!node || node.type !== "media" || !node.data.url) return null;
   const reference = references[0];
+  const download = (suffix = "原图") => {
+    const anchor = document.createElement("a");
+    anchor.href = String(node.data.url);
+    anchor.download = `${node.data.name || "画布素材"}-${suffix}.${node.data.kind === "video" ? "mp4" : "png"}`;
+    anchor.click();
+  };
+  const runReverse = async () => {
+    if (node.data.kind !== "image") return;
+    setBusy(true);
+    try {
+      const value = await runReversePrompt([{ url: String(node.data.url), name: String(node.data.name || "参考图") }], model);
+      setResult(value);
+    } catch (error) { onNotify(error instanceof Error ? error.message : "反推提示词失败", "error"); }
+    finally { setBusy(false); }
+  };
+  const runOptimize = async () => {
+    const source = String(node.data.generation?.prompt || "").trim();
+    if (!source) return onNotify("当前媒体没有可优化的原始提示词", "error");
+    setBusy(true);
+    try {
+      const value = await requestPromptOptimization(source, [], model);
+      setResult(value);
+    } catch (error) { onNotify(error instanceof Error ? error.message : "AI 优化失败", "error"); }
+    finally { setBusy(false); }
+  };
   return (
     <div
       className="canvas-modal-backdrop"
@@ -6094,7 +6290,7 @@ function CanvasLightbox({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="canvas-lightbox">
+      <div className="canvas-lightbox canvas-media-viewer">
         <header>
           <div>
             <b>{node.data.name || "素材预览"}</b>
@@ -6108,6 +6304,8 @@ function CanvasLightbox({
             <button type="button" onClick={onCompare} disabled={!reference}>
               {compare ? "单图预览" : "前后对比"}
             </button>
+            <button type="button" onClick={() => download()} title="下载原图">↓ 原图</button>
+            <button type="button" onClick={() => download("分享版")} title="下载分享版">⇩ 分享</button>
             <button type="button" onClick={onClose}>
               ×
             </button>
@@ -6131,9 +6329,58 @@ function CanvasLightbox({
             )}
           </div>
         </div>
+        <div className="canvas-media-viewer-actions">
+          {node.data.kind === "image" && <button type="button" disabled={busy} onClick={() => void runReverse()}>⌁ 反推提示词</button>}
+          <button type="button" disabled={busy} onClick={() => void runOptimize()}>✦ AI 优化</button>
+          <button type="button" onClick={() => onNotify("已将素材标记为参考图，可在底部生成面板继续使用。")}>⌁ 作为参考图</button>
+          <button type="button" onClick={() => onNotify("已加入当前资产索引，集合归类可在资产抽屉完成。")}>＋ 加入资产库</button>
+        </div>
+        {result && (
+          <section className="canvas-media-result-panel">
+            <header><b>AI 结果（未覆盖原文）</b><button type="button" onClick={() => setResult(null)}>×</button></header>
+            <p>{result}</p>
+            <footer>
+              <button type="button" onClick={() => onWritePrompt(node, result)}>写入当前提示词</button>
+              <button type="button" onClick={() => onCreateTextNode(node, result)}>创建文本节点</button>
+              <button type="button" onClick={() => navigator.clipboard?.writeText(result)}>复制结果</button>
+              <button type="button" onClick={() => setResult(null)}>放弃</button>
+            </footer>
+          </section>
+        )}
       </div>
     </div>
   );
+}
+
+function CanvasPanelShell({ title, subtitle, onClose, children, className = "" }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; className?: string }) {
+  return <div className="canvas-modal-backdrop canvas-panel-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <aside className={`canvas-side-panel ${className}`}>
+      <header><div><b>{title}</b><small>{subtitle}</small></div><button type="button" onClick={onClose} aria-label={`关闭${title}`}>×</button></header>
+      <div className="canvas-side-panel-body">{children}</div>
+    </aside>
+  </div>;
+}
+
+function CanvasActivityDrawer({ logs, onClose, onNotify }: { logs: string[]; onClose: () => void; onNotify: (message: string, kind?: Notice["kind"]) => void }) {
+  return <CanvasPanelShell title="活动日志" subtitle="生成、导入、节点与 Agent 操作" onClose={onClose} className="canvas-activity-panel">
+    <div className="canvas-activity-summary"><b>{logs.length}</b><span>条活动记录</span><button type="button" onClick={() => onNotify("日志已保留在当前画布会话中")}>清理</button></div>
+    {logs.length ? <div className="canvas-activity-list">{[...logs].reverse().map((log, index) => <button type="button" key={`${log}-${index}`} onClick={() => onNotify("该日志没有可定位的节点") }><time>{new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time><span className="canvas-activity-dot">●</span><p>{log}</p><small>查看</small></button>)}</div> : <div className="canvas-side-empty"><span>≡</span><b>暂无活动</b><small>生成或整理画布后会记录在这里。</small></div>}
+  </CanvasPanelShell>;
+}
+
+function CanvasSettingsPanel({ theme, connectionAnimation, connectionStyle, onTheme, onConnectionAnimationChange, onConnectionStyleChange, onClose }: { theme: CanvasTheme; connectionAnimation: ConnectionAnimation; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionAnimationChange: (value: ConnectionAnimation) => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onClose: () => void }) {
+  return <CanvasPanelShell title="画布设置" subtitle="只保留画布与应用配置" onClose={onClose} className="canvas-settings-panel">
+    <section className="canvas-setting-section"><b>界面主题</b><button type="button" onClick={onTheme}>{theme === "light" ? "☾ 切换深色" : "☀ 切换浅色"}</button></section>
+    <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label }))} /></section>
+    <section className="canvas-setting-section"><b>连线动画</b><SelectMenu value={connectionAnimation} onChange={onConnectionAnimationChange} ariaLabel="连线动画" options={CONNECTION_ANIMATION_OPTIONS.map((item) => ({ value: item.value, label: item.label }))} /></section>
+    <p className="canvas-setting-note">快捷键、资产和活动日志均已移出设置，分别从顶部入口打开。</p>
+  </CanvasPanelShell>;
+}
+
+function CanvasShortcutsPanel({ onClose }: { onClose: () => void }) {
+  return <CanvasPanelShell title="快捷键" subtitle="画布常用操作" onClose={onClose} className="canvas-shortcuts-panel">
+    <div className="canvas-shortcuts-list">{CANVAS_SHORTCUTS.map((item, index) => <div key={`${item.label}-${index}`}><span>{item.keys.map((key) => <kbd key={key}>{key}</kbd>)}</span><p>{item.label}</p></div>)}</div>
+  </CanvasPanelShell>;
 }
 
 function CanvasWorkbench({

@@ -25,6 +25,8 @@ export type AssetRecord = {
   width?: number;
   height?: number;
   projectIds: string[];
+  collectionIds: string[];
+  tags: string[];
   galleryId?: string;
   taskId?: string;
   indexId?: string;
@@ -71,6 +73,8 @@ function galleryAsset(item: GalleryItem): AssetRecord {
     modelId: item.modelId,
     modelName: item.modelName,
     projectIds: [],
+    collectionIds: [],
+    tags: [],
   };
 }
 
@@ -91,6 +95,8 @@ function indexAsset(item: AssetIndexItem): AssetRecord | null {
     width: item.width,
     height: item.height,
     projectIds: item.projectIds || [],
+    collectionIds: item.collectionIds || [],
+    tags: item.tags || [],
   };
 }
 
@@ -108,6 +114,8 @@ function videoAssets(tasks: VideoTaskAssetSource[]) {
     modelId: task.modelId,
     modelName: task.modelName,
     projectIds: [],
+    collectionIds: [],
+    tags: [],
   })));
 }
 
@@ -127,6 +135,8 @@ export function mergeAssetRecords(records: AssetRecord[], index: AssetIndexItem[
       name: overlay?.name || record.name || existing?.name || '未命名资产',
       favorite: overlay ? Boolean(overlay.favorite) : Boolean(record.favorite || existing?.favorite),
       projectIds: [...new Set([...(existing?.projectIds || []), ...record.projectIds, ...(overlay?.projectIds || [])])],
+      collectionIds: [...new Set([...(existing?.collectionIds || []), ...(record.collectionIds || []), ...(overlay?.collectionIds || [])])],
+      tags: [...new Set([...(existing?.tags || []), ...(record.tags || []), ...(overlay?.tags || [])])],
       galleryId: record.galleryId || existing?.galleryId,
       taskId: record.taskId || existing?.taskId,
       indexId: record.indexId || existing?.indexId,
@@ -151,7 +161,7 @@ export async function listUnifiedAssets(extra: AssetRecord[] = []) {
   return mergeAssetRecords([...gallery.map(galleryAsset), ...videoAssets(videoTasks), ...indexed, ...extra], index);
 }
 
-export async function registerCanvasAsset(input: Omit<AssetRecord, 'favorite' | 'projectIds'> & { favorite?: boolean; projectIds?: string[] }) {
+export async function registerCanvasAsset(input: Omit<AssetRecord, 'favorite' | 'projectIds' | 'collectionIds' | 'tags'> & { favorite?: boolean; projectIds?: string[]; collectionIds?: string[]; tags?: string[] }) {
   const item: AssetIndexItem = {
     id: input.indexId || input.id || `asset_${stableHash(`${input.kind}:${input.url}:${Date.now()}`)}`,
     kind: input.kind,
@@ -166,6 +176,8 @@ export async function registerCanvasAsset(input: Omit<AssetRecord, 'favorite' | 
     width: input.width,
     height: input.height,
     projectIds: input.projectIds || [],
+    collectionIds: input.collectionIds || [],
+    tags: input.tags || [],
   };
   await saveAssetIndexItem(item);
   return item;
@@ -182,6 +194,8 @@ export async function setUnifiedAssetFavorite(asset: AssetRecord, favorite: bool
     createdAt: Date.now(),
     favorite,
     projectIds: asset.projectIds,
+    collectionIds: asset.collectionIds,
+    tags: asset.tags,
   });
 }
 
@@ -196,5 +210,22 @@ export async function hideUnifiedAsset(asset: AssetRecord) {
     favorite: asset.favorite,
     hidden: true,
     projectIds: asset.projectIds,
+    collectionIds: asset.collectionIds,
+    tags: asset.tags,
+  });
+}
+
+export async function updateUnifiedAssetMetadata(asset: AssetRecord, patch: { collectionIds?: string[]; tags?: string[] }) {
+  await saveAssetIndexItem({
+    id: assetOverlayId(asset.kind, asset.url),
+    kind: asset.kind,
+    url: asset.url,
+    name: asset.name,
+    source: 'metadata',
+    createdAt: Date.now(),
+    favorite: asset.favorite,
+    projectIds: asset.projectIds,
+    collectionIds: patch.collectionIds ?? asset.collectionIds,
+    tags: patch.tags ?? asset.tags,
   });
 }

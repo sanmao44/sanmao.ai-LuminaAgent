@@ -73,6 +73,15 @@ html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height
 @media(max-width:960px){.video-studio-page{height:auto;min-height:calc(100dvh - var(--shell-header-height,64px));overflow:visible}.video-studio-grid{height:auto}.video-compose-card,.video-preview-column,.video-preview-card,.video-task-list{overflow:visible}.video-preview-column{grid-template-rows:none}.video-preview-card{min-height:0}.video-task-list{min-height:0}}
 @media(max-width:620px){.video-reference-tray{padding:8px}.video-reference-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.video-reference-preview{height:70px}.video-reference-tray-head{align-items:flex-start;flex-direction:column}.video-reference-add{width:100%}.video-media-dialog{padding:12px}.video-media-dialog-inner img{max-width:calc(100vw - 44px);max-height:calc(90vh - 72px)}}
 
+/* Recent-task actions share one clear hierarchy: restore first, utility actions next. */
+.video-task-actions{align-items:center;gap:6px;margin-top:2px;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent)}
+.video-task-actions a,.video-task-actions button{min-height:30px;display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text-2);font-size:10px;font-weight:850;text-decoration:none;white-space:nowrap;transition:border-color .16s,background .16s,color .16s,transform .16s}
+.video-task-actions a:hover,.video-task-actions button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text);transform:translateY(-1px)}
+.video-task-actions .video-task-restore{border-color:transparent;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 6px 14px color-mix(in srgb,var(--accent) 18%,transparent)}
+.video-task-actions .video-task-restore:hover{border-color:transparent;background:linear-gradient(135deg,var(--accent-2),var(--accent));color:#fff;filter:brightness(1.05)}
+.video-task-actions .video-action-icon{display:grid;place-items:center;min-width:13px;font-size:13px;line-height:1}
+
+
 /* Uploaded frame previews must preserve the complete source image. */
  .video-upload-button img{object-fit:contain;background:var(--bg-2);cursor:zoom-in}
 

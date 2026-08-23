@@ -37,8 +37,8 @@ export default function VideoRecordCard({ task, onNotify, onDelete }: Props) {
       <small>{operationLabel(task.operation)} · {task.modelName || '自动选择模型'}{typeof task.costUsd === 'number' ? ` · $${task.costUsd.toFixed(4)}` : ''}</small>
       {task.error && <p className="creative-video-error">{task.error}</p>}
       <div className="creative-video-actions">
-        {url && <><a href={url} download target="_blank" rel="noreferrer">下载视频</a><button type="button" onClick={() => void navigator.clipboard?.writeText(url).then(() => onNotify('视频地址已复制'))}>复制地址</button></>}
-        <button type="button" className="creative-video-delete" onClick={handleDelete} aria-label="删除视频任务">删除</button>
+        {url && <><a href={url} download target="_blank" rel="noreferrer" title="下载生成的视频" aria-label="下载生成的视频"><span className="creative-action-icon" aria-hidden="true">↓</span><span>下载</span></a><button type="button" title="复制视频地址" aria-label="复制视频地址" onClick={() => void navigator.clipboard?.writeText(url).then(() => onNotify('视频地址已复制'))}><span className="creative-action-icon" aria-hidden="true">⧉</span><span>复制</span></button></>}
+        <button type="button" className="creative-video-delete" onClick={handleDelete} title={canDelete ? '删除视频任务' : '视频生成完成或失败后可删除'} aria-label="删除视频任务"><span className="creative-action-icon" aria-hidden="true">⌫</span><span>删除</span></button>
       </div>
     </div>
   </article>;

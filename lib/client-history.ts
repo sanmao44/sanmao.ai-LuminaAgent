@@ -87,6 +87,18 @@ export type AssetIndexItem = {
   width?: number;
   height?: number;
   projectIds?: string[];
+  /** Optional collection and tag metadata introduced by the canvas asset library. */
+  collectionIds?: string[];
+  tags?: string[];
+};
+
+export type AssetCollection = {
+  id: string;
+  name: string;
+  color?: string;
+  createdAt: number;
+  updatedAt: number;
+  builtin?: boolean;
 };
 
 const DB_NAME = 'sanmao-ai';
@@ -266,4 +278,34 @@ export async function saveAssetIndexItems(items: AssetIndexItem[]) {
 
 export async function removeAssetIndexItem(id: string) {
   await withNamedStore<undefined>(ASSET_STORE, 'readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
+}
+
+const ASSET_COLLECTIONS_KEY = 'canvas-asset-collections';
+
+export const DEFAULT_ASSET_COLLECTIONS: AssetCollection[] = [
+  { id: 'all', name: '全部', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'recent', name: '最近使用', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'favorite', name: '收藏', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'generated', name: '生成结果', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'reference', name: '参考素材', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'image', name: '图片', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'video', name: '视频', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'uncategorized', name: '未分类', createdAt: 0, updatedAt: 0, builtin: true },
+];
+
+export async function listAssetCollections(): Promise<AssetCollection[]> {
+  const value = await withNamedStore<{ key: string; value?: AssetCollection[] } | undefined>(SETTINGS_STORE, 'readonly', (store) => store.get(ASSET_COLLECTIONS_KEY));
+  const custom = Array.isArray(value?.value) ? value!.value : [];
+  return [...DEFAULT_ASSET_COLLECTIONS, ...custom.filter((item) => !DEFAULT_ASSET_COLLECTIONS.some((builtin) => builtin.id === item.id))];
+}
+
+export async function saveAssetCollections(collections: AssetCollection[]) {
+  const custom = collections.filter((item) => !item.builtin && !DEFAULT_ASSET_COLLECTIONS.some((builtin) => builtin.id === item.id));
+  await withNamedStore<IDBValidKey>(SETTINGS_STORE, 'readwrite', (store) => store.put({ key: ASSET_COLLECTIONS_KEY, value: custom }));
+}
+
+export async function patchAssetIndexMetadata(id: string, patch: Partial<Pick<AssetIndexItem, 'collectionIds' | 'tags' | 'favorite' | 'projectIds'>>) {
+  const current = await withNamedStore<AssetIndexItem | undefined>(ASSET_STORE, 'readonly', (store) => store.get(id));
+  if (!current) return;
+  await saveAssetIndexItem({ ...current, ...patch, id: current.id });
 }

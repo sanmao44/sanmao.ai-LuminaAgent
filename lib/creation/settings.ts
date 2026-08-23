@@ -460,11 +460,14 @@ export function readSharedCreationSettings(
     const lastCall = getLastModelCall("generate");
     const merged = {
       ...readLegacyImageDefaults(),
-      ...objectValue(stored.image),
       ...(lastCall?.params || {}),
+      // Explicit edits in the shared creation dock are the current source of
+      // truth. The last-call snapshot is only a fallback for fields that have
+      // not been saved in the new defaults yet (notably image count).
+      ...objectValue(stored.image),
       model:
         lastCall?.mode === "manual"
-          ? lastCall.modelId
+          ? objectValue(stored.image).model || lastCall.modelId
           : objectValue(stored.image).model || "auto",
     };
     return normalizeImageCreationSettings(merged, runtime);
