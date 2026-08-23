@@ -2872,7 +2872,7 @@ export default function SuperCanvas() {
             `Agent 图片 ${index + 1}`,
             {
               x: parent.x + nodeSize(parent).w + 90 + (index % 2) * 350,
-              y: parent.y + 240 + Math.floor(index / 2) * 280,
+              y: parent.y + Math.floor(index / 2) * 280,
             },
             {
               role: "Agent 生成结果",
@@ -4533,6 +4533,7 @@ export default function SuperCanvas() {
                 <div className="canvas-prompt-input-wrap">
                   <textarea
                     ref={deckPromptRef}
+                    aria-label="创作提示词"
                     value={
                       selectedSingle?.type === "prompt"
                         ? String(

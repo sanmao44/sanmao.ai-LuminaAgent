@@ -87,7 +87,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     const availableAbove = Math.max(0, rect.top - margin - gap);
     const availableBelow = Math.max(0, window.innerHeight - rect.bottom - margin - gap);
     const openAbove = availableAbove >= 260 || availableAbove > availableBelow;
-    const maxHeight = Math.max(120, Math.min(420, openAbove ? availableAbove : availableBelow));
+    const maxHeight = Math.max(64, Math.min(420, openAbove ? availableAbove : availableBelow));
     const preferredLeft = rect.left + width > window.innerWidth - margin ? rect.right - width : rect.left;
     const left = Math.min(Math.max(margin, preferredLeft), Math.max(margin, window.innerWidth - width - margin));
     setMenuStyle({ visibility: 'visible', left: Math.round(left), width: Math.round(width), maxHeight: Math.round(maxHeight), top: openAbove ? 'auto' : Math.round(rect.bottom + gap), bottom: openAbove ? Math.round(window.innerHeight - rect.top + gap) : 'auto' });

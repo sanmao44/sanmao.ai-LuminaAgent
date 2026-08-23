@@ -263,6 +263,15 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node .canvas-media-state.draft span{color:var(--node-text)}
 .canvas-node .canvas-media-state.pending span{color:var(--node-effective)}
 .canvas-node .canvas-node-footer em{border:1px solid color-mix(in srgb,var(--node-effective) 22%,transparent);background:color-mix(in srgb,var(--node-effective) 12%,var(--panel));color:var(--node-effective)}
+
+/* Focused prompt field: keep keyboard focus obvious without the harsh square browser outline. */
+.canvas-deck-main .canvas-prompt-input-wrap{position:relative;min-width:0;display:flex;align-items:stretch;border:1px solid transparent;border-radius:11px;background:transparent;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.canvas-deck-main .canvas-prompt-input-wrap::before{content:"";position:absolute;z-index:1;left:0;top:8px;bottom:8px;width:2px;border-radius:999px;background:var(--accent);opacity:0;transform:scaleY(.55);transition:opacity .16s ease,transform .16s ease}
+.canvas-deck-main .canvas-prompt-input-wrap:focus-within{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:color-mix(in srgb,var(--panel) 48%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent),inset 0 0 18px color-mix(in srgb,var(--accent) 5%,transparent);transform:translateY(-1px)}
+.canvas-deck-main .canvas-prompt-input-wrap:focus-within::before{opacity:1;transform:scaleY(1)}
+.canvas-deck-main .canvas-prompt-input-wrap textarea,.canvas-deck-main .canvas-prompt-input-wrap textarea:focus,.canvas-deck-main .canvas-prompt-input-wrap textarea:focus-visible{position:relative;z-index:2;outline:0!important;box-shadow:none!important;border:0;color:var(--text);caret-color:var(--accent);font-size:11px;line-height:1.45;padding:6px 8px 6px 10px}
+.canvas-deck-main .canvas-prompt-input-wrap textarea::placeholder{color:var(--muted);opacity:.82;transition:color .16s ease,opacity .16s ease}
+.canvas-deck-main .canvas-prompt-input-wrap:focus-within textarea::placeholder{color:var(--text-2);opacity:.7}
 .canvas-node.status-queued .canvas-prompt-card>small,.canvas-node.status-running .canvas-prompt-card>small,.canvas-node.status-failed .canvas-prompt-card>small,.canvas-node.status-queued .canvas-generator-head small,.canvas-node.status-running .canvas-generator-head small,.canvas-node.status-failed .canvas-generator-head small{color:var(--node-effective)}
 .canvas-node .canvas-node-resize{border-color:color-mix(in srgb,var(--node-effective) 34%,var(--line-strong))}
 .canvas-node:hover .canvas-node-resize,.canvas-node.selected .canvas-node-resize{background:color-mix(in srgb,var(--node-effective) 10%,var(--panel-3));border-color:color-mix(in srgb,var(--node-effective) 68%,var(--line-strong))}
