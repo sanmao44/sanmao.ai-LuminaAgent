@@ -16,6 +16,7 @@ import {
   addEdge,
   arrangeCanvas,
   clone,
+  connectionPath,
   createEmptyMedia,
   createGenerator,
   createGroup,
@@ -379,6 +380,47 @@ function nodeStatus(node: CanvasNode) {
   if (!node.data.url && node.data.status === "draft")
     return node.data.statusLabel || "选中后在下方生成";
   return node.data.role || "参考素材";
+}
+
+function variantRequirementsFor(node: CanvasNode) {
+  return normalizeVariantRequirements(node.data.variantRequirements);
+}
+
+function variantStatesFor(node: CanvasNode): CanvasVariantState[] {
+  const requirements = variantRequirementsFor(node);
+  return requirements.map((instruction, index) => {
+    const current = node.data.variantStates?.[index];
+    return {
+      id: String(current?.id || `variant-${index + 1}`),
+      instruction,
+      status: current?.status || "pending",
+      resultIds: current?.resultIds || [],
+      ...(current?.taskIds ? { taskIds: current.taskIds } : {}),
+      ...(typeof current?.progress === "number"
+        ? { progress: current.progress }
+        : {}),
+      ...(current?.error ? { error: current.error } : {}),
+      ...(current?.updatedAt ? { updatedAt: current.updatedAt } : {}),
+    };
+  });
+}
+
+function variantStatusLabel(status: CanvasVariantState["status"]) {
+  return status === "running"
+    ? "生成中"
+    : status === "completed"
+      ? "已完成"
+      : status === "failed"
+        ? "失败"
+        : "等待中";
+}
+
+function variantBatchStatus(states: CanvasVariantState[]) {
+  if (states.some((state) => state.status === "running")) return "running" as const;
+  if (states.some((state) => state.status === "failed")) return "failed" as const;
+  if (states.length && states.every((state) => state.status === "completed"))
+    return "completed" as const;
+  return "queued" as const;
 }
 
 function rectanglesOverlap(
@@ -2616,6 +2658,30 @@ export default function SuperCanvas() {
     [mode, runtime, selectedSingle, updateDoc],
   );
 
+  const updateVariantRequirements = useCallback(
+    (value: string) => {
+      if (selectedSingle?.type !== "generator") return;
+      updateDoc((documentValue) => ({
+        ...documentValue,
+        nodes: documentValue.nodes.map((node) =>
+          node.id === selectedSingle.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  variantRequirements: normalizeVariantRequirements(value),
+                  variantStates: [],
+                  variantBatchId: undefined,
+                  variantGroupId: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+    },
+    [selectedSingle, updateDoc],
+  );
+
   const useAgentResponseAsImagePrompt = useCallback(
     (node: CanvasNode) => {
       if (node.type !== "prompt") return;
@@ -2703,18 +2769,46 @@ export default function SuperCanvas() {
       if (attempts > 40) {
         updateDoc((value) => ({
           ...value,
-          nodes: value.nodes.map((node) =>
-            node.id === nodeId
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    status: "failed",
-                    statusLabel: "视频任务查询超时，请重试",
-                  },
-                }
-              : node,
-          ),
+          nodes: value.nodes.map((node) => {
+            if (node.id === nodeId)
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "failed" as const,
+                  statusLabel: "视频任务查询超时，请重试",
+                },
+              };
+            const variantIndex = nodeById(value, nodeId)?.data.generation
+              ?.variantIndex;
+            const sourceGeneratorId = nodeById(value, nodeId)?.data.generation
+              ?.sourceGeneratorId;
+            if (
+              node.id === sourceGeneratorId &&
+              typeof variantIndex === "number"
+            ) {
+              const states = variantStatesFor(node).map((state, index) =>
+                index === variantIndex
+                  ? {
+                      ...state,
+                      status: "failed" as const,
+                      error: "视频任务查询超时，请重试",
+                      updatedAt: Date.now(),
+                    }
+                  : state,
+              );
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  variantStates: states,
+                  status: variantBatchStatus(states),
+                  statusLabel: "视频变体生成失败",
+                },
+              };
+            }
+            return node;
+          }),
         }));
         addLog(`视频任务查询超时：${taskId}`);
         pollAttemptsRef.current.delete(taskId);
@@ -2729,20 +2823,31 @@ export default function SuperCanvas() {
           task.status === "failed" ||
           task.status === "cancelled" ||
           task.status === "canceled";
-        updateDoc((value) => ({
-          ...value,
-          nodes: value.nodes.map((node) =>
-            node.id === nodeId
-              ? {
+        updateDoc((value) => {
+          const targetNode = nodeById(value, nodeId);
+          const variantIndex = targetNode?.data.generation?.variantIndex;
+          const sourceGeneratorId = targetNode?.data.generation
+            ?.sourceGeneratorId;
+          const nextStatus =
+            task.status === "done"
+              ? ("completed" as const)
+              : terminal
+                ? ("failed" as const)
+                : ("running" as const);
+          return {
+            ...value,
+            nodes: value.nodes.map((node) => {
+              if (node.id === nodeId)
+                return {
                   ...node,
                   data: {
                     ...node.data,
                     status:
                       task.status === "done"
-                        ? "completed"
+                        ? "completed" as const
                         : terminal
-                          ? "failed"
-                          : "running",
+                          ? "failed" as const
+                          : "running" as const,
                     progress: Number(
                       task.progress || (task.status === "done" ? 100 : 0),
                     ),
@@ -2755,10 +2860,43 @@ export default function SuperCanvas() {
                           ? "视频任务已中断"
                           : "视频生成中"),
                   },
-                }
-              : node,
-          ),
-        }));
+                };
+              if (
+                node.id === sourceGeneratorId &&
+                typeof variantIndex === "number"
+              ) {
+                const states = variantStatesFor(node).map((state, index) =>
+                  index === variantIndex
+                    ? {
+                        ...state,
+                        status: nextStatus,
+                        progress: Number(
+                          task.progress || (task.status === "done" ? 100 : 0),
+                        ),
+                        ...(task.error ? { error: task.error } : {}),
+                        updatedAt: Date.now(),
+                      }
+                    : state,
+                );
+                return {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    variantStates: states,
+                    status: variantBatchStatus(states),
+                    statusLabel:
+                      variantBatchStatus(states) === "completed"
+                        ? "视频变体生成完成"
+                        : variantBatchStatus(states) === "failed"
+                          ? "部分视频变体失败"
+                          : "视频变体生成中",
+                  },
+                };
+              }
+              return node;
+            }),
+          };
+        });
         if (!terminal) {
           const timer = window.setTimeout(() => {
             pollTimersRef.current.delete(timer);
@@ -4352,16 +4490,13 @@ export default function SuperCanvas() {
                 <path
                   className={`canvas-edge canvas-edge-draft node-color-${canvasSourceColorKey(document, draftConnection.sourceId)}`}
                   markerEnd={`url(#canvas-arrow-${canvasSourceColorKey(document, draftConnection.sourceId)})`}
-                  d={(() => {
-                    const dx =
-                      Math.max(
-                        72,
-                        Math.abs(
-                          draftConnection.end.x - draftConnection.start.x,
-                        ) * 0.42,
-                      ) * (draftConnection.sourcePort === "right" ? 1 : -1);
-                    return `M ${draftConnection.start.x} ${draftConnection.start.y} C ${draftConnection.start.x + dx} ${draftConnection.start.y}, ${draftConnection.end.x - dx} ${draftConnection.end.y}, ${draftConnection.end.x} ${draftConnection.end.y}`;
-                  })()}
+                  d={connectionPath(
+                    draftConnection.start,
+                    draftConnection.end,
+                    connectionStyle,
+                    draftConnection.sourcePort,
+                    draftConnection.sourcePort === "right" ? "left" : "right",
+                  )}
                 />
               )}
             </svg>
@@ -4790,6 +4925,7 @@ export default function SuperCanvas() {
         </div>
         <CanvasMinimap
           document={document}
+          connectionStyle={connectionStyle}
           selectedIds={selectedIds}
           bounds={minimapBounds}
           stageSize={stageSize}
@@ -5702,6 +5838,7 @@ function CanvasNodeCard({
 
 function CanvasMinimap({
   document,
+  connectionStyle,
   selectedIds,
   bounds,
   stageSize,
@@ -5711,6 +5848,7 @@ function CanvasMinimap({
   onMoveNodes,
 }: {
   document: CanvasDocument;
+  connectionStyle: ConnectionStyle;
   selectedIds: Set<string>;
   bounds: { x: number; y: number; w: number; h: number };
   stageSize: { width: number; height: number };
@@ -6078,24 +6216,37 @@ function CanvasMinimap({
           {document.edges.map((edge) => {
             const source = nodeById(document, edge.source);
             const target = nodeById(document, edge.target);
-            if (!source || !target) return null;
+            const sourceGroup = groupById(document, edge.source);
+            const targetGroup = groupById(document, edge.target);
+            if ((!source && !sourceGroup) || (!target && !targetGroup))
+              return null;
             const colorKey = canvasSourceColorKey(document, edge.source);
-            const sourceSize = nodeSize(source);
-            const targetSize = nodeSize(target);
-            const start = mapPosition(
-              source.x + sourceSize.w / 2,
-              source.y + sourceSize.h / 2,
+            const sourcePort = edge.sourcePort || "right";
+            const targetPort = edge.targetPort || "left";
+            const sourcePoint = entityPortPoint(
+              document,
+              edge.source,
+              sourcePort,
             );
-            const end = mapPosition(
-              target.x + targetSize.w / 2,
-              target.y + targetSize.h / 2,
+            const targetPoint = entityPortPoint(
+              document,
+              edge.target,
+              targetPort,
             );
-            const curve = Math.max(5, Math.abs(end.x - start.x) * 0.38);
+            const start = mapPosition(sourcePoint.x, sourcePoint.y);
+            const end = mapPosition(targetPoint.x, targetPoint.y);
             return (
               <path
                 key={edge.id}
                 className={`node-color-${colorKey}`}
-                d={`M ${start.x} ${start.y} C ${start.x + curve} ${start.y}, ${end.x - curve} ${end.y}, ${end.x} ${end.y}`}
+                d={connectionPath(
+                  start,
+                  end,
+                  connectionStyle,
+                  sourcePort,
+                  targetPort,
+                  mapScale,
+                )}
               />
             );
           })}

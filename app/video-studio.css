@@ -203,3 +203,18 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
   .video-task-details{display:grid;gap:3px}
   .video-task-details small{white-space:nowrap}
 }
+
+/* Below desktop, let the stacked workspace grow with the document so the
+   preview and recent-task panels remain reachable on touch devices. */
+@media(max-width:960px){
+  html:has(.video-studio-page),body:has(.video-studio-page){height:auto;min-height:100%;overflow-x:hidden;overflow-y:auto}
+  .app-shell:has(.video-studio-page),.main-column:has(.video-studio-page){height:auto;min-height:100vh;overflow:visible}
+  .video-studio-page{height:auto;min-height:calc(100dvh - var(--shell-header-height,64px));max-height:none;overflow:visible;grid-template-rows:auto auto}
+  .video-studio-grid{height:auto;min-height:0;grid-template-columns:1fr;grid-template-rows:none;align-items:start}
+  .video-compose-card{height:auto;min-height:0;display:block;overflow:visible!important}
+  .video-compose-scroll{max-height:none;overflow:visible;padding-right:0}
+  .video-preview-column{height:auto;min-height:0;grid-template-columns:1fr;grid-template-rows:none;overflow:visible}
+  .video-preview-card,.video-task-list{height:auto;min-height:0;overflow:visible}
+  .video-task-list{display:block}
+  .video-task-list-scroll{max-height:none;overflow:visible}
+}

@@ -654,30 +654,64 @@ export function entityPortPoint(
   };
 }
 
-export function edgePath(
-  document: CanvasDocument,
-  edge: CanvasEdge,
+/**
+ * Build a connection path from two already-resolved port points.
+ *
+ * The points can be in world coordinates (scale = 1) or in a scaled
+ * coordinate system such as the minimap.  Keeping the minimum control/bend
+ * distances in the same coordinate system prevents minimap paths from
+ * growing disproportionately when the canvas is zoomed out.
+ */
+export function connectionPath(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
   style: CanvasConnectionStyle = "curve",
+  sourcePort: "left" | "right" = "right",
+  targetPort: "left" | "right" = "left",
+  scale = 1,
 ) {
-  const a = entityPortPoint(document, edge.source, edge.sourcePort || "right");
-  const b = entityPortPoint(document, edge.target, edge.targetPort || "left");
-  if (style === "straight") return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const format = (value: number) =>
+    String(Number.isFinite(value) ? Number(value.toFixed(4)) : 0);
+  const sourceDirection = sourcePort === "right" ? 1 : -1;
+  const targetDirection = targetPort === "left" ? -1 : 1;
+  const distance = Math.abs(b.x - a.x);
+
+  if (style === "straight")
+    return `M ${format(a.x)} ${format(a.y)} L ${format(b.x)} ${format(b.y)}`;
+
   if (style === "orthogonal") {
-    const sourceDirection = (edge.sourcePort || "right") === "right" ? 1 : -1;
-    const targetDirection = (edge.targetPort || "left") === "left" ? -1 : 1;
-    const gap = Math.max(56, Math.min(140, Math.abs(b.x - a.x) * 0.24));
+    const gap = Math.max(
+      56 * safeScale,
+      Math.min(140 * safeScale, distance * 0.24),
+    );
     const bendX =
       sourceDirection === targetDirection
         ? sourceDirection === 1
           ? Math.max(a.x, b.x) + gap
           : Math.min(a.x, b.x) - gap
         : (a.x + b.x) / 2;
-    return `M ${a.x} ${a.y} H ${bendX} V ${b.y} H ${b.x}`;
+    return `M ${format(a.x)} ${format(a.y)} H ${format(bendX)} V ${format(b.y)} H ${format(b.x)}`;
   }
-  const sourceDirection = (edge.sourcePort || "right") === "right" ? 1 : -1;
-  const targetDirection = (edge.targetPort || "left") === "left" ? -1 : 1;
-  const dx = Math.max(72, Math.abs(b.x - a.x) * 0.42);
-  return `M ${a.x} ${a.y} C ${a.x + dx * sourceDirection} ${a.y}, ${b.x + dx * targetDirection} ${b.y}, ${b.x} ${b.y}`;
+
+  const controlDistance = Math.max(72 * safeScale, distance * 0.42);
+  return `M ${format(a.x)} ${format(a.y)} C ${format(a.x + controlDistance * sourceDirection)} ${format(a.y)}, ${format(b.x + controlDistance * targetDirection)} ${format(b.y)}, ${format(b.x)} ${format(b.y)}`;
+}
+
+export function edgePath(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+  style: CanvasConnectionStyle = "curve",
+) {
+  const sourcePort = edge.sourcePort || "right";
+  const targetPort = edge.targetPort || "left";
+  return connectionPath(
+    entityPortPoint(document, edge.source, sourcePort),
+    entityPortPoint(document, edge.target, targetPort),
+    style,
+    sourcePort,
+    targetPort,
+  );
 }
 
 export function mediaCardSizeForRatio(

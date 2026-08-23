@@ -111,6 +111,58 @@ test('supports selectable canvas edge path styles', () => {
   assert.match(model.edgePath(document, edge, 'orthogonal'), / H .* V .* H /);
 });
 
+test('shares connection geometry across ports and scaled minimap coordinates', () => {
+  const start = { x: 120, y: 80 };
+  const end = { x: 40, y: 180 };
+  const curve = model.connectionPath(start, end, 'curve', 'left', 'right');
+  assert.match(curve, /M 120 80 C 48 80, 112 180, 40 180/);
+
+  const straight = model.connectionPath(start, end, 'straight', 'left', 'right');
+  assert.equal(straight, 'M 120 80 L 40 180');
+  assert.doesNotMatch(straight, /[CHV]/);
+
+  const orthogonal = model.connectionPath(start, end, 'orthogonal', 'left', 'right');
+  assert.match(orthogonal, /M 120 80 H 80 V 180 H 40/);
+
+  const scaled = model.connectionPath(
+    { x: 12, y: 8 },
+    { x: 4, y: 18 },
+    'curve',
+    'left',
+    'right',
+    0.1,
+  );
+  assert.match(scaled, /C 4.8 8, 11.2 18/);
+
+  const scaledOrthogonal = model.connectionPath(
+    { x: 0, y: 0 },
+    { x: 2, y: 10 },
+    'orthogonal',
+    'left',
+    'left',
+    0.1,
+  );
+  assert.match(scaledOrthogonal, /H -5.6 V 10 H 2/);
+});
+
+test('uses group boundary ports for shared edge geometry', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/group-first.png', '组内第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/group-second.png', '组内第二张', { x: 360, y: 0 });
+  const target = model.createGenerator('image', { x: 800, y: 120 });
+  let document = { ...empty, nodes: [first, second, target] };
+  document = model.createGroup(document, [first.id, second.id]);
+  const group = document.groups[0];
+  document = model.addEdge(document, group.id, target.id);
+  const edge = document.edges[0];
+  const groupPoint = model.entityPortPoint(document, group.id, 'right');
+  const targetPoint = model.entityPortPoint(document, target.id, 'left');
+  assert.match(
+    model.edgePath(document, edge, 'straight'),
+    new RegExp(`^M ${groupPoint.x} ${groupPoint.y} L ${targetPoint.x} ${targetPoint.y}$`),
+  );
+});
+
 test('expands a grouped source into all media references and preserves manual order', () => {
   const empty = model.normalizeDocument(null);
   const first = model.createMedia('image', '/first.png', '第一张', { x: 0, y: 0 });
