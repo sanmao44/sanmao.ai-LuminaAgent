@@ -45,6 +45,7 @@ const CONNECTION_ANIMATION_OPTIONS: Array<{ value: ConnectionAnimation; label: s
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ['Ctrl'], label: '按住并拖拽框选节点' },
+  { keys: ['Ctrl', '左键'], label: '点击连线显示取消按钮' },
   { keys: ['Ctrl', 'G'], label: '合并选中的图片为组' },
   { keys: ['Ctrl', 'Shift', 'G'], label: '释放选中的分组' },
   { keys: ['Ctrl', 'Z'], label: '撤销上一步操作' },
@@ -739,7 +740,7 @@ export default function SuperCanvas() {
             <label><small>清晰度</small><select value={deck.params.resolution || ''} onChange={(event) => updateParam('resolution', event.target.value)}>{(deckKind === 'video' ? VIDEO_RESOLUTIONS : IMAGE_RESOLUTIONS).map((value) => <option key={value}>{value}</option>)}</select></label>
             {deckKind === 'image' ? <label><small>数量</small><select value={String(deck.params.count || 1)} onChange={(event) => updateParam('count', Number(event.target.value))}>{[1, 2, 3, 4].map((value) => <option key={value}>{value} 张</option>)}</select></label> : <label><small>时长</small><select value={String(deck.params.duration || 5)} onChange={(event) => updateParam('duration', Number(event.target.value))}>{[3, 4, 5, 6, 8, 10, 12, 15].map((value) => <option key={value}>{value} 秒</option>)}</select></label>}
           </>}</div>
-          <div className="canvas-deck-bottom"><span><kbd>左键</kbd> 平移 <i>·</i> <kbd>Ctrl</kbd> 框选 <i>·</i> <kbd>Ctrl+G</kbd> 成组 <i>·</i> <kbd>右键</kbd> 添加节点</span><div><button type="button" onClick={clearSelection}>清空选择</button><button type="button" onClick={() => fitView()}>适应全部</button></div></div>
+           <div className="canvas-deck-bottom"><span><kbd>左键</kbd> 平移 <i>·</i> <kbd>Ctrl</kbd> 框选 <i>·</i> <kbd>Ctrl+左键</kbd> 连线取消 <i>·</i> <kbd>Ctrl+G</kbd> 成组 <i>·</i> <kbd>右键</kbd> 添加节点</span><div><button type="button" onClick={clearSelection}>清空选择</button><button type="button" onClick={() => fitView()}>适应全部</button></div></div>
         </>}
       </div>
       <CanvasMinimap document={document} selectedIds={selectedIds} bounds={minimapBounds} stageSize={stageSize} zoomAt={zoomAt} fitView={fitView} onNavigate={panToWorld} />
