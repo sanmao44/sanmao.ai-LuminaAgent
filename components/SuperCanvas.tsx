@@ -4282,7 +4282,20 @@ export default function SuperCanvas() {
           onCancel={() => setMaskNodeId(null)}
         />
       )}
-      {workbenchOpen && (
+      {workbenchOpen && workbenchTab === "assets" && (
+        <CanvasAssetDrawer
+          extraAssets={canvasAssets}
+          refresh={assetRefresh}
+          canReference={Boolean(selectedGroupId || selectedSingle)}
+          onAdd={addAssetToCanvas}
+          onReference={addAssetAsReference}
+          onLocate={locateAsset}
+          onClose={() => setWorkbenchOpen(false)}
+          onOpenWorkbench={() => setWorkbenchTab("workflow")}
+          onNotify={notify}
+        />
+      )}
+      {workbenchOpen && workbenchTab !== "assets" && (
         <CanvasWorkbench
           tab={workbenchTab}
           setTab={setWorkbenchTab}
@@ -4333,6 +4346,120 @@ export default function SuperCanvas() {
       />
     </section>
   );
+}
+
+const ASSET_SOURCE_LABELS: Record<AssetSource, string> = {
+  history: "主界面历史",
+  "video-task": "视频任务",
+  "canvas-upload": "画布导入",
+  "canvas-output": "画布生成",
+};
+
+function CanvasAssetDrawer({
+  extraAssets,
+  refresh,
+  canReference,
+  onAdd,
+  onReference,
+  onLocate,
+  onClose,
+  onOpenWorkbench,
+  onNotify,
+}: {
+  extraAssets: AssetRecord[];
+  refresh: number;
+  canReference: boolean;
+  onAdd: (asset: AssetRecord) => void;
+  onReference: (asset: AssetRecord) => void;
+  onLocate: (asset: AssetRecord) => void;
+  onClose: () => void;
+  onOpenWorkbench: () => void;
+  onNotify: (message: string, kind?: Notice["kind"]) => void;
+}) {
+  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<"all" | "image" | "video">("all");
+  const [source, setSource] = useState<"all" | AssetSource>("all");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [sort, setSort] = useState<"newest" | "oldest" | "name">("newest");
+  const [preview, setPreview] = useState<AssetRecord | null>(null);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    void listUnifiedAssets(extraAssets)
+      .then(setAssets)
+      .catch(() => onNotify("资产中心读取失败，请稍后重试。", "error"))
+      .finally(() => setLoading(false));
+  }, [extraAssets, onNotify]);
+
+  useEffect(reload, [refresh, reload]);
+
+  const filtered = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    const result = assets.filter(
+      (asset) =>
+        (kind === "all" || asset.kind === kind) &&
+        (source === "all" || asset.source === source) &&
+        (!favoritesOnly || asset.favorite) &&
+        (!search ||
+          `${asset.name} ${asset.prompt || ""} ${asset.modelName || ""}`
+            .toLowerCase()
+            .includes(search)),
+    );
+    return [...result].sort((left, right) =>
+      sort === "oldest"
+        ? left.createdAt - right.createdAt
+        : sort === "name"
+          ? left.name.localeCompare(right.name, "zh-CN")
+          : right.createdAt - left.createdAt,
+    );
+  }, [assets, favoritesOnly, kind, query, sort, source]);
+
+  const toggleFavorite = async (asset: AssetRecord) => {
+    try {
+      await setUnifiedAssetFavorite(asset, !asset.favorite);
+      setAssets((items) =>
+        items.map((item) =>
+          item.id === asset.id ? { ...item, favorite: !item.favorite } : item,
+        ),
+      );
+    } catch {
+      onNotify("收藏状态保存失败。", "error");
+    }
+  };
+
+  const hideAsset = async (asset: AssetRecord) => {
+    try {
+      await hideUnifiedAsset(asset);
+      setAssets((items) => items.filter((item) => item.id !== asset.id));
+      if (preview?.id === asset.id) setPreview(null);
+      onNotify("已从资产索引隐藏，画布引用和磁盘文件保持不变。");
+    } catch {
+      onNotify("暂时无法隐藏这个资产。", "error");
+    }
+  };
+
+  return <>
+    <aside className="canvas-asset-drawer" aria-label="全局资产中心">
+      <header>
+        <div><span>◈</span><span><b>全局资产中心</b><small>历史、视频任务与所有画布</small></span></div>
+        <div><button type="button" onClick={onOpenWorkbench}>工作流</button><button type="button" onClick={onClose} aria-label="关闭资产中心">×</button></div>
+      </header>
+      <div className="canvas-asset-toolbar">
+        <label className="canvas-asset-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、提示词或模型…" />{query && <button type="button" onClick={() => setQuery("")}>×</button>}</label>
+        <div className="canvas-asset-kind" role="group" aria-label="资产类型"><button type="button" className={kind === "all" ? "active" : ""} onClick={() => setKind("all")}>全部</button><button type="button" className={kind === "image" ? "active" : ""} onClick={() => setKind("image")}>图片</button><button type="button" className={kind === "video" ? "active" : ""} onClick={() => setKind("video")}>视频</button><button type="button" className={favoritesOnly ? "active favorite" : ""} onClick={() => setFavoritesOnly((value) => !value)}>★ 收藏</button></div>
+        <div className="canvas-asset-filters"><SelectMenu value={source} onChange={setSource} ariaLabel="资产来源" options={[{ value: "all", label: "全部来源" }, ...Object.entries(ASSET_SOURCE_LABELS).map(([value, label]) => ({ value: value as AssetSource, label }))]} /><SelectMenu value={sort} onChange={setSort} ariaLabel="资产排序" options={[{ value: "newest", label: "最新优先" }, { value: "oldest", label: "最早优先" }, { value: "name", label: "按名称" }]} /></div>
+      </div>
+      {!canReference && <div className="canvas-asset-reference-hint">要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。</div>}
+      <div className="canvas-asset-results"><div className="canvas-asset-summary"><b>{filtered.length} 个资产</b><span>拖到空白画布可直接创建节点</span></div>{loading ? <div className="canvas-asset-loading"><span>✦</span>正在聚合资产…</div> : filtered.length ? <div className="canvas-global-asset-grid">{filtered.map((asset) => <article key={asset.id} className="canvas-global-asset-card" draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData("application/x-sanmao-asset", JSON.stringify(asset)); }}>
+          <button type="button" className="canvas-global-asset-preview" onClick={() => setPreview(asset)}>{asset.kind === "video" ? <video src={asset.url} muted playsInline preload="metadata" /> : <img src={asset.url} alt={asset.name} loading="lazy" />}<span>{asset.kind === "video" ? "▶ 视频" : "▣ 图片"}</span></button>
+          <div className="canvas-global-asset-copy"><b title={asset.name}>{asset.name}</b><small>{ASSET_SOURCE_LABELS[asset.source]} · {asset.createdAt ? new Date(asset.createdAt).toLocaleDateString("zh-CN") : "当前画布"}</small>{asset.prompt && <p>{asset.prompt}</p>}</div>
+          <div className="canvas-global-asset-actions"><button type="button" onClick={() => onAdd(asset)}>＋ 画布</button><button type="button" disabled={!canReference} onClick={() => onReference(asset)}>⌁ 参考</button><button type="button" onClick={() => onLocate(asset)}>⌖</button><button type="button" className={asset.favorite ? "active" : ""} onClick={() => void toggleFavorite(asset)}>★</button><a href={asset.url} download={asset.name} title="下载">↓</a><button type="button" className="danger" onClick={() => void hideAsset(asset)}>×</button></div>
+        </article>)}</div> : <div className="canvas-asset-empty"><span>◇</span><b>没有匹配的资产</b><small>调整筛选，或从主界面生成、上传素材。</small></div>}</div>
+    </aside>
+    {preview && <div className="canvas-asset-preview-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div className="canvas-asset-preview-modal"><header><div><b>{preview.name}</b><small>{ASSET_SOURCE_LABELS[preview.source]}{preview.modelName ? ` · ${preview.modelName}` : ""}</small></div><button type="button" onClick={() => setPreview(null)}>×</button></header><div className="canvas-asset-preview-stage">{preview.kind === "video" ? <video src={preview.url} controls autoPlay playsInline /> : <img src={preview.url} alt={preview.name} />}</div><footer><button type="button" onClick={() => onAdd(preview)}>＋ 添加到画布</button><button type="button" disabled={!canReference} onClick={() => onReference(preview)}>⌁ 作为参考</button><a href={preview.url} download={preview.name}>↓ 下载</a></footer></div></div>}
+  </>;
 }
 
 function CanvasReferenceList({
