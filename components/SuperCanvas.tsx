@@ -307,7 +307,6 @@ const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Ctrl", "Shift", "G"], label: "释放选中的分组" },
   { keys: ["Ctrl", "Z"], label: "撤销上一步操作" },
   { keys: ["Ctrl", "Shift", "Z"], label: "恢复上一步操作" },
-  { keys: ["Ctrl", "Y"], label: "恢复上一步操作（备用）" },
   { keys: ["Ctrl", "C"], label: "复制选中的节点" },
   { keys: ["Ctrl", "V"], label: "粘贴节点或剪贴板图片" },
   { keys: ["Ctrl", "D"], label: "复制选中的节点" },
@@ -316,8 +315,6 @@ const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Alt", "Shift"], label: "复制节点并保留输入连线" },
   { keys: ["A"], label: "打开/关闭资产库" },
   { keys: ["Z"], label: "适应画布视图" },
-  { keys: ["F"], label: "适应画布视图（备用）" },
-  { keys: ["0"], label: "适应画布视图（备用）" },
   { keys: ["+", "="], label: "放大画布视图" },
   { keys: ["-"], label: "缩小画布视图" },
   { keys: ["Ctrl", "Enter"], label: "执行当前生成任务" },
@@ -4405,7 +4402,6 @@ export default function SuperCanvas() {
       const key = event.key.toLowerCase();
       const isKeyZ = key === "z" || event.code === "KeyZ";
       const isKeyA = key === "a" || event.code === "KeyA";
-      const isKeyF = key === "f" || event.code === "KeyF";
       const stageRect = stageRef.current?.getBoundingClientRect();
       const centerX =
         (stageRect?.left || 0) + (stageRect?.width || stageSize.width) / 2;
@@ -4426,9 +4422,6 @@ export default function SuperCanvas() {
         event.preventDefault();
         event.stopPropagation();
         event.shiftKey ? redo() : undo();
-      } else if (!event.repeat && modifier && key === "y") {
-        event.preventDefault();
-        redo();
       } else if (!event.repeat && modifier && key === "c") {
         event.preventDefault();
         void copySelection();
@@ -4456,18 +4449,12 @@ export default function SuperCanvas() {
           commit((value) => removeEdge(value, selectedEdgeId));
           setSelectedEdgeId(null);
         } else deleteSelection();
-      } else if (!event.repeat && !modifier && isKeyF) {
-        event.preventDefault();
-        fitView();
       } else if (!event.repeat && (event.key === "+" || event.key === "=")) {
         event.preventDefault();
         zoomAt(centerX, centerY, 1.12);
       } else if (!event.repeat && event.key === "-") {
         event.preventDefault();
         zoomAt(centerX, centerY, 0.88);
-      } else if (!event.repeat && event.key === "0") {
-        event.preventDefault();
-        fitView();
       } else if (modifier && event.key === "Enter") {
         event.preventDefault();
         void runGeneration();
