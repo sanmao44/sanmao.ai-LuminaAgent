@@ -2669,6 +2669,7 @@ export default function SuperCanvas() {
                 ...node,
                 data: {
                   ...node.data,
+                  variantRequirementsText: value,
                   variantRequirements: normalizeVariantRequirements(value),
                   variantStates: [],
                   variantBatchId: undefined,
@@ -4678,11 +4679,15 @@ export default function SuperCanvas() {
     ? "处理中"
     : mode === "text"
       ? "运行"
+      : selectedSingle?.type === "generator"
+        ? "生成变体"
       : "生成";
   const runButtonTitle = generationBusy
     ? "正在处理中"
     : mode === "text"
       ? "运行 Agent"
+      : selectedSingle?.type === "generator"
+        ? "生成图片/视频变体"
       : deck.target
         ? "生成到此节点"
         : "生成";
@@ -5085,7 +5090,6 @@ export default function SuperCanvas() {
                       ),
                     }))
                   }
-                  onReorderReferences={reorderReference}
                 />
               ))}
             </div>
@@ -5408,6 +5412,30 @@ export default function SuperCanvas() {
                 </button>
               </div>
               <div className="canvas-deck-params">
+                {selectedSingle?.type === "generator" && (
+                  <div className="canvas-variant-editor">
+                    <div className="canvas-variant-editor-head">
+                      <div>
+                        <b>变体要求</b>
+                        <small>每行一条要求，空行自动忽略，最多 8 条</small>
+                      </div>
+                      <span>{variantRequirementsFor(selectedSingle).length}/8</span>
+                    </div>
+                    <textarea
+                      aria-label="变体要求，每行一条"
+                      rows={3}
+                      value={
+                        selectedSingle.data.variantRequirementsText ??
+                        variantRequirementsFor(selectedSingle).join("\n")
+                      }
+                      placeholder="改成夜景\n改为俯拍视角\n替换成红色包装"
+                      onChange={(event) => updateVariantRequirements(event.target.value)}
+                    />
+                    <small className="canvas-variant-editor-note">
+                      每条要求都会叠加到共同提示词，并按顺序生成独立结果。
+                    </small>
+                  </div>
+                )}
                 <CreationParameterEditor
                   settings={deck.params}
                   runtime={runtime}
@@ -6090,7 +6118,6 @@ function CanvasNodeCard({
   onRetryVariant,
   onNaturalSize,
   onPromptChange,
-  onReorderReferences,
   editing,
   onEdit,
 }: {
@@ -6111,11 +6138,6 @@ function CanvasNodeCard({
   onRetryVariant: (variantIndex: number) => void;
   onNaturalSize: (nodeId: string, width: number, height: number) => void;
   onPromptChange: (value: string) => void;
-  onReorderReferences: (
-    ownerId: string,
-    draggedId: string,
-    targetId: string,
-  ) => void;
   editing: boolean;
   onEdit: (value: boolean) => void;
 }) {

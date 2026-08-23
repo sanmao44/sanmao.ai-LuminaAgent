@@ -92,8 +92,12 @@ function normalizeNode(value: unknown): CanvasNode | null {
         ? normalizeCreationSettings("image", data.params)
         : normalizeCreationSettings("video", data.params);
     data.variantRequirements = normalizeVariantRequirements(
-      data.variantRequirements,
+      data.variantRequirementsText ?? data.variantRequirements,
     );
+    data.variantRequirementsText =
+      typeof data.variantRequirementsText === "string"
+        ? data.variantRequirementsText
+        : data.variantRequirements.join("\n");
     if (Array.isArray(data.variantStates)) {
       data.variantStates = data.variantStates
         .filter((item) => Boolean(item && typeof item === "object"))
@@ -821,6 +825,7 @@ export function createGenerator(
       prompt: "",
       status: "idle",
       variantRequirements: [""],
+      variantRequirementsText: "",
       variantStates: [],
     },
   };

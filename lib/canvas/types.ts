@@ -63,6 +63,8 @@ export type CanvasNodeData = {
   generation?: CanvasGenerationMeta;
   /** One line per requested batch variation on a generator node. */
   variantRequirements?: string[];
+  /** Editing buffer that preserves empty lines while the user types. */
+  variantRequirementsText?: string;
   /** Runtime/persisted status for each variation in the latest batch. */
   variantStates?: CanvasVariantState[];
   variantBatchId?: string;
