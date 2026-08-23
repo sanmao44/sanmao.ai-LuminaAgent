@@ -9,7 +9,7 @@
     "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.8/SANMAO.AI-0.7.8.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.8/SANMAO.AI-0.7.8.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "91d35cc2a444941d524cad74428ec048c43470dfb74a62ab15388ae324233d41",
   "publishedAt": "2026-08-24T12:00:00+08:00",
   "notes": [
     "修复图片节点双击无法打开查看器的问题，并将主界面完整图片查看与参数编辑能力接入超级画布。",
