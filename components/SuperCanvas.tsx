@@ -341,7 +341,7 @@ export default function SuperCanvas() {
   const handleStagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
     const target = event.target as HTMLElement;
-    if (target.closest('.canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-minimap,.canvas-context-menu')) return;
+    if (target.closest('.canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-minimap,.canvas-context-menu')) return;
     setContextMenu(null);
     setConnectionCancelEdgeId(null);
     if (event.button === 0 && (event.ctrlKey || event.metaKey)) return startMarquee(event);
@@ -351,6 +351,7 @@ export default function SuperCanvas() {
 
   const startNodeDrag = useCallback((event: ReactPointerEvent, node: CanvasNode) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('textarea,button,.canvas-node-resize')) return;
+    setConnectionCancelEdgeId(null);
     if (event.ctrlKey || event.metaKey) return startMarquee(event);
     event.preventDefault(); event.stopPropagation(); selectNode(node, event.shiftKey);
     const group = node.groupId ? groupById(docRef.current, node.groupId) : undefined;
@@ -365,6 +366,7 @@ export default function SuperCanvas() {
 
   const startGroupDrag = useCallback((event: ReactPointerEvent, group: CanvasGroup) => {
     if (event.button !== 0) return; event.preventDefault(); event.stopPropagation();
+    setConnectionCancelEdgeId(null);
     if (event.ctrlKey || event.metaKey) return startMarquee(event);
     const allSelected = group.nodeIds.every((id) => selectedIds.has(id));
     const ids = event.shiftKey ? (() => { const next = new Set(selectedIds); group.nodeIds.forEach((id) => allSelected ? next.delete(id) : next.add(id)); setSelectedIds(next); setSelectedGroupId(null); return [...next]; })() : (() => { setSelectedGroupId(group.id); setSelectedIds(new Set(group.nodeIds)); return group.nodeIds; })();
@@ -387,7 +389,7 @@ export default function SuperCanvas() {
     capture(event);
   }, [capture]);
 
-  const startResize = useCallback((event: ReactPointerEvent, node: CanvasNode) => { event.preventDefault(); event.stopPropagation(); const size = nodeSize(node); interactionRef.current = { kind: 'resize', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, nodeId: node.id, width: size.w, height: size.h, changed: false }; capture(event); }, [capture]);
+  const startResize = useCallback((event: ReactPointerEvent, node: CanvasNode) => { event.preventDefault(); event.stopPropagation(); setConnectionCancelEdgeId(null); const size = nodeSize(node); interactionRef.current = { kind: 'resize', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, nodeId: node.id, width: size.w, height: size.h, changed: false }; capture(event); }, [capture]);
   const startConnection = useCallback((event: ReactPointerEvent, nodeId: string, port: 'left' | 'right') => { event.preventDefault(); event.stopPropagation(); const point = stagePoint(event.clientX, event.clientY); setConnection({ start: point, end: point, sourcePort: port }); setConnectionTargetId(null); setConnectionCancelEdgeId(null); setSelectedEdgeId(null); interactionRef.current = { kind: 'connect', pointerId: event.pointerId, sourceId: nodeId, sourcePort: port, end: point, start: point }; capture(event); }, [capture, stagePoint]);
 
   const cancelConnection = useCallback((event?: ReactPointerEvent<HTMLButtonElement>) => {
