@@ -27,13 +27,12 @@ const capabilityLabels: Partial<Record<ModelCapability, string>> = {
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = { chat: 'chat', generate: 'generate', edit: 'edit', upscale: 'upscale' };
-const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
-
 export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];
 }
 
 export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '' }: ModelPickerProps) {
+  const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
   const [quickOpen, setQuickOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogQuery, setDialogQuery] = useState('');
