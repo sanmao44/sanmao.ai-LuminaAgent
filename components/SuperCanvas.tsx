@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   addEdge, clone, createEmptyMedia, createGenerator, createGroup, createMedia, createPrompt,
-  edgePath, entityBounds, groupBounds, groupById, groupNodes, incomingContext, incomingReferences, mediaCardSizeForRatio,
+  edgePath, entityBounds, entityPortPoint, groupBounds, groupById, groupNodes, incomingContext, incomingReferences, mediaCardSizeForRatio,
   nodeById, nodeSize, normalizeDocument, removeEdge, removeNodes, reorderReferences, smartPrompt, snapshot, uid,
 } from '@/lib/canvas/model';
 import { getCanvasVideoTask, generateCanvasImage, generateCanvasVideo, loadCanvasRuntime, uploadCanvasAsset } from '@/lib/canvas/api';
@@ -163,16 +163,16 @@ function createCanvasClipboardPayload(document: CanvasDocument, nodeIds: string[
   };
 }
 
-function CanvasEdgeVisual({ document, edge, animation, selected, onSelect }: { document: CanvasDocument; edge: CanvasEdge; animation: ConnectionAnimation; selected: boolean; onSelect: () => void }) {
+function CanvasEdgeVisual({ document, edge, animation, selected, onSelect, onCtrlClick }: { document: CanvasDocument; edge: CanvasEdge; animation: ConnectionAnimation; selected: boolean; onSelect: () => void; onCtrlClick: () => void }) {
   const path = edgePath(document, edge);
   const motionPathId = `canvas-edge-motion-${edge.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   return <g>
     <defs><path id={motionPathId} d={path} /></defs>
-    <path className={`canvas-edge canvas-edge-${animation} ${selected ? 'selected' : ''}`} d={path} markerEnd="url(#canvas-arrow)" onPointerDown={(event) => { event.stopPropagation(); onSelect(); }} />
+    <path className={`canvas-edge canvas-edge-${animation} ${selected ? 'selected' : ''}`} d={path} markerEnd="url(#canvas-arrow)" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (event.button === 0 && (event.ctrlKey || event.metaKey)) onCtrlClick(); else if (event.button === 0) onSelect(); }} />
     {animation === 'flow' && <g className="canvas-edge-flow-light" aria-hidden="true">
-      <animateMotion dur="1.7s" repeatCount="indefinite" rotate="auto"><mpath href={`#${motionPathId}`} /></animateMotion>
-      <path className="canvas-edge-flow-shape" d="M -58 0 L 0 -7.5 L 58 0 L 0 7.5 Z" />
-      <path className="canvas-edge-flow-core" d="M -34 0 L 0 -3.8 L 34 0 L 0 3.8 Z" />
+      <animateMotion dur="1.85s" repeatCount="indefinite" rotate="auto"><mpath href={`#${motionPathId}`} /></animateMotion>
+      <path className="canvas-edge-flow-shape" d="M -66 0 L 0 -6.5 L 66 0 L 0 6.5 Z" />
+      <path className="canvas-edge-flow-core" d="M -38 0 L 0 -3.4 L 38 0 L 0 3.4 Z" />
     </g>}
   </g>;
 }
@@ -217,6 +217,7 @@ export default function SuperCanvas() {
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [connection, setConnection] = useState<ConnectionPreview | null>(null);
   const [connectionTargetId, setConnectionTargetId] = useState<string | null>(null);
+  const [connectionCancelEdgeId, setConnectionCancelEdgeId] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [deckCollapsed, setDeckCollapsed] = useState(false);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
@@ -289,7 +290,7 @@ export default function SuperCanvas() {
   const stageToWorld = useCallback((point: Point) => ({ x: (point.x - document.camera.x) / document.camera.zoom, y: (point.y - document.camera.y) / document.camera.zoom }), [document.camera]);
   const worldToScreen = useCallback((x: number, y: number) => ({ x: x * document.camera.zoom + document.camera.x, y: y * document.camera.zoom + document.camera.y }), [document.camera]);
 
-  const clearSelection = useCallback(() => { setSelectedIds(new Set()); setSelectedGroupId(null); setSelectedEdgeId(null); setEditingNodeId(null); }, []);
+  const clearSelection = useCallback(() => { setSelectedIds(new Set()); setSelectedGroupId(null); setSelectedEdgeId(null); setConnectionCancelEdgeId(null); setEditingNodeId(null); }, []);
   const openNodePosition = useCallback((position: Point, node: CanvasNode) => {
     const size = nodeSize(node); const candidates: Point[] = [{ x: position.x, y: position.y }];
     for (let ring = 1; ring <= 8; ring += 1) {
@@ -341,6 +342,7 @@ export default function SuperCanvas() {
     const target = event.target as HTMLElement;
     if (target.closest('.canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-minimap,.canvas-context-menu')) return;
     setContextMenu(null);
+    setConnectionCancelEdgeId(null);
     if (event.button === 0 && (event.ctrlKey || event.metaKey)) return startMarquee(event);
     if (!event.shiftKey) clearSelection(); interactionRef.current = { kind: 'pan', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, camera: document.camera, changed: false };
     capture(event);
@@ -385,7 +387,28 @@ export default function SuperCanvas() {
   }, [capture]);
 
   const startResize = useCallback((event: ReactPointerEvent, node: CanvasNode) => { event.preventDefault(); event.stopPropagation(); const size = nodeSize(node); interactionRef.current = { kind: 'resize', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, nodeId: node.id, width: size.w, height: size.h, changed: false }; capture(event); }, [capture]);
-  const startConnection = useCallback((event: ReactPointerEvent, nodeId: string, port: 'left' | 'right') => { event.preventDefault(); event.stopPropagation(); const point = stagePoint(event.clientX, event.clientY); setConnection({ start: point, end: point, sourcePort: port }); setConnectionTargetId(null); setSelectedEdgeId(null); interactionRef.current = { kind: 'connect', pointerId: event.pointerId, sourceId: nodeId, sourcePort: port, end: point, start: point }; capture(event); }, [capture, stagePoint]);
+  const startConnection = useCallback((event: ReactPointerEvent, nodeId: string, port: 'left' | 'right') => { event.preventDefault(); event.stopPropagation(); const point = stagePoint(event.clientX, event.clientY); setConnection({ start: point, end: point, sourcePort: port }); setConnectionTargetId(null); setConnectionCancelEdgeId(null); setSelectedEdgeId(null); interactionRef.current = { kind: 'connect', pointerId: event.pointerId, sourceId: nodeId, sourcePort: port, end: point, start: point }; capture(event); }, [capture, stagePoint]);
+
+  const cancelConnection = useCallback((event?: ReactPointerEvent<HTMLButtonElement>) => {
+    event?.preventDefault(); event?.stopPropagation();
+    interactionRef.current = null;
+    setConnection(null);
+    setConnectionTargetId(null);
+    setConnectionCancelEdgeId(null);
+    setMarquee(null);
+    try { if (event) stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
+  }, []);
+
+  const removeConnection = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault(); event.stopPropagation();
+    if (!connectionCancelEdgeId) return cancelConnection(event);
+    const edgeId = connectionCancelEdgeId;
+    commit((value) => removeEdge(value, edgeId));
+    setSelectedEdgeId(null);
+    setConnectionCancelEdgeId(null);
+    addLog('已取消连线');
+    try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
+  }, [addLog, cancelConnection, commit, connectionCancelEdgeId]);
 
   const moveInteraction = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const interaction = interactionRef.current; if (!interaction || interaction.pointerId !== event.pointerId) return;
@@ -579,7 +602,7 @@ export default function SuperCanvas() {
       const centerX = (stageRect?.left || 0) + (stageRect?.width || stageSize.width) / 2;
       const centerY = (stageRect?.top || 0) + (stageRect?.height || stageSize.height) / 2;
       if (event.key === 'Escape') {
-        setContextMenu(null); setLightbox(null); setWorkbenchOpen(false); interactionRef.current = null; setConnection(null); setConnectionTargetId(null); clearSelection();
+        setContextMenu(null); setLightbox(null); setWorkbenchOpen(false); interactionRef.current = null; setConnection(null); setConnectionTargetId(null); setConnectionCancelEdgeId(null); clearSelection();
       } else if (!event.repeat && modifier && key === 'z') {
         event.preventDefault(); event.shiftKey ? redo() : undo();
       } else if (!event.repeat && modifier && key === 'y') {
@@ -648,14 +671,55 @@ export default function SuperCanvas() {
   const connectionTargetSize = connectionTargetNode ? nodeSize(connectionTargetNode) : undefined;
   const draftConnection = connection ? { start: stageToWorld(connection.start), end: stageToWorld(connection.end), sourcePort: connection.sourcePort } : null;
   const connectionTargetScreen = connectionTargetNode ? worldToScreen(connectionTargetNode.x, connectionTargetNode.y) : null;
-  const connectionCancelScreen = connection ? { x: (connection.start.x + connection.end.x) / 2, y: (connection.start.y + connection.end.y) / 2 } : null;
+  const connectionCancelEdge = connectionCancelEdgeId ? document.edges.find((edge) => edge.id === connectionCancelEdgeId) : undefined;
+  const connectionCancelEdgeMidpoint = connectionCancelEdge ? (() => {
+    const start = entityPortPoint(document, connectionCancelEdge.source, connectionCancelEdge.sourcePort || 'right');
+    const end = entityPortPoint(document, connectionCancelEdge.target, connectionCancelEdge.targetPort || 'left');
+    const sourceDirection = (connectionCancelEdge.sourcePort || 'right') === 'right' ? 1 : -1;
+    const targetDirection = (connectionCancelEdge.targetPort || 'left') === 'left' ? -1 : 1;
+    const dx = Math.max(72, Math.abs(end.x - start.x) * 0.42);
+    const t = 0.5;
+    const inverse = 1 - t;
+    return {
+      x: (inverse ** 3) * start.x + 3 * (inverse ** 2) * t * (start.x + dx * sourceDirection) + 3 * inverse * (t ** 2) * (end.x + dx * targetDirection) + (t ** 3) * end.x,
+      y: (inverse ** 3) * start.y + 3 * (inverse ** 2) * t * start.y + 3 * inverse * (t ** 2) * end.y + (t ** 3) * end.y,
+    };
+  })() : null;
+  const connectionCancelScreen = connection
+    ? { x: (connection.start.x + connection.end.x) / 2, y: (connection.start.y + connection.end.y) / 2 }
+    : connectionCancelEdgeMidpoint ? worldToScreen(connectionCancelEdgeMidpoint.x, connectionCancelEdgeMidpoint.y) : null;
 
   if (!ready) return <section className="canvas-workspace canvas-loading"><div className="canvas-loading-card"><span className="canvas-logo-mark"><img src="/brand-mark.png" alt="SANMAO.AI" /></span><strong>正在加载 SANMAO 无限画布</strong><small>恢复本地项目与模型库…</small></div></section>;
   return <section className="canvas-workspace" aria-label="SANMAO 无限画布" onClick={() => projectMenuOpen && setProjectMenuOpen(false)}>
       <header className="canvas-topbar"><div className="canvas-topbar-main"><button type="button" className="canvas-brand" onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((value) => !value); }}><span className="canvas-logo-mark"><img src="/brand-mark.png" alt="" /></span><span><b>SANMAO.AI</b><small>{currentProject?.name || '无限画布'}</small></span><i>⌄</i></button><button type="button" className="canvas-soft-button canvas-home-button" aria-label="返回主界面" onClick={() => window.location.assign('/')}>← <span>主界面</span></button><span className="canvas-separator" /><button type="button" className="canvas-icon-button" onClick={undo} disabled={!undoStack.length}>↶</button><button type="button" className="canvas-icon-button" onClick={redo} disabled={!redoStack.length}>↷</button><span className="canvas-separator" /><button type="button" className="canvas-soft-button" onClick={() => fileInputRef.current?.click()}>＋ 导入素材</button><button type="button" className="canvas-soft-button canvas-shortcuts-button" onClick={() => { setWorkbenchTab('shortcuts'); setWorkbenchOpen(true); }}>⌨ 快捷键</button><button type="button" className="canvas-soft-button canvas-settings-button" onClick={() => { setWorkbenchTab('settings'); setWorkbenchOpen(true); }}>⚙ 设置</button><div className="canvas-topbar-spacer" /><span className={`canvas-save-state ${saving ? 'saving' : saveError ? 'error' : ''}`}><i />{saving ? '保存中…' : saveError ? '保存失败' : '已保存'}</span><button type="button" className="canvas-workbench-button" onClick={() => setWorkbenchOpen(true)}><span>◈</span><b>工作台</b><small>资产 · 工作流</small></button></div><div className="canvas-project-popover-wrap">{projectMenuOpen && <div className="canvas-project-popover" onClick={(event) => event.stopPropagation()}><div className="canvas-popover-title">我的画布项目</div>{projects.map((project) => <div className={`canvas-project-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><button type="button" onClick={() => openProject(project.id)}><span className="canvas-project-dot">✦</span><span><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</small></span></button>{project.id === activeProjectId && <i>✓</i>}</div>)}<div className="canvas-popover-actions"><button type="button" onClick={newProject}>＋ 新建画布</button><button type="button" onClick={() => { setProjectRenameValue(currentProject?.name || ''); setProjectRename(true); }}>重命名</button></div>{projectRename && <div className="canvas-rename-row"><input value={projectRenameValue} onChange={(event) => setProjectRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveProjectName(); if (event.key === 'Escape') setProjectRename(false); }} autoFocus /><button type="button" onClick={saveProjectName}>保存</button></div>}</div>}</div></header>
-     <div ref={stageRef} className="canvas-stage" onPointerDown={handleStagePointerDown} onPointerMove={moveInteraction} onPointerUp={finishInteraction} onPointerCancel={finishInteraction} onContextMenu={handleContextMenu} onWheel={(event) => { if ((event.target as HTMLElement).closest('.canvas-minimap')) return; event.preventDefault(); zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .0014)); }}>
-        <div className="canvas-grid" /><div className="canvas-world"><div className="canvas-world-content" style={{ transform: `translate3d(${document.camera.x}px,${document.camera.y}px,0) scale(${document.camera.zoom})` }}><svg className="canvas-edge-layer" viewBox="-5000 -5000 10000 10000"><defs><linearGradient id="canvas-edge-gradient" x1="0" x2="1"><stop offset="0" stopColor="var(--accent)" /><stop offset="1" stopColor="var(--accent-2)" /></linearGradient><marker id="canvas-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)" /></marker></defs>{document.edges.map((edge) => <CanvasEdgeVisual key={edge.id} document={document} edge={edge} animation={connectionAnimation} selected={selectedEdgeId === edge.id} onSelect={() => { setSelectedEdgeId(edge.id); setSelectedIds(new Set()); setSelectedGroupId(null); }} />)}{draftConnection && <path className="canvas-edge canvas-edge-draft" d={(() => { const dx = Math.max(72, Math.abs(draftConnection.end.x - draftConnection.start.x) * .42) * (draftConnection.sourcePort === 'right' ? 1 : -1); return `M ${draftConnection.start.x} ${draftConnection.start.y} C ${draftConnection.start.x + dx} ${draftConnection.start.y}, ${draftConnection.end.x - dx} ${draftConnection.end.y}, ${draftConnection.end.x} ${draftConnection.end.y}`; })()} />}</svg><div className="canvas-group-layer">{document.groups.map((group) => { const bounds = groupBounds(document, group.id); return <div key={group.id} className={`canvas-group ${selectedGroupId === group.id ? 'selected' : ''}`} style={{ left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h }} onPointerDown={(event) => startGroupDrag(event, group)}><button type="button" className="canvas-group-resize" aria-label="调整对象组大小" onPointerDown={(event) => startGroupResize(event, group)} /><div className="canvas-group-label"><span>⌘</span><b>{group.name}</b><small>{group.nodeIds.length} 个对象</small></div></div>; })}</div><div className="canvas-node-layer">{document.nodes.map((node) => <CanvasNodeCard key={node.id} node={node} selected={selectedIds.has(node.id)} document={document} onPointerDown={startNodeDrag} onResize={startResize} onConnect={startConnection} onSelect={(event) => selectNode(node, event.shiftKey)} onPreview={() => setLightbox({ nodeId: node.id, compare: false })} editing={editingNodeId === node.id} onEdit={(value) => setEditingNodeId(value ? node.id : null)} onNaturalSize={setMediaNaturalSize} onPromptChange={(value) => updateDoc((valueDoc) => ({ ...valueDoc, nodes: valueDoc.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, text: value } } : item) }))} onReorderReferences={reorderReference} />)}</div></div></div>{connectionTargetNode && connectionTargetSize && connectionTargetScreen && <div className="canvas-connection-target" style={{ left: connectionTargetScreen.x - 8, top: connectionTargetScreen.y - 8, width: connectionTargetSize.w * document.camera.zoom + 16, height: connectionTargetSize.h * document.camera.zoom + 16 }} />}{connectionCancelScreen && <button type="button" className="canvas-connection-cancel" aria-label="取消连线" title="取消连线" style={{ left: connectionCancelScreen.x, top: connectionCancelScreen.y }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); interactionRef.current = null; setConnection(null); setConnectionTargetId(null); try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ } }}>×</button>}{marquee && <div className="canvas-marquee" style={{ left: Math.min(marquee.x, marquee.x + marquee.w), top: Math.min(marquee.y, marquee.y + marquee.h), width: Math.abs(marquee.w), height: Math.abs(marquee.h) }}><b>{Math.round(Math.abs(marquee.w))} × {Math.round(Math.abs(marquee.h))} px</b></div>}
-      {selectedNodes.length >= 2 && <div className="canvas-selection-toolbar"><b>{selectedGroupId ? '已选对象组' : `已选 ${selectedNodes.length} 个对象`}</b><span />{!selectedGroupId && <button type="button" onClick={makeGroup}>⌘ 成组</button>}{selectedGroupId && <button type="button" onClick={breakGroup}>解组</button>}<button type="button" onClick={duplicateSelection}>⧉ 复制</button><button type="button" onClick={() => fitView([...selectedIds])}>⌗ 聚焦</button><button type="button" className="danger" onClick={deleteSelection}>⌫ 删除</button></div>}
+      <div ref={stageRef} className="canvas-stage" onPointerDown={handleStagePointerDown} onPointerMove={moveInteraction} onPointerUp={finishInteraction} onPointerCancel={finishInteraction} onContextMenu={handleContextMenu} onWheel={(event) => { if ((event.target as HTMLElement).closest('.canvas-minimap')) return; event.preventDefault(); zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .0014)); }}>
+        <div className="canvas-grid" />
+        <div className="canvas-world">
+          <div className="canvas-world-content" style={{ transform: `translate3d(${document.camera.x}px,${document.camera.y}px,0) scale(${document.camera.zoom})` }}>
+            <svg className="canvas-edge-layer" viewBox="-5000 -5000 10000 10000">
+              <defs>
+                <linearGradient id="canvas-edge-gradient" x1="0" x2="1"><stop offset="0" stopColor="var(--accent)" /><stop offset="1" stopColor="var(--accent-2)" /></linearGradient>
+                <marker id="canvas-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)" /></marker>
+              </defs>
+              {document.edges.map((edge) => <CanvasEdgeVisual
+                key={edge.id}
+                document={document}
+                edge={edge}
+                animation={connectionAnimation}
+                selected={selectedEdgeId === edge.id}
+                onSelect={() => { setConnectionCancelEdgeId(null); setSelectedEdgeId(edge.id); setSelectedIds(new Set()); setSelectedGroupId(null); }}
+                onCtrlClick={() => { setConnectionCancelEdgeId(edge.id); setSelectedEdgeId(edge.id); setSelectedIds(new Set()); setSelectedGroupId(null); }}
+              />)}
+              {draftConnection && <path className="canvas-edge canvas-edge-draft" d={(() => { const dx = Math.max(72, Math.abs(draftConnection.end.x - draftConnection.start.x) * .42) * (draftConnection.sourcePort === 'right' ? 1 : -1); return `M ${draftConnection.start.x} ${draftConnection.start.y} C ${draftConnection.start.x + dx} ${draftConnection.start.y}, ${draftConnection.end.x - dx} ${draftConnection.end.y}, ${draftConnection.end.x} ${draftConnection.end.y}`; })()} />}
+            </svg>
+            <div className="canvas-group-layer">{document.groups.map((group) => { const bounds = groupBounds(document, group.id); return <div key={group.id} className={`canvas-group ${selectedGroupId === group.id ? 'selected' : ''}`} style={{ left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h }} onPointerDown={(event) => startGroupDrag(event, group)}><button type="button" className="canvas-group-resize" aria-label="调整对象组大小" onPointerDown={(event) => startGroupResize(event, group)} /><div className="canvas-group-label"><span>⌘</span><b>{group.name}</b><small>{group.nodeIds.length} 个对象</small></div></div>; })}</div>
+            <div className="canvas-node-layer">{document.nodes.map((node) => <CanvasNodeCard key={node.id} node={node} selected={selectedIds.has(node.id)} document={document} onPointerDown={startNodeDrag} onResize={startResize} onConnect={startConnection} onSelect={(event) => selectNode(node, event.shiftKey)} onPreview={() => setLightbox({ nodeId: node.id, compare: false })} editing={editingNodeId === node.id} onEdit={(value) => setEditingNodeId(value ? node.id : null)} onNaturalSize={setMediaNaturalSize} onPromptChange={(value) => updateDoc((valueDoc) => ({ ...valueDoc, nodes: valueDoc.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, text: value } } : item) }))} onReorderReferences={reorderReference} />)}</div>
+          </div>
+        </div>
+        {connectionTargetNode && connectionTargetSize && connectionTargetScreen && <div className="canvas-connection-target" style={{ left: connectionTargetScreen.x - 8, top: connectionTargetScreen.y - 8, width: connectionTargetSize.w * document.camera.zoom + 16, height: connectionTargetSize.h * document.camera.zoom + 16 }} />}
+        {connectionCancelScreen && <button type="button" className="canvas-connection-cancel" aria-label="取消连线" title="取消连线" style={{ left: connectionCancelScreen.x, top: connectionCancelScreen.y }} onPointerDown={connectionCancelEdge ? removeConnection : cancelConnection}>×</button>}
+        {marquee && <div className="canvas-marquee" style={{ left: Math.min(marquee.x, marquee.x + marquee.w), top: Math.min(marquee.y, marquee.y + marquee.h), width: Math.abs(marquee.w), height: Math.abs(marquee.h) }}><b>{Math.round(Math.abs(marquee.w))} × {Math.round(Math.abs(marquee.h))} px</b></div>}
+       {selectedNodes.length >= 2 && <div className="canvas-selection-toolbar"><b>{selectedGroupId ? '已选对象组' : `已选 ${selectedNodes.length} 个对象`}</b><span />{!selectedGroupId && <button type="button" onClick={makeGroup}>⌘ 成组</button>}{selectedGroupId && <button type="button" onClick={breakGroup}>解组</button>}<button type="button" onClick={duplicateSelection}>⧉ 复制</button><button type="button" onClick={() => fitView([...selectedIds])}>⌗ 聚焦</button><button type="button" className="danger" onClick={deleteSelection}>⌫ 删除</button></div>}
       <div className={`canvas-deck ${deckCollapsed ? 'collapsed' : ''}`}>
         <div className="canvas-deck-top">
           <div className="canvas-mode-switch"><button type="button" className={mode === 'image' ? 'active' : ''} onClick={() => setMode('image')}>✦ 图片</button><button type="button" className={mode === 'video' ? 'active' : ''} onClick={() => setMode('video')}>▶ 视频</button><button type="button" className={mode === 'text' ? 'active' : ''} onClick={() => setMode('text')}>T 文本</button></div>
