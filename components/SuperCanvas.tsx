@@ -44,6 +44,9 @@ const CONNECTION_ANIMATION_OPTIONS: Array<{ value: ConnectionAnimation; label: s
   { value: 'dash', label: '行进', description: '短线段沿连线方向行进' },
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
+  { keys: ['左键'], label: '拖动空白区域平移画布' },
+  { keys: ['中键'], label: '拖动平移画布' },
+  { keys: ['Space', '左键'], label: '按住 Space 拖动空白区域平移画布' },
   { keys: ['Ctrl'], label: '按住并拖拽框选节点' },
   { keys: ['Ctrl'], label: '悬停连线显示取消按钮' },
   { keys: ['Ctrl', 'G'], label: '合并选中的图片为组' },
@@ -174,6 +177,7 @@ function CanvasEdgeVisual({ document, edge, animation, selected, onSelect, onCtr
     <path className={`canvas-edge canvas-edge-${animation} ${selected ? 'selected' : ''}`} d={path} markerEnd="url(#canvas-arrow)" onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave} onPointerDown={handlePointerDown} />
     {animation === 'flow' && <g className="canvas-edge-flow-light" aria-hidden="true">
       <path className="canvas-edge-flow-glow" d={path} pathLength="1000" />
+      <path className="canvas-edge-flow-mid" d={path} pathLength="1000" />
       <path className="canvas-edge-flow-core" d={path} pathLength="1000" />
     </g>}
   </g>;
@@ -192,6 +196,7 @@ export default function SuperCanvas() {
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
   const mountedRef = useRef(true);
   const generationBusyRef = useRef(false);
+  const spaceHeldRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [runtime, setRuntime] = useState<CanvasRuntimeState | null>(null);
   const [runtimeError, setRuntimeError] = useState('');
@@ -230,6 +235,7 @@ export default function SuperCanvas() {
   const [stageSize, setStageSize] = useState({ width: 1200, height: 760 });
   const [connectionAnimation, setConnectionAnimation] = useState<ConnectionAnimation>('flow');
   const [mentionState, setMentionState] = useState<MentionState>(null);
+  const [panActive, setPanActive] = useState(false);
 
   const currentProject = projects.find((project) => project.id === activeProjectId);
   const selectedNodes = useMemo(() => document.nodes.filter((node) => selectedIds.has(node.id)), [document.nodes, selectedIds]);
@@ -310,6 +316,8 @@ export default function SuperCanvas() {
   const hideConnectionCancel = useCallback(() => {
     clearConnectionCancelHideTimer();
     setConnectionCancelEdgeId(null);
+    connectionHoverEdgeRef.current = null;
+    connectionCancelButtonHoverRef.current = false;
   }, [clearConnectionCancelHideTimer]);
   const scheduleConnectionCancelHide = useCallback((edgeId: string) => {
     clearConnectionCancelHideTimer();
@@ -347,6 +355,24 @@ export default function SuperCanvas() {
     window.addEventListener('blur', handleWindowBlur);
     return () => { window.removeEventListener('keydown', handleModifierDown); window.removeEventListener('keyup', handleModifierUp); window.removeEventListener('blur', handleWindowBlur); };
   }, [hideConnectionCancel, showConnectionCancel]);
+  useEffect(() => {
+    const handleSpaceDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || isEditableTarget(event.target)) return;
+      spaceHeldRef.current = true;
+      event.preventDefault();
+      if (interactionRef.current?.kind === 'pan') setPanActive(true);
+    };
+    const handleSpaceUp = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return;
+      spaceHeldRef.current = false;
+      if (!interactionRef.current) setPanActive(false);
+    };
+    const handleWindowBlur = () => { spaceHeldRef.current = false; setPanActive(false); };
+    window.addEventListener('keydown', handleSpaceDown);
+    window.addEventListener('keyup', handleSpaceUp);
+    window.addEventListener('blur', handleWindowBlur);
+    return () => { window.removeEventListener('keydown', handleSpaceDown); window.removeEventListener('keyup', handleSpaceUp); window.removeEventListener('blur', handleWindowBlur); };
+  }, []);
   const openNodePosition = useCallback((position: Point, node: CanvasNode) => {
     const size = nodeSize(node); const candidates: Point[] = [{ x: position.x, y: position.y }];
     for (let ring = 1; ring <= 8; ring += 1) {
@@ -398,9 +424,12 @@ export default function SuperCanvas() {
     const target = event.target as HTMLElement;
     if (target.closest('.canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-minimap,.canvas-context-menu')) return;
     setContextMenu(null);
-    hideConnectionCancel(); connectionHoverEdgeRef.current = null;
-    if (event.button === 0 && (event.ctrlKey || event.metaKey)) return startMarquee(event);
-    if (!event.shiftKey) clearSelection(); interactionRef.current = { kind: 'pan', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, camera: document.camera, changed: false };
+    hideConnectionCancel();
+    if (event.button === 0 && (event.ctrlKey || event.metaKey) && !spaceHeldRef.current) return startMarquee(event);
+    event.preventDefault();
+    if (event.button === 0 && !event.shiftKey && !spaceHeldRef.current) clearSelection();
+    interactionRef.current = { kind: 'pan', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, camera: document.camera, changed: false };
+    setPanActive(true);
     capture(event);
   }, [capture, clearSelection, document.camera, hideConnectionCancel, startMarquee]);
 
@@ -507,11 +536,43 @@ export default function SuperCanvas() {
       const ids = docRef.current.nodes.filter((node) => { const x = node.x * camera.zoom + camera.x; const y = node.y * camera.zoom + camera.y; const size = nodeSize(node); return x < right && x + size.w * camera.zoom > left && y < bottom && y + size.h * camera.zoom > top; }).map((node) => node.id); setSelectedIds(new Set(interaction.additive ? [...interaction.baseSelection, ...ids] : ids)); setSelectedGroupId(null);
     }
     if (interaction.kind === 'connect') { const target = connectionTargetId || (window.document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-canvas-node-id]')?.dataset.canvasNodeId; if (target && target !== interaction.sourceId) { commit((value) => addEdge(value, interaction.sourceId, target, interaction.sourcePort, interaction.sourcePort === 'right' ? 'left' : 'right', 'manual')); addLog(`已连接 ${interaction.sourceId} → ${target}`); } setConnection(null); setConnectionTargetId(null); }
-    interactionRef.current = null; setMarquee(null); try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
+    interactionRef.current = null; setPanActive(false); setMarquee(null); try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
   }, [addLog, commit, connectionTargetId, stagePoint]);
+
+  const cancelPointerInteraction = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    interactionRef.current = null;
+    setPanActive(false);
+    setMarquee(null);
+    setConnection(null);
+    setConnectionTargetId(null);
+    hideConnectionCancel();
+    try { stageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
+  }, [hideConnectionCancel]);
+
+  useEffect(() => {
+    const handleWindowBlur = () => {
+      interactionRef.current = null;
+      setPanActive(false);
+      setMarquee(null);
+      setConnection(null);
+      setConnectionTargetId(null);
+      hideConnectionCancel();
+    };
+    window.addEventListener('blur', handleWindowBlur);
+    return () => window.removeEventListener('blur', handleWindowBlur);
+  }, [hideConnectionCancel]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => { const point = stagePoint(clientX, clientY); const before = { x: (point.x - document.camera.x) / document.camera.zoom, y: (point.y - document.camera.y) / document.camera.zoom }; const zoom = clamp(document.camera.zoom * factor, .12, 3); updateDoc((value) => ({ ...value, camera: { x: point.x - before.x * zoom, y: point.y - before.y * zoom, zoom } })); }, [document.camera, stagePoint, updateDoc]);
   const panToWorld = useCallback((x: number, y: number) => { updateDoc((value) => ({ ...value, camera: { ...value.camera, x: stageSize.width / 2 - x * value.camera.zoom, y: stageSize.height / 2 - y * value.camera.zoom } })); }, [stageSize.height, stageSize.width, updateDoc]);
+  const moveMinimapNodes = useCallback((positions: Record<string, Point>, recordHistory: boolean) => {
+    if (recordHistory) {
+      setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60));
+      setRedoStack([]);
+    }
+    updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => positions[node.id] ? { ...node, ...positions[node.id] } : node) }));
+  }, [updateDoc]);
   const fitView = useCallback((ids?: string[]) => { const targets = ids?.length ? ids : docRef.current.nodes.map((node) => node.id); const rect = stageRef.current?.getBoundingClientRect(); const width = rect?.width || 1200; const height = rect?.height || 760; if (!targets.length) { updateDoc((value) => ({ ...value, camera: { x: width / 2, y: height / 2, zoom: 1 } })); return; } const bounds = targets.map((id) => entityBounds(docRef.current, id)); const minX = Math.min(...bounds.map((item) => item.x)); const minY = Math.min(...bounds.map((item) => item.y)); const maxX = Math.max(...bounds.map((item) => item.x + item.w)); const maxY = Math.max(...bounds.map((item) => item.y + item.h)); const zoom = clamp(Math.min((width - 180) / Math.max(1, maxX - minX), (height - 320) / Math.max(1, maxY - minY)), .12, 1.25); updateDoc((value) => ({ ...value, camera: { x: width / 2 - (minX + (maxX - minX) / 2) * zoom, y: (height - 120) / 2 - (minY + (maxY - minY) / 2) * zoom, zoom } })); }, [updateDoc]);
 
   const arrangeCanvasAction = useCallback(() => {
@@ -767,7 +828,7 @@ export default function SuperCanvas() {
   if (!ready) return <section className="canvas-workspace canvas-loading"><div className="canvas-loading-card"><span className="canvas-logo-mark"><img src="/brand-mark.png" alt="SANMAO.AI" /></span><strong>正在加载 SANMAO 无限画布</strong><small>恢复本地项目与模型库…</small></div></section>;
   return <section className="canvas-workspace" aria-label="SANMAO 无限画布" onClick={() => projectMenuOpen && setProjectMenuOpen(false)}>
       <header className="canvas-topbar"><div className="canvas-topbar-main"><button type="button" className="canvas-brand" onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((value) => !value); }}><span className="canvas-logo-mark"><img src="/brand-mark.png" alt="" /></span><span><b>SANMAO.AI</b><small>{currentProject?.name || '无限画布'}</small></span><i>⌄</i></button><button type="button" className="canvas-soft-button canvas-home-button" aria-label="返回主界面" onClick={() => window.location.assign('/')}>← <span>主界面</span></button><span className="canvas-separator" /><button type="button" className="canvas-icon-button" onClick={undo} disabled={!undoStack.length}>↶</button><button type="button" className="canvas-icon-button" onClick={redo} disabled={!redoStack.length}>↷</button><span className="canvas-separator" /><button type="button" className="canvas-soft-button" onClick={() => fileInputRef.current?.click()}>＋ 导入素材</button><button type="button" className="canvas-soft-button canvas-shortcuts-button" onClick={() => { setWorkbenchTab('shortcuts'); setWorkbenchOpen(true); }}>⌨ 快捷键</button><button type="button" className="canvas-soft-button canvas-settings-button" onClick={() => { setWorkbenchTab('settings'); setWorkbenchOpen(true); }}>⚙ 设置</button><div className="canvas-topbar-spacer" /><span className={`canvas-save-state ${saving ? 'saving' : saveError ? 'error' : ''}`}><i />{saving ? '保存中…' : saveError ? '保存失败' : '已保存'}</span><button type="button" className="canvas-workbench-button" onClick={() => setWorkbenchOpen(true)}><span>◈</span><b>工作台</b><small>资产 · 工作流</small></button></div><div className="canvas-project-popover-wrap">{projectMenuOpen && <div className="canvas-project-popover" onClick={(event) => event.stopPropagation()}><div className="canvas-popover-title">我的画布项目</div>{projects.map((project) => <div className={`canvas-project-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><button type="button" onClick={() => openProject(project.id)}><span className="canvas-project-dot">✦</span><span><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</small></span></button>{project.id === activeProjectId && <i>✓</i>}</div>)}<div className="canvas-popover-actions"><button type="button" onClick={newProject}>＋ 新建画布</button><button type="button" onClick={() => { setProjectRenameValue(currentProject?.name || ''); setProjectRename(true); }}>重命名</button></div>{projectRename && <div className="canvas-rename-row"><input value={projectRenameValue} onChange={(event) => setProjectRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveProjectName(); if (event.key === 'Escape') setProjectRename(false); }} autoFocus /><button type="button" onClick={saveProjectName}>保存</button></div>}</div>}</div></header>
-      <div ref={stageRef} className="canvas-stage" onPointerDown={handleStagePointerDown} onPointerMove={moveInteraction} onPointerUp={finishInteraction} onPointerCancel={finishInteraction} onContextMenu={handleContextMenu} onWheel={(event) => { if ((event.target as HTMLElement).closest('.canvas-minimap')) return; event.preventDefault(); zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .0014)); }}>
+      <div ref={stageRef} className={`canvas-stage ${panActive ? 'is-panning' : ''}`} onPointerDown={handleStagePointerDown} onPointerMove={moveInteraction} onPointerUp={finishInteraction} onPointerCancel={cancelPointerInteraction} onLostPointerCapture={cancelPointerInteraction} onDragStart={(event) => { if (!(event.target as HTMLElement).closest('.canvas-reference-item')) event.preventDefault(); }} onContextMenu={handleContextMenu} onWheel={(event) => { if ((event.target as HTMLElement).closest('.canvas-minimap')) return; event.preventDefault(); zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .0014)); }}>
         <div className="canvas-grid" />
         <div className="canvas-world">
           <div className="canvas-world-content" style={{ transform: `translate3d(${document.camera.x}px,${document.camera.y}px,0) scale(${document.camera.zoom})` }}>
@@ -816,10 +877,10 @@ export default function SuperCanvas() {
             <label><small>清晰度</small><select value={deck.params.resolution || ''} onChange={(event) => updateParam('resolution', event.target.value)}>{(deckKind === 'video' ? VIDEO_RESOLUTIONS : IMAGE_RESOLUTIONS).map((value) => <option key={value}>{value}</option>)}</select></label>
             {deckKind === 'image' ? <label><small>数量</small><select value={String(deck.params.count || 1)} onChange={(event) => updateParam('count', Number(event.target.value))}>{[1, 2, 3, 4].map((value) => <option key={value}>{value} 张</option>)}</select></label> : <label><small>时长</small><select value={String(deck.params.duration || 5)} onChange={(event) => updateParam('duration', Number(event.target.value))}>{[3, 4, 5, 6, 8, 10, 12, 15].map((value) => <option key={value}>{value} 秒</option>)}</select></label>}
           </>}</div>
-            <div className="canvas-deck-bottom"><span><kbd>左键</kbd> 平移 <i>·</i> <kbd>Ctrl</kbd> 框选 <i>·</i> <kbd>Ctrl+左键</kbd> 连线取消 <i>·</i> <kbd>Ctrl+G</kbd> 成组 <i>·</i> <kbd>右键</kbd> 添加节点</span><div><button type="button" onClick={clearSelection}>清空选择</button><button type="button" onClick={arrangeCanvasAction}>⌗ 一键整理</button><button type="button" onClick={() => fitView()}>适应全部</button></div></div>
+            <div className="canvas-deck-bottom"><span><kbd>左键</kbd>/<kbd>中键</kbd> 平移 <i>·</i> <kbd>Space+左键</kbd> 平移 <i>·</i> <kbd>Ctrl</kbd> 框选 <i>·</i> <kbd>Ctrl+左键</kbd> 连线取消 <i>·</i> <kbd>Ctrl+G</kbd> 成组 <i>·</i> <kbd>右键</kbd> 添加节点</span><div><button type="button" onClick={clearSelection}>清空选择</button><button type="button" onClick={arrangeCanvasAction}>⌗ 一键整理</button><button type="button" onClick={() => fitView()}>适应全部</button></div></div>
         </>}
       </div>
-      <CanvasMinimap document={document} selectedIds={selectedIds} bounds={minimapBounds} stageSize={stageSize} zoomAt={zoomAt} fitView={fitView} onNavigate={panToWorld} />
+      <CanvasMinimap document={document} selectedIds={selectedIds} bounds={minimapBounds} stageSize={stageSize} zoomAt={zoomAt} fitView={fitView} onNavigate={panToWorld} onMoveNodes={moveMinimapNodes} />
       {contextMenu && <div className="canvas-context-menu" style={{ left: clamp(contextMenu.x, 8, window.innerWidth - 250), top: clamp(contextMenu.y, 8, window.innerHeight - 330) }} onClick={(event) => event.stopPropagation()}><div className="canvas-menu-title">添加节点</div><button type="button" onClick={() => addNode('image', contextMenu.world)}>✦ 空图片节点 <small>结果直接写入节点</small></button><button type="button" onClick={() => addNode('video', contextMenu.world)}>▶ 空视频节点 <small>结果直接写入节点</small></button><button type="button" onClick={() => addNode('text', contextMenu.world)}>T 文本节点</button><button type="button" onClick={() => { setContextMenu(null); fileInputRef.current?.click(); }}>＋ 导入图片 / 视频</button><hr /><button type="button" onClick={() => addNode('workflowImage', contextMenu.world)}>✦ 高级图片工作流节点</button><button type="button" onClick={() => addNode('workflowVideo', contextMenu.world)}>▶ 高级视频工作流节点</button><hr /><button type="button" onClick={() => { setContextMenu(null); arrangeCanvasAction(); }}>⌗ 一键整理</button><button type="button" onClick={() => { setContextMenu(null); fitView(); }}>⌗ 适应全部</button></div>}
     </div>
     {lightbox && <CanvasLightbox node={nodeById(document, lightbox.nodeId)} compare={lightbox.compare} references={nodeById(document, lightbox.nodeId) ? incomingReferences(document, lightbox.nodeId) : []} onClose={() => setLightbox(null)} onCompare={() => setLightbox((value) => value ? { ...value, compare: !value.compare } : value)} />}
@@ -845,14 +906,20 @@ function CanvasNodeCard({ node, selected, document, onPointerDown, onResize, onC
   const size = nodeSize(node); const data = node.data; const pending = data.status === 'queued' || data.status === 'running'; const failed = data.status === 'failed' && !data.url;
   return <article className={`canvas-node ${selected ? 'selected' : ''}`} data-canvas-node-id={node.id} style={{ left: node.x, top: node.y, width: size.w, height: size.h }} onPointerDown={(event) => onPointerDown(event, node)} onDoubleClick={() => { if (node.type === 'prompt') onEdit(true); else if (node.type === 'media' && data.url) onPreview(); }}>
     <button type="button" className="canvas-port left" aria-label="左侧连接端口" onPointerDown={(event) => onConnect(event, node.id, 'left')} />
-    {node.type === 'media' && <div className="canvas-media-card"><div className="canvas-media-stage">{pending ? <div className="canvas-media-state pending"><span>✦</span><b>{data.statusLabel || '生成中'}</b><small>{Number(data.progress || 0)}%</small></div> : failed ? <div className="canvas-media-state failed"><span>!</span><b>生成失败</b><small>{data.statusLabel}</small></div> : !data.url ? <div className="canvas-media-state draft"><span>{data.kind === 'video' ? '▶' : '▣'}</span><b>{data.kind === 'video' ? '空视频节点' : '空图片节点'}</b><small>选中后在下方生成</small></div> : data.kind === 'video' ? <video src={data.url} muted playsInline preload="metadata" onLoadedMetadata={(event) => onNaturalSize(node.id, event.currentTarget.videoWidth, event.currentTarget.videoHeight)} /> : <img src={data.url} alt={data.name || '画布素材'} draggable={false} onLoad={(event) => onNaturalSize(node.id, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} />}{data.kind === 'video' && data.url && <span className="canvas-video-mark">▶</span>}</div><div className="canvas-node-footer"><span className="canvas-type-icon">{data.kind === 'video' ? '▶' : '▣'}</span><span className="canvas-node-title"><b>{data.name || '素材'}</b><small>{data.model || nodeStatus(node)}</small></span><em>{nodeStatus(node)}</em></div></div>}
+    {node.type === 'media' && <div className="canvas-media-card"><div className="canvas-media-stage">{pending ? <div className="canvas-media-state pending"><span>✦</span><b>{data.statusLabel || '生成中'}</b><small>{Number(data.progress || 0)}%</small></div> : failed ? <div className="canvas-media-state failed"><span>!</span><b>生成失败</b><small>{data.statusLabel}</small></div> : !data.url ? <div className="canvas-media-state draft"><span>{data.kind === 'video' ? '▶' : '▣'}</span><b>{data.kind === 'video' ? '空视频节点' : '空图片节点'}</b><small>选中后在下方生成</small></div> : data.kind === 'video' ? <video src={data.url} muted playsInline preload="metadata" draggable={false} onLoadedMetadata={(event) => onNaturalSize(node.id, event.currentTarget.videoWidth, event.currentTarget.videoHeight)} /> : <img src={data.url} alt={data.name || '画布素材'} draggable={false} onLoad={(event) => onNaturalSize(node.id, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} />}{data.kind === 'video' && data.url && <span className="canvas-video-mark">▶</span>}</div><div className="canvas-node-footer"><span className="canvas-type-icon">{data.kind === 'video' ? '▶' : '▣'}</span><span className="canvas-node-title"><b>{data.name || '素材'}</b><small>{data.model || nodeStatus(node)}</small></span><em>{nodeStatus(node)}</em></div></div>}
     {node.type === 'prompt' && <div className="canvas-prompt-card"><div className="canvas-node-kicker"><span>T</span><b>文本节点</b></div>{editing ? <textarea value={String(data.text || '')} placeholder="输入提示词或备注…" autoFocus onChange={(event) => onPromptChange(event.target.value)} onBlur={() => onEdit(false)} onPointerDown={(event) => event.stopPropagation()} /> : <div className="canvas-prompt-preview">{String(data.text || '双击编辑文本…')}</div>}<small>可连接到图片或视频生成节点</small></div>}
      {node.type === 'generator' && <div className="canvas-generator-card"><div className="canvas-generator-head"><span>{data.kind === 'video' ? '▶' : '✦'}</span><div><b>{data.kind === 'video' ? '视频生成' : '图片生成'}</b><small>{data.status === 'running' ? '生成中…' : '高级工作流节点'}</small></div></div><CanvasReferenceList document={document} ownerId={node.id} onReorder={onReorderReferences} variant="card" /><div className="canvas-generator-prompt">{String(data.prompt || '点击选中，在下方编辑提示词')}</div><div className="canvas-generator-meta"><span>{String((data.params as CanvasGenerationParams | undefined)?.model || '自动模型')}</span><span>{String((data.params as CanvasGenerationParams | undefined)?.aspect || '自动比例')}</span></div></div>}
     <button type="button" className="canvas-port right" aria-label="右侧连接端口" onPointerDown={(event) => onConnect(event, node.id, 'right')} /><span className="canvas-node-resize" onPointerDown={(event) => onResize(event, node)} title="调整卡片大小" />
   </article>;
 }
 
-function CanvasMinimap({ document, selectedIds, bounds, stageSize, zoomAt, fitView, onNavigate }: { document: CanvasDocument; selectedIds: Set<string>; bounds: { x: number; y: number; w: number; h: number }; stageSize: { width: number; height: number }; zoomAt: (x: number, y: number, factor: number) => void; fitView: () => void; onNavigate: (x: number, y: number) => void }) {
+function CanvasMinimap({ document, selectedIds, bounds, stageSize, zoomAt, fitView, onNavigate, onMoveNodes }: { document: CanvasDocument; selectedIds: Set<string>; bounds: { x: number; y: number; w: number; h: number }; stageSize: { width: number; height: number }; zoomAt: (x: number, y: number, factor: number) => void; fitView: () => void; onNavigate: (x: number, y: number) => void; onMoveNodes: (positions: Record<string, Point>, recordHistory: boolean) => void }) {
+  type MinimapInteraction =
+    | { kind: 'viewport'; pointerId: number; offset: Point; startPoint: Point; moved: boolean }
+    | { kind: 'node'; pointerId: number; nodeIds: string[]; startWorld: Point; positions: Record<string, Point>; moved: boolean };
+  const minimapStageRef = useRef<HTMLDivElement | null>(null);
+  const interactionRef = useRef<MinimapInteraction | null>(null);
+  const clickGuardRef = useRef(false);
   const zoom = Math.max(.12, document.camera.zoom || 1);
   // The minimap is a 16:9 viewport. Use one uniform map scale so the
   // wireframe and nodes always describe the same visible canvas area.
@@ -871,13 +938,77 @@ function CanvasMinimap({ document, selectedIds, bounds, stageSize, zoomAt, fitVi
   const style = (node: CanvasNode): CSSProperties => mapStyle({ x: node.x, y: node.y, w: nodeSize(node).w, h: nodeSize(node).h });
   const visible = { x: -document.camera.x / zoom, y: -document.camera.y / zoom, w: stageSize.width / zoom, h: stageSize.height / zoom };
   const viewportStyle: CSSProperties = mapStyle(visible);
-  const navigate = (event: React.MouseEvent<HTMLDivElement>) => { const rect = event.currentTarget.getBoundingClientRect(); const px = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1); const py = clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1); const x = bounds.x + (px * mapWidth - mapOffsetX) / mapScale; const y = bounds.y + (py * mapHeight - mapOffsetY) / mapScale; onNavigate(x, y); };
+  const mapPoint = (clientX: number, clientY: number): Point => {
+    const rect = minimapStageRef.current?.getBoundingClientRect();
+    if (!rect) return { x: bounds.x, y: bounds.y };
+    const px = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1) * mapWidth;
+    const py = clamp((clientY - rect.top) / Math.max(1, rect.height), 0, 1) * mapHeight;
+    return { x: bounds.x + (px - mapOffsetX) / mapScale, y: bounds.y + (py - mapOffsetY) / mapScale };
+  };
+  const capture = (pointerId: number) => { minimapStageRef.current?.setPointerCapture(pointerId); };
+  const startViewportDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    const point = mapPoint(event.clientX, event.clientY);
+    const center = { x: visible.x + visible.w / 2, y: visible.y + visible.h / 2 };
+    interactionRef.current = { kind: 'viewport', pointerId: event.pointerId, offset: { x: point.x - center.x, y: point.y - center.y }, startPoint: point, moved: false };
+    clickGuardRef.current = true;
+    capture(event.pointerId);
+  };
+  const startNodeDrag = (event: ReactPointerEvent<HTMLElement>, node: CanvasNode) => {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    const group = node.groupId ? document.groups.find((item) => item.id === node.groupId) : undefined;
+    const nodeIds = [...new Set((group?.nodeIds || [node.id]).filter((id) => document.nodes.some((item) => item.id === id)))];
+    const positions = Object.fromEntries(document.nodes.filter((item) => nodeIds.includes(item.id)).map((item) => [item.id, { x: item.x, y: item.y }])) as Record<string, Point>;
+    interactionRef.current = { kind: 'node', pointerId: event.pointerId, nodeIds, startWorld: mapPoint(event.clientX, event.clientY), positions, moved: false };
+    clickGuardRef.current = true;
+    capture(event.pointerId);
+  };
+  const moveInteraction = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const point = mapPoint(event.clientX, event.clientY);
+    if (interaction.kind === 'viewport') {
+      if (!interaction.moved && Math.abs(point.x - interaction.startPoint.x) + Math.abs(point.y - interaction.startPoint.y) > 2) interaction.moved = true;
+      onNavigate(point.x - interaction.offset.x, point.y - interaction.offset.y);
+    } else {
+      const dx = point.x - interaction.startWorld.x;
+      const dy = point.y - interaction.startWorld.y;
+      const wasMoved = interaction.moved;
+      if (!interaction.moved && Math.abs(dx) + Math.abs(dy) > 2) interaction.moved = true;
+      if (interaction.moved) {
+        const next = Object.fromEntries(interaction.nodeIds.map((id) => [id, { x: interaction.positions[id].x + dx, y: interaction.positions[id].y + dy }])) as Record<string, Point>;
+        onMoveNodes(next, !wasMoved);
+      }
+    }
+  };
+  const finishInteraction = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    clickGuardRef.current = interaction.moved || true;
+    interactionRef.current = null;
+    try { minimapStageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
+  };
+  const cancelInteraction = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    clickGuardRef.current = interaction.moved || true;
+    interactionRef.current = null;
+    try { minimapStageRef.current?.releasePointerCapture(event.pointerId); } catch { /* pointer capture already released */ }
+  };
+  const navigate = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (clickGuardRef.current) { clickGuardRef.current = false; return; }
+    const point = mapPoint(event.clientX, event.clientY);
+    onNavigate(point.x, point.y);
+  };
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
     zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .0014));
   };
-  return <div className="canvas-minimap" onWheel={handleWheel}><div className="canvas-minimap-head"><b>导航小地图</b><button type="button" onClick={fitView}>全览</button></div><div className="canvas-minimap-stage" onClick={navigate}><i className="canvas-minimap-viewport" style={viewportStyle} />{document.nodes.map((node) => <i key={node.id} className={selectedIds.has(node.id) ? 'active' : ''} style={style(node)} />)}</div><div className="canvas-minimap-foot"><span>{formatPercent(document.camera.zoom)}</span><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, .84)}>−</button><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, 1.18)}>＋</button><button type="button" onClick={fitView}>适应</button></div></div>;
+  return <div className="canvas-minimap" onWheel={handleWheel}><div className="canvas-minimap-head"><b>导航小地图</b><button type="button" onClick={fitView}>全览</button></div><div ref={minimapStageRef} className="canvas-minimap-stage" onPointerDown={(event) => { if (event.target === event.currentTarget) clickGuardRef.current = false; }} onPointerMove={moveInteraction} onPointerUp={finishInteraction} onPointerCancel={cancelInteraction} onLostPointerCapture={cancelInteraction} onClick={navigate}><i className="canvas-minimap-viewport" style={viewportStyle} onPointerDown={startViewportDrag} />{document.nodes.map((node) => <i key={node.id} className={`canvas-minimap-node ${selectedIds.has(node.id) ? 'active' : ''}`} style={style(node)} onPointerDown={(event) => startNodeDrag(event, node)} />)}</div><div className="canvas-minimap-foot"><span>{formatPercent(document.camera.zoom)}</span><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, .84)}>−</button><button type="button" onClick={() => zoomAt(stageSize.width / 2, stageSize.height / 2, 1.18)}>＋</button><button type="button" onClick={fitView}>适应</button></div></div>;
 }
 
 function CanvasLightbox({ node, compare, references, onClose, onCompare }: { node?: CanvasNode; compare: boolean; references: CanvasNode[]; onClose: () => void; onCompare: () => void }) {
@@ -888,5 +1019,5 @@ function CanvasLightbox({ node, compare, references, onClose, onCompare }: { nod
 function CanvasWorkbench({ tab, setTab, nodes, groups, edges, projects, activeProjectId, logs, connectionAnimation, onConnectionAnimationChange, onClose, onExport, onImport, onArrange, onDeleteProject }: { tab: WorkbenchTab; setTab: (tab: WorkbenchTab) => void; nodes: CanvasNode[]; groups: CanvasGroup[]; edges: CanvasEdge[]; projects: CanvasProject[]; activeProjectId: string; logs: string[]; connectionAnimation: ConnectionAnimation; onConnectionAnimationChange: (value: ConnectionAnimation) => void; onClose: () => void; onExport: () => void; onImport: () => void; onArrange: () => void; onDeleteProject: (id: string) => void }) {
   const media = nodes.filter((node) => node.type === 'media' && Boolean(node.data.url)); const tabs = ['assets', 'workflow', 'logs', 'shortcuts', 'project', 'settings'] as const;
   const tabLabels: Record<WorkbenchTab, string> = { assets: '资产', workflow: '工作流', logs: '日志', shortcuts: '快捷键', project: '项目', settings: '设置' };
-  return <div className="canvas-modal-backdrop workbench-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="canvas-workbench"><header><div><span className="canvas-logo-mark small"><img src="/brand-mark.png" alt="" /></span><span><b>统一工作台</b><small>资产、工作流与画布项目</small></span></div><button type="button" onClick={onClose}>×</button></header><nav>{tabs.map((item) => <button type="button" key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{tabLabels[item]}</button>)}</nav><div className="canvas-workbench-content">{tab === 'assets' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布资产</b><small>{media.length} 个媒体节点</small></span></div>{media.length ? <div className="canvas-asset-grid">{media.map((node) => <div className="canvas-asset-card" key={node.id}>{node.data.kind === 'video' ? <video src={node.data.url} muted /> : <img src={node.data.url} alt="" />}<span>{node.data.name || '素材'}</span></div>)}</div> : <div className="canvas-empty-panel">导入的图片和视频会集中显示在这里。</div>}</div>}{tab === 'workflow' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>工作流</b><small>{nodes.length} 个节点 · {edges.length} 条连线 · {groups.length} 个对象组</small></span></div><div className="canvas-workbench-actions"><button type="button" className="primary" onClick={onArrange}>⌗ 一键整理</button><button type="button" onClick={onExport}>↓ 导出 JSON</button><button type="button" onClick={onImport}>↑ 导入 JSON</button></div><div className="canvas-empty-panel">通过节点端口连接图片、视频和文本，生成结果会自动保留引用关系。</div></div>}{tab === 'logs' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>操作日志</b><small>最近 {logs.length} 条操作</small></span></div>{logs.length ? <div className="canvas-log-list">{logs.map((log, index) => <div key={`${log}-${index}`}><time>{index + 1}</time><span>{log}</span></div>)}</div> : <div className="canvas-empty-panel">还没有操作日志。</div>}</div>}{tab === 'shortcuts' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>快捷键</b><small>这些按键可直接操作当前画布</small></span></div><div className="canvas-shortcut-list">{CANVAS_SHORTCUTS.map((shortcut) => <div key={shortcut.keys.join('+')}><kbd>{shortcut.keys.map((key) => <span key={key}>{key}</span>)}</kbd><span>{shortcut.label}</span></div>)}</div></div>}{tab === 'project' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>项目管理</b><small>本地优先保存 · 支持 JSON 备份</small></span></div>{projects.map((project) => <div className={`canvas-project-manage-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><span className="canvas-project-dot">✦</span><div><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleString('zh-CN')}</small></div>{projects.length > 1 && <button type="button" onClick={() => onDeleteProject(project.id)}>删除</button>}</div>)}</div>}{tab === 'settings' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布设置</b><small>调整画布交互与显示效果</small></span></div><div className="canvas-settings-card"><div><b>节点连线动态</b><small>选择连线在画布中的显示方式，设置会自动保存到本机。</small></div><div className="canvas-settings-options">{CONNECTION_ANIMATION_OPTIONS.map((option) => <button type="button" key={option.value} className={connectionAnimation === option.value ? 'active' : ''} aria-pressed={connectionAnimation === option.value} onClick={() => onConnectionAnimationChange(option.value)}><span className="canvas-settings-option-icon" data-animation={option.value}>⌁</span><span><b>{option.label}</b><small>{option.description}</small></span><i>{connectionAnimation === option.value ? '✓' : ''}</i></button>)}</div></div></div>}</div></aside></div>;
+  return <div className="canvas-modal-backdrop workbench-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="canvas-workbench"><header><div><span className="canvas-logo-mark small"><img src="/brand-mark.png" alt="" /></span><span><b>统一工作台</b><small>资产、工作流与画布项目</small></span></div><button type="button" onClick={onClose}>×</button></header><nav>{tabs.map((item) => <button type="button" key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{tabLabels[item]}</button>)}</nav><div className="canvas-workbench-content">{tab === 'assets' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布资产</b><small>{media.length} 个媒体节点</small></span></div>{media.length ? <div className="canvas-asset-grid">{media.map((node) => <div className="canvas-asset-card" key={node.id}>{node.data.kind === 'video' ? <video src={node.data.url} muted /> : <img src={node.data.url} alt="" />}<span>{node.data.name || '素材'}</span></div>)}</div> : <div className="canvas-empty-panel">导入的图片和视频会集中显示在这里。</div>}</div>}{tab === 'workflow' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>工作流</b><small>{nodes.length} 个节点 · {edges.length} 条连线 · {groups.length} 个对象组</small></span></div><div className="canvas-workbench-actions"><button type="button" className="primary" onClick={onArrange}>⌗ 一键整理</button><button type="button" onClick={onExport}>↓ 导出 JSON</button><button type="button" onClick={onImport}>↑ 导入 JSON</button></div><div className="canvas-empty-panel">通过节点端口连接图片、视频和文本，生成结果会自动保留引用关系。</div></div>}{tab === 'logs' && <div className="canvas-workbench-section"><span><b>操作日志</b><small>最近 {logs.length} 条操作</small></span>{logs.length ? <div className="canvas-log-list">{logs.map((log, index) => <div key={`${log}-${index}`}><time>{index + 1}</time><span>{log}</span></div>)}</div> : <div className="canvas-empty-panel">还没有操作日志。</div>}</div>}{tab === 'shortcuts' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>快捷键</b><small>这些按键可直接操作当前画布</small></span></div><div className="canvas-shortcut-list">{CANVAS_SHORTCUTS.map((shortcut) => <div key={`${shortcut.keys.join('+')}-${shortcut.label}`}><kbd>{shortcut.keys.map((key) => <span key={key}>{key}</span>)}</kbd><span>{shortcut.label}</span></div>)}</div></div>}{tab === 'project' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>项目管理</b><small>本地优先保存 · 支持 JSON 备份</small></span></div>{projects.map((project) => <div className={`canvas-project-manage-row ${project.id === activeProjectId ? 'active' : ''}`} key={project.id}><span className="canvas-project-dot">✦</span><div><b>{project.name}</b><small>{new Date(project.updatedAt).toLocaleString('zh-CN')}</small></div>{projects.length > 1 && <button type="button" onClick={() => onDeleteProject(project.id)}>删除</button>}</div>)}</div>}{tab === 'settings' && <div className="canvas-workbench-section"><div className="canvas-workbench-heading"><span><b>画布设置</b><small>调整画布交互与显示效果</small></span></div><div className="canvas-settings-card"><div><b>节点连线动态</b><small>选择连线在画布中的显示方式，设置会自动保存到本机。</small></div><div className="canvas-settings-options">{CONNECTION_ANIMATION_OPTIONS.map((option) => <button type="button" key={option.value} className={connectionAnimation === option.value ? 'active' : ''} aria-pressed={connectionAnimation === option.value} onClick={() => onConnectionAnimationChange(option.value)}><span className="canvas-settings-option-icon" data-animation={option.value}>⌁</span><span><b>{option.label}</b><small>{option.description}</small></span><i>{connectionAnimation === option.value ? '✓' : ''}</i></button>)}</div></div></div>}</div></aside></div>;
 }
