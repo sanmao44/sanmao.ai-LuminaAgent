@@ -13,6 +13,20 @@ import type {
 import { normalizeCreationSettings } from "../creation/settings";
 
 export const CANVAS_VERSION = "sanmao-canvas-2";
+export const MAX_CANVAS_VARIANTS = 8;
+
+export function normalizeVariantRequirements(value: unknown): string[] {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\r?\n/)
+      : [];
+  const normalized = source
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, MAX_CANVAS_VARIANTS);
+  return normalized.length ? normalized : [""];
+}
 
 export function uid(prefix = "id") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -77,6 +91,39 @@ function normalizeNode(value: unknown): CanvasNode | null {
       kind === "image"
         ? normalizeCreationSettings("image", data.params)
         : normalizeCreationSettings("video", data.params);
+    data.variantRequirements = normalizeVariantRequirements(
+      data.variantRequirements,
+    );
+    if (Array.isArray(data.variantStates)) {
+      data.variantStates = data.variantStates
+        .filter((item) => Boolean(item && typeof item === "object"))
+        .slice(0, MAX_CANVAS_VARIANTS)
+        .map((item, index) => ({
+          id: String(item.id || `variant-${index + 1}`),
+          instruction: String(
+            item.instruction || data.variantRequirements?.[index] || "",
+          ),
+          status:
+            item.status === "running" ||
+            item.status === "completed" ||
+            item.status === "failed"
+              ? item.status
+              : "pending",
+          resultIds: Array.isArray(item.resultIds)
+            ? item.resultIds.map(String)
+            : [],
+          ...(Array.isArray(item.taskIds)
+            ? { taskIds: item.taskIds.map(String) }
+            : {}),
+          ...(Number.isFinite(Number(item.progress))
+            ? { progress: Number(item.progress) }
+            : {}),
+          ...(item.error ? { error: String(item.error) } : {}),
+          ...(Number.isFinite(Number(item.updatedAt))
+            ? { updatedAt: Number(item.updatedAt) }
+            : {}),
+        }));
+    }
   }
   if (type === "media" && data.generation) {
     const kind = mediaKind(data.generation.kind || data.kind);
@@ -734,7 +781,14 @@ export function createGenerator(
     y: position.y,
     w: 306,
     h: 238,
-    data: { kind, params: normalizedParams, prompt: "", status: "idle" },
+    data: {
+      kind,
+      params: normalizedParams,
+      prompt: "",
+      status: "idle",
+      variantRequirements: [""],
+      variantStates: [],
+    },
   };
 }
 
@@ -815,7 +869,11 @@ export function removeEdge(document: CanvasDocument, id: string) {
   };
 }
 
-export function createGroup(document: CanvasDocument, ids: string[]) {
+export function createGroup(
+  document: CanvasDocument,
+  ids: string[],
+  name?: string,
+) {
   const valid = [...new Set(ids)].filter((id) => nodeById(document, id));
   if (valid.length < 2) return document;
   const groupId = uid("group");
@@ -840,7 +898,7 @@ export function createGroup(document: CanvasDocument, ids: string[]) {
   );
   groups.push({
     id: groupId,
-    name: `对象组 ${document.groups.length + 1}`,
+    name: name?.trim() || `对象组 ${document.groups.length + 1}`,
     nodeIds: valid,
   });
   return { ...document, nodes, groups };

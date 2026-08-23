@@ -5,6 +5,18 @@ export type CanvasNodeType = 'media' | 'prompt' | 'generator';
 export type CanvasMediaKind = 'image' | 'video';
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
+export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export type CanvasVariantState = {
+  id: string;
+  instruction: string;
+  status: CanvasVariantStatus;
+  resultIds: string[];
+  taskIds?: string[];
+  progress?: number;
+  error?: string;
+  updatedAt?: number;
+};
 
 export type CanvasImageGenerationParams = ImageCreationSettings;
 export type CanvasVideoGenerationParams = VideoCreationSettings;
@@ -18,6 +30,9 @@ export type CanvasGenerationMeta = {
   sourceGeneratorId?: string;
   parentNodeId?: string;
   taskId?: string;
+  variantBatchId?: string;
+  variantIndex?: number;
+  variantInstruction?: string;
   createdAt?: number;
   updatedAt?: number;
 };
@@ -46,6 +61,12 @@ export type CanvasNodeData = {
   nativeHeight?: number;
   referenceOrder?: string[];
   generation?: CanvasGenerationMeta;
+  /** One line per requested batch variation on a generator node. */
+  variantRequirements?: string[];
+  /** Runtime/persisted status for each variation in the latest batch. */
+  variantStates?: CanvasVariantState[];
+  variantBatchId?: string;
+  variantGroupId?: string;
   [key: string]: unknown;
 };
 
