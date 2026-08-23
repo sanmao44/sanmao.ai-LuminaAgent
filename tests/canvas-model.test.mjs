@@ -65,6 +65,94 @@ test('expands a grouped source into all media references and preserves manual or
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第二张', '第一张']);
 });
 
+function arrangeDocument(nodes, edges = [], groups = []) {
+  const empty = model.normalizeDocument(null);
+  return model.normalizeDocument({ ...empty, nodes, edges, groups });
+}
+
+function overlaps(left, right, gap = 0) {
+  const document = { nodes: [left, right], groups: [], edges: [] };
+  const a = model.entityBounds(document, left.id);
+  const b = model.entityBounds(document, right.id);
+  return a.x < b.x + b.w + gap && a.x + a.w + gap > b.x && a.y < b.y + b.h + gap && a.y + a.h + gap > b.y;
+}
+
+test('arranges a directed workflow from inputs to outputs without overlap', () => {
+  const prompt = model.createPrompt({ x: 900, y: 500 }, '构图');
+  const source = model.createMedia('image', '/source.png', '输入', { x: 80, y: 900 });
+  const generator = model.createGenerator('image', { x: -300, y: -300 });
+  const result = model.createMedia('image', '/result.png', '结果', { x: -600, y: 1200 });
+  let document = arrangeDocument([prompt, source, generator, result]);
+  document = model.addEdge(document, prompt.id, generator.id);
+  document = model.addEdge(document, source.id, generator.id);
+  document = model.addEdge(document, generator.id, result.id);
+  const arranged = model.arrangeCanvas(document);
+  const byId = (id) => arranged.document.nodes.find((node) => node.id === id);
+  assert.equal(arranged.changed, true);
+  assert.ok(byId(prompt.id).x < byId(generator.id).x);
+  assert.ok(byId(source.id).x < byId(generator.id).x);
+  assert.ok(byId(generator.id).x < byId(result.id).x);
+  assert.equal(overlaps(byId(prompt.id), byId(source.id)), false);
+});
+
+test('arranges unconnected nodes in a non-overlapping grid', () => {
+  const nodes = Array.from({ length: 7 }, (_, index) => model.createMedia('image', `/grid-${index}.png`, `网格 ${index}`, { x: index * 17, y: index * 13 }));
+  const document = arrangeDocument(nodes);
+  const arranged = model.arrangeCanvas(document).document;
+  for (let left = 0; left < arranged.nodes.length; left += 1) {
+    for (let right = left + 1; right < arranged.nodes.length; right += 1) assert.equal(overlaps(arranged.nodes[left], arranged.nodes[right]), false);
+  }
+});
+
+test('selection-only arrangement leaves unselected nodes and external edges unchanged', () => {
+  const first = model.createPrompt({ x: 800, y: 800 }, '输入');
+  const second = model.createGenerator('image', { x: -800, y: -800 });
+  const outside = model.createMedia('image', '/outside.png', '外部节点', { x: 2400, y: 70 });
+  let document = arrangeDocument([first, second, outside]);
+  document = model.addEdge(document, first.id, second.id);
+  document = model.addEdge(document, second.id, outside.id);
+  const beforeOutside = { x: outside.x, y: outside.y };
+  const beforeEdges = JSON.stringify(document.edges);
+  const arranged = model.arrangeCanvas(document, [first.id, second.id]);
+  const nextOutside = arranged.document.nodes.find((node) => node.id === outside.id);
+  assert.deepEqual({ x: nextOutside.x, y: nextOutside.y }, beforeOutside);
+  assert.equal(JSON.stringify(arranged.document.edges), beforeEdges);
+  assert.ok(arranged.document.nodes.find((node) => node.id === first.id).x < arranged.document.nodes.find((node) => node.id === second.id).x);
+});
+
+test('keeps complete groups together and preserves relative positions for partial selection', () => {
+  const first = model.createMedia('image', '/first.png', '第一张', { x: 600, y: 400 });
+  const second = model.createMedia('image', '/second.png', '第二张', { x: 1100, y: 650 });
+  const result = model.createGenerator('image', { x: -500, y: -500 });
+  let document = arrangeDocument([first, second, result]);
+  document = model.createGroup(document, [first.id, second.id]);
+  document = model.addEdge(document, first.id, result.id);
+  const grouped = model.arrangeCanvas(document);
+  const groupedFirst = grouped.document.nodes.find((node) => node.id === first.id);
+  const groupedSecond = grouped.document.nodes.find((node) => node.id === second.id);
+  assert.equal(groupedSecond.x - groupedFirst.x, second.x - first.x);
+  assert.equal(groupedSecond.y - groupedFirst.y, second.y - first.y);
+  const partial = model.arrangeCanvas(document, [first.id, result.id]);
+  const partialFirst = partial.document.nodes.find((node) => node.id === first.id);
+  const partialSecond = partial.document.nodes.find((node) => node.id === second.id);
+  assert.equal(partialFirst.groupId, partialSecond.groupId);
+  assert.deepEqual({ x: partialSecond.x, y: partialSecond.y }, { x: second.x, y: second.y });
+});
+
+test('handles cycles, empty selections, and deterministic output', () => {
+  const first = model.createPrompt({ x: 1000, y: 20 }, 'A');
+  const second = model.createGenerator('image', { x: -1000, y: 20 });
+  let document = arrangeDocument([first, second]);
+  document = model.addEdge(document, first.id, second.id);
+  document = model.addEdge(document, second.id, first.id);
+  const arranged = model.arrangeCanvas(document);
+  assert.equal(overlaps(arranged.document.nodes[0], arranged.document.nodes[1]), false);
+  assert.deepEqual(model.arrangeCanvas(document).document.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y })), arranged.document.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y })));
+  const emptySelection = model.arrangeCanvas(document, []);
+  assert.equal(emptySelection.changed, false);
+  assert.deepEqual(emptySelection.arrangedIds, []);
+});
+
 test('NOVA localStorage keys have a one-way migration target and no independent API config', () => {
   assert.match(storageSource, /nova\.v1\.projects/);
   assert.match(storageSource, /nova\.v1\.active/);
