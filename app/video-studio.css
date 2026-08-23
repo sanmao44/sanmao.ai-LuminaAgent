@@ -171,3 +171,35 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
   .video-reference-preview{height:58px}
   .video-reference-actions button{height:20px}
 }
+
+/* Video studio refinement: make the primary flow scannable without changing the visual language. */
+.video-hero-copy{min-width:0}
+.video-hero-tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px}
+.video-hero-tags span{padding:4px 8px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent-soft) 55%,transparent);color:var(--accent-text);font-size:9px;font-weight:800;line-height:1}
+.video-reference-tray-title{display:grid;gap:2px;min-width:0}
+.video-reference-tray-actions{padding:3px;border:1px solid color-mix(in srgb,var(--line) 80%,transparent);border-radius:11px;background:color-mix(in srgb,var(--panel-2) 78%,transparent)}
+.video-reference-tray-actions .video-reference-add,.video-reference-tray-actions .video-reference-clear{min-height:26px}
+.video-task-copy{display:grid;gap:5px;min-width:0}
+.video-task-copy>strong{font-size:12px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.video-task-details{display:flex;align-items:center;gap:5px 9px;flex-wrap:wrap;min-width:0}
+.video-task-details small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--muted)}
+.video-task-details .video-task-param-summary{color:var(--accent-text)!important}
+
+@media(min-width:961px){
+  .video-studio-hero{height:108px;padding:18px 24px}
+  .video-studio-hero h1{font-size:clamp(24px,2.2vw,31px);margin:6px 0 4px}
+  .video-studio-hero p{font-size:11px;line-height:1.45}
+  .video-hero-tags{margin-top:8px}
+  .video-hero-tags span{font-size:8px;padding:4px 7px}
+  .video-reference-tray-head{align-items:flex-start}
+  .video-reference-tray-actions{gap:4px}
+  .video-task-card{padding:11px 12px;gap:6px}
+  .video-task-copy>strong{font-size:11px}
+}
+@media(max-width:620px){
+  .video-hero-tags{margin-top:9px}
+  .video-hero-tags span{font-size:8px}
+  .video-reference-tray-actions{padding:3px}
+  .video-task-details{display:grid;gap:3px}
+  .video-task-details small{white-space:nowrap}
+}
