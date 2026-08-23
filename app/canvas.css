@@ -212,3 +212,83 @@
 .canvas-group-port:hover,.canvas-group-port:focus-visible{opacity:1;background:var(--accent);border-color:var(--accent-2);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent),0 4px 14px color-mix(in srgb,var(--accent) 38%,transparent);transform:translateY(-50%) scale(1.12)}
 @media(max-width:720px){.canvas-run-button{width:68px;min-width:68px}}
 @media(max-width:420px){.canvas-run-button{width:62px;min-width:62px}}
+
+/* Semantic node colors: type stays recognizable while status owns the active emphasis. */
+.canvas-workspace{
+  --canvas-node-image:#7c3aed;
+  --canvas-node-video:#2563eb;
+  --canvas-node-agent:#b45309;
+  --canvas-node-image-generator:#047857;
+  --canvas-node-video-generator:#0e7490;
+  --canvas-node-image-text:#6d28d9;
+  --canvas-node-video-text:#1d4ed8;
+  --canvas-node-agent-text:#92400e;
+  --canvas-node-image-generator-text:#047857;
+  --canvas-node-video-generator-text:#0e7490;
+  --canvas-node-queued:#b45309;
+  --canvas-node-running:#0369a1;
+}
+html[data-theme="dark"] .canvas-workspace{
+  --canvas-node-image:#a78bfa;
+  --canvas-node-video:#60a5fa;
+  --canvas-node-agent:#fbbf24;
+  --canvas-node-image-generator:#34d399;
+  --canvas-node-video-generator:#22d3ee;
+  --canvas-node-image-text:#ddd6fe;
+  --canvas-node-video-text:#bfdbfe;
+  --canvas-node-agent-text:#fde68a;
+  --canvas-node-image-generator-text:#a7f3d0;
+  --canvas-node-video-generator-text:#a5f3fc;
+  --canvas-node-queued:#f59e0b;
+  --canvas-node-running:#38bdf8;
+}
+.node-color-image{--node-color:var(--canvas-node-image);--node-text:var(--canvas-node-image-text);--node-soft:color-mix(in srgb,var(--canvas-node-image) 14%,transparent);--node-effective:var(--canvas-node-image)}
+.node-color-video{--node-color:var(--canvas-node-video);--node-text:var(--canvas-node-video-text);--node-soft:color-mix(in srgb,var(--canvas-node-video) 14%,transparent);--node-effective:var(--canvas-node-video)}
+.node-color-agent{--node-color:var(--canvas-node-agent);--node-text:var(--canvas-node-agent-text);--node-soft:color-mix(in srgb,var(--canvas-node-agent) 14%,transparent);--node-effective:var(--canvas-node-agent)}
+.node-color-image-generator{--node-color:var(--canvas-node-image-generator);--node-text:var(--canvas-node-image-generator-text);--node-soft:color-mix(in srgb,var(--canvas-node-image-generator) 14%,transparent);--node-effective:var(--canvas-node-image-generator)}
+.node-color-video-generator{--node-color:var(--canvas-node-video-generator);--node-text:var(--canvas-node-video-generator-text);--node-soft:color-mix(in srgb,var(--canvas-node-video-generator) 14%,transparent);--node-effective:var(--canvas-node-video-generator)}
+.canvas-node.status-failed,.canvas-minimap-node.status-failed{--node-effective:var(--danger)}
+.canvas-node.status-queued,.canvas-minimap-node.status-queued{--node-effective:var(--canvas-node-queued)}
+.canvas-node.status-running,.canvas-minimap-node.status-running{--node-effective:var(--canvas-node-running)}
+
+.canvas-node{border-color:color-mix(in srgb,var(--node-effective) 32%,var(--line-strong))}
+.canvas-node::before{content:"";position:absolute;z-index:7;left:17px;right:17px;top:-1px;height:3px;border-radius:0 0 4px 4px;background:linear-gradient(90deg,transparent,var(--node-effective) 24%,var(--node-effective) 76%,transparent);opacity:.82;pointer-events:none}
+.canvas-node:hover{border-color:color-mix(in srgb,var(--node-effective) 66%,var(--line-strong));box-shadow:0 0 0 1px color-mix(in srgb,var(--node-effective) 10%,transparent),var(--shadow-soft)}
+.canvas-node.selected{border-color:var(--node-effective);outline-color:var(--node-effective);box-shadow:0 0 0 6px color-mix(in srgb,var(--node-effective) 13%,transparent),0 0 25px color-mix(in srgb,var(--node-effective) 20%,transparent),var(--shadow)}
+.canvas-node .canvas-port{border-color:color-mix(in srgb,var(--node-effective) 48%,var(--line-strong));box-shadow:0 0 0 2px color-mix(in srgb,var(--node-effective) 6%,transparent)}
+.canvas-node .canvas-port:hover,.canvas-node .canvas-port:focus-visible{border-color:var(--node-effective);background:color-mix(in srgb,var(--node-effective) 16%,var(--panel-3));box-shadow:0 0 0 4px color-mix(in srgb,var(--node-effective) 15%,transparent);outline:0}
+.canvas-node .canvas-type-icon,.canvas-node .canvas-node-kicker span,.canvas-node .canvas-generator-head>span{background:var(--node-soft);color:var(--node-text)}
+.canvas-node .canvas-node-kicker span,.canvas-node .canvas-generator-head>span{width:24px;height:24px;display:grid;place-items:center;flex:none;border-radius:8px}
+.canvas-node .canvas-media-state.draft span{color:var(--node-text)}
+.canvas-node .canvas-media-state.pending span{color:var(--node-effective)}
+.canvas-node .canvas-node-footer em{border:1px solid color-mix(in srgb,var(--node-effective) 22%,transparent);background:color-mix(in srgb,var(--node-effective) 12%,var(--panel));color:var(--node-effective)}
+.canvas-node.status-queued .canvas-prompt-card>small,.canvas-node.status-running .canvas-prompt-card>small,.canvas-node.status-failed .canvas-prompt-card>small,.canvas-node.status-queued .canvas-generator-head small,.canvas-node.status-running .canvas-generator-head small,.canvas-node.status-failed .canvas-generator-head small{color:var(--node-effective)}
+.canvas-node .canvas-node-resize{border-color:color-mix(in srgb,var(--node-effective) 34%,var(--line-strong))}
+.canvas-node:hover .canvas-node-resize,.canvas-node.selected .canvas-node-resize{background:color-mix(in srgb,var(--node-effective) 10%,var(--panel-3));border-color:color-mix(in srgb,var(--node-effective) 68%,var(--line-strong))}
+
+.canvas-edge-visual .canvas-edge,.canvas-edge-draft{stroke:color-mix(in srgb,var(--node-color) 76%,var(--line-strong));filter:drop-shadow(0 0 3px color-mix(in srgb,var(--node-color) 30%,transparent))}
+.canvas-edge-visual .canvas-edge:hover,.canvas-edge-visual .canvas-edge.selected{stroke:color-mix(in srgb,var(--node-color) 84%,var(--text));filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color) 52%,transparent))}
+.canvas-edge-visual .canvas-edge-flow-glow{stroke:color-mix(in srgb,var(--node-color) 76%,#fff);filter:blur(1.8px) drop-shadow(0 0 10px color-mix(in srgb,var(--node-color) 68%,transparent))}
+.canvas-edge-visual .canvas-edge-flow-mid{stroke:color-mix(in srgb,var(--node-color) 74%,#fff);filter:blur(.45px) drop-shadow(0 0 6px color-mix(in srgb,var(--node-color) 62%,transparent))}
+.canvas-edge-visual .canvas-edge-flow-core{stroke:color-mix(in srgb,var(--node-color) 48%,#fff);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--node-color) 54%,#fff))}
+.canvas-edge-draft{opacity:.86}
+@keyframes canvas-edge-breathe{0%,100%{opacity:.58;filter:drop-shadow(0 0 2px color-mix(in srgb,var(--node-color) 20%,transparent))}50%{opacity:1;filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color) 65%,transparent))}}
+
+.canvas-minimap-edges path{stroke:color-mix(in srgb,var(--node-color) 58%,var(--muted))}
+.canvas-minimap-node{background:var(--node-effective);border-color:color-mix(in srgb,var(--node-effective) 74%,#fff)}
+.canvas-minimap-node.type-generator{background:var(--node-effective);border-color:color-mix(in srgb,var(--node-effective) 62%,#fff)}
+.canvas-minimap-node.status-failed,.canvas-minimap-node.status-queued,.canvas-minimap-node.status-running{background:var(--node-effective)}
+.canvas-minimap-node:hover{box-shadow:0 0 0 2px color-mix(in srgb,#fff 68%,transparent),0 0 8px color-mix(in srgb,var(--node-effective) 45%,transparent)}
+.canvas-minimap-node.grouped{box-shadow:0 0 0 1px color-mix(in srgb,var(--node-effective) 52%,transparent),0 1px 3px rgba(0,0,0,.24)}
+.canvas-minimap-node.active{background:var(--node-effective);box-shadow:0 0 0 1px var(--panel),0 0 0 3px color-mix(in srgb,var(--node-effective) 72%,transparent),0 0 12px color-mix(in srgb,var(--node-effective) 54%,transparent)}
+@keyframes canvas-minimap-node-pulse{0%,100%{filter:brightness(.9);box-shadow:0 0 0 0 color-mix(in srgb,var(--node-effective) 0%,transparent)}50%{filter:brightness(1.35);box-shadow:0 0 0 3px color-mix(in srgb,var(--node-effective) 25%,transparent)}}
+.canvas-minimap-legend i.image{background:var(--canvas-node-image)}
+.canvas-minimap-legend i.video{background:var(--canvas-node-video)}
+.canvas-minimap-legend i.agent{background:var(--canvas-node-agent)}
+.canvas-minimap-legend i.image-generator{background:var(--canvas-node-image-generator)}
+.canvas-minimap-legend i.video-generator{background:var(--canvas-node-video-generator)}
+
+@media(prefers-reduced-motion:reduce){
+  .canvas-node,.canvas-node .canvas-port,.canvas-edge{transition:none!important}
+  .canvas-media-state.pending span{animation:none!important}
+}
