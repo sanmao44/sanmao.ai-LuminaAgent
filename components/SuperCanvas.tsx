@@ -78,6 +78,7 @@ import {
 } from "@/lib/assets";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import MaskEditor from "@/components/MaskEditor";
+import SelectMenu from "@/components/SelectMenu";
 import type {
   CanvasCamera,
   CanvasDocument,
@@ -645,6 +646,30 @@ export default function SuperCanvas() {
   const mediaNodes = useMemo(
     () => document.nodes.filter((node) => node.type === "media"),
     [document.nodes],
+  );
+  const canvasAssets = useMemo<AssetRecord[]>(
+    () =>
+      document.nodes
+        .filter((node) => node.type === "media" && Boolean(node.data.url))
+        .map((node) => ({
+          id: `canvas:${activeProjectId}:${node.id}`,
+          kind: node.data.kind === "video" ? "video" : "image",
+          url: String(node.data.url),
+          name: String(node.data.name || "画布素材"),
+          source: (node.data.generation
+            ? "canvas-output"
+            : "canvas-upload") as AssetSource,
+          createdAt: Number(node.data.generation?.createdAt || 0),
+          favorite: false,
+          prompt: node.data.generation?.prompt,
+          modelId: node.data.generation?.params.model,
+          modelName:
+            typeof node.data.model === "string" ? node.data.model : undefined,
+          width: Number(node.data.nativeWidth) || undefined,
+          height: Number(node.data.nativeHeight) || undefined,
+          projectIds: activeProjectId ? [activeProjectId] : [],
+        })),
+    [activeProjectId, document.nodes],
   );
   const referenceOwnerId = selectedGroupId || selectedSingle?.id;
   const mentionCandidates = useMemo(
@@ -3098,6 +3123,118 @@ export default function SuperCanvas() {
     }
   }, [addLog, commit, notify, runtime, selectedSingle]);
 
+  const addAssetToCanvas = useCallback(
+    (asset: AssetRecord, position?: Point) => {
+      const rect = stageRef.current?.getBoundingClientRect();
+      const seed =
+        position ||
+        screenToWorld(
+          (rect?.left || 0) + (rect?.width || stageSize.width) / 2,
+          (rect?.top || 0) + (rect?.height || stageSize.height) / 2,
+        );
+      const draft = createMedia(asset.kind, asset.url, asset.name, seed, {
+        role: "资产中心",
+        sourceAssetId: asset.id,
+      });
+      const point = openNodePosition(seed, draft);
+      const node = { ...draft, x: point.x, y: point.y };
+      commit((value) => ({ ...value, nodes: [...value.nodes, node] }));
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setMode(asset.kind);
+      notify(`已将${asset.kind === "video" ? "视频" : "图片"}添加到画布`);
+    },
+    [commit, notify, openNodePosition, screenToWorld, stageSize.height, stageSize.width],
+  );
+
+  const addAssetAsReference = useCallback(
+    (asset: AssetRecord) => {
+      const ownerId = selectedGroupId || selectedSingle?.id;
+      if (!ownerId) {
+        notify("多选内容需要先成组，或明确选中一个目标节点。", "error");
+        return;
+      }
+      const existing = docRef.current.nodes.find(
+        (node) =>
+          node.type === "media" &&
+          node.data.kind === asset.kind &&
+          node.data.url === asset.url,
+      );
+      if (existing?.id === ownerId) {
+        notify("素材不能引用自身，请选择另一个目标节点。", "error");
+        return;
+      }
+      const ownerBounds = entityBounds(docRef.current, ownerId);
+      const draft = existing
+        ? null
+        : createMedia(
+            asset.kind,
+            asset.url,
+            asset.name,
+            { x: ownerBounds.x - 430, y: ownerBounds.y },
+            { role: "参考素材", sourceAssetId: asset.id },
+          );
+      const sourceNode =
+        existing ||
+        (draft
+          ? {
+              ...draft,
+              ...openNodePosition(
+                { x: ownerBounds.x - 430, y: ownerBounds.y },
+                draft,
+              ),
+            }
+          : null);
+      if (!sourceNode) return;
+      commit((value) =>
+        addEdge(
+          draft ? { ...value, nodes: [...value.nodes, sourceNode] } : value,
+          sourceNode.id,
+          ownerId,
+          "right",
+          "left",
+          "manual",
+        ),
+      );
+      notify(existing ? "已复用现有素材并建立参考连线" : "已添加素材并建立参考连线");
+    },
+    [commit, notify, openNodePosition, selectedGroupId, selectedSingle?.id],
+  );
+
+  const locateAsset = useCallback(
+    (asset: AssetRecord) => {
+      const matches = docRef.current.nodes.filter(
+        (node) =>
+          node.type === "media" &&
+          node.data.kind === asset.kind &&
+          node.data.url === asset.url,
+      );
+      if (!matches.length) return notify("这个资产还没有放入当前画布。", "error");
+      setSelectedIds(new Set(matches.map((node) => node.id)));
+      setSelectedGroupId(null);
+      fitView(matches.map((node) => node.id));
+      setWorkbenchOpen(false);
+    },
+    [fitView, notify],
+  );
+
+  const handleAssetDrop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>) => {
+      const raw = event.dataTransfer.getData("application/x-sanmao-asset");
+      if (!raw) return;
+      event.preventDefault();
+      try {
+        const asset = JSON.parse(raw) as AssetRecord;
+        if (!asset?.url || (asset.kind !== "image" && asset.kind !== "video"))
+          throw new Error("invalid asset");
+        addAssetToCanvas(asset, screenToWorld(event.clientX, event.clientY));
+      } catch {
+        notify("无法读取拖入的资产。", "error");
+      }
+    },
+    [addAssetToCanvas, notify, screenToWorld],
+  );
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return;
@@ -3211,6 +3348,14 @@ export default function SuperCanvas() {
   const deckKind = deck.kind;
   const generationBusy = generationKeys.has(generationKey(deck));
   const deckModelState = resolveAvailableCreationModel(deck.params, runtime);
+  const maskNode = maskNodeId ? nodeById(document, maskNodeId) : undefined;
+  const maskSettings = maskNode
+    ? (copyParams(
+        maskNode.data.generation?.params || maskNode.data.params,
+        "image",
+        runtime,
+      ) as ImageCreationSettings)
+    : undefined;
   const references = referenceOwnerId
     ? incomingReferences(document, referenceOwnerId)
     : selectedNodes.filter((node) => node.type === "media" && node.data.url);
@@ -3540,6 +3685,13 @@ export default function SuperCanvas() {
           if (!(event.target as HTMLElement).closest(".canvas-reference-item"))
             event.preventDefault();
         }}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("application/x-sanmao-asset")) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+          }
+        }}
+        onDrop={handleAssetDrop}
         onContextMenu={handleContextMenu}
         onWheel={(event) => {
           if ((event.target as HTMLElement).closest(".canvas-minimap")) return;
@@ -4120,6 +4272,14 @@ export default function SuperCanvas() {
               value ? { ...value, compare: !value.compare } : value,
             )
           }
+        />
+      )}
+      {maskNode?.data.url && (
+        <MaskEditor
+          imageUrl={String(maskNode.data.url)}
+          initialMaskDataUrl={maskSettings?.mask?.url}
+          onApply={(value) => void applyCanvasMask(value)}
+          onCancel={() => setMaskNodeId(null)}
         />
       )}
       {workbenchOpen && (
