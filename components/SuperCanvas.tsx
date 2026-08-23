@@ -4869,6 +4869,37 @@ export default function SuperCanvas() {
     },
     [notify, updateDoc],
   );
+  const updateViewerParams = useCallback(
+    (node: CanvasNode, settings: CreationSettings) => {
+      if (node.type !== "media" || settings.kind === "text") return;
+      updateDoc((current) => ({
+        ...current,
+        nodes: current.nodes.map((item) =>
+          item.id === node.id
+            ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  params: clone(settings),
+                  generation: item.data.generation
+                    ? { ...item.data.generation, params: clone(settings) }
+                    : {
+                        kind: settings.kind,
+                        prompt: String(item.data.prompt || ""),
+                        params: clone(settings),
+                        referenceIds: item.data.referenceOrder || [],
+                        createdAt: Date.now(),
+                      },
+                },
+              }
+            : item,
+        ),
+      }));
+      writeSharedCreationSettings(settings);
+      notify("参数已保存到当前画布节点");
+    },
+    [notify, updateDoc],
+  );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
     if (node.type !== "media" || !node.data.url) return null;
     return {
@@ -5322,6 +5353,22 @@ export default function SuperCanvas() {
         onPointerUp={finishInteraction}
         onPointerCancel={cancelPointerInteraction}
         onLostPointerCapture={cancelPointerInteraction}
+        onDoubleClick={(event) => {
+          // Pointer capture used for node dragging can retarget the native
+          // dblclick to the stage. Resolve the node from the pointer position
+          // so double-clicking a media card always opens its full viewer.
+          const target = event.target as HTMLElement;
+          if (target.closest("button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize")) return;
+          const hit = target.closest("[data-canvas-node-id]") ||
+            window.document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-canvas-node-id]");
+          const nodeId = hit?.getAttribute("data-canvas-node-id");
+          const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+          if (node?.type === "media" && node.data.url) {
+            setLightbox({ nodeId: node.id, compare: false });
+          } else if (node?.type === "prompt") {
+            setTextLightboxNodeId(node.id);
+          }
+        }}
         onDragStart={(event) => {
           const target = event.target as HTMLElement;
           const isReferenceDrag = Boolean(
@@ -6014,6 +6061,19 @@ export default function SuperCanvas() {
           }
           model={runtime?.settings.agentModelId || undefined}
           agentAvailable={chatModelsAvailable}
+          runtime={runtime}
+          parameters={(() => {
+            const viewerNode = nodeById(document, lightbox.nodeId);
+            return viewerNode?.type === "media"
+              ? viewerNode.data.kind === "video"
+                ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "video", runtime) as VideoCreationSettings
+                : copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings
+              : undefined;
+          })()}
+          onParametersChange={(settings) => {
+            const viewerNode = nodeById(document, lightbox.nodeId);
+            if (viewerNode) updateViewerParams(viewerNode, settings);
+          }}
           onWritePrompt={writeViewerPrompt}
           onCreateTextNode={createViewerTextNode}
           onNotify={notify}
@@ -7813,6 +7873,9 @@ function CanvasMediaViewer({
   onCompare,
   model,
   agentAvailable,
+  runtime,
+  parameters,
+  onParametersChange,
   onWritePrompt,
   onCreateTextNode,
   onNotify,
@@ -7828,6 +7891,9 @@ function CanvasMediaViewer({
   onCompare: () => void;
   model?: string;
   agentAvailable: boolean;
+  runtime: CanvasRuntimeState | null;
+  parameters?: ImageCreationSettings | VideoCreationSettings;
+  onParametersChange: (settings: CreationSettings) => void;
   onWritePrompt: (node: CanvasNode, value: string) => void;
   onCreateTextNode: (node: CanvasNode, value: string) => void;
   onNotify: (message: string, kind?: Notice["kind"]) => void;
@@ -7840,14 +7906,27 @@ function CanvasMediaViewer({
   const [busy, setBusy] = useState(false);
   const [compareMode, setCompareMode] = useState<"split" | "slider">("split");
   const [comparePosition, setComparePosition] = useState(50);
+  const [viewerZoom, setViewerZoom] = useState(1);
+  const [showParameters, setShowParameters] = useState(false);
+  const [promptDraft, setPromptDraft] = useState("");
   useEffect(() => {
     setCompareMode("split");
     setComparePosition(50);
+    setViewerZoom(1);
     setResult(null);
+    setShowParameters(false);
+    setPromptDraft("");
   }, [node?.id]);
   if (!node || node.type !== "media" || !node.data.url) return null;
   const reference = references[0];
   const canCompare = Boolean(compare && reference?.data.url && node.data.kind === "image");
+  const sourcePrompt = String(node.data.generation?.prompt || node.data.prompt || "");
+  const currentPrompt = promptDraft || sourcePrompt;
+  const savePrompt = () => {
+    onWritePrompt(node, currentPrompt);
+    setPromptDraft("");
+    onNotify("提示词已保存，可继续调整参数后生成");
+  };
   const download = (suffix = "原图") => {
     const anchor = document.createElement("a");
     anchor.href = String(node.data.url);
@@ -7899,6 +7978,11 @@ function CanvasMediaViewer({
             </small>
           </div>
           <div>
+            <div className="canvas-media-zoom-controls" aria-label="预览缩放">
+              <button type="button" onClick={() => setViewerZoom((value) => Math.max(0.5, Number((value - 0.1).toFixed(1))))} title="缩小">−</button>
+              <button type="button" className="zoom-readout" onClick={() => setViewerZoom(1)} title="恢复原比例">{Math.round(viewerZoom * 100)}%</button>
+              <button type="button" onClick={() => setViewerZoom((value) => Math.min(3, Number((value + 0.1).toFixed(1))))} title="放大">＋</button>
+            </div>
             <button type="button" onClick={onCompare} disabled={!reference?.data.url}>
               {compare ? "单图预览" : "前后对比"}
             </button>
@@ -7912,6 +7996,7 @@ function CanvasMediaViewer({
                 {compareMode === "slider" ? "左右对比" : "滑动对比"}
               </button>
             )}
+            {parameters && <button type="button" className={showParameters ? "active" : ""} onClick={() => setShowParameters((value) => !value)}>⚙ 参数调整</button>}
             <button type="button" onClick={() => download()} title="下载原图">↓ 原图</button>
             <button type="button" onClick={() => download("分享版")} title="下载分享版">⇩ 分享</button>
             <button type="button" onClick={onClose}>
@@ -7922,8 +8007,8 @@ function CanvasMediaViewer({
         <div className={`canvas-lightbox-stage ${compare && reference ? "compare" : ""} ${canCompare && compareMode === "slider" ? "slider" : ""}`}>
           {canCompare && compareMode === "slider" ? (
             <div className="canvas-lightbox-slider">
-              <div className="canvas-lightbox-slider-base"><img src={reference.data.url} alt="参考图" /></div>
-              <div className="canvas-lightbox-slider-overlay" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img src={node.data.url} alt="生成结果" /></div>
+              <div className="canvas-lightbox-slider-base"><img src={reference.data.url} alt="参考图" style={{ transform: `scale(${viewerZoom})` }} /></div>
+              <div className="canvas-lightbox-slider-overlay" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img src={node.data.url} alt="生成结果" style={{ transform: `scale(${viewerZoom})` }} /></div>
               <span className="canvas-lightbox-slider-label before">参考图</span>
               <span className="canvas-lightbox-slider-label after">生成结果</span>
             </div>
@@ -7932,15 +8017,15 @@ function CanvasMediaViewer({
               {compare && reference?.data.url && (
                 <div className="canvas-lightbox-before">
                   <span>参考图</span>
-                  <img src={reference.data.url} alt="参考图" />
+                  <img src={reference.data.url} alt="参考图" style={{ transform: `scale(${viewerZoom})` }} />
                 </div>
               )}
               <div className="canvas-lightbox-after">
                 <span>{compare ? "生成结果" : ""}</span>
                 {node.data.kind === "video" ? (
-                  <video src={node.data.url} controls playsInline />
+                    <video src={node.data.url} controls playsInline style={{ transform: `scale(${viewerZoom})` }} />
                 ) : (
-                  <img src={node.data.url} alt={node.data.name || "预览"} />
+                  <img src={node.data.url} alt={node.data.name || "预览"} style={{ transform: `scale(${viewerZoom})` }} />
                 )}
               </div>
             </>
@@ -7952,6 +8037,16 @@ function CanvasMediaViewer({
             <input type="range" min="0" max="100" value={comparePosition} onChange={(event) => setComparePosition(Number(event.target.value))} aria-label="滑动对比位置" />
             <span>生成结果</span>
           </label>
+        )}
+        <div className="canvas-media-viewer-editing">
+          <label><span>提示词</span><textarea value={currentPrompt} onChange={(event) => setPromptDraft(event.target.value)} placeholder="当前节点没有保存提示词" /></label>
+          <button type="button" disabled={!promptDraft.trim() || promptDraft.trim() === sourcePrompt} onClick={savePrompt}>保存提示词</button>
+        </div>
+        {showParameters && parameters && (
+          <section className="canvas-media-parameters">
+            <header><b>生成参数</b><small>与主界面 CreationParameterEditor 共用</small></header>
+            <CreationParameterEditor settings={parameters} runtime={runtime} onChange={onParametersChange} />
+          </section>
         )}
         <div className="canvas-media-viewer-actions">
           {node.data.kind === "image" && <button type="button" disabled={busy || !agentAvailable} title={!agentAvailable ? "没有可用的对话模型，请先在主界面模型库启用" : "根据当前图片反推提示词"} onClick={() => void runReverse()}>⌁ 反推提示词</button>}
