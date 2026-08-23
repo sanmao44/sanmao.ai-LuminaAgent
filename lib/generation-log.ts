@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
 import type { MediaKind, ReferenceImageRecord } from './types';
+import type { GenerationSource } from './generation-source';
 
 export type GenerationLog = {
   id: string;
@@ -11,7 +12,7 @@ export type GenerationLog = {
   mode: 'generate' | 'edit' | 'upscale' | 'agent' | 'video' | 'audio';
   /** Stable cross-media label for future audio and other creative work. */
   mediaKind?: MediaKind;
-  source?: 'workspace' | 'agent';
+  source?: GenerationSource;
   prompt: string;
   modelId?: string;
   modelName?: string;

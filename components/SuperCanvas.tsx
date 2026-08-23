@@ -124,20 +124,13 @@ type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
 type Point = { x: number; y: number };
 type Notice = { message: string; kind: "ok" | "error" };
-type WorkbenchTab =
-  | "assets"
-  | "workflow"
-  | "logs"
-  | "shortcuts"
-  | "project"
-  | "settings";
 type CanvasGenerationLog = {
   id: string;
   createdAt: string;
   status: "pending" | "success" | "error";
   mode: "generate" | "edit" | "upscale" | "agent" | "video" | "audio";
   mediaKind?: "image" | "video" | "audio";
-  source?: "workspace" | "agent";
+  source?: "workspace" | "agent" | "canvas";
   prompt: string;
   modelName?: string;
   providerName?: string;
@@ -153,6 +146,13 @@ type CanvasGenerationLog = {
   references?: Array<{ name?: string; dataUrl?: string; url?: string }>;
   operation?: "generate" | "edit" | "extend";
   providerTaskId?: string;
+};
+type CanvasActivityLog = {
+  id: string;
+  message: string;
+  createdAt: string;
+  type: "canvas" | "generation" | "agent" | "asset" | "project" | "system";
+  status: "ok" | "error";
 };
 type ConnectionAnimation = "none" | "flow" | "pulse" | "dash";
 type CanvasClipboardPayload = {
@@ -848,7 +848,7 @@ export default function SuperCanvas() {
   const connectionCancelButtonHoverRef = useRef(false);
   const connectionCancelHideTimerRef = useRef<number | null>(null);
   const modifierHeldRef = useRef(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<CanvasActivityLog[]>([]);
   const [generationLogs, setGenerationLogs] = useState<CanvasGenerationLog[]>([]);
   const [generationLogsLoading, setGenerationLogsLoading] = useState(false);
   const [deckCollapsed, setDeckCollapsed] = useState(() => {
@@ -982,9 +982,38 @@ export default function SuperCanvas() {
     [updateDoc],
   );
   const addLog = useCallback(
-    (message: string) => setLogs((items) => [message, ...items].slice(0, 120)),
+    (message: string) => {
+      const normalized = message.toLowerCase();
+      const type: CanvasActivityLog["type"] = normalized.includes("agent")
+        ? "agent"
+        : normalized.includes("生成") || normalized.includes("任务") || normalized.includes("超分")
+          ? "generation"
+          : normalized.includes("资产") || normalized.includes("素材")
+            ? "asset"
+            : normalized.includes("导入") || normalized.includes("导出") || normalized.includes("项目") || normalized.includes("工作流")
+              ? "project"
+              : normalized.includes("节点") || normalized.includes("连线") || normalized.includes("对象组")
+                ? "canvas"
+                : "system";
+      const status: CanvasActivityLog["status"] = /失败|错误|超时/.test(message) ? "error" : "ok";
+      const entry: CanvasActivityLog = {
+        id: `activity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        message,
+        createdAt: new Date().toISOString(),
+        type,
+        status,
+      };
+      setLogs((items) => [entry, ...items].slice(0, 120));
+    },
     [],
   );
+  const notify = useCallback((message: string, kind: Notice["kind"] = "ok") => {
+    setNotice({ message, kind });
+    window.setTimeout(
+      () => setNotice((value) => (value?.message === message ? null : value)),
+      kind === "error" ? 5200 : 2800,
+    );
+  }, []);
   const refreshGenerationLogs = useCallback(async () => {
     setGenerationLogsLoading(true);
     try {
@@ -1005,13 +1034,13 @@ export default function SuperCanvas() {
       setGenerationLogsLoading(false);
     }
   }, [notify]);
-  const notify = useCallback((message: string, kind: Notice["kind"] = "ok") => {
-    setNotice({ message, kind });
-    window.setTimeout(
-      () => setNotice((value) => (value?.message === message ? null : value)),
-      kind === "error" ? 5200 : 2800,
-    );
-  }, []);
+
+  useEffect(() => {
+    if (!ready || activePanel !== "activity") return;
+    void refreshGenerationLogs();
+    const timer = window.setInterval(() => void refreshGenerationLogs(), 5000);
+    return () => window.clearInterval(timer);
+  }, [activePanel, ready, refreshGenerationLogs]);
 
   useEffect(() => {
     const storage = ensureCanvasStorage();
@@ -2412,6 +2441,20 @@ export default function SuperCanvas() {
     clearSelection();
     notify("已解散对象组");
   }, [clearSelection, commit, notify, selectedGroupId]);
+  const removeNodeFromGroup = useCallback(
+    (nodeId: string) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (!node?.groupId) return;
+      const group = groupById(docRef.current, node.groupId);
+      const next = detachNodesFromGroups(docRef.current, [nodeId]);
+      if (next === docRef.current) return;
+      commit(() => next);
+      setSelectedGroupId(null);
+      setSelectedIds(new Set([nodeId]));
+      notify(`已将${nodeLabel(node)}移出${group?.name || "对象组"}`);
+    },
+    [commit, notify],
+  );
 
   const openProject = useCallback(
     (id: string) => {
@@ -3484,6 +3527,7 @@ export default function SuperCanvas() {
               });
               void recordCanvasImages(result.images, {
                 prompt,
+                source: "canvas",
                 modelId: imageParams.model,
                 modelName: result.model?.name,
                 providerName: result.model?.provider,
@@ -3817,6 +3861,7 @@ export default function SuperCanvas() {
         if (response.images?.length)
           void recordCanvasImages(response.images, {
             prompt,
+            source: "canvas",
             modelId: imageSettings.model,
             modelName: response.model,
             aspectRatio: imageSettings.aspect,
@@ -4108,6 +4153,7 @@ export default function SuperCanvas() {
         writeSharedCreationSettings(imageParams);
         void recordCanvasImages(result.images, {
           prompt,
+          source: "canvas",
           modelId: imageParams.model,
           modelName: result.model?.name,
           providerName: result.model?.provider,
@@ -4409,6 +4455,7 @@ export default function SuperCanvas() {
       writeSharedCreationSettings(settings);
       void recordCanvasImages(result.images, {
         prompt: source.data.generation?.prompt || "Upscale this image",
+        source: "canvas",
         modelId: settings.model,
         modelName: result.model?.name,
         providerName: result.model?.provider,
@@ -4480,8 +4527,8 @@ export default function SuperCanvas() {
   );
 
   const addAssetAsReference = useCallback(
-    (asset: AssetRecord) => {
-      const ownerId = selectedGroupId || selectedSingle?.id;
+    (asset: AssetRecord, ownerOverride?: string) => {
+      const ownerId = ownerOverride || selectedGroupId || selectedSingle?.id;
       if (!ownerId) {
         notify("多选内容需要先成组，或明确选中一个目标节点。", "error");
         return;
@@ -4574,14 +4621,17 @@ export default function SuperCanvas() {
         const asset = JSON.parse(raw) as AssetRecord;
         if (!asset?.url || (asset.kind !== "image" && asset.kind !== "video"))
           throw new Error("invalid asset");
-        addAssetToCanvas(asset, screenToWorld(event.clientX, event.clientY));
+        const targetNodeId = (event.target as HTMLElement | null)
+          ?.closest<HTMLElement>("[data-canvas-node-id]")?.dataset.canvasNodeId;
+        if (targetNodeId) addAssetAsReference(asset, targetNodeId);
+        else addAssetToCanvas(asset, screenToWorld(event.clientX, event.clientY));
       } catch {
         notify("无法读取拖入的资产。", "error");
       } finally {
         setAssetDropGroupId(null);
       }
     },
-    [addAssetToCanvas, notify, screenToWorld],
+    [addAssetAsReference, addAssetToCanvas, notify, screenToWorld],
   );
 
   useEffect(() => {
@@ -4738,6 +4788,78 @@ export default function SuperCanvas() {
     setSelectedIds(new Set([textNode.id]));
     notify("已创建新的文本节点");
   }, [commit, notify]);
+  const updateTextNode = useCallback(
+    (node: CanvasNode, value: string) => {
+      if (node.type !== "prompt") return;
+      updateDoc((current) => ({
+        ...current,
+        nodes: current.nodes.map((item) =>
+          item.id === node.id
+            ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  text: value,
+                  agentPrompt: value,
+                  agentResponse: undefined,
+                  role: "Agent 输入",
+                  status: "idle",
+                  statusLabel: undefined,
+                },
+              }
+            : item,
+        ),
+      }));
+      notify("文本节点已更新");
+    },
+    [notify, updateDoc],
+  );
+  const writeTextToPrompt = useCallback(
+    (value: string) => {
+      setDrafts((current) => ({
+        ...current,
+        [mode]: { ...current[mode], prompt: value },
+      }));
+      notify("结果已写入当前创作提示词");
+    },
+    [mode, notify],
+  );
+  const continueFromMedia = useCallback(
+    (node: CanvasNode) => {
+      if (node.type !== "media" || !node.data.kind) return;
+      const kind = node.data.kind;
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setMode(kind);
+      setLightbox(null);
+      if (kind === "video") {
+        updateDoc((current) => ({
+          ...current,
+          nodes: current.nodes.map((item) =>
+            item.id === node.id
+              ? {
+                  ...item,
+                  data: {
+                    ...item.data,
+                    generation: item.data.generation
+                      ? {
+                          ...item.data.generation,
+                          params: {
+                            ...item.data.generation.params,
+                            operation: "extend",
+                          },
+                        }
+                      : item.data.generation,
+                  },
+                }
+              : item,
+          ),
+        }));
+        notify("已切换到视频续写模式，请确认参数后生成");
+      } else notify("已回填图片提示词，可继续生成新版本");
+    },
+    [notify, updateDoc],
+  );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
     if (node.type !== "media" || !node.data.url) return null;
     return {
@@ -4764,6 +4886,66 @@ export default function SuperCanvas() {
     try { await registerCanvasAsset(asset); setAssetRefresh((value) => value + 1); notify("已加入资产库"); }
     catch (error) { notify(error instanceof Error ? error.message : "资产登记失败", "error"); }
   }, [notify, viewerAsset]);
+  const focusGenerationLog = useCallback(
+    (log: CanvasGenerationLog, openMedia = false) => {
+      const outputUrls = new Set(generationLogOutputUrls(log));
+      const kind = generationLogKind(log);
+      const node = docRef.current.nodes.find(
+        (item) =>
+          (item.type === "media" && item.data.url && outputUrls.has(String(item.data.url))) ||
+          (item.data.generation?.prompt === log.prompt &&
+            (item.data.kind || "image") === (kind === "audio" ? "image" : kind)),
+      );
+      if (!node) {
+        if (openMedia && outputUrls.size) {
+          window.open([...outputUrls][0], "_blank", "noopener,noreferrer");
+          return;
+        }
+        notify("当前任务还没有对应的画布节点。", "error");
+        return;
+      }
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setActivePanel(null);
+      if (openMedia && node.type === "media" && node.data.url)
+        setLightbox({ nodeId: node.id, compare: false });
+      else fitView([node.id]);
+    },
+    [fitView, notify],
+  );
+  const retryGenerationLog = useCallback(
+    (log: CanvasGenerationLog) => {
+      const kind = generationLogKind(log);
+      if (kind === "audio") {
+        notify("音频任务请回到主界面任务日志重试。", "error");
+        return;
+      }
+      const node = docRef.current.nodes.find(
+        (item) =>
+          item.data.generation?.prompt === log.prompt &&
+          (item.data.kind || "image") === kind,
+      );
+      if (node) {
+        setSelectedIds(new Set([node.id]));
+        setSelectedGroupId(null);
+      } else {
+        setSelectedIds(new Set());
+        setSelectedGroupId(null);
+        setDrafts((current) => ({
+          ...current,
+          [kind]: { ...current[kind], prompt: log.prompt },
+        }));
+      }
+      setMode(kind);
+      setActivePanel(null);
+      notify(
+        node
+          ? "已定位任务节点，请确认参数后点击生成重试。"
+          : "已将任务提示词放入生成面板，请确认参数后点击生成。",
+      );
+    },
+    [notify],
+  );
   const updateDeckPrompt = useCallback(
     (event: ReactChangeEvent<HTMLTextAreaElement>) => {
       const value = event.target.value;
@@ -4912,6 +5094,12 @@ export default function SuperCanvas() {
       : deck.target
         ? "生成到此节点"
         : "生成";
+  const chatModelsAvailable = Boolean(
+    runtime?.models?.some(
+      (model) =>
+        model.kind === "chat" && model.enabled !== false && model.published !== false,
+    ),
+  );
 
   if (!ready)
     return (
@@ -4978,7 +5166,7 @@ export default function SuperCanvas() {
           <span className="canvas-separator" />
           <button
             type="button"
-            className="canvas-soft-button"
+            className="canvas-soft-button canvas-import-button"
             onClick={() => fileInputRef.current?.click()}
           >
             ＋ 导入素材
@@ -5004,7 +5192,7 @@ export default function SuperCanvas() {
           {!topbarCollapsed && <>
           <button
             type="button"
-            className={`canvas-soft-button canvas-panel-button ${activePanel === "assets" ? "active" : ""}`}
+            className={`canvas-soft-button canvas-panel-button canvas-assets-button ${activePanel === "assets" ? "active" : ""}`}
             aria-keyshortcuts="A"
             title="资产库（A）"
             onClick={toggleAssetLibrary}
@@ -5013,7 +5201,7 @@ export default function SuperCanvas() {
           </button>
           <button
             type="button"
-            className={`canvas-soft-button canvas-panel-button ${activePanel === "activity" ? "active" : ""}`}
+            className={`canvas-soft-button canvas-panel-button canvas-activity-button ${activePanel === "activity" ? "active" : ""}`}
             onClick={() => setActivePanel((value) => value === "activity" ? null : "activity")}
           >
             ≡ 日志
@@ -5285,9 +5473,10 @@ export default function SuperCanvas() {
                   document={document}
                   onPointerDown={startNodeDrag}
                   onResize={startResize}
-                  onConnect={startConnection}
-                  onSelect={(event) => selectNode(node, event.shiftKey)}
-                  onPreview={() =>
+                   onConnect={startConnection}
+                   onSelect={(event) => selectNode(node, event.shiftKey)}
+                   onRemoveFromGroup={() => removeNodeFromGroup(node.id)}
+                   onPreview={() =>
                     setLightbox({ nodeId: node.id, compare: false })
                   }
                   onTextPreview={() => setTextLightboxNodeId(node.id)}
@@ -5542,7 +5731,7 @@ export default function SuperCanvas() {
             <button
               type="button"
               className="canvas-deck-collapse"
-              aria-label={deckCollapsed ? "展开创作工作台" : "收起创作工作台"}
+              aria-label={deckCollapsed ? "展开创作面板" : "收起创作面板"}
               onClick={toggleDeckCollapsed}
             >
               {deckCollapsed ? "⌃" : "⌄"}
@@ -5793,12 +5982,14 @@ export default function SuperCanvas() {
             )
           }
           model={runtime?.settings.agentModelId || undefined}
+          agentAvailable={chatModelsAvailable}
           onWritePrompt={writeViewerPrompt}
           onCreateTextNode={createViewerTextNode}
           onNotify={notify}
           onUpscale={(node) => void runUpscale(node)}
           onUseAsReference={(node) => { const asset = viewerAsset(node); if (asset) addAssetAsReference(asset); }}
           onAddToAssets={(node) => void addViewerAsset(node)}
+          onContinue={continueFromMedia}
         />
       )}
       {textLightboxNodeId && (
@@ -5806,6 +5997,11 @@ export default function SuperCanvas() {
           node={nodeById(document, textLightboxNodeId)}
           onClose={() => setTextLightboxNodeId(null)}
           onNotify={notify}
+          model={runtime?.settings.agentModelId || undefined}
+          agentAvailable={chatModelsAvailable}
+          onUpdate={updateTextNode}
+          onCreateTextNode={createViewerTextNode}
+          onWritePrompt={writeTextToPrompt}
         />
       )}
       {maskNode?.data.url && (
@@ -5830,7 +6026,18 @@ export default function SuperCanvas() {
           onNotify={notify}
         />
       )}
-      {activePanel === "activity" && <CanvasActivityDrawer logs={logs} onClose={() => setActivePanel(null)} onNotify={notify} />}
+      {activePanel === "activity" && (
+        <CanvasActivityDrawer
+          taskLogs={generationLogs}
+          activityLogs={logs}
+          loading={generationLogsLoading}
+          onRefresh={() => void refreshGenerationLogs()}
+          onFocusTask={focusGenerationLog}
+          onRetryTask={retryGenerationLog}
+          onClose={() => setActivePanel(null)}
+          onNotify={notify}
+        />
+      )}
       {activePanel === "settings" && (
         <CanvasSettingsPanel
           theme={theme}
@@ -6035,6 +6242,39 @@ function CanvasAssetDrawer({
     setCollection(item.id);
   };
 
+  const deleteCollection = async (collectionId: string) => {
+    const target = collections.find((item) => item.id === collectionId);
+    if (!target || target.builtin) {
+      onNotify("内置资产集合不能删除。", "error");
+      return;
+    }
+    if (typeof window !== "undefined" && !window.confirm(`确定删除资产集合“${target.name}”吗？集合内资产不会被删除。`)) return;
+    try {
+      const affectedAssets = assets.filter((asset) => asset.collectionIds?.includes(collectionId));
+      await Promise.all(
+        affectedAssets.map((asset) =>
+          updateUnifiedAssetMetadata(asset, {
+            collectionIds: asset.collectionIds.filter((id) => id !== collectionId),
+          }),
+        ),
+      );
+      const next = collections.filter((item) => item.id !== collectionId);
+      await saveAssetCollections(next);
+      setCollections(next);
+      setAssets((items) =>
+        items.map((asset) =>
+          asset.collectionIds?.includes(collectionId)
+            ? { ...asset, collectionIds: asset.collectionIds.filter((id) => id !== collectionId) }
+            : asset,
+        ),
+      );
+      if (collection === collectionId) setCollection("all");
+      onNotify(`已删除资产集合“${target.name}”，其中的资产已保留。`);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "资产集合删除失败。", "error");
+    }
+  };
+
   const toggleFavorite = async (asset: AssetRecord) => {
     try {
       await setUnifiedAssetFavorite(asset, !asset.favorite);
@@ -6150,7 +6390,17 @@ function CanvasAssetDrawer({
             </button>
           </div>
           <div className="canvas-asset-filters">
-            <SelectMenu value={collection} onChange={setCollection} ariaLabel="资产集合" options={collections.map((item) => ({ value: item.id, label: item.name }))} />
+            <SelectMenu
+              value={collection}
+              onChange={setCollection}
+              onDelete={(id) => void deleteCollection(id)}
+              ariaLabel="资产集合"
+              options={collections.map((item) => ({
+                value: item.id,
+                label: item.name,
+                deletable: !item.builtin,
+              }))}
+            />
             <SelectMenu
               value={source}
               onChange={setSource}
@@ -6179,8 +6429,8 @@ function CanvasAssetDrawer({
             要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。
           </div>
         )}
-        <div className="canvas-asset-collection-dropzone">
-          <span>⌘</span><b>把画布节点拖到这里归类</b><small>节点不会从画布移除</small>
+        <div className={`canvas-asset-collection-dropzone ${collection === "all" ? "needs-collection" : ""}`}>
+          <span>⌘</span><b>{collection === "all" ? "先选择集合，再拖入节点" : "把画布节点拖到这里归类"}</b><small>{collection === "all" ? "下拉框中可删除自定义集合" : "拖动节点右上角 ↗，节点不会从画布移除"}</small>
         </div>
         <div className="canvas-asset-new-collection"><input value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="新建集合…" onKeyDown={(event) => { if (event.key === "Enter") void createCollection(); }} /><button type="button" onClick={() => void createCollection()}>＋</button></div>
         <div className="canvas-asset-results">
@@ -6446,6 +6696,7 @@ function CanvasNodeCard({
   onResize,
   onConnect,
   onSelect,
+  onRemoveFromGroup,
   onPreview,
   onTextPreview,
   onUseAsImagePrompt,
@@ -6467,6 +6718,7 @@ function CanvasNodeCard({
     port: "left" | "right",
   ) => void;
   onSelect: (event: ReactPointerEvent) => void;
+  onRemoveFromGroup: () => void;
   onPreview: () => void;
   onTextPreview: () => void;
   onUseAsImagePrompt: () => void;
@@ -6542,7 +6794,7 @@ function CanvasNodeCard({
       data-node-color={colorKey}
       aria-busy={pending}
       style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
-      draggable={node.type === "media" && Boolean(data.url)}
+      draggable={node.type === "media" && Boolean(data.url) && !node.groupId}
       onDragStart={(event) => {
         if (node.type !== "media" || !data.url) return;
         event.dataTransfer.effectAllowed = "copy";
@@ -6554,6 +6806,21 @@ function CanvasNodeCard({
         else if (node.type === "media" && data.url) onPreview();
       }}
     >
+      {node.groupId && (
+        <button
+          type="button"
+          className="canvas-node-group-remove"
+          aria-label="移出对象组"
+          title="移出对象组"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemoveFromGroup();
+          }}
+        >
+          出组
+        </button>
+      )}
       <button
         type="button"
         className="canvas-port left"
@@ -6614,6 +6881,27 @@ function CanvasNodeCard({
             )}
             {data.kind === "video" && data.url && (
               <span className="canvas-video-mark">▶</span>
+            )}
+            {data.url && (
+              <span
+                className="canvas-node-asset-drag-handle"
+                role="button"
+                tabIndex={0}
+                draggable
+                aria-label="拖到资产中心归类"
+                title="拖到资产中心归类"
+                onPointerDown={(event) => event.stopPropagation()}
+                onDragStart={(event) => {
+                  event.stopPropagation();
+                  event.dataTransfer.effectAllowed = "copy";
+                  event.dataTransfer.setData(
+                    "application/x-sanmao-canvas-node",
+                    node.id,
+                  );
+                }}
+              >
+                ↗
+              </span>
             )}
           </div>
           <div className="canvas-node-footer">
@@ -7319,15 +7607,31 @@ function CanvasTextLightbox({
   node,
   onClose,
   onNotify,
+  model,
+  agentAvailable,
+  onUpdate,
+  onCreateTextNode,
+  onWritePrompt,
 }: {
   node?: CanvasNode;
   onClose: () => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
+  model?: string;
+  agentAvailable: boolean;
+  onUpdate: (node: CanvasNode, value: string) => void;
+  onCreateTextNode: (node: CanvasNode, value: string) => void;
+  onWritePrompt: (value: string) => void;
 }) {
   const text =
     node?.type === "prompt"
       ? String(node.data.agentResponse || node.data.text || "")
       : "";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const [result, setResult] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => setDraft(text), [text]);
 
   useEffect(() => {
     if (!node) return;
@@ -7345,6 +7649,21 @@ function CanvasTextLightbox({
       onNotify("Agent 回复已复制");
     } catch {
       onNotify("复制失败，请检查浏览器剪贴板权限", "error");
+    }
+  };
+  const optimizeText = async () => {
+    if (!agentAvailable) {
+      onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const optimized = await requestPromptOptimization(text, [], model);
+      setResult(optimized);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "AI 优化失败", "error");
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -7367,6 +7686,7 @@ function CanvasTextLightbox({
             </small>
           </div>
           <div className="canvas-text-lightbox-actions">
+            <button type="button" onClick={() => setEditing((value) => !value)}>{editing ? "取消编辑" : "编辑"}</button>
             <button type="button" onClick={() => void copyText()}>
               复制全文
             </button>
@@ -7381,7 +7701,13 @@ function CanvasTextLightbox({
             <p>{String(node.data.agentPrompt)}</p>
           </div>
         )}
-        <div className="canvas-text-lightbox-body">{text}</div>
+        {editing ? <div className="canvas-text-edit-wrap"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="编辑 Agent 文本" /><div><button type="button" onClick={() => { onUpdate(node, draft); setEditing(false); }}>保存修改</button><button type="button" onClick={() => setDraft(text)}>恢复原文</button></div></div> : <div className="canvas-text-lightbox-body">{text}</div>}
+        <div className="canvas-text-lightbox-tools">
+          <button type="button" disabled={busy} onClick={() => void optimizeText()}>✦ AI 优化</button>
+          <button type="button" onClick={() => onWritePrompt(text)}>写入当前提示词</button>
+          <button type="button" onClick={() => onCreateTextNode(node, text)}>创建文本节点</button>
+        </div>
+        {result && <section className="canvas-text-result-panel"><header><b>AI 结果（未覆盖原文）</b><button type="button" onClick={() => setResult(null)}>×</button></header><p>{result}</p><footer><button type="button" onClick={() => onUpdate(node, result)}>写入此节点</button><button type="button" onClick={() => onWritePrompt(result)}>写入当前提示词</button><button type="button" onClick={() => onCreateTextNode(node, result)}>创建新节点</button><button type="button" onClick={() => navigator.clipboard?.writeText(result)}>复制</button></footer></section>}
         <footer>
           <span>{text.length.toLocaleString()} 字</span>
           <span>按 Esc 关闭</span>
@@ -7398,12 +7724,14 @@ function CanvasMediaViewer({
   onClose,
   onCompare,
   model,
+  agentAvailable,
   onWritePrompt,
   onCreateTextNode,
   onNotify,
   onUpscale,
   onUseAsReference,
   onAddToAssets,
+  onContinue,
 }: {
   node?: CanvasNode;
   compare: boolean;
@@ -7411,17 +7739,27 @@ function CanvasMediaViewer({
   onClose: () => void;
   onCompare: () => void;
   model?: string;
+  agentAvailable: boolean;
   onWritePrompt: (node: CanvasNode, value: string) => void;
   onCreateTextNode: (node: CanvasNode, value: string) => void;
   onNotify: (message: string, kind?: Notice["kind"]) => void;
   onUpscale: (node: CanvasNode) => void;
   onUseAsReference: (node: CanvasNode) => void;
   onAddToAssets: (node: CanvasNode) => void;
+  onContinue: (node: CanvasNode) => void;
 }) {
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [compareMode, setCompareMode] = useState<"split" | "slider">("split");
+  const [comparePosition, setComparePosition] = useState(50);
+  useEffect(() => {
+    setCompareMode("split");
+    setComparePosition(50);
+    setResult(null);
+  }, [node?.id]);
   if (!node || node.type !== "media" || !node.data.url) return null;
   const reference = references[0];
+  const canCompare = Boolean(compare && reference?.data.url && node.data.kind === "image");
   const download = (suffix = "原图") => {
     const anchor = document.createElement("a");
     anchor.href = String(node.data.url);
@@ -7430,6 +7768,10 @@ function CanvasMediaViewer({
   };
   const runReverse = async () => {
     if (node.data.kind !== "image") return;
+    if (!agentAvailable) {
+      onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+      return;
+    }
     setBusy(true);
     try {
       const value = await runReversePrompt([{ url: String(node.data.url), name: String(node.data.name || "参考图") }], model);
@@ -7438,6 +7780,10 @@ function CanvasMediaViewer({
     finally { setBusy(false); }
   };
   const runOptimize = async () => {
+    if (!agentAvailable) {
+      onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+      return;
+    }
     const source = String(node.data.generation?.prompt || "").trim();
     if (!source) return onNotify("当前媒体没有可优化的原始提示词", "error");
     setBusy(true);
@@ -7465,9 +7811,19 @@ function CanvasMediaViewer({
             </small>
           </div>
           <div>
-            <button type="button" onClick={onCompare} disabled={!reference}>
+            <button type="button" onClick={onCompare} disabled={!reference?.data.url}>
               {compare ? "单图预览" : "前后对比"}
             </button>
+            {canCompare && (
+              <button
+                type="button"
+                className={compareMode === "slider" ? "active" : ""}
+                onClick={() => setCompareMode((value) => value === "split" ? "slider" : "split")}
+                title="切换左右分栏或滑动对比"
+              >
+                {compareMode === "slider" ? "左右对比" : "滑动对比"}
+              </button>
+            )}
             <button type="button" onClick={() => download()} title="下载原图">↓ 原图</button>
             <button type="button" onClick={() => download("分享版")} title="下载分享版">⇩ 分享</button>
             <button type="button" onClick={onClose}>
@@ -7475,31 +7831,49 @@ function CanvasMediaViewer({
             </button>
           </div>
         </header>
-        <div
-          className={`canvas-lightbox-stage ${compare && reference ? "compare" : ""}`}
-        >
-          {compare && reference?.data.url && (
-            <div className="canvas-lightbox-before">
-              <span>参考图</span>
-              <img src={reference.data.url} alt="参考图" />
+        <div className={`canvas-lightbox-stage ${compare && reference ? "compare" : ""} ${canCompare && compareMode === "slider" ? "slider" : ""}`}>
+          {canCompare && compareMode === "slider" ? (
+            <div className="canvas-lightbox-slider">
+              <div className="canvas-lightbox-slider-base"><img src={reference.data.url} alt="参考图" /></div>
+              <div className="canvas-lightbox-slider-overlay" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img src={node.data.url} alt="生成结果" /></div>
+              <span className="canvas-lightbox-slider-label before">参考图</span>
+              <span className="canvas-lightbox-slider-label after">生成结果</span>
             </div>
+          ) : (
+            <>
+              {compare && reference?.data.url && (
+                <div className="canvas-lightbox-before">
+                  <span>参考图</span>
+                  <img src={reference.data.url} alt="参考图" />
+                </div>
+              )}
+              <div className="canvas-lightbox-after">
+                <span>{compare ? "生成结果" : ""}</span>
+                {node.data.kind === "video" ? (
+                  <video src={node.data.url} controls playsInline />
+                ) : (
+                  <img src={node.data.url} alt={node.data.name || "预览"} />
+                )}
+              </div>
+            </>
           )}
-          <div className="canvas-lightbox-after">
-            <span>{compare ? "生成结果" : ""}</span>
-            {node.data.kind === "video" ? (
-              <video src={node.data.url} controls playsInline />
-            ) : (
-              <img src={node.data.url} alt={node.data.name || "预览"} />
-            )}
-          </div>
         </div>
+        {canCompare && compareMode === "slider" && (
+          <label className="canvas-lightbox-slider-control">
+            <span>参考图</span>
+            <input type="range" min="0" max="100" value={comparePosition} onChange={(event) => setComparePosition(Number(event.target.value))} aria-label="滑动对比位置" />
+            <span>生成结果</span>
+          </label>
+        )}
         <div className="canvas-media-viewer-actions">
-          {node.data.kind === "image" && <button type="button" disabled={busy} onClick={() => void runReverse()}>⌁ 反推提示词</button>}
-          <button type="button" disabled={busy} onClick={() => void runOptimize()}>✦ AI 优化</button>
+          {node.data.kind === "image" && <button type="button" disabled={busy || !agentAvailable} title={!agentAvailable ? "没有可用的对话模型，请先在主界面模型库启用" : "根据当前图片反推提示词"} onClick={() => void runReverse()}>⌁ 反推提示词</button>}
+          <button type="button" disabled={busy || !agentAvailable} title={!agentAvailable ? "没有可用的对话模型，请先在主界面模型库启用" : "优化原始提示词"} onClick={() => void runOptimize()}>✦ AI 优化</button>
           {node.data.kind === "image" && <button type="button" onClick={() => onUpscale(node)}>↗ 超分</button>}
+          <button type="button" onClick={() => onContinue(node)}>{node.data.kind === "video" ? "▶ 继续生成 / 变体" : "▶ 继续生成"}</button>
           <button type="button" onClick={() => onUseAsReference(node)}>⌁ 作为参考图</button>
           <button type="button" onClick={() => onAddToAssets(node)}>＋ 加入资产库</button>
         </div>
+        {!agentAvailable && <div className="canvas-media-viewer-note">反推提示词与 AI 优化已暂停：请先在主界面模型库启用一个对话模型。</div>}
         {result && (
           <section className="canvas-media-result-panel">
             <header><b>AI 结果（未覆盖原文）</b><button type="button" onClick={() => setResult(null)}>×</button></header>
@@ -7526,11 +7900,108 @@ function CanvasPanelShell({ title, subtitle, onClose, children, className = "" }
   </div>;
 }
 
-function CanvasActivityDrawer({ logs, onClose, onNotify }: { logs: string[]; onClose: () => void; onNotify: (message: string, kind?: Notice["kind"]) => void }) {
-  return <CanvasPanelShell title="活动日志" subtitle="生成、导入、节点与 Agent 操作" onClose={onClose} className="canvas-activity-panel">
-    <div className="canvas-activity-summary"><b>{logs.length}</b><span>条活动记录</span><button type="button" onClick={() => onNotify("日志已保留在当前画布会话中")}>清理</button></div>
-    {logs.length ? <div className="canvas-activity-list">{[...logs].reverse().map((log, index) => <button type="button" key={`${log}-${index}`} onClick={() => onNotify("该日志没有可定位的节点") }><time>{new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time><span className="canvas-activity-dot">●</span><p>{log}</p><small>查看</small></button>)}</div> : <div className="canvas-side-empty"><span>≡</span><b>暂无活动</b><small>生成或整理画布后会记录在这里。</small></div>}
-  </CanvasPanelShell>;
+function CanvasActivityDrawer({
+  taskLogs,
+  activityLogs,
+  loading,
+  onRefresh,
+  onFocusTask,
+  onRetryTask,
+  onClose,
+  onNotify,
+}: {
+  taskLogs: CanvasGenerationLog[];
+  activityLogs: CanvasActivityLog[];
+  loading: boolean;
+  onRefresh: () => void;
+  onFocusTask: (log: CanvasGenerationLog, openMedia?: boolean) => void;
+  onRetryTask: (log: CanvasGenerationLog) => void;
+  onClose: () => void;
+  onNotify: (message: string, kind?: Notice["kind"]) => void;
+}) {
+  const [tab, setTab] = useState<"tasks" | "activity">("tasks");
+  const [status, setStatus] = useState<"all" | CanvasGenerationLog["status"]>("all");
+  const [media, setMedia] = useState<"all" | "image" | "video">("all");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const filteredTasks = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return taskLogs.filter((log) => {
+      const matchesStatus = status === "all" || log.status === status;
+      const kind = generationLogKind(log);
+      const matchesMedia = media === "all" || kind === media;
+      const matchesQuery =
+        !normalized ||
+        `${log.prompt} ${log.modelName || ""} ${log.providerName || ""}`
+          .toLowerCase()
+          .includes(normalized);
+      return matchesStatus && matchesMedia && matchesQuery;
+    });
+  }, [media, query, status, taskLogs]);
+  const selected = taskLogs.find((log) => log.id === selectedId);
+  const summary = useMemo(
+    () => ({
+      total: taskLogs.length,
+      pending: taskLogs.filter((log) => log.status === "pending").length,
+      success: taskLogs.filter((log) => log.status === "success").length,
+      error: taskLogs.filter((log) => log.status === "error").length,
+    }),
+    [taskLogs],
+  );
+
+  return (
+    <CanvasPanelShell
+      title="任务日志"
+      subtitle="与主界面统一的生成任务记录"
+      onClose={onClose}
+      className="canvas-activity-panel canvas-task-log-panel"
+    >
+      <div className="canvas-log-tabs" role="tablist" aria-label="日志类型">
+        <button type="button" className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>任务 <b>{summary.total}</b></button>
+        <button type="button" className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>活动 <b>{activityLogs.length}</b></button>
+      </div>
+      {tab === "tasks" ? (
+        <>
+          <div className="canvas-log-summary-grid">
+            <button type="button" className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}><b>{summary.total}</b><small>全部</small></button>
+            <button type="button" className={status === "pending" ? "active pending" : "pending"} onClick={() => setStatus("pending")}><b>{summary.pending}</b><small>进行中</small></button>
+            <button type="button" className={status === "success" ? "active success" : "success"} onClick={() => setStatus("success")}><b>{summary.success}</b><small>成功</small></button>
+            <button type="button" className={status === "error" ? "active error" : "error"} onClick={() => setStatus("error")}><b>{summary.error}</b><small>失败</small></button>
+          </div>
+          <div className="canvas-log-toolbar">
+            <label className="canvas-log-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索提示词、模型或服务商…" /></label>
+            <div className="canvas-log-filter-row" role="group" aria-label="任务媒体类型">
+              <button type="button" className={media === "all" ? "active" : ""} onClick={() => setMedia("all")}>全部</button>
+              <button type="button" className={media === "image" ? "active" : ""} onClick={() => setMedia("image")}>图片</button>
+              <button type="button" className={media === "video" ? "active" : ""} onClick={() => setMedia("video")}>视频</button>
+              <button type="button" className="refresh" onClick={onRefresh} disabled={loading}>{loading ? "读取中…" : "↻ 刷新"}</button>
+            </div>
+          </div>
+          {loading && !taskLogs.length ? <div className="canvas-side-empty"><span>◌</span><b>正在读取任务日志</b><small>与主界面服务端日志保持同步。</small></div> : filteredTasks.length ? <div className="canvas-task-log-list">
+            {filteredTasks.map((log) => {
+              const urls = generationLogOutputUrls(log);
+              const kind = generationLogKind(log);
+              return <article className={`canvas-task-log-card ${log.status} ${selectedId === log.id ? "selected" : ""}`} key={log.id} onClick={() => setSelectedId((value) => value === log.id ? null : log.id)}>
+                <div className="canvas-task-log-preview">
+                  {kind === "video" && urls[0] ? <video src={urls[0]} muted playsInline preload="metadata" /> : urls.length ? <div className="canvas-task-log-images">{urls.slice(0, 3).map((url, index) => <img key={`${url}-${index}`} src={url} alt={`${generationLogKindLabel(log)}结果 ${index + 1}`} />)}</div> : <span className={log.status === "pending" ? "loading" : "placeholder"}>{log.status === "pending" ? "◌" : kind === "video" ? "▶" : "▣"}</span>}
+                </div>
+                <div className="canvas-task-log-status">{generationLogStatusLabel(log.status)}</div>
+                <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{log.status === "pending" && <small className="pending-note">任务正在后台生成，可继续使用画布</small>}{log.error && <small className="error-note">{log.error}</small>}</div>
+                <div className="canvas-task-log-meta"><span>{kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span>{generationLogDuration(log)}</span><span>{kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
+                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId(log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{log.status === "error" && <button type="button" onClick={(event) => { event.stopPropagation(); onRetryTask(log); }}>重试</button>}<button type="button" onClick={(event) => { event.stopPropagation(); onFocusTask(log, Boolean(urls.length)); }}>{urls.length ? "打开结果" : "定位节点"}</button></div>
+                {selectedId === log.id && <div className="canvas-task-log-detail"><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
+              </article>;
+            })}
+          </div> : <div className="canvas-side-empty"><span>▱</span><b>{taskLogs.length ? "没有符合条件的任务" : "还没有生成任务"}</b><small>{taskLogs.length ? "调整状态、媒体类型或搜索条件。" : "从画布生成图片、视频或 Agent 结果后会出现在这里。"}</small></div>}
+        </>
+      ) : (
+        <>
+          <div className="canvas-activity-summary"><b>{activityLogs.length}</b><span>条画布操作</span></div>
+          {activityLogs.length ? <div className="canvas-activity-list">{activityLogs.map((log) => <button type="button" className={log.status} key={log.id} onClick={() => onNotify("这条活动记录没有可定位的节点或任务详情") }><time>{new Date(log.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time><span className="canvas-activity-dot">●</span><p>{log.message}</p><small>{log.type === "generation" ? "生成" : log.type === "agent" ? "Agent" : log.type === "asset" ? "资产" : log.type === "project" ? "项目" : log.type === "canvas" ? "画布" : "系统"}</small></button>)}</div> : <div className="canvas-side-empty"><span>≡</span><b>暂无活动</b><small>生成、导入或整理画布后会记录在这里。</small></div>}
+        </>
+      )}
+    </CanvasPanelShell>
+  );
 }
 
 function CanvasSettingsPanel({ theme, connectionAnimation, connectionStyle, onTheme, onConnectionAnimationChange, onConnectionStyleChange, onClose }: { theme: CanvasTheme; connectionAnimation: ConnectionAnimation; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionAnimationChange: (value: ConnectionAnimation) => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onClose: () => void }) {
@@ -7546,308 +8017,4 @@ function CanvasShortcutsPanel({ onClose }: { onClose: () => void }) {
   return <CanvasPanelShell title="快捷键" subtitle="画布常用操作" onClose={onClose} className="canvas-shortcuts-panel">
     <div className="canvas-shortcuts-list">{CANVAS_SHORTCUTS.map((item, index) => <div key={`${item.label}-${index}`}><span>{item.keys.map((key) => <kbd key={key}>{key}</kbd>)}</span><p>{item.label}</p></div>)}</div>
   </CanvasPanelShell>;
-}
-
-function CanvasWorkbench({
-  tab,
-  setTab,
-  nodes,
-  groups,
-  edges,
-  projects,
-  activeProjectId,
-  logs,
-  connectionAnimation,
-  onConnectionAnimationChange,
-  connectionStyle,
-  onConnectionStyleChange,
-  onClose,
-  onExport,
-  onImport,
-  onArrange,
-  onDeleteProject,
-}: {
-  tab: WorkbenchTab;
-  setTab: (tab: WorkbenchTab) => void;
-  nodes: CanvasNode[];
-  groups: CanvasGroup[];
-  edges: CanvasEdge[];
-  projects: CanvasProject[];
-  activeProjectId: string;
-  logs: string[];
-  connectionAnimation: ConnectionAnimation;
-  onConnectionAnimationChange: (value: ConnectionAnimation) => void;
-  connectionStyle: ConnectionStyle;
-  onConnectionStyleChange: (value: ConnectionStyle) => void;
-  onClose: () => void;
-  onExport: () => void;
-  onImport: () => void;
-  onArrange: () => void;
-  onDeleteProject: (id: string) => void;
-}) {
-  const media = nodes.filter(
-    (node) => node.type === "media" && Boolean(node.data.url),
-  );
-  const tabs = [
-    "assets",
-    "workflow",
-    "logs",
-    "shortcuts",
-    "project",
-    "settings",
-  ] as const;
-  const tabLabels: Record<WorkbenchTab, string> = {
-    assets: "资产",
-    workflow: "工作流",
-    logs: "日志",
-    shortcuts: "快捷键",
-    project: "项目",
-    settings: "设置",
-  };
-  return (
-    <div
-      className="canvas-modal-backdrop workbench-backdrop"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <aside className="canvas-workbench">
-        <header>
-          <div>
-            <span className="canvas-logo-mark small">
-              <img src="/brand-mark.png" alt="" />
-            </span>
-            <span>
-              <b>统一工作台</b>
-              <small>资产、工作流与画布项目</small>
-            </span>
-          </div>
-          <button type="button" onClick={onClose}>
-            ×
-          </button>
-        </header>
-        <nav>
-          {tabs.map((item) => (
-            <button
-              type="button"
-              key={item}
-              className={tab === item ? "active" : ""}
-              onClick={() => setTab(item)}
-            >
-              {tabLabels[item]}
-            </button>
-          ))}
-        </nav>
-        <div className="canvas-workbench-content">
-          {tab === "assets" && (
-            <div className="canvas-workbench-section">
-              <div className="canvas-workbench-heading">
-                <span>
-                  <b>画布资产</b>
-                  <small>{media.length} 个媒体节点</small>
-                </span>
-              </div>
-              {media.length ? (
-                <div className="canvas-asset-grid">
-                  {media.map((node) => (
-                    <div className="canvas-asset-card" key={node.id}>
-                      {node.data.kind === "video" ? (
-                        <video src={node.data.url} muted />
-                      ) : (
-                        <img src={node.data.url} alt="" />
-                      )}
-                      <span>{node.data.name || "素材"}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="canvas-empty-panel">
-                  导入的图片和视频会集中显示在这里。
-                </div>
-              )}
-            </div>
-          )}
-          {tab === "workflow" && (
-            <div className="canvas-workbench-section">
-              <div className="canvas-workbench-heading">
-                <span>
-                  <b>工作流</b>
-                  <small>
-                    {nodes.length} 个节点 · {edges.length} 条连线 ·{" "}
-                    {groups.length} 个对象组
-                  </small>
-                </span>
-              </div>
-              <div className="canvas-workbench-actions">
-                <button type="button" className="primary" onClick={onArrange}>
-                  ⌗ 一键整理
-                </button>
-                <button type="button" onClick={onExport}>
-                  ↓ 导出 JSON
-                </button>
-                <button type="button" onClick={onImport}>
-                  ↑ 导入 JSON
-                </button>
-              </div>
-              <div className="canvas-empty-panel">
-                通过节点端口连接图片、视频和文本，生成结果会自动保留引用关系。
-              </div>
-            </div>
-          )}
-          {tab === "logs" && (
-            <div className="canvas-workbench-section">
-              <div className="canvas-workbench-heading">
-                <span>
-                  <b>操作日志</b>
-                  <small>最近 {logs.length} 条操作</small>
-                </span>
-              </div>
-              {logs.length ? (
-                <div className="canvas-log-list">
-                  {logs.map((log, index) => (
-                    <div key={`${log}-${index}`}>
-                      <time>{index + 1}</time>
-                      <span>{log}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="canvas-empty-panel">还没有操作日志。</div>
-              )}
-            </div>
-          )}
-          {tab === "shortcuts" && (
-            <div className="canvas-workbench-section">
-              <div className="canvas-workbench-heading">
-                <span>
-                  <b>快捷键</b>
-                  <small>这些按键可直接操作当前画布</small>
-                </span>
-              </div>
-              <div className="canvas-shortcut-list">
-                {CANVAS_SHORTCUTS.map((shortcut) => (
-                  <div key={`${shortcut.keys.join("+")}-${shortcut.label}`}>
-                    <kbd>
-                      {shortcut.keys.map((key) => (
-                        <span key={key}>{key}</span>
-                      ))}
-                    </kbd>
-                    <span>{shortcut.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {tab === "project" && (
-            <div className="canvas-workbench-section">
-              <div className="canvas-workbench-heading">
-                <span>
-                  <b>项目管理</b>
-                  <small>本地优先保存 · 支持 JSON 备份</small>
-                </span>
-              </div>
-              {projects.map((project) => (
-                <div
-                  className={`canvas-project-manage-row ${project.id === activeProjectId ? "active" : ""}`}
-                  key={project.id}
-                >
-                  <span className="canvas-project-dot">✦</span>
-                  <div>
-                    <b>{project.name}</b>
-                    <small>
-                      {new Date(project.updatedAt).toLocaleString("zh-CN")}
-                    </small>
-                  </div>
-                  {projects.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => onDeleteProject(project.id)}
-                    >
-                      删除
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {tab === "settings" && (
-            <div className="canvas-workbench-section">
-              <div className="canvas-workbench-heading">
-                <span>
-                  <b>画布设置</b>
-                  <small>调整画布交互与显示效果</small>
-                </span>
-              </div>
-              <div className="canvas-settings-card">
-                <div>
-                  <b>节点连线动态</b>
-                  <small>
-                    选择连线在画布中的显示方式，设置会自动保存到本机。
-                  </small>
-                </div>
-                <div className="canvas-settings-options">
-                  {CONNECTION_ANIMATION_OPTIONS.map((option) => (
-                    <button
-                      type="button"
-                      key={option.value}
-                      className={
-                        connectionAnimation === option.value ? "active" : ""
-                      }
-                      aria-pressed={connectionAnimation === option.value}
-                      onClick={() => onConnectionAnimationChange(option.value)}
-                    >
-                      <span
-                        className="canvas-settings-option-icon"
-                        data-animation={option.value}
-                      >
-                        <ConnectionOptionIcon kind="animation" value={option.value} />
-                      </span>
-                      <span>
-                        <b>{option.label}</b>
-                        <small>{option.description}</small>
-                      </span>
-                      <i>{connectionAnimation === option.value ? "✓" : ""}</i>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="canvas-settings-card">
-                <div>
-                  <b>节点连线形式</b>
-                  <small>
-                    切换曲线、直线或流程图式折线，设置会自动保存到本机。
-                  </small>
-                </div>
-                <div className="canvas-settings-options">
-                  {CONNECTION_STYLE_OPTIONS.map((option) => (
-                    <button
-                      type="button"
-                      key={option.value}
-                      className={
-                        connectionStyle === option.value ? "active" : ""
-                      }
-                      aria-pressed={connectionStyle === option.value}
-                      onClick={() => onConnectionStyleChange(option.value)}
-                    >
-                      <span
-                        className="canvas-settings-option-icon"
-                        data-style={option.value}
-                      >
-                        <ConnectionOptionIcon kind="style" value={option.value} />
-                      </span>
-                      <span>
-                        <b>{option.label}</b>
-                        <small>{option.description}</small>
-                      </span>
-                      <i>{connectionStyle === option.value ? "✓" : ""}</i>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </aside>
-    </div>
-  );
 }

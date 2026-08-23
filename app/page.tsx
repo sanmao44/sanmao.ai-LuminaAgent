@@ -162,9 +162,10 @@ function platformLabel(platform) {
     return providerPresets.find((item)=>item.value === platform)?.short || '自定义';
 }
 function sourceLabel(source) {
-    return source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : '直接生成';
+    return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : '直接生成';
 }
 function generationLogSourceLabel(log) {
+    if (log.source === 'canvas') return '画布生成';
     if (log.mode === 'video') return log.operation === 'edit' ? '视频编辑' : log.operation === 'extend' ? '视频扩展' : '视频生成';
     if (log.mode === 'audio' || log.mediaKind === 'audio') return '音频生成';
     if (log.source === 'agent') return '助手生成';
@@ -5089,7 +5090,15 @@ export default function Page() {
             const q = historySearch.trim().toLowerCase();
             const matchSearch = !q || `${task.input?.prompt || ''} ${task.modelName || ''}`.toLowerCase().includes(q);
             const matchMedia = historyMediaFilter === 'all' || historyMediaFilter === 'video';
-            const matchSource = historyFilter === 'all' || historyFilter === 'generate';
+            const matchSource = historyFilter === 'all'
+                ? true
+                : historyFilter === 'canvas'
+                    ? task.source === 'canvas'
+                    : historyFilter === 'generate'
+                        ? !task.source || task.source === 'workspace'
+                        : historyFilter === 'agent'
+                            ? task.source === 'agent'
+                            : false;
             return matchSearch && matchMedia && matchSource;
         }), [
         videoTasks,
@@ -11768,6 +11777,10 @@ export default function Page() {
                                                     [
                                                         'edit',
                                                         '图片修改'
+                                                    ],
+                                                    [
+                                                        'canvas',
+                                                        '画布生成'
                                                     ]
                                                 ].map(([value, label])=>/*#__PURE__*/ _jsx("button", {
                                                         className: historyFilter === value ? 'active' : '',
@@ -11964,7 +11977,7 @@ export default function Page() {
                                                 children: gallery.length || videoTasks.length ? '没有符合条件的作品' : '还没有创作记录'
                                             }),
                                             /*#__PURE__*/ _jsx("p", {
-                                                children: gallery.length ? '换个关键词或筛选条件试试。' : '每次生图、助手生成和图片修改都会自动保存在这个浏览器里。'
+                                                children: gallery.length ? '换个关键词或筛选条件试试。' : '每次生图、助手生成、画布生成和图片修改都会自动保存在这个浏览器里。'
                                             }),
                                             !gallery.length && /*#__PURE__*/ _jsxs("div", {
                                                 className: "history-empty-actions",

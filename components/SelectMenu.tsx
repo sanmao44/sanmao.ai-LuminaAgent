@@ -9,6 +9,7 @@ export type SelectMenuOption<T extends string | number> = {
   icon?: ReactNode;
   description?: ReactNode;
   disabled?: boolean;
+  deletable?: boolean;
 };
 
 type Props<T extends string | number> = {
@@ -19,18 +20,27 @@ type Props<T extends string | number> = {
   className?: string;
   menuClassName?: string;
   disabled?: boolean;
+  onDelete?: (value: T) => void;
 };
 
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-export default function SelectMenu<T extends string | number>({ value, options, onChange, ariaLabel, className = '', menuClassName = '', disabled = false }: Props<T>) {
+export default function SelectMenu<T extends string | number>({ value, options, onChange, ariaLabel, className = '', menuClassName = '', disabled = false, onDelete }: Props<T>) {
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(value);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const [menuStyle, setMenuStyle] = useState<Record<string, string | number>>({ visibility: 'hidden' });
+  const [menuStyle, setMenuStyle] = useState<Record<string, string | number>>({
+    position: 'fixed',
+    visibility: 'hidden',
+    left: 0,
+    top: 0,
+    right: 'auto',
+    bottom: 'auto',
+    width: 0,
+  });
   const selected = options.find((option) => option.value === value) || options[0];
   const enabledOptions = useMemo(() => options.filter((option) => !option.disabled), [options]);
 
@@ -42,6 +52,12 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       if (!rect) return;
       const gap = 8;
       const maxHeight = 310;
+      const width = Math.round(rect.width);
+      const viewportPadding = 8;
+      const left = Math.max(
+        viewportPadding,
+        Math.min(Math.round(rect.left), window.innerWidth - width - viewportPadding),
+      );
       const below = window.innerHeight - rect.bottom - gap;
       const above = rect.top - gap;
       const openAbove = below < 180 && above > below;
@@ -49,14 +65,20 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       setMenuStyle({
         position: 'fixed',
         visibility: 'visible',
-        left: Math.round(rect.left),
+        left,
         right: 'auto',
-        width: Math.round(rect.width),
+        width,
         maxHeight: available,
         ...(openAbove ? { bottom: Math.round(window.innerHeight - rect.top + gap), top: 'auto' } : { top: Math.round(rect.bottom + gap), bottom: 'auto' }),
       });
     }
+    let firstFrame = 0;
+    let secondFrame = 0;
     positionMenu();
+    firstFrame = window.requestAnimationFrame(() => {
+      positionMenu();
+      secondFrame = window.requestAnimationFrame(positionMenu);
+    });
     menuRef.current?.focus({ preventScroll: true });
     const handlePointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false);
@@ -71,7 +93,14 @@ export default function SelectMenu<T extends string | number>({ value, options, 
     document.addEventListener('keydown', handleKeyDown);
     window.addEventListener('resize', positionMenu);
     window.addEventListener('scroll', positionMenu, true);
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(positionMenu)
+      : null;
+    if (triggerRef.current) resizeObserver?.observe(triggerRef.current);
     return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+      resizeObserver?.disconnect();
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('resize', positionMenu);
@@ -80,7 +109,15 @@ export default function SelectMenu<T extends string | number>({ value, options, 
   }, [open, value]);
 
   function openMenu() {
-    setMenuStyle({ visibility: 'hidden' });
+    setMenuStyle({
+      position: 'fixed',
+      visibility: 'hidden',
+      left: 0,
+      top: 0,
+      right: 'auto',
+      bottom: 'auto',
+      width: 0,
+    });
     setOpen(true);
   }
 
@@ -159,6 +196,32 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       >
         {option.icon && <span className="select-menu-option-icon" aria-hidden="true">{option.icon}</span>}
         <span className="select-menu-option-copy"><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+        {option.deletable && onDelete && (
+          <span
+            className="select-menu-option-delete"
+            role="button"
+            tabIndex={0}
+            aria-label={`删除${String(option.label)}`}
+            title="删除集合"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onDelete(option.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              event.stopPropagation();
+              onDelete(option.value);
+            }}
+          >
+            ×
+          </span>
+        )}
         {option.value === value && <span className="select-menu-check" aria-hidden="true">✓</span>}
       </button>)}
     </div>, document.body)}

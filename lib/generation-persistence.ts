@@ -1,10 +1,11 @@
 import { appendGenerationLog, finishGenerationLog } from './generation-log';
 import { persistGeneratedImages } from './image-storage';
 import type { GeneratedImage, ReferenceImageRecord } from './types';
+import type { GenerationSource } from './generation-source';
 
 type BackgroundGenerationLog = {
   mode: 'generate' | 'edit' | 'upscale' | 'agent';
-  source?: 'workspace' | 'agent';
+  source?: GenerationSource;
   prompt: string;
   modelId?: string;
   modelName?: string;

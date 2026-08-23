@@ -35,7 +35,7 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   assert.deepEqual(result.images, [{ url: '/api/storage/file?name=generated.png' }]);
   assert.equal(request.input, '/api/generate');
   assert.deepEqual(JSON.parse(request.options.body), {
-    prompt: '紫色云海', model: 'image-model', count: 2, aspectRatio: '16:9',
+    source: 'canvas', prompt: '紫色云海', model: 'image-model', count: 2, aspectRatio: '16:9',
     resolution: '自动', quality: '自动', references: [], referenceImages: [],
   });
 });
@@ -50,9 +50,32 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.deepEqual(task, { id: 'video-1', status: 'pending' });
   const payload = JSON.parse(request.options.body);
   assert.equal(request.input, '/api/video/generate');
+  assert.equal(payload.source, 'canvas');
   assert.equal(payload.model, 'video-model');
   assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720P', referenceImages: [] });
   assert.equal('audio' in payload.input, false);
+});
+
+test('canvas agent generation marks the request as canvas-originated', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ ok: true, message: '已完成' });
+  }, () => api.generateCanvasAgent({ messages: [{ role: 'user', content: '生成一张海报' }] }));
+
+  assert.equal(request.input, '/api/agent');
+  assert.equal(JSON.parse(request.options.body).source, 'canvas');
+});
+
+test('canvas upscale marks the request as canvas-originated', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [] });
+  }, () => api.generateCanvasUpscale({ referenceUrl: 'data:image/png;base64,AA==', scale: 2 }));
+
+  assert.equal(request.input, '/api/upscale');
+  assert.equal(JSON.parse(request.options.body).source, 'canvas');
 });
 
 test('canvas video polling uses the SANMAO task endpoint', async () => {

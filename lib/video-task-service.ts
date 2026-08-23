@@ -7,6 +7,7 @@ import type { GeneratedVideo, VideoGenerationInput } from './types';
 import { getVideoModelLimits, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
 import { is65535Provider, isJimengProvider } from './video-platform';
 import { prepareVideoInputMedia } from './video-input-media';
+import type { GenerationSource } from './generation-source';
 
 function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGenerationInput {
   const prompt = String(input.prompt || '').trim();
@@ -167,7 +168,7 @@ async function failTask(task: VideoTask, error: unknown, code?: string) {
   return updated;
 }
 
-export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string }) {
+export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource }) {
   const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
   assertGenericInputLimits(options.input);
@@ -189,13 +190,14 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
     modelId: runtime.model.id,
     modelName: runtime.model.displayName,
     operation: input.operation || 'generate',
+    source: options.source || 'workspace',
     status: 'pending',
     idempotencyKey: key,
     input,
   });
   if (!created.created) return created.task;
   const task = created.task;
-  await startGenerationLog({ mode: 'video', mediaKind: 'video', source: 'workspace', prompt: input.prompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, operation: input.operation || 'generate', idempotencyKey: key }, task.id);
+  await startGenerationLog({ mode: 'video', mediaKind: 'video', source: task.source || 'workspace', prompt: input.prompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, operation: input.operation || 'generate', idempotencyKey: key }, task.id);
   try {
     const result = await callSubmit(runtime, input, key);
     if (result.status === 'done' && result.videos.length) return persistResult({ ...task, providerTaskId: result.providerTaskId }, result);

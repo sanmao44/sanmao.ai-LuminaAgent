@@ -1,6 +1,7 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { createVideoGeneration } from '@/lib/video-task-service';
 import type { VideoGenerationInput } from '@/lib/types';
+import { normalizeGenerationSource } from '@/lib/generation-source';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
       audio: raw.audio,
     };
     const key = request.headers.get('Idempotency-Key') || String(body.idempotencyKey || '');
-    const task = await createVideoGeneration({ modelId: String(body.model || 'auto'), input, idempotencyKey: key });
+    const task = await createVideoGeneration({ modelId: String(body.model || 'auto'), input, idempotencyKey: key, source: normalizeGenerationSource(body.source, 'workspace') });
     return Response.json({ ok: true, task }, { status: task?.status === 'failed' ? 502 : 202 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '视频生成失败' }, { status: 400 });

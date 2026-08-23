@@ -11,6 +11,7 @@ import { referenceRecordsForLog } from '@/lib/reference-images';
 import { isImageContinuationRequest, likelyAgentToolRequest, likelyImageGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
+import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 
 export const runtime = 'nodejs';
 
@@ -265,6 +266,7 @@ export async function POST(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   try {
     const body = await request.json();
+    const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
     const wantsStream = body.stream === true;
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
@@ -516,7 +518,7 @@ export async function POST(request: Request) {
         ? await getRuntimeImageGenerationModel(args.modelId || null)
         : await getRuntimeModel(args.modelId || null, 'image');
       if (!imageRuntime) {
-        await appendGenerationLog({ status: 'error', mode, source: 'agent', prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型' }).catch(() => undefined);
+        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型' }).catch(() => undefined);
         toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '没有可用图片模型' }) });
         continue;
       }
@@ -531,14 +533,14 @@ export async function POST(request: Request) {
           storagePath: state.settings.imageStoragePath,
           startedAt,
           providerFinishedAt,
-          log: { mode, source: 'agent', prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, references: mode === 'edit' && referenceRecords.length ? referenceRecords : undefined },
+          log: { mode, source: sourceForLog, prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, references: mode === 'edit' && referenceRecords.length ? referenceRecords : undefined },
         });
         generated.push(...stored.images);
         generations.push({ prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, mode });
         toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, count: images.length, model: imageRuntime.model.displayName, mode }) });
       } catch (error) {
         const message = error instanceof Error ? error.message : '图片工具失败';
-        await appendGenerationLog({ status: 'error', mode, source: 'agent', prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: message }).catch(() => undefined);
+        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: message }).catch(() => undefined);
         toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: message }) });
       }
     }

@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { VideoGenerationInput } from './types';
+import type { GenerationSource } from './generation-source';
 
 export type VideoTaskStatus = 'pending' | 'running' | 'done' | 'failed';
 export type VideoTask = {
@@ -11,6 +12,7 @@ export type VideoTask = {
   modelId: string;
   modelName?: string;
   operation: 'generate' | 'edit' | 'extend';
+  source?: GenerationSource;
   status: VideoTaskStatus;
   idempotencyKey: string;
   input: VideoGenerationInput;

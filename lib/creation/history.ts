@@ -1,6 +1,6 @@
 'use client';
 
-import { saveGalleryItems, type GalleryItem } from '../client-history';
+import { saveGalleryItems, type GalleryItem, type GallerySource } from '../client-history';
 import type { ReferenceImageRecord } from '../types';
 
 export async function recordCanvasImages(
@@ -16,6 +16,7 @@ export async function recordCanvasImages(
     generationMs?: number;
     references?: ReferenceImageRecord[];
     parentId?: string;
+    source?: GallerySource;
   },
 ) {
   const createdAt = Date.now();
@@ -31,7 +32,7 @@ export async function recordCanvasImages(
     outputSize: meta.outputSize,
     outputFormat: meta.outputFormat,
     generationMs: meta.generationMs,
-    source: meta.references?.length ? 'edit' : 'generate',
+    source: meta.source || (meta.references?.length ? 'edit' : 'generate'),
     createdAt: createdAt + index,
     favorite: false,
     parentId: meta.parentId,

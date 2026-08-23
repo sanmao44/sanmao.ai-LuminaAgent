@@ -84,6 +84,7 @@ export async function generateCanvasImage(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      source: "canvas",
       ...(input.taskId ? { taskId: input.taskId } : {}),
       prompt: input.prompt,
       model: input.model || "auto",
@@ -144,6 +145,7 @@ export async function generateCanvasVideo(input: {
       "Idempotency-Key": crypto.randomUUID(),
     },
     body: JSON.stringify({
+      source: "canvas",
       model: input.model || "auto",
       operation: input.operation || "generate",
       input: {
@@ -187,6 +189,7 @@ export async function generateCanvasUpscale(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      source: "canvas",
       prompt: input.prompt || "Upscale this image",
       model: input.model || "auto",
       reference,
@@ -224,6 +227,7 @@ export async function generateCanvasAgent(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      source: "canvas",
       messages,
       model: input.model || "auto",
       webMode: input.webMode || "off",

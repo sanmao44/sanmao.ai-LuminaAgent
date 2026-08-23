@@ -21,6 +21,7 @@
 .select-menu-trigger-icon svg,.select-menu-option-icon svg{display:block}
 .select-menu-option-icon{width:24px;height:24px;border-radius:7px;background:color-mix(in srgb,var(--accent-soft) 82%,var(--panel))}
 .select-menu-option-copy{flex:1}
+.select-menu-option-delete{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:7px;color:var(--muted);font-size:16px;line-height:1;cursor:pointer}.select-menu-option-delete:hover,.select-menu-option-delete:focus-visible{background:var(--danger-soft,var(--accent-soft));color:var(--danger);outline:0}
 
 /* Video studio is viewport-locked: the form body and task list own their
    scroll positions, while the primary action remains visible. */

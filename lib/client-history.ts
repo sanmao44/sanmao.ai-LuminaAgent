@@ -1,7 +1,7 @@
 import type { ClientReferenceImage, ReferenceImageRecord, WebSearchDecisionMeta, WebSearchMeta } from './types';
 import type { AngleCameraState } from './angle-control';
 
-export type GallerySource = 'generate' | 'agent' | 'edit';
+export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas';
 
 export type GalleryItem = {
   id: string;
