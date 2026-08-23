@@ -208,6 +208,7 @@
 .canvas-group-port{position:absolute;z-index:7;top:50%;width:18px;height:18px;padding:0;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));border-radius:50%;background:color-mix(in srgb,var(--panel-2) 94%,transparent);box-shadow:0 2px 8px color-mix(in srgb,#000 24%,transparent);color:var(--accent-text);cursor:crosshair;opacity:.58;transform:translateY(-50%);transition:opacity .14s,background .14s,border-color .14s,box-shadow .14s,transform .14s}
 .canvas-group-port.left{left:-9px}
 .canvas-group-port.right{right:-9px}
+.canvas-group.asset-drop-target{border-color:var(--accent-2);background:color-mix(in srgb,var(--accent-soft) 62%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent-2) 18%,transparent),0 0 24px color-mix(in srgb,var(--accent-2) 26%,transparent)}
 .canvas-group:hover .canvas-group-port,.canvas-group.selected .canvas-group-port,.canvas-group.connection-source .canvas-group-port,.canvas-group.connection-target .canvas-group-port{opacity:.96;background:var(--accent-soft);border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 3px 12px color-mix(in srgb,var(--accent) 28%,transparent)}
 .canvas-group-port:hover,.canvas-group-port:focus-visible{opacity:1;background:var(--accent);border-color:var(--accent-2);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent),0 4px 14px color-mix(in srgb,var(--accent) 38%,transparent);transform:translateY(-50%) scale(1.12)}
 @media(max-width:720px){.canvas-run-button{width:68px;min-width:68px}}

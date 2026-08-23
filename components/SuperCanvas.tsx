@@ -23,6 +23,7 @@ import {
   edgePath,
   entityBounds,
   entityPortPoint,
+  groupAtPoint,
   groupBounds,
   groupById,
   groupNodes,
@@ -34,6 +35,7 @@ import {
   normalizeDocument,
   removeEdge,
   removeNodes,
+  moveNodesToGroup,
   reorderReferences,
   smartPrompt,
   snapshot,
@@ -684,6 +686,9 @@ export default function SuperCanvas() {
   const [panActive, setPanActive] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [assetRefresh, setAssetRefresh] = useState(0);
+  const [assetDropGroupId, setAssetDropGroupId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     setTheme(
@@ -1771,6 +1776,58 @@ export default function SuperCanvas() {
         setConnection(null);
         setConnectionTargetId(null);
       }
+      if (interaction.kind === "drag" && interaction.changed) {
+        const point = stageToWorld(stagePoint(event.clientX, event.clientY));
+        const draggedNodes = interaction.nodeIds
+          .map((id) => nodeById(docRef.current, id))
+          .filter(Boolean) as CanvasNode[];
+        if (draggedNodes.length) {
+          const bounds = draggedNodes.reduce(
+            (result, node) => {
+              const size = nodeSize(node);
+              return {
+                left: Math.min(result.left, node.x),
+                top: Math.min(result.top, node.y),
+                right: Math.max(result.right, node.x + size.w),
+                bottom: Math.max(result.bottom, node.y + size.h),
+              };
+            },
+            {
+              left: Infinity,
+              top: Infinity,
+              right: -Infinity,
+              bottom: -Infinity,
+            },
+          );
+          const target = groupAtPoint(docRef.current, {
+            x: Number.isFinite(bounds.left)
+              ? (bounds.left + bounds.right) / 2
+              : point.x,
+            y: Number.isFinite(bounds.top)
+              ? (bounds.top + bounds.bottom) / 2
+              : point.y,
+          });
+          if (target) {
+            const before = docRef.current;
+            const after = moveNodesToGroup(
+              before,
+              draggedNodes.map((node) => node.id),
+              target.id,
+            );
+            if (after !== before) {
+              updateDoc(() => after);
+              setSelectedGroupId(target.id);
+              setSelectedIds(
+                new Set(
+                  after.groups.find((group) => group.id === target.id)
+                    ?.nodeIds || [],
+                ),
+              );
+              notify(`已将 ${draggedNodes.length} 个节点加入${target.name}`);
+            }
+          }
+        }
+      }
       interactionRef.current = null;
       setPanActive(false);
       setMarquee(null);
@@ -1780,7 +1837,15 @@ export default function SuperCanvas() {
         /* pointer capture already released */
       }
     },
-    [addLog, commit, connectionTargetId, stagePoint, stageToWorld],
+    [
+      addLog,
+      commit,
+      connectionTargetId,
+      notify,
+      stagePoint,
+      stageToWorld,
+      updateDoc,
+    ],
   );
 
   const cancelPointerInteraction = useCallback(
@@ -3430,13 +3495,34 @@ export default function SuperCanvas() {
         role: "资产中心",
         sourceAssetId: asset.id,
       });
-      const point = openNodePosition(seed, draft);
+      const targetGroup = position
+        ? groupAtPoint(docRef.current, seed)
+        : undefined;
+      const point = targetGroup ? seed : openNodePosition(seed, draft);
       const node = { ...draft, x: point.x, y: point.y };
-      commit((value) => ({ ...value, nodes: [...value.nodes, node] }));
-      setSelectedIds(new Set([node.id]));
-      setSelectedGroupId(null);
+      const next = targetGroup
+        ? moveNodesToGroup(
+            { ...docRef.current, nodes: [...docRef.current.nodes, node] },
+            [node.id],
+            targetGroup.id,
+          )
+        : { ...docRef.current, nodes: [...docRef.current.nodes, node] };
+      commit(() => next);
+      setSelectedIds(
+        new Set(
+          targetGroup
+            ? next.groups.find((group) => group.id === targetGroup.id)
+                ?.nodeIds || [node.id]
+            : [node.id],
+        ),
+      );
+      setSelectedGroupId(targetGroup?.id || null);
       setMode(asset.kind);
-      notify(`已将${asset.kind === "video" ? "视频" : "图片"}添加到画布`);
+      notify(
+        targetGroup
+          ? `已将${asset.kind === "video" ? "视频" : "图片"}加入${targetGroup.name}`
+          : `已将${asset.kind === "video" ? "视频" : "图片"}添加到画布`,
+      );
     },
     [
       commit,
@@ -3534,6 +3620,8 @@ export default function SuperCanvas() {
         addAssetToCanvas(asset, screenToWorld(event.clientX, event.clientY));
       } catch {
         notify("无法读取拖入的资产。", "error");
+      } finally {
+        setAssetDropGroupId(null);
       }
     },
     [addAssetToCanvas, notify, screenToWorld],
@@ -4016,7 +4104,17 @@ export default function SuperCanvas() {
           if (event.dataTransfer.types.includes("application/x-sanmao-asset")) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
+            setAssetDropGroupId(
+              groupAtPoint(
+                docRef.current,
+                screenToWorld(event.clientX, event.clientY),
+              )?.id || null,
+            );
           }
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+            setAssetDropGroupId(null);
         }}
         onDrop={handleAssetDrop}
         onContextMenu={handleContextMenu}
@@ -4111,7 +4209,7 @@ export default function SuperCanvas() {
                 return (
                   <div
                     key={group.id}
-                    className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""} ${connection?.sourceId === group.id ? "connection-source" : ""} ${connectionTargetId === group.id ? "connection-target" : ""}`}
+                    className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""} ${connection?.sourceId === group.id ? "connection-source" : ""} ${connectionTargetId === group.id ? "connection-target" : ""} ${assetDropGroupId === group.id ? "asset-drop-target" : ""}`}
                     data-canvas-connectable-id={group.id}
                     style={{
                       left: bounds.x,
@@ -4897,7 +4995,7 @@ function CanvasAssetDrawer({
         <div className="canvas-asset-results">
           <div className="canvas-asset-summary">
             <b>{filtered.length} 个资产</b>
-            <span>拖到空白画布可直接创建节点</span>
+            <span>拖到空白画布创建节点，拖到对象组自动加入</span>
           </div>
           {loading ? (
             <div className="canvas-asset-loading">

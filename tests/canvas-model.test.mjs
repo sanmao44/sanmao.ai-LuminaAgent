@@ -124,6 +124,41 @@ test('expands a grouped source into all media references and preserves manual or
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第二张', '第一张']);
 });
 
+test('adds dropped nodes to the group under the pointer and keeps membership consistent', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/group-first.png', '组内第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/group-second.png', '组内第二张', { x: 360, y: 0 });
+  const dropped = model.createMedia('image', '/dropped.png', '拖入图片', { x: 160, y: 180 });
+  let document = { ...empty, nodes: [first, second, dropped] };
+  document = model.createGroup(document, [first.id, second.id]);
+  const group = document.groups[0];
+  assert.equal(model.groupAtPoint(document, { x: 160, y: 180 })?.id, group.id);
+
+  const next = model.moveNodesToGroup(document, [dropped.id], group.id);
+  assert.equal(next.nodes.find((node) => node.id === dropped.id)?.groupId, group.id);
+  assert.deepEqual(next.groups[0].nodeIds, [first.id, second.id, dropped.id]);
+});
+
+test('moving a node out of a two-node group removes the invalid old group cleanly', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/second.png', '第二张', { x: 360, y: 0 });
+  const targetFirst = model.createMedia('image', '/target-first.png', '目标第一张', { x: 0, y: 500 });
+  const targetSecond = model.createMedia('image', '/target-second.png', '目标第二张', { x: 360, y: 500 });
+  let document = { ...empty, nodes: [first, second, targetFirst, targetSecond] };
+  document = model.createGroup(document, [first.id, second.id]);
+  document = model.createGroup(document, [targetFirst.id, targetSecond.id]);
+  const sourceGroup = document.groups.find((group) => group.nodeIds.includes(first.id));
+  const targetGroup = document.groups.find((group) => group.nodeIds.includes(targetFirst.id));
+  assert.ok(sourceGroup);
+  assert.ok(targetGroup);
+
+  const next = model.moveNodesToGroup(document, [first.id], targetGroup.id);
+  assert.equal(next.groups.some((group) => group.id === sourceGroup.id), false);
+  assert.equal(next.nodes.find((node) => node.id === second.id)?.groupId, undefined);
+  assert.equal(next.nodes.find((node) => node.id === first.id)?.groupId, targetGroup.id);
+});
+
 function arrangeDocument(nodes, edges = [], groups = []) {
   const empty = model.normalizeDocument(null);
   return model.normalizeDocument({ ...empty, nodes, edges, groups });

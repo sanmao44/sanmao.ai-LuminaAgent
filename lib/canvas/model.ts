@@ -254,6 +254,23 @@ export function groupBounds(document: CanvasDocument, groupId: string) {
   };
 }
 
+export function groupAtPoint(
+  document: CanvasDocument,
+  point: { x: number; y: number },
+) {
+  return [...document.groups]
+    .reverse()
+    .find((group) => {
+      const bounds = groupBounds(document, group.id);
+      return (
+        point.x >= bounds.x &&
+        point.x <= bounds.x + bounds.w &&
+        point.y >= bounds.y &&
+        point.y <= bounds.y + bounds.h
+      );
+    });
+}
+
 export function entityBounds(document: CanvasDocument, id: string) {
   const group = groupById(document, id);
   if (group) return groupBounds(document, group.id);
@@ -827,6 +844,54 @@ export function createGroup(document: CanvasDocument, ids: string[]) {
     nodeIds: valid,
   });
   return { ...document, nodes, groups };
+}
+
+export function moveNodesToGroup(
+  document: CanvasDocument,
+  ids: string[],
+  groupId: string,
+) {
+  const target = groupById(document, groupId);
+  const valid = [...new Set(ids)].filter((id) => nodeById(document, id));
+  if (!target || !valid.length) return document;
+  if (valid.every((id) => nodeById(document, id)?.groupId === groupId))
+    return document;
+  const moving = new Set(valid);
+  const groups = document.groups
+    .map((group) => ({
+      ...group,
+      nodeIds:
+        group.id === groupId
+          ? [
+              ...new Set([
+                ...group.nodeIds.filter((id) => !moving.has(id)),
+                ...valid,
+              ]),
+            ]
+          : group.nodeIds.filter((id) => !moving.has(id)),
+    }))
+    .filter((group) => group.id === groupId || group.nodeIds.length >= 2);
+  const membership = new Map(
+    groups.flatMap((group) =>
+      group.nodeIds.map((id) => [id, group.id] as const),
+    ),
+  );
+  const entityIds = new Set([
+    ...document.nodes.map((node) => node.id),
+    ...groups.map((group) => group.id),
+  ]);
+  return {
+    ...document,
+    nodes: document.nodes.map((node) =>
+      membership.has(node.id)
+        ? { ...node, groupId: membership.get(node.id) }
+        : { ...node, groupId: undefined },
+    ),
+    groups,
+    edges: document.edges.filter(
+      (edge) => entityIds.has(edge.source) && entityIds.has(edge.target),
+    ),
+  };
 }
 
 export function ungroup(document: CanvasDocument, groupId: string) {
