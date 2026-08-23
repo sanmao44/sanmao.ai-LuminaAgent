@@ -30,6 +30,7 @@ import {
   groupNodes,
   incomingContext,
   incomingReferences,
+  normalizeVariantRequirements,
   mediaCardSizeForRatio,
   nodeById,
   nodeSize,
@@ -113,6 +114,7 @@ import type {
   CanvasProject,
   CanvasRuntimeState,
   CanvasSnapshot,
+  CanvasVariantState,
 } from "@/lib/canvas/types";
 
 type Mode = CanvasMediaKind | "text";
@@ -282,14 +284,14 @@ const CONNECTION_NODE_OPTIONS: Array<{
   {
     kind: "workflowImage",
     icon: "✧",
-    label: "图片工作流",
-    description: "连接高级图片工作流",
+    label: "图片变体生成器",
+    description: "按多条要求批量生成图片变体",
   },
   {
     kind: "workflowVideo",
     icon: "◆",
-    label: "视频工作流",
-    description: "连接高级视频工作流",
+    label: "视频变体生成器",
+    description: "按多条要求串行生成视频变体",
   },
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
@@ -3719,6 +3721,7 @@ export default function SuperCanvas() {
       if (isEditableTarget(event.target)) return;
       const modifier = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
+      const isKeyZ = key === "z" || event.code === "KeyZ";
       const stageRect = stageRef.current?.getBoundingClientRect();
       const centerX =
         (stageRect?.left || 0) + (stageRect?.width || stageSize.width) / 2;
@@ -3735,8 +3738,9 @@ export default function SuperCanvas() {
         hideConnectionCancel();
         connectionHoverEdgeRef.current = null;
         clearSelection();
-      } else if (!event.repeat && modifier && key === "z") {
+      } else if (!event.repeat && modifier && isKeyZ) {
         event.preventDefault();
+        event.stopPropagation();
         event.shiftKey ? redo() : undo();
       } else if (!event.repeat && modifier && key === "y") {
         event.preventDefault();
@@ -3785,8 +3789,8 @@ export default function SuperCanvas() {
         void runGeneration();
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   }, [
     breakGroup,
     clearSelection,
