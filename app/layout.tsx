@@ -3,6 +3,7 @@ import './globals.css';
 import './provider-library.css';
 import './agent-upgrades.css';
 import './desktop-readability.css';
+import './canvas.css';
 
 export const viewport: Viewport = {
   colorScheme: 'light dark',
