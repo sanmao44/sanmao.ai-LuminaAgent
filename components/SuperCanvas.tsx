@@ -6139,6 +6139,7 @@ function CanvasAssetDrawer({
   const [newCollectionName, setNewCollectionName] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [nodeDropActive, setNodeDropActive] = useState(false);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
 
   useEffect(() => { void listAssetCollections().then(setCollections); }, []);
 
@@ -6275,6 +6276,41 @@ function CanvasAssetDrawer({
     }
   };
 
+  const renameCollection = async (collectionId: string) => {
+    const target = collections.find((item) => item.id === collectionId);
+    if (!target || target.builtin) {
+      onNotify("内置资产集合不能重命名。", "error");
+      return;
+    }
+    const nextName = window.prompt("重命名资产集合", target.name)?.trim();
+    if (!nextName || nextName === target.name) return;
+    const next = collections.map((item) => item.id === collectionId ? { ...item, name: nextName, updatedAt: Date.now() } : item);
+    try {
+      await saveAssetCollections(next);
+      setCollections(next);
+      onNotify(`已将资产集合重命名为“${nextName}”。`);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "资产集合重命名失败。", "error");
+    }
+  };
+
+  const addSelectedAssetsToCollection = async () => {
+    if (collection === "all" || collection === "uncategorized" || collection === "favorite" || collection === "recent" || collection === "generated" || collection === "reference" || collection === "image" || collection === "video") {
+      onNotify("请先在集合筛选中选择一个自定义集合，再批量归类。", "error");
+      return;
+    }
+    const selected = assets.filter((asset) => selectedAssetIds.has(asset.id));
+    if (!selected.length) return;
+    try {
+      await Promise.all(selected.map((asset) => updateUnifiedAssetMetadata(asset, { collectionIds: [...new Set([...(asset.collectionIds || []), collection])] })));
+      setAssets((items) => items.map((asset) => selectedAssetIds.has(asset.id) ? { ...asset, collectionIds: [...new Set([...(asset.collectionIds || []), collection])] } : asset));
+      setSelectedAssetIds(new Set());
+      onNotify(`已将 ${selected.length} 个资产加入“${collections.find((item) => item.id === collection)?.name || "当前集合"}”。`);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "批量归类失败。", "error");
+    }
+  };
+
   const toggleFavorite = async (asset: AssetRecord) => {
     try {
       await setUnifiedAssetFavorite(asset, !asset.favorite);
@@ -6390,17 +6426,20 @@ function CanvasAssetDrawer({
             </button>
           </div>
           <div className="canvas-asset-filters">
-            <SelectMenu
-              value={collection}
-              onChange={setCollection}
-              onDelete={(id) => void deleteCollection(id)}
-              ariaLabel="资产集合"
-              options={collections.map((item) => ({
-                value: item.id,
-                label: item.name,
-                deletable: !item.builtin,
-              }))}
-            />
+            <div className="canvas-asset-collection-picker">
+              <SelectMenu
+                value={collection}
+                onChange={setCollection}
+                onDelete={(id) => void deleteCollection(id)}
+                ariaLabel="资产集合"
+                options={collections.map((item) => ({
+                  value: item.id,
+                  label: item.name,
+                  deletable: !item.builtin,
+                }))}
+              />
+              <button type="button" disabled={collection === "all" || collections.find((item) => item.id === collection)?.builtin !== false} onClick={() => void renameCollection(collection)} title="重命名当前自定义集合" aria-label="重命名当前资产集合">✎</button>
+            </div>
             <SelectMenu
               value={source}
               onChange={setSource}
@@ -6433,6 +6472,7 @@ function CanvasAssetDrawer({
           <span>⌘</span><b>{collection === "all" ? "先选择集合，再拖入节点" : "把画布节点拖到这里归类"}</b><small>{collection === "all" ? "下拉框中可删除自定义集合" : "拖动节点右上角 ↗，节点不会从画布移除"}</small>
         </div>
         <div className="canvas-asset-new-collection"><input value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="新建集合…" onKeyDown={(event) => { if (event.key === "Enter") void createCollection(); }} /><button type="button" onClick={() => void createCollection()}>＋</button></div>
+        {selectedAssetIds.size > 0 && <div className="canvas-asset-bulk-bar"><b>已选 {selectedAssetIds.size} 个</b><button type="button" onClick={() => void addSelectedAssetsToCollection()}>加入当前集合</button><button type="button" onClick={() => setSelectedAssetIds(new Set())}>清除选择</button></div>}
         <div className="canvas-asset-results">
           <div className="canvas-asset-summary">
             <b>{filtered.length} 个资产</b>
@@ -6475,7 +6515,7 @@ function CanvasAssetDrawer({
                     <span>{asset.kind === "video" ? "▶ 视频" : "▣ 图片"}</span>
                   </button>
                   <div className="canvas-global-asset-copy">
-                    <b title={asset.name}>{asset.name}</b>
+                    <label className="canvas-asset-select"><input type="checkbox" checked={selectedAssetIds.has(asset.id)} onChange={(event) => setSelectedAssetIds((current) => { const next = new Set(current); if (event.target.checked) next.add(asset.id); else next.delete(asset.id); return next; })} aria-label={`选择资产 ${asset.name}`} /><b title={asset.name}>{asset.name}</b></label>
                     <small>
                       {ASSET_SOURCE_LABELS[asset.source]} ·{" "}
                       {asset.createdAt
