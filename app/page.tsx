@@ -8,6 +8,7 @@ import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
 import { listChatSessions, listGallery, loadImageDirectoryHandle, patchGalleryItem, removeChatSession, removeGalleryItems, replaceChatSessions, replaceGalleryItems, saveChatSession, saveGalleryItems, saveImageDirectoryHandle } from '@/lib/client-history';
+import Link from 'next/link';
 import MaskEditor from '@/components/MaskEditor';
 import VideoStudio from '@/components/VideoStudio';
 import SelectMenu from '@/components/SelectMenu';
@@ -1268,6 +1269,38 @@ function Icon({ name, size = 18 }) {
                 })
             ]
         }),
+        canvas: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "3.5",
+                    y: "3.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "13.5",
+                    y: "3.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "3.5",
+                    y: "13.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "13.5",
+                    y: "13.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                })
+            ]
+        }),
         menu: /*#__PURE__*/ _jsx(_Fragment, {
             children: /*#__PURE__*/ _jsx("path", {
                 d: "M4 7h16M4 12h16M4 17h16"
@@ -2518,7 +2551,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
         ]
     });
 }
-function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSource: passedComparisonSource, previousItem, priority = false, onSelect, onPreview, onEdit, onUpscale, onReuse, onReference, onCompare, onReversePrompt, onFavorite, onDownload, onDownloadShare, onDelete }) {
+function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSource: passedComparisonSource, previousItem, priority = false, onSelect, onPreview, onEdit, onUpscale, onReuse, onReference, onPushVideo, onCompare, onReversePrompt, onFavorite, onDownload, onDownloadShare, onDelete }) {
     const [menu, setMenu] = useState(false);
     const [imageState, setImageState] = useState('loading');
     const [retryToken, setRetryToken] = useState(0);
@@ -2664,6 +2697,18 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                         size: 15
                                     }),
                                     "复用参数"
+                                ]
+                            }),
+                            onPushVideo && /*#__PURE__*/ _jsxs("button", {
+                                type: "button",
+                                className: "push-video-action",
+                                onClick: onPushVideo,
+                                children: [
+                                    /*#__PURE__*/ _jsx(Icon, {
+                                        name: "video",
+                                        size: 15
+                                    }),
+                                    "生视频"
                                 ]
                             }),
                             /*#__PURE__*/ _jsxs("button", {
@@ -4888,6 +4933,9 @@ export default function Page() {
     const [selectedChatSessions, setSelectedChatSessions] = useState(new Set());
     const [selectionPush, setSelectionPush] = useState(null);
     const [videoPromptPrefill, setVideoPromptPrefill] = useState(null);
+    const [videoReferenceQueue, setVideoReferenceQueue] = useState([]);
+    const [videoMediaPrefill, setVideoMediaPrefill] = useState(null);
+    const [videoMediaPrefillToken, setVideoMediaPrefillToken] = useState(0);
     const [chatNearBottom, setChatNearBottom] = useState(true);
     const chatEndRef = useRef(null);
     const agentComposerRef = useRef(null);
@@ -9150,6 +9198,101 @@ export default function Page() {
             y: 0
         });
     }
+    const VIDEO_QUEUE_MAX = 20;
+
+    function pushVideoQueueItem(item) {
+        if (!availableVideoModels.length) {
+            notify('请先在模型库启用视频模型');
+            return false;
+        }
+        if (videoReferenceQueue.some((queued)=>queued.id === item.id)) {
+            notify('该图片已在视频队列');
+            return false;
+        }
+        if (videoReferenceQueue.length >= VIDEO_QUEUE_MAX) {
+            notify('视频参考队列最多 ' + VIDEO_QUEUE_MAX + ' 张，请先清理');
+            return false;
+        }
+        markHistoryImageViewed(item);
+        setVideoReferenceQueue((current)=>[
+            ...current,
+            {
+                id: item.id,
+                url: item.url
+            }
+        ]);
+        notify('已加入视频参考，可继续选择图片');
+        return true;
+    }
+    function pushToVideo(item) {
+        void pushVideoQueueItem(item);
+    }
+    function pushSelectedToVideo() {
+        if (!availableVideoModels.length) {
+            notify('请先在模型库启用视频模型');
+            return;
+        }
+        const queuedIds = new Set(videoReferenceQueue.map((queued)=>queued.id));
+        const additions = [];
+        let duplicateCount = 0;
+        for (const id of selectedHistory) {
+            const item = gallery.find((entry)=>entry.id === id);
+            if (!item) continue;
+            if (queuedIds.has(item.id)) {
+                duplicateCount++;
+                continue;
+            }
+            if (videoReferenceQueue.length + additions.length >= VIDEO_QUEUE_MAX) break;
+            queuedIds.add(item.id);
+            additions.push({
+                id: item.id,
+                url: item.url
+            });
+        }
+        if (!additions.length) {
+            notify(duplicateCount ? '所选图片都已在视频队列' : '没有可推送的作品');
+            return;
+        }
+        setVideoReferenceQueue((current)=>[
+            ...current,
+            ...additions
+        ]);
+        notify('已加入 ' + additions.length + ' 张到视频参考');
+    }
+    function clearVideoQueue() {
+        setVideoReferenceQueue([]);
+    }
+    async function goVideoFromQueue() {
+        if (!videoReferenceQueue.length) return;
+        const queueSnapshot = videoReferenceQueue;
+        const results = await Promise.allSettled(queueSnapshot.map(async (queued)=>{
+            const item = gallery.find((entry)=>entry.id === queued.id) || gallery.find((entry)=>entry.url === queued.url);
+            if (!item) throw new Error('找不到对应作品');
+            const prepared = await galleryItemToReference(item);
+            return {
+                name: prepared.name,
+                url: prepared.dataUrl,
+                kind: 'image'
+            };
+        }));
+        const resolved = [];
+        let failedCount = 0;
+        for (const result of results) {
+            if (result.status === 'fulfilled') resolved.push(result.value);
+            else failedCount++;
+        }
+        if (!resolved.length) {
+            notify('没有可用的图片，请重试');
+            return;
+        }
+        if (failedCount) notify('有 ' + failedCount + ' 张图片无法读取，已跳过');
+        const capped = resolved.slice(0, VIDEO_QUEUE_MAX);
+        setVideoMediaPrefill(capped);
+        setVideoMediaPrefillToken((token)=>token + 1);
+        setVideoReferenceQueue([]);
+        setSection('video');
+        if (!failedCount) notify('已带入 ' + capped.length + ' 张参考图到视频');
+    }
     function adjustViewerZoom(next) {
         const value = Math.min(10, Math.max(0.25, Math.round(next * 20) / 20));
         setViewerZoom(value);
@@ -9817,12 +9960,34 @@ export default function Page() {
                                                 children: "Agent"
                                             })
                                         ]
-                                    })
+                                    }),
                                 ]
                             }),
                             /*#__PURE__*/ _jsx("div", {
                                 className: "top-actions",
                                 children: [
+                                    /*#__PURE__*/ _jsxs(Link, {
+                                        href: "/canvas",
+                                        className: "super-canvas-entry",
+                                        "aria-label": "超级画布",
+                                        "data-tooltip": "超级画布 · 无限画布",
+                                        onClick: ()=>{
+                                            closeSidebarOnMobile();
+                                        },
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "canvas",
+                                                size: 16
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "超级画布"
+                                            }),
+                                            /*#__PURE__*/ _jsx("small", {
+                                                className: "super-canvas-entry-badge",
+                                                children: "NEW"
+                                            })
+                                        ]
+                                    }),
                                     section === 'agent' && messages.length > 0 && (shareSelectionMode ? /*#__PURE__*/ _jsxs("div", {
                                         className: "conversation-share-controls",
                                         role: "toolbar",
@@ -10574,6 +10739,9 @@ export default function Page() {
                                 defaultModelId: state.settings.defaultVideoModelId,
                                 promptPrefill: videoPromptPrefill,
                                 onPromptPrefillConsumed: ()=>setVideoPromptPrefill(null),
+                                mediaPrefill: videoMediaPrefill,
+                                mediaPrefillToken: videoMediaPrefillToken,
+                                onMediaPrefillConsumed: ()=>setVideoMediaPrefill(null),
                                 onOpenModels: ()=>setSection('models'),
                                 onNotify: notify
                             }),
@@ -11482,6 +11650,7 @@ export default function Page() {
                                                                             onUpscale: ()=>openUpscale(item),
                                                                             onReuse: ()=>reuseItem(item),
                                                                             onReference: ()=>useAsReference(item),
+                                                                            onPushVideo: ()=>pushToVideo(item),
                                                                             onCompare: ()=>openCompare(item),
                                                                             onReversePrompt: ()=>reversePrompt(item),
                                                                             onFavorite: ()=>void toggleFavorite(item),
@@ -11570,6 +11739,7 @@ export default function Page() {
                                                         onUpscale: ()=>openUpscale(item),
                                                         onReuse: ()=>reuseItem(item),
                                                         onReference: ()=>useAsReference(item),
+                                                        onPushVideo: ()=>pushToVideo(item),
                                                         onCompare: ()=>openCompare(item),
                                                         onReversePrompt: ()=>reversePrompt(item),
                                                         onFavorite: ()=>void toggleFavorite(item),
@@ -11737,6 +11907,18 @@ export default function Page() {
                                                         ]
                                                     }),
                                                     /*#__PURE__*/ _jsxs("button", {
+                                                        className: "push-video-batch",
+                                                        disabled: !selectedHistory.size,
+                                                        onClick: ()=>pushSelectedToVideo(),
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "video",
+                                                                size: 15
+                                                            }),
+                                                            "推送到视频"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("button", {
                                                         className: "danger",
                                                         disabled: !selectedHistory.size,
                                                         onClick: ()=>askDeleteItems([
@@ -11785,6 +11967,7 @@ export default function Page() {
                                                         onUpscale: ()=>openUpscale(item),
                                                         onReuse: ()=>reuseItem(item),
                                                         onReference: ()=>useAsReference(item),
+                                                        onPushVideo: ()=>pushToVideo(item),
                                                         onCompare: ()=>openCompare(item),
                                                         onReversePrompt: ()=>reversePrompt(item),
                                                         onFavorite: ()=>void toggleFavorite(item),
@@ -11875,6 +12058,51 @@ export default function Page() {
                                                 ]
                                             })
                                         ]
+                                    })
+                                ]
+                            }),
+                            videoReferenceQueue.length > 0 && section === 'history' && recordTab === 'works' && /*#__PURE__*/ _jsxs("div", {
+                                className: "video-reference-dock",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "video-reference-dock-thumbs",
+                                        children: [
+                                            videoReferenceQueue.slice(0, 4).map((queued, index)=>/*#__PURE__*/ _jsx("img", {
+                                                src: queued.url,
+                                                alt: "参考图 " + (index + 1)
+                                            }, queued.id)),
+                                            videoReferenceQueue.length > 4 && /*#__PURE__*/ _jsx("span", {
+                                                className: "video-reference-dock-label",
+                                                children: "+" + (videoReferenceQueue.length - 4)
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "video-reference-dock-meta",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("strong", {
+                                                children: videoReferenceQueue.length + " 张"
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "视频参考"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        className: "video-reference-dock-go",
+                                        onClick: ()=>{
+                                            void goVideoFromQueue();
+                                        },
+                                        children: [
+                                            "去生成 (",
+                                            videoReferenceQueue.length,
+                                            ")"
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        className: "video-reference-dock-clear",
+                                        onClick: clearVideoQueue,
+                                        title: "清空队列"
                                     })
                                 ]
                             }),

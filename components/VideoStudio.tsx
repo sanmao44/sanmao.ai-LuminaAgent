@@ -25,6 +25,9 @@ type Props = {
   defaultModelId?: string | null;
   promptPrefill?: string | null;
   onPromptPrefillConsumed?: () => void;
+  mediaPrefill?: { name: string; url: string; kind: 'image' }[];
+  mediaPrefillToken?: number;
+  onMediaPrefillConsumed?: () => void;
   onOpenModels: () => void;
   onNotify: (message: string) => void;
 };
@@ -135,7 +138,7 @@ function statusLabel(status: VideoTask['status']) {
   return status === 'done' ? '已完成' : status === 'failed' ? '失败' : status === 'running' ? '生成中' : '排队中';
 }
 
-export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, onOpenModels, onNotify }: Props) {
+export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState(defaultModelId || 'auto');
   const [operation, setOperation] = useState<VideoOperation>('generate');
@@ -222,6 +225,67 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setReferenceImages((old) => old.length > modelLimits.maxReferenceImages ? old.slice(0, modelLimits.maxReferenceImages) : old);
     setAudios((old) => old.length > modelLimits.maxAudios ? old.slice(0, modelLimits.maxAudios) : old);
   }, [durationOptions, modelLimits, resolution, seconds]);
+
+  // Consume reference images pushed from the record view and map them to the
+  // best-supported video input mode, degrading gracefully when the selected
+  // model cannot accept the full set.
+  useEffect(() => {
+    if (!mediaPrefillToken || !mediaPrefill?.length) return;
+    const images = mediaPrefill.filter((item) => item.kind === 'image');
+    if (!images.length) {
+      onMediaPrefillConsumed?.();
+      return;
+    }
+    const maxReference = modelLimits.maxReferenceImages || images.length;
+    const applyText = () => {
+      setInputMode('text');
+      setFirstFrame(null);
+      setLastFrame(null);
+      setReferenceImages([]);
+      onNotify('当前模型不支持图片输入，已切换到纯文本');
+    };
+    const applyFirstFrame = (list: UploadSlot[]) => {
+      setInputMode('first-frame');
+      setFirstFrame(list[0] || null);
+      setLastFrame(null);
+      setReferenceImages([]);
+    };
+    const applyFrames = (list: UploadSlot[]) => {
+      setInputMode('frames');
+      setFirstFrame(list[0] || null);
+      setLastFrame(list[1] || null);
+      setReferenceImages([]);
+    };
+    const applyReference = (list: UploadSlot[]) => {
+      setInputMode('reference');
+      setReferenceImages(list);
+      setFirstFrame(null);
+      setLastFrame(null);
+    };
+
+    if (images.length === 1) {
+      if (supportsFirst) applyFirstFrame(images);
+      else if (supportsReference) {
+        applyReference(images);
+        onNotify('当前模型不支持首帧，已改用参考图');
+      } else applyText();
+    } else if (images.length === 2) {
+      if (supportsFirst) applyFrames(images);
+      else if (supportsReference) {
+        applyReference(images);
+        onNotify('当前模型不支持首尾帧，已改用参考图');
+      } else applyText();
+    } else {
+      const capped = images.length > maxReference ? images.slice(0, maxReference) : images;
+      if (capped.length !== images.length) onNotify('已保留前 ' + maxReference + ' 张参考图');
+      if (supportsReference) applyReference(capped);
+      else if (supportsFirst) {
+        applyFrames(capped);
+        onNotify('当前模型不支持多帧参考，已改用首尾帧');
+      } else applyText();
+    }
+    onMediaPrefillConsumed?.();
+  }, [mediaPrefillToken]);
 
   async function refreshTasks() {
     try {
