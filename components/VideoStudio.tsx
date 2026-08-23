@@ -9,6 +9,7 @@ import { is65535Provider, isJimengProvider } from '@/lib/video-platform';
 type VideoTask = {
   id: string;
   status: 'pending' | 'running' | 'done' | 'failed';
+  modelId?: string;
   modelName?: string;
   operation?: string;
   input?: VideoGenerationInput;
@@ -34,6 +35,7 @@ type Props = {
 
 type UploadSlot = { name: string; url: string; kind: 'image' | 'video' | 'audio' };
 type VideoOperation = 'generate' | 'edit' | 'extend';
+type VideoInputMode = 'text' | 'first-frame' | 'frames' | 'reference';
 const MAX_65535_INLINE_BYTES = 64 * 1024 * 1024;
 const MAX_VIDEO_IMAGE_EDGE = 2048;
 const MAX_VIDEO_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -138,11 +140,181 @@ function statusLabel(status: VideoTask['status']) {
   return status === 'done' ? '已完成' : status === 'failed' ? '失败' : status === 'running' ? '生成中' : '排队中';
 }
 
+function operationLabel(operation?: string) {
+  return operation === 'extend' ? '扩展' : operation === 'edit' ? '编辑' : '生成';
+}
+
+function taskParameterSummary(task: VideoTask) {
+  const input: Partial<VideoGenerationInput> = task.input || {};
+  const duration = input.seconds ? `${input.seconds} 秒` : '默认时长';
+  const ratio = input.aspectRatio || 'Auto';
+  const resolution = input.resolution || '默认清晰度';
+  return `${duration} · ${ratio} · ${resolution}`;
+}
+
+function uploadSlot(url: string, name: string, kind: UploadSlot['kind']): UploadSlot {
+  return { url, name, kind };
+}
+
+type VideoRestorePlan = {
+  modelId: string;
+  prompt: string;
+  operation: VideoOperation;
+  inputMode: VideoInputMode;
+  seconds: number;
+  ratio: string;
+  resolution: string;
+  firstFrame: UploadSlot | null;
+  lastFrame: UploadSlot | null;
+  referenceImages: UploadSlot[];
+  referenceVideo: UploadSlot | null;
+  audios: UploadSlot[];
+  warnings: string[];
+};
+
+function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], providers: ProviderConnection[], defaultModelId?: string | null): VideoRestorePlan {
+  const input: Partial<VideoGenerationInput> = task.input || {};
+  const requestedModelId = task.modelId || input.model;
+  const targetModel = requestedModelId && requestedModelId !== 'auto' ? models.find((model) => model.id === requestedModelId) : undefined;
+  const defaultModel = defaultModelId ? models.find((model) => model.id === defaultModelId) : undefined;
+  const modelForLimits = targetModel || defaultModel || models[0];
+  const modelId = targetModel?.id || defaultModel?.id || 'auto';
+  const provider = providers.find((item) => item.id === modelForLimits?.providerId);
+  const capabilities = modelForLimits?.capabilities || [];
+  const can = (name: string) => capabilities.includes(name as never);
+  const uses65535Policy = is65535Provider(provider);
+  const usesJimengCli = isJimengProvider(provider);
+  const supportsEdit = can('video-edit');
+  const supportsExtend = can('video-extend');
+  const supportsFirst = can('video-first-frame') || can('video-generate') || uses65535Policy;
+  const supportsReference = can('video-reference') || can('video-generate') || uses65535Policy;
+  const supportsAudio = can('video-audio') || !uses65535Policy;
+  const warnings: string[] = [];
+
+  if (requestedModelId && requestedModelId !== 'auto' && !targetModel) warnings.push('历史模型已不可用，已切换到当前默认模型');
+
+  let operation = (input.operation || task.operation || 'generate') as VideoOperation;
+  if (operation !== 'generate' && operation !== 'edit' && operation !== 'extend') operation = 'generate';
+  if (operation === 'edit' && !supportsEdit) {
+    operation = 'generate';
+    warnings.push('当前模型不支持视频编辑，已切换为生成视频');
+  }
+  if (operation === 'extend' && !supportsExtend) {
+    operation = 'generate';
+    warnings.push('当前模型不支持视频扩展，已切换为生成视频');
+  }
+
+  const firstUrl = typeof input.firstFrame === 'string' ? input.firstFrame : '';
+  const lastUrl = typeof input.lastFrame === 'string' ? input.lastFrame : '';
+  const sourceReferenceUrls = Array.isArray(input.referenceImages) ? input.referenceImages.filter((value): value is string => typeof value === 'string' && Boolean(value)) : [];
+  let inputMode: VideoInputMode = 'text';
+  let firstFrame: UploadSlot | null = null;
+  let lastFrame: UploadSlot | null = null;
+  let referenceImages: UploadSlot[] = [];
+
+  if (firstUrl && lastUrl) {
+    if (supportsFirst) {
+      inputMode = 'frames';
+      firstFrame = uploadSlot(firstUrl, '首帧', 'image');
+      lastFrame = uploadSlot(lastUrl, '尾帧', 'image');
+    } else if (supportsReference) {
+      inputMode = 'reference';
+      const maxReferenceImages = getVideoModelLimits(modelForLimits, provider).maxReferenceImages;
+      referenceImages = [uploadSlot(firstUrl, '参考图 1', 'image'), uploadSlot(lastUrl, '参考图 2', 'image')].slice(0, maxReferenceImages);
+      warnings.push('当前模型不支持首尾帧，已改用参考图');
+      if (maxReferenceImages < 2) warnings.push(`参考图已按当前模型限制保留前 ${maxReferenceImages} 张`);
+    } else {
+      warnings.push('当前模型不支持图片输入，已切换为纯文本');
+    }
+  } else if (firstUrl) {
+    if (supportsFirst) {
+      inputMode = 'first-frame';
+      firstFrame = uploadSlot(firstUrl, '首帧', 'image');
+    } else if (supportsReference) {
+      inputMode = 'reference';
+      referenceImages = [uploadSlot(firstUrl, '参考图 1', 'image')];
+      warnings.push('当前模型不支持首帧，已改用参考图');
+    } else {
+      warnings.push('当前模型不支持图片输入，已切换为纯文本');
+    }
+  } else if (sourceReferenceUrls.length) {
+    if (supportsReference) {
+      inputMode = 'reference';
+      const maxReferenceImages = getVideoModelLimits(modelForLimits, provider).maxReferenceImages;
+      referenceImages = sourceReferenceUrls.slice(0, maxReferenceImages).map((url, index) => uploadSlot(url, `参考图 ${index + 1}`, 'image'));
+      if (sourceReferenceUrls.length > referenceImages.length) warnings.push(`参考图已按当前模型限制保留前 ${referenceImages.length} 张`);
+    } else if (supportsFirst) {
+      if (sourceReferenceUrls.length > 2) warnings.push('当前模型不支持多张参考图，已保留首尾两张');
+      inputMode = sourceReferenceUrls.length > 1 ? 'frames' : 'first-frame';
+      firstFrame = uploadSlot(sourceReferenceUrls[0], '首帧', 'image');
+      lastFrame = sourceReferenceUrls[1] ? uploadSlot(sourceReferenceUrls[sourceReferenceUrls.length - 1], '尾帧', 'image') : null;
+      if (!lastFrame) warnings.push('当前模型不支持参考图，已改用首帧');
+      else warnings.push('当前模型不支持参考图，已改用首尾帧');
+    } else {
+      warnings.push('当前模型不支持图片输入，已切换为纯文本');
+    }
+  }
+
+  const inputReferenceVideo = typeof input.referenceVideo === 'string' ? input.referenceVideo : '';
+  const referenceVideo = inputReferenceVideo && operation !== 'generate' ? uploadSlot(inputReferenceVideo, '参考视频', 'video') : null;
+  if (inputReferenceVideo && !referenceVideo) warnings.push('当前操作不使用参考视频，已清除该素材');
+
+  const sourceAudioUrls = Array.isArray(input.audios) && input.audios.length
+    ? input.audios.filter((value): value is string => typeof value === 'string' && Boolean(value))
+    : typeof input.audio === 'string' && input.audio ? [input.audio] : [];
+  let audios: UploadSlot[] = [];
+  if (sourceAudioUrls.length && supportsAudio) {
+    const maxAudios = getVideoModelLimits(modelForLimits, provider).maxAudios;
+    audios = sourceAudioUrls.slice(0, maxAudios).map((url, index) => uploadSlot(url, `音频 ${index + 1}`, 'audio'));
+    if (sourceAudioUrls.length > audios.length) warnings.push(`音频已按当前模型限制保留前 ${audios.length} 段`);
+  } else if (sourceAudioUrls.length) {
+    warnings.push('当前模型不支持音频输入，已清除音频素材');
+  }
+
+  const baseLimits = getVideoModelLimits(modelForLimits, provider);
+  const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
+  const limits = usesJimengMultiframe ? {
+    ...baseLimits,
+    minSeconds: 1,
+    maxSeconds: 8,
+    allowedSeconds: Array.from({ length: 8 }, (_, index) => index + 1),
+    resolutions: ['720p', '1080p'],
+  } : baseLimits;
+  const durationValues = limits.fixedSeconds ? [limits.fixedSeconds] : limits.allowedSeconds || [1, 3, 5, 8, 10, 15, 30, 60];
+  const requestedSeconds = Number(input.seconds || 5);
+  const seconds = durationValues.includes(requestedSeconds) && requestedSeconds >= limits.minSeconds && requestedSeconds <= limits.maxSeconds
+    ? requestedSeconds
+    : durationValues.find((value) => value >= limits.minSeconds && value <= limits.maxSeconds) || limits.minSeconds;
+  if (input.seconds !== undefined && seconds !== requestedSeconds) warnings.push(`时长已调整为当前模型支持的 ${seconds} 秒`);
+
+  const requestedRatio = typeof input.aspectRatio === 'string' && allRatios.includes(input.aspectRatio) ? input.aspectRatio : '16:9';
+  if (input.aspectRatio && requestedRatio !== input.aspectRatio) warnings.push('比例已调整为当前支持的选项');
+  const requestedResolution = typeof input.resolution === 'string' ? input.resolution : '720p';
+  const resolution = limits.resolutions.includes(requestedResolution) ? requestedResolution : limits.resolutions[0] || '720p';
+  if (input.resolution && resolution !== input.resolution) warnings.push(`分辨率已调整为 ${resolution}`);
+
+  return {
+    modelId,
+    prompt: typeof input.prompt === 'string' ? input.prompt : '',
+    operation,
+    inputMode,
+    seconds,
+    ratio: requestedRatio,
+    resolution,
+    firstFrame,
+    lastFrame,
+    referenceImages,
+    referenceVideo,
+    audios,
+    warnings,
+  };
+}
+
 export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState(defaultModelId || 'auto');
   const [operation, setOperation] = useState<VideoOperation>('generate');
-  const [inputMode, setInputMode] = useState<'text' | 'first-frame' | 'frames' | 'reference'>('text');
+  const [inputMode, setInputMode] = useState<VideoInputMode>('text');
   const [seconds, setSeconds] = useState(5);
   const [ratio, setRatio] = useState('16:9');
   const [resolution, setResolution] = useState('720p');
@@ -154,6 +326,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [previewImage, setPreviewImage] = useState<UploadSlot | null>(null);
   const [referenceMentionOpen, setReferenceMentionOpen] = useState(false);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -307,6 +480,13 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     return () => window.clearTimeout(timer);
   }, [tasks]);
 
+  useEffect(() => {
+    setSelectedTaskId((current) => {
+      if (current && tasks.some((task) => task.id === current)) return current;
+      return tasks.find((task) => task.status === 'done' && task.videoUrls?.length)?.id || tasks[0]?.id || null;
+    });
+  }, [tasks]);
+
   async function selectFile(key: string, onChange: (slot: UploadSlot | null) => void, kind: UploadSlot['kind']) {
     const input = inputRefs.current[key];
     if (!input?.files?.[0]) return;
@@ -377,6 +557,46 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setPrompt((value) => value.replace(/@(?:[1-9]|1[0-6])\s*/g, '').replace(/[ \t]{2,}/g, ' '));
   }
 
+  function hasDraft() {
+    return Boolean(
+      prompt.trim()
+      || firstFrame
+      || lastFrame
+      || referenceImages.length
+      || referenceVideo
+      || audios.length
+      || operation !== 'generate'
+      || inputMode !== 'text'
+      || seconds !== 5
+      || ratio !== '16:9'
+      || resolution !== '720p'
+      || (modelId !== 'auto' && modelId !== defaultModelId),
+    );
+  }
+
+  function restoreTask(task: VideoTask) {
+    if (!task.input) return onNotify('这条任务没有保存完整参数，无法恢复');
+    if (hasDraft() && !window.confirm('恢复历史参数会替换左侧当前草稿，是否继续？')) return;
+
+    const plan = buildVideoRestorePlan(task, models, providers, defaultModelId);
+    setPrompt(plan.prompt);
+    setModelId(plan.modelId);
+    setOperation(plan.operation);
+    setInputMode(plan.inputMode);
+    setSeconds(plan.seconds);
+    setRatio(plan.ratio);
+    setResolution(plan.resolution);
+    setFirstFrame(plan.firstFrame);
+    setLastFrame(plan.lastFrame);
+    setReferenceImages(plan.referenceImages);
+    setReferenceVideo(plan.referenceVideo);
+    setAudios(plan.audios);
+    setReferenceMentionOpen(false);
+    setPreviewImage(null);
+    setSelectedTaskId(task.id);
+    onNotify(plan.warnings.length ? `已恢复参数；${plan.warnings.join('；')}` : '已恢复这条任务的全部参数');
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!prompt.trim()) return onNotify('请先输入视频提示词');
@@ -432,13 +652,17 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok && !data.task) throw new Error(data.error || '提交视频任务失败');
-      if (data.task) setTasks((old) => [data.task, ...old.filter((task) => task.id !== data.task.id)]);
+      if (data.task) {
+        setTasks((old) => [data.task, ...old.filter((task) => task.id !== data.task.id)]);
+        setSelectedTaskId(data.task.id);
+      }
       onNotify('视频任务已提交，完成后会自动保存到本地');
     } catch (error) { onNotify(error instanceof Error ? error.message : '视频生成失败'); }
     finally { setBusy(false); }
   }
 
-  const previewTask = useMemo(() => tasks.find((task) => task.status === 'done' && task.videoUrls?.length), [tasks]);
+  const selectedTask = useMemo(() => tasks.find((task) => task.id === selectedTaskId) || null, [selectedTaskId, tasks]);
+  const previewTask = selectedTask?.status === 'done' && selectedTask.videoUrls?.length ? selectedTask : null;
 
   return <section className="video-studio-page">
     <div className="video-studio-hero">
@@ -447,7 +671,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         <h1>把想法变成一段会动的画面</h1>
         <p>统一接入 65535、OpenAI 兼容接口和即梦 CLI。任务会保存在本地，远程完成后自动下载。</p>
       </div>
-      <div className="video-hero-orb" aria-hidden="true">✦</div>
+      <div className="video-hero-orb" aria-hidden="true"><img src="/brand-mark.png" alt="" /></div>
     </div>
     {!models.length ? <div className="video-empty-state">
       <div className="video-empty-icon">▣</div><h2>还没有可用的视频模型</h2>
@@ -480,8 +704,26 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         <button className="video-primary-button video-submit" type="submit" disabled={busy}><span>{busy ? '提交中…' : '开始生成视频'}</span><b>↗</b></button>
       </form>
       <aside className="video-preview-column">
-        <div className="video-preview-card"><div className="video-card-heading"><div><span>预览与任务</span><small>{tasks.length ? `${tasks.length} 个本地任务` : '生成后会显示在这里'}</small></div><button className="video-quiet-button" type="button" onClick={() => void refreshTasks()}>刷新</button></div>{previewTask ? <video className="video-preview-player" src={previewTask.videoUrls?.[0]} controls playsInline /> : <div className="video-preview-empty"><div className="video-play-orb">▶</div><span>完成的视频会自动出现在这里</span><small>支持下载、复制地址与再次生成</small></div>}</div>
-        <div className="video-task-list"><div className="video-task-list-heading"><span>最近任务</span><small>状态会自动更新</small></div>{tasks.length ? tasks.slice(0, 8).map((task) => <article className={`video-task-card ${task.status}`} key={task.id}>{task.status !== 'done' && <span className="video-task-scan" aria-hidden="true" />}<div className="video-task-meta"><span className="video-status-pill">{statusLabel(task.status)}</span><time>{formatTime(task.createdAt)}</time></div><strong>{task.input?.prompt || '未命名视频任务'}</strong><small>{task.modelName || '自动模型'} · {task.operation === 'extend' ? '扩展' : task.operation === 'edit' ? '编辑' : '生成'}</small>{task.status === 'done' && task.videoUrls?.length ? <>{task.error && <p className="video-task-error">远程完成，但本地保存失败：{task.error}</p>}<div className="video-task-actions"><a href={task.videoUrls[0]} download target="_blank" rel="noreferrer">下载视频</a><button type="button" onClick={() => void navigator.clipboard?.writeText(task.remoteVideoUrls?.[0] || task.videoUrls?.[0] || '').then(() => onNotify('视频地址已复制'))}>复制地址</button>{task.error && <button type="button" onClick={async () => { const response = await fetch(`/api/video/tasks/${task.id}`, { method: 'POST' }); const data = await response.json().catch(() => ({})); if (!response.ok) onNotify(data.error || '再次保存失败'); else { onNotify('已再次保存视频'); void refreshTasks(); } }}>再次保存</button>}</div></> : task.status === 'failed' ? <p className="video-task-error">{task.error || '视频任务失败'}</p> : <small className="video-task-waiting">正在等待服务商完成…</small>}</article>) : <div className="video-task-list-empty">暂无任务，提交第一段视频吧。</div>}</div>
+        <div className="video-preview-card">
+          <div className="video-card-heading"><div><span>预览与任务</span><small>{selectedTask ? `${selectedTask.modelName || '自动模型'} · ${statusLabel(selectedTask.status)}` : tasks.length ? `${tasks.length} 个本地任务` : '生成后会显示在这里'}</small></div><button className="video-quiet-button" type="button" onClick={() => void refreshTasks()}>刷新</button></div>
+          {previewTask ? <video className="video-preview-player" src={previewTask.videoUrls?.[0]} controls playsInline /> : <div className={`video-preview-empty ${selectedTask ? `video-preview-${selectedTask.status}` : ''}`}><div className="video-play-orb">{selectedTask?.status === 'failed' ? '!' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '…' : '▶'}</div><span>{selectedTask?.status === 'failed' ? '视频任务失败' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '正在等待服务商完成…' : selectedTask ? '任务已完成，但没有可预览的视频' : '完成的视频会自动出现在这里'}</span><small>{selectedTask?.error || (selectedTask ? '可点击“恢复参数”继续创作' : '支持下载、复制地址与再次生成')}</small></div>}
+        </div>
+        <div className="video-task-list">
+          <div className="video-task-list-heading"><span>最近任务</span><small>点击任务切换预览 · 列表可滚动</small></div>
+          <div className="video-task-list-scroll">
+            {tasks.length ? tasks.slice(0, 8).map((task) => {
+              const selected = task.id === selectedTaskId;
+              return <article className={`video-task-card ${task.status} ${selected ? 'selected' : ''}`} key={task.id} role="button" tabIndex={0} aria-pressed={selected} onClick={() => setSelectedTaskId(task.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedTaskId(task.id); } }}>
+                {task.status !== 'done' && <span className="video-task-scan" aria-hidden="true" />}
+                <div className="video-task-meta"><span className="video-status-pill">{statusLabel(task.status)}</span><time>{formatTime(task.createdAt)}</time></div>
+                <strong>{task.input?.prompt || '未命名视频任务'}</strong>
+                <small>{task.modelName || '自动模型'} · {operationLabel(task.operation)}</small>
+                <small className="video-task-param-summary">{taskParameterSummary(task)}</small>
+                {task.status === 'done' && task.videoUrls?.length ? <>{task.error && <p className="video-task-error">远程完成，但本地保存失败：{task.error}</p>}<div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" onClick={() => restoreTask(task)}>恢复参数</button><a href={task.videoUrls[0]} download target="_blank" rel="noreferrer">下载视频</a><button type="button" onClick={() => void navigator.clipboard?.writeText(task.remoteVideoUrls?.[0] || task.videoUrls?.[0] || '').then(() => onNotify('视频地址已复制'))}>复制地址</button>{task.error && <button type="button" onClick={async () => { const response = await fetch(`/api/video/tasks/${task.id}`, { method: 'POST' }); const data = await response.json().catch(() => ({})); if (!response.ok) onNotify(data.error || '再次保存失败'); else { onNotify('已再次保存视频'); void refreshTasks(); } }}>再次保存</button>}</div></> : task.status === 'failed' ? <><p className="video-task-error">{task.error || '视频任务失败'}</p><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" onClick={() => restoreTask(task)}>恢复参数</button></div></> : <><small className="video-task-waiting">正在等待服务商完成…</small><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" onClick={() => restoreTask(task)}>恢复参数</button></div></>}
+              </article>;
+            }) : <div className="video-task-list-empty">暂无任务，提交第一段视频吧。</div>}
+          </div>
+        </div>
       </aside>
     </div>}
     {previewImage && <div className="video-media-dialog" role="dialog" aria-modal="true" aria-label="查看参考图" onClick={() => setPreviewImage(null)}><div className="video-media-dialog-inner" onClick={(event) => event.stopPropagation()}><button type="button" className="video-media-dialog-close" aria-label="关闭预览" onClick={() => setPreviewImage(null)}>×</button><img src={previewImage.url} alt={previewImage.name} /><span>{previewImage.name}</span></div></div>}

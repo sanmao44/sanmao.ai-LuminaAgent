@@ -5,7 +5,7 @@ import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, Provi
 import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
-import { resolveModelKind } from './model-kind';
+import { inferModelKind, resolveModelKind } from './model-kind';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -135,19 +135,21 @@ function maskKey(secret: string) {
   return `${secret.slice(0, 3)}••••${secret.slice(-4)}`;
 }
 
-export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSearchProtocol?: NativeSearchProtocol): { kind: ModelKind; capabilities: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection } {
+export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSearchProtocol?: NativeSearchProtocol, hints: { displayName?: string; capabilities?: ModelCapability[] } = {}): { kind: ModelKind; capabilities: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection } {
   const id = rawId.toLowerCase();
+  const inferredKind = inferModelKind({ rawId, displayName: hints.displayName, capabilities: hints.capabilities });
   const upscaleish = /(seed[-_ ]?vr2?|real[-_ ]?esrgan|swinir|upscal|super[-_ ]?resolution)/.test(id);
   if (upscaleish) return { kind: 'image', capabilities: ['edit', 'reference', 'upscale'] };
+  if (inferredKind === 'video') return { kind: 'video', capabilities: ['video-generate'] };
   const imageish = /(image|imagen|flux|sdxl|stable-diffusion|dall-e|ideogram|recraft|seedream|nano[-_ ]?banana)/.test(id);
-  if (imageish) {
+  if (imageish || inferredKind === 'image') {
     const capabilities: ModelCapability[] = ['generate'];
     if (/(gpt-image|gemini.*image|nano|recraft|flux)/.test(id)) capabilities.push('edit', 'reference');
     if (/(gpt-image|gemini.*image|ideogram|recraft)/.test(id)) capabilities.push('typography');
     return { kind: 'image', capabilities };
   }
   const chatish = /(gpt|gemini|claude|deepseek|qwen|llama|mistral|glm|kimi|command-r|o[134]|sonar|perplexity)/.test(id);
-  if (chatish) {
+  if (chatish || inferredKind === 'chat') {
     const capabilities: ModelCapability[] = ['chat', 'vision'];
     const inferredNative = inferNativeSearch(rawId, platform);
     const protocol = nativeSearchProtocol || inferredNative.protocol;
@@ -158,7 +160,7 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
 }
 
 function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): RegistryModel {
-  const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol);
+  const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol, { displayName: model.displayName, capabilities: model.capabilities });
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
   const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search');
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
@@ -170,7 +172,13 @@ function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): Regi
 
 export async function getPublicState(): Promise<PublicState> {
   const state = await readState();
-  state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const normalizedModels = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  if (normalizedModels.some((model, index) => JSON.stringify(model) !== JSON.stringify(state.models[index]))) {
+    await mutateState((latest) => {
+      latest.models = latest.models.map((model) => normalizeModel(model, latest.providers.find((provider) => provider.id === model.providerId)?.platform));
+    });
+  }
+  state.models = normalizedModels;
   const providers: ProviderConnection[] = await Promise.all(state.providers.map(async (p) => {
     let key = '';
     try { key = await decryptSecret(p.encryptedApiKey); } catch {}
@@ -379,11 +387,11 @@ export async function replaceProviderModels(providerId: string, providerName: st
     const next = rawModels.map((raw) => {
       const previous = existing.get(raw.id);
       if (previous) {
-        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform, raw.nativeSearchProtocol);
+        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities });
         return normalizeModel({ ...previous, providerName, ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, state.providers.find((provider) => provider.id === providerId)?.platform);
       }
       const platform = state.providers.find((provider) => provider.id === providerId)?.platform;
-      const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol);
+      const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities });
       return normalizeModel({
         id: randomUUID(), providerId, providerName, rawId: raw.id,
         displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,

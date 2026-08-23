@@ -14,6 +14,22 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const modelKind = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 
+test('classifies common chat model families from their names', () => {
+  assert.equal(modelKind.inferModelKind({ rawId: 'Shanghai_AI_Laboratory/Intern-S1' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ rawId: 'OpenGVLab/InternVL3_5-241B-A28B' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ displayName: 'Step-3.7-Flash' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ displayName: 'Hiy3' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ rawId: 'codex-mini-latest' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ rawId: 'Tencent-Hunyuan/Hy3' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ rawId: 'doubao-seedance-2-0' }), 'video');
+});
+
+test('uses discovered capabilities before name heuristics', () => {
+  assert.equal(modelKind.inferModelKind({ rawId: 'vendor/custom-model', capabilities: ['video-generate'] }), 'video');
+  assert.equal(modelKind.inferModelKind({ rawId: 'vendor/custom-model', capabilities: ['generate'] }), 'image');
+  assert.equal(modelKind.inferModelKind({ rawId: 'vendor/custom-model', capabilities: ['chat'] }), 'chat');
+});
+
 test('keeps an explicit category even when capabilities overlap', () => {
   assert.equal(modelKind.resolveModelKind('chat', 'image', ['chat', 'generate']), 'chat');
   assert.equal(modelKind.resolveModelKind('image', 'chat', ['chat', 'video-generate']), 'image');

@@ -2676,72 +2676,80 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                     /*#__PURE__*/ _jsxs("div", {
                         className: "image-actions",
                         children: [
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                onClick: onEdit,
+                            /*#__PURE__*/ _jsxs("div", {
+                                className: "image-actions-main",
                                 children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "edit",
-                                        size: 15
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        onClick: onEdit,
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "edit",
+                                                size: 15
+                                            }),
+                                            "修改"
+                                        ]
                                     }),
-                                    "修改"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "reuse-action",
-                                onClick: onReuse,
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "reuse",
-                                        size: 15
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "reuse-action",
+                                        onClick: onReuse,
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "reuse",
+                                                size: 15
+                                            }),
+                                            "复用参数"
+                                        ]
                                     }),
-                                    "复用参数"
-                                ]
-                            }),
-                            onPushVideo && /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "push-video-action",
-                                onClick: onPushVideo,
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "video",
-                                        size: 15
+                                    onPushVideo && /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "push-video-action",
+                                        onClick: onPushVideo,
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "video",
+                                                size: 15
+                                            }),
+                                            "生视频"
+                                        ]
                                     }),
-                                    "生视频"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "reference-action",
-                                onClick: onReference,
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "image",
-                                        size: 15
-                                    }),
-                                    "参考图"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "download-action",
-                                onClick: onDownload,
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "download",
-                                        size: 15
-                                    }),
-                                    "下载"
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "reference-action",
+                                        onClick: onReference,
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "image",
+                                                size: 15
+                                            }),
+                                            "参考图"
+                                        ]
+                                    })
                                 ]
                             }),
                             /*#__PURE__*/ _jsxs("div", {
-                                className: "more-wrap",
-                                tabIndex: -1,
-                                onBlur: (e)=>{
-                                    if (!e.currentTarget.contains(e.relatedTarget)) setMenu(false);
-                                },
+                                className: "image-actions-secondary",
                                 children: [
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "download-action",
+                                        onClick: onDownload,
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "download",
+                                                size: 15
+                                            }),
+                                            "下载"
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "more-wrap",
+                                        tabIndex: -1,
+                                        onBlur: (e)=>{
+                                            if (!e.currentTarget.contains(e.relatedTarget)) setMenu(false);
+                                        },
+                                        children: [
                                     /*#__PURE__*/ _jsx("button", {
                                         type: "button",
                                         onClick: ()=>setMenu((v)=>!v),
@@ -2877,6 +2885,8 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                     "删除"
                                                 ]
                                             })
+                                        ]
+                                    })
                                         ]
                                     })
                                 ]
@@ -9774,16 +9784,25 @@ export default function Page() {
                                 className: "runtime-card",
                                 children: [
                                     /*#__PURE__*/ _jsx("span", {
-                                        className: `status-dot ${availableChatModels.length || availableImageModels.length ? 'online' : ''}`
+                                        className: `status-dot ${availableChatModels.length || availableImageModels.length || availableVideoModels.length ? 'online' : ''}`
                                     }),
                                     /*#__PURE__*/ _jsxs("div", {
                                         children: [
                                             /*#__PURE__*/ _jsxs("strong", {
                                                 children: [
+                                                    "共 ",
+                                                    availableImageModels.length + availableChatModels.length + availableVideoModels.length,
+                                                    " 个可用模型"
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("small", {
+                                                children: [
                                                     availableImageModels.length,
-                                                    " 个图片模型 \xb7 ",
+                                                    " 图片 · ",
                                                     availableChatModels.length,
-                                                    " 个对话模型"
+                                                    " 对话 · ",
+                                                    availableVideoModels.length,
+                                                    " 视频"
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsx("small", {
@@ -12061,7 +12080,7 @@ export default function Page() {
                                     })
                                 ]
                             }),
-                            videoReferenceQueue.length > 0 && section === 'history' && recordTab === 'works' && /*#__PURE__*/ _jsxs("div", {
+                            videoReferenceQueue.length > 0 && (section === 'generate' || (section === 'history' && recordTab === 'works')) && /*#__PURE__*/ _jsxs("div", {
                                 className: "video-reference-dock",
                                 children: [
                                     /*#__PURE__*/ _jsxs("div", {
@@ -12094,15 +12113,31 @@ export default function Page() {
                                             void goVideoFromQueue();
                                         },
                                         children: [
-                                            "去生成 (",
-                                            videoReferenceQueue.length,
-                                            ")"
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "video",
+                                                size: 14
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "去视频生成"
+                                            }),
+                                            /*#__PURE__*/ _jsxs("b", {
+                                                children: [
+                                                    videoReferenceQueue.length,
+                                                    " 张"
+                                                ]
+                                            })
                                         ]
                                     }),
                                     /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
                                         className: "video-reference-dock-clear",
                                         onClick: clearVideoQueue,
-                                        title: "清空队列"
+                                        title: "清空已添加的视频参考图",
+                                        "aria-label": "清空已添加的视频参考图",
+                                        children: /*#__PURE__*/ _jsx("span", {
+                                            "aria-hidden": "true",
+                                            children: "×"
+                                        })
                                     })
                                 ]
                             }),
