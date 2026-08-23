@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.7",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.7",
+  "latestVersion": "0.7.8",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.8",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.8/SANMAO.AI-0.7.8.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.7/SANMAO.AI-0.7.7.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.8/SANMAO.AI-0.7.8.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.8/SANMAO.AI-0.7.8.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.8/SANMAO.AI-0.7.8.zip"
   ],
-  "sha256": "c573eb828867e27e431985838fc70d619546eb3ed9185e0f2b4383ccb47b6faa",
-  "publishedAt": "2026-08-23T01:27:00+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-24T12:00:00+08:00",
   "notes": [
+    "修复图片节点双击无法打开查看器的问题，并将主界面完整图片查看与参数编辑能力接入超级画布。",
+    "图片查看器支持缩放、提示词编辑、生成参数调整、左右/滑动对比、超分、继续生成和参考图。",
+    "任务日志、资产中心、活动日志和移动端画布入口完成统一排版与交互优化。",
     "新增视频工作台和统一视频接口适配，普通服务商只需填写 API 地址与 API Key，即可自动识别并调用视频模型。",
     "新增即梦 CLI 独立接入，支持本地授权后的图片与视频创作。",
     "Agent 选中文本支持分别推送到图片生成或视频生成，提供继续选择和送入并跳转。",
