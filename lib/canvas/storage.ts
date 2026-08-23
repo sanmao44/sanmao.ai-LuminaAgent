@@ -9,6 +9,7 @@ const NOVA_ACTIVE_KEY = 'nova.v1.active';
 const NOVA_PROJECT_PREFIX = 'nova.v1.project.';
 const MIGRATION_KEY = 'sanmao.canvas.nova-migrated';
 const MIGRATION_BACKUP_KEY = 'sanmao.canvas.nova-backup';
+export const CANVAS_V1_BACKUP_PREFIX = 'sanmao.canvas.v1-backup.';
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -66,7 +67,15 @@ export function loadCanvasDocument(id: string) {
 }
 
 export function saveCanvasDocument(id: string, document: CanvasDocument) {
-  return writeJson(`${CANVAS_PROJECT_PREFIX}${id}`, { ...normalizeDocument(document), version: CANVAS_VERSION });
+  const key = `${CANVAS_PROJECT_PREFIX}${id}`;
+  const current = readJson<Record<string, unknown> | null>(key, null);
+  if (current && current.version !== CANVAS_VERSION) {
+    const backupKey = `${CANVAS_V1_BACKUP_PREFIX}${id}`;
+    try {
+      if (!window.localStorage.getItem(backupKey)) window.localStorage.setItem(backupKey, JSON.stringify({ backedUpAt: new Date().toISOString(), sourceVersion: current.version || 'nova-compatible', document: current }));
+    } catch { return false; }
+  }
+  return writeJson(key, { ...normalizeDocument(document), version: CANVAS_VERSION });
 }
 
 export function saveCanvasProjects(projects: CanvasProject[], activeId: string) {

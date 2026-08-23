@@ -23,6 +23,7 @@ type ModelPickerProps = {
 
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
   chat: '对话', generate: '生图', edit: '改图', upscale: '超分', reference: '参考图', vision: '视觉', typography: '文字', 'web-search': '联网',
+  'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频',
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = { chat: 'chat', generate: 'generate', edit: 'edit', upscale: 'upscale' };
@@ -45,7 +46,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
 
   useBodyScrollLock(quickOpen || dialogOpen);
 
-  const availableModels = useMemo(() => models.filter((model) => model.enabled && model.published && model.capabilities.includes(capability)), [models, capability]);
+  const availableModels = useMemo(() => models.filter((model) => model.enabled && model.published && (model.capabilities.includes(capability) || (capability.startsWith('video-') && model.kind === 'video'))), [models, capability]);
   const selected = value !== 'auto' ? availableModels.find((model) => model.id === value) : null;
   const autoModel = selectAutomaticModel(availableModels, defaultProviderId, defaultModelId);
   const recentModels = useMemo(() => uniqueModels(recent.map((id) => availableModels.find((model) => model.id === id))), [availableModels, recent]);

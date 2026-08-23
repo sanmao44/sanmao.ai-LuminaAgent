@@ -72,11 +72,29 @@ export type ChatSession = {
   messages: ChatHistoryMessage[];
 };
 
+export type AssetIndexItem = {
+  id: string;
+  kind: 'image' | 'video';
+  url: string;
+  name: string;
+  source: 'canvas-upload' | 'canvas-output' | 'metadata';
+  createdAt: number;
+  favorite?: boolean;
+  hidden?: boolean;
+  prompt?: string;
+  modelId?: string;
+  modelName?: string;
+  width?: number;
+  height?: number;
+  projectIds?: string[];
+};
+
 const DB_NAME = 'sanmao-ai';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE = 'gallery';
 const CHAT_STORE = 'chat-sessions';
 const SETTINGS_STORE = 'app-settings';
+const ASSET_STORE = 'asset-index';
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -93,6 +111,12 @@ function openDb(): Promise<IDBDatabase> {
         store.createIndex('updatedAt', 'updatedAt');
       }
       if (!db.objectStoreNames.contains(SETTINGS_STORE)) db.createObjectStore(SETTINGS_STORE, { keyPath: 'key' });
+      if (!db.objectStoreNames.contains(ASSET_STORE)) {
+        const store = db.createObjectStore(ASSET_STORE, { keyPath: 'id' });
+        store.createIndex('createdAt', 'createdAt');
+        store.createIndex('kind', 'kind');
+        store.createIndex('source', 'source');
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('本地历史数据库打开失败'));
@@ -217,4 +241,29 @@ export async function loadImageDirectoryHandle(): Promise<FileSystemDirectoryHan
 
 export async function clearImageDirectoryHandle() {
   await withNamedStore<undefined>(SETTINGS_STORE, 'readwrite', (store) => store.delete('image-directory') as IDBRequest<undefined>);
+}
+
+export async function listAssetIndex(): Promise<AssetIndexItem[]> {
+  const items = await withNamedStore<AssetIndexItem[]>(ASSET_STORE, 'readonly', (store) => store.getAll());
+  return [...items].sort((left, right) => right.createdAt - left.createdAt);
+}
+
+export async function saveAssetIndexItem(item: AssetIndexItem) {
+  await withNamedStore<IDBValidKey>(ASSET_STORE, 'readwrite', (store) => store.put(item));
+}
+
+export async function saveAssetIndexItems(items: AssetIndexItem[]) {
+  if (!items.length) return;
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(ASSET_STORE, 'readwrite');
+    const store = tx.objectStore(ASSET_STORE);
+    items.forEach((item) => store.put(item));
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error || new Error('保存资产索引失败')); };
+  });
+}
+
+export async function removeAssetIndexItem(id: string) {
+  await withNamedStore<undefined>(ASSET_STORE, 'readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
 }

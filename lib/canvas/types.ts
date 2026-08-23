@@ -1,15 +1,20 @@
+import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from '../creation/settings';
+import type { PublicState } from '../types';
+
 export type CanvasNodeType = 'media' | 'prompt' | 'generator';
 export type CanvasMediaKind = 'image' | 'video';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 
-export type CanvasGenerationParams = {
-  model?: string;
-  aspect?: string;
-  resolution?: string;
-  quality?: string;
+export type CanvasImageGenerationParams = ImageCreationSettings;
+export type CanvasVideoGenerationParams = VideoCreationSettings;
+/** Canvas nodes still accept the legacy optional fields while using shared creation settings. */
+export type CanvasGenerationParams = CreationSettings & {
   count?: number;
+  quality?: string;
   duration?: number;
   audio?: boolean;
+  operation?: VideoCreationSettings['operation'];
+  inputMode?: VideoCreationSettings['inputMode'];
 };
 
 export type CanvasGenerationMeta = {
@@ -18,6 +23,8 @@ export type CanvasGenerationMeta = {
   params: CanvasGenerationParams;
   referenceIds?: string[];
   sourceGeneratorId?: string;
+  parentNodeId?: string;
+  taskId?: string;
   createdAt?: number;
   updatedAt?: number;
 };
@@ -33,6 +40,10 @@ export type CanvasNodeData = {
   progress?: number;
   jobId?: string;
   text?: string;
+  prompt?: string;
+  params?: CanvasGenerationParams;
+  assetId?: string;
+  sourceAssetId?: string;
   autoFit?: boolean;
   nativeWidth?: number;
   nativeHeight?: number;
@@ -99,13 +110,7 @@ export type CanvasRuntimeModel = {
   capabilities?: string[];
 };
 
-export type CanvasRuntimeState = {
-  models: CanvasRuntimeModel[];
-  providers: Array<{ id: string; name: string; status?: string }>;
-  settings: {
-    defaultImageModelId?: string | null;
-    defaultVideoModelId?: string | null;
-  };
-};
+/** Backward-compatible name used by the canvas client. Runtime state is the app's public registry. */
+export type CanvasRuntimeState = PublicState;
 
 export type CanvasSnapshot = Pick<CanvasDocument, 'nodes' | 'edges' | 'groups' | 'camera'>;

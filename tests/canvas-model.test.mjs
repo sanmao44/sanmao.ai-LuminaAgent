@@ -10,6 +10,16 @@ async function loadTypeScript(path) {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: sourceUrl.pathname,
   }).outputText;
+  if (sourceUrl.pathname.endsWith('/lib/canvas/model.ts')) {
+    const settingsUrl = new URL('../lib/creation/settings.ts', import.meta.url);
+    const settingsSource = await readFile(settingsUrl, 'utf8');
+    const settingsCompiled = ts.transpileModule(settingsSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: settingsUrl.pathname,
+    }).outputText.replace("import { getLastModelCall } from '../model-preferences';", 'const getLastModelCall = () => null;');
+    const modelCompiled = compiled.replace("import { normalizeCreationSettings } from '../creation/settings';", '');
+    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${modelCompiled}`).toString('base64')}`);
+  }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 

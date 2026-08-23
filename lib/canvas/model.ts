@@ -9,8 +9,9 @@ import type {
   CanvasNodeData,
   CanvasSnapshot,
 } from './types';
+import { normalizeCreationSettings } from '../creation/settings';
 
-export const CANVAS_VERSION = 'sanmao-canvas-1';
+export const CANVAS_VERSION = 'sanmao-canvas-2';
 
 export function uid(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -48,7 +49,15 @@ function normalizeNode(value: unknown): CanvasNode | null {
   if (!raw.id || !Number.isFinite(Number(raw.x)) || !Number.isFinite(Number(raw.y))) return null;
   const data = raw.data && typeof raw.data === 'object' ? clone(raw.data as CanvasNodeData) : {};
   const type = nodeType(raw.type);
-  if (type === 'media') data.kind = mediaKind(data.kind);
+  if (type === 'media' || type === 'generator') data.kind = mediaKind(data.kind);
+  if (type === 'generator') {
+    const kind = mediaKind(data.kind || 'image');
+    data.params = kind === 'image' ? normalizeCreationSettings('image', data.params) : normalizeCreationSettings('video', data.params);
+  }
+  if (type === 'media' && data.generation) {
+    const kind = mediaKind(data.generation.kind || data.kind);
+    data.generation = { ...data.generation, kind, params: kind === 'image' ? normalizeCreationSettings('image', data.generation.params) : normalizeCreationSettings('video', data.generation.params) };
+  }
   return {
     id: String(raw.id),
     type,
@@ -369,9 +378,9 @@ export function mediaCardSizeForRatio(ratio = 1, kind: CanvasMediaKind = 'image'
   return { w: Math.round(width), h: Math.round(stage + footer) };
 }
 
-export function smartMediaSize(kind: CanvasMediaKind, params: CanvasGenerationParams = {}) {
+export function smartMediaSize(kind: CanvasMediaKind, params?: CanvasGenerationParams) {
   if (kind === 'video') return mediaCardSizeForRatio(16 / 9, kind);
-  const [a, b] = String(params.aspect || '1:1').split(':').map(Number);
+  const [a, b] = String(params?.aspect || '1:1').split(':').map(Number);
   return mediaCardSizeForRatio((a || 1) / (b || 1), kind);
 }
 
@@ -387,16 +396,18 @@ export function createPrompt(position: { x: number; y: number }, text = ''): Can
   return { id: uid('node'), type: 'prompt', x: position.x, y: position.y, w: 270, h: 170, data: { text } };
 }
 
-export function createGenerator(kind: CanvasMediaKind, position: { x: number; y: number }, params: CanvasGenerationParams = {}): CanvasNode {
-  return { id: uid('node'), type: 'generator', x: position.x, y: position.y, w: 306, h: 238, data: { kind, params, prompt: '', status: 'idle' } };
+export function createGenerator(kind: CanvasMediaKind, position: { x: number; y: number }, params?: CanvasGenerationParams): CanvasNode {
+  const normalizedParams = kind === 'image' ? normalizeCreationSettings('image', params) : normalizeCreationSettings('video', params);
+  return { id: uid('node'), type: 'generator', x: position.x, y: position.y, w: 306, h: 238, data: { kind, params: normalizedParams, prompt: '', status: 'idle' } };
 }
 
-export function createEmptyMedia(kind: CanvasMediaKind, position: { x: number; y: number }, params: CanvasGenerationParams = {}): CanvasNode {
-  const size = smartMediaSize(kind, params);
+export function createEmptyMedia(kind: CanvasMediaKind, position: { x: number; y: number }, params?: CanvasGenerationParams): CanvasNode {
+  const normalizedParams = kind === 'image' ? normalizeCreationSettings('image', params) : normalizeCreationSettings('video', params);
+  const size = smartMediaSize(kind, normalizedParams);
   return {
     ...createMedia(kind, '', kind === 'video' ? '空视频节点' : '空图片节点', position, {
       role: '待生成', status: 'draft', statusLabel: kind === 'video' ? '等待生成视频' : '等待生成图片',
-      generation: { kind, prompt: '', params, referenceIds: [], createdAt: Date.now() }, referenceOrder: [],
+      generation: { kind, prompt: '', params: normalizedParams, referenceIds: [], createdAt: Date.now() }, referenceOrder: [],
     }),
     ...size,
   };

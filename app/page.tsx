@@ -23,6 +23,7 @@ import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
+import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -62,23 +63,7 @@ const emptyState = {
         defaultProviderId: null
     }
 };
-const ratios = [
-    '自动',
-    '1:1',
-    '16:9',
-    '9:16',
-    '4:3',
-    '3:4',
-    '3:2',
-    '2:3',
-    '5:4',
-    '4:5',
-    '2:1',
-    '1:2',
-    '21:9',
-    '9:21',
-    '自定义'
-];
+const ratios = [...IMAGE_RATIOS];
 const ratioDescriptions = {
     自动: '单图匹配参考图，多图交给模型',
     '1:1': '方形',
@@ -112,24 +97,7 @@ const pageSizeOptions = [
         label: `每页 ${value} 张`
     }));
 const generationLogPageSize = 16;
-const qualityOptions = [
-    {
-        value: '自动',
-        label: '自动质量'
-    },
-    {
-        value: 'low',
-        label: '低质量 · 更快'
-    },
-    {
-        value: 'medium',
-        label: '中等质量'
-    },
-    {
-        value: 'high',
-        label: '高质量'
-    }
-];
+const qualityOptions = IMAGE_QUALITY_OPTIONS.map((item)=>({ value: item.value, label: item.label, meta: item.description }));
 const upscaleScales = [
     1,
     2,
@@ -1711,92 +1679,17 @@ function Icon({ name, size = 18 }) {
     });
 }
 function Dropdown({ value, options, onChange, placeholder = '请选择', className = '' }) {
-    const [open, setOpen] = useState(false);
-    const dropdownRef = useRef(null);
-    const triggerRef = useRef(null);
-    const [menuStyle, setMenuStyle] = useState({});
-    const selected = options.find((item)=>item.value === value);
-    useEffect(()=>{
-        if (!open) return;
-        const closeOnOutsidePointer = (event)=>{
-            const target = event.target;
-            if (target && !dropdownRef.current?.contains(target)) setOpen(false);
-        };
-        document.addEventListener('pointerdown', closeOnOutsidePointer);
-        return ()=>document.removeEventListener('pointerdown', closeOnOutsidePointer);
-    }, [
-        open
-    ]);
-    function toggle() {
-        const next = !open;
-        if (next && triggerRef.current) {
-            const rect = triggerRef.current.getBoundingClientRect();
-            const viewportPadding = 8;
-            const height = Math.min(300, options.length * 52 + 10);
-            const width = Math.min(rect.width, Math.max(0, window.innerWidth - viewportPadding * 2));
-            const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
-            setMenuStyle({
-                left: Math.min(Math.max(viewportPadding, rect.left), maxLeft),
-                width,
-                top: rect.bottom + 6,
-                maxHeight: height,
-                ...rect.bottom + height + 12 > window.innerHeight ? {
-                    top: Math.max(8, rect.top - height - 6)
-                } : {}
-            });
-        }
-        setOpen(next);
-    }
-    return /*#__PURE__*/ _jsxs("div", {
-        ref: dropdownRef,
-        className: `custom-dropdown ${className}`,
-        tabIndex: -1,
-        children: [
-            /*#__PURE__*/ _jsxs("button", {
-                ref: triggerRef,
-                type: "button",
-                className: `dropdown-trigger ${open ? 'open' : ''}`,
-                onClick: toggle,
-                children: [
-                    /*#__PURE__*/ _jsx("span", {
-                        children: selected?.label || placeholder
-                    }),
-                    /*#__PURE__*/ _jsx(Icon, {
-                        name: "chevron",
-                        size: 15
-                    })
-                ]
-            }),
-            open && /*#__PURE__*/ _jsx("div", {
-                className: "dropdown-menu dropdown-menu-floating",
-                style: menuStyle,
-                children: options.map((item)=>/*#__PURE__*/ _jsxs("button", {
-                        type: "button",
-                        className: item.value === value ? 'selected' : '',
-                        onPointerDown: (event)=>{
-                            event.preventDefault();
-                            onChange(item.value);
-                            setOpen(false);
-                        },
-                                                     children: [
-                                                         /*#__PURE__*/ _jsxs("span", {
-                                children: [
-                                    /*#__PURE__*/ _jsx("strong", {
-                                        children: item.label
-                                    }),
-                                    item.meta && /*#__PURE__*/ _jsx("small", {
-                                        children: item.meta
-                                    })
-                                ]
-                            }),
-                            item.value === value && /*#__PURE__*/ _jsx(Icon, {
-                                name: "check",
-                                size: 15
-                            })
-                        ]
-                    }, item.value))
-            })
-        ]
+    return /*#__PURE__*/ _jsx(SelectMenu, {
+        value,
+        options: options.map((item)=>({
+                value: item.value,
+                label: item.label,
+                description: item.meta,
+                disabled: item.disabled
+            })),
+        onChange,
+        ariaLabel: placeholder,
+        className: `custom-dropdown ${className}`
     });
 }
 function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
