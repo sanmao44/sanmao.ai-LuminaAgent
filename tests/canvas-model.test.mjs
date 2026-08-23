@@ -96,6 +96,141 @@ test('supports group-level connections without expanding into member edges', () 
   assert.equal(model.addEdge(document, sourceGroup.id, sourceGroup.id).edges.length, 3);
 });
 
+test('normalizes variant requirements by removing blank lines and capping at eight', () => {
+  const requirements = model.normalizeVariantRequirements(
+    '  夜景  \n\n俯拍视角\r\n  \n替换成红色包装\n' +
+      Array.from({ length: 8 }, (_, index) => `变体 ${index + 4}`).join('\n'),
+  );
+  assert.deepEqual(requirements, [
+    '夜景',
+    '俯拍视角',
+    '替换成红色包装',
+    '变体 4',
+    '变体 5',
+    '变体 6',
+    '变体 7',
+    '变体 8',
+  ]);
+  assert.deepEqual(model.normalizeVariantRequirements([]), ['']);
+});
+
+test('keeps legacy advanced generators compatible as a single default variant', () => {
+  const document = model.normalizeDocument({
+    nodes: [
+      {
+        id: 'legacy-generator',
+        type: 'generator',
+        x: 0,
+        y: 0,
+        data: {
+          kind: 'image',
+          prompt: '保留主体并优化光影',
+          params: { model: 'legacy-image-model', count: 2 },
+        },
+      },
+    ],
+  });
+  const generator = document.nodes[0];
+  assert.deepEqual(generator.data.variantRequirements, ['']);
+  assert.equal(generator.data.variantRequirementsText, '');
+  assert.deepEqual(generator.data.variantStates, undefined);
+  assert.equal(generator.data.prompt, '保留主体并优化光影');
+  assert.equal(generator.data.params.model, 'legacy-image-model');
+  assert.equal(generator.data.params.count, 2);
+});
+
+test('normalizes saved variant states and preserves batch metadata', () => {
+  const document = model.normalizeDocument({
+    nodes: [
+      {
+        id: 'variant-generator',
+        type: 'generator',
+        x: 0,
+        y: 0,
+        data: {
+          kind: 'video',
+          variantRequirementsText: '夜景\n\n俯拍视角\n替换包装',
+          variantBatchId: 'batch-42',
+          variantGroupId: 'group-42',
+          variantStates: [
+            {
+              id: 'v-1',
+              status: 'completed',
+              instruction: '旧文案',
+              resultIds: ['result-1'],
+              taskIds: ['task-1'],
+              progress: 100,
+            },
+            { status: 'not-a-status', resultIds: 'not-an-array' },
+          ],
+        },
+      },
+    ],
+  });
+  const data = document.nodes[0].data;
+  assert.deepEqual(data.variantRequirements, ['夜景', '俯拍视角', '替换包装']);
+  assert.equal(data.variantRequirementsText, '夜景\n\n俯拍视角\n替换包装');
+  assert.equal(data.variantBatchId, 'batch-42');
+  assert.equal(data.variantGroupId, 'group-42');
+  assert.deepEqual(data.variantStates, [
+    {
+      id: 'v-1',
+      instruction: '旧文案',
+      status: 'completed',
+      resultIds: ['result-1'],
+      taskIds: ['task-1'],
+      progress: 100,
+    },
+    {
+      id: 'variant-2',
+      instruction: '俯拍视角',
+      status: 'pending',
+      resultIds: [],
+    },
+  ]);
+});
+
+test('preserves named variant batch groups and result lineage in stable variant order', () => {
+  const generator = model.createGenerator('image', { x: 0, y: 0 });
+  const first = model.createMedia('image', '/variant-1.png', '图片变体 1-1', { x: 420, y: 0 }, {
+    role: '变体结果',
+    generation: {
+      kind: 'image',
+      prompt: '共同提示词\n变体要求：夜景',
+      params: generator.data.params,
+      sourceGeneratorId: generator.id,
+      variantBatchId: 'batch-1',
+      variantIndex: 0,
+      variantInstruction: '夜景',
+    },
+  });
+  const second = model.createMedia('image', '/variant-2.png', '图片变体 2-1', { x: 420, y: 300 }, {
+    role: '变体结果',
+    generation: {
+      kind: 'image',
+      prompt: '共同提示词\n变体要求：俯拍视角',
+      params: generator.data.params,
+      sourceGeneratorId: generator.id,
+      variantBatchId: 'batch-1',
+      variantIndex: 1,
+      variantInstruction: '俯拍视角',
+    },
+  });
+  let document = model.normalizeDocument({
+    nodes: [generator, first, second],
+    edges: [],
+    groups: [],
+  });
+  document = model.createGroup(document, [first.id, second.id], '图片变体批次');
+  const group = document.groups[0];
+  const results = group.nodeIds.map((id) => model.nodeById(document, id));
+  assert.equal(group.name, '图片变体批次');
+  assert.deepEqual(results.map((node) => node.data.generation.variantIndex), [0, 1]);
+  assert.deepEqual(results.map((node) => node.data.generation.variantInstruction), ['夜景', '俯拍视角']);
+  assert.equal(results.every((node) => node.data.generation.sourceGeneratorId === generator.id), true);
+  assert.equal(results.every((node) => node.data.generation.variantBatchId === 'batch-1'), true);
+});
+
 test('supports selectable canvas edge path styles', () => {
   const empty = model.normalizeDocument(null);
   const source = model.createPrompt({ x: 0, y: 0 }, '输入');

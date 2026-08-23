@@ -4062,6 +4062,18 @@ export default function SuperCanvas() {
     [runVariantBatch],
   );
 
+  const retryFailedVariants = useCallback(
+    (generatorId: string) => {
+      const generator = nodeById(docRef.current, generatorId);
+      if (!generator || generator.type !== "generator") return;
+      const failedIndices = variantStatesFor(generator)
+        .map((state, index) => (state.status === "failed" ? index : -1))
+        .filter((index) => index >= 0);
+      void runVariantBatch(generatorId, failedIndices);
+    },
+    [runVariantBatch],
+  );
+
   const applyCanvasMask = useCallback(
     async (maskDataUrl: string) => {
       const node = maskNodeId
@@ -5080,6 +5092,7 @@ export default function SuperCanvas() {
                   onRetryVariant={(variantIndex) =>
                     retryVariant(node.id, variantIndex)
                   }
+                  onRetryFailedVariants={() => retryFailedVariants(node.id)}
                   editing={editingNodeId === node.id}
                   onEdit={(value) => setEditingNodeId(value ? node.id : null)}
                   onNaturalSize={setMediaNaturalSize}
@@ -6130,6 +6143,7 @@ function CanvasNodeCard({
   onTextPreview,
   onUseAsImagePrompt,
   onRetryVariant,
+  onRetryFailedVariants,
   onNaturalSize,
   onPromptChange,
   editing,
@@ -6150,6 +6164,7 @@ function CanvasNodeCard({
   onTextPreview: () => void;
   onUseAsImagePrompt: () => void;
   onRetryVariant: (variantIndex: number) => void;
+  onRetryFailedVariants: () => void;
   onNaturalSize: (nodeId: string, width: number, height: number) => void;
   onPromptChange: (value: string) => void;
   editing: boolean;
@@ -6176,6 +6191,18 @@ function CanvasNodeCard({
   const completedVariants = variantStates.filter(
     (state) => state.status === "completed",
   ).length;
+  const failedVariants = variantStates.filter(
+    (state) => state.status === "failed",
+  ).length;
+  const imageParams =
+    node.type === "generator" && data.kind === "image"
+      ? (data.params as ImageCreationSettings | undefined)
+      : undefined;
+  const perVariantImageCount = Math.max(1, Number(imageParams?.count || 1));
+  const estimatedResultCount =
+    node.type === "generator" && data.kind === "image"
+      ? variantRequirements.length * perVariantImageCount
+      : 0;
   const referenceCount =
     node.type === "generator" ? incomingReferences(document, node.id).length : 0;
   return (
@@ -6346,7 +6373,27 @@ function CanvasNodeCard({
             <span>参考素材 {referenceCount}</span>
             <span>变体 {variantRequirements.length}</span>
             <span>完成 {completedVariants}/{variantRequirements.length}</span>
+            <span>
+              {data.kind === "image"
+                ? `预计 ${estimatedResultCount} 张`
+                : `串行 ${variantRequirements.length} 项`}
+            </span>
           </div>
+          {failedVariants > 0 && (
+            <button
+              type="button"
+              className="canvas-variant-retry-all"
+              title={`重试全部失败变体（${failedVariants} 条）`}
+              aria-label={`重试全部失败变体（${failedVariants} 条）`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRetryFailedVariants();
+              }}
+            >
+              ↻ 重试失败项（{failedVariants}）
+            </button>
+          )}
           <div className="canvas-generator-prompt">
             <b>共同提示词</b>
             <span>{String(data.prompt || "点击选中，在下方编辑提示词")}</span>
