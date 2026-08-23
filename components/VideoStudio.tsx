@@ -664,22 +664,28 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const selectedTask = useMemo(() => tasks.find((task) => task.id === selectedTaskId) || null, [selectedTaskId, tasks]);
   const previewTask = selectedTask?.status === 'done' && selectedTask.videoUrls?.length ? selectedTask : null;
 
-  return <section className="video-studio-page">
-    <div className="video-studio-hero">
-      <div className="video-hero-copy">
-        <span className="video-eyebrow">VIDEO STUDIO · 本地工作台</span>
-        <h1>把想法变成一段会动的画面</h1>
-        <p>统一接入 65535、OpenAI 兼容接口和即梦 CLI。任务会保存在本地，远程完成后自动下载。</p>
-        <div className="video-hero-tags" aria-label="工作台特性"><span>本地任务</span><span>多模型兼容</span><span>完成自动下载</span></div>
-      </div>
-      <div className="video-hero-orb" aria-hidden="true"><img src="/brand-mark.png" alt="" /></div>
+  const hero = <div className="video-studio-hero">
+    <div className="video-hero-copy">
+      <span className="video-eyebrow">VIDEO STUDIO · 本地工作台</span>
+      <h1>把想法变成一段会动的画面</h1>
+      <p>统一接入 65535、OpenAI 兼容接口和即梦 CLI。任务会保存在本地，远程完成后自动下载。</p>
+      <div className="video-hero-tags" aria-label="工作台特性"><span>本地任务</span><span>多模型兼容</span><span>完成自动下载</span></div>
     </div>
-    {!models.length ? <div className="video-empty-state">
-      <div className="video-empty-icon">▣</div><h2>还没有可用的视频模型</h2>
-      <p>先在模型库启用并发布视频模型，图片模型不会出现在这里。</p>
-      <button className="video-primary-button" type="button" onClick={onOpenModels}>去模型库选择</button>
-    </div> : <div className="video-studio-grid">
-      <form className="video-compose-card" onSubmit={submit}>
+    <div className="video-hero-orb" aria-hidden="true"><img src="/brand-mark.png" alt="" /></div>
+  </div>;
+
+  return <section className="video-studio-page">
+    {!models.length ? <>
+      {hero}
+      <div className="video-empty-state">
+        <div className="video-empty-icon">▣</div><h2>还没有可用的视频模型</h2>
+        <p>先在模型库启用并发布视频模型，图片模型不会出现在这里。</p>
+        <button className="video-primary-button" type="button" onClick={onOpenModels}>去模型库选择</button>
+      </div>
+    </> : <div className="video-studio-grid">
+      <div className="video-compose-column">
+        {hero}
+        <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
           <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className="video-live-pill">● 已连接</span></div>
           <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图'} maxLength={6000} />{supportsReferenceMentions && referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
@@ -703,7 +709,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
           </div>
         </div>
         <button className="video-primary-button video-submit" type="submit" disabled={busy}><span>{busy ? '提交中…' : '开始生成视频'}</span><b>↗</b></button>
-      </form>
+        </form>
+      </div>
       <aside className="video-preview-column">
         <div className="video-preview-card">
           <div className="video-card-heading"><div><span>预览与任务</span><small>{selectedTask ? `${selectedTask.modelName || '自动模型'} · ${statusLabel(selectedTask.status)}` : tasks.length ? `${tasks.length} 个本地任务` : '生成后会显示在这里'}</small></div><button className="video-quiet-button" type="button" onClick={() => void refreshTasks()}>刷新</button></div>

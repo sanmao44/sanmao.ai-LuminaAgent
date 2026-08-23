@@ -218,3 +218,27 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
   .video-task-list{display:block}
   .video-task-list-scroll{max-height:none;overflow:visible}
 }
+
+/* Desktop composition: keep the intro with the form column so the preview
+   column starts at the same visual anchor instead of leaving a wide banner
+   floating above both panels. */
+@media(min-width:961px){
+  .video-studio-page{display:block;height:calc(100dvh - var(--shell-header-height,64px));max-height:calc(100dvh - var(--shell-header-height,64px));overflow:hidden;grid-template-rows:none}
+  .video-studio-grid{height:100%;min-height:0;grid-template-columns:minmax(0,1.05fr) minmax(420px,.95fr);grid-template-rows:minmax(0,1fr);align-items:stretch;gap:14px}
+  .video-compose-column{display:grid;grid-template-rows:auto minmax(0,1fr);gap:14px;min-width:0;min-height:0}
+  .video-compose-column .video-studio-hero{height:auto;min-height:126px;padding:12px 24px}
+  .video-hero-copy{flex:1;min-width:0}
+  .video-studio-hero h1{line-height:1.12}
+  .video-eyebrow{line-height:1.1}
+  .video-hero-orb{margin-left:20px}
+  .video-compose-column .video-compose-card{height:100%;min-height:0}
+  .video-preview-column{height:100%;min-height:0;grid-template-rows:minmax(0,1.08fr) minmax(200px,.92fr);gap:14px}
+}
+
+@media(max-width:960px){
+  .video-studio-grid{display:grid;grid-template-columns:1fr;grid-template-rows:none;gap:10px;height:auto;min-height:0}
+  .video-compose-column{display:grid;grid-template-rows:auto auto;gap:10px;min-width:0;min-height:0}
+  .video-compose-column .video-studio-hero{height:auto;min-height:0}
+  .video-compose-column .video-compose-card{height:auto;min-height:0}
+  .video-preview-column{height:auto;min-height:0;grid-template-rows:none}
+}
