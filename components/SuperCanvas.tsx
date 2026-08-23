@@ -2955,7 +2955,11 @@ export default function SuperCanvas() {
   }, [activeProjectId, document.nodes, pollVideo, ready]);
 
   const runVariantBatch = useCallback(
-    async (generatorId: string, retryIndices?: number[]) => {
+    async (
+      generatorId: string,
+      retryIndices?: number[],
+      mode: "all" | "failed" | "pending" = retryIndices ? "failed" : "all",
+    ) => {
       const generator = nodeById(docRef.current, generatorId);
       if (!generator || generator.type !== "generator") {
         notify("变体生成器已不存在，请重新选择节点。", "error");
@@ -2969,10 +2973,12 @@ export default function SuperCanvas() {
             (index) =>
               index >= 0 &&
               index < requirements.length &&
-              currentStates[index]?.status === "failed",
+              currentStates[index]?.status ===
+                (mode === "pending" ? "pending" : "failed"),
           )
         : requirements.map((_, index) => index);
-      const isRetry = Boolean(retryIndices);
+      const isRetry = mode === "failed";
+      const isResume = mode === "pending";
       if (!requested.length)
         return notify(
           isRetry ? "当前没有可重试的失败变体。" : "请至少填写一条变体要求。",
@@ -2985,7 +2991,7 @@ export default function SuperCanvas() {
       setGenerationKeys(new Set(generationKeysRef.current));
 
       const batchId =
-        isRetry && generator.data.variantBatchId
+        (isRetry || isResume) && generator.data.variantBatchId
           ? String(generator.data.variantBatchId)
           : uid("variant-batch");
       const initialStates = currentStates.map((state, index) => {
@@ -2994,8 +3000,8 @@ export default function SuperCanvas() {
           ...state,
           instruction: requirements[index],
           status: "pending" as const,
-          resultIds: isRetry ? state.resultIds : [],
-          taskIds: isRetry ? state.taskIds : undefined,
+          resultIds: isRetry || isResume ? state.resultIds : [],
+          taskIds: isRetry || isResume ? state.taskIds : undefined,
           progress: 0,
           error: undefined,
           updatedAt: Date.now(),
@@ -3426,8 +3432,8 @@ export default function SuperCanvas() {
               }),
             );
             addLog(`${kind === "video" ? "视频" : "图片"}变体 ${index + 1} 失败：${message}`);
-          }
         }
+      }
         notify(`${kind === "video" ? "视频" : "图片"}变体批量处理完成`);
       } finally {
         generationKeysRef.current.delete(activeKey);
@@ -3436,6 +3442,28 @@ export default function SuperCanvas() {
     },
     [addLog, notify, resolveAvailableCreationModel, runtime, updateDoc],
   );
+
+  useEffect(() => {
+    if (!ready) return;
+    document.nodes.forEach((node) => {
+      if (
+        node.type !== "generator" ||
+        node.data.kind !== "video" ||
+        (node.data.status !== "queued" &&
+          node.data.status !== "running" &&
+          node.data.status !== "failed") ||
+        generationKeysRef.current.has(node.id)
+      )
+        return;
+      const states = variantStatesFor(node);
+      if (states.some((state) => state.status === "running")) return;
+      const nextPendingIndex = states.findIndex(
+        (state) => state.status === "pending",
+      );
+      if (nextPendingIndex >= 0)
+        void runVariantBatch(node.id, [nextPendingIndex], "pending");
+    });
+  }, [document.nodes, ready, runVariantBatch]);
 
   const runGeneration = useCallback(async () => {
     const source = deckSource();
