@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CSSProperties } from 'react';
 import type { ModelCapability, RegistryModel } from '@/lib/types';
@@ -27,6 +27,7 @@ const capabilityLabels: Partial<Record<ModelCapability, string>> = {
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = { chat: 'chat', generate: 'generate', edit: 'edit', upscale: 'upscale' };
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];
@@ -93,7 +94,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     setMenuStyle({ visibility: 'visible', left: Math.round(left), width: Math.round(width), maxHeight: Math.round(maxHeight), top: openAbove ? 'auto' : Math.round(rect.bottom + gap), bottom: openAbove ? Math.round(window.innerHeight - rect.top + gap) : 'auto' });
   }
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!quickOpen) return;
     const frame = requestAnimationFrame(updateQuickPosition);
     const handleViewportChange = () => updateQuickPosition();
