@@ -146,8 +146,11 @@
 .creation-parameter-grid.advanced{gap:6px;padding-top:6px}
 .creation-model-warning,.creation-model-notes{min-height:25px;padding:4px 8px;border-radius:8px;font-size:8px}
 .canvas-deck-node-tools{display:flex;align-items:center;gap:4px;margin-left:auto;flex:none}
+.canvas-deck-image-tools{display:flex;align-items:center;gap:4px}
 .canvas-deck-node-tools button{height:26px;padding:0 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text-2);font-size:8px}
 .canvas-deck-node-tools button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.canvas-deck-node-tools .canvas-deck-delete{border-color:color-mix(in srgb,var(--danger) 38%,var(--line));color:var(--danger)}
+.canvas-deck-node-tools .canvas-deck-delete:hover{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
 .canvas-deck-node-tools button:disabled{opacity:.5;cursor:wait}
 .canvas-deck-collapse{margin-left:0;width:25px;height:25px}
 
@@ -191,13 +194,14 @@
   .creation-parameter-grid.primary>.creation-field.model{flex-basis:210px}
   .creation-parameter-grid.advanced{grid-template-columns:repeat(2,minmax(0,1fr))}
   .canvas-deck-node-tools button{width:27px;padding:0;font-size:0}
-  .canvas-deck-node-tools button span{font-size:11px}
+  .canvas-deck-node-tools button .canvas-deck-icon{font-size:11px}
+  .canvas-deck-node-tools .canvas-deck-delete-label{display:none}
   .canvas-asset-drawer{bottom:112px}
   .canvas-workspace:has(.canvas-asset-drawer) .canvas-deck-params{display:none}
 }
 @media(max-width:420px){
   .canvas-mode-switch button{padding:0 5px;font-size:8px}
-  .canvas-deck-node-tools{display:none}
+  .canvas-deck-image-tools{display:none}
   .canvas-run-button{width:58px}
   .canvas-asset-drawer{bottom:106px}
 }
