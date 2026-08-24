@@ -80,6 +80,7 @@ import {
   type ImageCreationSettings,
   type VideoCreationSettings,
 } from "@/lib/creation/settings";
+import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
 import { recordCanvasImages } from "@/lib/creation/history";
 import {
   requestPromptOptimization,
@@ -102,6 +103,11 @@ import {
   type AssetCollection,
 } from "@/lib/client-history";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
+import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
+import MediaViewer, {
+  type MediaViewerItem,
+  type MediaViewerReference,
+} from "@/components/MediaViewer";
 import MaskEditor from "@/components/MaskEditor";
 import SelectMenu from "@/components/SelectMenu";
 import type {
@@ -111,6 +117,7 @@ import type {
   CanvasEdge,
   CanvasGenerationParams,
   CanvasGroup,
+  CanvasInputRole,
   CanvasMediaKind,
   CanvasNode,
   CanvasProject,
@@ -118,6 +125,17 @@ import type {
   CanvasSnapshot,
   CanvasVariantState,
 } from "@/lib/canvas/types";
+import {
+  addReferenceDrafts,
+  cloneReuseDraft,
+  dedupeReferenceDrafts,
+  referenceIdsForDraft,
+  removeReferenceDraft,
+  reorderReferenceDrafts,
+  reuseDraftFromNode,
+  type CanvasReferenceDraft,
+  type CanvasReuseDraft,
+} from "@/lib/canvas/reuse";
 
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
@@ -228,6 +246,10 @@ type CanvasDrafts = {
   image: { prompt: string; params: ImageCreationSettings };
   video: { prompt: string; params: VideoCreationSettings };
   text: { prompt: string; params: AgentCreationSettings };
+};
+type CanvasEditorDraft = {
+  prompt: string;
+  params?: CanvasGenerationParams;
 };
 type Interaction =
   | {
@@ -563,6 +585,18 @@ function mentionLabel(node: CanvasNode, index: number) {
   return `${index + 1}. ${node.data.name || (node.data.kind === "video" ? "视频素材" : "图片素材")}`;
 }
 
+function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | null {
+  if (node.type !== "media" || !node.data.url || !node.data.kind) return null;
+  return {
+    id: `node-ref:${node.id}`,
+    nodeId: node.id,
+    kind: node.data.kind,
+    url: String(node.data.url),
+    name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : "图片素材")),
+    origin: "node",
+  };
+}
+
 function mentionedMedia(prompt: string, candidates: CanvasNode[]) {
   const ids = [...prompt.matchAll(/@([0-9]+)/g)]
     .map((match) => Number(match[1]) - 1)
@@ -777,6 +811,7 @@ function CanvasEdgeVisual({
 
 export default function SuperCanvas() {
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const deckRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workflowInputRef = useRef<HTMLInputElement | null>(null);
   const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -786,6 +821,7 @@ export default function SuperCanvas() {
   const saveTimerRef = useRef<number | null>(null);
   const pollTimersRef = useRef<Set<number>>(new Set());
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
+  const runGenerationRef = useRef<(() => Promise<void>) | null>(null);
   const mountedRef = useRef(true);
   const generationKeysRef = useRef<Set<string>>(new Set());
   const registeredAssetUrlsRef = useRef<Set<string>>(new Set());
@@ -799,6 +835,8 @@ export default function SuperCanvas() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [expandedEditorId, setExpandedEditorId] = useState<string | null>(null);
+  const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
   const [mode, setMode] = useState<Mode>("image");
@@ -820,6 +858,8 @@ export default function SuperCanvas() {
     nodeId: string;
     compare: boolean;
   } | null>(null);
+  const [reuseDraft, setReuseDraft] = useState<CanvasReuseDraft | null>(null);
+  const [reusePreview, setReusePreview] = useState<CanvasReferenceDraft | null>(null);
   const [textLightboxNodeId, setTextLightboxNodeId] = useState<string | null>(
     null,
   );
@@ -866,6 +906,7 @@ export default function SuperCanvas() {
   });
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: 1200, height: 760 });
+  const [deckHeight, setDeckHeight] = useState(0);
   const [connectionAnimation, setConnectionAnimation] =
     useState<ConnectionAnimation>("none");
   const [connectionStyle, setConnectionStyle] =
@@ -921,6 +962,29 @@ export default function SuperCanvas() {
     [document.nodes, selectedIds],
   );
   const selectedSingle = selectedNodes.length === 1 ? selectedNodes[0] : null;
+  const collapsedGeneratorOutputIds = useMemo(() => {
+    const generatorIds = new Set(
+      document.nodes.filter((node) => node.type === "generator").map((node) => node.id),
+    );
+    return new Set(
+      document.nodes
+        .filter(
+          (node) =>
+            node.type === "media" &&
+            Boolean(node.data.generation?.sourceGeneratorId) &&
+            generatorIds.has(String(node.data.generation?.sourceGeneratorId)),
+        )
+        .map((node) => node.id),
+    );
+  }, [document.nodes]);
+  const visibleCanvasNodes = useMemo(
+    () => document.nodes.filter((node) => !collapsedGeneratorOutputIds.has(node.id)),
+    [collapsedGeneratorOutputIds, document.nodes],
+  );
+  const visibleCanvasNodeIds = useMemo(
+    () => new Set(visibleCanvasNodes.map((node) => node.id)),
+    [visibleCanvasNodes],
+  );
   const selectedGroup = selectedGroupId
     ? groupById(document, selectedGroupId)
     : undefined;
@@ -1198,6 +1262,25 @@ export default function SuperCanvas() {
     return () => observer.disconnect();
   }, [ready]);
 
+  // The composer is an overlay by design, but it must still behave like a
+  // reserved work area. Measuring the real rendered height keeps the canvas,
+  // minimap and selected-node focus in sync when references, parameters or a
+  // multiline prompt expand the deck.
+  useEffect(() => {
+    if (!ready || !deckRef.current || typeof ResizeObserver === "undefined")
+      return;
+    const deck = deckRef.current;
+    const update = () => {
+      const height = Math.ceil(deck.getBoundingClientRect().height);
+      setDeckHeight((current) => (current === height ? current : height));
+      stageRef.current?.style.setProperty("--canvas-deck-height", `${height}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(deck);
+    return () => observer.disconnect();
+  }, [deckCollapsed, ready]);
+
   useEffect(() => {
     if (ready && activeProjectId) saveCanvasProjects(projects, activeProjectId);
   }, [activeProjectId, projects, ready]);
@@ -1278,6 +1361,57 @@ export default function SuperCanvas() {
     }),
     [document.camera],
   );
+
+  const ensureSelectedNodeVisible = useCallback(() => {
+    const node = selectedSingle;
+    const stage = stageRef.current;
+    const deck = deckRef.current;
+    if (!node || !stage || !deck || interactionRef.current) return;
+    const nodeElement = [...stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]")]
+      .find((element) => element.dataset.canvasNodeId === node.id);
+    if (!nodeElement) return;
+    const stageRect = stage.getBoundingClientRect();
+    const nodeRect = nodeElement.getBoundingClientRect();
+    const deckRect = deck.getBoundingClientRect();
+    const topSafe = 112;
+    const bottomSafe = deckRect.top - stageRect.top - 18;
+    const safeHeight = bottomSafe - topSafe;
+    if (safeHeight < 120) return;
+
+    const size = nodeSize(node);
+    const camera = docRef.current.camera;
+    const nextZoom = clamp(
+      Math.min(
+        camera.zoom,
+        (safeHeight - 18) / Math.max(1, size.h),
+        (stageRect.width - 32) / Math.max(1, size.w),
+      ),
+      0.12,
+      3,
+    );
+    const currentTop = nodeRect.top - stageRect.top;
+    const currentBottom = nodeRect.bottom - stageRect.top;
+    const needsVerticalMove = currentTop < topSafe || currentBottom > bottomSafe;
+    const needsScale = nextZoom < camera.zoom - 0.005;
+    if (!needsVerticalMove && !needsScale) return;
+
+    const renderedHeight = size.h * nextZoom;
+    const desiredTop = topSafe + Math.max(0, (safeHeight - renderedHeight) / 2);
+    updateDoc((value) => ({
+      ...value,
+      camera: {
+        x: stageRect.width / 2 - (node.x + size.w / 2) * nextZoom,
+        y: desiredTop - node.y * nextZoom,
+        zoom: nextZoom,
+      },
+    }));
+  }, [selectedSingle, updateDoc]);
+
+  useEffect(() => {
+    if (!ready || !selectedSingle) return;
+    const frame = window.requestAnimationFrame(ensureSelectedNodeVisible);
+    return () => window.cancelAnimationFrame(frame);
+  }, [deckHeight, ensureSelectedNodeVisible, ready, selectedSingle?.id]);
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
@@ -2966,28 +3100,18 @@ export default function SuperCanvas() {
         return;
       }
       if (source.target && settings.kind !== "text") {
-        const mediaSettings = settings;
-        updateDoc((valueDoc) => ({
-          ...valueDoc,
-          nodes: valueDoc.nodes.map((node) =>
-            node.id === source.target!.id
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    generation: {
-                      kind: mediaSettings.kind,
-                      prompt: source.prompt,
-                      referenceIds: node.data.referenceOrder || [],
-                      createdAt: node.data.generation?.createdAt || Date.now(),
-                      ...node.data.generation,
-                      params: clone(mediaSettings),
-                    },
-                  },
-                }
-              : node,
-          ),
-        }));
+        const target = source.target;
+        const references = incomingReferences(docRef.current, target.id)
+          .map(canvasReferenceDraftFromNode)
+          .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
+        const draft = reuseDraftFromNode(target, references);
+        if (draft) {
+          setReuseDraft((current) => current?.sourceNodeId === target.id
+            ? { ...current, params: clone(settings), dirty: true }
+            : { ...draft, params: clone(settings), dirty: true });
+          setMode(target.data.kind === "video" ? "video" : "image");
+          setDeckCollapsed(false);
+        }
         return;
       }
       if (settings.kind === "image")
@@ -3704,8 +3828,345 @@ export default function SuperCanvas() {
     });
   }, [document.nodes, ready, runVariantBatch]);
 
+  const openReuseDraft = useCallback(
+    (source: CanvasNode, options?: { prompt?: string; params?: CanvasGenerationParams }) => {
+      if (source.type !== "media" || !source.data.kind || !source.data.url) {
+        notify("只有已完成的图片或视频节点可以复用参数。", "error");
+        return;
+      }
+      const references = incomingReferences(docRef.current, source.id)
+        .map(canvasReferenceDraftFromNode)
+        .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
+      const draft = reuseDraftFromNode(source, references);
+      if (!draft) {
+        notify("当前节点没有完整的生成参数，无法复用。", "error");
+        return;
+      }
+      setReuseDraft({
+        ...draft,
+        ...(options?.prompt !== undefined ? { prompt: options.prompt } : {}),
+        ...(options?.params ? { params: clone(options.params) } : {}),
+        dirty: Boolean(options),
+      });
+      setMode(source.data.kind);
+      setDeckCollapsed(false);
+      setSelectedIds(new Set([source.id]));
+      setSelectedGroupId(null);
+      setLightbox(null);
+      notify("已复制完整参数和参考图，可替换参考图后生成新分支");
+    },
+    [notify],
+  );
+
+  const addReuseReferences = useCallback(
+    (incoming: CanvasReferenceDraft[]) => {
+      setReuseDraft((current) => {
+        if (!current) return current;
+        const result = addReferenceDrafts(current.references, incoming);
+        if (result.rejected.length && current.references.length >= 16)
+          notify("参考图最多 16 张。", "error");
+        else if (result.rejected.length)
+          notify("部分参考图重复或无法添加。", "error");
+        return { ...current, references: result.references, dirty: true };
+      });
+    },
+    [notify],
+  );
+
+  const addReuseFiles = useCallback(
+    async (files: File[]) => {
+      if (!reuseDraft || !files.length) return;
+      const pending = files.map((file, index) => ({
+        id: uid("draft-ref"),
+        kind: (file.type.startsWith("video/") ? "video" : "image") as CanvasMediaKind,
+        url: URL.createObjectURL(file),
+        name: file.name || `参考图 ${index + 1}`,
+        origin: "upload" as const,
+        pending: true,
+      }));
+      addReuseReferences(pending);
+      for (const [index, file] of files.entries()) {
+        const draftRef = pending[index];
+        try {
+          const asset = await uploadCanvasAsset(file);
+          setReuseDraft((current) => {
+            if (!current) return current;
+            return {
+              ...current,
+              references: current.references.map((reference) =>
+                reference.id === draftRef.id
+                  ? { ...reference, url: asset.url, name: asset.name, kind: asset.kind, pending: false, error: undefined }
+                  : reference,
+              ),
+              dirty: true,
+            };
+          });
+        } catch (error) {
+          setReuseDraft((current) => current ? {
+            ...current,
+            references: current.references.map((reference) => reference.id === draftRef.id ? { ...reference, pending: false, error: error instanceof Error ? error.message : "上传失败" } : reference),
+          } : current);
+          notify(error instanceof Error ? error.message : "参考图上传失败。", "error");
+        } finally {
+          URL.revokeObjectURL(draftRef.url);
+        }
+      }
+    },
+    [addReuseReferences, notify, reuseDraft],
+  );
+
+  const pasteReuseReference = useCallback(async () => {
+    if (!reuseDraft || !navigator.clipboard?.read) {
+      notify("当前浏览器不允许读取剪贴板图片，请使用上传或拖入。", "error");
+      return;
+    }
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((value) => value.startsWith("image/"));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        await addReuseFiles([new File([blob], `粘贴参考图.${type.split("/")[1] || "png"}`, { type })]);
+        return;
+      }
+      notify("剪贴板中没有图片。", "error");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "读取剪贴板失败。", "error");
+    }
+  }, [addReuseFiles, notify, reuseDraft]);
+
+  const removeReuseReference = useCallback((id: string) => {
+    setReuseDraft((current) => current ? { ...current, references: removeReferenceDraft(current.references, id), dirty: true } : current);
+  }, []);
+
+  const reorderReuseReference = useCallback((from: number, to: number) => {
+    setReuseDraft((current) => current ? { ...current, references: reorderReferenceDrafts(current.references, from, to), dirty: true } : current);
+  }, []);
+
+  const addCurrentNodeToReuse = useCallback((node: CanvasNode) => {
+    const reference = canvasReferenceDraftFromNode(node);
+    if (!reference) return;
+    if (!reuseDraft) {
+      openReuseDraft(node);
+      setReuseDraft((current) => current ? { ...current, references: [...current.references.filter((item) => item.nodeId !== node.id), reference], dirty: true } : current);
+      return;
+    }
+    addReuseReferences([reference]);
+  }, [addReuseReferences, openReuseDraft, reuseDraft]);
+
+  const optimizeReusePrompt = useCallback(async () => {
+    if (!reuseDraft?.prompt.trim()) return notify("请输入需要优化的提示词。", "error");
+    if (!runtime?.models?.some((model) => model.kind === "chat" && model.enabled !== false && model.published !== false))
+      return notify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+    try {
+      const value = await requestPromptOptimization(
+        reuseDraft.prompt,
+        reuseDraft.references.map((reference) => ({ url: reference.url, name: reference.name })),
+        runtime.settings.agentModelId || undefined,
+      );
+      setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
+      notify("AI 已优化提示词，尚未生成");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "AI 优化失败", "error");
+    }
+  }, [notify, reuseDraft, runtime]);
+
+  const reverseReusePrompt = useCallback(async () => {
+    if (!reuseDraft) return;
+    const source = reuseDraft.sourceNodeId ? nodeById(docRef.current, reuseDraft.sourceNodeId) : undefined;
+    const images = [
+      source && source.type === "media" && source.data.url ? { url: String(source.data.url), name: String(source.data.name || "当前图片") } : null,
+      ...reuseDraft.references.filter((reference) => reference.kind === "image").map((reference) => ({ url: reference.url, name: reference.name })),
+    ].filter((item): item is { url: string; name: string } => Boolean(item));
+    if (!images.length) return notify("请先添加图片参考。", "error");
+    if (!runtime?.models?.some((model) => model.kind === "chat" && model.enabled !== false && model.published !== false))
+      return notify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+    try {
+      const value = await runReversePrompt(images, runtime.settings.agentModelId || undefined);
+      setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
+      notify("已反推提示词，尚未生成");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "反推提示词失败", "error");
+    }
+  }, [notify, reuseDraft, runtime]);
+
+  const runReuseGeneration = useCallback(async (draftInput: CanvasReuseDraft) => {
+    const draft = cloneReuseDraft(draftInput);
+    if (!draft.prompt.trim()) return notify("请输入生成提示词。", "error");
+    if (draft.references.some((reference) => reference.pending || reference.error)) {
+      return notify("请等待参考图准备完成，或移除失败的参考图。", "error");
+    }
+    if (draft.kind === "image" && draft.references.some((reference) => reference.kind !== "image")) {
+      return notify("图片生成只能使用图片参考，请移除视频素材。", "error");
+    }
+    const activeKey = `reuse:${draft.sourceNodeId || draft.kind}`;
+    if (generationKeysRef.current.has(activeKey)) return notify("这个复用任务正在生成，请稍候。", "error");
+    const source = draft.sourceNodeId ? nodeById(docRef.current, draft.sourceNodeId) : undefined;
+    const sourcePosition = source || selectedSingle;
+    const seed = sourcePosition
+      ? { x: sourcePosition.x + nodeSize(sourcePosition).w + 90, y: sourcePosition.y }
+      : screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const generatorBase = createGenerator(draft.kind, seed, clone(draft.params));
+    const generator = {
+      ...generatorBase,
+      ...openNodePosition(seed, generatorBase),
+      data: {
+        ...generatorBase.data,
+        prompt: draft.prompt,
+        role: "复用参数生成器",
+        status: "running" as const,
+        statusLabel: draft.kind === "video" ? "视频复用生成中" : "图片复用生成中",
+        reuseSourceNodeId: draft.sourceNodeId,
+        variantRequirementsText: draft.variantRequirementsText || "",
+        variantRequirements: normalizeVariantRequirements(draft.variantRequirementsText || ""),
+      },
+    };
+    const materializedReferences: CanvasNode[] = [];
+    const resolvedReferenceIds: string[] = [];
+    for (const [index, reference] of draft.references.entries()) {
+      const existing = reference.nodeId ? nodeById(docRef.current, reference.nodeId) : undefined;
+      if (existing?.type === "media" && existing.data.url) {
+        resolvedReferenceIds.push(existing.id);
+        continue;
+      }
+      const materialized = createMedia(
+        reference.kind,
+        reference.url,
+        reference.name,
+        { x: generator.x - 430, y: generator.y + index * 285 },
+        { role: "复用参考素材", ...(reference.assetId ? { sourceAssetId: reference.assetId } : {}) },
+      );
+      const placed = { ...materialized, ...openNodePosition({ x: generator.x - 430, y: generator.y + index * 285 }, materialized) };
+      materializedReferences.push(placed);
+      resolvedReferenceIds.push(placed.id);
+    }
+    const referenceByIndex = draft.references.map((reference, index) => ({ reference, id: resolvedReferenceIds[index] }));
+    const initialEdges: CanvasEdge[] = referenceByIndex.map(({ id }) => ({
+      id: uid("edge"), source: id, target: generator.id, sourcePort: "right" as const, targetPort: "left" as const, kind: "manual" as const,
+    }));
+    if (source) initialEdges.push({ id: uid("edge"), source: source.id, target: generator.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
+    const outputPosition = { x: generator.x + nodeSize(generator).w + 90, y: generator.y };
+    const output = createMedia(draft.kind, "", draft.kind === "video" ? "视频任务" : "图片生成中", outputPosition, {
+      role: "复用生成结果",
+      status: draft.kind === "video" ? "queued" : "running",
+      statusLabel: draft.kind === "video" ? "视频任务提交中" : "图片生成中",
+      generation: {
+        kind: draft.kind,
+        prompt: draft.prompt,
+        params: clone(draft.params),
+        operation: draft.operation,
+        referenceIds: resolvedReferenceIds,
+        sourceGeneratorId: generator.id,
+        parentNodeId: source?.id,
+        reuseSourceNodeId: source?.id,
+        createdAt: Date.now(),
+      },
+      referenceOrder: resolvedReferenceIds,
+    });
+    let initialDocument: CanvasDocument = {
+      ...docRef.current,
+      nodes: [...docRef.current.nodes, ...materializedReferences, generator, output],
+      edges: [...docRef.current.edges, ...initialEdges, { id: uid("edge"), source: generator.id, target: output.id, sourcePort: "right", targetPort: "left", kind: "generated" }],
+    };
+    generationKeysRef.current.add(activeKey);
+    setGenerationKeys(new Set(generationKeysRef.current));
+    commit(() => initialDocument);
+    setSelectedIds(new Set([generator.id]));
+    setSelectedGroupId(null);
+    try {
+      if (draft.kind === "image") {
+        const params = draft.params as ImageCreationSettings;
+        const result = await generateCanvasImage({
+          taskId: uid("image-task"), prompt: draft.prompt, model: params.model, count: params.count,
+          aspect: params.aspect === "自定义" ? `${params.customAspectWidth}:${params.customAspectHeight}` : params.aspect,
+          resolution: params.resolution, quality: params.quality,
+          ...(params.sizeMode === "custom" ? { width: params.width, height: params.height } : {}),
+          outputFormat: params.outputFormat,
+          background: params.backgroundMode === "api-transparent" ? "transparent" : params.backgroundMode === "opaque" ? "opaque" : undefined,
+          maskUrl: params.mask?.url,
+          references: draft.references.filter((reference) => reference.kind === "image").map((reference) => ({ url: reference.url, name: reference.name })),
+        });
+        if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
+        const extraOutputs = result.images.slice(1).map((image, index) => createMedia("image", image.url, `复用生成图片 ${index + 2}`, { x: output.x + 350 * (index + 1), y: output.y }, {
+          role: "复用生成结果", model: result.model?.name || params.model,
+          generation: { kind: "image", prompt: draft.prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, createdAt: Date.now() }, referenceOrder: resolvedReferenceIds,
+        }));
+        updateDoc((value) => ({
+          ...value,
+          nodes: value.nodes.map((node) => node.id === generator.id ? { ...node, data: { ...node.data, status: "completed" as const, statusLabel: "复用生成完成" } } : node.id === output.id ? { ...node, data: { ...node.data, url: result.images[0].url, name: "复用生成图片 1", status: "completed" as const, statusLabel: "图片已完成", model: result.model?.name || params.model, generation: { kind: "image" as const, prompt: draft.prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, createdAt: Date.now() }, referenceOrder: resolvedReferenceIds } } : node).concat(extraOutputs),
+          edges: [...value.edges, ...extraOutputs.map((item) => ({ id: uid("edge"), source: generator.id, target: item.id, sourcePort: "right" as const, targetPort: "left" as const, kind: "variant" as const }))],
+        }));
+        setSelectedIds(new Set([output.id, ...extraOutputs.map((item) => item.id)]));
+        writeSharedCreationSettings(params);
+        void recordCanvasImages(result.images, { prompt: draft.prompt, source: "canvas", modelId: params.model, modelName: result.model?.name, providerName: result.model?.provider, aspectRatio: params.aspect, outputSize: params.sizeMode === "custom" ? `${params.width}x${params.height}` : params.resolution, outputFormat: params.outputFormat, parentId: source?.id }).then(() => setAssetRefresh((value) => value + 1));
+        notify(`已生成 ${result.images.length} 张新分支图片`);
+        addLog(`复用参数生成完成：${result.images.length} 张图片`);
+        setReuseDraft(null);
+      } else {
+        const params = draft.params as VideoCreationSettings;
+        const sourceNode = draft.sourceNodeId
+          ? nodeById(docRef.current, draft.sourceNodeId)
+          : undefined;
+        const videoInputs = resolveCanvasInputSemantics(
+          draft.references.map((reference) => ({
+            id: reference.id,
+            type: "media" as const,
+            x: 0,
+            y: 0,
+            data: {
+              kind: reference.kind,
+              url: reference.url,
+              name: reference.name,
+            },
+          })),
+          "video",
+          params.inputMode,
+        );
+        const task = await generateCanvasVideo({
+          prompt: draft.prompt, model: params.model, operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
+          references: videoInputs.imageReferences.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
+          referenceVideo: sourceNode?.data.kind === "video" && sourceNode.data.url
+            ? String(sourceNode.data.url)
+            : videoInputs.referenceVideo?.data.url
+              ? String(videoInputs.referenceVideo.data.url)
+              : undefined,
+          audio: params.audio,
+        });
+        updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id ? { ...node, data: { ...node.data, status: "running", statusLabel: "视频生成中" } } : node.id === output.id ? { ...node, data: { ...node.data, jobId: task.id, status: task.status === "done" ? "completed" : "running", progress: Number(task.progress || 0), url: task.videoUrls?.[0] || node.data.url, statusLabel: task.status === "done" ? "视频已完成" : "视频生成中", generation: { kind: "video", prompt: draft.prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, taskId: task.id, createdAt: Date.now() } } } : node) }));
+        writeSharedCreationSettings(params);
+        setReuseDraft(null);
+        if (task.status === "done") notify("视频复用生成完成");
+        else { void pollVideo(output.id, task.id); notify("视频新分支任务已提交"); }
+        addLog(`视频复用任务已提交：${task.id}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "复用生成失败";
+      updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id || node.id === output.id ? { ...node, data: { ...node.data, status: "failed", statusLabel: message } } : node) }));
+      notify(message, "error");
+      addLog(`复用生成失败：${message}`);
+    } finally {
+      generationKeysRef.current.delete(activeKey);
+      setGenerationKeys(new Set(generationKeysRef.current));
+    }
+  }, [addLog, commit, notify, openNodePosition, pollVideo, runtime, screenToWorld, selectedSingle]);
+
   const runGeneration = useCallback(async () => {
+    if (reuseDraft) {
+      await runReuseGeneration(reuseDraft);
+      return;
+    }
     const source = deckSource();
+    const selectedMediaTarget = selectedSingle?.type === "media" ? selectedSingle : null;
+    if (selectedMediaTarget) {
+      const references = incomingReferences(docRef.current, selectedMediaTarget.id)
+        .map(canvasReferenceDraftFromNode)
+        .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
+      const draft = reuseDraftFromNode(selectedMediaTarget, references);
+      if (!draft) return notify("当前节点没有完整生成参数，无法创建新分支。", "error");
+      await runReuseGeneration(draft);
+      return;
+    }
+    const sourceTarget = selectedSingle?.type === "media" ? selectedSingle : null;
     if (source.node?.type === "generator" && mode !== "text")
       return runVariantBatch(source.node.id);
     if (mode === "text") {
@@ -3909,11 +4370,12 @@ export default function SuperCanvas() {
       }
       return;
     }
-    const ownerId = source.node?.id || source.target?.id;
+    const kind = source.kind as CanvasMediaKind;
+    const ownerId = source.node?.id || sourceTarget?.id;
     const incoming = ownerId ? incomingContext(docRef.current, ownerId) : [];
     const baseLinked = ownerId
       ? [
-          ...(source.target?.data.url ? [source.target] : []),
+          ...(sourceTarget?.data.url ? [sourceTarget] : []),
           ...incoming.filter((node) => node.type === "media" && node.data.url),
         ]
       : selectedNodes.filter((node) => node.type === "media" && node.data.url);
@@ -3935,20 +4397,24 @@ export default function SuperCanvas() {
       context,
     );
     if (!prompt.trim()) return notify("请输入生成提示词。", "error");
-    const refs = linked
+    const inputSemantics = resolveCanvasInputSemantics(
+        linked,
+        kind === "video" ? "video" : "image",
+        kind === "video" ? (source.params as VideoCreationSettings).inputMode : undefined,
+      );
+    const refs = inputSemantics.imageReferences
       .map((node) => ({
-        url: String(node.data.url || ""),
-        name: String(node.data.name || "参考素材"),
-      }))
+          url: String(node.data.url || ""),
+          name: String(node.data.name || "参考素材"),
+        }))
       .filter((item) => item.url);
-    const kind = source.kind as CanvasMediaKind;
     const sourceNode = source.node;
     const resolvedModel = resolveAvailableCreationModel(source.params, runtime);
     const effectiveParams = {
       ...source.params,
       model: resolvedModel.model?.id || "auto",
     } as CreationSettings;
-    let targetId = source.target?.id || "";
+    let targetId = sourceTarget?.id || "";
     const activeKey = generationKey(source);
     if (generationKeysRef.current.has(activeKey))
       return notify("这个节点正在生成，请稍候。", "error");
@@ -3960,7 +4426,7 @@ export default function SuperCanvas() {
       // completed card is updated in place so a simple retry does not grow a
       // second branch node; lineage tools (mask/upscale) remain explicit
       // branch operations below.
-      const pendingId = sourceNode?.id || source.target?.id;
+      const pendingId = sourceNode?.id || sourceTarget?.id;
       if (pendingId)
         updateDoc((value) => ({
           ...value,
@@ -3981,12 +4447,12 @@ export default function SuperCanvas() {
       if (kind === "image") {
         const imageParams = effectiveParams as ImageCreationSettings;
         const taskId = uid("image-task");
-        const base = source.target || sourceNode;
+        const base = sourceTarget || sourceNode;
         const position = base
           ? {
               x:
                 base.x +
-                (source.target && !source.target.data.url
+                  (sourceTarget && !sourceTarget.data.url
                   ? 0
                   : nodeSize(base).w + 90),
               y: base.y,
@@ -4071,8 +4537,8 @@ export default function SuperCanvas() {
             },
           ),
         );
-        const fillsTarget = Boolean(source.target) || Boolean(pendingImageId);
-        const fillId = source.target?.id || pendingImageId;
+        const fillsTarget = Boolean(sourceTarget) || Boolean(pendingImageId);
+        const fillId = sourceTarget?.id || pendingImageId;
         const selectedOutputIds = fillsTarget
           ? [fillId, ...outputs.slice(1).map((output) => output.id)]
           : outputs.map((output) => output.id);
@@ -4104,10 +4570,10 @@ export default function SuperCanvas() {
               ],
             };
             outputs.slice(1).forEach((output) => {
-              if (source.target)
+              if (sourceTarget)
                 next = addEdge(
                   next,
-                  source.target.id,
+                  sourceTarget.id,
                   output.id,
                   "right",
                   "left",
@@ -4116,11 +4582,11 @@ export default function SuperCanvas() {
             });
           } else {
             next = { ...next, nodes: [...next.nodes, ...outputs] };
-            if (source.target?.data.url)
+            if (sourceTarget?.data.url)
               outputs.forEach((output) => {
                 next = addEdge(
                   next,
-                  source.target!.id,
+                  sourceTarget.id,
                   output.id,
                   "right",
                   "left",
@@ -4172,7 +4638,7 @@ export default function SuperCanvas() {
               ? `${imageParams.width}x${imageParams.height}`
               : imageParams.resolution,
           outputFormat: imageParams.outputFormat,
-          parentId: source.target?.data.url ? source.target.id : undefined,
+          parentId: sourceTarget?.data.url ? sourceTarget.id : undefined,
         })
           .then(() => setAssetRefresh((value) => value + 1))
           .catch(() => addLog("图片已生成，但写入主界面历史失败"));
@@ -4180,8 +4646,8 @@ export default function SuperCanvas() {
         addLog(`图片生成完成：${result.images.length} 张`);
       } else {
         const videoParams = effectiveParams as VideoCreationSettings;
-        const parent = source.target || sourceNode;
-        const fillsTarget = Boolean(source.target);
+        const parent = sourceTarget || sourceNode;
+        const fillsTarget = Boolean(sourceTarget);
         const position = parent
           ? {
               x: parent.x + (fillsTarget ? 0 : nodeSize(parent).w + 90),
@@ -4189,7 +4655,7 @@ export default function SuperCanvas() {
             }
           : screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
         const target = fillsTarget
-          ? source.target!
+          ? sourceTarget!
           : createMedia("video", "", "视频任务", position, {
               role: "生成结果",
               status: "queued",
@@ -4218,7 +4684,7 @@ export default function SuperCanvas() {
                     target: target.id,
                     sourcePort: "right",
                     targetPort: "left",
-                    kind: source.target?.data.url ? "variant" : "generated",
+                    kind: sourceTarget?.data.url ? "variant" : "generated",
                   },
                 ]
               : value.edges,
@@ -4226,8 +4692,8 @@ export default function SuperCanvas() {
         const referenceVideo =
           videoParams.operation !== "generate"
             ? String(
-                (source.target?.data.kind === "video" &&
-                  source.target.data.url) ||
+                (sourceTarget?.data.kind === "video" &&
+                  sourceTarget.data.url) ||
                   linked.find((item) => item.data.kind === "video")?.data.url ||
                   "",
               )
@@ -4240,13 +4706,17 @@ export default function SuperCanvas() {
           duration: videoParams.duration,
           aspect: videoParams.aspect,
           resolution: videoParams.resolution,
-          references: linked
-            .filter((item) => item.data.kind === "image" && item.data.url)
+          references: inputSemantics.imageReferences
+            .filter((item) => item.data.url)
             .map((item) => ({
               url: String(item.data.url),
               name: String(item.data.name || "参考图片"),
             })),
-          referenceVideo,
+          referenceVideo:
+            referenceVideo ||
+            (inputSemantics.referenceVideo?.data.url
+              ? String(inputSemantics.referenceVideo.data.url)
+              : undefined),
           audio: videoParams.audio,
         });
         updateDoc((value) => ({
@@ -4322,7 +4792,256 @@ export default function SuperCanvas() {
     selectedNodes,
     selectedSingle,
     updateDoc,
+    reuseDraft,
+    runReuseGeneration,
   ]);
+
+  runGenerationRef.current = runGeneration;
+
+  const editorPromptFor = useCallback(
+    (node: CanvasNode) => {
+      const draft = editorDrafts[node.id];
+      if (draft) return draft.prompt;
+      if (node.type === "prompt") return String(node.data.agentPrompt || node.data.text || "");
+      return String(node.data.generation?.prompt || node.data.prompt || "");
+    },
+    [editorDrafts],
+  );
+
+  const editorParamsFor = useCallback(
+    (node: CanvasNode): CanvasGenerationParams | undefined => {
+      const draft = editorDrafts[node.id];
+      if (draft?.params) return draft.params;
+      if (node.type === "prompt") return normalizeCreationSettings("text", node.data.params, runtime);
+      const kind = node.data.kind === "video" ? "video" : "image";
+      return copyParams(node.data.generation?.params || node.data.params, kind, runtime);
+    },
+    [editorDrafts, runtime],
+  );
+
+  const toggleEditor = useCallback(
+    (node: CanvasNode) => {
+      if (expandedEditorId === node.id) {
+        setExpandedEditorId(null);
+        return;
+      }
+      // A card can be draggable, so keep editor opening independent from the
+      // drag gesture. Some persisted legacy nodes also carry partial params;
+      // opening the editor must still work with a safe default in that case.
+      let params: CanvasGenerationParams | undefined;
+      try {
+        params = editorParamsFor(node);
+      } catch {
+        params = undefined;
+      }
+      setEditorDrafts((current) => ({
+        ...current,
+        [node.id]: {
+          prompt: editorPromptFor(node),
+          params,
+        },
+      }));
+      setExpandedEditorId(node.id);
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
+    },
+    [editorParamsFor, editorPromptFor, expandedEditorId],
+  );
+
+  const updateEditorPrompt = useCallback(
+    (node: CanvasNode, value: string) => {
+      setEditorDrafts((current) => ({
+        ...current,
+        [node.id]: { ...current[node.id], prompt: value },
+      }));
+      updateDoc((valueDoc) => ({
+        ...valueDoc,
+        nodes: valueDoc.nodes.map((item) => {
+          if (item.id !== node.id) return item;
+          if (item.type === "prompt")
+            return {
+              ...item,
+              data: {
+                ...item.data,
+                text: value,
+                agentPrompt: value,
+                agentResponse: undefined,
+                editor: { ...item.data.editor, draftPrompt: value, dirty: true },
+              },
+            };
+          return {
+            ...item,
+            data: {
+              ...item.data,
+              prompt: value,
+              generation: item.data.generation
+                ? { ...item.data.generation, prompt: value }
+                : item.data.generation,
+              editor: { ...item.data.editor, draftPrompt: value, dirty: true },
+            },
+          };
+        }),
+      }));
+    },
+    [updateDoc],
+  );
+
+  const updateEditorParams = useCallback(
+    (node: CanvasNode, settings: CreationSettings) => {
+      setEditorDrafts((current) => ({
+        ...current,
+        [node.id]: { ...current[node.id], prompt: editorPromptFor(node), params: clone(settings) },
+      }));
+      updateDoc((valueDoc) => ({
+        ...valueDoc,
+        nodes: valueDoc.nodes.map((item) =>
+          item.id === node.id
+            ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  params: clone(settings),
+                  generation: item.data.generation
+                    ? { ...item.data.generation, params: clone(settings) }
+                    : item.data.generation,
+                  editor: { ...item.data.editor, draftParams: clone(settings), dirty: true },
+                },
+              }
+            : item,
+        ),
+      }));
+      writeSharedCreationSettings(settings);
+    },
+    [editorPromptFor, updateDoc],
+  );
+
+  const addNodeReference = useCallback(
+    (targetId: string, sourceId: string, requestedRole?: CanvasInputRole) => {
+      const source = nodeById(docRef.current, sourceId);
+      const target = nodeById(docRef.current, targetId);
+      if (!source || !target || source.id === target.id) return;
+      let inputRole: CanvasInputRole | undefined = requestedRole;
+      if (target.type === "prompt") {
+        inputRole = source.type === "prompt" || source.type === "generator"
+          ? "context"
+          : source.data.kind === "video" ? "video" : "reference-image";
+      } else if (source.type === "prompt" || source.type === "generator") {
+        inputRole = "context";
+      } else if (source.type === "media") {
+        if (target.data.kind === "image" && source.data.kind !== "image") {
+          notify("图片节点不能接收视频作为图片参考。", "error");
+          return;
+        }
+        inputRole = requestedRole || (target.data.kind === "video" && source.data.kind === "video" ? "video" : "reference-image");
+      }
+      const current = incomingReferences(docRef.current, targetId);
+      if (inputRole === "reference-image" && current.some((item) => item.id === sourceId)) return;
+      if (inputRole === "reference-image" && current.length >= 16) {
+        notify("参考图最多 16 张。", "error");
+        return;
+      }
+      commit((value) =>
+        addEdge(
+          value,
+          sourceId,
+          targetId,
+          "right",
+          "left",
+          inputRole === "reference-image" ? "reference" : "manual",
+          inputRole,
+          current.length,
+        ),
+      );
+      notify(inputRole === "base-image" ? "已设置为基底图" : "已加入引用并保留顺序");
+    },
+    [commit, notify],
+  );
+
+  const removeNodeReference = useCallback(
+    (targetId: string, sourceId: string) => {
+      const edgeIds = docRef.current.edges
+        .filter((edge) => edge.target === targetId && edge.source === sourceId)
+        .map((edge) => edge.id);
+      if (edgeIds.length) commit((value) => edgeIds.reduce((next, id) => removeEdge(next, id), value));
+    },
+    [commit],
+  );
+
+  const addEditorReferenceFiles = useCallback(
+    async (targetId: string, files: File[]) => {
+      const target = nodeById(docRef.current, targetId);
+      if (!target || !files.length) return;
+      const existing = incomingReferences(docRef.current, targetId).length;
+      if (existing >= 16) return notify("参考图最多 16 张。", "error");
+      const nodes: CanvasNode[] = [];
+      for (const [index, file] of files.slice(0, 16 - existing).entries()) {
+        try {
+          const asset = await uploadCanvasAsset(file);
+          if (target.data.kind === "image" && asset.kind !== "image") {
+            notify("图片节点只接受图片参考。", "error");
+            continue;
+          }
+          nodes.push(
+            createMedia(asset.kind, asset.url, asset.name, {
+              x: target.x - nodeSize(target).w - 90,
+              y: target.y + index * 230,
+            }, { role: "参考素材", assetId: asset.id }),
+          );
+        } catch (error) {
+          notify(error instanceof Error ? error.message : "参考素材上传失败。", "error");
+        }
+      }
+      if (!nodes.length) return;
+      commit((value) => {
+        let next = { ...value, nodes: [...value.nodes, ...nodes] };
+        nodes.forEach((node, index) => {
+          next = addEdge(
+            next,
+            node.id,
+            targetId,
+            "right",
+            "left",
+            "reference",
+            "reference-image",
+            existing + index,
+          );
+        });
+        return next;
+      });
+      notify(`已添加 ${nodes.length} 张参考素材`);
+    },
+    [commit, notify],
+  );
+
+  const runEditorGeneration = useCallback(
+    (node: CanvasNode) => {
+      const draft = editorDrafts[node.id];
+      if (draft) {
+        commit((valueDoc) => ({
+          ...valueDoc,
+          nodes: valueDoc.nodes.map((item) =>
+            item.id === node.id
+              ? {
+                  ...item,
+                  data: {
+                    ...item.data,
+                    ...(item.type === "prompt" ? { text: draft.prompt, agentPrompt: draft.prompt } : { prompt: draft.prompt }),
+                    ...(draft.params ? { params: clone(draft.params) } : {}),
+                    editor: { ...item.data.editor, dirty: false, draftPrompt: draft.prompt, draftParams: draft.params },
+                  },
+                }
+              : item,
+          ),
+        }));
+      }
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
+      window.setTimeout(() => void runGenerationRef.current?.(), 0);
+    },
+    [commit, editorDrafts],
+  );
 
   const retryVariant = useCallback(
     (generatorId: string, variantIndex: number) => {
@@ -4361,32 +5080,14 @@ export default function SuperCanvas() {
           "image",
           runtime,
         ) as ImageCreationSettings;
-        commit((value) => ({
-          ...value,
-          nodes: value.nodes.map((item) =>
-            item.id === node.id
-              ? {
-                  ...item,
-                  data: {
-                    ...item.data,
-                    generation: {
-                      kind: "image",
-                      prompt: String(item.data.generation?.prompt || ""),
-                      referenceIds: item.data.referenceOrder || [],
-                      createdAt: item.data.generation?.createdAt || Date.now(),
-                      ...item.data.generation,
-                      params: {
-                        ...settings,
-                        mask: { assetId: uploaded.id, url: uploaded.url },
-                      },
-                    },
-                  },
-                }
-              : item,
-          ),
-        }));
+        openReuseDraft(node, {
+          params: {
+            ...settings,
+            mask: { assetId: uploaded.id, url: uploaded.url },
+          },
+        });
         setMaskNodeId(null);
-        notify("蒙版已保存到节点快照，下一次生成会自动使用", "ok");
+        notify("蒙版已加入复用草稿，确认生成后会创建新分支；原节点保持不变", "ok");
       } catch (error) {
         notify(
           error instanceof Error ? error.message : "蒙版保存失败",
@@ -4394,7 +5095,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [commit, maskNodeId, notify, runtime],
+    [maskNodeId, notify, openReuseDraft, runtime],
   );
 
   const runUpscale = useCallback(async (sourceOverride?: CanvasNode) => {
@@ -4656,8 +5357,10 @@ export default function SuperCanvas() {
       const centerY =
         (stageRect?.top || 0) + (stageRect?.height || stageSize.height) / 2;
       if (event.key === "Escape") {
+        const hadOverlay = Boolean(lightbox || textLightboxNodeId || activePanel || reusePreview);
         setContextMenu(null);
         setLightbox(null);
+        setReusePreview(null);
         setActivePanel(null);
         interactionRef.current = null;
         setConnection(null);
@@ -4665,6 +5368,7 @@ export default function SuperCanvas() {
         setConnectionTargetId(null);
         hideConnectionCancel();
         connectionHoverEdgeRef.current = null;
+        if (hadOverlay) return;
         clearSelection();
       } else if (!event.repeat && modifier && isKeyZ) {
         event.preventDefault();
@@ -4723,10 +5427,14 @@ export default function SuperCanvas() {
     pasteFromClipboard,
     redo,
     runGeneration,
+    activePanel,
+    lightbox,
+    reusePreview,
     selectedEdgeId,
     stageSize.height,
     stageSize.width,
     toggleAssetLibrary,
+    textLightboxNodeId,
     undo,
     zoomAt,
   ]);
@@ -4748,7 +5456,9 @@ export default function SuperCanvas() {
   );
   const deck = deckSource();
   const deckKind = deck.kind;
-  const generationBusy = generationKeys.has(generationKey(deck));
+  const generationBusy = reuseDraft
+    ? generationKeys.has(`reuse:${reuseDraft.sourceNodeId || reuseDraft.kind}`)
+    : generationKeys.has(generationKey(deck));
   const deckModelState = resolveAvailableCreationModel(deck.params, runtime);
   const maskNode = maskNodeId ? nodeById(document, maskNodeId) : undefined;
   const maskSettings = maskNode
@@ -4758,9 +5468,62 @@ export default function SuperCanvas() {
         runtime,
       ) as ImageCreationSettings)
     : undefined;
-  const references = referenceOwnerId
+  const references = reuseDraft
+    ? reuseDraft.references
+        .map((reference) => reference.nodeId ? nodeById(document, reference.nodeId) : undefined)
+        .filter((node): node is CanvasNode => Boolean(node))
+    : referenceOwnerId
     ? incomingReferences(document, referenceOwnerId)
     : selectedNodes.filter((node) => node.type === "media" && node.data.url);
+  const composerReferences = reuseDraft ? reuseDraft.references : references;
+  const composerPrompt = reuseDraft ? reuseDraft.prompt : deck.prompt;
+  const composerSemanticBadges = useMemo(() => {
+    const badges: string[] = [];
+    if (reuseDraft) {
+      const imageCount = reuseDraft.references.filter((reference) => reference.kind === "image").length;
+      const videoCount = reuseDraft.references.filter((reference) => reference.kind === "video").length;
+      if (imageCount) badges.push(`图片参考 ${imageCount}`);
+      if (videoCount) badges.push(`视频输入 ${videoCount}`);
+      if (!badges.length) badges.push("尚未添加参考素材");
+      return badges;
+    }
+    const contextNodes = referenceOwnerId
+      ? incomingContext(document, referenceOwnerId)
+      : selectedNodes;
+    const semantics = resolveCanvasInputSemantics(
+      contextNodes,
+      mode === "text" ? "agent" : mode,
+      mode === "video" ? (deck.params as VideoCreationSettings).inputMode : undefined,
+    );
+    if (mode === "text") {
+      if (semantics.textContext.length) badges.push(`文本上下文 ${semantics.textContext.length}`);
+      if (semantics.imageReferences.length) badges.push(`图片参考 ${semantics.imageReferences.length}`);
+      if (semantics.videoReferences.length) badges.push(`视频不作图片参考 ${semantics.videoReferences.length}`);
+      if (!badges.length) badges.push("输入内容将作为文本上下文");
+    } else if (mode === "video") {
+      if (semantics.firstFrame) badges.push("首帧 1");
+      if (semantics.lastFrame) badges.push("尾帧 1");
+      if (semantics.referenceVideo) badges.push("参考视频 1");
+      const remainingImages = semantics.imageReferences.length - (semantics.firstFrame ? 1 : 0) - (semantics.lastFrame ? 1 : 0);
+      if (remainingImages > 0 && !semantics.firstFrame && !semantics.lastFrame) badges.push(`图片参考 ${semantics.imageReferences.length}`);
+      else if (remainingImages > 0) badges.push(`图片参考 ${remainingImages}`);
+      if (semantics.textContext.length) badges.push(`文本上下文 ${semantics.textContext.length}`);
+      if (!badges.length) badges.push("可添加首帧、尾帧或参考视频");
+    } else {
+      if (semantics.imageReferences.length) badges.push(`图片参考 ${semantics.imageReferences.length}`);
+      if (semantics.videoReferences.length) badges.push(`视频已忽略 ${semantics.videoReferences.length}`);
+      if (!badges.length) badges.push("可添加图片参考");
+    }
+    return badges;
+  }, [deck.params, document, mode, referenceOwnerId, reuseDraft, selectedNodes]);
+  useEffect(() => {
+    const textarea = deckPromptRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const minHeight = window.innerWidth <= 720 ? 68 : 72;
+    const maxHeight = window.innerWidth <= 720 ? 190 : 320;
+    textarea.style.height = `${Math.min(maxHeight, Math.max(minHeight, textarea.scrollHeight))}px`;
+  }, [composerPrompt, mode, reuseDraft, selectedSingle?.id]);
   const filteredMentionCandidates = mentionCandidates.filter(
     (node, index) =>
       !mentionState?.query ||
@@ -4836,69 +5599,24 @@ export default function SuperCanvas() {
   const continueFromMedia = useCallback(
     (node: CanvasNode) => {
       if (node.type !== "media" || !node.data.kind) return;
-      const kind = node.data.kind;
-      setSelectedIds(new Set([node.id]));
-      setSelectedGroupId(null);
-      setMode(kind);
-      setLightbox(null);
-      if (kind === "video") {
-        updateDoc((current) => ({
-          ...current,
-          nodes: current.nodes.map((item) =>
-            item.id === node.id
-              ? {
-                  ...item,
-                  data: {
-                    ...item.data,
-                    generation: item.data.generation
-                      ? {
-                          ...item.data.generation,
-                          params: {
-                            ...item.data.generation.params,
-                            operation: "extend",
-                          },
-                        }
-                      : item.data.generation,
-                  },
-                }
-              : item,
-          ),
-        }));
-        notify("已切换到视频续写模式，请确认参数后生成");
-      } else notify("已回填图片提示词，可继续生成新版本");
+      if (node.data.kind === "video") {
+        const params = node.data.generation?.params as VideoCreationSettings | undefined;
+        openReuseDraft(node, params ? { params: { ...params, operation: "extend" } } : undefined);
+      } else openReuseDraft(node);
     },
-    [notify, updateDoc],
+    [openReuseDraft],
   );
   const updateViewerParams = useCallback(
     (node: CanvasNode, settings: CreationSettings) => {
       if (node.type !== "media" || settings.kind === "text") return;
-      updateDoc((current) => ({
-        ...current,
-        nodes: current.nodes.map((item) =>
-          item.id === node.id
-            ? {
-                ...item,
-                data: {
-                  ...item.data,
-                  params: clone(settings),
-                  generation: item.data.generation
-                    ? { ...item.data.generation, params: clone(settings) }
-                    : {
-                        kind: settings.kind,
-                        prompt: String(item.data.prompt || ""),
-                        params: clone(settings),
-                        referenceIds: item.data.referenceOrder || [],
-                        createdAt: Date.now(),
-                      },
-                },
-              }
-            : item,
-        ),
-      }));
-      writeSharedCreationSettings(settings);
-      notify("参数已保存到当前画布节点");
+      if (reuseDraft?.sourceNodeId === node.id) {
+        setReuseDraft((current) => current ? { ...current, params: clone(settings), dirty: true } : current);
+        notify("参数已复制到复用草稿，原节点保持不变");
+        return;
+      }
+      openReuseDraft(node, { params: settings });
     },
-    [notify, updateDoc],
+    [notify, openReuseDraft, reuseDraft],
   );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
     if (node.type !== "media" || !node.data.url) return null;
@@ -4990,23 +5708,35 @@ export default function SuperCanvas() {
     (event: ReactChangeEvent<HTMLTextAreaElement>) => {
       const value = event.target.value;
       const cursor = event.target.selectionStart;
+      if (reuseDraft) {
+        setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
+        setMentionState(mentionStateForValue(value, cursor));
+        return;
+      }
+      if (selectedSingle?.type === "media") {
+        openReuseDraft(selectedSingle, { prompt: value });
+        setMentionState(mentionStateForValue(value, cursor));
+        return;
+      }
       updatePrompt(value);
       setMentionState(mentionStateForValue(value, cursor));
     },
-    [updatePrompt],
+    [openReuseDraft, reuseDraft, selectedSingle, updatePrompt],
   );
   const chooseMention = useCallback(
     (node: CanvasNode) => {
       if (!mentionState) return;
       const index = mentionCandidates.findIndex((item) => item.id === node.id);
       if (index < 0) return;
-      const value = deck.prompt;
+      const value = reuseDraft?.prompt || deck.prompt;
       const next = `${value.slice(0, mentionState.start)}@${index + 1} ${value.slice(mentionState.end)}`;
-      updatePrompt(next);
+      if (reuseDraft) setReuseDraft((current) => current ? { ...current, prompt: next, dirty: true } : current);
+      else if (selectedSingle?.type === "media") openReuseDraft(selectedSingle, { prompt: next });
+      else updatePrompt(next);
       setMentionState(null);
       window.requestAnimationFrame(() => deckPromptRef.current?.focus());
     },
-    [deck.prompt, mentionCandidates, mentionState, updatePrompt],
+    [deck.prompt, mentionCandidates, mentionState, openReuseDraft, reuseDraft, selectedSingle, updatePrompt],
   );
   const reorderReference = useCallback(
     (ownerId: string, draggedId: string, targetId: string) => {
@@ -5023,6 +5753,34 @@ export default function SuperCanvas() {
     },
     [commit],
   );
+  const removeComposerReference = useCallback((nodeId: string) => {
+    if (referenceOwnerId) {
+      const incoming = docRef.current.edges.filter((edge) => edge.target === referenceOwnerId && edge.source === nodeId);
+      if (incoming.length) {
+        commit((value) => incoming.reduce((next, edge) => removeEdge(next, edge.id), value));
+      }
+    }
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      next.delete(nodeId);
+      return next;
+    });
+  }, [commit, referenceOwnerId]);
+  const clearComposerReferences = useCallback(() => {
+    const ownerId = referenceOwnerId;
+    const ids = references.map((node) => node.id);
+    if (ownerId) {
+      const edgeIds = docRef.current.edges
+        .filter((edge) => edge.target === ownerId && ids.includes(edge.source))
+        .map((edge) => edge.id);
+      if (edgeIds.length) commit((value) => edgeIds.reduce((next, id) => removeEdge(next, id), value));
+    }
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, [commit, referenceOwnerId, references]);
   const minimapBounds = useMemo(() => {
     if (!document.nodes.length) return { x: -300, y: -200, w: 600, h: 400 };
     const bounds = document.nodes.map((node) =>
@@ -5120,6 +5878,8 @@ export default function SuperCanvas() {
       : null;
   const runButtonLabel = generationBusy
     ? "处理中"
+    : reuseDraft
+      ? "生成新分支"
     : mode === "text"
       ? "运行"
       : selectedSingle?.type === "generator"
@@ -5127,6 +5887,8 @@ export default function SuperCanvas() {
       : "生成";
   const runButtonTitle = generationBusy
     ? "正在处理中"
+    : reuseDraft
+      ? "使用当前参数和参考图生成独立新分支"
     : mode === "text"
       ? "运行 Agent"
       : selectedSingle?.type === "generator"
@@ -5441,7 +6203,11 @@ export default function SuperCanvas() {
                   </marker>
                 ))}
               </defs>
-              {document.edges.map((edge) => (
+              {document.edges.filter((edge) => {
+                const sourceVisible = visibleCanvasNodeIds.has(edge.source) || Boolean(groupById(document, edge.source));
+                const targetVisible = visibleCanvasNodeIds.has(edge.target) || Boolean(groupById(document, edge.target));
+                return sourceVisible && targetVisible;
+              }).map((edge) => (
                 <CanvasEdgeVisual
                   key={edge.id}
                   document={document}
@@ -5529,7 +6295,7 @@ export default function SuperCanvas() {
               })}
             </div>
             <div className="canvas-node-layer">
-              {document.nodes.map((node) => (
+              {visibleCanvasNodes.map((node) => (
                 <CanvasNodeCard
                   key={node.id}
                   node={node}
@@ -5543,6 +6309,7 @@ export default function SuperCanvas() {
                    onPreview={() =>
                     setLightbox({ nodeId: node.id, compare: false })
                   }
+                  onOutputPreview={(output) => setLightbox({ nodeId: output.id, compare: false })}
                   onTextPreview={() => setTextLightboxNodeId(node.id)}
                   onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
                   onRetryVariant={(variantIndex) =>
@@ -5573,6 +6340,37 @@ export default function SuperCanvas() {
                       ),
                     }))
                   }
+                  onEditorPromptChange={updateEditorPrompt}
+                  onEditorParamsChange={updateEditorParams}
+                  onVariantRequirementsChange={(target, value) => {
+                    if (target.type !== "generator") return;
+                    updateDoc((valueDoc) => ({
+                      ...valueDoc,
+                      nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
+                        ...item,
+                        data: {
+                          ...item.data,
+                          variantRequirementsText: value,
+                          variantRequirements: normalizeVariantRequirements(value),
+                          variantStates: [],
+                          variantBatchId: undefined,
+                          variantGroupId: undefined,
+                        },
+                      } : item),
+                    }));
+                  }}
+                  runtime={runtime}
+                  editorPrompt={editorPromptFor(node)}
+                  editorParams={editorParamsFor(node)}
+                  expanded={expandedEditorId === node.id}
+                  onToggleEditor={toggleEditor}
+                  onGenerate={runEditorGeneration}
+                  onReferenceReorder={reorderReference}
+                  onReferenceRemove={removeNodeReference}
+                  onReferenceDrop={addNodeReference}
+                  onAddReferenceFiles={addEditorReferenceFiles}
+                  editorContexts={incomingContext(document, node.id).filter((item) => item.type === "prompt" || item.type === "generator")}
+                  mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
                 />
               ))}
             </div>
@@ -5712,7 +6510,7 @@ export default function SuperCanvas() {
             </button>
           </div>
         )}
-        <div className={`canvas-deck ${deckCollapsed ? "collapsed" : ""}`}>
+        <div ref={deckRef} className={`canvas-deck legacy-deck-hidden ${deckCollapsed ? "collapsed" : ""}`}>
           <div className="canvas-deck-top">
             <div className="canvas-mode-switch">
               <button
@@ -5759,10 +6557,12 @@ export default function SuperCanvas() {
                 {selectedNodes.length > 1 || selectedGroup
                   ? `将所选内容作为参考 · 当前输出 ${mode === "video" ? "视频" : mode === "text" ? "Agent 回复" : "图片"}`
                   : references.length
-                    ? `已连接 ${references.length} 个参考素材`
+                    ? reuseDraft
+                      ? `复用草稿 · ${composerReferences.length} 个参考素材`
+                      : `已连接 ${composerReferences.length} 个参考素材`
                     : selectedSingle?.type === "media" &&
                         selectedSingle.data.url
-                      ? "再次生成会回写当前节点；蒙版、超分仍创建独立分支"
+                      ? "再次生成会创建新分支；原节点和原连线保持不变"
                       : "生成结果直接进入画布卡片"}
               </small>
             </div>
@@ -5817,23 +6617,77 @@ export default function SuperCanvas() {
           </div>
           {!deckCollapsed && (
             <>
-              <div className="canvas-deck-main">
-                <button
-                  type="button"
-                  className="canvas-context-add"
-                  aria-label="导入参考素材"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  ＋
-                </button>
-                <CanvasReferenceList
-                  document={document}
-                  ownerId={referenceOwnerId}
-                  nodes={references}
-                  onReorder={reorderReference}
-                  variant="deck"
-                />
-                <div className="canvas-prompt-input-wrap">
+              <div
+                className="canvas-deck-main"
+                onDragOver={(event) => {
+                  if (!reuseDraft) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                  if (reuseDraft) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (event.dataTransfer.files.length) void handleFiles(event.dataTransfer.files);
+                }}
+                onPaste={(event) => {
+                  if (reuseDraft) return;
+                  const image = [...event.clipboardData.items].find((item) => item.type.startsWith("image/"));
+                  if (image?.getAsFile()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void handleFiles([image.getAsFile()!]);
+                  }
+                }}
+              >
+                <div className="canvas-deck-reference-row">
+                  {!reuseDraft && (
+                    <button
+                      type="button"
+                      className="canvas-context-add"
+                      aria-label="导入参考素材"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      ＋
+                    </button>
+                  )}
+                  {reuseDraft ? (
+                    <CanvasReferenceDraftStrip
+                      references={reuseDraft.references}
+                      onFiles={(files) => void addReuseFiles(files)}
+                      onRemove={removeReuseReference}
+                      onReorder={reorderReuseReference}
+                      onPaste={() => void pasteReuseReference()}
+                      onClear={() => setReuseDraft((current) => current ? { ...current, references: [], dirty: true } : current)}
+                      onPreview={setReusePreview}
+                      emptyLabel="添加参考图"
+                      trailing={
+                        <>
+                          <button type="button" disabled={!reuseDraft.references.length} onClick={() => void reverseReusePrompt()}>⌁ 反推</button>
+                          <button type="button" disabled={!reuseDraft.prompt.trim()} onClick={() => void optimizeReusePrompt()}>✦ 优化</button>
+                        </>
+                      }
+                    />
+                  ) : (
+                    <CanvasReferenceList
+                      document={document}
+                      ownerId={referenceOwnerId}
+                      nodes={references}
+                      onReorder={reorderReference}
+                      onRemove={removeComposerReference}
+                      onClear={clearComposerReferences}
+                      onAdd={() => fileInputRef.current?.click()}
+                      onPaste={() => void pasteFromClipboard()}
+                      variant="deck"
+                    />
+                  )}
+                  <div className="canvas-input-semantics" aria-label="引用语义">
+                    <span className="canvas-input-semantics-label">引用方式</span>
+                    {composerSemanticBadges.map((badge) => (
+                      <span key={badge}>{badge}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="canvas-deck-prompt-row">
+                  <div className="canvas-prompt-input-wrap">
                   <textarea
                     ref={deckPromptRef}
                     aria-label="创作提示词"
@@ -5844,7 +6698,7 @@ export default function SuperCanvas() {
                               selectedSingle.data.text ||
                               "",
                           )
-                        : deck.prompt
+                      : composerPrompt
                     }
                     onChange={updateDeckPrompt}
                     onClick={(event) =>
@@ -5866,6 +6720,11 @@ export default function SuperCanvas() {
                     }}
                     onKeyDown={(event) => {
                       if (event.key === "Escape") setMentionState(null);
+                      if (mode === "text" && event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void runGeneration();
+                        return;
+                      }
                       if (
                         (event.ctrlKey || event.metaKey) &&
                         event.key === "Enter"
@@ -5883,6 +6742,16 @@ export default function SuperCanvas() {
                     }
                     rows={2}
                   />
+                  {reuseDraft && composerPrompt && (
+                    <button
+                      type="button"
+                      className="canvas-reuse-prompt-clear"
+                      aria-label="清空复用提示词"
+                      onClick={() => setReuseDraft((current) => current ? { ...current, prompt: "", dirty: true } : current)}
+                    >
+                      清空
+                    </button>
+                  )}
                   {mentionState && filteredMentionCandidates.length > 0 && (
                     <div className="canvas-mention-menu">
                       {filteredMentionCandidates.slice(0, 8).map((node) => (
@@ -5910,20 +6779,21 @@ export default function SuperCanvas() {
                       ))}
                     </div>
                   )}
+                  </div>
+                  <button
+                    type="button"
+                    className="canvas-run-button"
+                    disabled={generationBusy}
+                    aria-busy={generationBusy}
+                    aria-label={runButtonTitle}
+                    title={`${runButtonTitle}（Ctrl + Enter）`}
+                    onClick={() => void runGeneration()}
+                  >
+                    <span aria-hidden="true">✦</span>
+                    <b>{runButtonLabel}</b>
+                    <small>Ctrl + Enter</small>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="canvas-run-button"
-                  disabled={generationBusy}
-                  aria-busy={generationBusy}
-                  aria-label={runButtonTitle}
-                  title={`${runButtonTitle}（Ctrl + Enter）`}
-                  onClick={() => void runGeneration()}
-                >
-                  <span aria-hidden="true">✦</span>
-                  <b>{runButtonLabel}</b>
-                  <small>Ctrl + Enter</small>
-                </button>
               </div>
               <div className="canvas-deck-params">
                 {selectedSingle?.type === "generator" && (
@@ -5951,11 +6821,14 @@ export default function SuperCanvas() {
                   </div>
                 )}
                 <CreationParameterEditor
-                  settings={deck.params}
+                  settings={reuseDraft ? reuseDraft.params : deck.params}
                   runtime={runtime}
                   unavailableModelId={deckModelState.unavailableModelId}
-                  referenceCount={references.length}
-                  onChange={updateParams}
+                  referenceCount={composerReferences.length}
+                  onChange={(settings) => {
+                    if (reuseDraft) setReuseDraft((current) => current ? { ...current, params: clone(settings), dirty: true } : current);
+                    else updateParams(settings);
+                  }}
                 />
               </div>
             </>
@@ -6044,44 +6917,65 @@ export default function SuperCanvas() {
           </div>
         )}
       </div>
-      {lightbox && (
-        <CanvasMediaViewer
-          node={nodeById(document, lightbox.nodeId)}
-          compare={lightbox.compare}
-          references={
-            nodeById(document, lightbox.nodeId)
-              ? incomingReferences(document, lightbox.nodeId)
-              : []
-          }
-          onClose={() => setLightbox(null)}
-          onCompare={() =>
-            setLightbox((value) =>
-              value ? { ...value, compare: !value.compare } : value,
-            )
-          }
+      {lightbox && (() => {
+        const viewerNode = nodeById(document, lightbox.nodeId);
+        if (!viewerNode || viewerNode.type !== "media" || !viewerNode.data.url || !viewerNode.data.kind) return null;
+        const viewerItem: MediaViewerItem = {
+          id: viewerNode.id,
+          kind: viewerNode.data.kind,
+          url: String(viewerNode.data.url),
+          name: String(viewerNode.data.name || "画布素材"),
+          prompt: String(viewerNode.data.generation?.prompt || viewerNode.data.prompt || ""),
+          width: Number(viewerNode.data.nativeWidth) || undefined,
+          height: Number(viewerNode.data.nativeHeight) || undefined,
+        };
+        const viewerReferences: MediaViewerReference[] = incomingReferences(document, viewerNode.id).map((reference) => ({
+          id: reference.id,
+          kind: reference.data.kind === "video" ? ("video" as const) : ("image" as const),
+          url: String(reference.data.url || ""),
+          name: String(reference.data.name || "参考素材"),
+        })).filter((reference) => Boolean(reference.url));
+        const removeViewerNode = () => {
+          if (!window.confirm("删除这个节点？可以使用撤销恢复。")) return;
+          commit((value) => removeNodes(value, [viewerNode.id]));
+          setSelectedIds(new Set());
+          setSelectedGroupId(null);
+          setLightbox(null);
+          notify("节点已删除，可用撤销恢复");
+        };
+        return <MediaViewer
+          item={viewerItem}
+          references={viewerReferences}
+          initialCompare={lightbox.compare}
           model={runtime?.settings.agentModelId || undefined}
           agentAvailable={chatModelsAvailable}
           runtime={runtime}
-          parameters={(() => {
-            const viewerNode = nodeById(document, lightbox.nodeId);
-            return viewerNode?.type === "media"
-              ? viewerNode.data.kind === "video"
-                ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "video", runtime) as VideoCreationSettings
-                : copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings
-              : undefined;
-          })()}
-          onParametersChange={(settings) => {
-            const viewerNode = nodeById(document, lightbox.nodeId);
-            if (viewerNode) updateViewerParams(viewerNode, settings);
-          }}
-          onWritePrompt={writeViewerPrompt}
-          onCreateTextNode={createViewerTextNode}
+          parameters={viewerNode.data.kind === "video"
+            ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "video", runtime) as VideoCreationSettings
+            : copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings}
+          onClose={() => setLightbox(null)}
+          onParametersChange={(settings) => updateViewerParams(viewerNode, settings)}
+          onPromptSave={(value) => writeViewerPrompt(viewerNode, value)}
+          onWriteResult={(value) => writeViewerPrompt(viewerNode, value)}
+          onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
-          onUpscale={(node) => void runUpscale(node)}
-          onUseAsReference={(node) => { const asset = viewerAsset(node); if (asset) addAssetAsReference(asset); }}
-          onAddToAssets={(node) => void addViewerAsset(node)}
-          onContinue={continueFromMedia}
-        />
+          onEdit={viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
+          onUpscale={viewerNode.data.kind === "image" ? () => void runUpscale(viewerNode) : undefined}
+          onContinue={() => continueFromMedia(viewerNode)}
+          onReuse={() => openReuseDraft(viewerNode)}
+          onUseAsReference={() => addCurrentNodeToReuse(viewerNode)}
+          onAddToAssets={() => void addViewerAsset(viewerNode)}
+          onDelete={removeViewerNode}
+        />;
+      })()}
+      {reusePreview && (
+        <div className="canvas-modal-backdrop canvas-reference-preview-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setReusePreview(null); }}>
+          <div className="canvas-reference-preview-modal canvas-draft-reference-preview">
+            <header><div><b>{reusePreview.name}</b><small>临时复用参考图 · 不会修改原节点</small></div><button type="button" onClick={() => setReusePreview(null)} aria-label="关闭参考图预览">×</button></header>
+            <div className="canvas-reference-preview-stage">{reusePreview.kind === "video" ? <video src={reusePreview.url} controls playsInline /> : <img src={reusePreview.url} alt={reusePreview.name} />}</div>
+            <footer><button type="button" onClick={() => { removeReuseReference(reusePreview.id); setReusePreview(null); }}>移除这张参考图</button><button type="button" onClick={() => setReusePreview(null)}>关闭</button></footer>
+          </div>
+        </div>
       )}
       {textLightboxNodeId && (
         <CanvasTextLightbox
@@ -6740,56 +7634,93 @@ function CanvasReferenceList({
   ownerId,
   nodes,
   onReorder,
+  onRemove,
+  onClear,
+  onAdd,
+  onPaste,
   variant = "card",
 }: {
   document: CanvasDocument;
   ownerId?: string;
   nodes?: CanvasNode[];
   onReorder: (ownerId: string, draggedId: string, targetId: string) => void;
+  onRemove?: (nodeId: string) => void;
+  onClear?: () => void;
+  onAdd?: () => void;
+  onPaste?: () => void;
   variant?: "card" | "deck";
 }) {
   const references = ownerId
     ? incomingReferences(document, ownerId)
     : nodes || [];
-  if (!references.length)
-    return (
-      <small className="canvas-reference-empty">连接素材后显示参考顺序</small>
-    );
   return (
-    <div className={`canvas-reference-list ${variant}`}>
-      {references.map((item, index) => (
-        <div
-          className="canvas-reference-item"
-          key={item.id}
-          draggable={Boolean(ownerId)}
-          title={ownerId ? "拖动调整参考顺序" : item.data.name || "参考素材"}
-          onPointerDown={(event) => event.stopPropagation()}
-          onDragStart={(event: ReactDragEvent<HTMLDivElement>) => {
-            if (!ownerId) return;
-            event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData("text/plain", item.id);
-          }}
-          onDragOver={(event) => {
-            if (ownerId) event.preventDefault();
-          }}
-          onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
-            event.preventDefault();
-            const draggedId = event.dataTransfer.getData("text/plain");
-            if (ownerId && draggedId) onReorder(ownerId, draggedId, item.id);
-          }}
-        >
-          <span className="canvas-reference-index">{index + 1}</span>
-          {item.data.kind === "video" ? (
-            <video src={item.data.url} muted playsInline />
-          ) : (
-            <img src={item.data.url} alt={item.data.name || "参考素材"} />
-          )}
-          <b>
-            {item.data.name ||
-              (item.data.kind === "video" ? "视频素材" : "图片素材")}
-          </b>
+    <div className={`canvas-reference-list-shell ${variant}`}>
+      <div className={`canvas-reference-list ${variant}`}>
+        {references.map((item, index) => (
+          <div
+            className="canvas-reference-item"
+            key={item.id}
+            draggable={Boolean(ownerId)}
+            title={ownerId ? "拖动调整参考顺序" : item.data.name || "参考素材"}
+            onPointerDown={(event) => event.stopPropagation()}
+            onDragStart={(event: ReactDragEvent<HTMLDivElement>) => {
+              if (!ownerId) return;
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", item.id);
+            }}
+            onDragOver={(event) => {
+              if (ownerId) event.preventDefault();
+            }}
+            onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
+              event.preventDefault();
+              const draggedId = event.dataTransfer.getData("text/plain");
+              if (ownerId && draggedId) onReorder(ownerId, draggedId, item.id);
+            }}
+          >
+            <button
+              type="button"
+              className="canvas-reference-preview-button"
+              aria-label={`预览参考图 ${index + 1}`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <span className="canvas-reference-index">{index + 1}</span>
+              {item.data.kind === "video" ? (
+                <video src={item.data.url} muted playsInline />
+              ) : (
+                <img src={item.data.url} alt={item.data.name || "参考素材"} />
+              )}
+            </button>
+            <b>
+              {item.data.name ||
+                (item.data.kind === "video" ? "视频素材" : "图片素材")}
+            </b>
+            {onRemove && (
+              <button
+                type="button"
+                className="canvas-reference-remove"
+                aria-label={`移除参考图 ${index + 1}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRemove(item.id);
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        {!references.length && (
+          <small className="canvas-reference-empty">连接素材后显示参考顺序</small>
+        )}
+      </div>
+      {(onAdd || onPaste || (onClear && references.length > 0)) && (
+        <div className="canvas-reference-list-actions">
+          <span>{references.length}/16</span>
+          {onAdd && <button type="button" onClick={onAdd}>＋ 添加</button>}
+          {onPaste && <button type="button" onClick={onPaste}>粘贴</button>}
+          {onClear && references.length > 0 && <button type="button" className="danger" onClick={onClear}>清空</button>}
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -6836,6 +7767,127 @@ function CanvasProcessingIndicator({
   );
 }
 
+function CanvasNodeReferenceStrip({
+  target,
+  document,
+  references,
+  contexts,
+  base,
+  onReorder,
+  onRemove,
+  onDrop,
+  onAddFiles,
+  onPreview,
+}: {
+  target: CanvasNode;
+  document: CanvasDocument;
+  references: CanvasNode[];
+  contexts: CanvasNode[];
+  base?: CanvasNode;
+  onReorder: (ownerId: string, draggedId: string, targetId: string) => void;
+  onRemove: (ownerId: string, sourceId: string) => void;
+  onDrop: (ownerId: string, sourceId: string, role: "base-image" | "reference-image") => void;
+  onAddFiles: (ownerId: string, files: File[]) => void;
+  onPreview: (node: CanvasNode) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const allowImageReference = target.type === "prompt" || target.data.kind === "image" || target.data.kind === "video";
+
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>, role: "base-image" | "reference-image", targetId?: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const fromIndex = Number(event.dataTransfer.getData("application/x-sanmao-reference-index"));
+    if (role === "reference-image" && Number.isInteger(fromIndex) && fromIndex >= 0 && fromIndex < references.length && targetId) {
+      onReorder(target.id, references[fromIndex].id, targetId);
+      setDraggedId(null);
+      return;
+    }
+    const sourceId = event.dataTransfer.getData("application/x-sanmao-canvas-node");
+    if (sourceId) onDrop(target.id, sourceId, role);
+    setDraggedId(null);
+  };
+
+  return (
+    <div className="canvas-editor-references" onDragOver={(event) => event.preventDefault()}>
+      <div className="canvas-editor-section-head">
+        <span><b>输入与引用</b><small>拖动缩略图可调整顺序</small></span>
+        <div>
+          <b>{references.length}/16</b>
+          <button type="button" onClick={() => inputRef.current?.click()}>＋ 添加</button>
+        </div>
+      </div>
+      {target.type !== "prompt" && (
+        <div
+          className={`canvas-editor-base-slot${base ? " filled" : ""}`}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleDrop(event, "base-image")}
+        >
+          <span className="canvas-editor-slot-label">基底图 <small>最多 1 张</small></span>
+          {base ? (
+            <div
+              className="canvas-editor-base-preview"
+              role="button"
+              tabIndex={0}
+              onClick={() => onPreview(base)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") onPreview(base);
+              }}
+            >
+              {base.data.kind === "video" ? <video src={base.data.url} muted playsInline /> : <img src={base.data.url} alt={base.data.name || "基底图"} />}
+              <b>{base.data.name || "基底图"}</b>
+              <button type="button" aria-label="移除基底图" onClick={(event) => { event.stopPropagation(); onRemove(target.id, base.id); }}>×</button>
+            </div>
+          ) : <small>把图片节点拖到这里</small>}
+        </div>
+      )}
+      {contexts.length > 0 && (
+        <div className="canvas-editor-context-slot">
+          <span className="canvas-editor-slot-label">文本上下文 <small>来自 @ 引用</small></span>
+          <div className="canvas-editor-context-items">
+            {contexts.map((context, index) => (
+              <div className="canvas-editor-context-item" key={context.id}>
+                <span>{index + 1}</span>
+                <b>{context.type === "prompt" ? "Agent" : context.data.kind === "video" ? "视频生成器" : "图片生成器"}</b>
+                <small>{String(context.data.text || context.data.prompt || "上下文")}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="canvas-editor-reference-slot" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop(event, "reference-image")}>
+        <span className="canvas-editor-slot-label">{target.type === "prompt" ? "上下文与参考" : "参考图"} <small>按编号提交</small></span>
+        <div className="canvas-editor-reference-items">
+          {references.map((reference, index) => (
+            <div
+              key={reference.id}
+              className={`canvas-editor-reference-item${draggedId === reference.id ? " dragging" : ""}`}
+              draggable
+              onDragStart={(event) => {
+                setDraggedId(reference.id);
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("application/x-sanmao-canvas-node", reference.id);
+                event.dataTransfer.setData("application/x-sanmao-reference-index", String(index));
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => handleDrop(event, "reference-image", reference.id)}
+              onDragEnd={() => setDraggedId(null)}
+            >
+              <button type="button" className="canvas-editor-reference-preview" onClick={() => onPreview(reference)} title={reference.data.name || `引用 ${index + 1}`}>
+                <span>{index + 1}</span>
+                {reference.type === "prompt" ? <b>✦</b> : reference.data.kind === "video" ? <video src={reference.data.url} muted playsInline /> : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
+              </button>
+              <button type="button" className="canvas-editor-reference-remove" aria-label={`移除引用 ${index + 1}`} onClick={() => onRemove(target.id, reference.id)}>×</button>
+            </div>
+          ))}
+          {!references.length && <small className="canvas-editor-reference-empty">拖入节点，或点击添加本地素材</small>}
+        </div>
+      </div>
+      <input ref={inputRef} hidden type="file" multiple accept={allowImageReference ? "image/png,image/jpeg,image/webp,video/mp4,video/webm" : "*/*"} onChange={(event) => { if (event.target.files) onAddFiles(target.id, [...event.target.files]); event.currentTarget.value = ""; }} />
+    </div>
+  );
+}
+
 function CanvasNodeCard({
   node,
   selected,
@@ -6852,6 +7904,22 @@ function CanvasNodeCard({
   onRetryFailedVariants,
   onNaturalSize,
   onPromptChange,
+  onEditorPromptChange,
+  onEditorParamsChange,
+  onVariantRequirementsChange,
+  runtime,
+  editorPrompt,
+  editorParams,
+  expanded,
+  onToggleEditor,
+  onGenerate,
+  onReferenceReorder,
+  onReferenceRemove,
+  onReferenceDrop,
+  onAddReferenceFiles,
+  editorContexts,
+  mentionCandidates,
+  onOutputPreview,
   editing,
   onEdit,
 }: {
@@ -6874,6 +7942,22 @@ function CanvasNodeCard({
   onRetryFailedVariants: () => void;
   onNaturalSize: (nodeId: string, width: number, height: number) => void;
   onPromptChange: (value: string) => void;
+  onEditorPromptChange: (node: CanvasNode, value: string) => void;
+  onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
+  onVariantRequirementsChange: (node: CanvasNode, value: string) => void;
+  runtime: CanvasRuntimeState | null;
+  editorPrompt: string;
+  editorParams?: CanvasGenerationParams;
+  expanded: boolean;
+  onToggleEditor: (node: CanvasNode) => void;
+  onGenerate: (node: CanvasNode) => void;
+  onReferenceReorder: (ownerId: string, draggedId: string, targetId: string) => void;
+  onReferenceRemove: (ownerId: string, sourceId: string) => void;
+  onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
+  onAddReferenceFiles: (ownerId: string, files: File[]) => void;
+  editorContexts: CanvasNode[];
+  mentionCandidates: CanvasNode[];
+  onOutputPreview: (node: CanvasNode) => void;
   editing: boolean;
   onEdit: (value: boolean) => void;
 }) {
@@ -6934,6 +8018,42 @@ function CanvasNodeCard({
       : 0;
   const referenceCount =
     node.type === "generator" ? incomingReferences(document, node.id).length : 0;
+  const editorReferences = incomingContext(document, node.id).filter((item) =>
+    item.type === "media" && Boolean(item.data.url),
+  );
+  const editorBase = document.edges.find(
+    (edge) => edge.target === node.id && edge.inputRole === "base-image",
+  )?.source;
+  const baseNode = editorBase ? nodeById(document, editorBase) : undefined;
+  const editorOutputs =
+    node.type === "generator"
+      ? document.nodes.filter(
+          (item) => item.type === "media" && item.data.generation?.sourceGeneratorId === node.id,
+        )
+      : [];
+  const [mentionState, setMentionState] = useState<MentionState>(null);
+  const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
+    if (item.id === node.id) return false;
+    if (!mentionState?.query) return true;
+    const query = mentionState.query.trim().toLowerCase();
+    // Numeric queries address the visible mention number directly. This keeps
+    // “@2” deterministic instead of accidentally matching digits in a UUID.
+    if (/^\d+$/.test(query)) return String(index + 1).startsWith(query);
+    const search = [
+      mentionLabel(item, index),
+      nodeLabel(item),
+      item.data.name,
+      item.data.text,
+      item.data.prompt,
+      item.data.agentPrompt,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return search.includes(query);
+  });
+  const expandedHeight = expanded ? Math.max(size.h, node.type === "prompt" ? 450 : 570) : size.h;
+  const expandedWidth = expanded ? Math.max(size.w, 380) : size.w;
   return (
     <article
       className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
@@ -6941,16 +8061,19 @@ function CanvasNodeCard({
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
       aria-busy={pending}
-      style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
-      draggable={node.type === "media" && Boolean(data.url) && !node.groupId}
+      style={{ left: node.x, top: node.y, width: expandedWidth, height: expandedHeight }}
+      // Node movement and typed connections use the canvas pointer model.
+      // Do not enable native HTML dragging on the whole card: it steals click
+      // events from the editor controls and makes the card feel unresponsive.
+      draggable={false}
       onDragStart={(event) => {
-        if (node.type !== "media" || !data.url) return;
+        if (!data.url && node.type !== "prompt") return;
         event.dataTransfer.effectAllowed = "copy";
         event.dataTransfer.setData("application/x-sanmao-canvas-node", node.id);
       }}
       onPointerDown={(event) => onPointerDown(event, node)}
       onDoubleClick={() => {
-        if (node.type === "prompt") onEdit(true);
+        if (node.type === "prompt") onToggleEditor(node);
         else if (node.type === "media" && data.url) onPreview();
       }}
     >
@@ -7061,6 +8184,7 @@ function CanvasNodeCard({
               <small>{data.model || nodeStatus(node)}</small>
             </span>
             <em>{nodeStatus(node)}</em>
+            <button type="button" draggable={false} className="canvas-node-edit-toggle" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label={expanded ? "收起编辑器" : "展开编辑器"}>{expanded ? "⌃" : "✎"}</button>
           </div>
         </div>
       )}
@@ -7069,6 +8193,7 @@ function CanvasNodeCard({
           <div className="canvas-node-kicker">
             <span>✦</span>
             <b>{String(data.role || "Agent 节点")}</b>
+            <button type="button" draggable={false} className="canvas-node-edit-toggle" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label={expanded ? "收起编辑器" : "展开编辑器"}>{expanded ? "⌃" : "✎"}</button>
           </div>
           {pending && (
             <CanvasProcessingIndicator
@@ -7142,6 +8267,7 @@ function CanvasNodeCard({
                     : "共同提示词 + 多行变体要求"}
               </small>
             </div>
+            <button type="button" draggable={false} className="canvas-node-edit-toggle" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label={expanded ? "收起编辑器" : "展开编辑器"}>{expanded ? "⌃" : "✎"}</button>
           </div>
           {pending && (
             <CanvasProcessingIndicator
@@ -7173,6 +8299,29 @@ function CanvasNodeCard({
             >
               ↻ 重试失败项（{failedVariants}）
             </button>
+          )}
+          {editorOutputs.length > 0 && (
+            <div className="canvas-generator-output-gallery" aria-label="生成结果">
+              {editorOutputs.map((output) => (
+                <button
+                  type="button"
+                  key={output.id}
+                  className="canvas-generator-output-thumb"
+                  draggable={Boolean(output.data.url)}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onDragStart={(event) => {
+                    event.stopPropagation();
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData("application/x-sanmao-canvas-node", output.id);
+                  }}
+                  onClick={() => onOutputPreview(output)}
+                  title="查看结果；可拖到其他节点作为参考"
+                >
+                  {output.data.kind === "video" ? <video src={output.data.url} muted playsInline /> : <img src={output.data.url} alt={output.data.name || "生成结果"} />}
+                  <span>{output.data.name || "结果"}</span>
+                </button>
+              ))}
+            </div>
           )}
           <div className="canvas-generator-prompt">
             <b>共同提示词</b>
@@ -7218,6 +8367,114 @@ function CanvasNodeCard({
                   : "自动比例",
               )}
             </span>
+          </div>
+        </div>
+      )}
+      {expanded && (
+        <div
+          className="canvas-node-editor"
+          aria-label={`${nodeLabel(node)}编辑器`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="canvas-node-editor-head">
+            <div>
+              <b>{node.type === "prompt" ? "Agent 编辑器" : data.kind === "video" ? "视频编辑器" : "图片编辑器"}</b>
+              <small>节点内完成输入、引用、参数和生成</small>
+            </div>
+            <button type="button" draggable={false} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label="收起节点编辑器">⌃</button>
+          </div>
+          <div className="canvas-node-editor-prompt-wrap">
+            <textarea
+              aria-label={`${nodeLabel(node)}提示词`}
+              value={editorPrompt}
+              placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
+              onChange={(event) => {
+                const value = event.target.value;
+                onEditorPromptChange(node, value);
+                setMentionState(mentionStateForValue(value, event.target.selectionStart));
+              }}
+              onClick={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+              onKeyUp={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setMentionState(null);
+                if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
+                  event.preventDefault();
+                  onGenerate(node);
+                }
+              }}
+              rows={3}
+            />
+            {mentionState && visibleMentionCandidates.length > 0 && (
+              <div className="canvas-node-mention-menu">
+                {visibleMentionCandidates.slice(0, 12).map((candidate, index) => (
+                  <button
+                    type="button"
+                    key={candidate.id}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
+                      const next = `${editorPrompt.slice(0, mentionState.start)}@${candidateIndex + 1} ${editorPrompt.slice(mentionState.end)}`;
+                      onEditorPromptChange(node, next);
+                      const role: CanvasInputRole =
+                        candidate.type === "prompt" || candidate.type === "generator"
+                          ? "context"
+                          : candidate.data.kind === "video"
+                            ? node.type === "prompt" || node.data.kind === "video"
+                              ? "video"
+                              : "reference-image"
+                            : "reference-image";
+                      onReferenceDrop(node.id, candidate.id, role);
+                      setMentionState(null);
+                    }}
+                  >
+                    <strong>@{mentionCandidates.findIndex((item) => item.id === candidate.id) + 1}</strong>
+                    <span className="canvas-node-mention-preview">
+                      {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" && candidate.data.kind === "video" ? "▶" : "✦"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
+                    </span>
+                    <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <CanvasNodeReferenceStrip
+            target={node}
+            document={document}
+            references={editorReferences}
+            contexts={editorContexts}
+            base={baseNode}
+            onReorder={onReferenceReorder}
+            onRemove={onReferenceRemove}
+            onDrop={onReferenceDrop}
+            onAddFiles={onAddReferenceFiles}
+            onPreview={onOutputPreview}
+          />
+          {node.type === "generator" && (
+            <div className="canvas-node-variant-editor">
+              <label>变体要求 <small>每行一条，最多 8 条</small></label>
+              <textarea
+                rows={2}
+                value={data.variantRequirementsText ?? variantRequirements.join("\n")}
+                placeholder="改成夜景\n改为俯拍视角"
+                onChange={(event) => onVariantRequirementsChange(node, event.target.value)}
+              />
+            </div>
+          )}
+          {node.type !== "prompt" && editorParams && (
+            <details className="canvas-node-parameters" open={false}>
+              <summary>参数设置 <span>模型、比例、尺寸和高级选项</span></summary>
+              <CreationParameterEditor
+                settings={editorParams}
+                runtime={runtime}
+                referenceCount={editorReferences.length}
+                onChange={(settings) => onEditorParamsChange(node, settings)}
+              />
+            </details>
+          )}
+          <div className="canvas-node-editor-actions">
+            <span>{node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : "Ctrl/Cmd + Enter 生成"}</span>
+            <button type="button" className="canvas-node-editor-generate" disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "prompt" ? "发送" : "生成"}</button>
           </div>
         </div>
       )}

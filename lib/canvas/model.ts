@@ -5,6 +5,7 @@ import type {
   CanvasEdge,
   CanvasGenerationParams,
   CanvasGroup,
+  CanvasInputRole,
   CanvasMediaKind,
   CanvasNode,
   CanvasNodeData,
@@ -167,13 +168,64 @@ function normalizeEdge(value: unknown): CanvasEdge | null {
     target: String(raw.target),
     sourcePort: raw.sourcePort === "left" ? "left" : "right",
     targetPort: raw.targetPort === "right" ? "right" : "left",
+    ...(raw.inputRole ? { inputRole: normalizeInputRole(raw.inputRole) } : {}),
+    ...(Number.isFinite(Number(raw.order)) ? { order: Number(raw.order) } : {}),
     kind:
       raw.kind === "generated" ||
       raw.kind === "variant" ||
-      raw.kind === "lineage"
+      raw.kind === "lineage" ||
+      raw.kind === "reference"
         ? raw.kind
         : "manual",
   };
+}
+
+function normalizeInputRole(value: unknown): CanvasInputRole | undefined {
+  return value === "prompt" ||
+    value === "context" ||
+    value === "base-image" ||
+    value === "reference-image" ||
+    value === "mask" ||
+    value === "video" ||
+    value === "first-frame" ||
+    value === "last-frame"
+    ? value
+    : undefined;
+}
+
+function hasPath(document: CanvasDocument, source: string, target: string) {
+  const visited = new Set<string>();
+  const pending = [target];
+  while (pending.length) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    if (current === source) return true;
+    visited.add(current);
+    document.edges.forEach((edge) => {
+      if (edge.source === current && !visited.has(edge.target)) pending.push(edge.target);
+    });
+  }
+  return false;
+}
+
+export function canConnect(
+  document: CanvasDocument,
+  source: string,
+  target: string,
+  inputRole?: CanvasInputRole,
+) {
+  if (!source || !target || source === target) return { ok: false, reason: "不能连接自身" };
+  if (!nodeById(document, source) && !groupById(document, source)) return { ok: false, reason: "源节点不存在" };
+  if (!nodeById(document, target) && !groupById(document, target)) return { ok: false, reason: "目标节点不存在" };
+  if (hasPath(document, source, target)) return { ok: false, reason: "这条连接会形成循环" };
+  const targetNode = nodeById(document, target);
+  if (inputRole === "base-image" && targetNode) {
+    const existing = document.edges.some(
+      (edge) => edge.target === target && edge.inputRole === "base-image",
+    );
+    if (existing) return { ok: false, reason: "一个生成节点只能有一个基底图" };
+  }
+  return { ok: true as const };
 }
 
 export function normalizeDocument(
@@ -872,6 +924,8 @@ export function addEdge(
   sourcePort: "left" | "right" = "right",
   targetPort: "left" | "right" = "left",
   kind: CanvasEdge["kind"] = "manual",
+  inputRole?: CanvasInputRole,
+  order?: number,
 ) {
   const sourceExists = Boolean(
     nodeById(document, source) || groupById(document, source),
@@ -879,7 +933,9 @@ export function addEdge(
   const targetExists = Boolean(
     nodeById(document, target) || groupById(document, target),
   );
+  const validation = canConnect(document, source, target, inputRole);
   if (
+    !validation.ok ||
     !sourceExists ||
     !targetExists ||
     source === target ||
@@ -896,7 +952,16 @@ export function addEdge(
     ...document,
     edges: [
       ...document.edges,
-      { id: uid("edge"), source, target, sourcePort, targetPort, kind },
+      {
+        id: uid("edge"),
+        source,
+        target,
+        sourcePort,
+        targetPort,
+        kind,
+        ...(inputRole ? { inputRole } : {}),
+        ...(Number.isFinite(Number(order)) ? { order: Number(order) } : {}),
+      },
     ],
   };
 }
@@ -1154,6 +1219,11 @@ export function reorderReferences(
   });
   return {
     ...document,
+    edges: document.edges.map((edge) => {
+      if (edge.target !== ownerId) return edge;
+      const index = next.indexOf(edge.source);
+      return index >= 0 ? { ...edge, order: index } : edge;
+    }),
     nodes: document.nodes.map((node) =>
       node.id === ownerId
         ? {

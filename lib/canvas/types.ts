@@ -6,6 +6,15 @@ export type CanvasMediaKind = 'image' | 'video';
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type CanvasInputRole =
+  | 'prompt'
+  | 'context'
+  | 'base-image'
+  | 'reference-image'
+  | 'mask'
+  | 'video'
+  | 'first-frame'
+  | 'last-frame';
 
 export type CanvasVariantState = {
   id: string;
@@ -26,9 +35,12 @@ export type CanvasGenerationMeta = {
   kind: CanvasMediaKind;
   prompt: string;
   params: CanvasGenerationParams;
+  operation?: "generate" | "edit" | "upscale" | "extend";
   referenceIds?: string[];
   sourceGeneratorId?: string;
   parentNodeId?: string;
+  /** The completed media node whose prompt/parameters were copied for a new branch. */
+  reuseSourceNodeId?: string;
   taskId?: string;
   variantBatchId?: string;
   variantIndex?: number;
@@ -69,7 +81,17 @@ export type CanvasNodeData = {
   variantStates?: CanvasVariantState[];
   variantBatchId?: string;
   variantGroupId?: string;
+  editor?: CanvasEditorState;
   [key: string]: unknown;
+};
+
+export type CanvasEditorState = {
+  expanded?: boolean;
+  draftPrompt?: string;
+  draftParams?: CanvasGenerationParams;
+  draftReferenceIds?: string[];
+  activeHistoryId?: string;
+  dirty?: boolean;
 };
 
 export type CanvasNode = {
@@ -89,7 +111,9 @@ export type CanvasEdge = {
   target: string;
   sourcePort?: 'left' | 'right';
   targetPort?: 'left' | 'right';
-  kind?: 'manual' | 'generated' | 'variant' | 'lineage';
+  inputRole?: CanvasInputRole;
+  order?: number;
+  kind?: 'manual' | 'generated' | 'variant' | 'lineage' | 'reference';
 };
 
 export type CanvasGroup = {
