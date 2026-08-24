@@ -9,7 +9,7 @@
     "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.9/SANMAO.AI-0.7.9.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.9/SANMAO.AI-0.7.9.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "27eba373ab972f61e42a73602a3024c0777fe3fb6e7f5270118e628be2701774",
   "publishedAt": "2026-08-25T00:00:00+08:00",
   "notes": [
     "节点式超级画布编辑器：每个节点独立承载提示词、参数、参考素材和生成操作，避免全局工作台遮挡无限画布。",
