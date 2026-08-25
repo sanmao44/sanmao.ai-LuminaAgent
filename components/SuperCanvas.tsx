@@ -4452,7 +4452,7 @@ export default function SuperCanvas() {
         });
         setSelectedIds(new Set([inputId]));
         setSelectedGroupId(null);
-        writeSharedCreationSettings(effectiveSettings);
+        if (!source.node) writeSharedCreationSettings(effectiveSettings);
         if (response.images?.length)
           void recordCanvasImages(response.images, {
             prompt,
