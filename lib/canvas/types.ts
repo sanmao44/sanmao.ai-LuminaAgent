@@ -49,6 +49,27 @@ export type CanvasGenerationMeta = {
   updatedAt?: number;
 };
 
+export type CanvasHistoryEntry = {
+  id: string;
+  operation: "generate" | "edit" | "inpaint" | "outpaint" | "upscale" | "extend";
+  prompt: string;
+  params?: CanvasGenerationParams;
+  referenceIds: string[];
+  resultIds?: string[];
+  parentNodeId?: string;
+  taskId?: string;
+  status: "pending" | "running" | "completed" | "failed";
+  error?: string;
+  createdAt: number;
+  updatedAt?: number;
+};
+
+export type CanvasNodePresentation = {
+  hidden?: boolean;
+  compoundId?: string;
+  role?: "editor" | "lineage" | "result" | "reference";
+};
+
 export type CanvasNodeData = {
   kind?: CanvasMediaKind;
   url?: string;
@@ -82,6 +103,8 @@ export type CanvasNodeData = {
   variantBatchId?: string;
   variantGroupId?: string;
   editor?: CanvasEditorState;
+  history?: CanvasHistoryEntry[];
+  presentation?: CanvasNodePresentation;
   [key: string]: unknown;
 };
 

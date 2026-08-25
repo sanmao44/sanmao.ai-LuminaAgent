@@ -21,6 +21,7 @@ type Props = {
   runtime: PublicState | null;
   unavailableModelId?: string;
   referenceCount?: number;
+  variant?: "default" | "canvas-flat";
   onChange: (settings: CreationSettings) => void;
 };
 
@@ -47,14 +48,17 @@ function ImageEditor({
   settings,
   runtime,
   unavailableModelId,
+  variant,
   onChange,
 }: {
   settings: ImageCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  variant?: Props["variant"];
   onChange: Props["onChange"];
 }) {
   const [advanced, setAdvanced] = useState(false);
+  const flat = variant === "canvas-flat";
   const update = <K extends keyof ImageCreationSettings>(
     key: K,
     value: ImageCreationSettings[K],
@@ -175,6 +179,17 @@ function ImageEditor({
             ariaLabel="生成数量"
           />
         </label>
+        {flat && (
+          <label className="creation-field compact">
+            <small>质量</small>
+            <SelectMenu
+              value={settings.quality}
+              onChange={(value) => update("quality", value)}
+              options={IMAGE_QUALITY_OPTIONS}
+              ariaLabel="图片质量"
+            />
+          </label>
+        )}
       </div>
       {settings.aspect === "自定义" && (
         <div className="creation-custom-ratio">
@@ -209,23 +224,25 @@ function ImageEditor({
         className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
         onClick={() => setAdvanced((value) => !value)}
         aria-expanded={advanced}
-        title={advanced ? "收起高级图片参数" : "展开质量、格式与背景参数"}
+        title={advanced ? "收起更多图片参数" : "展开格式与背景参数"}
       >
-        <span>{advanced ? "收起" : "高级"}</span>
-        <small>质量、格式与背景</small>
+        <span>{advanced ? "收起" : flat ? "更多参数" : "高级"}</span>
+        <small>{flat ? "格式与背景" : "质量、格式与背景"}</small>
         <b>{advanced ? "⌃" : "⌄"}</b>
       </button>
       {advanced && (
         <div className="creation-parameter-grid advanced">
-          <label className="creation-field">
-            <small>质量</small>
-            <SelectMenu
-              value={settings.quality}
-              onChange={(value) => update("quality", value)}
-              options={IMAGE_QUALITY_OPTIONS}
-              ariaLabel="图片质量"
-            />
-          </label>
+          {!flat && (
+            <label className="creation-field">
+              <small>质量</small>
+              <SelectMenu
+                value={settings.quality}
+                onChange={(value) => update("quality", value)}
+                options={IMAGE_QUALITY_OPTIONS}
+                ariaLabel="图片质量"
+              />
+            </label>
+          )}
           <label className="creation-field">
             <small>输出格式</small>
             <SelectMenu
@@ -577,6 +594,7 @@ export default function CreationParameterEditor({
   settings,
   runtime,
   unavailableModelId,
+  variant,
   onChange,
 }: Props) {
   return settings.kind === "video" ? (
@@ -598,6 +616,7 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      variant={variant}
       onChange={onChange}
     />
   );

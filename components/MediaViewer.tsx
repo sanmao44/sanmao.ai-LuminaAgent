@@ -84,7 +84,13 @@ export default function MediaViewer({
   const [busy, setBusy] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
   const [promptDraft, setPromptDraft] = useState<string | null>(null);
-  const pointerStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const pointerStart = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
 
   const sourcePrompt = item.prompt || "";
   const currentPrompt = promptDraft ?? sourcePrompt;
@@ -103,6 +109,12 @@ export default function MediaViewer({
     setShowParameters(false);
     setPromptDraft(null);
   }, [initialCompare, item.id, referenceSignature]);
+
+  useEffect(() => {
+    pointerStart.current = null;
+    setDragging(false);
+    setPan({ x: 0, y: 0 });
+  }, [compare, compareMode, selectedReferenceId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -128,11 +140,59 @@ export default function MediaViewer({
     };
   }, [onClose, onNavigate]);
 
+  const getPanLimits = (nextZoom: number) => {
+    const stage = stageRef.current;
+    if (!stage) return { x: 0, y: 0 };
+
+    const mediaElements = Array.from(stage.querySelectorAll<HTMLElement>("img, video"));
+    if (!mediaElements.length) {
+      return {
+        x: Math.max(0, stage.clientWidth * Math.max(0, nextZoom - 1) * 0.5),
+        y: Math.max(0, stage.clientHeight * Math.max(0, nextZoom - 1) * 0.5),
+      };
+    }
+
+    const limits = mediaElements.map((media) => {
+      const viewport = media.parentElement || stage;
+      const viewportStyle = window.getComputedStyle(viewport);
+      const paddingX = (Number.parseFloat(viewportStyle.paddingLeft) || 0) + (Number.parseFloat(viewportStyle.paddingRight) || 0);
+      const paddingY = (Number.parseFloat(viewportStyle.paddingTop) || 0) + (Number.parseFloat(viewportStyle.paddingBottom) || 0);
+      const viewportWidth = Math.max(0, viewport.clientWidth - paddingX);
+      const viewportHeight = Math.max(0, viewport.clientHeight - paddingY);
+      const mediaWidth = media.offsetWidth || media.clientWidth || viewportWidth;
+      const mediaHeight = media.offsetHeight || media.clientHeight || viewportHeight;
+
+      return {
+        x: Math.max(0, (mediaWidth * nextZoom - viewportWidth) / 2),
+        y: Math.max(0, (mediaHeight * nextZoom - viewportHeight) / 2),
+      };
+    });
+
+    return {
+      x: Math.min(...limits.map((limit) => limit.x)),
+      y: Math.min(...limits.map((limit) => limit.y)),
+    };
+  };
+
+  const clampPan = (value: { x: number; y: number }, limits = getPanLimits(zoom)) => ({
+    x: Math.max(-limits.x, Math.min(limits.x, value.x)),
+    y: Math.max(-limits.y, Math.min(limits.y, value.y)),
+  });
+
+  const resetView = () => {
+    pointerStart.current = null;
+    setDragging(false);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
   const updateZoom = (next: number, focus?: { x: number; y: number }) => {
     const previous = zoom;
     const value = Math.max(0.5, Math.min(4, Number(next.toFixed(2))));
     setZoom(value);
     if (value <= 1) {
+      pointerStart.current = null;
+      setDragging(false);
       setPan({ x: 0, y: 0 });
       return;
     }
@@ -144,12 +204,7 @@ export default function MediaViewer({
         x: pointerX - (pointerX - pan.x) * (value / previous),
         y: pointerY - (pointerY - pan.y) * (value / previous),
       };
-      const limitX = Math.max(0, rect.width * Math.max(0, value - 1) * 0.7);
-      const limitY = Math.max(0, rect.height * Math.max(0, value - 1) * 0.7);
-      setPan({
-        x: Math.max(-limitX, Math.min(limitX, nextPan.x)),
-        y: Math.max(-limitY, Math.min(limitY, nextPan.y)),
-      });
+      setPan(clampPan(nextPan, getPanLimits(value)));
     }
   };
 
@@ -160,28 +215,40 @@ export default function MediaViewer({
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (zoom <= 1 || event.button !== 0) return;
+    const target = event.target as Element;
+    if (target.closest("button, input, textarea, select, option") || target.closest("video")) return;
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    pointerStart.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+    pointerStart.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
     setDragging(true);
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    const rect = stageRef.current?.getBoundingClientRect();
-    const limitX = rect ? Math.max(0, rect.width * Math.max(0, zoom - 1) * 0.7) : Infinity;
-    const limitY = rect ? Math.max(0, rect.height * Math.max(0, zoom - 1) * 0.7) : Infinity;
-    setPan({
-      x: Math.max(-limitX, Math.min(limitX, pointerStart.current.panX + event.clientX - pointerStart.current.x)),
-      y: Math.max(-limitY, Math.min(limitY, pointerStart.current.panY + event.clientY - pointerStart.current.y)),
-    });
+    const drag = pointerStart.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    setPan(clampPan({
+      x: drag.panX + event.clientX - drag.x,
+      y: drag.panY + event.clientY - drag.y,
+    }));
   };
 
   const stopDragging = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointerStart.current || pointerStart.current.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    pointerStart.current = null;
     setDragging(false);
   };
 
-  const mediaStyle = { transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})` };
+  const handleLostPointerCapture = () => {
+    pointerStart.current = null;
+    setDragging(false);
+  };
+
+  const mediaStyle = {
+    transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+    transformOrigin: "center center",
+  };
 
   const runReverse = async () => {
     if (item.kind !== "image") return;
@@ -252,7 +319,7 @@ export default function MediaViewer({
           <div className="media-viewer-header-actions">
             <div className="canvas-media-zoom-controls" aria-label="预览缩放">
               <button type="button" onClick={() => updateZoom(zoom - 0.1)} title="缩小">−</button>
-              <button type="button" className="zoom-readout" onClick={() => { updateZoom(1); setPan({ x: 0, y: 0 }); }} title="恢复原比例">{Math.round(zoom * 100)}%</button>
+              <button type="button" className="zoom-readout" onClick={resetView} title="恢复原比例">{Math.round(zoom * 100)}%</button>
               <button type="button" onClick={() => updateZoom(zoom + 0.1)} title="放大">＋</button>
             </div>
             {onNavigate && <span className="media-viewer-nav-hint">← / → 切换</span>}
@@ -273,27 +340,28 @@ export default function MediaViewer({
 
         <div
           ref={stageRef}
-          className={`canvas-lightbox-stage media-viewer-stage ${compare && selectedReference ? "compare" : ""} ${canCompare && compareMode === "slider" ? "slider" : ""} ${dragging ? "dragging" : ""}`}
+          className={`canvas-lightbox-stage media-viewer-stage ${zoom > 1 ? "can-pan" : ""} ${compare && selectedReference ? "compare" : ""} ${canCompare && compareMode === "slider" ? "slider" : ""} ${dragging ? "dragging" : ""}`}
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={stopDragging}
           onPointerCancel={stopDragging}
-          onDoubleClick={() => { updateZoom(1); setPan({ x: 0, y: 0 }); }}
+          onLostPointerCapture={handleLostPointerCapture}
+          onDoubleClick={resetView}
         >
           {canCompare && compareMode === "slider" && compare ? (
             <div className="canvas-lightbox-slider">
-              <div className="canvas-lightbox-slider-base"><img src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} /></div>
-              <div className="canvas-lightbox-slider-overlay" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img src={item.url} alt={item.name} style={mediaStyle} /></div>
+              <div className="canvas-lightbox-slider-base"><img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} /></div>
+              <div className="canvas-lightbox-slider-overlay" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img draggable={false} src={item.url} alt={item.name} style={mediaStyle} /></div>
               <span className="canvas-lightbox-slider-label before">{selectedReference.name}</span>
               <span className="canvas-lightbox-slider-label after">生成结果</span>
             </div>
           ) : (
             <>
-              {compare && selectedReference && <div className="canvas-lightbox-before"><span>{selectedReference.name}</span><img src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} /></div>}
+              {compare && selectedReference && <div className="canvas-lightbox-before"><span>{selectedReference.name}</span><img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} /></div>}
               <div className="canvas-lightbox-after">
                 <span>{compare ? "生成结果" : ""}</span>
-                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} /> : <img src={item.url} alt={item.name} style={mediaStyle} />}
+                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} /> : <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} />}
               </div>
             </>
           )}

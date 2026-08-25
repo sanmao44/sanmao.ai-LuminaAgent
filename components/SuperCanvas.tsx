@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import {
   type ChangeEvent as ReactChangeEvent,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
   type ReactNode,
 } from "react";
 import {
@@ -136,6 +138,10 @@ import {
   type CanvasReferenceDraft,
   type CanvasReuseDraft,
 } from "@/lib/canvas/reuse";
+import {
+  snapCanvasNodePositions,
+  type CanvasSnapGuide,
+} from "@/lib/canvas/snap";
 
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
@@ -259,6 +265,21 @@ type Interaction =
       startY: number;
       camera: CanvasCamera;
       changed: boolean;
+    }
+  | {
+      kind: "nodePress";
+      pointerId: number;
+      startX: number;
+      startY: number;
+      startTime: number;
+      nodeId: string;
+      nodeIds: string[];
+      positions: Record<string, Point>;
+      doubleClick?: boolean;
+      originGroupId?: string;
+      originGroupBounds?: { x: number; y: number; w: number; h: number };
+      copyOnMove?: boolean;
+      preserveInputConnections?: boolean;
     }
   | {
       kind: "drag";
@@ -816,6 +837,8 @@ export default function SuperCanvas() {
   const workflowInputRef = useRef<HTMLInputElement | null>(null);
   const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
+  const pendingNodeClickRef = useRef<number | null>(null);
+  const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
   const docRef = useRef<CanvasDocument>(normalizeDocument(null));
   const saveTimerRef = useRef<number | null>(null);
@@ -836,6 +859,7 @@ export default function SuperCanvas() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [expandedEditorId, setExpandedEditorId] = useState<string | null>(null);
+  const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
@@ -849,6 +873,14 @@ export default function SuperCanvas() {
   const [saveError, setSaveError] = useState(false);
   const [generationKeys, setGenerationKeys] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
+  const cancelPendingNodeClick = useCallback(() => {
+    if (pendingNodeClickRef.current !== null) {
+      window.clearTimeout(pendingNodeClickRef.current);
+      pendingNodeClickRef.current = null;
+    }
+    setPendingClickNodeId(null);
+  }, []);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -1627,6 +1659,7 @@ export default function SuperCanvas() {
         return;
       setContextMenu(null);
       setConnectionNodePicker(null);
+      cancelPendingNodeClick();
       hideConnectionCancel();
       if (
         event.button === 0 &&
@@ -1652,6 +1685,7 @@ export default function SuperCanvas() {
       capture,
       clearSelection,
       document.camera,
+      cancelPendingNodeClick,
       hideConnectionCancel,
       startMarquee,
     ],
@@ -1672,6 +1706,14 @@ export default function SuperCanvas() {
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       event.preventDefault();
       event.stopPropagation();
+      const now = Date.now();
+      const doubleClick = Boolean(
+        lastNodePressRef.current &&
+          lastNodePressRef.current.nodeId === node.id &&
+          now - lastNodePressRef.current.at < 320,
+      );
+      if (doubleClick) cancelPendingNodeClick();
+      lastNodePressRef.current = { nodeId: node.id, at: now };
       selectNode(node, event.shiftKey);
       const group = node.groupId
         ? groupById(docRef.current, node.groupId)
@@ -1706,13 +1748,15 @@ export default function SuperCanvas() {
         }),
       );
       interactionRef.current = {
-        kind: "drag",
+        kind: "nodePress",
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
+        startTime: Date.now(),
+        nodeId: node.id,
         nodeIds: dragIds,
         positions,
-        changed: false,
+        doubleClick,
         originGroupId: node.groupId,
         originGroupBounds,
         copyOnMove: event.altKey,
@@ -1722,6 +1766,7 @@ export default function SuperCanvas() {
     },
     [
       capture,
+      cancelPendingNodeClick,
       focusCanvasStage,
       hideConnectionCancel,
       selectNode,
@@ -1910,13 +1955,34 @@ export default function SuperCanvas() {
 
   const moveInteraction = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      const interaction = interactionRef.current;
+      let interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       const dx =
         "startX" in interaction ? event.clientX - interaction.startX : 0;
       const dy =
         "startY" in interaction ? event.clientY - interaction.startY : 0;
       const zoom = docRef.current.camera.zoom;
+      if (interaction.kind === "nodePress") {
+        const distance = Math.hypot(dx, dy);
+        const elapsed = Date.now() - interaction.startTime;
+        if (distance > 10 || (elapsed >= 220 && distance > 6)) {
+          const press = interaction;
+          interactionRef.current = {
+            kind: "drag",
+            pointerId: press.pointerId,
+            startX: press.startX,
+            startY: press.startY,
+            nodeIds: press.nodeIds,
+            positions: press.positions,
+            changed: false,
+            originGroupId: press.originGroupId,
+            originGroupBounds: press.originGroupBounds,
+            copyOnMove: press.copyOnMove,
+            preserveInputConnections: press.preserveInputConnections,
+          };
+          interaction = interactionRef.current;
+        }
+      }
       if (interaction.kind === "pan")
         updateDoc((value) => ({
           ...value,
@@ -1965,19 +2031,46 @@ export default function SuperCanvas() {
           }
           interaction.changed = true;
         }
-        if (interaction.changed)
+        if (interaction.changed) {
+          const proposedPositions = Object.fromEntries(
+            interaction.nodeIds.map((id) => [
+              id,
+              {
+                x: interaction.positions[id].x + dx / zoom,
+                y: interaction.positions[id].y + dy / zoom,
+              },
+            ]),
+          );
+          const snapResult = snapCanvasNodePositions(
+            docRef.current.nodes.map((node) => {
+              const size = nodeSize(node);
+              return {
+                id: node.id,
+                x: node.x,
+                y: node.y,
+                w: size.w,
+                h: size.h,
+              };
+            }),
+            interaction.nodeIds,
+            proposedPositions,
+            10 / Math.max(0.12, zoom),
+          );
+          setSnapGuides(snapResult.guides);
           updateDoc((value) => ({
             ...value,
             nodes: value.nodes.map((node) =>
-              interaction.nodeIds.includes(node.id)
+              snapResult.positions[node.id]
                 ? {
                     ...node,
-                    x: interaction.positions[node.id].x + dx / zoom,
-                    y: interaction.positions[node.id].y + dy / zoom,
+                    ...snapResult.positions[node.id],
                   }
                 : node,
             ),
           }));
+        } else {
+          setSnapGuides([]);
+        }
       }
       if (interaction.kind === "resize") {
         if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) {
@@ -2097,6 +2190,25 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
+      if (interaction.kind === "nodePress") {
+        const node = nodeById(docRef.current, interaction.nodeId);
+        if (node) {
+          if (interaction.doubleClick) {
+            cancelPendingNodeClick();
+            if (node.type === "media" && node.data.url)
+              setLightbox({ nodeId: node.id, compare: false });
+            else if (node.type === "prompt") setTextLightboxNodeId(node.id);
+            else setPendingClickNodeId(node.id);
+          } else {
+          if (pendingNodeClickRef.current !== null)
+            window.clearTimeout(pendingNodeClickRef.current);
+          pendingNodeClickRef.current = window.setTimeout(() => {
+            pendingNodeClickRef.current = null;
+            setPendingClickNodeId(node.id);
+          }, 270);
+          }
+        }
+      }
       if (interaction.kind === "marquee") {
         const start = stagePoint(interaction.startX, interaction.startY);
         const point = stagePoint(event.clientX, event.clientY);
@@ -2263,6 +2375,7 @@ export default function SuperCanvas() {
         }
       }
       interactionRef.current = null;
+      setSnapGuides([]);
       setPanActive(false);
       setMarquee(null);
       try {
@@ -2287,6 +2400,7 @@ export default function SuperCanvas() {
       const interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       interactionRef.current = null;
+      setSnapGuides([]);
       setPanActive(false);
       setMarquee(null);
       setConnection(null);
@@ -2305,6 +2419,7 @@ export default function SuperCanvas() {
   useEffect(() => {
     const handleWindowBlur = () => {
       interactionRef.current = null;
+      setSnapGuides([]);
       setPanActive(false);
       setMarquee(null);
       setConnection(null);
@@ -4849,6 +4964,13 @@ export default function SuperCanvas() {
     [editorParamsFor, editorPromptFor, expandedEditorId],
   );
 
+  useEffect(() => {
+    if (!pendingClickNodeId) return;
+    const node = nodeById(docRef.current, pendingClickNodeId);
+    setPendingClickNodeId(null);
+    if (node) toggleEditor(node);
+  }, [pendingClickNodeId, toggleEditor]);
+
   const updateEditorPrompt = useCallback(
     (node: CanvasNode, value: string) => {
       setEditorDrafts((current) => ({
@@ -6126,8 +6248,10 @@ export default function SuperCanvas() {
           const nodeId = hit?.getAttribute("data-canvas-node-id");
           const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
           if (node?.type === "media" && node.data.url) {
+            cancelPendingNodeClick();
             setLightbox({ nodeId: node.id, compare: false });
           } else if (node?.type === "prompt") {
+            cancelPendingNodeClick();
             setTextLightboxNodeId(node.id);
           }
         }}
@@ -6170,6 +6294,37 @@ export default function SuperCanvas() {
         }}
       >
         <div className="canvas-grid" />
+        {snapGuides.length > 0 && (
+          <div className="canvas-snap-guides" aria-hidden="true">
+            {snapGuides.map((guide, index) => {
+              const zoom = document.camera.zoom;
+              if (guide.axis === "x") {
+                return (
+                  <span
+                    className="canvas-snap-guide x"
+                    key={`${guide.axis}-${guide.position}-${guide.targetId}-${index}`}
+                    style={{
+                      left: document.camera.x + guide.position * zoom,
+                      top: document.camera.y + guide.start * zoom,
+                      height: Math.max(1, (guide.end - guide.start) * zoom),
+                    }}
+                  />
+                );
+              }
+              return (
+                <span
+                  className="canvas-snap-guide y"
+                  key={`${guide.axis}-${guide.position}-${guide.targetId}-${index}`}
+                  style={{
+                    left: document.camera.x + guide.start * zoom,
+                    top: document.camera.y + guide.position * zoom,
+                    width: Math.max(1, (guide.end - guide.start) * zoom),
+                  }}
+                />
+              );
+            })}
+          </div>
+        )}
         <div className="canvas-world">
           <div
             className="canvas-world-content"
@@ -6373,9 +6528,54 @@ export default function SuperCanvas() {
                   mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
                 />
               ))}
-            </div>
+           </div>
           </div>
         </div>
+        {expandedEditorId && (() => {
+          const editorNode = document.nodes.find((item) => item.id === expandedEditorId);
+          if (!editorNode) return null;
+          return (
+            <CanvasNodeEditorPopover
+              node={editorNode}
+              document={document}
+              stageRef={stageRef}
+              runtime={runtime}
+              editorPrompt={editorPromptFor(editorNode)}
+              editorParams={editorParamsFor(editorNode)}
+              onToggleEditor={toggleEditor}
+              onGenerate={runEditorGeneration}
+              onEditorPromptChange={updateEditorPrompt}
+              onEditorParamsChange={updateEditorParams}
+              onVariantRequirementsChange={(target, value) => {
+                if (target.type !== "generator") return;
+                updateDoc((valueDoc) => ({
+                  ...valueDoc,
+                  nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
+                    ...item,
+                    data: {
+                      ...item.data,
+                      variantRequirementsText: value,
+                      variantRequirements: normalizeVariantRequirements(value),
+                      variantStates: [],
+                      variantBatchId: undefined,
+                      variantGroupId: undefined,
+                    },
+                  } : item),
+                }));
+              }}
+              onReferenceReorder={reorderReference}
+              onReferenceRemove={removeNodeReference}
+              onReferenceDrop={addNodeReference}
+              onAddReferenceFiles={addEditorReferenceFiles}
+              editorContexts={incomingContext(document, editorNode.id).filter((item) => item.type === "prompt" || item.type === "generator")}
+              mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
+              onOutputPreview={(output) => {
+                cancelPendingNodeClick();
+                setLightbox({ nodeId: output.id, compare: false });
+              }}
+            />
+          );
+        })()}
         {connectionTargetEntity &&
           connectionTargetBounds &&
           connectionTargetScreen && (
@@ -7888,6 +8088,283 @@ function CanvasNodeReferenceStrip({
   );
 }
 
+type CanvasNodeEditorPopoverProps = {
+  node: CanvasNode;
+  document: CanvasDocument;
+  stageRef: RefObject<HTMLDivElement | null>;
+  runtime: CanvasRuntimeState | null;
+  editorPrompt: string;
+  editorParams?: CanvasGenerationParams;
+  onToggleEditor: (node: CanvasNode) => void;
+  onGenerate: (node: CanvasNode) => void;
+  onEditorPromptChange: (node: CanvasNode, value: string) => void;
+  onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
+  onVariantRequirementsChange: (node: CanvasNode, value: string) => void;
+  onReferenceReorder: (ownerId: string, draggedId: string, targetId: string) => void;
+  onReferenceRemove: (ownerId: string, sourceId: string) => void;
+  onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
+  onAddReferenceFiles: (ownerId: string, files: File[]) => void;
+  editorContexts: CanvasNode[];
+  mentionCandidates: CanvasNode[];
+  onOutputPreview: (node: CanvasNode) => void;
+};
+
+function CanvasNodeEditorPopover({
+  node,
+  document,
+  stageRef,
+  runtime,
+  editorPrompt,
+  editorParams,
+  onToggleEditor,
+  onGenerate,
+  onEditorPromptChange,
+  onEditorParamsChange,
+  onVariantRequirementsChange,
+  onReferenceReorder,
+  onReferenceRemove,
+  onReferenceDrop,
+  onAddReferenceFiles,
+  editorContexts,
+  mentionCandidates,
+  onOutputPreview,
+}: CanvasNodeEditorPopoverProps) {
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ left: 18, top: 86, placement: "right" });
+  const [isCompact, setIsCompact] = useState(false);
+  const [mentionState, setMentionState] = useState<MentionState>(null);
+  const data = node.data;
+  const size = nodeSize(node);
+  const pending = data.status === "queued" || data.status === "running";
+  const editorReferences = incomingContext(document, node.id).filter(
+    (item) => item.type === "media" && Boolean(item.data.url),
+  );
+  const editorBase = document.edges.find(
+    (edge) => edge.target === node.id && edge.inputRole === "base-image",
+  )?.source;
+  const baseNode = editorBase ? nodeById(document, editorBase) : undefined;
+  const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
+  const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
+    if (item.id === node.id) return false;
+    if (!mentionState?.query) return true;
+    const query = mentionState.query.trim().toLowerCase();
+    if (/^\d+$/.test(query)) return String(index + 1).startsWith(query);
+    return [
+      mentionLabel(item, index),
+      nodeLabel(item),
+      item.data.name,
+      item.data.text,
+      item.data.prompt,
+      item.data.agentPrompt,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+
+  const reposition = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const zoom = Math.max(0.12, document.camera.zoom || 1);
+    const stageWidth = stage.clientWidth;
+    const stageHeight = stage.clientHeight;
+    const nextCompact = stageWidth < 900 || zoom < 0.58;
+    if (nextCompact !== isCompact) setIsCompact(nextCompact);
+    const popoverWidth = popoverRef.current?.offsetWidth || (nextCompact ? 300 : 344);
+    const popoverHeight = popoverRef.current?.offsetHeight || (nextCompact ? 360 : 520);
+    const anchor = {
+      left: node.x * zoom + document.camera.x,
+      top: node.y * zoom + document.camera.y,
+      width: size.w * zoom,
+      height: size.h * zoom,
+    };
+    const candidates = [
+      { left: anchor.left + anchor.width + 14, top: anchor.top, placement: "right", priority: 0 },
+      { left: anchor.left - popoverWidth - 14, top: anchor.top, placement: "left", priority: 1 },
+      { left: anchor.left, top: anchor.top + anchor.height + 14, placement: "bottom", priority: 2 },
+      { left: anchor.left, top: anchor.top - popoverHeight - 14, placement: "top", priority: 3 },
+    ];
+    const maxLeft = Math.max(10, stageWidth - popoverWidth - 10);
+    const maxTop = Math.max(74, stageHeight - popoverHeight - 10);
+    const overlap = (candidate: { left: number; top: number; priority: number }) => {
+      const left = Math.max(10, Math.min(maxLeft, candidate.left));
+      const top = Math.max(74, Math.min(maxTop, candidate.top));
+      const right = left + popoverWidth;
+      const bottom = top + popoverHeight;
+      const offscreen =
+        Math.max(0, 12 - candidate.left) +
+        Math.max(0, 12 - candidate.top) +
+        Math.max(0, candidate.left + popoverWidth - stageWidth + 12) +
+        Math.max(0, candidate.top + popoverHeight - stageHeight + 12);
+      const overlapArea = (rect: { left: number; top: number; right: number; bottom: number }) =>
+        Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left)) *
+        Math.max(0, Math.min(bottom, rect.bottom) - Math.max(top, rect.top));
+      const ownOverlap = overlapArea({
+        left: anchor.left - 8,
+        top: anchor.top - 8,
+        right: anchor.left + anchor.width + 8,
+        bottom: anchor.top + anchor.height + 8,
+      });
+      const distance = Math.abs(left - anchor.left) + Math.abs(top - anchor.top);
+      // Only the active node is protected. Other cards and canvas chrome may
+      // sit underneath this editor; the canvas remains intentionally layered.
+      return offscreen * 1000 + ownOverlap * 100000 + distance * 0.02 + candidate.priority * 0.01;
+    };
+    const best = candidates.sort((a, b) => overlap(a) - overlap(b))[0];
+    const left = Math.max(10, Math.min(maxLeft, best.left));
+    const top = Math.max(74, Math.min(maxTop, best.top));
+    setPosition({
+      left,
+      top,
+      placement: best.placement,
+    });
+  }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, size.h, size.w, stageRef]);
+
+  useLayoutEffect(() => {
+    reposition();
+    let frame = 0;
+    const handleResize = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(reposition);
+    };
+    const observer = typeof ResizeObserver !== "undefined" && popoverRef.current
+      ? new ResizeObserver(handleResize)
+      : null;
+    if (observer && popoverRef.current) observer.observe(popoverRef.current);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [reposition]);
+
+  return (
+    <div
+      ref={popoverRef}
+      className="canvas-node-editor-popover canvas-node-editor-dock"
+      data-placement={position.placement}
+      data-density={isCompact ? "compact" : "comfortable"}
+      data-node-kind={node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
+      data-node-id={node.id}
+      aria-label={`${nodeLabel(node)}编辑器`}
+      style={{ left: position.left, top: position.top }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="canvas-node-editor-head">
+        <div className="canvas-node-editor-identity">
+          <span className="canvas-node-editor-status-dot" aria-hidden="true" />
+          <div>
+            <b>{nodeLabel(node)}</b>
+            <small>{node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : "图片节点"} · 节点内编辑</small>
+          </div>
+        </div>
+        <div className="canvas-node-editor-head-actions">
+          <span>编辑中</span>
+          <button type="button" onClick={() => onToggleEditor(node)} aria-label="关闭节点参数">×</button>
+        </div>
+      </div>
+      <div className="canvas-node-editor-body">
+        <div className="canvas-node-editor-prompt-wrap">
+          <div className="canvas-node-editor-prompt-label">
+            <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
+            <small>@ 引用节点 · {node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
+          </div>
+          <textarea
+            aria-label={`${nodeLabel(node)}提示词`}
+            value={editorPrompt}
+            placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
+            onChange={(event) => {
+              const value = event.target.value;
+              onEditorPromptChange(node, value);
+              setMentionState(mentionStateForValue(value, event.target.selectionStart));
+            }}
+            onClick={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+            onKeyUp={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setMentionState(null);
+              if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
+                event.preventDefault();
+                onGenerate(node);
+              }
+            }}
+            rows={3}
+          />
+          {mentionState && visibleMentionCandidates.length > 0 && (
+            <div className="canvas-node-mention-menu">
+              {visibleMentionCandidates.slice(0, 12).map((candidate) => {
+                const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
+                return (
+                  <button
+                    type="button"
+                    key={candidate.id}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      const next = `${editorPrompt.slice(0, mentionState.start)}@${candidateIndex + 1} ${editorPrompt.slice(mentionState.end)}`;
+                      onEditorPromptChange(node, next);
+                      const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+                        ? "context"
+                        : candidate.data.kind === "video"
+                          ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
+                          : "reference-image";
+                      onReferenceDrop(node.id, candidate.id, role);
+                      setMentionState(null);
+                    }}
+                  >
+                    <strong>@{candidateIndex + 1}</strong>
+                    <span className="canvas-node-mention-preview">
+                      {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" && candidate.data.kind === "video" ? "▶" : "✦"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
+                    </span>
+                    <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <CanvasNodeReferenceStrip
+          target={node}
+          document={document}
+          references={editorReferences}
+          contexts={editorContexts}
+          base={baseNode}
+          onReorder={onReferenceReorder}
+          onRemove={onReferenceRemove}
+          onDrop={onReferenceDrop}
+          onAddFiles={onAddReferenceFiles}
+          onPreview={onOutputPreview}
+        />
+        {node.type === "generator" && (
+          <div className="canvas-node-variant-editor">
+            <label>变体要求 <small>每行一条，最多 8 条</small></label>
+            <textarea
+              rows={2}
+              value={data.variantRequirementsText ?? variantRequirements.join("\n")}
+              placeholder="改成夜景\n改为俯拍视角"
+              onChange={(event) => onVariantRequirementsChange(node, event.target.value)}
+            />
+          </div>
+        )}
+        {node.type !== "prompt" && editorParams && (
+          <CreationParameterEditor
+            settings={editorParams}
+            runtime={runtime}
+            referenceCount={editorReferences.length}
+            variant="canvas-flat"
+            onChange={(settings) => onEditorParamsChange(node, settings)}
+          />
+        )}
+      </div>
+      <div className="canvas-node-editor-actions">
+        <span>{node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : "Ctrl/Cmd + Enter 生成"}</span>
+        <button type="button" className="canvas-node-editor-generate" disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "prompt" ? "发送" : "生成"}</button>
+      </div>
+    </div>
+  );
+}
+
 function CanvasNodeCard({
   node,
   selected,
@@ -8052,8 +8529,6 @@ function CanvasNodeCard({
       .toLowerCase();
     return search.includes(query);
   });
-  const expandedHeight = expanded ? Math.max(size.h, node.type === "prompt" ? 450 : 570) : size.h;
-  const expandedWidth = expanded ? Math.max(size.w, 380) : size.w;
   return (
     <article
       className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
@@ -8061,7 +8536,7 @@ function CanvasNodeCard({
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
       aria-busy={pending}
-      style={{ left: node.x, top: node.y, width: expandedWidth, height: expandedHeight }}
+      style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
       // Node movement and typed connections use the canvas pointer model.
       // Do not enable native HTML dragging on the whole card: it steals click
       // events from the editor controls and makes the card feel unresponsive.
@@ -8072,9 +8547,11 @@ function CanvasNodeCard({
         event.dataTransfer.setData("application/x-sanmao-canvas-node", node.id);
       }}
       onPointerDown={(event) => onPointerDown(event, node)}
-      onDoubleClick={() => {
-        if (node.type === "prompt") onToggleEditor(node);
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        if (node.type === "prompt") onTextPreview();
         else if (node.type === "media" && data.url) onPreview();
+        else onToggleEditor(node);
       }}
     >
       {node.groupId && (
@@ -8370,7 +8847,7 @@ function CanvasNodeCard({
           </div>
         </div>
       )}
-      {expanded && (
+      {false && expanded && (
         <div
           className="canvas-node-editor"
           aria-label={`${nodeLabel(node)}编辑器`}
@@ -8413,8 +8890,10 @@ function CanvasNodeCard({
                     key={candidate.id}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
+                      const activeMention = mentionState;
+                      if (!activeMention) return;
                       const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
-                      const next = `${editorPrompt.slice(0, mentionState.start)}@${candidateIndex + 1} ${editorPrompt.slice(mentionState.end)}`;
+                      const next = `${editorPrompt.slice(0, activeMention.start)}@${candidateIndex + 1} ${editorPrompt.slice(activeMention.end)}`;
                       onEditorPromptChange(node, next);
                       const role: CanvasInputRole =
                         candidate.type === "prompt" || candidate.type === "generator"
@@ -8465,7 +8944,7 @@ function CanvasNodeCard({
             <details className="canvas-node-parameters" open={false}>
               <summary>参数设置 <span>模型、比例、尺寸和高级选项</span></summary>
               <CreationParameterEditor
-                settings={editorParams}
+                settings={editorParams!}
                 runtime={runtime}
                 referenceCount={editorReferences.length}
                 onChange={(settings) => onEditorParamsChange(node, settings)}
