@@ -1452,6 +1452,7 @@ export default function SuperCanvas() {
     setSelectedEdgeId(null);
     setConnectionCancelEdgeId(null);
     setEditingNodeId(null);
+    setExpandedEditorId(null);
   }, []);
   const clearConnectionCancelHideTimer = useCallback(() => {
     if (connectionCancelHideTimerRef.current === null) return;
@@ -1816,8 +1817,8 @@ export default function SuperCanvas() {
         startY: event.clientY,
         nodeIds: ids,
         positions,
-        snapGuides: [],
         changed: false,
+        snapGuides: [],
         copyOnMove: event.altKey,
         preserveInputConnections: event.altKey && event.shiftKey,
       };
@@ -1975,9 +1976,9 @@ export default function SuperCanvas() {
             startX: press.startX,
             startY: press.startY,
             nodeIds: press.nodeIds,
-            snapGuides: [],
             positions: press.positions,
             changed: false,
+            snapGuides: [],
             originGroupId: press.originGroupId,
             originGroupBounds: press.originGroupBounds,
             copyOnMove: press.copyOnMove,
@@ -2055,16 +2056,16 @@ export default function SuperCanvas() {
                 h: size.h,
               };
             }),
+            interaction.nodeIds,
+            proposedPositions,
+            10 / Math.max(0.12, zoom),
             {
               releaseThreshold: 14 / Math.max(0.12, zoom),
               previousGuides: interaction.snapGuides,
               visibleNodeIds: visibleCanvasNodeIds,
             },
-            interaction.nodeIds,
-          interaction.snapGuides = snapResult.guides;
-            proposedPositions,
-            10 / Math.max(0.12, zoom),
           );
+          interaction.snapGuides = snapResult.guides;
           setSnapGuides(snapResult.guides);
           updateDoc((value) => ({
             ...value,
@@ -5042,7 +5043,7 @@ export default function SuperCanvas() {
             : item,
         ),
       }));
-      writeSharedCreationSettings(settings);
+      if (node.type !== "prompt") writeSharedCreationSettings(settings);
     },
     [editorPromptFor, updateDoc],
   );
@@ -8261,6 +8262,7 @@ function CanvasNodeEditorPopover({
       style={{ left: position.left, top: position.top }}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
     >
       <div className="canvas-node-editor-head">
         <div className="canvas-node-editor-identity">
@@ -8356,7 +8358,7 @@ function CanvasNodeEditorPopover({
             />
           </div>
         )}
-        {node.type !== "prompt" && editorParams && (
+        {editorParams && (
           <CreationParameterEditor
             settings={editorParams}
             runtime={runtime}
@@ -8949,9 +8951,16 @@ function CanvasNodeCard({
               />
             </div>
           )}
-          {node.type !== "prompt" && editorParams && (
+          {editorParams && (
             <details className="canvas-node-parameters" open={false}>
-              <summary>参数设置 <span>模型、比例、尺寸和高级选项</span></summary>
+              <summary>
+                参数设置{" "}
+                <span>
+                  {node.type === "prompt"
+                    ? "对话模型和联网方式"
+                    : "模型、比例、尺寸和高级选项"}
+                </span>
+              </summary>
               <CreationParameterEditor
                 settings={editorParams!}
                 runtime={runtime}

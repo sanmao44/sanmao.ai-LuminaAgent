@@ -61,10 +61,21 @@ test('canvas agent generation marks the request as canvas-originated', async () 
   await withFetch(async (input, options) => {
     request = { input, options };
     return jsonResponse({ ok: true, message: '已完成' });
-  }, () => api.generateCanvasAgent({ messages: [{ role: 'user', content: '生成一张海报' }] }));
+  }, () => api.generateCanvasAgent({
+    messages: [{ role: 'user', content: '生成一张海报' }],
+    model: 'provider-a-chat-model',
+    webMode: 'off',
+  }));
 
   assert.equal(request.input, '/api/agent');
-  assert.equal(JSON.parse(request.options.body).source, 'canvas');
+  assert.deepEqual(JSON.parse(request.options.body), {
+    source: 'canvas',
+    messages: [{ role: 'user', content: '生成一张海报', references: [], files: [] }],
+    model: 'provider-a-chat-model',
+    webMode: 'off',
+    webSearch: false,
+    stream: false,
+  });
 });
 
 test('canvas upscale marks the request as canvas-originated', async () => {

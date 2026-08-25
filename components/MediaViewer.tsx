@@ -360,7 +360,7 @@ export default function MediaViewer({
             <>
               {compare && selectedReference && <div className="canvas-lightbox-before"><span>{selectedReference.name}</span><img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} /></div>}
               <div className="canvas-lightbox-after">
-                <span>{compare ? "生成结果" : ""}</span>
+                {compare && <span>生成结果</span>}
                 {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} /> : <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} />}
               </div>
             </>
