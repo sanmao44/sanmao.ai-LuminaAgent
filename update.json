@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.9",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.9",
+  "latestVersion": "0.7.10",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.10",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.9/SANMAO.AI-0.7.9.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.9/SANMAO.AI-0.7.9.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.9/SANMAO.AI-0.7.9.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.9/SANMAO.AI-0.7.9.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip"
   ],
-  "sha256": "27eba373ab972f61e42a73602a3024c0777fe3fb6e7f5270118e628be2701774",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "publishedAt": "2026-08-25T00:00:00+08:00",
   "notes": [
+    "Agent 节点可独立选择对话模型和服务商，不同节点可以并行使用不同服务商。",
+    "节点模型选择保存到当前节点，不会修改全局默认助手模型；选择自动或模型不可用时才回退默认模型。",
+    "模型选择器支持按服务商筛选并显示服务商与模型名称，手动模型失效时会显示回退提示。",
     "节点式超级画布编辑器：每个节点独立承载提示词、参数、参考素材和生成操作，避免全局工作台遮挡无限画布。",
     "所有节点编辑器支持带序号和缩略图的 @ 引用，图片、视频和文本上下文按类型安全接入。",
     "参考素材支持编号预览、拖动排序、删除和 16 张上限，并按排序后的顺序提交。",
