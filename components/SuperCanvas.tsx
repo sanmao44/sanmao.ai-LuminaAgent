@@ -289,6 +289,7 @@ type Interaction =
       nodeIds: string[];
       positions: Record<string, Point>;
       changed: boolean;
+      snapGuides: CanvasSnapGuide[];
       originGroupId?: string;
       originGroupBounds?: { x: number; y: number; w: number; h: number };
       copyOnMove?: boolean;
@@ -1815,6 +1816,7 @@ export default function SuperCanvas() {
         startY: event.clientY,
         nodeIds: ids,
         positions,
+        snapGuides: [],
         changed: false,
         copyOnMove: event.altKey,
         preserveInputConnections: event.altKey && event.shiftKey,
@@ -1973,6 +1975,7 @@ export default function SuperCanvas() {
             startX: press.startX,
             startY: press.startY,
             nodeIds: press.nodeIds,
+            snapGuides: [],
             positions: press.positions,
             changed: false,
             originGroupId: press.originGroupId,
@@ -2052,7 +2055,13 @@ export default function SuperCanvas() {
                 h: size.h,
               };
             }),
+            {
+              releaseThreshold: 14 / Math.max(0.12, zoom),
+              previousGuides: interaction.snapGuides,
+              visibleNodeIds: visibleCanvasNodeIds,
+            },
             interaction.nodeIds,
+          interaction.snapGuides = snapResult.guides;
             proposedPositions,
             10 / Math.max(0.12, zoom),
           );
@@ -2183,7 +2192,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [notify, setDoc, stagePoint, updateDoc],
+    [notify, setDoc, stagePoint, updateDoc, visibleCanvasNodeIds],
   );
 
   const finishInteraction = useCallback(
@@ -6296,13 +6305,13 @@ export default function SuperCanvas() {
         <div className="canvas-grid" />
         {snapGuides.length > 0 && (
           <div className="canvas-snap-guides" aria-hidden="true">
-            {snapGuides.map((guide, index) => {
+            {snapGuides.map((guide) => {
               const zoom = document.camera.zoom;
               if (guide.axis === "x") {
                 return (
                   <span
                     className="canvas-snap-guide x"
-                    key={`${guide.axis}-${guide.position}-${guide.targetId}-${index}`}
+                    key={`${guide.axis}-${guide.targetId}`}
                     style={{
                       left: document.camera.x + guide.position * zoom,
                       top: document.camera.y + guide.start * zoom,
@@ -6314,7 +6323,7 @@ export default function SuperCanvas() {
               return (
                 <span
                   className="canvas-snap-guide y"
-                  key={`${guide.axis}-${guide.position}-${guide.targetId}-${index}`}
+                  key={`${guide.axis}-${guide.targetId}`}
                   style={{
                     left: document.camera.x + guide.start * zoom,
                     top: document.camera.y + guide.position * zoom,

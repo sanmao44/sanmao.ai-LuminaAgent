@@ -86,3 +86,107 @@ test('does not snap outside the threshold and ignores dragged nodes as targets',
   assert.deepEqual(result.positions, positions(['first', 189, 100], ['second', 389, 100]));
   assert.deepEqual(result.guides, []);
 });
+
+test('supports all six node alignment anchors', () => {
+  const horizontalCases = [
+    ['left edge', 395, 400],
+    ['right edge', 425, 420],
+    ['horizontal center', 410, 410],
+  ];
+  for (const [label, proposedX, expectedX] of horizontalCases) {
+    const result = snap.snapCanvasNodePositions(
+      [node('moving', proposedX, 100), node('target', 400, 240, 120, 80)],
+      ['moving'],
+      positions(['moving', proposedX, 100], ['target', 400, 240]),
+      10,
+    );
+    assert.equal(result.positions.moving.x, expectedX, label);
+    assert.equal(result.guides.some((guide) => guide.axis === 'x'), true, label);
+  }
+
+  const verticalCases = [
+    ['top edge', 235, 240],
+    ['bottom edge', 285, 280],
+    ['vertical center', 260, 260],
+  ];
+  for (const [label, proposedY, expectedY] of verticalCases) {
+    const result = snap.snapCanvasNodePositions(
+      [node('moving', 100, proposedY), node('target', 400, 240, 100, 120)],
+      ['moving'],
+      positions(['moving', 100, proposedY], ['target', 400, 240]),
+      10,
+    );
+    assert.equal(result.positions.moving.y, expectedY, label);
+    assert.equal(result.guides.some((guide) => guide.axis === 'y'), true, label);
+  }
+});
+
+test('uses visible targets only and keeps the nearest candidate stable', () => {
+  const result = snap.snapCanvasNodePositions(
+    [
+      node('moving', 100, 100),
+      node('hidden', 400, 240),
+      node('near', 405, 500),
+      node('far', 408, 700),
+    ],
+    ['moving'],
+    positions(
+      ['moving', 395, 100],
+      ['hidden', 400, 240],
+      ['near', 405, 500],
+      ['far', 408, 700],
+    ),
+    10,
+    { visibleNodeIds: new Set(['moving', 'near', 'far']) },
+  );
+
+  assert.equal(result.positions.moving.x, 405);
+  assert.equal(result.guides.find((guide) => guide.axis === 'x')?.targetId, 'near');
+});
+
+test('holds an active guide until the release threshold, then switches target', () => {
+  const nodes = [
+    node('moving', 100, 100),
+    node('first', 400, 240),
+    node('second', 412, 500),
+  ];
+  const activeGuide = [{ axis: 'x', position: 400, start: 80, end: 180, targetId: 'first' }];
+  const held = snap.snapCanvasNodePositions(
+    nodes,
+    ['moving'],
+    positions(['moving', 411, 100], ['first', 400, 240], ['second', 412, 500]),
+    10,
+    { previousGuides: activeGuide, releaseThreshold: 14 },
+  );
+  assert.equal(held.positions.moving.x, 400);
+  assert.equal(held.guides.find((guide) => guide.axis === 'x')?.targetId, 'first');
+
+  const released = snap.snapCanvasNodePositions(
+    nodes,
+    ['moving'],
+    positions(['moving', 415, 100], ['first', 400, 240], ['second', 412, 500]),
+    10,
+    { previousGuides: activeGuide, releaseThreshold: 14 },
+  );
+  assert.equal(released.positions.moving.x, 412);
+  assert.equal(released.guides.find((guide) => guide.axis === 'x')?.targetId, 'second');
+});
+
+test('keeps guide segments local when the target is far away', () => {
+  const result = snap.snapCanvasNodePositions(
+    [node('moving', 395, 100), node('target', 400, 1000)],
+    ['moving'],
+    positions(['moving', 395, 100], ['target', 400, 1000]),
+    10,
+  );
+  const guide = result.guides.find((item) => item.axis === 'x');
+  assert.ok(guide);
+  assert.ok(guide.end - guide.start <= 180);
+});
+
+test('uses fine dashed guide styling without glow', async () => {
+  const css = await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8');
+  assert.match(css, /\.canvas-snap-guide\.x\{[^}]*repeating-linear-gradient/);
+  assert.match(css, /\.canvas-snap-guide\.y\{[^}]*repeating-linear-gradient/);
+  assert.doesNotMatch(css, /\.canvas-snap-guide\{[^}]*box-shadow/);
+});
