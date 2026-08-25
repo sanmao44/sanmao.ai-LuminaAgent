@@ -133,7 +133,15 @@ test('keeps text, file, tutorial and prompt-only requests out of image generatio
     '海报制作方法',
     '生成一张海报的文案',
     '导出一张图片文件',
+    '生成一段用于 seedance2.0 生成视频的提示词，不要背景音乐，只保留音效，不要出图片，只要提示词',
+    '不要出图，只输出提示词',
+    '帮我根据这张图反推提示词，不要生成新图片',
   ]) {
     assert.equal(web.likelyImageGenerationRequest(input), false, input);
   }
+});
+
+test('keeps prompt-only requests out of the agent tool planner', () => {
+  assert.equal(web.likelyAgentToolRequest('帮我根据这张图反推提示词', true), false);
+  assert.equal(web.likelyAgentToolRequest('先写提示词，再生成一张海报', false), true);
 });

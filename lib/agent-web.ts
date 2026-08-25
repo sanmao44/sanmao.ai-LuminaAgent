@@ -39,6 +39,34 @@ const drawingVerbPattern = '(?:画|绘制|画出|描绘|勾勒|涂鸦|画下|画
 const imageNeedVerbPattern = '(?:给我|请给我|我要|我想要|我需要|帮我|麻烦|请|来|弄|搞|整|做|做个|做一|来个|来一|出|直接出|配|配上|配一张|配几张)';
 const imageTextArtifactPattern = '(?:提示词|prompt|文案|文稿|文档|文章|报告|总结|清单|表格|计划|方案|建议|回复|段落|故事|标题|脚本|代码|教程|步骤|方法|口号|slogan|视频|音频|音乐|文件|附件)';
 
+/**
+ * A prompt is a text artifact, even when it describes a picture or video.
+ * Keep this decision ahead of the visual keyword checks below: users often
+ * describe the scene in detail and then explicitly say they only want the
+ * prompt. Sending those requests to an image tool is the opposite of the
+ * requested output.
+ */
+function isPromptOnlyRequest(text: string) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!/(?:提示词|prompt)/i.test(value)) return false;
+
+  const asksForPrompt = /(?:写|生成|制作|创建|设计|优化|改写|润色|反推|提取|翻译|解释|给我|提供|输出|返回|整理|补全|扩写|只要|只需|仅需|只输出|仅输出|只提供|仅提供|需要的是).{0,56}(?:提示词|prompt)/i.test(value)
+    || /(?:提示词|prompt).{0,40}(?:怎么|如何|是什么|怎么写|如何写|优化|改写|润色|反推|提取|翻译|解释|输出|返回)/i.test(value);
+  if (!asksForPrompt) return false;
+
+  // A negative visual request is an explicit output constraint, not an image
+  // request. Match both "不要出图" and "图片不要" word orders.
+  const rejectsImageOutput = /(?:不要|无需|不用|不需要|别|勿|不要再).{0,32}(?:出图|生图|生成图片|生成图像|图片|图像|画图|绘图|图形)/i.test(value)
+    || /(?:出图|生图|生成图片|生成图像|图片|图像|画图|绘图|图形).{0,32}(?:不要|无需|不用|不需要|别|勿)/i.test(value);
+
+  // Preserve an intentional two-step request such as "先写提示词，再生成
+  // 图片". Without an explicit second image action, the prompt wins.
+  const explicitImageAfterPrompt = /(?:提示词|prompt).{0,48}(?:然后|之后|再|同时|并且|并|接着).{0,32}(?:画|绘制|生成|制作|创建|出图|渲染).{0,32}(?:图|图片|图像|海报|封面|插画|poster|image|picture)/i.test(value);
+  const explicitImageBeforePrompt = /(?:画|绘制|生成|制作|创建|出图|渲染).{0,32}(?:图|图片|图像|海报|封面|插画|poster|image|picture).{0,48}(?:然后|之后|再|同时|并且|并|接着).{0,48}(?:提示词|prompt)/i.test(value);
+
+  return !explicitImageAfterPrompt && !explicitImageBeforePrompt && (rejectsImageOutput || asksForPrompt);
+}
+
 /** Extract the numbered/bulleted continuation choices from an assistant caption. */
 export function extractAgentDirections(content: string) {
   const lines = String(content || '').replace(/\r/g, '').split('\n');
@@ -208,6 +236,7 @@ export function likelyImageGenerationRequest(input: string) {
   if (!text) return false;
   const fileRequest = /(?:导出|下载|保存|生成|创建|制作).{0,16}(?:文件|附件|csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|代码|脚本|报告|文档)/i;
   if (fileRequest.test(text)) return false;
+  if (isPromptOnlyRequest(text)) return false;
   const imageAction = new RegExp(drawingVerbPattern, 'i');
   const imageTarget = new RegExp(imageTargetPattern, 'i');
   const promptMention = /(?:提示词|prompt)/i.test(text);
@@ -244,6 +273,7 @@ export function likelyImageGenerationRequest(input: string) {
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();
+  if (isPromptOnlyRequest(text)) return false;
   if (likelyImageGenerationRequest(text)) return true;
   if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
   return /(?:导出|下载|保存|生成).{0,12}(?:文件|csv|json|markdown|文档|代码)/i.test(text);
