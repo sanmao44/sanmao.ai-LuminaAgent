@@ -9,7 +9,7 @@
     "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "a8294bcbe9c8cbcabf32383315b49b068499c22215e64efcf8ce09256e842d3a",
   "publishedAt": "2026-08-25T00:00:00+08:00",
   "notes": [
     "Agent 节点可独立选择对话模型和服务商，不同节点可以并行使用不同服务商。",
