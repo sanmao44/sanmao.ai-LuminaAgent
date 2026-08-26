@@ -904,6 +904,9 @@ export default function SuperCanvas() {
   const [logs, setLogs] = useState<CanvasActivityLog[]>([]);
   const [generationLogs, setGenerationLogs] = useState<CanvasGenerationLog[]>([]);
   const [generationLogsLoading, setGenerationLogsLoading] = useState(false);
+  const [draggingNodeIds, setDraggingNodeIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [deckCollapsed, setDeckCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -1645,6 +1648,7 @@ export default function SuperCanvas() {
         return;
       setContextMenu(null);
       setConnectionNodePicker(null);
+      setDraggingNodeIds(new Set());
       cancelPendingNodeClick();
       hideConnectionCancel();
       if (
@@ -1786,6 +1790,7 @@ export default function SuperCanvas() {
             setSelectedIds(new Set(group.nodeIds));
             return group.nodeIds;
           })();
+      setDraggingNodeIds(new Set(ids));
       setSelectedEdgeId(null);
       const positions = Object.fromEntries(
         ids.map((id) => {
@@ -1824,6 +1829,7 @@ export default function SuperCanvas() {
           return [[id, { x: node.x, y: node.y, w: size.w, h: size.h }]];
         }),
       );
+      setDraggingNodeIds(new Set(group.nodeIds));
       setSelectedGroupId(group.id);
       setSelectedIds(new Set(group.nodeIds));
       setSelectedEdgeId(null);
@@ -1849,6 +1855,7 @@ export default function SuperCanvas() {
       event.stopPropagation();
       hideConnectionCancel();
       connectionHoverEdgeRef.current = null;
+      setDraggingNodeIds(new Set([node.id]));
       const size = nodeSize(node);
       interactionRef.current = {
         kind: "resize",
@@ -1967,6 +1974,7 @@ export default function SuperCanvas() {
             copyOnMove: press.copyOnMove,
             preserveInputConnections: press.preserveInputConnections,
           };
+          setDraggingNodeIds(new Set(press.nodeIds));
           interaction = interactionRef.current;
         }
       }
@@ -2010,6 +2018,7 @@ export default function SuperCanvas() {
               groups: [...docRef.current.groups, ...copies.groups],
             });
             setSelectedIds(new Set(copies.ids));
+            setDraggingNodeIds(new Set(copies.ids));
             setSelectedGroupId(
               copies.groupIds.length === 1 ? copies.groupIds[0] : null,
             );
@@ -2370,6 +2379,7 @@ export default function SuperCanvas() {
         }
       }
       interactionRef.current = null;
+      setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
       setMarquee(null);
@@ -2396,6 +2406,7 @@ export default function SuperCanvas() {
       const interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       interactionRef.current = null;
+      setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
       setMarquee(null);
@@ -2415,6 +2426,7 @@ export default function SuperCanvas() {
   useEffect(() => {
     const handleWindowBlur = () => {
       interactionRef.current = null;
+      setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
       setMarquee(null);
@@ -6331,7 +6343,7 @@ export default function SuperCanvas() {
         id: "retry",
         icon: "↻",
         label: failedCount ? `重试失败项 (${failedCount})` : "重试失败项",
-        disabled: failedCount === 0 || generationKeys.has(`variants:${node.id}`),
+        disabled: failedCount === 0 || generationKeys.has(node.id),
         onClick: () => retryFailedVariants(node.id),
       },
       { id: "delete", icon: "⌫", label: "删除", danger: true, onClick: deleteSelection },
@@ -6786,6 +6798,7 @@ export default function SuperCanvas() {
                   key={node.id}
                   node={node}
                   selected={selectedIds.has(node.id)}
+                  dragging={draggingNodeIds.has(node.id)}
                   document={document}
                   onPointerDown={startNodeDrag}
                   onResize={startResize}
@@ -8618,9 +8631,7 @@ function CanvasNodeQuickToolbar({
       width: toolbarRef.current?.offsetWidth || (compact ? 280 : 520),
       height: toolbarRef.current?.offsetHeight || 40,
     };
-    setPosition(
-      placeCanvasNodeToolbar(anchor, stageSize, overlay, 10, 10),
-    );
+    setPosition(placeCanvasNodeToolbar(anchor, stageSize, overlay, 10));
   }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node, stageRef]);
 
   useLayoutEffect(() => {
@@ -8757,18 +8768,29 @@ function CanvasNodeEditorPopover({
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
     const popoverWidth = popoverRef.current?.offsetWidth || (nextCompact ? 300 : 344);
     const popoverHeight = popoverRef.current?.offsetHeight || (nextCompact ? 360 : 520);
-    const anchor = {
-      left: node.x * zoom + document.camera.x,
-      top: node.y * zoom + document.camera.y,
-      width: size.w * zoom,
-      height: size.h * zoom,
-    };
+    const stageRect = stage.getBoundingClientRect();
+    const nodeElement = Array.from(
+      stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
+    ).find((element) => element.dataset.canvasNodeId === node.id);
+    const nodeRect = nodeElement?.getBoundingClientRect();
+    const anchor = nodeRect
+      ? {
+          left: nodeRect.left - stageRect.left,
+          top: nodeRect.top - stageRect.top,
+          width: nodeRect.width,
+          height: nodeRect.height,
+        }
+      : {
+          left: node.x * zoom + document.camera.x,
+          top: node.y * zoom + document.camera.y,
+          width: size.w * zoom,
+          height: size.h * zoom,
+        };
     const position = placeCanvasNodeEditor(
       anchor,
       { width: stageWidth, height: stageHeight },
       { width: popoverWidth, height: popoverHeight },
       14,
-      10,
     );
     setPosition({
       ...position,
@@ -8783,10 +8805,17 @@ function CanvasNodeEditorPopover({
       if (frame) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(reposition);
     };
-    const observer = typeof ResizeObserver !== "undefined" && popoverRef.current
+    const observer = typeof ResizeObserver !== "undefined"
       ? new ResizeObserver(handleResize)
       : null;
-    if (observer && popoverRef.current) observer.observe(popoverRef.current);
+    if (observer) {
+      if (popoverRef.current) observer.observe(popoverRef.current);
+      if (stageRef.current) observer.observe(stageRef.current);
+      const nodeElement = Array.from(
+        stageRef.current?.querySelectorAll<HTMLElement>("[data-canvas-node-id]") || [],
+      ).find((element) => element.dataset.canvasNodeId === node.id);
+      if (nodeElement) observer.observe(nodeElement);
+    }
     window.addEventListener("resize", handleResize);
     return () => {
       if (frame) window.cancelAnimationFrame(frame);
@@ -8937,6 +8966,7 @@ function CanvasNodeEditorPopover({
 function CanvasNodeCard({
   node,
   selected,
+  dragging,
   document,
   onPointerDown,
   onResize,
@@ -8971,6 +9001,7 @@ function CanvasNodeCard({
 }: {
   node: CanvasNode;
   selected: boolean;
+  dragging: boolean;
   document: CanvasDocument;
   onPointerDown: (event: ReactPointerEvent, node: CanvasNode) => void;
   onResize: (event: ReactPointerEvent, node: CanvasNode) => void;
@@ -10184,215 +10215,6 @@ function CanvasTextLightbox({
           <span>{text.length.toLocaleString()} 字</span>
           <span>按 Esc 关闭</span>
         </footer>
-      </div>
-    </div>
-  );
-}
-
-function CanvasMediaViewer({
-  node,
-  compare,
-  references,
-  onClose,
-  onCompare,
-  model,
-  agentAvailable,
-  runtime,
-  parameters,
-  onParametersChange,
-  onWritePrompt,
-  onCreateTextNode,
-  onNotify,
-  onUpscale,
-  onUseAsReference,
-  onAddToAssets,
-  onContinue,
-}: {
-  node?: CanvasNode;
-  compare: boolean;
-  references: CanvasNode[];
-  onClose: () => void;
-  onCompare: () => void;
-  model?: string;
-  agentAvailable: boolean;
-  runtime: CanvasRuntimeState | null;
-  parameters?: ImageCreationSettings | VideoCreationSettings;
-  onParametersChange: (settings: CreationSettings) => void;
-  onWritePrompt: (node: CanvasNode, value: string) => void;
-  onCreateTextNode: (node: CanvasNode, value: string) => void;
-  onNotify: (message: string, kind?: Notice["kind"]) => void;
-  onUpscale: (node: CanvasNode) => void;
-  onUseAsReference: (node: CanvasNode) => void;
-  onAddToAssets: (node: CanvasNode) => void;
-  onContinue: (node: CanvasNode) => void;
-}) {
-  const [result, setResult] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [compareMode, setCompareMode] = useState<"split" | "slider">("split");
-  const [comparePosition, setComparePosition] = useState(50);
-  const [viewerZoom, setViewerZoom] = useState(1);
-  const [showParameters, setShowParameters] = useState(false);
-  const [promptDraft, setPromptDraft] = useState("");
-  useEffect(() => {
-    setCompareMode("split");
-    setComparePosition(50);
-    setViewerZoom(1);
-    setResult(null);
-    setShowParameters(false);
-    setPromptDraft("");
-  }, [node?.id]);
-  if (!node || node.type !== "media" || !node.data.url) return null;
-  const reference = references[0];
-  const canCompare = Boolean(compare && reference?.data.url && node.data.kind === "image");
-  const sourcePrompt = String(node.data.generation?.prompt || node.data.prompt || "");
-  const currentPrompt = promptDraft || sourcePrompt;
-  const savePrompt = () => {
-    onWritePrompt(node, currentPrompt);
-    setPromptDraft("");
-    onNotify("提示词已保存，可继续调整参数后生成");
-  };
-  const download = (suffix = "原图") => {
-    const anchor = document.createElement("a");
-    anchor.href = String(node.data.url);
-    anchor.download = `${node.data.name || "画布素材"}-${suffix}.${node.data.kind === "video" ? "mp4" : "png"}`;
-    anchor.click();
-  };
-  const runReverse = async () => {
-    if (node.data.kind !== "image") return;
-    if (!agentAvailable) {
-      onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
-      return;
-    }
-    setBusy(true);
-    try {
-      const value = await runReversePrompt([{ url: String(node.data.url), name: String(node.data.name || "参考图") }], model);
-      setResult(value);
-    } catch (error) { onNotify(error instanceof Error ? error.message : "反推提示词失败", "error"); }
-    finally { setBusy(false); }
-  };
-  const runOptimize = async () => {
-    if (!agentAvailable) {
-      onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
-      return;
-    }
-    const source = String(node.data.generation?.prompt || "").trim();
-    if (!source) return onNotify("当前媒体没有可优化的原始提示词", "error");
-    setBusy(true);
-    try {
-      const value = await requestPromptOptimization(source, [], model);
-      setResult(value);
-    } catch (error) { onNotify(error instanceof Error ? error.message : "AI 优化失败", "error"); }
-    finally { setBusy(false); }
-  };
-  return (
-    <div
-      className="canvas-modal-backdrop"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className="canvas-lightbox canvas-media-viewer">
-        <header>
-          <div>
-            <b>{node.data.name || "素材预览"}</b>
-            <small>
-              {node.data.nativeWidth && node.data.nativeHeight
-                ? `${node.data.nativeWidth} × ${node.data.nativeHeight}`
-                : "画布媒体预览"}
-            </small>
-          </div>
-          <div>
-            <div className="canvas-media-zoom-controls" aria-label="预览缩放">
-              <button type="button" onClick={() => setViewerZoom((value) => Math.max(0.5, Number((value - 0.1).toFixed(1))))} title="缩小">−</button>
-              <button type="button" className="zoom-readout" onClick={() => setViewerZoom(1)} title="恢复原比例">{Math.round(viewerZoom * 100)}%</button>
-              <button type="button" onClick={() => setViewerZoom((value) => Math.min(3, Number((value + 0.1).toFixed(1))))} title="放大">＋</button>
-            </div>
-            <button type="button" onClick={onCompare} disabled={!reference?.data.url}>
-              {compare ? "单图预览" : "前后对比"}
-            </button>
-            {canCompare && (
-              <button
-                type="button"
-                className={compareMode === "slider" ? "active" : ""}
-                onClick={() => setCompareMode((value) => value === "split" ? "slider" : "split")}
-                title="切换左右分栏或滑动对比"
-              >
-                {compareMode === "slider" ? "左右对比" : "滑动对比"}
-              </button>
-            )}
-            {parameters && <button type="button" className={showParameters ? "active" : ""} onClick={() => setShowParameters((value) => !value)}>⚙ 参数调整</button>}
-            <button type="button" onClick={() => download()} title="下载原图">↓ 原图</button>
-            <button type="button" onClick={() => download("分享版")} title="下载分享版">⇩ 分享</button>
-            <button type="button" onClick={onClose}>
-              ×
-            </button>
-          </div>
-        </header>
-        <div className={`canvas-lightbox-stage ${compare && reference ? "compare" : ""} ${canCompare && compareMode === "slider" ? "slider" : ""}`}>
-          {canCompare && compareMode === "slider" ? (
-            <div className="canvas-lightbox-slider">
-              <div className="canvas-lightbox-slider-base"><img src={reference.data.url} alt="参考图" style={{ transform: `scale(${viewerZoom})` }} /></div>
-              <div className="canvas-lightbox-slider-overlay" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img src={node.data.url} alt="生成结果" style={{ transform: `scale(${viewerZoom})` }} /></div>
-              <span className="canvas-lightbox-slider-label before">参考图</span>
-              <span className="canvas-lightbox-slider-label after">生成结果</span>
-            </div>
-          ) : (
-            <>
-              {compare && reference?.data.url && (
-                <div className="canvas-lightbox-before">
-                  <span>参考图</span>
-                  <img src={reference.data.url} alt="参考图" style={{ transform: `scale(${viewerZoom})` }} />
-                </div>
-              )}
-              <div className="canvas-lightbox-after">
-                <span>{compare ? "生成结果" : ""}</span>
-                {node.data.kind === "video" ? (
-                    <video src={node.data.url} controls playsInline style={{ transform: `scale(${viewerZoom})` }} />
-                ) : (
-                  <img src={node.data.url} alt={node.data.name || "预览"} style={{ transform: `scale(${viewerZoom})` }} />
-                )}
-              </div>
-            </>
-          )}
-        </div>
-        {canCompare && compareMode === "slider" && (
-          <label className="canvas-lightbox-slider-control">
-            <span>参考图</span>
-            <input type="range" min="0" max="100" value={comparePosition} onChange={(event) => setComparePosition(Number(event.target.value))} aria-label="滑动对比位置" />
-            <span>生成结果</span>
-          </label>
-        )}
-        <div className="canvas-media-viewer-editing">
-          <label><span>提示词</span><textarea value={currentPrompt} onChange={(event) => setPromptDraft(event.target.value)} placeholder="当前节点没有保存提示词" /></label>
-          <button type="button" disabled={!promptDraft.trim() || promptDraft.trim() === sourcePrompt} onClick={savePrompt}>保存提示词</button>
-        </div>
-        {showParameters && parameters && (
-          <section className="canvas-media-parameters">
-            <header><b>生成参数</b><small>与主界面 CreationParameterEditor 共用</small></header>
-            <CreationParameterEditor settings={parameters} runtime={runtime} onChange={onParametersChange} />
-          </section>
-        )}
-        <div className="canvas-media-viewer-actions">
-          {node.data.kind === "image" && <button type="button" disabled={busy || !agentAvailable} title={!agentAvailable ? "没有可用的对话模型，请先在主界面模型库启用" : "根据当前图片反推提示词"} onClick={() => void runReverse()}>⌁ 反推提示词</button>}
-          <button type="button" disabled={busy || !agentAvailable} title={!agentAvailable ? "没有可用的对话模型，请先在主界面模型库启用" : "优化原始提示词"} onClick={() => void runOptimize()}>✦ AI 优化</button>
-          {node.data.kind === "image" && <button type="button" onClick={() => onUpscale(node)}>↗ 超分</button>}
-          <button type="button" onClick={() => onContinue(node)}>{node.data.kind === "video" ? "▶ 继续生成 / 变体" : "▶ 继续生成"}</button>
-          <button type="button" onClick={() => onUseAsReference(node)}>⌁ 作为参考图</button>
-          <button type="button" onClick={() => onAddToAssets(node)}>＋ 加入资产库</button>
-        </div>
-        {!agentAvailable && <div className="canvas-media-viewer-note">反推提示词与 AI 优化已暂停：请先在主界面模型库启用一个对话模型。</div>}
-        {result && (
-          <section className="canvas-media-result-panel">
-            <header><b>AI 结果（未覆盖原文）</b><button type="button" onClick={() => setResult(null)}>×</button></header>
-            <p>{result}</p>
-            <footer>
-              <button type="button" onClick={() => onWritePrompt(node, result)}>写入当前提示词</button>
-              <button type="button" onClick={() => onCreateTextNode(node, result)}>创建文本节点</button>
-              <button type="button" onClick={() => navigator.clipboard?.writeText(result)}>复制结果</button>
-              <button type="button" onClick={() => setResult(null)}>放弃</button>
-            </footer>
-          </section>
-        )}
       </div>
     </div>
   );

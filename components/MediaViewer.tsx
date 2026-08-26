@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import { requestPromptOptimization, runReversePrompt } from "@/lib/creation/agent";
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from "@/lib/creation/settings";
@@ -24,6 +24,28 @@ export type MediaViewerItem = {
 };
 
 export type MediaViewerSurface = "workspace" | "canvas";
+
+type MediaViewerSide = "item" | "reference";
+type MediaViewerSize = { width: number; height: number };
+type MediaViewerViewport = { width: number; height: number };
+
+function containMediaSize(media: MediaViewerSize, viewport: MediaViewerViewport) {
+  if (!viewport.width || !viewport.height) return { width: 0, height: 0 };
+  if (!media.width || !media.height) {
+    return {
+      width: Math.max(1, viewport.width - 40),
+      height: Math.max(1, viewport.height - 40),
+    };
+  }
+  const scale = Math.min(
+    Math.max(1, viewport.width - 40) / media.width,
+    Math.max(1, viewport.height - 40) / media.height,
+  );
+  return {
+    width: Math.max(1, Math.round(media.width * scale)),
+    height: Math.max(1, Math.round(media.height * scale)),
+  };
+}
 
 export default function MediaViewer({
   item,
@@ -79,13 +101,28 @@ export default function MediaViewer({
   onNotify: (message: string, kind?: "ok" | "error") => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const beforePaneRef = useRef<HTMLDivElement | null>(null);
+  const currentPaneRef = useRef<HTMLDivElement | null>(null);
   const [compare, setCompare] = useState(initialCompare);
-  const [compareMode, setCompareMode] = useState<"split" | "slider">("split");
+  const [compareMode, setCompareMode] = useState<"slider" | "side-by-side">("slider");
   const [comparePosition, setComparePosition] = useState(50);
   const [selectedReferenceId, setSelectedReferenceId] = useState(references[0]?.id || "");
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [mediaSizes, setMediaSizes] = useState<Record<MediaViewerSide, MediaViewerSize>>({
+    item: { width: 0, height: 0 },
+    reference: { width: 0, height: 0 },
+  });
+  const [viewportSizes, setViewportSizes] = useState<{
+    stage: MediaViewerViewport;
+    before: MediaViewerViewport;
+    current: MediaViewerViewport;
+  }>({
+    stage: { width: 0, height: 0 },
+    before: { width: 0, height: 0 },
+    current: { width: 0, height: 0 },
+  });
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<"reverse" | "optimize" | null>(null);
@@ -98,30 +135,119 @@ export default function MediaViewer({
     panX: number;
     panY: number;
   } | null>(null);
+  const sliderPointerId = useRef<number | null>(null);
 
   const sourcePrompt = item.prompt || "";
   const currentPrompt = promptDraft ?? sourcePrompt;
   const selectedReference = references.find((reference) => reference.id === selectedReferenceId) || references[0];
-  const canCompare = item.kind === "image" && Boolean(selectedReference?.url);
+  const canCompare = item.kind === "image" && selectedReference?.kind === "image" && Boolean(selectedReference.url);
   const referenceSignature = references.map((reference) => `${reference.id}:${reference.url}`).join("|");
+  const showComparison = compare && canCompare && Boolean(selectedReference);
 
   useEffect(() => {
     setCompare(initialCompare);
-    setCompareMode("split");
+    setCompareMode("slider");
     setComparePosition(50);
     setSelectedReferenceId(references[0]?.id || "");
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    setMediaSizes({
+      item: { width: 0, height: 0 },
+      reference: { width: 0, height: 0 },
+    });
     setResult(null);
     setShowParameters(false);
     setPromptDraft(null);
   }, [initialCompare, item.id, referenceSignature]);
 
   useEffect(() => {
+    sliderPointerId.current = null;
     pointerStart.current = null;
     setDragging(false);
     setPan({ x: 0, y: 0 });
   }, [compare, compareMode, selectedReferenceId]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const readSize = (element: HTMLElement | null, fallback: MediaViewerViewport) =>
+      element
+        ? { width: element.clientWidth, height: element.clientHeight }
+        : fallback;
+    const measure = () => {
+      const stageSize = { width: stage.clientWidth, height: stage.clientHeight };
+      const sideBySide = showComparison && compareMode === "side-by-side";
+      const fallbackPane = {
+        width: Math.max(1, (stageSize.width - 1) / 2),
+        height: stageSize.height,
+      };
+      const next = {
+        stage: stageSize,
+        before: sideBySide ? readSize(beforePaneRef.current, fallbackPane) : stageSize,
+        current: sideBySide ? readSize(currentPaneRef.current, fallbackPane) : stageSize,
+      };
+      setViewportSizes((current) =>
+        current.stage.width === next.stage.width &&
+        current.stage.height === next.stage.height &&
+        current.before.width === next.before.width &&
+        current.before.height === next.before.height &&
+        current.current.width === next.current.width &&
+        current.current.height === next.current.height
+          ? current
+          : next,
+      );
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(stage);
+    if (beforePaneRef.current) observer?.observe(beforePaneRef.current);
+    if (currentPaneRef.current) observer?.observe(currentPaneRef.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [compareMode, showComparison]);
+
+  const beforeViewport = showComparison && compareMode === "side-by-side"
+    ? viewportSizes.before
+    : viewportSizes.stage;
+  const currentViewport = showComparison && compareMode === "side-by-side"
+    ? viewportSizes.current
+    : viewportSizes.stage;
+  const frameSizes = useMemo(
+    () => ({
+      reference: containMediaSize(mediaSizes.reference, beforeViewport),
+      item: containMediaSize(mediaSizes.item, currentViewport),
+    }),
+    [beforeViewport, currentViewport, mediaSizes],
+  );
+  const getPanLimits = (nextZoom: number) => {
+    const limits = [
+      { frame: frameSizes.item, viewport: currentViewport },
+      ...(showComparison
+        ? [{ frame: frameSizes.reference, viewport: beforeViewport }]
+        : []),
+    ];
+    return {
+      x: Math.max(0, Math.min(...limits.map(({ frame, viewport }) => Math.max(0, (frame.width * nextZoom - viewport.width) / 2)))),
+      y: Math.max(0, Math.min(...limits.map(({ frame, viewport }) => Math.max(0, (frame.height * nextZoom - viewport.height) / 2)))),
+    };
+  };
+
+  const panLimits = useMemo(
+    () => getPanLimits(zoom),
+    [beforeViewport, currentViewport, frameSizes, showComparison, zoom],
+  );
+
+  const clampPan = (value: { x: number; y: number }, limits = panLimits) => ({
+    x: Math.min(limits.x, Math.max(-limits.x, value.x)),
+    y: Math.min(limits.y, Math.max(-limits.y, value.y)),
+  });
+
+  useEffect(() => {
+    setPan((current) => clampPan(current));
+  }, [panLimits.x, panLimits.y]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -147,47 +273,9 @@ export default function MediaViewer({
     };
   }, [onClose, onNavigate]);
 
-  const getPanLimits = (nextZoom: number) => {
-    const stage = stageRef.current;
-    if (!stage) return { x: 0, y: 0 };
-
-    const mediaElements = Array.from(stage.querySelectorAll<HTMLElement>("img, video"));
-    if (!mediaElements.length) {
-      return {
-        x: Math.max(0, stage.clientWidth * Math.max(0, nextZoom - 1) * 0.5),
-        y: Math.max(0, stage.clientHeight * Math.max(0, nextZoom - 1) * 0.5),
-      };
-    }
-
-    const limits = mediaElements.map((media) => {
-      const viewport = media.parentElement || stage;
-      const viewportStyle = window.getComputedStyle(viewport);
-      const paddingX = (Number.parseFloat(viewportStyle.paddingLeft) || 0) + (Number.parseFloat(viewportStyle.paddingRight) || 0);
-      const paddingY = (Number.parseFloat(viewportStyle.paddingTop) || 0) + (Number.parseFloat(viewportStyle.paddingBottom) || 0);
-      const viewportWidth = Math.max(0, viewport.clientWidth - paddingX);
-      const viewportHeight = Math.max(0, viewport.clientHeight - paddingY);
-      const mediaWidth = media.offsetWidth || media.clientWidth || viewportWidth;
-      const mediaHeight = media.offsetHeight || media.clientHeight || viewportHeight;
-
-      return {
-        x: Math.max(0, (mediaWidth * nextZoom - viewportWidth) / 2),
-        y: Math.max(0, (mediaHeight * nextZoom - viewportHeight) / 2),
-      };
-    });
-
-    return {
-      x: Math.min(...limits.map((limit) => limit.x)),
-      y: Math.min(...limits.map((limit) => limit.y)),
-    };
-  };
-
-  const clampPan = (value: { x: number; y: number }, limits = getPanLimits(zoom)) => ({
-    x: Math.max(-limits.x, Math.min(limits.x, value.x)),
-    y: Math.max(-limits.y, Math.min(limits.y, value.y)),
-  });
-
   const resetView = () => {
     pointerStart.current = null;
+    sliderPointerId.current = null;
     setDragging(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -195,7 +283,7 @@ export default function MediaViewer({
 
   const updateZoom = (next: number, focus?: { x: number; y: number }) => {
     const previous = zoom;
-    const value = Math.max(0.5, Math.min(4, Number(next.toFixed(2))));
+    const value = Math.max(1, Math.min(8, Number(next.toFixed(2))));
     setZoom(value);
     if (value <= 1) {
       pointerStart.current = null;
@@ -223,7 +311,7 @@ export default function MediaViewer({
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (zoom <= 1 || event.button !== 0) return;
     const target = event.target as Element;
-    if (target.closest("button, input, textarea, select, option") || target.closest("video")) return;
+    if (target.closest("button, input, textarea, select, option, video, .media-viewer-divider")) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerStart.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
@@ -231,6 +319,10 @@ export default function MediaViewer({
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (sliderPointerId.current === event.pointerId) {
+      updateComparePosition(event.clientX);
+      return;
+    }
     const drag = pointerStart.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     event.preventDefault();
@@ -241,20 +333,66 @@ export default function MediaViewer({
   };
 
   const stopDragging = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!pointerStart.current || pointerStart.current.pointerId !== event.pointerId) return;
+    if (sliderPointerId.current === event.pointerId) sliderPointerId.current = null;
+    if (pointerStart.current?.pointerId === event.pointerId) pointerStart.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    pointerStart.current = null;
     setDragging(false);
   };
 
   const handleLostPointerCapture = () => {
+    sliderPointerId.current = null;
     pointerStart.current = null;
     setDragging(false);
   };
 
+  const handleMediaLoad = (side: MediaViewerSide, element: HTMLImageElement | HTMLVideoElement) => {
+    const width = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
+    const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
+    if (!width || !height) return;
+    setMediaSizes((current) =>
+      current[side].width === width && current[side].height === height
+        ? current
+        : { ...current, [side]: { width, height } },
+    );
+  };
+
+  const updateComparePosition = (clientX: number) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const rect = stage.getBoundingClientRect();
+    setComparePosition(Math.min(100, Math.max(0, ((clientX - rect.left) / Math.max(1, rect.width)) * 100)));
+  };
+
+  const startSliderDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const stage = stageRef.current;
+    if (!stage) return;
+    stage.setPointerCapture(event.pointerId);
+    sliderPointerId.current = event.pointerId;
+    updateComparePosition(event.clientX);
+  };
+
+  const handleDividerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Home") return setComparePosition(0);
+    if (event.key === "End") return setComparePosition(100);
+    setComparePosition((current) => Math.min(100, Math.max(0, current + (event.key === "ArrowRight" ? 5 : -5))));
+  };
+
+  const mediaFrameStyle = (size: MediaViewerSize) => ({
+    width: Math.max(1, size.width),
+    height: Math.max(1, size.height),
+    left: `calc(50% + ${pan.x}px)`,
+    top: `calc(50% + ${pan.y}px)`,
+    transform: `translate(-50%, -50%) scale(${zoom})`,
+  });
+
   const mediaStyle = {
-    transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
-    transformOrigin: "center center",
+    width: "100%",
+    height: "100%",
+    objectFit: "contain" as const,
   };
 
   const runReverse = async () => {
@@ -342,13 +480,14 @@ export default function MediaViewer({
               <button type="button" onClick={() => updateZoom(zoom + 0.1)} title="放大">＋</button>
             </div>
             {onNavigate && <span className="media-viewer-nav-hint">← / → 切换</span>}
-            <button type="button" onClick={() => setCompare((value) => !value)} disabled={!selectedReference?.url}>
+            <button type="button" onClick={() => setCompare((value) => !value)} disabled={!canCompare}>
               {compare ? "单图预览" : "前后对比"}
             </button>
-            {canCompare && (
-              <button type="button" className={compareMode === "slider" ? "active" : ""} onClick={() => setCompareMode((value) => value === "split" ? "slider" : "split")}>
-                {compareMode === "slider" ? "左右对比" : "滑动对比"}
-              </button>
+            {canCompare && compare && (
+              <div className="media-viewer-compare-mode" role="group" aria-label="对比模式">
+                <button type="button" className={compareMode === "slider" ? "active" : ""} onClick={() => setCompareMode("slider")}>滑块</button>
+                <button type="button" className={compareMode === "side-by-side" ? "active" : ""} onClick={() => setCompareMode("side-by-side")}>并排</button>
+              </div>
             )}
             {parameters && <button type="button" className={showParameters ? "active" : ""} onClick={() => setShowParameters((value) => !value)}>⚙ 参数调整</button>}
             <button type="button" onClick={() => download("original")}>↓ 原图</button>
@@ -359,7 +498,7 @@ export default function MediaViewer({
 
         <div
           ref={stageRef}
-          className={`canvas-lightbox-stage media-viewer-stage ${zoom > 1 ? "can-pan" : ""} ${compare && selectedReference ? "compare" : ""} ${canCompare && compareMode === "slider" ? "slider" : ""} ${dragging ? "dragging" : ""}`}
+          className={`canvas-lightbox-stage media-viewer-stage ${zoom > 1 ? "can-pan" : ""} ${showComparison ? "compare" : ""} ${showComparison && compareMode === "slider" ? "slider" : ""} ${showComparison && compareMode === "side-by-side" ? "side-by-side" : ""} ${dragging ? "dragging" : ""}`}
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -368,35 +507,66 @@ export default function MediaViewer({
           onLostPointerCapture={handleLostPointerCapture}
           onDoubleClick={resetView}
         >
-          {canCompare && compareMode === "slider" && compare ? (
-            <div className="canvas-lightbox-slider">
-              <div className="canvas-lightbox-slider-base"><img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} /></div>
-              <div className="canvas-lightbox-slider-overlay" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img draggable={false} src={item.url} alt={item.name} style={mediaStyle} /></div>
-              <span className="canvas-lightbox-slider-label before">{selectedReference.name}</span>
-              <span className="canvas-lightbox-slider-label after">生成结果</span>
+          {showComparison && compareMode === "slider" ? (
+            <>
+              <div className="media-viewer-compare-layer">
+                <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.reference)}>
+                  <img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("reference", event.currentTarget)} />
+                </div>
+              </div>
+              <div className="media-viewer-compare-layer media-viewer-current-layer" style={{ clipPath: `inset(0 0 0 ${comparePosition}%)` }}>
+                <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
+                  <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="media-viewer-divider"
+                style={{ left: `${comparePosition}%` }}
+                role="slider"
+                aria-label="调整前后版本分界线"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(comparePosition)}
+                onPointerDown={startSliderDrag}
+                onKeyDown={handleDividerKeyDown}
+              >
+                <span />
+              </button>
+              <span className="media-viewer-compare-label before">{selectedReference.name}</span>
+              <span className="media-viewer-compare-label after">生成结果</span>
+            </>
+          ) : showComparison ? (
+            <div className="media-viewer-side-grid">
+              <div className="media-viewer-side-pane" ref={beforePaneRef}>
+                <span className="media-viewer-compare-label">{selectedReference.name}</span>
+                <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.reference)}>
+                  <img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("reference", event.currentTarget)} />
+                </div>
+              </div>
+              <div className="media-viewer-side-pane" ref={currentPaneRef}>
+                <span className="media-viewer-compare-label">生成结果</span>
+                <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
+                  <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />
+                </div>
+              </div>
             </div>
           ) : (
-            <>
-              {compare && selectedReference && <div className="canvas-lightbox-before"><span>{selectedReference.name}</span><img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} /></div>}
-              <div className="canvas-lightbox-after">
-                {compare && <span>生成结果</span>}
-                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} /> : <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} />}
+            <div className="media-viewer-single-layer">
+              <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
+                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />}
               </div>
-            </>
+            </div>
           )}
-          <span className="media-viewer-wheel-tip">滚轮缩放 · 双击复位{zoom > 1 ? " · 拖动查看" : ""}</span>
+          <span className="media-viewer-wheel-tip">滚轮缩放 · 双击复位{zoom > 1 ? " · 拖动查看" : ""} · 点击百分比恢复完整画面</span>
         </div>
-
-        {canCompare && compare && compareMode === "slider" && (
-          <label className="canvas-lightbox-slider-control"><span>参考图</span><input type="range" min="0" max="100" value={comparePosition} onChange={(event) => setComparePosition(Number(event.target.value))} aria-label="滑动对比位置" /><span>生成结果</span></label>
-        )}
 
         {references.length > 0 && (
           <section className="media-viewer-reference-panel">
             <div className="media-viewer-reference-head"><b>参考图 · {references.length} 张</b><small>点击切换对比对象</small></div>
             <div className="media-viewer-reference-list">
               {references.map((reference, index) => (
-                <button type="button" className={reference.id === selectedReference?.id ? "active" : ""} key={reference.id} onClick={() => { setSelectedReferenceId(reference.id); setCompare(true); }}>
+                <button type="button" className={reference.id === selectedReference?.id ? "active" : ""} key={reference.id} onClick={() => { setSelectedReferenceId(reference.id); if (reference.kind === "image") setCompare(true); }}>
                   {reference.kind === "video" ? <video src={reference.url} muted playsInline /> : <img src={reference.url} alt={reference.name} />}
                   <span>图 {index + 1}</span>
                 </button>

@@ -20,36 +20,24 @@ export type CanvasOverlayPosition = {
   top: number;
 };
 
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function centeredLeft(
   anchor: CanvasOverlayAnchor,
-  stage: CanvasOverlayStage,
+  _stage: CanvasOverlayStage,
   overlay: CanvasOverlaySize,
-  edge: number,
 ) {
-  const maxLeft = Math.max(edge, stage.width - overlay.width - edge);
-  return clamp(
-    anchor.left + anchor.width / 2 - overlay.width / 2,
-    edge,
-    maxLeft,
-  );
+  return anchor.left + anchor.width / 2 - overlay.width / 2;
 }
 
-/** Places the compact action rail above a node while keeping it in the stage. */
+/** Places the compact action rail above a node at a stable screen offset. */
 export function placeCanvasNodeToolbar(
   anchor: CanvasOverlayAnchor,
   stage: CanvasOverlayStage,
   overlay: CanvasOverlaySize,
   gap = 10,
-  edge = 10,
 ): CanvasOverlayPosition {
-  const maxTop = Math.max(edge, stage.height - overlay.height - edge);
   return {
-    left: centeredLeft(anchor, stage, overlay, edge),
-    top: clamp(anchor.top - overlay.height - gap, edge, maxTop),
+    left: centeredLeft(anchor, stage, overlay),
+    top: anchor.top - overlay.height - gap,
   };
 }
 
@@ -59,11 +47,9 @@ export function placeCanvasNodeEditor(
   stage: CanvasOverlayStage,
   overlay: CanvasOverlaySize,
   gap = 14,
-  edge = 10,
 ): CanvasOverlayPosition {
-  const maxTop = Math.max(edge, stage.height - overlay.height - edge);
   return {
-    left: centeredLeft(anchor, stage, overlay, edge),
-    top: clamp(anchor.top + anchor.height + gap, edge, maxTop),
+    left: centeredLeft(anchor, stage, overlay),
+    top: anchor.top + anchor.height + gap,
   };
 }
