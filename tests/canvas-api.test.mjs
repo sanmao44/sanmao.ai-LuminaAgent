@@ -232,6 +232,21 @@ test('canvas agent generation marks the request as canvas-originated', async () 
   });
 });
 
+test('canvas agent forwards explicit reverse-prompt tasks', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ ok: true, message: '已完成' });
+  }, () => api.generateCanvasAgent({
+    messages: [{ role: 'user', content: '反推图片提示词' }],
+    model: 'provider-a-chat-model',
+    task: 'reverse_prompt',
+    references: [{ url: 'data:image/jpeg;base64,AA==', name: '参考图' }],
+  }));
+
+  assert.equal(JSON.parse(request.options.body).task, 'reverse_prompt');
+});
+
 test('canvas agent references use the compact image format before sending', async () => {
   const mocks = withImageCanvas({ width: 3200, height: 1800 });
   try {

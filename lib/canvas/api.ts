@@ -22,6 +22,29 @@ export type CanvasUploadPreparation = {
   uploadedSize: number;
 };
 
+export type CanvasAgentTask =
+  | "reverse_prompt"
+  | "one_take_video_prompt"
+  | "optimize_prompt";
+
+export function inferCanvasAgentTask(
+  prompt: string,
+  hasImageReferences: boolean,
+): CanvasAgentTask | undefined {
+  if (!hasImageReferences) return undefined;
+  const value = String(prompt || "").replace(/\s+/g, " ").trim();
+  if (
+    /(?:反推|提取|识别|分析).{0,24}(?:提示词|prompt)/i.test(value) ||
+    /(?:提示词|prompt).{0,24}(?:反推|提取|识别)/i.test(value)
+  )
+    return "reverse_prompt";
+  if (/(?:一镜到底|串联成一段|按顺序).{0,32}(?:视频|video|prompt|提示词)/i.test(value))
+    return "one_take_video_prompt";
+  if (/(?:优化|润色|改写|扩写).{0,24}(?:提示词|prompt)/i.test(value))
+    return "optimize_prompt";
+  return undefined;
+}
+
 function loadUploadImage(file: File) {
   const objectUrl = URL.createObjectURL(file);
   return new Promise<{ image: HTMLImageElement; objectUrl: string }>(
@@ -478,6 +501,7 @@ export async function generateCanvasAgent(input: {
   model?: string;
   webMode?: "off" | "auto" | "always";
   references?: Array<{ url: string; name?: string }>;
+  task?: CanvasAgentTask;
 }) {
   const preparedReferences = await prepareCanvasAgentReferences(input.references);
   const references = preparedReferences.map((item) => item.url);
@@ -499,6 +523,7 @@ export async function generateCanvasAgent(input: {
       source: "canvas",
       messages,
       model: input.model || "auto",
+      ...(input.task ? { task: input.task } : {}),
       webMode: input.webMode || "off",
       webSearch: input.webMode !== "off",
       stream: false,

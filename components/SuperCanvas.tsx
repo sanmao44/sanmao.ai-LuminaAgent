@@ -54,6 +54,7 @@ import {
   generateCanvasImage,
   generateCanvasUpscale,
   generateCanvasVideo,
+  inferCanvasAgentTask,
   loadCanvasRuntime,
   uploadCanvasAsset,
 } from "@/lib/canvas/api";
@@ -4435,7 +4436,10 @@ export default function SuperCanvas() {
       const resolved = resolveAvailableCreationModel(settings, runtime);
       const effectiveSettings: AgentCreationSettings = {
         ...settings,
-        model: resolved.model?.id || "auto",
+        // Keep "auto" as auto so the canvas uses the same configured Agent
+        // model as the main surface instead of silently selecting the first
+        // chat model in the registry.
+        model: settings.model === "auto" ? "auto" : resolved.model?.id || "auto",
       };
       const activeKey = generationKey(source);
       if (generationKeysRef.current.has(activeKey))
@@ -4513,6 +4517,7 @@ export default function SuperCanvas() {
           messages: [...contextMessages, { role: "user", content: prompt }],
           model: effectiveSettings.model,
           webMode: effectiveSettings.webMode,
+          task: inferCanvasAgentTask(prompt, referenceNodes.length > 0),
           references: referenceNodes.map((node) => ({
             url: String(node.data.url),
             name: String(node.data.name || "参考图片"),
@@ -5148,6 +5153,9 @@ export default function SuperCanvas() {
                 text: value,
                 agentPrompt: value,
                 agentResponse: undefined,
+                role: "Agent 输入",
+                status: "idle",
+                statusLabel: undefined,
                 editor: { ...item.data.editor, draftPrompt: value, dirty: true },
               },
             };
@@ -6647,7 +6655,7 @@ export default function SuperCanvas() {
             setLightbox({ nodeId: node.id, compare: false });
           } else if (node?.type === "prompt") {
             cancelPendingNodeClick();
-            setTextLightboxNodeId(node.id);
+            setEditingNodeId(node.id);
           }
         }}
         onDragStart={(event) => {
@@ -6870,27 +6878,7 @@ export default function SuperCanvas() {
                   editing={editingNodeId === node.id}
                   onEdit={(value) => setEditingNodeId(value ? node.id : null)}
                   onNaturalSize={setMediaNaturalSize}
-                  onPromptChange={(value) =>
-                    updateDoc((valueDoc) => ({
-                      ...valueDoc,
-                      nodes: valueDoc.nodes.map((item) =>
-                        item.id === node.id
-                          ? {
-                              ...item,
-                              data: {
-                                ...item.data,
-                                text: value,
-                                agentPrompt: value,
-                                agentResponse: undefined,
-                                role: "Agent 输入",
-                                status: "idle",
-                                statusLabel: undefined,
-                              },
-                            }
-                          : item,
-                      ),
-                    }))
-                  }
+                  onPromptChange={(value) => updateEditorPrompt(node, value)}
                   onEditorPromptChange={updateEditorPrompt}
                   onEditorParamsChange={updateEditorParams}
                   onVariantRequirementsChange={(target, value) => {
@@ -8750,8 +8738,10 @@ function CanvasNodeEditorPopover({
   onOutputPreview,
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const [position, setPosition] = useState({ left: 18, top: 86, placement: "bottom" });
   const [isCompact, setIsCompact] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const [mentionState, setMentionState] = useState<MentionState>(null);
   const data = node.data;
   const size = nodeSize(node);
@@ -8779,6 +8769,56 @@ function CanvasNodeEditorPopover({
       .toLowerCase()
       .includes(query);
   });
+
+  useEffect(() => {
+    setPromptExpanded(false);
+    setMentionState(null);
+  }, [node.id]);
+
+  useLayoutEffect(() => {
+    const textarea = promptRef.current;
+    if (!textarea) return;
+    const syncPromptHeight = () => {
+      const mobile = window.matchMedia("(max-width: 720px)").matches;
+      const minHeight = promptExpanded ? (mobile ? 180 : 220) : (mobile ? 104 : 120);
+      const maxHeight = promptExpanded ? (mobile ? 360 : 460) : (mobile ? 220 : 260);
+      textarea.style.height = "auto";
+      const contentHeight = textarea.scrollHeight;
+      textarea.style.height = `${Math.min(maxHeight, Math.max(minHeight, contentHeight))}px`;
+      textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+    };
+    syncPromptHeight();
+    const frame = window.requestAnimationFrame(syncPromptHeight);
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(syncPromptHeight)
+      : null;
+    if (observer) observer.observe(textarea.parentElement || textarea);
+    window.addEventListener("resize", syncPromptHeight);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", syncPromptHeight);
+    };
+  }, [editorPrompt, isCompact, node.id, promptExpanded]);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (mentionState) {
+        event.preventDefault();
+        event.stopPropagation();
+        setMentionState(null);
+        return;
+      }
+      if (promptExpanded) {
+        event.preventDefault();
+        event.stopPropagation();
+        setPromptExpanded(false);
+      }
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [mentionState, promptExpanded]);
 
   const reposition = useCallback(() => {
     const stage = stageRef.current;
@@ -8853,6 +8893,7 @@ function CanvasNodeEditorPopover({
       data-placement={position.placement}
       data-density={isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
+      data-prompt-expanded={promptExpanded ? "true" : "false"}
       data-node-id={node.id}
       aria-label={`${nodeLabel(node)}编辑器`}
       style={{ left: position.left, top: position.top }}
@@ -8870,6 +8911,19 @@ function CanvasNodeEditorPopover({
         </div>
         <div className="canvas-node-editor-head-actions">
           <span>编辑中</span>
+          <button
+            type="button"
+            className="canvas-node-editor-expand"
+            title={promptExpanded ? "收回编辑" : "放大编辑"}
+            aria-label={promptExpanded ? "收回编辑" : "放大编辑"}
+            aria-expanded={promptExpanded}
+            onClick={(event) => {
+              event.stopPropagation();
+              setPromptExpanded((value) => !value);
+            }}
+          >
+            <span aria-hidden="true">{promptExpanded ? "⤡" : "⤢"}</span>
+          </button>
           <button type="button" onClick={() => onToggleEditor(node)} aria-label="关闭节点参数">×</button>
         </div>
       </div>
@@ -8882,6 +8936,7 @@ function CanvasNodeEditorPopover({
                 <small>@ 引用节点 · {node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
               </div>
               <textarea
+                ref={promptRef}
                 aria-label={`${nodeLabel(node)}提示词`}
                 value={editorPrompt}
                 placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
@@ -9172,7 +9227,7 @@ function CanvasNodeCard({
       onPointerDown={(event) => onPointerDown(event, node)}
       onDoubleClick={(event) => {
         event.stopPropagation();
-        if (node.type === "prompt") onTextPreview();
+        if (node.type === "prompt") onEdit(true);
         else if (node.type === "media" && data.url) onPreview();
         else onToggleEditor(node);
       }}
@@ -9313,7 +9368,11 @@ function CanvasNodeCard({
               placeholder="输入要交给 Agent 的任务…"
               autoFocus
               onChange={(event) => onPromptChange(event.target.value)}
-              onBlur={() => onEdit(false)}
+              onBlur={(event) => {
+                const next = event.relatedTarget;
+                if (next instanceof HTMLElement && next.closest(".canvas-node-editor-popover")) return;
+                onEdit(false);
+              }}
               onPointerDown={(event) => event.stopPropagation()}
             />
           ) : (

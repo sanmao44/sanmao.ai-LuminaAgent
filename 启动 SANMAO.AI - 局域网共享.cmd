@@ -1,3 +1,3 @@
 @echo off
 cd /d %~dp0
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File %~dp0scripts\start.ps1 -Lan
+start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0scripts\lan-launcher.ps1"

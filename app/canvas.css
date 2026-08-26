@@ -745,3 +745,42 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-world-content>.canvas-group-layer{z-index:10}
 .canvas-world-content>.canvas-node-layer{z-index:20}
 .canvas-world-content>.canvas-node-layer>.canvas-node.dragging{z-index:100}
+
+/* Node editor v6: keep the composer visually grouped with its references and
+   settings, while letting the prompt textarea grow from its measured content.
+   The height is set by CanvasNodeEditorPopover so this also works without
+   relying on field-sizing support. */
+.canvas-node-editor-popover .canvas-node-editor-head-actions{gap:5px}
+.canvas-node-editor-popover .canvas-node-editor-head-actions>button.canvas-node-editor-expand{font-size:13px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-wrap{padding:12px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:16px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent-soft) 38%,var(--panel-2)),color-mix(in srgb,var(--panel-2) 92%,var(--panel)));box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 5%,transparent)}
+.canvas-node-editor-popover .canvas-node-editor-prompt-label{margin:0 1px 8px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-label span{font-size:9px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-label small{font-size:7px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea{min-height:120px;max-height:260px;height:120px;resize:none;overflow-y:hidden;border-color:color-mix(in srgb,var(--accent) 28%,var(--line));background:color-mix(in srgb,var(--panel) 70%,var(--panel-2));padding:11px 12px;line-height:1.6}
+.canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea[style*="overflow-y: auto"]{scrollbar-width:thin}
+.canvas-node-editor-popover .canvas-editor-references,.canvas-node-editor-popover .canvas-reference-draft-strip{padding:11px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--panel-2) 72%,transparent)}
+.canvas-node-editor-popover .canvas-editor-references{gap:9px}
+.canvas-node-editor-popover .canvas-editor-reference-slot{border-style:solid;border-color:color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--panel) 45%,transparent)}
+.canvas-node-editor-popover .canvas-node-editor-settings>.creation-parameter-editor{padding:12px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--panel-2) 72%,transparent)}
+.canvas-node-editor-popover .canvas-node-variant-editor{padding:11px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--panel-2) 72%,transparent)}
+.canvas-node-editor-popover .canvas-node-variant-editor textarea{min-height:72px;resize:vertical;border-color:color-mix(in srgb,var(--accent) 20%,var(--line));background:var(--panel)}
+.canvas-node-editor-popover.is-prompt-expanded{position:fixed;z-index:520;left:50%!important;top:50%!important;width:min(860px,calc(100vw - 32px))!important;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);transform:translate(-50%,-50%);border-radius:22px;box-shadow:0 28px 86px rgba(0,0,0,.42),0 0 0 4px color-mix(in srgb,var(--accent) 10%,transparent)}
+.canvas-node-editor-popover.is-prompt-expanded::before,.canvas-node-editor-popover.is-prompt-expanded::after{display:none}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-head{min-height:58px;padding:11px 15px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-body{padding:14px 15px 10px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-columns{grid-template-columns:minmax(0,1.12fr) minmax(280px,.88fr);gap:18px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>textarea{min-height:220px;max-height:460px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions{min-height:59px;padding:10px 15px 12px}
+@media(max-width:720px){
+  .canvas-node-editor-popover .canvas-node-editor-prompt-wrap{padding:10px}
+  .canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea{min-height:104px;max-height:220px}
+  .canvas-node-editor-popover.is-prompt-expanded{width:calc(100vw - 16px)!important;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);border-radius:18px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-head{min-height:52px;padding:9px 11px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-body{padding:10px 11px 7px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>textarea{min-height:180px;max-height:360px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions{min-height:51px;padding:8px 11px 10px}
+}
+@media(max-width:540px){
+  .canvas-node-editor-popover .canvas-node-editor-head-actions>span{display:none}
+  .canvas-node-editor-popover .canvas-node-editor-head-actions{gap:4px}
+}
