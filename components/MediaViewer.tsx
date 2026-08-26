@@ -23,9 +23,12 @@ export type MediaViewerItem = {
   height?: number;
 };
 
+export type MediaViewerSurface = "workspace" | "canvas";
+
 export default function MediaViewer({
   item,
   references,
+  surface = "workspace",
   initialCompare = false,
   parameters,
   runtime,
@@ -36,6 +39,7 @@ export default function MediaViewer({
   onPromptSave,
   onParametersChange,
   onEdit,
+  onMask,
   onUpscale,
   onContinue,
   onReuse,
@@ -50,6 +54,7 @@ export default function MediaViewer({
 }: {
   item: MediaViewerItem;
   references: MediaViewerReference[];
+  surface?: MediaViewerSurface;
   initialCompare?: boolean;
   parameters?: ImageCreationSettings | VideoCreationSettings;
   runtime: unknown;
@@ -60,6 +65,7 @@ export default function MediaViewer({
   onPromptSave?: (value: string) => void;
   onParametersChange?: (settings: CreationSettings) => void;
   onEdit?: () => void;
+  onMask?: () => void;
   onAngle?: () => void;
   onUpscale?: () => void;
   onContinue?: () => void;
@@ -82,6 +88,7 @@ export default function MediaViewer({
   const [dragging, setDragging] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"reverse" | "optimize" | null>(null);
   const [showParameters, setShowParameters] = useState(false);
   const [promptDraft, setPromptDraft] = useState<string | null>(null);
   const pointerStart = useRef<{
@@ -254,6 +261,7 @@ export default function MediaViewer({
     if (item.kind !== "image") return;
     if (!agentAvailable) return onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
     setBusy(true);
+    setBusyAction("reverse");
     try {
       const value = await runReversePrompt(
         [{ url: item.url, name: item.name }, ...references.map((reference) => ({ url: reference.url, name: reference.name }))],
@@ -264,6 +272,7 @@ export default function MediaViewer({
       onNotify(error instanceof Error ? error.message : "反推提示词失败", "error");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -271,6 +280,7 @@ export default function MediaViewer({
     if (!agentAvailable) return onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
     if (!sourcePrompt.trim()) return onNotify("当前媒体没有可优化的原始提示词", "error");
     setBusy(true);
+    setBusyAction("optimize");
     try {
       const value = await requestPromptOptimization(
         sourcePrompt,
@@ -282,7 +292,16 @@ export default function MediaViewer({
       onNotify(error instanceof Error ? error.message : "AI 优化失败", "error");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
+  };
+
+  const writeResultToPrompt = () => {
+    if (!result) return;
+    // Keep the result visible here too; the canvas parent may close this viewer
+    // after copying it into the node editor.
+    setPromptDraft(result);
+    onWriteResult?.(result);
   };
 
   const savePrompt = () => {
@@ -393,15 +412,20 @@ export default function MediaViewer({
 
         {showParameters && parameters && onParametersChange && (
           <section className="canvas-media-parameters">
-            <header><b>生成参数</b><small>与主界面 CreationParameterEditor 共用</small></header>
+            <header><b>生成参数</b><small>修改后用于生成新分支，原图不会被覆盖</small></header>
             <CreationParameterEditor settings={parameters} runtime={runtime as never} onChange={onParametersChange} />
           </section>
         )}
 
-        <div className="canvas-media-viewer-actions media-viewer-actions-shared">
-          {item.kind === "image" && <button type="button" disabled={busy || !agentAvailable} onClick={() => void runReverse()}>⌁ 反推提示词</button>}
-          <button type="button" disabled={busy || !agentAvailable} onClick={() => void runOptimize()}>✦ AI 优化</button>
-          {onEdit && <button type="button" onClick={onEdit}>✎ 修改 / 蒙版</button>}
+        <div className={`canvas-media-viewer-actions media-viewer-actions-shared media-viewer-surface-${surface}`}>
+          {item.kind === "image" && <button type="button" disabled={busy || !agentAvailable} aria-busy={busyAction === "reverse"} onClick={() => void runReverse()}>{busyAction === "reverse" ? "⌁ 反推中…" : "⌁ 反推提示词"}</button>}
+          <button type="button" disabled={busy || !agentAvailable} aria-busy={busyAction === "optimize"} onClick={() => void runOptimize()}>{busyAction === "optimize" ? "✦ 优化中…" : "✦ AI 优化"}</button>
+          {surface === "canvas" ? (
+            <>
+              {onEdit && <button type="button" onClick={onEdit}>✎ 编辑节点</button>}
+              {onMask && item.kind === "image" && <button type="button" onClick={onMask}>◌ 蒙版</button>}
+            </>
+          ) : onEdit ? <button type="button" onClick={onEdit}>✎ 修改 / 蒙版</button> : null}
           {onAngle && item.kind === "image" && <button type="button" onClick={onAngle}>◌ 调整角度</button>}
           {onUpscale && item.kind === "image" && <button type="button" onClick={onUpscale}>↗ 超分</button>}
           {onContinue && <button type="button" onClick={onContinue}>{item.kind === "video" ? "▶ 继续生成 / 变体" : "▶ 继续生成"}</button>}
@@ -417,7 +441,7 @@ export default function MediaViewer({
             <header><b>AI 结果（未覆盖原文）</b><button type="button" onClick={() => setResult(null)}>×</button></header>
             <p>{result}</p>
             <footer>
-              {onWriteResult && <button type="button" onClick={() => onWriteResult(result)}>写入当前提示词</button>}
+              {onWriteResult && <button type="button" onClick={writeResultToPrompt}>写入当前提示词</button>}
               {onCreateTextNode && <button type="button" onClick={() => onCreateTextNode(result)}>创建文本节点</button>}
               <button type="button" onClick={() => void navigator.clipboard?.writeText(result)}>复制结果</button>
               <button type="button" onClick={() => setResult(null)}>放弃</button>

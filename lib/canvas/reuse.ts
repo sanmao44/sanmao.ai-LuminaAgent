@@ -107,9 +107,13 @@ export function cloneReuseDraft(draft: CanvasReuseDraft): CanvasReuseDraft {
 export function reuseDraftFromNode(
   node: CanvasNode,
   references: CanvasReferenceDraft[],
+  fallbackParams?: CanvasGenerationParams,
 ): CanvasReuseDraft | null {
   if (node.type !== "media" || !node.data.kind) return null;
-  const params = node.data.generation?.params || node.data.params;
+  // Uploaded media has no generation snapshot. Use the caller's current
+  // defaults so it can still be used as the source of a new branch.
+  const params =
+    node.data.generation?.params || node.data.params || fallbackParams;
   if (!params) return null;
   return {
     sourceNodeId: node.id,

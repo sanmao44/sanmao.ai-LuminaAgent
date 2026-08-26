@@ -100,6 +100,41 @@ test("creates a reuse draft from a completed media node using saved generation p
   assert.equal(draft.references[0].nodeId, "ref-1");
 });
 
+test("creates a reuse draft for an uploaded media node using fallback parameters", () => {
+  const node = {
+    id: "upload-1",
+    type: "media",
+    x: 0,
+    y: 0,
+    data: { kind: "image", url: "/uploaded.png", name: "上传图片" },
+  };
+  const fallback = {
+    kind: "image",
+    model: "image-model",
+    aspect: "16:9",
+    customAspectWidth: 16,
+    customAspectHeight: 9,
+    sizeMode: "system",
+    resolution: "2K",
+    width: 1024,
+    height: 576,
+    count: 2,
+    quality: "high",
+    outputFormat: "png",
+    backgroundMode: "auto",
+    upscaleScale: 2,
+    upscaleTarget: "auto",
+    upscaleSeed: 42,
+    upscaleColorCorrection: "wavelet",
+    upscaleAlgorithm: "lanczos",
+  };
+  const draft = reuse.reuseDraftFromNode(node, [], fallback);
+  assert.equal(draft.sourceNodeId, "upload-1");
+  assert.equal(draft.params.aspect, "16:9");
+  assert.equal(draft.params.count, 2);
+  assert.equal(draft.prompt, "");
+});
+
 test("ignores invalid source nodes instead of creating a destructive partial draft", () => {
   assert.equal(reuse.reuseDraftFromNode({ id: "prompt", type: "prompt", x: 0, y: 0, data: { text: "hello" } }, []), null);
   assert.equal(reuse.reuseDraftFromNode({ id: "media", type: "media", x: 0, y: 0, data: { kind: "image", url: "/image.png" } }, []), null);

@@ -610,6 +610,15 @@ html[data-theme="dark"] .canvas-workspace{
 @media(prefers-reduced-motion:reduce){.canvas-node-editor-popover{scroll-behavior:auto;transition:none}}
 div.canvas-deck.legacy-deck-hidden{display:none!important}
 
+/* v5: single-node actions live above the card. The rail owns its pointer
+   events, while the action row scrolls inside the stage on narrow screens. */
+.canvas-node-quick-toolbar{position:absolute;z-index:190;display:flex;align-items:center;gap:7px;max-width:calc(100% - 20px);min-width:0;padding:5px 6px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));border-radius:13px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 10px 28px rgba(0,0,0,.24),0 0 0 3px color-mix(in srgb,var(--accent) 6%,transparent);backdrop-filter:blur(15px);pointer-events:auto;overflow:hidden;box-sizing:border-box}
+.canvas-node-quick-title{display:flex;align-items:center;gap:5px;flex:none;max-width:150px;color:var(--text-2);font-size:8px}.canvas-node-quick-title i{width:22px;height:22px;display:grid;place-items:center;border-radius:7px;background:var(--accent-soft);color:var(--accent-text);font-style:normal;font-size:11px}.canvas-node-quick-title b{max-width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8px}
+.canvas-node-quick-divider{width:1px;height:22px;flex:none;background:var(--line)}.canvas-node-quick-actions{display:flex;align-items:center;gap:3px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;padding:1px 1px 2px}.canvas-node-quick-actions button{display:inline-flex;align-items:center;gap:4px;height:28px;flex:none;padding:0 7px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text-2);font:inherit;font-size:8px;white-space:nowrap;cursor:pointer}.canvas-node-quick-actions button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}.canvas-node-quick-actions button:disabled{opacity:.45;cursor:not-allowed}.canvas-node-quick-actions button>span{font-size:11px;line-height:1}.canvas-node-quick-actions button em{font-style:normal}.canvas-node-quick-actions button.danger{color:var(--danger)}.canvas-node-quick-actions button.danger:hover{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
+.canvas-node-editor-popover[data-placement="bottom"]{border-top-width:2px;border-top-left-radius:9px;border-top-right-radius:9px}.canvas-node-editor-popover[data-placement="bottom"]::before{left:50%;top:-10px;width:1px;height:9px;transform:translateX(-50%)}.canvas-node-editor-popover[data-placement="bottom"]::after{left:50%;top:-14px;transform:translateX(-50%)}
+@media(max-width:720px){.canvas-node-quick-toolbar{max-width:calc(100% - 20px);padding:4px}.canvas-node-quick-title{max-width:92px}.canvas-node-quick-title b{max-width:62px}.canvas-node-quick-actions button{height:27px;padding-inline:6px}}
+@media(max-width:540px){.canvas-node-quick-toolbar{max-width:calc(100% - 20px)}.canvas-node-quick-title{max-width:28px}.canvas-node-quick-title b,.canvas-node-quick-divider{display:none}.canvas-node-quick-actions{width:100%}.canvas-node-quick-actions button em{display:none}.canvas-node-quick-actions button{width:29px;justify-content:center;padding:0}}
+
 /* Text containment: cards may be zoomed far down on an infinite canvas, so
    every flexible text/control row must be allowed to shrink before its copy
    is clipped or wrapped. No label is allowed to paint outside its surface. */
@@ -657,8 +666,47 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-topbar-toggle-icon{font-size:13px;line-height:1;transform:translateY(2px)}
 .canvas-topbar-toggle:hover{filter:none;background:color-mix(in srgb,var(--accent-soft) 58%,var(--panel));border-color:color-mix(in srgb,var(--accent) 58%,var(--line));box-shadow:0 7px 17px color-mix(in srgb,var(--accent) 18%,transparent);transform:translateX(-50%)}
 .canvas-topbar-toggle:active{transform:translateX(-50%) translateY(1px)}
-.canvas-topbar.collapsed .canvas-topbar-toggle{top:8px;width:52px;min-width:52px;height:26px;border:1px solid color-mix(in srgb,var(--accent) 44%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--panel) 88%,transparent);box-shadow:0 7px 18px rgba(0,0,0,.28);animation:none}
+.canvas-topbar.collapsed .canvas-topbar-toggle{top:-4px;width:52px;min-width:52px;height:26px;border:1px solid color-mix(in srgb,var(--accent) 44%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--panel) 88%,transparent);box-shadow:0 7px 18px rgba(0,0,0,.28);animation:none}
 .canvas-topbar.collapsed .canvas-topbar-toggle::before{top:4px;width:14px;opacity:.8}
 .canvas-topbar.collapsed .canvas-topbar-toggle-icon{transform:translateY(3px)}
 .canvas-topbar.collapsed .canvas-topbar-toggle:hover{transform:translateX(-50%) translateY(-1px);box-shadow:0 8px 21px color-mix(in srgb,var(--accent) 22%,transparent)}
-@media(max-width:720px){.canvas-topbar.collapsed .canvas-topbar-toggle{top:7px;width:48px;min-width:48px;height:24px}.canvas-topbar-toggle{width:40px;min-width:40px}}
+@media(max-width:720px){.canvas-topbar.collapsed .canvas-topbar-toggle{top:0;width:48px;min-width:48px;height:24px}.canvas-topbar-toggle{width:40px;min-width:40px}}
+
+/* Context menu v2: grouped actions with a dedicated media import entry. */
+.canvas-context-menu{position:fixed;z-index:350;width:min(300px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line-strong));border-radius:18px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 18px 46px rgba(0,0,0,.28),0 0 0 1px color-mix(in srgb,var(--accent) 7%,transparent);backdrop-filter:blur(20px);scrollbar-width:thin;animation:canvas-context-menu-in .16s ease-out}
+.canvas-menu-title{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;padding:2px 4px 10px;color:var(--text);font-size:12px;font-weight:900;line-height:1.1}
+.canvas-menu-title small{max-width:155px;overflow:hidden;color:var(--muted);font-size:9px;font-weight:500;line-height:1.25;text-align:right;white-space:nowrap;text-overflow:ellipsis}
+.canvas-menu-group{display:grid;gap:4px}
+.canvas-menu-group+.canvas-menu-group{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
+.canvas-menu-media+.canvas-menu-group{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
+.canvas-menu-group-title{display:flex;align-items:center;gap:8px;padding:0 4px 4px;color:var(--text-2)}
+.canvas-menu-group-title>span:last-child{display:grid;gap:2px;min-width:0}
+.canvas-menu-group-title b{font-size:10px;font-weight:900;line-height:1.1}
+.canvas-menu-group-title small{color:var(--muted);font-size:9px;line-height:1.15}
+.canvas-menu-group-mark{width:24px;height:19px;display:grid;place-items:center;flex:none;border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:6px;background:var(--accent-soft);color:var(--accent-text);font-size:8px;font-weight:900;letter-spacing:.04em}
+.canvas-context-menu button.canvas-menu-item,.canvas-context-menu button.canvas-menu-media{width:100%;min-height:48px;display:flex;align-items:center;gap:10px;margin:0;padding:7px;border:1px solid transparent;border-radius:12px;background:transparent;color:var(--text);text-align:left;font:inherit;cursor:pointer;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.canvas-context-menu button.canvas-menu-item:hover{border-color:color-mix(in srgb,var(--accent) 26%,var(--line));background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel));box-shadow:0 5px 14px color-mix(in srgb,var(--accent) 8%,transparent);transform:translateX(2px)}
+.canvas-context-menu button.canvas-menu-item:active,.canvas-context-menu button.canvas-menu-media:active{transform:translateX(1px) scale(.985)}
+.canvas-context-menu button.canvas-menu-item:focus-visible,.canvas-context-menu button.canvas-menu-media:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
+.canvas-menu-icon{width:32px;height:32px;display:grid;place-items:center;flex:none;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:10px;background:var(--accent-soft);color:var(--accent-text);font-size:14px;font-weight:900;line-height:1}
+.canvas-menu-item-image .canvas-menu-icon{border-color:color-mix(in srgb,#f59e0b 36%,var(--line));background:color-mix(in srgb,#f59e0b 14%,var(--panel-3));color:#f59e0b}
+.canvas-menu-item-video .canvas-menu-icon{border-color:color-mix(in srgb,#60a5fa 36%,var(--line));background:color-mix(in srgb,#60a5fa 14%,var(--panel-3));color:#60a5fa;font-size:11px}
+.canvas-menu-item-agent .canvas-menu-icon{border-color:color-mix(in srgb,var(--accent) 34%,var(--line));background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel));color:var(--accent-text)}
+.canvas-menu-item-tool .canvas-menu-icon{border-color:color-mix(in srgb,var(--muted) 34%,var(--line));background:var(--panel-3);color:var(--text-2);font-size:17px}
+.canvas-menu-copy{display:grid;gap:3px;min-width:0;flex:1}
+.canvas-menu-copy b{overflow:hidden;color:var(--text);font-size:11px;font-weight:850;line-height:1.15;white-space:nowrap;text-overflow:ellipsis}
+.canvas-menu-copy small{overflow:hidden;margin:0!important;color:var(--muted);font-size:9px;font-weight:500;line-height:1.2;white-space:nowrap;text-overflow:ellipsis}
+.canvas-menu-arrow{flex:none;padding:0 2px;color:var(--muted);font-size:19px;font-weight:400;line-height:1;transition:color .16s ease,transform .16s ease}
+.canvas-menu-item:hover .canvas-menu-arrow{color:var(--accent-text);transform:translateX(2px)}
+.canvas-menu-media{position:relative;isolation:isolate;overflow:hidden;min-height:70px!important;margin:10px 0 0!important;padding:10px!important;border-color:color-mix(in srgb,#a855f7 40%,var(--line))!important;background:linear-gradient(120deg,color-mix(in srgb,#a855f7 14%,var(--panel-2)),color-mix(in srgb,#3b82f6 12%,var(--panel)),color-mix(in srgb,#22d3ee 10%,var(--panel-2)))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 22px color-mix(in srgb,#7c3aed 13%,transparent)}
+.canvas-menu-media::before{content:"";position:absolute;z-index:-1;inset:-55% 38% -55% -20%;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.14),transparent 65%);transform:rotate(-12deg);pointer-events:none}
+.canvas-menu-media:hover{border-color:color-mix(in srgb,#c084fc 70%,var(--line))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 10px 26px color-mix(in srgb,#7c3aed 22%,transparent);transform:translateY(-1px)}
+.canvas-menu-media:focus-visible{outline:2px solid #c084fc;outline-offset:2px}
+.canvas-menu-media .canvas-menu-copy b{color:var(--text)}
+.canvas-menu-media-icons{position:relative;width:42px;height:36px;display:block;flex:none}
+.canvas-menu-media-icons i{position:absolute;width:29px;height:29px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.28);border-radius:9px;background:color-mix(in srgb,#a855f7 52%,var(--panel-3));color:#fff;font-size:13px;font-style:normal;line-height:1;box-shadow:0 5px 12px rgba(0,0,0,.15)}
+.canvas-menu-media-icons i:first-child{left:0;top:5px;background:color-mix(in srgb,#f59e0b 70%,#7c3aed);font-size:14px}
+.canvas-menu-media-icons i:last-child{right:0;top:0;background:color-mix(in srgb,#3b82f6 75%,#7c3aed);font-size:10px}
+@keyframes canvas-context-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:420px){.canvas-context-menu{width:calc(100vw - 16px);padding:10px;border-radius:16px}.canvas-menu-title{padding-bottom:8px}.canvas-menu-title small{max-width:130px}.canvas-menu-group+.canvas-menu-group{margin-top:8px;padding-top:8px}.canvas-menu-group-title{padding-bottom:3px}.canvas-menu-copy b{font-size:11px}.canvas-menu-copy small{font-size:9px}.canvas-menu-media{margin-top:8px!important}}
+@media(prefers-reduced-motion:reduce){.canvas-context-menu,.canvas-menu-item,.canvas-menu-media,.canvas-menu-arrow{animation:none;transition:none}}

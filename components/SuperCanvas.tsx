@@ -84,6 +84,10 @@ import {
   type VideoCreationSettings,
 } from "@/lib/creation/settings";
 import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
+import {
+  placeCanvasNodeEditor,
+  placeCanvasNodeToolbar,
+} from "@/lib/canvas/editor-layout";
 import { recordCanvasImages } from "@/lib/creation/history";
 import {
   requestPromptOptimization,
@@ -237,6 +241,10 @@ type CanvasDrafts = {
 type CanvasEditorDraft = {
   prompt: string;
   params?: CanvasGenerationParams;
+  sourceNodeId?: string;
+  references?: CanvasReferenceDraft[];
+  operation?: "generate" | "edit" | "extend";
+  dirty?: boolean;
 };
 type Interaction =
   | {
@@ -2187,13 +2195,6 @@ export default function SuperCanvas() {
               setLightbox({ nodeId: node.id, compare: false });
             else if (node.type === "prompt") setTextLightboxNodeId(node.id);
             else setPendingClickNodeId(node.id);
-          } else {
-          if (pendingNodeClickRef.current !== null)
-            window.clearTimeout(pendingNodeClickRef.current);
-          pendingNodeClickRef.current = window.setTimeout(() => {
-            pendingNodeClickRef.current = null;
-            setPendingClickNodeId(node.id);
-          }, 270);
           }
         }
       }
@@ -2852,7 +2853,10 @@ export default function SuperCanvas() {
                 x: base.x + (index % 3) * 350,
                 y: base.y + Math.floor(index / 3) * 270,
               },
-              { role: "参考素材" },
+              {
+                role: "参考素材",
+                params: defaultParams(asset.kind, runtime),
+              },
             ),
           );
           addLog(
@@ -2872,7 +2876,15 @@ export default function SuperCanvas() {
         notify(`已导入 ${nodes.length} 个素材`);
       }
     },
-    [addLog, commit, notify, screenToWorld, stageSize.height, stageSize.width],
+    [
+      addLog,
+      commit,
+      notify,
+      runtime,
+      screenToWorld,
+      stageSize.height,
+      stageSize.width,
+    ],
   );
 
   const copySelection = useCallback(async () => {
@@ -3182,17 +3194,47 @@ export default function SuperCanvas() {
         node.data.agentResponse || node.data.text || "",
       ).trim();
       if (!response) return;
-      setSelectedIds(new Set());
+      const imageNode = createEmptyMedia("image", {
+        x: node.x + nodeSize(node).w + 90,
+        y: node.y,
+      }, normalizeCreationSettings("image", null, runtime));
+      const nextImageNode: CanvasNode = {
+        ...imageNode,
+        data: {
+          ...imageNode.data,
+          role: "Agent 转图片",
+          prompt: response,
+          generation: imageNode.data.generation
+            ? { ...imageNode.data.generation, prompt: response }
+            : imageNode.data.generation,
+        },
+      };
+      commit((current) =>
+        addEdge(
+          { ...current, nodes: [...current.nodes, nextImageNode] },
+          node.id,
+          nextImageNode.id,
+          "right",
+          "left",
+          "generated",
+          "context",
+        ),
+      );
+      setEditorDrafts((current) => ({
+        ...current,
+        [nextImageNode.id]: {
+          prompt: response,
+          params: normalizeCreationSettings("image", null, runtime),
+          dirty: true,
+        },
+      }));
+      setSelectedIds(new Set([nextImageNode.id]));
       setSelectedGroupId(null);
       setMode("image");
-      setDrafts((current) => ({
-        ...current,
-        image: { ...current.image, prompt: response },
-      }));
-      window.requestAnimationFrame(() => deckPromptRef.current?.focus());
-      notify("已将 Agent 回复填入图片提示词");
+      setExpandedEditorId(nextImageNode.id);
+      notify("已创建图片分支，Agent 回复已填入画布编辑器");
     },
-    [notify],
+    [commit, notify, runtime],
   );
 
   const updateParams = useCallback(
@@ -3214,7 +3256,15 @@ export default function SuperCanvas() {
         const references = incomingReferences(docRef.current, target.id)
           .map(canvasReferenceDraftFromNode)
           .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
-        const draft = reuseDraftFromNode(target, references);
+        const draft = reuseDraftFromNode(
+          target,
+          references,
+          copyParams(
+            target.data.generation?.params || target.data.params,
+            target.data.kind || "image",
+            runtime,
+          ),
+        );
         if (draft) {
           setReuseDraft((current) => current?.sourceNodeId === target.id
             ? { ...current, params: clone(settings), dirty: true }
@@ -3241,7 +3291,7 @@ export default function SuperCanvas() {
         }));
       writeSharedCreationSettings(settings);
     },
-    [deckSource, updateDoc],
+    [deckSource, runtime, updateDoc],
   );
 
   const pollVideo = useCallback(
@@ -3942,33 +3992,57 @@ export default function SuperCanvas() {
   }, [document.nodes, ready, runVariantBatch]);
 
   const openReuseDraft = useCallback(
-    (source: CanvasNode, options?: { prompt?: string; params?: CanvasGenerationParams }) => {
+    (
+      source: CanvasNode,
+      options?: {
+        prompt?: string;
+        params?: CanvasGenerationParams;
+        operation?: "generate" | "edit" | "extend";
+        includeSourceReference?: boolean;
+      },
+    ) => {
       if (source.type !== "media" || !source.data.kind || !source.data.url) {
         notify("只有已完成的图片或视频节点可以复用参数。", "error");
         return;
       }
-      const references = incomingReferences(docRef.current, source.id)
+      const linkedReferences = incomingReferences(docRef.current, source.id)
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
-      const draft = reuseDraftFromNode(source, references);
+      const draft = reuseDraftFromNode(
+        source,
+        linkedReferences,
+        copyParams(
+          source.data.generation?.params || source.data.params,
+          source.data.kind || "image",
+          runtime,
+        ),
+      );
       if (!draft) {
         notify("当前节点没有完整的生成参数，无法复用。", "error");
         return;
       }
+      const sourceReference = options?.includeSourceReference
+        ? canvasReferenceDraftFromNode(source)
+        : null;
+      const references = sourceReference
+        ? addReferenceDrafts(draft.references, [sourceReference]).references
+        : draft.references;
       setReuseDraft({
         ...draft,
+        references,
         ...(options?.prompt !== undefined ? { prompt: options.prompt } : {}),
         ...(options?.params ? { params: clone(options.params) } : {}),
+        ...(options?.operation ? { operation: options.operation } : {}),
         dirty: Boolean(options),
       });
       setMode(source.data.kind);
-      setDeckCollapsed(false);
+      setExpandedEditorId(source.id);
       setSelectedIds(new Set([source.id]));
       setSelectedGroupId(null);
       setLightbox(null);
-      notify("已复制完整参数和参考图，可替换参考图后生成新分支");
+      notify("已复制完整参数和参考图，可在节点下方生成新分支");
     },
-    [notify],
+    [notify, runtime],
   );
 
   const addReuseReferences = useCallback(
@@ -4059,13 +4133,23 @@ export default function SuperCanvas() {
   const addCurrentNodeToReuse = useCallback((node: CanvasNode) => {
     const reference = canvasReferenceDraftFromNode(node);
     if (!reference) return;
-    if (!reuseDraft) {
-      openReuseDraft(node);
-      setReuseDraft((current) => current ? { ...current, references: [...current.references.filter((item) => item.nodeId !== node.id), reference], dirty: true } : current);
-      return;
-    }
-    addReuseReferences([reference]);
+    if (reuseDraft?.sourceNodeId === node.id) addReuseReferences([reference]);
+    else openReuseDraft(node, { includeSourceReference: true });
+    setLightbox(null);
   }, [addReuseReferences, openReuseDraft, reuseDraft]);
+
+  const addReuseReferenceNode = useCallback(
+    (nodeId: string) => {
+      const node = nodeById(docRef.current, nodeId);
+      const reference = node ? canvasReferenceDraftFromNode(node) : null;
+      if (reference) addReuseReferences([reference]);
+    },
+    [addReuseReferences],
+  );
+
+  const previewReuseReference = useCallback((reference: CanvasReferenceDraft) => {
+    setReusePreview(reference);
+  }, []);
 
   const optimizeReusePrompt = useCallback(async () => {
     if (!reuseDraft?.prompt.trim()) return notify("请输入需要优化的提示词。", "error");
@@ -4276,7 +4360,15 @@ export default function SuperCanvas() {
       const references = incomingReferences(docRef.current, selectedMediaTarget.id)
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
-      const draft = reuseDraftFromNode(selectedMediaTarget, references);
+      const draft = reuseDraftFromNode(
+        selectedMediaTarget,
+        references,
+        copyParams(
+          selectedMediaTarget.data.generation?.params || selectedMediaTarget.data.params,
+          selectedMediaTarget.data.kind || "image",
+          runtime,
+        ),
+      );
       if (!draft) return notify("当前节点没有完整生成参数，无法创建新分支。", "error");
       await runReuseGeneration(draft);
       return;
@@ -4943,6 +5035,11 @@ export default function SuperCanvas() {
     (node: CanvasNode) => {
       if (expandedEditorId === node.id) {
         setExpandedEditorId(null);
+        if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
+        return;
+      }
+      if (node.type === "media" && node.data.url) {
+        openReuseDraft(node);
         return;
       }
       // A card can be draggable, so keep editor opening independent from the
@@ -4966,7 +5063,7 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
     },
-    [editorParamsFor, editorPromptFor, expandedEditorId],
+    [editorParamsFor, editorPromptFor, expandedEditorId, openReuseDraft, reuseDraft],
   );
 
   useEffect(() => {
@@ -4982,6 +5079,14 @@ export default function SuperCanvas() {
         ...current,
         [node.id]: { ...current[node.id], prompt: value },
       }));
+      if (reuseDraft?.sourceNodeId === node.id) {
+        setReuseDraft((current) =>
+          current?.sourceNodeId === node.id
+            ? { ...current, prompt: value, dirty: true }
+            : current,
+        );
+        return;
+      }
       updateDoc((valueDoc) => ({
         ...valueDoc,
         nodes: valueDoc.nodes.map((item) => {
@@ -5011,7 +5116,7 @@ export default function SuperCanvas() {
         }),
       }));
     },
-    [updateDoc],
+    [reuseDraft, updateDoc],
   );
 
   const updateEditorParams = useCallback(
@@ -5020,6 +5125,14 @@ export default function SuperCanvas() {
         ...current,
         [node.id]: { ...current[node.id], prompt: editorPromptFor(node), params: clone(settings) },
       }));
+      if (reuseDraft?.sourceNodeId === node.id) {
+        setReuseDraft((current) =>
+          current?.sourceNodeId === node.id
+            ? { ...current, params: clone(settings), dirty: true }
+            : current,
+        );
+        return;
+      }
       updateDoc((valueDoc) => ({
         ...valueDoc,
         nodes: valueDoc.nodes.map((item) =>
@@ -5040,7 +5153,7 @@ export default function SuperCanvas() {
       }));
       if (node.type !== "prompt") writeSharedCreationSettings(settings);
     },
-    [editorPromptFor, updateDoc],
+    [editorPromptFor, reuseDraft, updateDoc],
   );
 
   const addNodeReference = useCallback(
@@ -5113,7 +5226,11 @@ export default function SuperCanvas() {
             createMedia(asset.kind, asset.url, asset.name, {
               x: target.x - nodeSize(target).w - 90,
               y: target.y + index * 230,
-            }, { role: "参考素材", assetId: asset.id }),
+            }, {
+              role: "参考素材",
+              assetId: asset.id,
+              params: defaultParams(asset.kind, runtime),
+            }),
           );
         } catch (error) {
           notify(error instanceof Error ? error.message : "参考素材上传失败。", "error");
@@ -5138,11 +5255,18 @@ export default function SuperCanvas() {
       });
       notify(`已添加 ${nodes.length} 张参考素材`);
     },
-    [commit, notify],
+    [commit, notify, runtime],
   );
 
   const runEditorGeneration = useCallback(
     (node: CanvasNode) => {
+      if (reuseDraft?.sourceNodeId === node.id) {
+        const draft = cloneReuseDraft(reuseDraft);
+        setExpandedEditorId(null);
+        setReuseDraft(null);
+        void runReuseGeneration(draft);
+        return;
+      }
       const draft = editorDrafts[node.id];
       if (draft) {
         commit((valueDoc) => ({
@@ -5168,7 +5292,7 @@ export default function SuperCanvas() {
       setExpandedEditorId(null);
       window.setTimeout(() => void runGenerationRef.current?.(), 0);
     },
-    [commit, editorDrafts],
+    [commit, editorDrafts, reuseDraft, runReuseGeneration],
   );
 
   const retryVariant = useCallback(
@@ -5203,19 +5327,47 @@ export default function SuperCanvas() {
         const uploaded = await uploadCanvasAsset(
           dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
         );
+        const existingDraft =
+          reuseDraft?.sourceNodeId === node.id
+            ? cloneReuseDraft(reuseDraft)
+            : reuseDraftFromNode(
+                node,
+                incomingReferences(docRef.current, node.id)
+                  .map(canvasReferenceDraftFromNode)
+                  .filter(
+                    (reference): reference is CanvasReferenceDraft =>
+                      Boolean(reference),
+                  ),
+                copyParams(
+                  node.data.generation?.params || node.data.params,
+                  "image",
+                  runtime,
+                ),
+              );
+        if (!existingDraft)
+          throw new Error("当前节点没有完整生成参数，无法使用蒙版。");
         const settings = copyParams(
-          node.data.generation?.params || node.data.params,
+          existingDraft.params,
           "image",
           runtime,
         ) as ImageCreationSettings;
-        openReuseDraft(node, {
+        setReuseDraft({
+          ...existingDraft,
           params: {
             ...settings,
             mask: { assetId: uploaded.id, url: uploaded.url },
           },
+          dirty: true,
         });
+        setExpandedEditorId(node.id);
+        setSelectedIds(new Set([node.id]));
+        setSelectedGroupId(null);
+        setLightbox(null);
         setMaskNodeId(null);
-        notify("蒙版已加入复用草稿，确认生成后会创建新分支；原节点保持不变", "ok");
+        notify(
+          "蒙版已加入画布编辑器，点击生成即可创建新分支；原节点保持不变",
+          "ok",
+        );
       } catch (error) {
         notify(
           error instanceof Error ? error.message : "蒙版保存失败",
@@ -5223,7 +5375,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [maskNodeId, notify, openReuseDraft, runtime],
+    [maskNodeId, notify, reuseDraft, runtime],
   );
 
   const runUpscale = useCallback(async (sourceOverride?: CanvasNode) => {
@@ -5235,6 +5387,7 @@ export default function SuperCanvas() {
       !source.data.url
     )
       return notify("请先选择一张已完成的图片。", "error");
+    setLightbox(null);
     const activeKey = `upscale:${source.id}`;
     if (generationKeysRef.current.has(activeKey)) return;
     const settings = copyParams(
@@ -5660,17 +5813,14 @@ export default function SuperCanvas() {
         .includes(mentionState.query.toLowerCase()),
   );
   const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
-    const kind = node.data.kind === "video" ? "video" : "image";
-    setDrafts((current) => ({ ...current, [kind]: { ...current[kind], prompt: value } }));
-    setMode(kind);
-    if (node.type === "media" && node.data.generation) {
-      updateDoc((valueDoc) => ({
-        ...valueDoc,
-        nodes: valueDoc.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, generation: item.data.generation ? { ...item.data.generation, prompt: value } : item.data.generation } } : item),
-      }));
-    }
-    notify("结果已写入创作面板，可确认后继续生成");
-  }, [notify, updateDoc]);
+    if (node.type !== "media") return;
+    openReuseDraft(node, {
+      prompt: value,
+      operation: "generate",
+      includeSourceReference: true,
+    });
+    notify("提示词已复制到画布编辑器，原节点保持不变");
+  }, [notify, openReuseDraft]);
   const runOneTakeFromSelection = useCallback(async () => {
     const source = selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url);
     if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
@@ -5729,7 +5879,12 @@ export default function SuperCanvas() {
       if (node.type !== "media" || !node.data.kind) return;
       if (node.data.kind === "video") {
         const params = node.data.generation?.params as VideoCreationSettings | undefined;
-        openReuseDraft(node, params ? { params: { ...params, operation: "extend" } } : undefined);
+        openReuseDraft(
+          node,
+          params
+            ? { params: { ...params, operation: "extend" }, operation: "extend" }
+            : { operation: "extend" },
+        );
       } else openReuseDraft(node);
     },
     [openReuseDraft],
@@ -5739,7 +5894,9 @@ export default function SuperCanvas() {
       if (node.type !== "media" || settings.kind === "text") return;
       if (reuseDraft?.sourceNodeId === node.id) {
         setReuseDraft((current) => current ? { ...current, params: clone(settings), dirty: true } : current);
-        notify("参数已复制到复用草稿，原节点保持不变");
+        setExpandedEditorId(node.id);
+        setLightbox(null);
+        notify("参数已复制到画布编辑器，原节点保持不变");
         return;
       }
       openReuseDraft(node, { params: settings });
@@ -5772,6 +5929,18 @@ export default function SuperCanvas() {
     try { await registerCanvasAsset(asset); setAssetRefresh((value) => value + 1); notify("已加入资产库"); }
     catch (error) { notify(error instanceof Error ? error.message : "资产登记失败", "error"); }
   }, [notify, viewerAsset]);
+  const downloadCanvasNode = useCallback((node: CanvasNode) => {
+    if (node.type !== "media" || !node.data.url) {
+      notify("当前节点还没有可下载的媒体。", "error");
+      return;
+    }
+    const anchor = window.document.createElement("a");
+    anchor.href = String(node.data.url);
+    anchor.download = `${String(node.data.name || "SANMAO素材")}.${node.data.kind === "video" ? "mp4" : "png"}`;
+    anchor.rel = "noreferrer";
+    anchor.click();
+    notify("已开始下载");
+  }, [notify]);
   const focusGenerationLog = useCallback(
     (log: CanvasGenerationLog, openMedia = false) => {
       const outputUrls = new Set(generationLogOutputUrls(log));
@@ -6030,6 +6199,159 @@ export default function SuperCanvas() {
         model.kind === "chat" && model.enabled !== false && model.published !== false,
     ),
   );
+  const quickActions = useMemo<CanvasQuickAction[]>(() => {
+    const node = selectedSingle;
+    if (!node || selectedGroupId || selectedNodes.length !== 1) return [];
+    if (node.type === "media" && node.data.kind === "image") {
+      const hasMedia = Boolean(node.data.url);
+      return [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasMedia,
+          onClick: () => setLightbox({ nodeId: node.id, compare: false }),
+        },
+        {
+          id: "mask",
+          icon: "◌",
+          label: "蒙版",
+          disabled: !hasMedia,
+          onClick: () => setMaskNodeId(node.id),
+        },
+        {
+          id: "upscale",
+          icon: "↗",
+          label: generationKeys.has(`upscale:${node.id}`) ? "处理中" : "超分",
+          disabled: !hasMedia || generationKeys.has(`upscale:${node.id}`),
+          onClick: () => void runUpscale(node),
+        },
+        {
+          id: "regenerate",
+          icon: "↻",
+          label: "再生成",
+          disabled: !hasMedia,
+          onClick: () => openReuseDraft(node),
+        },
+        {
+          id: "reference",
+          icon: "⌁",
+          label: "作为参考",
+          disabled: !hasMedia,
+          onClick: () => addCurrentNodeToReuse(node),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          disabled: !hasMedia,
+          onClick: () => downloadCanvasNode(node),
+        },
+        {
+          id: "asset",
+          icon: "＋",
+          label: "加入资产",
+          disabled: !hasMedia,
+          onClick: () => void addViewerAsset(node),
+        },
+        {
+          id: "delete",
+          icon: "⌫",
+          label: "删除",
+          danger: true,
+          onClick: deleteSelection,
+        },
+      ];
+    }
+    if (node.type === "media" && node.data.kind === "video") {
+      const hasMedia = Boolean(node.data.url);
+      return [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasMedia,
+          onClick: () => setLightbox({ nodeId: node.id, compare: false }),
+        },
+        {
+          id: "continue",
+          icon: "▶",
+          label: "继续生成 / 变体",
+          disabled: !hasMedia,
+          onClick: () => continueFromMedia(node),
+        },
+        {
+          id: "reference",
+          icon: "⌁",
+          label: "作为参考",
+          disabled: !hasMedia,
+          onClick: () => addCurrentNodeToReuse(node),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          disabled: !hasMedia,
+          onClick: () => downloadCanvasNode(node),
+        },
+        {
+          id: "asset",
+          icon: "＋",
+          label: "加入资产",
+          disabled: !hasMedia,
+          onClick: () => void addViewerAsset(node),
+        },
+        {
+          id: "delete",
+          icon: "⌫",
+          label: "删除",
+          danger: true,
+          onClick: deleteSelection,
+        },
+      ];
+    }
+    if (node.type === "prompt") {
+      const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
+      return [
+        { id: "edit", icon: "✎", label: "编辑", onClick: () => toggleEditor(node) },
+        { id: "preview", icon: "⤢", label: "放大查看", onClick: () => setTextLightboxNodeId(node.id) },
+        {
+          id: "image",
+          icon: "✦",
+          label: "转图片",
+          disabled: !hasResponse,
+          onClick: () => useAgentResponseAsImagePrompt(node),
+        },
+      ];
+    }
+    const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
+    return [
+      { id: "edit", icon: "✎", label: "编辑", onClick: () => toggleEditor(node) },
+      {
+        id: "retry",
+        icon: "↻",
+        label: failedCount ? `重试失败项 (${failedCount})` : "重试失败项",
+        disabled: failedCount === 0 || generationKeys.has(`variants:${node.id}`),
+        onClick: () => retryFailedVariants(node.id),
+      },
+      { id: "delete", icon: "⌫", label: "删除", danger: true, onClick: deleteSelection },
+    ];
+  }, [
+    addCurrentNodeToReuse,
+    addViewerAsset,
+    continueFromMedia,
+    deleteSelection,
+    downloadCanvasNode,
+    generationKeys,
+    openReuseDraft,
+    retryFailedVariants,
+    runUpscale,
+    selectedGroupId,
+    selectedNodes.length,
+    selectedSingle,
+    toggleEditor,
+    useAgentResponseAsImagePrompt,
+  ]);
 
   if (!ready)
     return (
@@ -6540,6 +6862,14 @@ export default function SuperCanvas() {
            </div>
           </div>
         </div>
+        {selectedSingle && quickActions.length > 0 && (
+          <CanvasNodeQuickToolbar
+            node={selectedSingle}
+            document={document}
+            stageRef={stageRef}
+            actions={quickActions}
+          />
+        )}
         {expandedEditorId && (() => {
           const editorNode = document.nodes.find((item) => item.id === expandedEditorId);
           if (!editorNode) return null;
@@ -6549,8 +6879,16 @@ export default function SuperCanvas() {
               document={document}
               stageRef={stageRef}
               runtime={runtime}
-              editorPrompt={editorPromptFor(editorNode)}
-              editorParams={editorParamsFor(editorNode)}
+              editorPrompt={
+                reuseDraft?.sourceNodeId === editorNode.id
+                  ? reuseDraft.prompt
+                  : editorPromptFor(editorNode)
+              }
+              editorParams={
+                reuseDraft?.sourceNodeId === editorNode.id
+                  ? reuseDraft.params
+                  : editorParamsFor(editorNode)
+              }
               onToggleEditor={toggleEditor}
               onGenerate={runEditorGeneration}
               onEditorPromptChange={updateEditorPrompt}
@@ -6576,6 +6914,13 @@ export default function SuperCanvas() {
               onReferenceRemove={removeNodeReference}
               onReferenceDrop={addNodeReference}
               onAddReferenceFiles={addEditorReferenceFiles}
+              branchDraft={reuseDraft?.sourceNodeId === editorNode.id ? reuseDraft : null}
+              onDraftReferenceFiles={addReuseFiles}
+              onDraftReferenceRemove={removeReuseReference}
+              onDraftReferenceReorder={reorderReuseReference}
+              onDraftReferenceNodeDrop={addReuseReferenceNode}
+              onDraftReferencePreview={previewReuseReference}
+              onDraftReferencePaste={pasteReuseReference}
               editorContexts={incomingContext(document, editorNode.id).filter((item) => item.type === "prompt" || item.type === "generator")}
               mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
               onOutputPreview={(output) => {
@@ -6775,46 +7120,6 @@ export default function SuperCanvas() {
                       : "生成结果直接进入画布卡片"}
               </small>
             </div>
-            {selectedSingle && (
-              <div className="canvas-deck-node-tools" aria-label="节点工具">
-                {selectedSingle.type === "media" &&
-                  selectedSingle.data.kind === "image" &&
-                  selectedSingle.data.url && (
-                    <div className="canvas-deck-image-tools" aria-label="图片工具">
-                      <button
-                        type="button"
-                        title="绘制蒙版；结果会创建新分支"
-                        onClick={() => setMaskNodeId(selectedSingle.id)}
-                      >
-                        <span className="canvas-deck-icon" aria-hidden="true">◌</span> 蒙版
-                      </button>
-                      <button
-                        type="button"
-                        title="超分；结果会创建新分支"
-                        disabled={generationKeys.has(
-                          `upscale:${selectedSingle.id}`,
-                        )}
-                        onClick={() => void runUpscale()}
-                      >
-                        <span className="canvas-deck-icon" aria-hidden="true">↗</span>{" "}
-                        {generationKeys.has(`upscale:${selectedSingle.id}`)
-                          ? "处理中"
-                          : "超分"}
-                      </button>
-                    </div>
-                  )}
-                <button
-                  type="button"
-                  className="canvas-deck-delete"
-                  aria-label="删除当前节点"
-                  title="删除当前节点（可用撤销恢复）"
-                  onClick={deleteSelection}
-                >
-                  <span className="canvas-deck-icon" aria-hidden="true">⌫</span>
-                  <span className="canvas-deck-delete-label">删除节点</span>
-                </button>
-              </div>
-            )}
             <button
               type="button"
               className="canvas-deck-collapse"
@@ -7058,71 +7363,165 @@ export default function SuperCanvas() {
           <div
             className="canvas-context-menu"
             style={{
-              left: clamp(contextMenu.x, 8, window.innerWidth - 250),
-              top: clamp(contextMenu.y, 8, window.innerHeight - 330),
+              left: Math.max(
+                8,
+                Math.min(
+                  contextMenu.x,
+                  window.innerWidth <= 420
+                    ? 8
+                    : Math.max(8, window.innerWidth - 308),
+                ),
+              ),
+              top: Math.max(
+                8,
+                Math.min(contextMenu.y, Math.max(8, window.innerHeight - 640)),
+              ),
             }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="canvas-menu-title">添加节点</div>
+            <div className="canvas-menu-title">
+              <span>添加节点</span>
+              <small>选择操作放置到当前画布</small>
+            </div>
+
+            <div className="canvas-menu-group">
+              <div className="canvas-menu-group-title">
+                <span className="canvas-menu-group-mark" aria-hidden="true">01</span>
+                <span>
+                  <b>基础节点</b>
+                  <small>从空白开始创建</small>
+                </span>
+              </div>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-image"
+                onClick={() => addNode("image", contextMenu.world)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">▧</span>
+                <span className="canvas-menu-copy">
+                  <b>空图片节点</b>
+                  <small>结果直接写入节点</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-video"
+                onClick={() => addNode("video", contextMenu.world)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">▶</span>
+                <span className="canvas-menu-copy">
+                  <b>空视频节点</b>
+                  <small>结果直接写入节点</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-agent"
+                onClick={() => addNode("text", contextMenu.world)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">✦</span>
+                <span className="canvas-menu-copy">
+                  <b>Agent 节点</b>
+                  <small>文本驱动智能工作流</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => addNode("image", contextMenu.world)}
-            >
-              ✦ 空图片节点 <small>结果直接写入节点</small>
-            </button>
-            <button
-              type="button"
-              onClick={() => addNode("video", contextMenu.world)}
-            >
-              ▶ 空视频节点 <small>结果直接写入节点</small>
-            </button>
-            <button
-              type="button"
-              onClick={() => addNode("text", contextMenu.world)}
-            >
-              ✦ Agent 节点
-            </button>
-            <button
-              type="button"
+              className="canvas-menu-media"
               onClick={() => {
                 setContextMenu(null);
                 fileInputRef.current?.click();
               }}
             >
-              ＋ 导入图片 / 视频
+              <span className="canvas-menu-media-icons" aria-hidden="true">
+                <i>▧</i>
+                <i>▶</i>
+              </span>
+              <span className="canvas-menu-copy">
+                <b>导入图片 / 视频</b>
+                <small>支持多选，自动识别类型</small>
+              </span>
+              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
             </button>
-            <hr />
-            <button
-              type="button"
-              onClick={() => addNode("workflowImage", contextMenu.world)}
-            >
-              ✦ 图片变体生成器 <small>多行要求批量生成</small>
-            </button>
-            <button
-              type="button"
-              onClick={() => addNode("workflowVideo", contextMenu.world)}
-            >
-              ▶ 视频变体生成器 <small>多行要求串行生成</small>
-            </button>
-            <hr />
-            <button
-              type="button"
-              onClick={() => {
-                setContextMenu(null);
-                arrangeCanvasAction();
-              }}
-            >
-              ⌗ 一键整理
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setContextMenu(null);
-                fitView();
-              }}
-            >
-              ⌗ 适应全部
-            </button>
+
+            <div className="canvas-menu-group">
+              <div className="canvas-menu-group-title">
+                <span className="canvas-menu-group-mark" aria-hidden="true">02</span>
+                <span>
+                  <b>生成工作流</b>
+                  <small>批量生成与变体</small>
+                </span>
+              </div>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-image"
+                onClick={() => addNode("workflowImage", contextMenu.world)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">✦</span>
+                <span className="canvas-menu-copy">
+                  <b>图片变体生成器</b>
+                  <small>多行要求批量生成</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-video"
+                onClick={() => addNode("workflowVideo", contextMenu.world)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">▶</span>
+                <span className="canvas-menu-copy">
+                  <b>视频变体生成器</b>
+                  <small>多行要求串行生成</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
+
+            <div className="canvas-menu-group">
+              <div className="canvas-menu-group-title">
+                <span className="canvas-menu-group-mark" aria-hidden="true">03</span>
+                <span>
+                  <b>画布工具</b>
+                  <small>快速整理当前视图</small>
+                </span>
+              </div>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  setContextMenu(null);
+                  arrangeCanvasAction();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⌗</span>
+                <span className="canvas-menu-copy">
+                  <b>一键整理</b>
+                  <small>自动对齐并排列节点</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  setContextMenu(null);
+                  fitView();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⌗</span>
+                <span className="canvas-menu-copy">
+                  <b>适应全部</b>
+                  <small>缩放至完整显示画布</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -7155,6 +7554,7 @@ export default function SuperCanvas() {
         return <MediaViewer
           item={viewerItem}
           references={viewerReferences}
+          surface="canvas"
           initialCompare={lightbox.compare}
           model={runtime?.settings.agentModelId || undefined}
           agentAvailable={chatModelsAvailable}
@@ -7168,7 +7568,8 @@ export default function SuperCanvas() {
           onWriteResult={(value) => writeViewerPrompt(viewerNode, value)}
           onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
-          onEdit={viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
+          onEdit={() => openReuseDraft(viewerNode)}
+          onMask={viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
           onUpscale={viewerNode.data.kind === "image" ? () => void runUpscale(viewerNode) : undefined}
           onContinue={() => continueFromMedia(viewerNode)}
           onReuse={() => openReuseDraft(viewerNode)}
@@ -8148,10 +8549,141 @@ type CanvasNodeEditorPopoverProps = {
   onReferenceRemove: (ownerId: string, sourceId: string) => void;
   onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
   onAddReferenceFiles: (ownerId: string, files: File[]) => void;
+  branchDraft?: CanvasReuseDraft | null;
+  onDraftReferenceFiles?: (files: File[]) => void;
+  onDraftReferenceRemove?: (id: string) => void;
+  onDraftReferenceReorder?: (from: number, to: number) => void;
+  onDraftReferenceNodeDrop?: (nodeId: string) => void;
+  onDraftReferencePreview?: (reference: CanvasReferenceDraft) => void;
+  onDraftReferencePaste?: () => void;
   editorContexts: CanvasNode[];
   mentionCandidates: CanvasNode[];
   onOutputPreview: (node: CanvasNode) => void;
 };
+
+type CanvasQuickAction = {
+  id: string;
+  icon: string;
+  label: string;
+  title?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+};
+
+function CanvasNodeQuickToolbar({
+  node,
+  document,
+  stageRef,
+  actions,
+}: {
+  node: CanvasNode;
+  document: CanvasDocument;
+  stageRef: RefObject<HTMLDivElement | null>;
+  actions: CanvasQuickAction[];
+}) {
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ left: 10, top: 10 });
+  const [isCompact, setIsCompact] = useState(false);
+
+  const reposition = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const stageRect = stage.getBoundingClientRect();
+    const nodeElement = Array.from(
+      stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
+    ).find((element) => element.dataset.canvasNodeId === node.id);
+    const nodeRect = nodeElement?.getBoundingClientRect();
+    const zoom = Math.max(0.12, document.camera.zoom || 1);
+    const anchor = nodeRect
+      ? {
+          left: nodeRect.left - stageRect.left,
+          top: nodeRect.top - stageRect.top,
+          width: nodeRect.width,
+          height: nodeRect.height,
+        }
+      : {
+          left: node.x * zoom + document.camera.x,
+          top: node.y * zoom + document.camera.y,
+          width: nodeSize(node).w * zoom,
+          height: nodeSize(node).h * zoom,
+        };
+    const stageSize = {
+      width: Math.max(1, stage.clientWidth),
+      height: Math.max(1, stage.clientHeight),
+    };
+    const compact = stageSize.width < 760 || zoom < 0.58;
+    if (compact !== isCompact) setIsCompact(compact);
+    const overlay = {
+      width: toolbarRef.current?.offsetWidth || (compact ? 280 : 520),
+      height: toolbarRef.current?.offsetHeight || 40,
+    };
+    setPosition(
+      placeCanvasNodeToolbar(anchor, stageSize, overlay, 10, 10),
+    );
+  }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node, stageRef]);
+
+  useLayoutEffect(() => {
+    reposition();
+    let frame = 0;
+    const handleResize = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(reposition);
+    };
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(handleResize)
+      : null;
+    if (observer) {
+      if (toolbarRef.current) observer.observe(toolbarRef.current);
+      if (stageRef.current) observer.observe(stageRef.current);
+    }
+    window.addEventListener("resize", handleResize);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [reposition, stageRef]);
+
+  return (
+    <div
+      ref={toolbarRef}
+      className="canvas-node-quick-toolbar"
+      data-density={isCompact ? "compact" : "comfortable"}
+      data-node-id={node.id}
+      aria-label={`${nodeLabel(node)}快捷工具`}
+      style={{ left: position.left, top: position.top }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      <span className="canvas-node-quick-title">
+        <i aria-hidden="true">{node.type === "prompt" ? "✦" : node.type === "generator" ? "⌁" : node.data.kind === "video" ? "▶" : "▣"}</i>
+        <b>{nodeLabel(node)}</b>
+      </span>
+      <span className="canvas-node-quick-divider" aria-hidden="true" />
+      <div className="canvas-node-quick-actions">
+        {actions.map((action) => (
+          <button
+            type="button"
+            key={action.id}
+            className={action.danger ? "danger" : ""}
+            title={action.title || action.label}
+            aria-label={action.label}
+            disabled={action.disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              action.onClick();
+            }}
+          >
+            <span aria-hidden="true">{action.icon}</span>
+            <em>{action.label}</em>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function CanvasNodeEditorPopover({
   node,
@@ -8169,12 +8701,19 @@ function CanvasNodeEditorPopover({
   onReferenceRemove,
   onReferenceDrop,
   onAddReferenceFiles,
+  branchDraft,
+  onDraftReferenceFiles,
+  onDraftReferenceRemove,
+  onDraftReferenceReorder,
+  onDraftReferenceNodeDrop,
+  onDraftReferencePreview,
+  onDraftReferencePaste,
   editorContexts,
   mentionCandidates,
   onOutputPreview,
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState({ left: 18, top: 86, placement: "right" });
+  const [position, setPosition] = useState({ left: 18, top: 86, placement: "bottom" });
   const [isCompact, setIsCompact] = useState(false);
   const [mentionState, setMentionState] = useState<MentionState>(null);
   const data = node.data;
@@ -8187,6 +8726,7 @@ function CanvasNodeEditorPopover({
     (edge) => edge.target === node.id && edge.inputRole === "base-image",
   )?.source;
   const baseNode = editorBase ? nodeById(document, editorBase) : undefined;
+  const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
   const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
     if (item.id === node.id) return false;
@@ -8223,45 +8763,16 @@ function CanvasNodeEditorPopover({
       width: size.w * zoom,
       height: size.h * zoom,
     };
-    const candidates = [
-      { left: anchor.left + anchor.width + 14, top: anchor.top, placement: "right", priority: 0 },
-      { left: anchor.left - popoverWidth - 14, top: anchor.top, placement: "left", priority: 1 },
-      { left: anchor.left, top: anchor.top + anchor.height + 14, placement: "bottom", priority: 2 },
-      { left: anchor.left, top: anchor.top - popoverHeight - 14, placement: "top", priority: 3 },
-    ];
-    const maxLeft = Math.max(10, stageWidth - popoverWidth - 10);
-    const maxTop = Math.max(74, stageHeight - popoverHeight - 10);
-    const overlap = (candidate: { left: number; top: number; priority: number }) => {
-      const left = Math.max(10, Math.min(maxLeft, candidate.left));
-      const top = Math.max(74, Math.min(maxTop, candidate.top));
-      const right = left + popoverWidth;
-      const bottom = top + popoverHeight;
-      const offscreen =
-        Math.max(0, 12 - candidate.left) +
-        Math.max(0, 12 - candidate.top) +
-        Math.max(0, candidate.left + popoverWidth - stageWidth + 12) +
-        Math.max(0, candidate.top + popoverHeight - stageHeight + 12);
-      const overlapArea = (rect: { left: number; top: number; right: number; bottom: number }) =>
-        Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left)) *
-        Math.max(0, Math.min(bottom, rect.bottom) - Math.max(top, rect.top));
-      const ownOverlap = overlapArea({
-        left: anchor.left - 8,
-        top: anchor.top - 8,
-        right: anchor.left + anchor.width + 8,
-        bottom: anchor.top + anchor.height + 8,
-      });
-      const distance = Math.abs(left - anchor.left) + Math.abs(top - anchor.top);
-      // Only the active node is protected. Other cards and canvas chrome may
-      // sit underneath this editor; the canvas remains intentionally layered.
-      return offscreen * 1000 + ownOverlap * 100000 + distance * 0.02 + candidate.priority * 0.01;
-    };
-    const best = candidates.sort((a, b) => overlap(a) - overlap(b))[0];
-    const left = Math.max(10, Math.min(maxLeft, best.left));
-    const top = Math.max(74, Math.min(maxTop, best.top));
+    const position = placeCanvasNodeEditor(
+      anchor,
+      { width: stageWidth, height: stageHeight },
+      { width: popoverWidth, height: popoverHeight },
+      14,
+      10,
+    );
     setPosition({
-      left,
-      top,
-      placement: best.placement,
+      ...position,
+      placement: "bottom",
     });
   }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, size.h, size.w, stageRef]);
 
@@ -8369,18 +8880,31 @@ function CanvasNodeEditorPopover({
             </div>
           )}
         </div>
-        <CanvasNodeReferenceStrip
-          target={node}
-          document={document}
-          references={editorReferences}
-          contexts={editorContexts}
-          base={baseNode}
-          onReorder={onReferenceReorder}
-          onRemove={onReferenceRemove}
-          onDrop={onReferenceDrop}
-          onAddFiles={onAddReferenceFiles}
-          onPreview={onOutputPreview}
-        />
+        {branchDraft ? (
+          <CanvasReferenceDraftStrip
+            references={branchReferences}
+            onFiles={onDraftReferenceFiles || (() => undefined)}
+            onRemove={onDraftReferenceRemove || (() => undefined)}
+            onReorder={onDraftReferenceReorder || (() => undefined)}
+            onNodeDrop={onDraftReferenceNodeDrop}
+            onPaste={onDraftReferencePaste}
+            onPreview={onDraftReferencePreview}
+            emptyLabel="添加画布参考"
+          />
+        ) : (
+          <CanvasNodeReferenceStrip
+            target={node}
+            document={document}
+            references={editorReferences}
+            contexts={editorContexts}
+            base={baseNode}
+            onReorder={onReferenceReorder}
+            onRemove={onReferenceRemove}
+            onDrop={onReferenceDrop}
+            onAddFiles={onAddReferenceFiles}
+            onPreview={onOutputPreview}
+          />
+        )}
         {node.type === "generator" && (
           <div className="canvas-node-variant-editor">
             <label>变体要求 <small>每行一条，最多 8 条</small></label>
@@ -8396,7 +8920,7 @@ function CanvasNodeEditorPopover({
           <CreationParameterEditor
             settings={editorParams}
             runtime={runtime}
-            referenceCount={editorReferences.length}
+            referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
             variant="canvas-flat"
             onChange={(settings) => onEditorParamsChange(node, settings)}
           />

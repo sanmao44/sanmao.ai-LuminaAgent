@@ -11,6 +11,7 @@ export default function CanvasReferenceDraftStrip({
   onPaste,
   onClear,
   onPreview,
+  onNodeDrop,
   max = 16,
   disabled = false,
   emptyLabel = "添加参考图",
@@ -23,6 +24,7 @@ export default function CanvasReferenceDraftStrip({
   onPaste?: () => void;
   onClear?: () => void;
   onPreview?: (reference: CanvasReferenceDraft) => void;
+  onNodeDrop?: (nodeId: string) => void;
   max?: number;
   disabled?: boolean;
   emptyLabel?: string;
@@ -42,7 +44,12 @@ export default function CanvasReferenceDraftStrip({
     event.preventDefault();
     setDragIndex(null);
     if (disabled) return;
-    acceptFiles([...event.dataTransfer.files]);
+    if (event.dataTransfer.files.length) {
+      acceptFiles([...event.dataTransfer.files]);
+      return;
+    }
+    const nodeId = event.dataTransfer.getData("application/x-sanmao-canvas-node");
+    if (nodeId) onNodeDrop?.(nodeId);
   };
 
   return (
