@@ -8889,7 +8889,7 @@ function CanvasNodeEditorPopover({
   return (
     <div
       ref={popoverRef}
-      className="canvas-node-editor-popover canvas-node-editor-dock"
+      className={`canvas-node-editor-popover canvas-node-editor-dock${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement={position.placement}
       data-density={isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
