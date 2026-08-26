@@ -641,4 +641,11 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .media-viewer-stage.can-pan{cursor:grab}
 .media-viewer-stage.dragging{cursor:grabbing}
 .media-viewer-stage img,.media-viewer-stage video{user-select:none;-webkit-user-drag:none}
-.media-viewer-stage img{pointer-events:none}
+ .media-viewer-stage img{pointer-events:none}
+
+ /* Refined top drawer: when closed, the chrome disappears completely and
+    leaves only a small, intentional pull handle at the top edge. */
+ .canvas-topbar.collapsed .canvas-topbar-main{transform:translateY(calc(-100% - 14px));opacity:0;pointer-events:none;box-shadow:none}
+ .canvas-topbar.collapsed .canvas-topbar-toggle{top:-12px;height:36px;padding:0 16px 1px;border-top:0;border-radius:0 0 15px 15px;background:linear-gradient(180deg,var(--accent),var(--accent-2));box-shadow:0 8px 22px color-mix(in srgb,var(--accent) 34%,transparent);animation:canvas-topbar-toggle-pulse 2.8s ease-in-out infinite}
+ .canvas-topbar.collapsed .canvas-topbar-toggle:hover{transform:translateX(-50%) translateY(2px);box-shadow:0 10px 25px color-mix(in srgb,var(--accent) 42%,transparent)}
+ @media(prefers-reduced-motion:reduce){.canvas-topbar.collapsed .canvas-topbar-toggle{animation:none}}
