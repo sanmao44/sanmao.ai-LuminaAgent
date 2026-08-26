@@ -61,15 +61,7 @@ function Test-SanmaoLanPasswordFile {
 
   try {
     $encrypted = (Get-Content -LiteralPath $passwordPath -Raw -ErrorAction Stop).Trim()
-    if (-not $encrypted) { return $false }
-    $secure = ConvertTo-SecureString -String $encrypted -ErrorAction Stop
-    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try {
-      $password = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
-      return -not [string]::IsNullOrWhiteSpace($password) -and $password.Length -ge 8
-    } finally {
-      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-    }
+    return -not [string]::IsNullOrWhiteSpace($encrypted)
   } catch {
     return $false
   }
@@ -333,7 +325,7 @@ try {
   $configured = $env:SANMAO_ADMIN_PASSWORD
   $hasConfiguredPassword = $configured -and $configured.Trim().Length -ge 8
   $passwordFileValid = Test-SanmaoLanPasswordFile
-  Write-SanmaoLanLauncherLog "密码文件存在：$([bool](Test-Path -LiteralPath $passwordPath))，可解密：$passwordFileValid。"
+  Write-SanmaoLanLauncherLog "Password ciphertext file available: $passwordFileValid."
   if (-not $hasConfiguredPassword -and -not $passwordFileValid) {
     $password = Show-SanmaoLanPasswordDialog
     if ([string]::IsNullOrWhiteSpace($password)) { exit 0 }
