@@ -74,6 +74,7 @@ function writeModelPreferences(value: ModelPreferences) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
     window.dispatchEvent(new Event(CHANGE_EVENT));
+    window.dispatchEvent(new Event('sanmao-workspace-change'));
   } catch {}
 }
 

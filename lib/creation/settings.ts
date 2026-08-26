@@ -510,6 +510,7 @@ export function writeSharedCreationSettings(settings: CreationSettings) {
       );
     }
     window.dispatchEvent(new Event(CHANGE_EVENT));
+    window.dispatchEvent(new Event("sanmao-workspace-change"));
   } catch {
     /* local settings should never block creation */
   }

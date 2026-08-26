@@ -26,7 +26,7 @@ export function validateWorkspaceShape(value: unknown) {
 }
 
 export function workspaceContentSignature(snapshot: WorkspaceShape) {
-  return JSON.stringify({
+  const content = JSON.stringify({
     canvas: snapshot.canvas,
     gallery: snapshot.gallery,
     chatSessions: snapshot.chatSessions,
@@ -34,6 +34,12 @@ export function workspaceContentSignature(snapshot: WorkspaceShape) {
     assetCollections: snapshot.assetCollections,
     preferences: snapshot.preferences,
   });
+  let hash = 2166136261;
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${content.length}:${(hash >>> 0).toString(16)}`;
 }
 
 export function workspaceHasData(snapshot: WorkspaceShape) {
