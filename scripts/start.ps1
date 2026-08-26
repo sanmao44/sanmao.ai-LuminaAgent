@@ -5,6 +5,10 @@
 )
 
 $ErrorActionPreference = 'Stop'
+# Load the Windows security cmdlets explicitly before reading the DPAPI-backed
+# LAN password. This keeps hidden launcher processes independent of inherited
+# PowerShell module paths.
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $script:NonInteractive = $NonInteractive.IsPresent
 try { $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器' } catch {}
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}

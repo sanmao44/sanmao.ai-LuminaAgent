@@ -48,6 +48,15 @@ function Write-SanmaoLanLauncherLog([string]$message) {
   } catch {}
 }
 
+function Use-SanmaoWindowsPowerShellModules {
+  $modulePaths = @(
+    (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'),
+    (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+    (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Modules')
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+  if ($modulePaths.Count -gt 0) { $env:PSModulePath = $modulePaths -join ';' }
+}
+
 function Initialize-SanmaoLanForms {
   if ($script:FormsReady) { return }
   Add-Type -AssemblyName System.Windows.Forms
@@ -60,14 +69,26 @@ function Test-SanmaoLanPasswordFile {
   if (-not (Test-Path -LiteralPath $passwordPath)) { return $false }
 
   try {
+    Use-SanmaoWindowsPowerShellModules
+    Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
     $encrypted = (Get-Content -LiteralPath $passwordPath -Raw -ErrorAction Stop).Trim()
-    return -not [string]::IsNullOrWhiteSpace($encrypted)
+    if (-not $encrypted) { return $false }
+    $secure = ConvertTo-SecureString -String $encrypted -ErrorAction Stop
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+      $password = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+      return -not [string]::IsNullOrWhiteSpace($password) -and $password.Length -ge 8
+    } finally {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+    }
   } catch {
     return $false
   }
 }
 
 function Save-SanmaoLanPassword([string]$password) {
+  Use-SanmaoWindowsPowerShellModules
+  Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
   $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
   $encrypted = ConvertFrom-SecureString -SecureString $secure
   $directory = Split-Path -Parent $passwordPath
@@ -189,17 +210,34 @@ function Get-SanmaoLanServerInfo {
   if ($env:SANMAO_PORT -match '^\d+$') {
     $ports += [int]$env:SANMAO_PORT
   }
-  $ports += 3210..3220
+  try {
+    $ports += @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
+      Where-Object { $_.LocalPort -ge 3210 -and $_.LocalPort -le 3220 } |
+      Select-Object -ExpandProperty LocalPort)
+  } catch {
+    $ports += 3210..3220
+  }
 
   foreach ($port in @($ports | Sort-Object -Unique)) {
+    $request = $null
+    $response = $null
+    $reader = $null
     try {
-      $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/health" -TimeoutSec 2
-      if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) { continue }
-      $data = $response.Content | ConvertFrom-Json
+      $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$port/api/health")
+      $request.Proxy = $null
+      $request.Timeout = 2000
+      $request.ReadWriteTimeout = 2000
+      $response = $request.GetResponse()
+      if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) { continue }
+      $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
+      $data = $reader.ReadToEnd() | ConvertFrom-Json
       if ($data.service -eq 'sanmao-ai-studio' -and $data.networkMode -eq 'lan') {
         return [pscustomobject]@{ Port = $port }
       }
-    } catch {}
+    } catch {} finally {
+      if ($reader) { $reader.Dispose() }
+      if ($response) { $response.Close() }
+    }
   }
   return $null
 }
@@ -335,6 +373,7 @@ try {
 
   $startArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$startScript`" -Lan -NonInteractive"
   Write-SanmaoLanLauncherLog $ui.LogStarting
+  Use-SanmaoWindowsPowerShellModules
   $startProcess = Start-Process `
     -FilePath 'powershell.exe' `
     -ArgumentList $startArguments `
