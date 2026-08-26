@@ -2853,9 +2853,11 @@ export default function SuperCanvas() {
       };
       const base = position || screenToWorld(center.x, center.y);
       const nodes: CanvasNode[] = [];
+      let optimizedImageCount = 0;
       for (const [index, file] of list.entries()) {
         try {
           const asset = await uploadCanvasAsset(file);
+          if (asset.kind === "image" && asset.optimized) optimizedImageCount += 1;
           nodes.push(
             createMedia(
               asset.kind,
@@ -2885,7 +2887,11 @@ export default function SuperCanvas() {
         commit((value) => ({ ...value, nodes: [...value.nodes, ...nodes] }));
         setSelectedIds(new Set(nodes.map((node) => node.id)));
         setSelectedGroupId(null);
-        notify(`已导入 ${nodes.length} 个素材`);
+        notify(
+          optimizedImageCount
+            ? `已自动优化 ${optimizedImageCount} 张图片后上传，已导入 ${nodes.length} 个素材`
+            : `已导入 ${nodes.length} 个素材`,
+        );
       }
     },
     [
@@ -4084,10 +4090,12 @@ export default function SuperCanvas() {
         pending: true,
       }));
       addReuseReferences(pending);
+      let optimizedImageCount = 0;
       for (const [index, file] of files.entries()) {
         const draftRef = pending[index];
         try {
           const asset = await uploadCanvasAsset(file);
+          if (asset.kind === "image" && asset.optimized) optimizedImageCount += 1;
           setReuseDraft((current) => {
             if (!current) return current;
             return {
@@ -4110,6 +4118,8 @@ export default function SuperCanvas() {
           URL.revokeObjectURL(draftRef.url);
         }
       }
+      if (optimizedImageCount)
+        notify(`已自动优化 ${optimizedImageCount} 张图片后上传`);
     },
     [addReuseReferences, notify, reuseDraft],
   );
@@ -5227,9 +5237,11 @@ export default function SuperCanvas() {
       const existing = incomingReferences(docRef.current, targetId).length;
       if (existing >= 16) return notify("参考图最多 16 张。", "error");
       const nodes: CanvasNode[] = [];
+      let optimizedImageCount = 0;
       for (const [index, file] of files.slice(0, 16 - existing).entries()) {
         try {
           const asset = await uploadCanvasAsset(file);
+          if (asset.kind === "image" && asset.optimized) optimizedImageCount += 1;
           if (target.data.kind === "image" && asset.kind !== "image") {
             notify("图片节点只接受图片参考。", "error");
             continue;
@@ -5265,7 +5277,11 @@ export default function SuperCanvas() {
         });
         return next;
       });
-      notify(`已添加 ${nodes.length} 张参考素材`);
+      notify(
+        optimizedImageCount
+          ? `已自动优化 ${optimizedImageCount} 张图片后上传，已添加 ${nodes.length} 张参考素材`
+          : `已添加 ${nodes.length} 张参考素材`,
+      );
     },
     [commit, notify, runtime],
   );

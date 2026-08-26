@@ -24,6 +24,7 @@ import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/li
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
+import { optimizeCanvasUploadFile } from '@/lib/canvas/api';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -454,7 +455,22 @@ async function compressReferenceDataUrl(dataUrl) {
         const context = canvas.getContext('2d');
         if (!context) return dataUrl;
         context.drawImage(source, 0, 0, canvas.width, canvas.height);
-        compressed = canvas.toDataURL('image/jpeg', Math.max(0.56, 0.78 - attempt * 0.05));
+        let preserveAlpha = !/jpe?g/i.test(dataUrl.slice(5, dataUrl.indexOf(';')));
+        if (preserveAlpha) {
+            try {
+                const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+                preserveAlpha = false;
+                for (let index = 3; index < pixels.length; index += 4) {
+                    if (pixels[index] < 255) {
+                        preserveAlpha = true;
+                        break;
+                    }
+                }
+            } catch {
+                preserveAlpha = true;
+            }
+        }
+        compressed = canvas.toDataURL(preserveAlpha ? 'image/webp' : 'image/jpeg', Math.max(0.56, 0.78 - attempt * 0.05));
         if (compressed.length <= 900000) break;
         scale *= 0.82;
     }
@@ -462,18 +478,22 @@ async function compressReferenceDataUrl(dataUrl) {
 }
 async function fileToReference(file, options) {
     if (!file.type.startsWith('image/')) throw new Error('只能上传图片文件');
-    if (file.size > 15 * 1024 * 1024) throw new Error(`${file.name} 超过 15MB`);
+    const prepared = await optimizeCanvasUploadFile(file);
+    const sourceFile = prepared.file;
     const rawDataUrl = await new Promise((resolve, reject)=>{
         const reader = new FileReader();
         reader.onload = ()=>resolve(String(reader.result || ''));
         reader.onerror = ()=>reject(new Error('读取图片失败'));
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(sourceFile);
     });
     const dataUrl = options?.compressForChat ? await compressReferenceDataUrl(rawDataUrl) : rawDataUrl;
     return {
         id: uid('ref'),
         name: file.name || '参考图',
-        dataUrl
+        dataUrl,
+        optimized: prepared.changed,
+        originalSize: prepared.originalSize,
+        uploadedSize: prepared.uploadedSize
     };
 }
 const textAttachmentExtensions = new Set([
@@ -6767,7 +6787,11 @@ export default function Page() {
                 setAngleCameraStartSeed(null);
                 setAngleResults([]);
             }
-            if (Array.from(files).length > room) notify(target === 'angle' ? '角度控制台只使用一张参考图' : '最多保留 16 张参考图');
+            const noticeParts = [];
+            const optimizedCount = refs.filter((reference)=>reference.optimized).length;
+            if (optimizedCount) noticeParts.push(`已自动优化 ${optimizedCount} 张图片后添加`);
+            if (Array.from(files).length > room) noticeParts.push(target === 'angle' ? '角度控制台只使用一张参考图' : '最多保留 16 张参考图');
+            if (noticeParts.length) notify(noticeParts.join('；'));
         } catch (error) {
             notify(error instanceof Error ? error.message : '上传图片失败');
         }
