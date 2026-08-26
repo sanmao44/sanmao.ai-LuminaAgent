@@ -815,7 +815,6 @@ export default function SuperCanvas() {
   const workflowInputRef = useRef<HTMLInputElement | null>(null);
   const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
-  const pendingNodeClickRef = useRef<number | null>(null);
   const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
   const docRef = useRef<CanvasDocument>(normalizeDocument(null));
@@ -837,6 +836,7 @@ export default function SuperCanvas() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [expandedEditorId, setExpandedEditorId] = useState<string | null>(null);
+  const [nodeGestureActive, setNodeGestureActive] = useState(false);
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
@@ -853,10 +853,6 @@ export default function SuperCanvas() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
   const cancelPendingNodeClick = useCallback(() => {
-    if (pendingNodeClickRef.current !== null) {
-      window.clearTimeout(pendingNodeClickRef.current);
-      pendingNodeClickRef.current = null;
-    }
     setPendingClickNodeId(null);
   }, []);
   const [contextMenu, setContextMenu] = useState<{
@@ -1695,13 +1691,14 @@ export default function SuperCanvas() {
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       event.preventDefault();
       event.stopPropagation();
+      cancelPendingNodeClick();
+      setNodeGestureActive(true);
       const now = Date.now();
       const doubleClick = Boolean(
         lastNodePressRef.current &&
           lastNodePressRef.current.nodeId === node.id &&
           now - lastNodePressRef.current.at < 320,
       );
-      if (doubleClick) cancelPendingNodeClick();
       lastNodePressRef.current = { nodeId: node.id, at: now };
       selectNode(node, event.shiftKey);
       const group = node.groupId
@@ -1759,6 +1756,7 @@ export default function SuperCanvas() {
       focusCanvasStage,
       hideConnectionCancel,
       selectNode,
+      setNodeGestureActive,
       selectedGroupId,
       selectedIds,
       startMarquee,
@@ -1975,6 +1973,7 @@ export default function SuperCanvas() {
             preserveInputConnections: press.preserveInputConnections,
           };
           setDraggingNodeIds(new Set(press.nodeIds));
+          lastNodePressRef.current = null;
           interaction = interactionRef.current;
         }
       }
@@ -2200,10 +2199,16 @@ export default function SuperCanvas() {
         if (node) {
           if (interaction.doubleClick) {
             cancelPendingNodeClick();
+            setExpandedEditorId(null);
+            if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
             if (node.type === "media" && node.data.url)
               setLightbox({ nodeId: node.id, compare: false });
             else if (node.type === "prompt") setTextLightboxNodeId(node.id);
-            else setPendingClickNodeId(node.id);
+          } else {
+            // A click is confirmed on pointer-up. Dragging has already been
+            // promoted to `drag` in moveInteraction, so it cannot open the
+            // editor accidentally.
+            setPendingClickNodeId(node.id);
           }
         }
       }
@@ -2378,6 +2383,7 @@ export default function SuperCanvas() {
           }
         }
       }
+      setNodeGestureActive(false);
       interactionRef.current = null;
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
@@ -2395,8 +2401,11 @@ export default function SuperCanvas() {
       connectionTargetId,
       clearSelection,
       notify,
+      cancelPendingNodeClick,
+      reuseDraft,
       stagePoint,
       stageToWorld,
+      setNodeGestureActive,
       updateDoc,
     ],
   );
@@ -2404,8 +2413,12 @@ export default function SuperCanvas() {
   const cancelPointerInteraction = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const interaction = interactionRef.current;
-      if (!interaction || interaction.pointerId !== event.pointerId) return;
+      if (!interaction || interaction.pointerId !== event.pointerId) {
+        setNodeGestureActive(false);
+        return;
+      }
       interactionRef.current = null;
+      setNodeGestureActive(false);
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
@@ -2426,6 +2439,7 @@ export default function SuperCanvas() {
   useEffect(() => {
     const handleWindowBlur = () => {
       interactionRef.current = null;
+      setNodeGestureActive(false);
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
@@ -5092,8 +5106,8 @@ export default function SuperCanvas() {
     if (!pendingClickNodeId) return;
     const node = nodeById(docRef.current, pendingClickNodeId);
     setPendingClickNodeId(null);
-    if (node) toggleEditor(node);
-  }, [pendingClickNodeId, toggleEditor]);
+    if (node && expandedEditorId !== node.id) toggleEditor(node);
+  }, [expandedEditorId, pendingClickNodeId, toggleEditor]);
 
   const updateEditorPrompt = useCallback(
     (node: CanvasNode, value: string) => {
@@ -6341,7 +6355,6 @@ export default function SuperCanvas() {
     if (node.type === "prompt") {
       const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
       return [
-        { id: "edit", icon: "✎", label: "编辑", onClick: () => toggleEditor(node) },
         { id: "preview", icon: "⤢", label: "放大查看", onClick: () => setTextLightboxNodeId(node.id) },
         {
           id: "image",
@@ -6354,7 +6367,6 @@ export default function SuperCanvas() {
     }
     const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
     return [
-      { id: "edit", icon: "✎", label: "编辑", onClick: () => toggleEditor(node) },
       {
         id: "retry",
         icon: "↻",
@@ -6377,7 +6389,6 @@ export default function SuperCanvas() {
     selectedGroupId,
     selectedNodes.length,
     selectedSingle,
-    toggleEditor,
     useAgentResponseAsImagePrompt,
   ]);
 
@@ -6891,7 +6902,7 @@ export default function SuperCanvas() {
            </div>
           </div>
         </div>
-        {selectedSingle && quickActions.length > 0 && (
+        {selectedSingle && !nodeGestureActive && quickActions.length > 0 && (
           <CanvasNodeQuickToolbar
             node={selectedSingle}
             document={document}
@@ -6899,7 +6910,7 @@ export default function SuperCanvas() {
             actions={quickActions}
           />
         )}
-        {expandedEditorId && (() => {
+        {expandedEditorId && !nodeGestureActive && (() => {
           const editorNode = document.nodes.find((item) => item.id === expandedEditorId);
           if (!editorNode) return null;
           return (
@@ -9281,7 +9292,6 @@ function CanvasNodeCard({
               <small>{data.model || nodeStatus(node)}</small>
             </span>
             <em>{nodeStatus(node)}</em>
-            <button type="button" draggable={false} className="canvas-node-edit-toggle" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label={expanded ? "收起编辑器" : "展开编辑器"}>{expanded ? "⌃" : "✎"}</button>
           </div>
         </div>
       )}
@@ -9290,7 +9300,6 @@ function CanvasNodeCard({
           <div className="canvas-node-kicker">
             <span>✦</span>
             <b>{String(data.role || "Agent 节点")}</b>
-            <button type="button" draggable={false} className="canvas-node-edit-toggle" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label={expanded ? "收起编辑器" : "展开编辑器"}>{expanded ? "⌃" : "✎"}</button>
           </div>
           {pending && (
             <CanvasProcessingIndicator
@@ -9368,7 +9377,6 @@ function CanvasNodeCard({
                     : "共同提示词 + 多行变体要求"}
               </small>
             </div>
-            <button type="button" draggable={false} className="canvas-node-edit-toggle" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label={expanded ? "收起编辑器" : "展开编辑器"}>{expanded ? "⌃" : "✎"}</button>
           </div>
           {pending && (
             <CanvasProcessingIndicator

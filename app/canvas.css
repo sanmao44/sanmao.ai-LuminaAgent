@@ -531,8 +531,6 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node:has(.canvas-node-editor) .canvas-media-stage{height:170px;min-height:0}
 .canvas-node:has(.canvas-node-editor) .canvas-prompt-card{min-height:140px}
 .canvas-node:has(.canvas-node-editor) .canvas-generator-card{min-height:180px}
-.canvas-node-edit-toggle{position:relative;z-index:12;width:25px;height:25px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:8px;background:var(--panel-3);color:var(--text-2);font-size:11px;cursor:pointer}
-.canvas-node-edit-toggle:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-node-editor{position:relative;z-index:40;display:grid;gap:9px;margin:0 8px 8px;padding:10px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line-strong));border-radius:15px;background:color-mix(in srgb,var(--panel) 98%,transparent);box-shadow:0 10px 26px rgba(0,0,0,.2);pointer-events:auto}
 .canvas-node-editor-head,.canvas-editor-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
 .canvas-node-editor-head>div,.canvas-editor-section-head>span{display:grid;gap:3px;min-width:0}
