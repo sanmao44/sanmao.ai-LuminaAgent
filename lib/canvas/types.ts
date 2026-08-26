@@ -79,6 +79,8 @@ export type CanvasNodeData = {
   status?: CanvasGenerationStatus;
   statusLabel?: string;
   progress?: number;
+  /** Timestamp for the currently active generation, used by the canvas timer. */
+  processingStartedAt?: number;
   jobId?: string;
   text?: string;
   /** Original Agent request kept alongside the visible response for reruns/audit. */

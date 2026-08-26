@@ -3490,6 +3490,7 @@ export default function SuperCanvas() {
                   variantBatchId: batchId,
                   variantStates: initialStates,
                   status: "running" as const,
+                  processingStartedAt: Date.now(),
                   statusLabel: `正在生成 ${kind === "video" ? "视频" : "图片"}变体`,
                 },
               }
@@ -3819,6 +3820,8 @@ export default function SuperCanvas() {
                   model: task.modelId || videoParams.model,
                   jobId: task.id,
                   status: task.status === "done" ? "completed" : "running",
+                  processingStartedAt:
+                    task.status === "done" ? undefined : Date.now(),
                   progress: Number(task.progress || (task.status === "done" ? 100 : 0)),
                   statusLabel: task.status === "done" ? "视频已完成" : "视频生成中",
                   generation: {
@@ -4125,6 +4128,7 @@ export default function SuperCanvas() {
         prompt: draft.prompt,
         role: "复用参数生成器",
         status: "running" as const,
+        processingStartedAt: Date.now(),
         statusLabel: draft.kind === "video" ? "视频复用生成中" : "图片复用生成中",
         reuseSourceNodeId: draft.sourceNodeId,
         variantRequirementsText: draft.variantRequirementsText || "",
@@ -4159,6 +4163,7 @@ export default function SuperCanvas() {
     const output = createMedia(draft.kind, "", draft.kind === "video" ? "视频任务" : "图片生成中", outputPosition, {
       role: "复用生成结果",
       status: draft.kind === "video" ? "queued" : "running",
+      processingStartedAt: Date.now(),
       statusLabel: draft.kind === "video" ? "视频任务提交中" : "图片生成中",
       generation: {
         kind: draft.kind,
@@ -4329,6 +4334,7 @@ export default function SuperCanvas() {
             role: "Agent 输入",
             params: clone(effectiveSettings),
             status: "running",
+            processingStartedAt: Date.now(),
             statusLabel: "Agent 思考中",
           },
         };
@@ -4352,6 +4358,7 @@ export default function SuperCanvas() {
                     params: clone(effectiveSettings),
                     role: "Agent 输入",
                     status: "running",
+                    processingStartedAt: Date.now(),
                     statusLabel: "Agent 思考中",
                   },
                 }
@@ -4547,6 +4554,7 @@ export default function SuperCanvas() {
                   data: {
                     ...node.data,
                     status: "running",
+                    processingStartedAt: Date.now(),
                     statusLabel: kind === "video" ? "视频生成中" : "图片生成中",
                     prompt,
                   },
@@ -4577,6 +4585,7 @@ export default function SuperCanvas() {
             {
               role: "生成中",
               status: "running",
+              processingStartedAt: Date.now(),
               progress: 0,
               statusLabel: "图片生成中 · 等待结果",
               generation: {
@@ -4769,6 +4778,7 @@ export default function SuperCanvas() {
           : createMedia("video", "", "视频任务", position, {
               role: "生成结果",
               status: "queued",
+              processingStartedAt: Date.now(),
               statusLabel: "视频任务提交中",
               generation: {
                 kind: "video",
@@ -7928,15 +7938,45 @@ function progressValue(value: unknown) {
   return Math.max(0, Math.min(100, Math.round(numeric)));
 }
 
+function formatProcessingTime(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0)
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function CanvasProcessingIndicator({
   label,
   progress,
+  startedAt,
+  waiting = false,
   compact = false,
 }: {
   label: string;
   progress?: number;
+  startedAt?: number;
+  waiting?: boolean;
   compact?: boolean;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  const fallbackStartedAtRef = useRef(Date.now());
+  const validStartedAt = Number.isFinite(startedAt) ? Number(startedAt) : undefined;
+
+  useEffect(() => {
+    fallbackStartedAtRef.current = validStartedAt ?? Date.now();
+  }, [validStartedAt]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const elapsed = formatProcessingTime(
+    now - (validStartedAt ?? fallbackStartedAtRef.current),
+  );
   return (
     <div
       className={`canvas-processing-indicator${compact ? " compact" : ""}`}
@@ -7948,7 +7988,14 @@ function CanvasProcessingIndicator({
       </span>
       <span className="canvas-processing-copy">
         <b>{label}</b>
-        {typeof progress === "number" && <small>{progress}%</small>}
+        <span className="canvas-processing-details">
+          <small className="canvas-processing-elapsed">
+            {waiting ? "已等待" : "已运行"} {elapsed}
+          </small>
+          {typeof progress === "number" && (
+            <small className="canvas-processing-percent">{progress}%</small>
+          )}
+        </span>
       </span>
       <span className="canvas-processing-dots" aria-hidden="true">
         <i />
@@ -8581,6 +8628,10 @@ function CanvasNodeCard({
                 <CanvasProcessingIndicator
                   label={processingLabel}
                   progress={processingProgress}
+                  startedAt={
+                    data.processingStartedAt || data.generation?.createdAt
+                  }
+                  waiting={data.status === "queued"}
                   compact
                 />
               </div>
@@ -8674,6 +8725,10 @@ function CanvasNodeCard({
             <CanvasProcessingIndicator
               label={processingLabel}
               progress={processingProgress}
+              startedAt={
+                data.processingStartedAt || data.generation?.createdAt
+              }
+              waiting={data.status === "queued"}
             />
           )}
           {editing ? (
@@ -8748,6 +8803,10 @@ function CanvasNodeCard({
             <CanvasProcessingIndicator
               label={processingLabel}
               progress={generatorProgress}
+              startedAt={
+                data.processingStartedAt || data.generation?.createdAt
+              }
+              waiting={data.status === "queued"}
             />
           )}
           <div className="canvas-generator-summary">
