@@ -29,7 +29,7 @@ async function writeAtomic(content: string) {
 }
 
 export async function GET(request: Request) {
-  if (!isTrustedAppRequest(request)) return Response.json({ error: '仅允许本机访问工作区。' }, { status: 401 });
+  if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录后访问工作区。' }, { status: 401 });
   try {
     const workspace = await readWorkspace();
     return Response.json({ ok: true, workspace, updatedAt: workspace?.updatedAt || null }, { headers: { 'Cache-Control': 'no-store' } });
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  if (!isTrustedAppRequest(request)) return Response.json({ error: '仅允许本机访问工作区。' }, { status: 401 });
+  if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录后保存工作区。' }, { status: 401 });
   try {
     const contentLength = Number(request.headers.get('content-length') || 0);
     if (contentLength > maxWorkspaceBytes + 4096) throw new Error('工作区数据超过 80MB');

@@ -2,6 +2,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 
 const COOKIE = 'sanmao_admin';
 
+export type SanmaoNetworkMode = 'local' | 'lan';
+
 function isLoopbackRequest(request: Request) {
   try {
     const url = new URL(request.url);
@@ -12,6 +14,10 @@ function isLoopbackRequest(request: Request) {
 
 function configuredPassword() {
   return process.env.SANMAO_ADMIN_PASSWORD?.trim() || '';
+}
+
+export function networkMode(): SanmaoNetworkMode {
+  return process.env.SANMAO_NETWORK_MODE === 'lan' ? 'lan' : 'local';
 }
 
 function expectedToken() {
@@ -30,7 +36,7 @@ function parseCookie(header: string | null, name: string) {
 }
 
 export function adminProtectionEnabled() {
-  return Boolean(configuredPassword());
+  return networkMode() === 'lan' || Boolean(configuredPassword());
 }
 
 export function isAdminRequest(request: Request) {

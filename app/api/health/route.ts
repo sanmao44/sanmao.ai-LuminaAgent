@@ -5,6 +5,7 @@ export async function GET() {
     {
       service: 'sanmao-ai-studio',
       ok: true,
+      networkMode: process.env.SANMAO_NETWORK_MODE === 'lan' ? 'lan' : 'local',
       time: new Date().toISOString(),
     },
     { headers: { 'Cache-Control': 'no-store' } },
