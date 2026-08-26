@@ -4434,13 +4434,6 @@ export default function SuperCanvas() {
           ? source.params
           : normalizeCreationSettings("text", null, runtime);
       const resolved = resolveAvailableCreationModel(settings, runtime);
-      const effectiveSettings: AgentCreationSettings = {
-        ...settings,
-        // Keep "auto" as auto so the canvas uses the same configured Agent
-        // model as the main surface instead of silently selecting the first
-        // chat model in the registry.
-        model: settings.model === "auto" ? "auto" : resolved.model?.id || "auto",
-      };
       const activeKey = generationKey(source);
       if (generationKeysRef.current.has(activeKey))
         return notify("这个 Agent 节点正在回复。", "error");
@@ -4463,6 +4456,30 @@ export default function SuperCanvas() {
           node.data.kind === "image" &&
           Boolean(node.data.url),
       );
+      const configuredAgentModel = runtime?.settings.agentModelId;
+      const hasUsableConfiguredAgentModel = Boolean(
+        configuredAgentModel &&
+          runtime?.models.some(
+            (model) =>
+              model.id === configuredAgentModel &&
+              model.kind === "chat" &&
+              model.enabled &&
+              model.published,
+          ),
+      );
+      const effectiveSettings: AgentCreationSettings = {
+        ...settings,
+        // Image-backed Agent work must follow the same configured model as the
+        // main Agent surface. Older canvas nodes may still contain an
+        // explicit text-only model snapshot, which would otherwise reject
+        // image_url even though the main surface succeeds.
+        model:
+          referenceNodes.length > 0 && hasUsableConfiguredAgentModel
+            ? configuredAgentModel!
+            : settings.model === "auto"
+              ? "auto"
+              : resolved.model?.id || "auto",
+      };
       let inputNode = source.node;
       if (!inputNode) {
         const seed = screenToWorld(
@@ -4525,8 +4542,14 @@ export default function SuperCanvas() {
         });
         const parent = nodeById(docRef.current, inputId) || inputNode;
         const responseText = response.message || "Agent 没有返回文本。";
+        const effectiveModelRecord = runtime?.models.find(
+          (model) => model.id === effectiveSettings.model,
+        );
         const responseModel =
-          response.model || resolved.model?.displayName || effectiveSettings.model;
+          response.model ||
+          effectiveModelRecord?.displayName ||
+          resolved.model?.displayName ||
+          effectiveSettings.model;
         const imageSettings = readSharedCreationSettings("image", runtime);
         const imageNodes = (response.images || []).map((image, index) =>
           createMedia(

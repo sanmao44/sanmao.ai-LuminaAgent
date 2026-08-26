@@ -772,11 +772,13 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>textarea{min-height:220px;max-height:460px}
 .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions{min-height:59px;padding:10px 15px 12px}
 @media(max-width:720px){
+  .canvas-node-editor-popover:not(.is-prompt-expanded){position:fixed;left:8px!important;right:8px;top:72px!important;width:auto!important;max-width:none;max-height:calc(100vh - 80px);border-radius:18px}
   .canvas-node-editor-popover .canvas-node-editor-prompt-wrap{padding:10px}
   .canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea{min-height:104px;max-height:220px}
-  .canvas-node-editor-popover.is-prompt-expanded{width:calc(100vw - 16px)!important;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);border-radius:18px}
+  .canvas-node-editor-popover.is-prompt-expanded{width:calc(100vw - 16px)!important;max-width:calc(100vw - 16px);max-height:calc(100vh - 96px);top:calc(50% + 24px)!important;border-radius:18px}
   .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-head{min-height:52px;padding:9px 11px}
   .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-body{padding:10px 11px 7px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-columns{grid-template-columns:minmax(0,1fr);gap:10px}
   .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>textarea{min-height:180px;max-height:360px}
   .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions{min-height:51px;padding:8px 11px 10px}
 }

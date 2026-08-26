@@ -332,7 +332,9 @@ try {
   Write-SanmaoLanLauncherLog $ui.LogStarted
   $configured = $env:SANMAO_ADMIN_PASSWORD
   $hasConfiguredPassword = $configured -and $configured.Trim().Length -ge 8
-  if (-not $hasConfiguredPassword -and -not (Test-SanmaoLanPasswordFile)) {
+  $passwordFileValid = Test-SanmaoLanPasswordFile
+  Write-SanmaoLanLauncherLog "密码文件存在：$([bool](Test-Path -LiteralPath $passwordPath))，可解密：$passwordFileValid。"
+  if (-not $hasConfiguredPassword -and -not $passwordFileValid) {
     $password = Show-SanmaoLanPasswordDialog
     if ([string]::IsNullOrWhiteSpace($password)) { exit 0 }
     Save-SanmaoLanPassword $password

@@ -252,6 +252,12 @@ test('canvas agent forwards explicit reverse-prompt tasks', async () => {
   }
 });
 
+test('canvas agent task inference only applies image-backed prompt work', () => {
+  assert.equal(api.inferCanvasAgentTask('反推图片提示词', true), 'reverse_prompt');
+  assert.equal(api.inferCanvasAgentTask('反推图片提示词', false), undefined);
+  assert.equal(api.inferCanvasAgentTask('请优化这段提示词', true), 'optimize_prompt');
+});
+
 test('canvas agent references use the compact image format before sending', async () => {
   const mocks = withImageCanvas({ width: 3200, height: 1800 });
   try {
