@@ -25,6 +25,7 @@ import { buildContinuationPrompt, extractAgentDirections, extractChatDirections,
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { optimizeCanvasUploadFile } from '@/lib/canvas/api';
+import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -5344,8 +5345,13 @@ export default function Page() {
         };
     }, []);
     useEffect(()=>{
-        initializeNavNoticeState();
-        try {
+        let cancelled = false;
+        let stopWorkspaceSync = ()=>{};
+        const start = async ()=>{
+            await bootstrapWorkspace();
+            if (cancelled) return;
+            initializeNavNoticeState();
+            try {
             const savedSection = localStorage.getItem(LAST_SECTION_STORAGE_KEY);
             if (isRememberedSection(savedSection)) {
                 if (savedSection === 'logs') setRecordTab('tasks');
@@ -5419,17 +5425,24 @@ export default function Page() {
                 });
                 setGenerateTasks(tasks);
             }
-        } catch  {}
-        setGenerateSettingsReady(true);
-        setGenerateTasksReady(true);
-        void refreshState();
-        void refreshAdmin();
-        void refreshGallery();
-        void refreshChatSessions();
-        void refreshGenerationLogs();
-        void refreshVideoTasks();
-        void refreshStorageMaintenance();
-        void loadLocalDirectory();
+            } catch  {}
+            setGenerateSettingsReady(true);
+            setGenerateTasksReady(true);
+            void refreshState();
+            void refreshAdmin();
+            void refreshGallery();
+            void refreshChatSessions();
+            void refreshGenerationLogs();
+            void refreshVideoTasks();
+            void refreshStorageMaintenance();
+            void loadLocalDirectory();
+            stopWorkspaceSync = startWorkspaceSync();
+        };
+        void start();
+        return ()=>{
+            cancelled = true;
+            stopWorkspaceSync();
+        };
     }, []);
     useEffect(()=>{
         if (!generateSettingsReady) return;

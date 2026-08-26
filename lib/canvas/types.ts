@@ -9,7 +9,6 @@ export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type CanvasInputRole =
   | 'prompt'
   | 'context'
-  | 'base-image'
   | 'reference-image'
   | 'mask'
   | 'video'

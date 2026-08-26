@@ -10,6 +10,7 @@ import { encryptSecret } from './store';
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const snapshotDir = path.join(dataDir, 'backups', 'auto');
 const statePath = path.join(dataDir, 'state.json');
+const workspacePath = path.join(dataDir, 'workspace.json');
 const keyPath = path.join(dataDir, 'master.key');
 const SNAPSHOT_FORMAT = 'sanmao-ai-auto-snapshot';
 const KEEP_SNAPSHOTS = 7;
@@ -48,6 +49,8 @@ async function createLocalSnapshotInternal(reason: string) {
   const entries: BackupArchiveEntry[] = [];
   const state = await readFile(statePath).catch(() => Buffer.from(JSON.stringify({ schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } }, null, 2)));
   entries.push({ name: 'server/state.json', data: state });
+  const workspace = await readFile(workspacePath).catch(() => Buffer.alloc(0));
+  if (workspace.length) entries.push({ name: 'server/workspace.json', data: workspace });
   const key = await readFile(keyPath).catch(() => Buffer.alloc(0));
   if (key.length) entries.push({ name: 'server/master.key', data: key });
   for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) {
@@ -138,6 +141,8 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
   for (const entry of restoredLogs) await writeFile(path.join(dataDir, path.basename(entry.name)), entry.data);
   const masterKey = byName.get('server/master.key');
   if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await writeFile(keyPath, masterKey.data, { flush: true });
+  const workspace = byName.get('server/workspace.json');
+  if (workspace) await writeFile(`${workspacePath}.snapshot.tmp`, workspace.data, { flush: true });
   const root = path.resolve(configuredStoragePath.trim() || getDefaultStoragePath());
   await mkdir(root, { recursive: true });
   for (const entry of entries.filter((value) => value.name.startsWith('images/'))) {
@@ -149,5 +154,6 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
     await writeFile(target, entry.data);
   }
   await rename(`${statePath}.snapshot.tmp`, statePath);
-  return { restoredImages: entries.filter((entry) => entry.name.startsWith('images/')).length, state };
+  if (workspace) await rename(`${workspacePath}.snapshot.tmp`, workspacePath);
+  return { restoredImages: entries.filter((entry) => entry.name.startsWith('images/')).length, restoredWorkspace: Boolean(workspace), state };
 }

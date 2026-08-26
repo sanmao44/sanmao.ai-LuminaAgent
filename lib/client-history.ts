@@ -1,5 +1,6 @@
 import type { ClientReferenceImage, ReferenceImageRecord, WebSearchDecisionMeta, WebSearchMeta } from './types';
 import type { AngleCameraState } from './angle-control';
+import { emitWorkspaceChange } from './workspace-events';
 
 export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas';
 
@@ -165,6 +166,7 @@ export async function listGallery(): Promise<GalleryItem[]> {
 
 export async function saveGalleryItem(item: GalleryItem) {
   await withStore<IDBValidKey>('readwrite', (store) => store.put(item));
+  emitWorkspaceChange();
 }
 
 export async function saveGalleryItems(items: GalleryItem[]) {
@@ -177,10 +179,12 @@ export async function saveGalleryItems(items: GalleryItem[]) {
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error || new Error('保存历史失败')); };
   });
+  emitWorkspaceChange();
 }
 
 export async function removeGalleryItem(id: string) {
   await withStore<undefined>('readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
+  emitWorkspaceChange();
 }
 
 export async function removeGalleryItems(ids: string[]) {
@@ -193,6 +197,7 @@ export async function removeGalleryItems(ids: string[]) {
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error || new Error('删除历史失败')); };
   });
+  emitWorkspaceChange();
 }
 
 export async function patchGalleryItem(id: string, patch: Partial<GalleryItem>) {
@@ -203,6 +208,7 @@ export async function patchGalleryItem(id: string, patch: Partial<GalleryItem>) 
 
 export async function clearGallery() {
   await withStore<undefined>('readwrite', (store) => store.clear() as IDBRequest<undefined>);
+  emitWorkspaceChange();
 }
 
 export async function replaceGalleryItems(items: GalleryItem[]) {
@@ -215,6 +221,7 @@ export async function replaceGalleryItems(items: GalleryItem[]) {
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error || new Error('恢复生成历史失败')); };
   });
+  emitWorkspaceChange();
 }
 
 export async function listChatSessions(): Promise<ChatSession[]> {
@@ -224,10 +231,12 @@ export async function listChatSessions(): Promise<ChatSession[]> {
 
 export async function saveChatSession(session: ChatSession) {
   await withNamedStore<IDBValidKey>(CHAT_STORE, 'readwrite', (store) => store.put(session));
+  emitWorkspaceChange();
 }
 
 export async function removeChatSession(id: string) {
   await withNamedStore<undefined>(CHAT_STORE, 'readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
+  emitWorkspaceChange();
 }
 
 export async function replaceChatSessions(sessions: ChatSession[]) {
@@ -240,6 +249,7 @@ export async function replaceChatSessions(sessions: ChatSession[]) {
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error || new Error('恢复助手历史失败')); };
   });
+  emitWorkspaceChange();
 }
 
 export async function saveImageDirectoryHandle(handle: FileSystemDirectoryHandle) {
@@ -262,6 +272,7 @@ export async function listAssetIndex(): Promise<AssetIndexItem[]> {
 
 export async function saveAssetIndexItem(item: AssetIndexItem) {
   await withNamedStore<IDBValidKey>(ASSET_STORE, 'readwrite', (store) => store.put(item));
+  emitWorkspaceChange();
 }
 
 export async function saveAssetIndexItems(items: AssetIndexItem[]) {
@@ -274,10 +285,25 @@ export async function saveAssetIndexItems(items: AssetIndexItem[]) {
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error || new Error('保存资产索引失败')); };
   });
+  emitWorkspaceChange();
 }
 
 export async function removeAssetIndexItem(id: string) {
   await withNamedStore<undefined>(ASSET_STORE, 'readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
+  emitWorkspaceChange();
+}
+
+export async function replaceAssetIndexItems(items: AssetIndexItem[]) {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(ASSET_STORE, 'readwrite');
+    const store = tx.objectStore(ASSET_STORE);
+    store.clear();
+    for (const item of items) store.put(item);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error || new Error('恢复资产索引失败')); };
+  });
+  emitWorkspaceChange();
 }
 
 const ASSET_COLLECTIONS_KEY = 'canvas-asset-collections';
@@ -302,6 +328,7 @@ export async function listAssetCollections(): Promise<AssetCollection[]> {
 export async function saveAssetCollections(collections: AssetCollection[]) {
   const custom = collections.filter((item) => !item.builtin && !DEFAULT_ASSET_COLLECTIONS.some((builtin) => builtin.id === item.id));
   await withNamedStore<IDBValidKey>(SETTINGS_STORE, 'readwrite', (store) => store.put({ key: ASSET_COLLECTIONS_KEY, value: custom }));
+  emitWorkspaceChange();
 }
 
 export async function patchAssetIndexMetadata(id: string, patch: Partial<Pick<AssetIndexItem, 'collectionIds' | 'tags' | 'favorite' | 'projectIds'>>) {

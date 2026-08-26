@@ -52,6 +52,36 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.equal(result.camera.zoom, 3);
 });
 
+test('maps legacy base-image connections to ordered references without losing assets', () => {
+  const source = model.createMedia('image', '/legacy-base.png', '历史基底图', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/second-reference.png', '第二张参考图', { x: 0, y: 300 });
+  const target = model.createGenerator('image', { x: 720, y: 0 });
+  const result = model.normalizeDocument({
+    nodes: [source, second, target],
+    edges: [
+      { id: 'legacy-base-edge', source: source.id, target: target.id, inputRole: 'base-image' },
+      { id: 'reference-edge', source: second.id, target: target.id, inputRole: 'reference-image', order: 1 },
+    ],
+  });
+
+  assert.equal(result.edges.length, 2);
+  assert.equal(result.edges.find((edge) => edge.id === 'legacy-base-edge')?.inputRole, 'reference-image');
+  assert.deepEqual(model.incomingReferences(result, target.id).map((node) => node.data.name), ['历史基底图', '第二张参考图']);
+  assert.deepEqual(result.nodes.filter((node) => node.data.url).map((node) => node.data.url), ['/legacy-base.png', '/second-reference.png']);
+});
+
+test('allows multiple image references on the same target after legacy migration', () => {
+  const first = model.createMedia('image', '/first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/second.png', '第二张', { x: 0, y: 300 });
+  const target = model.createGenerator('image', { x: 720, y: 0 });
+  const document = model.normalizeDocument({ nodes: [first, second, target], edges: [] });
+  const withFirst = model.addEdge(document, first.id, target.id, 'right', 'left', 'reference', 'reference-image', 0);
+  const withSecond = model.addEdge(withFirst, second.id, target.id, 'right', 'left', 'reference', 'reference-image', 1);
+
+  assert.equal(withSecond.edges.length, 2);
+  assert.deepEqual(model.incomingReferences(withSecond, target.id).map((node) => node.id), [first.id, second.id]);
+});
+
 test('creates media, prompt, generator, groups, edges and reference order', () => {
   const empty = model.normalizeDocument(null);
   const image = model.createMedia('image', '/image.png', '参考图', { x: 0, y: 0 });

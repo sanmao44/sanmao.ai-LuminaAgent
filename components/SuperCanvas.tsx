@@ -109,6 +109,7 @@ import {
   saveAssetCollections,
   type AssetCollection,
 } from "@/lib/client-history";
+import { bootstrapWorkspace, startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
 import MediaViewer, {
@@ -849,6 +850,7 @@ export default function SuperCanvas() {
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>("idle");
   const [generationKeys, setGenerationKeys] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<Notice | null>(null);
   const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
@@ -1136,39 +1138,50 @@ export default function SuperCanvas() {
   }, [activePanel, ready, refreshGenerationLogs]);
 
   useEffect(() => {
-    const storage = ensureCanvasStorage();
-    const initial = loadCanvasDocument(storage.activeId);
-    docRef.current = initial;
-    setDocument(initial);
-    setProjects(storage.projects);
-    setActiveProjectId(storage.activeId);
-    setReady(true);
-    if (storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
-    void loadCanvasRuntime()
-      .then((value) => {
-        setRuntime(value);
-        setDrafts((current) => ({
-          ...current,
-          image: {
-            ...current.image,
-            params: readSharedCreationSettings("image", value),
-          },
-          video: {
-            ...current.video,
-            params: readSharedCreationSettings("video", value),
-          },
-          text: {
-            ...current.text,
-            params: readSharedCreationSettings("text", value),
-          },
-        }));
-      })
-      .catch((error: unknown) =>
-        setRuntimeError(
-          error instanceof Error ? error.message : "模型库读取失败",
-        ),
-      );
+    let cancelled = false;
+    let stopWorkspaceSync = () => {};
+    const start = async () => {
+      await bootstrapWorkspace();
+      if (cancelled) return;
+      const storage = ensureCanvasStorage();
+      const initial = loadCanvasDocument(storage.activeId);
+      docRef.current = initial;
+      setDocument(initial);
+      setProjects(storage.projects);
+      setActiveProjectId(storage.activeId);
+      setReady(true);
+      if (storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
+      stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
+      void loadCanvasRuntime()
+        .then((value) => {
+          if (cancelled) return;
+          setRuntime(value);
+          setDrafts((current) => ({
+            ...current,
+            image: {
+              ...current.image,
+              params: readSharedCreationSettings("image", value),
+            },
+            video: {
+              ...current.video,
+              params: readSharedCreationSettings("video", value),
+            },
+            text: {
+              ...current.text,
+              params: readSharedCreationSettings("text", value),
+            },
+          }));
+        })
+        .catch((error: unknown) =>
+          setRuntimeError(
+            error instanceof Error ? error.message : "模型库读取失败",
+          ),
+        );
+    };
+    void start();
     return () => {
+      cancelled = true;
+      stopWorkspaceSync();
       mountedRef.current = false;
       pollTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       pollTimersRef.current.clear();
@@ -5229,7 +5242,7 @@ export default function SuperCanvas() {
           current.length,
         ),
       );
-      notify(inputRole === "base-image" ? "已设置为基底图" : "已加入引用并保留顺序");
+      notify("已加入参考图并保留顺序");
     },
     [commit, notify],
   );
@@ -6519,6 +6532,10 @@ export default function SuperCanvas() {
           >
             <i />
             {saving ? "保存中…" : saveError ? "保存失败" : "已保存"}
+          </span>
+          <span className={`canvas-workspace-sync-state ${workspaceSyncStatus}`} title="同台电脑跨浏览器工作区同步状态">
+            <i />
+            {workspaceSyncStatus === "syncing" ? "同步中…" : workspaceSyncStatus === "offline" ? "离线待同步" : workspaceSyncStatus === "error" ? "同步失败" : workspaceSyncStatus === "synced" ? "已同步" : "准备同步"}
           </span>
         </div>
         <button
@@ -8457,7 +8474,6 @@ function CanvasNodeReferenceStrip({
   document,
   references,
   contexts,
-  base,
   onReorder,
   onRemove,
   onDrop,
@@ -8468,10 +8484,9 @@ function CanvasNodeReferenceStrip({
   document: CanvasDocument;
   references: CanvasNode[];
   contexts: CanvasNode[];
-  base?: CanvasNode;
   onReorder: (ownerId: string, draggedId: string, targetId: string) => void;
   onRemove: (ownerId: string, sourceId: string) => void;
-  onDrop: (ownerId: string, sourceId: string, role: "base-image" | "reference-image") => void;
+  onDrop: (ownerId: string, sourceId: string, role: "reference-image") => void;
   onAddFiles: (ownerId: string, files: File[]) => void;
   onPreview: (node: CanvasNode) => void;
 }) {
@@ -8479,17 +8494,17 @@ function CanvasNodeReferenceStrip({
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const allowImageReference = target.type === "prompt" || target.data.kind === "image" || target.data.kind === "video";
 
-  const handleDrop = (event: ReactDragEvent<HTMLDivElement>, role: "base-image" | "reference-image", targetId?: string) => {
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>, targetId?: string) => {
     event.preventDefault();
     event.stopPropagation();
     const fromIndex = Number(event.dataTransfer.getData("application/x-sanmao-reference-index"));
-    if (role === "reference-image" && Number.isInteger(fromIndex) && fromIndex >= 0 && fromIndex < references.length && targetId) {
+    if (Number.isInteger(fromIndex) && fromIndex >= 0 && fromIndex < references.length && targetId) {
       onReorder(target.id, references[fromIndex].id, targetId);
       setDraggedId(null);
       return;
     }
     const sourceId = event.dataTransfer.getData("application/x-sanmao-canvas-node");
-    if (sourceId) onDrop(target.id, sourceId, role);
+    if (sourceId) onDrop(target.id, sourceId, "reference-image");
     setDraggedId(null);
   };
 
@@ -8502,30 +8517,6 @@ function CanvasNodeReferenceStrip({
           <button type="button" onClick={() => inputRef.current?.click()}>＋ 添加</button>
         </div>
       </div>
-      {target.type !== "prompt" && (
-        <div
-          className={`canvas-editor-base-slot${base ? " filled" : ""}`}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => handleDrop(event, "base-image")}
-        >
-          <span className="canvas-editor-slot-label">基底图 <small>最多 1 张</small></span>
-          {base ? (
-            <div
-              className="canvas-editor-base-preview"
-              role="button"
-              tabIndex={0}
-              onClick={() => onPreview(base)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") onPreview(base);
-              }}
-            >
-              {base.data.kind === "video" ? <video src={base.data.url} muted playsInline /> : <img src={base.data.url} alt={base.data.name || "基底图"} />}
-              <b>{base.data.name || "基底图"}</b>
-              <button type="button" aria-label="移除基底图" onClick={(event) => { event.stopPropagation(); onRemove(target.id, base.id); }}>×</button>
-            </div>
-          ) : <small>把图片节点拖到这里</small>}
-        </div>
-      )}
       {contexts.length > 0 && (
         <div className="canvas-editor-context-slot">
           <span className="canvas-editor-slot-label">文本上下文 <small>来自 @ 引用</small></span>
@@ -8540,7 +8531,7 @@ function CanvasNodeReferenceStrip({
           </div>
         </div>
       )}
-      <div className="canvas-editor-reference-slot" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop(event, "reference-image")}>
+      <div className="canvas-editor-reference-slot" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop(event)}>
         <span className="canvas-editor-slot-label">{target.type === "prompt" ? "上下文与参考" : "参考图"} <small>按编号提交</small></span>
         <div className="canvas-editor-reference-items">
           {references.map((reference, index) => (
@@ -8555,7 +8546,7 @@ function CanvasNodeReferenceStrip({
                 event.dataTransfer.setData("application/x-sanmao-reference-index", String(index));
               }}
               onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => handleDrop(event, "reference-image", reference.id)}
+              onDrop={(event) => handleDrop(event, reference.id)}
               onDragEnd={() => setDraggedId(null)}
             >
               <button type="button" className="canvas-editor-reference-preview" onClick={() => onPreview(reference)} title={reference.data.name || `引用 ${index + 1}`}>
@@ -8760,10 +8751,6 @@ function CanvasNodeEditorPopover({
   const editorReferences = incomingContext(document, node.id).filter(
     (item) => item.type === "media" && Boolean(item.data.url),
   );
-  const editorBase = document.edges.find(
-    (edge) => edge.target === node.id && edge.inputRole === "base-image",
-  )?.source;
-  const baseNode = editorBase ? nodeById(document, editorBase) : undefined;
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
   const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
@@ -8791,10 +8778,10 @@ function CanvasNodeEditorPopover({
     const zoom = Math.max(0.12, document.camera.zoom || 1);
     const stageWidth = stage.clientWidth;
     const stageHeight = stage.clientHeight;
-    const nextCompact = stageWidth < 900 || zoom < 0.58;
+    const nextCompact = stageWidth < 960 || zoom < 0.58;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
-    const popoverWidth = popoverRef.current?.offsetWidth || (nextCompact ? 300 : 344);
-    const popoverHeight = popoverRef.current?.offsetHeight || (nextCompact ? 360 : 520);
+    const popoverWidth = popoverRef.current?.offsetWidth || (nextCompact ? 510 : 640);
+    const popoverHeight = popoverRef.current?.offsetHeight || (nextCompact ? 500 : 580);
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -8879,108 +8866,113 @@ function CanvasNodeEditorPopover({
         </div>
       </div>
       <div className="canvas-node-editor-body">
-        <div className="canvas-node-editor-prompt-wrap">
-          <div className="canvas-node-editor-prompt-label">
-            <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
-            <small>@ 引用节点 · {node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
-          </div>
-          <textarea
-            aria-label={`${nodeLabel(node)}提示词`}
-            value={editorPrompt}
-            placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
-            onChange={(event) => {
-              const value = event.target.value;
-              onEditorPromptChange(node, value);
-              setMentionState(mentionStateForValue(value, event.target.selectionStart));
-            }}
-            onClick={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
-            onKeyUp={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setMentionState(null);
-              if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
-                event.preventDefault();
-                onGenerate(node);
-              }
-            }}
-            rows={3}
-          />
-          {mentionState && visibleMentionCandidates.length > 0 && (
-            <div className="canvas-node-mention-menu">
-              {visibleMentionCandidates.slice(0, 12).map((candidate) => {
-                const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
-                return (
-                  <button
-                    type="button"
-                    key={candidate.id}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      const next = `${editorPrompt.slice(0, mentionState.start)}@${candidateIndex + 1} ${editorPrompt.slice(mentionState.end)}`;
-                      onEditorPromptChange(node, next);
-                      const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                        ? "context"
-                        : candidate.data.kind === "video"
-                          ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
-                          : "reference-image";
-                      onReferenceDrop(node.id, candidate.id, role);
-                      setMentionState(null);
-                    }}
-                  >
-                    <strong>@{candidateIndex + 1}</strong>
-                    <span className="canvas-node-mention-preview">
-                      {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" && candidate.data.kind === "video" ? "▶" : "✦"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
-                    </span>
-                    <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
-                  </button>
-                );
-              })}
+        <div className="canvas-node-editor-columns">
+          <div className="canvas-node-editor-copy">
+            <div className="canvas-node-editor-prompt-wrap">
+              <div className="canvas-node-editor-prompt-label">
+                <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
+                <small>@ 引用节点 · {node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
+              </div>
+              <textarea
+                aria-label={`${nodeLabel(node)}提示词`}
+                value={editorPrompt}
+                placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  onEditorPromptChange(node, value);
+                  setMentionState(mentionStateForValue(value, event.target.selectionStart));
+                }}
+                onClick={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+                onKeyUp={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setMentionState(null);
+                  if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
+                    event.preventDefault();
+                    onGenerate(node);
+                  }
+                }}
+                rows={3}
+              />
+              {mentionState && visibleMentionCandidates.length > 0 && (
+                <div className="canvas-node-mention-menu">
+                  {visibleMentionCandidates.slice(0, 12).map((candidate) => {
+                    const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
+                    return (
+                      <button
+                        type="button"
+                        key={candidate.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          const next = `${editorPrompt.slice(0, mentionState.start)}@${candidateIndex + 1} ${editorPrompt.slice(mentionState.end)}`;
+                          onEditorPromptChange(node, next);
+                          const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+                            ? "context"
+                            : candidate.data.kind === "video"
+                              ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
+                              : "reference-image";
+                          onReferenceDrop(node.id, candidate.id, role);
+                          setMentionState(null);
+                        }}
+                      >
+                        <strong>@{candidateIndex + 1}</strong>
+                        <span className="canvas-node-mention-preview">
+                          {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" && candidate.data.kind === "video" ? "▶" : "✦"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
+                        </span>
+                        <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        {branchDraft ? (
-          <CanvasReferenceDraftStrip
-            references={branchReferences}
-            onFiles={onDraftReferenceFiles || (() => undefined)}
-            onRemove={onDraftReferenceRemove || (() => undefined)}
-            onReorder={onDraftReferenceReorder || (() => undefined)}
-            onNodeDrop={onDraftReferenceNodeDrop}
-            onPaste={onDraftReferencePaste}
-            onPreview={onDraftReferencePreview}
-            emptyLabel="添加画布参考"
-          />
-        ) : (
-          <CanvasNodeReferenceStrip
-            target={node}
-            document={document}
-            references={editorReferences}
-            contexts={editorContexts}
-            base={baseNode}
-            onReorder={onReferenceReorder}
-            onRemove={onReferenceRemove}
-            onDrop={onReferenceDrop}
-            onAddFiles={onAddReferenceFiles}
-            onPreview={onOutputPreview}
-          />
-        )}
-        {node.type === "generator" && (
-          <div className="canvas-node-variant-editor">
-            <label>变体要求 <small>每行一条，最多 8 条</small></label>
-            <textarea
-              rows={2}
-              value={data.variantRequirementsText ?? variantRequirements.join("\n")}
-              placeholder="改成夜景\n改为俯拍视角"
-              onChange={(event) => onVariantRequirementsChange(node, event.target.value)}
-            />
+            {branchDraft ? (
+              <CanvasReferenceDraftStrip
+                references={branchReferences}
+                onFiles={onDraftReferenceFiles || (() => undefined)}
+                onRemove={onDraftReferenceRemove || (() => undefined)}
+                onReorder={onDraftReferenceReorder || (() => undefined)}
+                onNodeDrop={onDraftReferenceNodeDrop}
+                onPaste={onDraftReferencePaste}
+                onPreview={onDraftReferencePreview}
+                emptyLabel="添加画布参考"
+              />
+            ) : (
+              <CanvasNodeReferenceStrip
+                target={node}
+                document={document}
+                references={editorReferences}
+                contexts={editorContexts}
+                onReorder={onReferenceReorder}
+                onRemove={onReferenceRemove}
+                onDrop={onReferenceDrop}
+                onAddFiles={onAddReferenceFiles}
+                onPreview={onOutputPreview}
+              />
+            )}
           </div>
-        )}
-        {editorParams && (
-          <CreationParameterEditor
-            settings={editorParams}
-            runtime={runtime}
-            referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
-            variant="canvas-flat"
-            onChange={(settings) => onEditorParamsChange(node, settings)}
-          />
-        )}
+          <div className="canvas-node-editor-settings">
+            {node.type === "generator" && (
+              <div className="canvas-node-variant-editor">
+                <label>变体要求 <small>每行一条，最多 8 条</small></label>
+                <textarea
+                  rows={2}
+                  value={data.variantRequirementsText ?? variantRequirements.join("\n")}
+                  placeholder="改成夜景\n改为俯拍视角"
+                  onChange={(event) => onVariantRequirementsChange(node, event.target.value)}
+                />
+              </div>
+            )}
+            {editorParams && (
+              <CreationParameterEditor
+                settings={editorParams}
+                runtime={runtime}
+                referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
+                variant="canvas-flat"
+                onChange={(settings) => onEditorParamsChange(node, settings)}
+              />
+            )}
+          </div>
+        </div>
       </div>
       <div className="canvas-node-editor-actions">
         <span>{node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : "Ctrl/Cmd + Enter 生成"}</span>
@@ -9125,10 +9117,6 @@ function CanvasNodeCard({
   const editorReferences = incomingContext(document, node.id).filter((item) =>
     item.type === "media" && Boolean(item.data.url),
   );
-  const editorBase = document.edges.find(
-    (edge) => edge.target === node.id && edge.inputRole === "base-image",
-  )?.source;
-  const baseNode = editorBase ? nodeById(document, editorBase) : undefined;
   const editorOutputs =
     node.type === "generator"
       ? document.nodes.filter(
@@ -9558,7 +9546,6 @@ function CanvasNodeCard({
             document={document}
             references={editorReferences}
             contexts={editorContexts}
-            base={baseNode}
             onReorder={onReferenceReorder}
             onRemove={onReferenceRemove}
             onDrop={onReferenceDrop}

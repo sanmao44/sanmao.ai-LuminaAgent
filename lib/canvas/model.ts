@@ -181,9 +181,9 @@ function normalizeEdge(value: unknown): CanvasEdge | null {
 }
 
 function normalizeInputRole(value: unknown): CanvasInputRole | undefined {
+  if (value === "base-image") return "reference-image";
   return value === "prompt" ||
     value === "context" ||
-    value === "base-image" ||
     value === "reference-image" ||
     value === "mask" ||
     value === "video" ||
@@ -218,13 +218,6 @@ export function canConnect(
   if (!nodeById(document, source) && !groupById(document, source)) return { ok: false, reason: "源节点不存在" };
   if (!nodeById(document, target) && !groupById(document, target)) return { ok: false, reason: "目标节点不存在" };
   if (hasPath(document, source, target)) return { ok: false, reason: "这条连接会形成循环" };
-  const targetNode = nodeById(document, target);
-  if (inputRole === "base-image" && targetNode) {
-    const existing = document.edges.some(
-      (edge) => edge.target === target && edge.inputRole === "base-image",
-    );
-    if (existing) return { ok: false, reason: "一个生成节点只能有一个基底图" };
-  }
   return { ok: true as const };
 }
 

@@ -1,5 +1,7 @@
 import type { CanvasDocument, CanvasProject } from './types';
 import { CANVAS_VERSION, normalizeDocument } from './model';
+import { emitWorkspaceChange } from '../workspace-events';
+import type { CanvasWorkspaceData } from '../workspace-types';
 
 export const CANVAS_PROJECTS_KEY = 'sanmao.canvas.projects';
 export const CANVAS_ACTIVE_KEY = 'sanmao.canvas.active';
@@ -33,6 +35,49 @@ function normalizeProjects(value: unknown): CanvasProject[] {
     createdAt: Number(item.createdAt) || Date.now(),
     updatedAt: Number(item.updatedAt) || Number(item.createdAt) || Date.now(),
   }));
+}
+
+function activeProjectId(projects: CanvasProject[], value: unknown) {
+  const activeId = typeof value === 'string' ? value : '';
+  return projects.some((project) => project.id === activeId) ? activeId : projects[0]?.id || null;
+}
+
+/** Reads the current canvas without creating a project during workspace bootstrap. */
+export function readCanvasWorkspace(): CanvasWorkspaceData {
+  let projects = normalizeProjects(readJson(CANVAS_PROJECTS_KEY, []));
+  if (!projects.length && normalizeProjects(readJson(NOVA_PROJECTS_KEY, [])).length) {
+    ensureCanvasStorage();
+    projects = normalizeProjects(readJson(CANVAS_PROJECTS_KEY, []));
+  }
+  const documents = projects.reduce<Record<string, CanvasDocument>>((result, project) => {
+    const value = readJson<unknown>(`${CANVAS_PROJECT_PREFIX}${project.id}`, null);
+    if (value) result[project.id] = normalizeDocument(value);
+    return result;
+  }, {});
+  return {
+    projects,
+    activeId: activeProjectId(projects, readJson(CANVAS_ACTIVE_KEY, null)),
+    documents,
+    ui: readJson<Record<string, unknown>>(CANVAS_UI_KEY, {}),
+  };
+}
+
+export function restoreCanvasWorkspace(value: Partial<CanvasWorkspaceData> | null | undefined) {
+  const projects = normalizeProjects(value?.projects);
+  const activeId = activeProjectId(projects, value?.activeId);
+  try {
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith(CANVAS_PROJECT_PREFIX))
+      .forEach((key) => window.localStorage.removeItem(key));
+  } catch { return false; }
+  const okProjects = writeJson(CANVAS_PROJECTS_KEY, projects);
+  const okActive = activeId ? writeJson(CANVAS_ACTIVE_KEY, activeId) : writeJson(CANVAS_ACTIVE_KEY, null);
+  const okUi = writeJson(CANVAS_UI_KEY, value?.ui && typeof value.ui === 'object' ? value.ui : {});
+  const okDocuments = projects.every((project) => {
+    const document = value?.documents?.[project.id];
+    return writeJson(`${CANVAS_PROJECT_PREFIX}${project.id}`, normalizeDocument(document || null));
+  });
+  return okProjects && okActive && okUi && okDocuments;
 }
 
 export function ensureCanvasStorage() {
@@ -75,17 +120,22 @@ export function saveCanvasDocument(id: string, document: CanvasDocument) {
       if (!window.localStorage.getItem(backupKey)) window.localStorage.setItem(backupKey, JSON.stringify({ backedUpAt: new Date().toISOString(), sourceVersion: current.version || 'nova-compatible', document: current }));
     } catch { return false; }
   }
-  return writeJson(key, { ...normalizeDocument(document), version: CANVAS_VERSION });
+  const ok = writeJson(key, { ...normalizeDocument(document), version: CANVAS_VERSION });
+  if (ok) emitWorkspaceChange();
+  return ok;
 }
 
 export function saveCanvasProjects(projects: CanvasProject[], activeId: string) {
   const okProjects = writeJson(CANVAS_PROJECTS_KEY, projects);
   const okActive = writeJson(CANVAS_ACTIVE_KEY, activeId);
-  return okProjects && okActive;
+  const ok = okProjects && okActive;
+  if (ok) emitWorkspaceChange();
+  return ok;
 }
 
 export function deleteCanvasProject(id: string) {
   try { window.localStorage.removeItem(`${CANVAS_PROJECT_PREFIX}${id}`); } catch { return false; }
+  emitWorkspaceChange();
   return true;
 }
 
@@ -94,7 +144,9 @@ export function readCanvasUi<T extends Record<string, unknown>>() {
 }
 
 export function writeCanvasUi(value: Record<string, unknown>) {
-  return writeJson(CANVAS_UI_KEY, value);
+  const ok = writeJson(CANVAS_UI_KEY, value);
+  if (ok) emitWorkspaceChange();
+  return ok;
 }
 
 export function canvasProjectFromDocument(name: string, document: CanvasDocument): string {
