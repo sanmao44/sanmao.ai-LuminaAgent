@@ -24,7 +24,7 @@ import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/li
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
-import { optimizeCanvasUploadFile } from '@/lib/canvas/api';
+import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -438,44 +438,6 @@ function editorRatio(editor) {
     if (editor.ratio !== '自动') return editor.ratio;
     const dimensions = outputDimensions(editor.item.outputSize);
     return dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '1:1';
-}
-async function compressReferenceDataUrl(dataUrl) {
-    const source = new Image();
-    await new Promise((resolve, reject)=>{
-        source.onload = ()=>resolve();
-        source.onerror = ()=>reject(new Error('读取图片尺寸失败'));
-        source.src = dataUrl;
-    });
-    const maxEdge = 1400;
-    let scale = Math.min(1, maxEdge / Math.max(source.naturalWidth, source.naturalHeight));
-    let compressed = dataUrl;
-    for(let attempt = 0; attempt < 5; attempt += 1){
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
-        canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
-        const context = canvas.getContext('2d');
-        if (!context) return dataUrl;
-        context.drawImage(source, 0, 0, canvas.width, canvas.height);
-        let preserveAlpha = !/jpe?g/i.test(dataUrl.slice(5, dataUrl.indexOf(';')));
-        if (preserveAlpha) {
-            try {
-                const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-                preserveAlpha = false;
-                for (let index = 3; index < pixels.length; index += 4) {
-                    if (pixels[index] < 255) {
-                        preserveAlpha = true;
-                        break;
-                    }
-                }
-            } catch {
-                preserveAlpha = true;
-            }
-        }
-        compressed = canvas.toDataURL(preserveAlpha ? 'image/webp' : 'image/jpeg', Math.max(0.56, 0.78 - attempt * 0.05));
-        if (compressed.length <= 900000) break;
-        scale *= 0.82;
-    }
-    return compressed;
 }
 async function fileToReference(file, options) {
     if (!file.type.startsWith('image/')) throw new Error('只能上传图片文件');

@@ -1,5 +1,7 @@
 "use client";
 
+import { prepareCanvasAgentReferences } from "@/lib/canvas/api";
+
 export type AgentReference = { url: string; name?: string };
 export type AgentMessage = { role: "user" | "assistant"; content: string };
 
@@ -39,11 +41,17 @@ async function readAgentStream(response: Response, onEvent?: (event: AgentEvent)
 }
 
 async function runAgentTask(task: string, prompt: string, references: AgentReference[] = [], model?: string) {
+  const preparedReferences = await prepareCanvasAgentReferences(references);
   const response = await fetch("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      messages: [{ role: "user", content: prompt, references, files: [] }],
+      messages: [{
+        role: "user",
+        content: prompt,
+        references: preparedReferences.map((reference) => reference.url),
+        files: [],
+      }],
       model: model || "auto",
       task,
       stream: true,
@@ -78,4 +86,3 @@ export function requestPromptOptimization(prompt: string, references: AgentRefer
   if (!prompt.trim()) return Promise.reject(new Error("请输入需要优化的提示词"));
   return runAgentTask("optimize_prompt", prompt, references, model);
 }
-

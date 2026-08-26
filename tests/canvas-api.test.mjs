@@ -78,6 +78,10 @@ function withImageCanvas(options = {}) {
           }
           callback(new Blob([new Uint8Array(outputBytes)], { type }));
         },
+        toDataURL(type) {
+          encodedTypes.push(type);
+          return `data:${type};base64,AA==`;
+        },
       };
       canvasSizes.push(canvas);
       return canvas;
@@ -226,6 +230,34 @@ test('canvas agent generation marks the request as canvas-originated', async () 
     webSearch: false,
     stream: false,
   });
+});
+
+test('canvas agent references use the compact image format before sending', async () => {
+  const mocks = withImageCanvas({ width: 3200, height: 1800 });
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      return jsonResponse({ ok: true, message: '已完成' });
+    }, () => api.generateCanvasAgent({
+      messages: [{ role: 'user', content: '请反推提示词' }],
+      model: 'provider-a-chat-model',
+      references: [
+        { url: 'data:image/png;base64,ORIGINAL-1', name: '第一张' },
+        { url: 'data:image/png;base64,ORIGINAL-2', name: '第二张' },
+      ],
+    }));
+
+    const payload = JSON.parse(request.options.body);
+    assert.equal(request.input, '/api/agent');
+    assert.deepEqual(payload.messages[0].references, [
+      'data:image/jpeg;base64,AA==',
+      'data:image/jpeg;base64,AA==',
+    ]);
+    assert.deepEqual(mocks.encodedTypes, ['image/jpeg', 'image/jpeg']);
+  } finally {
+    mocks.restore();
+  }
 });
 
 test('canvas upscale marks the request as canvas-originated', async () => {
