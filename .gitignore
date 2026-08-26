@@ -11,3 +11,4 @@ backups/
 image_generation_records/
 *.sanmao.json
 *.sanmao-backup.tar.gz
+*.lnk

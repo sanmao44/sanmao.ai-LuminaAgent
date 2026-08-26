@@ -10,6 +10,8 @@
   <string>com.sanmao.ai</string>
   <key>CFBundleName</key>
   <string>SANMAO.AI</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

@@ -2,9 +2,12 @@
 
 ## 启动器
 
-- Windows：双击 `启动 SANMAO.AI - Windows.cmd`
-- Windows 局域网共享：双击 `启动 SANMAO.AI - 局域网共享.cmd`
-- macOS：优先双击 `SANMAO.AI.app`；也可以双击 `启动 SANMAO.AI - macOS.command`
+- Windows 本机：优先双击蓝色 Logo 的 `启动 SANMAO.AI - Windows.lnk`
+- Windows 局域网共享：优先双击绿色 Logo 的 `启动 SANMAO.AI - 局域网共享.lnk`
+- macOS：优先双击带橙色 Logo 的 `SANMAO.AI.app`
+- 备用入口：Windows 使用对应 `.cmd`，macOS 使用 `启动 SANMAO.AI - macOS.command`
+
+首次解压后如果还没有 `.lnk` 快捷方式，先双击一次对应的 Windows `.cmd`，启动器会自动在项目目录生成带 Logo 的快捷方式。快捷方式只在本机生成，不会把当前电脑的绝对路径提交到 GitHub；项目目录移动后，再双击一次 `.cmd` 即可自动刷新路径。蓝色代表本机启动，绿色代表局域网共享，橙色代表 macOS 应用。
 
 首次在 macOS 上使用时，如果系统提示没有执行权限，请在项目目录打开终端运行：
 
@@ -202,11 +205,13 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 
 推荐解压到一个全新的文件夹，然后双击：
 
+`启动 SANMAO.AI - Windows.lnk`
+
+如果还没有快捷方式，先双击备用入口：
+
 `启动 SANMAO.AI - Windows.cmd`
 
-或：
-
-旧文件名 `启动 SANMAO.AI.cmd` 仍可继续使用。
+备用 `.cmd` 会自动生成或刷新本机的 Logo 快捷方式。项目目录移动后，用 `.cmd` 启动一次即可修复快捷方式；旧文件名 `启动 SANMAO.AI.cmd` 仍可继续使用。
 
 启动器会自动：
 1. 检查 Node.js 20.9+
@@ -219,7 +224,7 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 
 ## 局域网共享画布（Windows）
 
-主机和其他电脑连接同一个路由器即可，主机接网线、其他电脑连 WiFi 也可以。双击 `启动 SANMAO.AI - 局域网共享.cmd` 后，首次启动会单独弹出密码设置窗口，设置至少 8 位管理员密码；确认后服务会在后台启动，并弹出“局域网共享已启动”窗口，显示和复制局域网画布地址，例如：
+主机和其他电脑连接同一个路由器即可，主机接网线、其他电脑连 WiFi 也可以。优先双击绿色 Logo 的 `启动 SANMAO.AI - 局域网共享.lnk`；如果还没有快捷方式，双击 `启动 SANMAO.AI - 局域网共享.cmd`，它会先自动生成快捷方式。首次启动会单独弹出密码设置窗口，设置至少 8 位管理员密码；确认后服务会在后台启动，并弹出“局域网共享已启动”窗口，显示和复制局域网画布地址，例如：
 
 `http://192.168.1.20:3210/canvas`
 

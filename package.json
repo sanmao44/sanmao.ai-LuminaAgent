@@ -6,7 +6,8 @@
     "dev": "next dev --webpack -p 3210",
     "build": "next build --webpack",
     "start": "next start -p 3210",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "generate:launcher-icons": "node scripts/generate-launcher-icons.mjs"
   },
   "dependencies": {
     "next": "16.2.12",

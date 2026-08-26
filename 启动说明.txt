@@ -3,13 +3,13 @@ SANMAO.AI 0.6.6 使用说明
 
 一、第一次启动
 1. 解压到一个全新的文件夹。
-2. Windows 双击“启动 SANMAO.AI - Windows.cmd”；macOS 优先双击“SANMAO.AI.app”，也可以双击“启动 SANMAO.AI - macOS.command”。
-   Windows 如果要让同一局域网的其他电脑使用同一个画布，请双击“启动 SANMAO.AI - 局域网共享.cmd”。
+2. Windows 本机优先双击蓝色 Logo 的“启动 SANMAO.AI - Windows.lnk”；如果还没有快捷方式，先双击“启动 SANMAO.AI - Windows.cmd”。macOS 优先双击带橙色 Logo 的“SANMAO.AI.app”，也可以双击“启动 SANMAO.AI - macOS.command”。
+   Windows 如果要让同一局域网的其他电脑使用同一个画布，请优先双击绿色 Logo 的“启动 SANMAO.AI - 局域网共享.lnk”；如果还没有快捷方式，请双击“启动 SANMAO.AI - 局域网共享.cmd”。
 3. macOS 首次使用如果提示没有执行权限，请在项目目录执行：chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO.AI'
 4. 第一次会自动安装依赖和构建；重复双击不会启动第二个服务，而是打开已有网页。
 5. 本地服务会保持在后台运行，不受浏览器关闭、崩溃或刷新影响；再次双击启动器会直接复用它。
 6. Windows 可双击“停止 SANMAO.AI - Windows.cmd”，macOS 可双击“停止 SANMAO.AI - macOS.command”停止本地服务。
-7. 等看到“SANMAO.AI 已启动”后浏览器才会自动打开。
+7. 等看到“SANMAO.AI 已启动”后浏览器才会自动打开。Windows 的 `.cmd` 会自动生成或刷新同目录的 Logo 快捷方式；项目目录移动后再次双击 `.cmd` 一次即可修复。蓝色是本机启动，绿色是局域网共享，橙色是 macOS 应用；`.cmd` 和 `.command` 始终保留为备用入口。
 
 局域网共享说明：主机接网线、其他电脑连同一路由器 WiFi 也可以。局域网启动器首次会提示设置至少 8 位管理员密码（密文保存在本机 .data/lan-password）；之后会自动使用。若要重新设置，请停止服务后删除该文件再启动。启动器会显示类似 http://192.168.1.20:3210/canvas 的地址，其他电脑打开该地址登录即可。主机必须保持运行，数据同步约每 5 秒一次，不是实时多人协同。只建议在可信局域网使用，不要开放到公网。
 
