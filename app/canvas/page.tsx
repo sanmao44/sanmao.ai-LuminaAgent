@@ -1,3 +1,4 @@
+import AdminAccessGate from '@/components/AdminAccessGate';
 import SuperCanvas from '@/components/SuperCanvas';
 
 /**
@@ -6,5 +7,9 @@ import SuperCanvas from '@/components/SuperCanvas';
  * 后续无限画布逻辑直接挂载到 components/SuperCanvas.tsx。
  */
 export default function CanvasPage() {
-  return <SuperCanvas />;
+  return (
+    <AdminAccessGate>
+      <SuperCanvas />
+    </AdminAccessGate>
+  );
 }

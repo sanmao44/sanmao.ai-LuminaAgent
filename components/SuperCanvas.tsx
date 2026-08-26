@@ -5778,6 +5778,14 @@ export default function SuperCanvas() {
   const handleContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       event.preventDefault();
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          ".canvas-node,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        )
+      )
+        return;
       const point = stagePoint(event.clientX, event.clientY);
       setContextMenu({
         x: event.clientX,

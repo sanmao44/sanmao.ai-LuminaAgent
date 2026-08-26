@@ -208,14 +208,14 @@ function Stop-SanmaoOwnedProcess {
   )
 
   $pidValue = [int]$Process.ProcessId
-  & taskkill.exe /PID $pidValue /T 2>$null | Out-Null
+  try { & taskkill.exe /PID $pidValue /T 2>$null | Out-Null } catch {}
   Start-Sleep -Milliseconds $GraceMs
   try {
     Get-Process -Id $pidValue -ErrorAction Stop | Out-Null
   } catch {
     return $true
   }
-  & taskkill.exe /PID $pidValue /T /F 2>$null | Out-Null
+  try { & taskkill.exe /PID $pidValue /T /F 2>$null | Out-Null } catch {}
   return $true
 }
 

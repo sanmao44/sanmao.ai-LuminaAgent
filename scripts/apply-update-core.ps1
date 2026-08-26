@@ -112,12 +112,15 @@ try {
   $launcher = Join-Path $TargetPath 'scripts\start.ps1'
   if (-not (Test-Path -LiteralPath $launcher)) { throw '更新后找不到 Windows 启动器' }
   $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcher, '-NonInteractive')
+  $lanArgument = if ($env:SANMAO_NETWORK_MODE -eq 'lan') { ' -Lan' } else { '' }
   if ($Port -ge 1024 -and $Port -le 65525) {
     # Keep this compatible with older releases whose start.ps1 did not yet
     # declare a -Port parameter; all supported launchers already honor the
     # SANMAO_PORT environment variable.
-    $launcherCommand = "`$env:SANMAO_PORT=$(PowerShellLiteral ([string]$Port)); & $(PowerShellLiteral $launcher) -NonInteractive"
+    $launcherCommand = "`$env:SANMAO_PORT=$(PowerShellLiteral ([string]$Port)); & $(PowerShellLiteral $launcher) -NonInteractive$lanArgument"
     $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $launcherCommand)
+  } elseif ($lanArgument) {
+    $launcherArguments += '-Lan'
   }
   $launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $launcherArguments -WorkingDirectory $TargetPath -WindowStyle Hidden -PassThru
   Write-UpdateLog "已启动更新后启动器 PID $($launcherProcess.Id)"

@@ -651,6 +651,10 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .media-viewer-stage.dragging{cursor:grabbing}
 .media-viewer-stage img,.media-viewer-stage video{user-select:none;-webkit-user-drag:none}
  .media-viewer-stage img{pointer-events:none}
+ /* Keep the actual preview image hit-testable so the browser can expose its
+    native image menu (including Copy image) on right click. The stage still
+    owns left-button pan/zoom gestures through event bubbling. */
+ .media-viewer-stage .media-viewer-copyable-image{pointer-events:auto}
 
  /* Main viewer parity: fixed media frames keep contain sizing and panning
     predictable while the stage remains the single gesture surface. */

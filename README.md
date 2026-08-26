@@ -3,6 +3,7 @@
 ## 启动器
 
 - Windows：双击 `启动 SANMAO.AI - Windows.cmd`
+- Windows 局域网共享：双击 `启动 SANMAO.AI - 局域网共享.cmd`
 - macOS：优先双击 `SANMAO.AI.app`；也可以双击 `启动 SANMAO.AI - macOS.command`
 
 首次在 macOS 上使用时，如果系统提示没有执行权限，请在项目目录打开终端运行：
@@ -215,6 +216,16 @@ chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO
 5. 等服务器真的启动后再打开浏览器
 
 首次安装依赖通常需要几分钟。
+
+## 局域网共享画布（Windows）
+
+主机和其他电脑连接同一个路由器即可，主机接网线、其他电脑连 WiFi 也可以。双击 `启动 SANMAO.AI - 局域网共享.cmd` 后，首次启动会提示设置至少 8 位管理员密码，并在窗口中显示局域网画布地址，例如：
+
+`http://192.168.1.20:3210/canvas`
+
+其他电脑打开这个地址，输入管理员密码后即可使用主机上的同一个画布、图库、资产和生成服务。主机需要保持 SANMAO.AI 运行；现有同步约每 5 秒更新一次，同时编辑时以后保存的版本会覆盖先保存的版本，不是实时多人协同。
+
+管理员密码会以当前 Windows 用户可解密的密文保存于 `.data/lan-password`，不会进入 GitHub 或工作区同步；如需重新设置，停止服务后删除该文件再启动局域网入口。局域网入口默认只建议在可信的家庭或办公网络使用，不要做公网端口转发。如果其他电脑无法打开，需确认 Windows 网络类型为“专用网络”，并按启动器提示在管理员 PowerShell 中放行当前端口的 Private 入站规则。普通 `启动 SANMAO.AI - Windows.cmd` 仍然只允许本机访问，也不需要管理员密码。
 
 ## 手动启动
 

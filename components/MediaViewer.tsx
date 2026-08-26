@@ -511,12 +511,12 @@ export default function MediaViewer({
             <>
               <div className="media-viewer-compare-layer">
                 <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.reference)}>
-                  <img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("reference", event.currentTarget)} />
+                  <img className="media-viewer-copyable-image" draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("reference", event.currentTarget)} />
                 </div>
               </div>
               <div className="media-viewer-compare-layer media-viewer-current-layer" style={{ clipPath: `inset(0 0 0 ${comparePosition}%)` }}>
                 <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
-                  <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />
+                  <img className="media-viewer-copyable-image" draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />
                 </div>
               </div>
               <button
@@ -541,20 +541,20 @@ export default function MediaViewer({
               <div className="media-viewer-side-pane" ref={beforePaneRef}>
                 <span className="media-viewer-compare-label">{selectedReference.name}</span>
                 <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.reference)}>
-                  <img draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("reference", event.currentTarget)} />
+                  <img className="media-viewer-copyable-image" draggable={false} src={selectedReference.url} alt={selectedReference.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("reference", event.currentTarget)} />
                 </div>
               </div>
               <div className="media-viewer-side-pane" ref={currentPaneRef}>
                 <span className="media-viewer-compare-label">生成结果</span>
                 <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
-                  <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />
+                  <img className="media-viewer-copyable-image" draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />
                 </div>
               </div>
             </div>
           ) : (
             <div className="media-viewer-single-layer">
               <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
-                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : <img draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />}
+                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : <img className="media-viewer-copyable-image" draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />}
               </div>
             </div>
           )}

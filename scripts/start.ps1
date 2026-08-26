@@ -1,6 +1,7 @@
 ﻿param(
   [int]$Port = 0,
-  [switch]$NonInteractive = $false
+  [switch]$NonInteractive = $false,
+  [switch]$Lan = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,9 @@ $portStart = if ($requestedPort -ge 1024 -and $requestedPort -le 65525) { $reque
 $portEnd = $portStart + 10
 $portRange = $portStart..$portEnd
 $legacyPortRange = 3000..3010
+$networkMode = if ($Lan.IsPresent) { 'lan' } else { 'local' }
+$bindHost = if ($Lan.IsPresent) { '0.0.0.0' } else { '127.0.0.1' }
+$lanPasswordPath = Join-Path $root '.data\lan-password'
 $legacyMarkerPath = Join-Path $env:TEMP 'sanmao-ai-studio-instance.lock'
 $script:serverProcess = $null
 $serverStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
@@ -50,6 +54,71 @@ Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，端口范�
 
 function Test-SanmaoServerAtPort([int]$port) {
   return Test-SanmaoHealthEndpoint -Port $port
+}
+
+function Get-SanmaoServerInfo([int]$port) {
+  $health = Invoke-SanmaoLocalHttp -Port $port -Path '/api/health' -TimeoutMs 1000
+  if (-not $health.Ok -or $health.StatusCode -lt 200 -or $health.StatusCode -ge 500) { return $null }
+  try {
+    $data = $health.Content | ConvertFrom-Json
+    if ($data.service -ne 'sanmao-ai-studio') { return $null }
+    return [pscustomobject]@{
+      Port = $port
+      NetworkMode = if ($data.networkMode -eq 'lan') { 'lan' } else { 'local' }
+    }
+  } catch { return $null }
+}
+
+function Get-SanmaoLanAddresses {
+  $values = @()
+  try {
+    if (Get-Command Get-NetIPAddress -ErrorAction SilentlyContinue) {
+      $values = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Select-Object -ExpandProperty IPAddress)
+    }
+  } catch {}
+  if ($values.Count -eq 0) {
+    try {
+      $values = @([System.Net.Dns]::GetHostEntry([System.Net.Dns]::GetHostName()).AddressList |
+        Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
+        ForEach-Object { $_.IPAddressToString })
+    } catch {}
+  }
+  return @($values |
+    Where-Object { $_ -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' } |
+    Sort-Object -Unique)
+}
+
+function Test-SanmaoPrivateFirewallRule([int]$port) {
+  try {
+    if (-not (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue)) { return $null }
+    $rules = @(Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -Profile Private -ErrorAction Stop)
+    foreach ($rule in $rules) {
+      $filters = @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule -ErrorAction SilentlyContinue)
+      foreach ($filter in $filters) {
+        $localPort = [string]$filter.LocalPort
+        if ($localPort -eq 'Any' -or @($localPort -split ',' | Where-Object { $_.Trim() -eq [string]$port }).Count -gt 0) { return $true }
+      }
+    }
+    return $false
+  } catch { return $null }
+}
+
+function Show-SanmaoLanAccess([int]$port) {
+  $addresses = @(Get-SanmaoLanAddresses)
+  if ($addresses.Count -eq 0) {
+    Write-Host '没有检测到私有局域网 IPv4 地址，请确认主机已连接 WiFi 或网线。' -ForegroundColor Yellow
+  } else {
+    Write-Host '其他电脑请访问以下局域网画布地址：' -ForegroundColor Green
+    foreach ($address in $addresses) { Write-Host "  http://$address`:$port/canvas" -ForegroundColor White }
+  }
+  $firewall = Test-SanmaoPrivateFirewallRule $port
+  if ($firewall -eq $false) {
+    Write-Host 'Windows 防火墙可能尚未允许此端口。若其他电脑打不开，请在“管理员 PowerShell”执行：' -ForegroundColor Yellow
+    Write-Host "New-NetFirewallRule -DisplayName 'SANMAO.AI LAN $port' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -Profile Private" -ForegroundColor DarkGray
+  } elseif ($null -eq $firewall) {
+    Write-Host '如其他电脑打不开，请确认 Windows 防火墙已允许此端口的“专用网络”入站访问。' -ForegroundColor Yellow
+  }
+  Write-Host '局域网模式仅建议在可信网络使用，不要将端口转发到公网。' -ForegroundColor DarkGray
 }
 
 function Test-LocalPortOpen([int]$port) {
@@ -130,7 +199,8 @@ function Find-ExistingServer {
     } elseif (-not (Test-LocalPortOpen $port)) {
       continue
     }
-    if ((Test-SanmaoProcessAtPort $port) -and (Test-SanmaoServerAtPort $port)) { return $port }
+    $info = Get-SanmaoServerInfo $port
+    if ((Test-SanmaoProcessAtPort $port) -and $info) { return $info }
   }
   return 0
 }
@@ -165,6 +235,63 @@ function Fail([string]$text) {
   exit 1
 }
 
+function Read-SanmaoSecret {
+  $secure = Read-Host -AsSecureString
+  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+}
+
+function Load-SanmaoLanPassword {
+  if (Test-Path -LiteralPath $lanPasswordPath) {
+    try {
+      $encrypted = (Get-Content -LiteralPath $lanPasswordPath -Raw -ErrorAction Stop).Trim()
+      if (-not $encrypted) { return }
+      $secure = ConvertTo-SecureString -String $encrypted -ErrorAction Stop
+      $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+      try { $env:SANMAO_ADMIN_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+      finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+    } catch {
+      Write-SanmaoLauncherLog '读取局域网管理员密码密文失败，将重新要求输入。' 'WARN'
+    }
+  }
+}
+
+function Save-SanmaoLanPassword([string]$password) {
+  try {
+    $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
+    $encrypted = ConvertFrom-SecureString -SecureString $secure
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lanPasswordPath) | Out-Null
+    Set-Content -LiteralPath $lanPasswordPath -Value $encrypted -Encoding ASCII
+  } catch {
+    Write-SanmaoLauncherLog '保存局域网管理员密码密文失败，后续启动可能需要再次输入。' 'WARN'
+  }
+}
+
+function Ensure-SanmaoLanPassword {
+  Load-SanmaoLanPassword
+  $configured = $env:SANMAO_ADMIN_PASSWORD
+  if ($configured -and $configured.Trim().Length -ge 8) {
+    $env:SANMAO_ADMIN_PASSWORD = $configured.Trim()
+    return
+  }
+  if ($configured) {
+    Fail '局域网模式要求 SANMAO_ADMIN_PASSWORD 至少 8 位。'
+  }
+  if ($script:NonInteractive) {
+    Fail '局域网模式需要管理员密码。请设置 SANMAO_ADMIN_PASSWORD 后重试，或直接双击局域网启动器。'
+  }
+  Write-Host '局域网模式需要设置管理员密码（至少 8 位，仅用于本次服务，不会写入项目文件）。' -ForegroundColor Yellow
+  Write-Host '请输入管理员密码：' -ForegroundColor Yellow
+  $first = Read-SanmaoSecret
+  if (-not $first -or $first.Length -lt 8) { Fail '管理员密码至少需要 8 位。' }
+  Write-Host '请再次输入管理员密码：' -ForegroundColor Yellow
+  $second = Read-SanmaoSecret
+  if ($first -ne $second) { Fail '两次输入的管理员密码不一致。' }
+  $env:SANMAO_ADMIN_PASSWORD = $first
+  Save-SanmaoLanPassword $first
+}
+
 function Release-LauncherMutex {
   if ($script:LauncherMutex) {
     try { $script:LauncherMutex.ReleaseMutex() } catch {}
@@ -188,23 +315,37 @@ if (-not $acquired) {
 }
 
 
-$existingPort = Find-ExistingServer
-if ($existingPort -gt 0) {
-  if (Test-SanmaoBuildStale) {
-    Write-Host "检测到源码比当前构建更新，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
+$existing = Find-ExistingServer
+if ($existing) {
+  $existingPort = [int]$existing.Port
+  $modeMismatch = $existing.NetworkMode -ne $networkMode
+  $buildStale = Test-SanmaoBuildStale
+  if (($modeMismatch -or $buildStale) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
+  if ($modeMismatch -or $buildStale) {
+    $reason = if ($modeMismatch) { '正在切换为局域网共享模式' } else { '检测到源码比当前构建更新' }
+    Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {
       Fail "旧服务仍占用端口 $existingPort，已停止启动以避免继续使用旧页面。请运行停止 SANMAO.AI - Windows.cmd 后重试。"
     }
   } else {
-    Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
+    if ($existing.NetworkMode -eq 'lan') {
+      Write-Host "SANMAO.AI 局域网共享已在运行（本机：http://localhost:$existingPort）" -ForegroundColor Green
+      Show-SanmaoLanAccess $existingPort
+      $openUrl = "http://localhost:$existingPort/canvas"
+    } else {
+      Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
+      $openUrl = "http://localhost:$existingPort"
+    }
     Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
     Release-LauncherMutex
-    if (-not $script:NonInteractive) { Start-Process "http://localhost:$existingPort" }
+    if (-not $script:NonInteractive) { Start-Process $openUrl }
     exit 0
   }
 }
 Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
+
+if ($Lan.IsPresent) { Ensure-SanmaoLanPassword }
 
 # Clean stale project-owned Next services before dependency install and again
 # before choosing a port. This reclaims hung/legacy/relative-path servers that
@@ -391,12 +532,13 @@ if ($port -gt $portEnd) {
 }
 
 Remove-Item Env:SANMAO_LIFECYCLE -ErrorAction SilentlyContinue
+$env:SANMAO_NETWORK_MODE = $networkMode
 Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 $nextCliPath = Join-Path $root 'node_modules\next\dist\bin\next'
 $script:serverProcess = Start-Process `
   -FilePath $nodePath `
-  -ArgumentList @($nextCliPath, 'start', '-H', '127.0.0.1', '-p', "$port") `
+  -ArgumentList @($nextCliPath, 'start', '-H', $bindHost, '-p', "$port") `
   -WorkingDirectory $root `
   -WindowStyle Hidden `
   -RedirectStandardOutput $serverStdoutPath `
@@ -410,7 +552,8 @@ for ($i = 0; $i -lt 150; $i++) {
   Start-Sleep -Milliseconds 200
   if ($script:serverProcess.HasExited) { break }
   if (-not (Test-LocalPortOpen $port)) { continue }
-  if (Test-SanmaoHealthEndpoint -Port $port) { $ready = $true; break }
+  $serverInfo = Get-SanmaoServerInfo $port
+  if ($serverInfo -and $serverInfo.NetworkMode -eq $networkMode) { $ready = $true; break }
 }
 
 if (-not $ready) {
@@ -418,9 +561,16 @@ if (-not $ready) {
 }
 
 $url = "http://localhost:$port"
-Write-Host "SANMAO.AI 已启动：$url" -ForegroundColor Green
+if ($Lan.IsPresent) {
+  Write-Host "SANMAO.AI 局域网共享已启动（本机：$url）" -ForegroundColor Green
+  Show-SanmaoLanAccess $port
+  $openUrl = "$url/canvas"
+} else {
+  Write-Host "SANMAO.AI 已启动：$url" -ForegroundColor Green
+  $openUrl = $url
+}
 Write-Host '本地服务会保持运行，下一次启动会直接打开已有服务。' -ForegroundColor DarkGray
-Write-SanmaoLauncherLog "服务已就绪：http://localhost:$port" 'INFO'
+Write-SanmaoLauncherLog "服务已就绪：http://localhost:$port，网络模式：$networkMode" 'INFO'
 Release-LauncherMutex
-if (-not $script:NonInteractive) { Start-Process $url }
+if (-not $script:NonInteractive) { Start-Process $openUrl }
 Start-Sleep -Milliseconds 300
