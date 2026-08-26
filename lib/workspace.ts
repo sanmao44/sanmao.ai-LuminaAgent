@@ -256,15 +256,18 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
       const data = await requestWorkspace('GET');
       const remote = data.workspace ? validateWorkspaceShape(data.workspace) as unknown as WorkspaceSnapshot : null;
       const localSignature = workspaceContentSignature(local);
-      const localDirty = meta.pending || (Boolean(meta.contentSignature) && meta.contentSignature !== localSignature);
-      if (remote && localDirty) {
-        await saveWorkspace({ ...local, updatedAt: Math.max(meta.localUpdatedAt, Date.now()) }, { ...meta, pending: true });
+      const signatureChanged = Boolean(meta.contentSignature) && meta.contentSignature !== localSignature;
+      const localDirty = meta.pending || signatureChanged;
+      const localUpdatedAt = localDirty ? Math.max(meta.localUpdatedAt, signatureChanged ? Date.now() : 0) : 0;
+      if (signatureChanged && !meta.pending) writeMeta({ ...meta, localUpdatedAt, pending: true });
+      if (remote && localDirty && localUpdatedAt > remote.updatedAt) {
+        await saveWorkspace({ ...local, updatedAt: localUpdatedAt }, { ...meta, localUpdatedAt, pending: true });
       } else if (remote && remote.updatedAt > meta.serverUpdatedAt) {
         await restoreWorkspace(remote);
         writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, pending: false, contentSignature: workspaceContentSignature(remote) });
       } else if (workspaceHasData(local)) {
         if (!meta.serverUpdatedAt || localDirty) {
-          const next = { ...local, updatedAt: Math.max(Date.now(), meta.localUpdatedAt) };
+          const next = { ...local, updatedAt: Math.max(localUpdatedAt, Date.now()) };
           await saveWorkspace(next, { ...meta, localUpdatedAt: next.updatedAt, pending: true });
         }
       }
