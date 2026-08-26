@@ -770,6 +770,27 @@ export function edgePath(
   );
 }
 
+export function edgeTouchesSelection(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+  selectedIds: Iterable<string>,
+  selectedGroupId?: string | null,
+) {
+  const selectedEntities = new Set(selectedIds);
+  if (selectedGroupId) selectedEntities.add(selectedGroupId);
+
+  document.groups.forEach((group) => {
+    if (
+      group.id === selectedGroupId ||
+      group.nodeIds.some((nodeId) => selectedEntities.has(nodeId))
+    ) {
+      selectedEntities.add(group.id);
+    }
+  });
+
+  return selectedEntities.has(edge.source) || selectedEntities.has(edge.target);
+}
+
 export function mediaCardSizeForRatio(
   ratio = 1,
   kind: CanvasMediaKind = "image",

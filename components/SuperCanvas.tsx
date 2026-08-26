@@ -25,6 +25,7 @@ import {
   createMedia,
   createPrompt,
   detachNodesFromGroups,
+  edgeTouchesSelection,
   edgePath,
   entityBounds,
   entityPortPoint,
@@ -178,7 +179,6 @@ type CanvasActivityLog = {
   type: "canvas" | "generation" | "agent" | "asset" | "project" | "system";
   status: "ok" | "error";
 };
-type ConnectionAnimation = "none" | "flow" | "pulse" | "dash";
 type CanvasClipboardPayload = {
   type: "sanmao-canvas-nodes";
   version: 1;
@@ -189,13 +189,10 @@ type CanvasClipboardPayload = {
 type MentionState = { start: number; end: number; query: string } | null;
 
 function ConnectionOptionIcon({
-  kind,
   value,
 }: {
-  kind: "style" | "animation";
-  value: ConnectionStyle | ConnectionAnimation;
+  value: ConnectionStyle;
 }) {
-  const isStyle = kind === "style";
   return (
     <svg
       viewBox="0 0 24 24"
@@ -208,28 +205,12 @@ function ConnectionOptionIcon({
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      {isStyle ? (
-        value === "curve" ? (
-          <path d="M3 16c4 0 4-8 9-8s5 8 9 8" />
-        ) : value === "straight" ? (
-          <path d="m4 18 16-12" />
-        ) : (
-          <path d="M3 17h7V7h11" />
-        )
-      ) : value === "none" ? (
-        <>
-          <path d="M3 12h18" />
-          <path d="M9 8v8M15 8v8" />
-        </>
-      ) : value === "flow" ? (
-        <>
-          <path d="M3 12h18" />
-          <path d="m13 8 4 4-4 4" />
-        </>
-      ) : value === "pulse" ? (
-        <path d="M3 12h4l2-5 4 10 2-5h6" />
+      {value === "curve" ? (
+        <path d="M3 16c4 0 4-8 9-8s5 8 9 8" />
+      ) : value === "straight" ? (
+        <path d="m4 18 16-12" />
       ) : (
-        <path d="M3 12h3m4 0h3m4 0h3" />
+        <path d="M3 17h7V7h11" />
       )}
     </svg>
   );
@@ -265,6 +246,7 @@ type Interaction =
       startY: number;
       camera: CanvasCamera;
       changed: boolean;
+      clearSelectionOnClick: boolean;
     }
   | {
       kind: "nodePress";
@@ -354,20 +336,6 @@ type ConnectionNodePicker = {
 };
 
 const CANVAS_SETTINGS_KEY = "sanmao.canvas.settings";
-const CONNECTION_ANIMATION_OPTIONS: Array<{
-  value: ConnectionAnimation;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "none",
-    label: "关闭动态",
-    description: "保持连线静态，减少视觉干扰",
-  },
-  { value: "flow", label: "流光", description: "沿连线方向持续流动" },
-  { value: "pulse", label: "呼吸", description: "连线亮度与光晕缓慢变化" },
-  { value: "dash", label: "行进", description: "短线段沿连线方向行进" },
-];
 const CONNECTION_STYLE_OPTIONS: Array<{
   value: ConnectionStyle;
   label: string;
@@ -769,7 +737,7 @@ function createCanvasClipboardPayload(
 function CanvasEdgeVisual({
   document,
   edge,
-  animation,
+  related,
   style,
   selected,
   onSelect,
@@ -779,7 +747,7 @@ function CanvasEdgeVisual({
 }: {
   document: CanvasDocument;
   edge: CanvasEdge;
-  animation: ConnectionAnimation;
+  related: boolean;
   style: ConnectionStyle;
   selected: boolean;
   onSelect: () => void;
@@ -813,19 +781,20 @@ function CanvasEdgeVisual({
         onPointerDown={handlePointerDown}
       />
       <path
-        className={`canvas-edge canvas-edge-${animation} ${selected ? "selected" : ""}`}
+        className={`canvas-edge ${selected ? "selected" : ""}`}
         d={path}
         markerEnd={`url(#canvas-arrow-${colorKey})`}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
-      {animation === "flow" && (
-        <g className="canvas-edge-flow-light" aria-hidden="true">
-          <path className="canvas-edge-flow-glow" d={path} pathLength="1000" />
-          <path className="canvas-edge-flow-mid" d={path} pathLength="1000" />
-          <path className="canvas-edge-flow-core" d={path} pathLength="1000" />
-        </g>
+      {related && (
+        <path
+          className="canvas-edge-related-flow"
+          d={path}
+          pathLength="1000"
+          aria-hidden="true"
+        />
       )}
     </g>
   );
@@ -940,8 +909,6 @@ export default function SuperCanvas() {
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: 1200, height: 760 });
   const [deckHeight, setDeckHeight] = useState(0);
-  const [connectionAnimation, setConnectionAnimation] =
-    useState<ConnectionAnimation>("none");
   const [connectionStyle, setConnectionStyle] =
     useState<ConnectionStyle>("curve");
   const [theme, setTheme] = useState<CanvasTheme>("light");
@@ -995,6 +962,22 @@ export default function SuperCanvas() {
     [document.nodes, selectedIds],
   );
   const selectedSingle = selectedNodes.length === 1 ? selectedNodes[0] : null;
+  const relatedConnectionEdgeIds = useMemo(
+    () =>
+      new Set(
+        document.edges
+          .filter((edge) =>
+            edgeTouchesSelection(
+              document,
+              edge,
+              selectedIds,
+              selectedGroupId,
+            ),
+          )
+          .map((edge) => edge.id),
+      ),
+    [document, selectedGroupId, selectedIds],
+  );
   const collapsedGeneratorOutputIds = useMemo(() => {
     const generatorIds = new Set(
       document.nodes.filter((node) => node.type === "generator").map((node) => node.id),
@@ -1222,15 +1205,8 @@ export default function SuperCanvas() {
       const raw = JSON.parse(
         window.localStorage.getItem(CANVAS_SETTINGS_KEY) || "null",
       ) as {
-        connectionAnimation?: unknown;
         connectionStyle?: unknown;
       } | null;
-      if (
-        CONNECTION_ANIMATION_OPTIONS.some(
-          (item) => item.value === raw?.connectionAnimation,
-        )
-      )
-        setConnectionAnimation(raw!.connectionAnimation as ConnectionAnimation);
       if (
         CONNECTION_STYLE_OPTIONS.some(
           (item) => item.value === raw?.connectionStyle,
@@ -1247,12 +1223,12 @@ export default function SuperCanvas() {
     try {
       window.localStorage.setItem(
         CANVAS_SETTINGS_KEY,
-        JSON.stringify({ connectionAnimation, connectionStyle }),
+        JSON.stringify({ connectionStyle }),
       );
     } catch {
       /* 设置保存失败不应阻断画布 */
     }
-  }, [connectionAnimation, connectionStyle, ready]);
+  }, [connectionStyle, ready]);
 
   useEffect(() => {
     if (!ready || !activeProjectId) return;
@@ -1670,8 +1646,6 @@ export default function SuperCanvas() {
       )
         return startMarquee(event);
       event.preventDefault();
-      if (event.button === 0 && !event.shiftKey && !spaceHeldRef.current)
-        clearSelection();
       interactionRef.current = {
         kind: "pan",
         pointerId: event.pointerId,
@@ -1679,13 +1653,14 @@ export default function SuperCanvas() {
         startY: event.clientY,
         camera: document.camera,
         changed: false,
+        clearSelectionOnClick:
+          event.button === 0 && !event.shiftKey && !spaceHeldRef.current,
       };
       setPanActive(true);
       capture(event);
     },
     [
       capture,
-      clearSelection,
       document.camera,
       cancelPendingNodeClick,
       hideConnectionCancel,
@@ -1987,6 +1962,9 @@ export default function SuperCanvas() {
           interaction = interactionRef.current;
         }
       }
+      if (interaction.kind === "pan" && !interaction.changed) {
+        if (Math.hypot(dx, dy) > 4) interaction.changed = true;
+      }
       if (interaction.kind === "pan")
         updateDoc((value) => ({
           ...value,
@@ -2286,6 +2264,12 @@ export default function SuperCanvas() {
         setConnection(null);
         setConnectionTargetId(null);
       }
+      if (
+        interaction.kind === "pan" &&
+        interaction.clearSelectionOnClick &&
+        !interaction.changed
+      )
+        clearSelection();
       if (interaction.kind === "drag" && interaction.changed) {
         const point = stageToWorld(stagePoint(event.clientX, event.clientY));
         const draggedNodes = interaction.nodeIds
@@ -2398,6 +2382,7 @@ export default function SuperCanvas() {
       addLog,
       commit,
       connectionTargetId,
+      clearSelection,
       notify,
       stagePoint,
       stageToWorld,
@@ -4282,7 +4267,7 @@ export default function SuperCanvas() {
     }
     const source = deckSource();
     const selectedMediaTarget = selectedSingle?.type === "media" ? selectedSingle : null;
-    if (selectedMediaTarget) {
+    if (selectedMediaTarget?.data.url) {
       const references = incomingReferences(docRef.current, selectedMediaTarget.id)
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
@@ -5170,6 +5155,7 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
+      setExpandedEditorId(null);
       window.setTimeout(() => void runGenerationRef.current?.(), 0);
     },
     [commit, editorDrafts],
@@ -6163,18 +6149,21 @@ export default function SuperCanvas() {
             <i />
             {saving ? "保存中…" : saveError ? "保存失败" : "已保存"}
           </span>
-          <button
-            type="button"
-            className="canvas-topbar-collapse"
-            aria-label={topbarCollapsed ? "展开顶部栏" : "折叠顶部栏"}
-            title={topbarCollapsed ? "展开顶部栏" : "折叠顶部栏"}
-            onClick={() => setTopbarCollapsed((value) => {
-              const next = !value;
-              try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed", String(next)); } catch { /* optional */ }
-              return next;
-            })}
-          >{topbarCollapsed ? "⌄" : "⌃"}</button>
         </div>
+        <button
+          type="button"
+          className="canvas-topbar-toggle"
+          aria-label={topbarCollapsed ? "展开顶部工具栏" : "收起顶部工具栏"}
+          title={topbarCollapsed ? "展开顶部工具栏" : "收起顶部工具栏"}
+          onClick={() => setTopbarCollapsed((value) => {
+            const next = !value;
+            try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed", String(next)); } catch { /* optional */ }
+            return next;
+          })}
+        >
+          <span className="canvas-topbar-toggle-icon" aria-hidden="true">{topbarCollapsed ? "⌄" : "⌃"}</span>
+          <span>{topbarCollapsed ? "展开工具栏" : "收起"}</span>
+        </button>
         <div className="canvas-project-popover-wrap">
           {projectMenuOpen && (
             <div
@@ -6377,7 +6366,7 @@ export default function SuperCanvas() {
                   key={edge.id}
                   document={document}
                   edge={edge}
-                  animation={connectionAnimation}
+                  related={relatedConnectionEdgeIds.has(edge.id)}
                   style={connectionStyle}
                   selected={selectedEdgeId === edge.id}
                   onSelect={() => {
@@ -7236,10 +7225,8 @@ export default function SuperCanvas() {
       {activePanel === "settings" && (
         <CanvasSettingsPanel
           theme={theme}
-          connectionAnimation={connectionAnimation}
           connectionStyle={connectionStyle}
           onTheme={toggleTheme}
-          onConnectionAnimationChange={setConnectionAnimation}
           onConnectionStyleChange={setConnectionStyle}
           onClose={() => setActivePanel(null)}
         />
@@ -9941,12 +9928,11 @@ function CanvasActivityDrawer({
   );
 }
 
-function CanvasSettingsPanel({ theme, connectionAnimation, connectionStyle, onTheme, onConnectionAnimationChange, onConnectionStyleChange, onClose }: { theme: CanvasTheme; connectionAnimation: ConnectionAnimation; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionAnimationChange: (value: ConnectionAnimation) => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onClose: () => void }) {
+function CanvasSettingsPanel({ theme, connectionStyle, onTheme, onConnectionStyleChange, onClose }: { theme: CanvasTheme; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onClose: () => void }) {
   return <CanvasPanelShell title="画布设置" subtitle="只保留画布与应用配置" onClose={onClose} className="canvas-settings-panel">
     <section className="canvas-setting-section"><b>界面主题</b><button type="button" onClick={onTheme}>{theme === "light" ? "☾ 切换深色" : "☀ 切换浅色"}</button></section>
-    <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon kind="style" value={item.value} /> }))} /></section>
-    <section className="canvas-setting-section"><b>连线动画</b><SelectMenu value={connectionAnimation} onChange={onConnectionAnimationChange} ariaLabel="连线动画" options={CONNECTION_ANIMATION_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon kind="animation" value={item.value} /> }))} /></section>
-    <p className="canvas-setting-note">快捷键、资产和活动日志均已移出设置，分别从顶部入口打开。</p>
+    <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon value={item.value} /> }))} /></section>
+    <p className="canvas-setting-note">选中节点后，直接关联的入边和出边会显示细流光。</p>
   </CanvasPanelShell>;
 }
 

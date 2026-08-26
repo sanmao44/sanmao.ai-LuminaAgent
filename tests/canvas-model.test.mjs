@@ -246,6 +246,40 @@ test('supports selectable canvas edge path styles', () => {
   assert.match(model.edgePath(document, edge, 'orthogonal'), / H .* V .* H /);
 });
 
+test('marks directly related node and group connections for selected-edge effects', () => {
+  const empty = model.normalizeDocument(null);
+  const source = model.createPrompt({ x: 0, y: 0 }, '来源');
+  const selected = model.createMedia('image', '/selected.png', '选中', { x: 360, y: 0 });
+  const groupMember = model.createMedia('image', '/group-member.png', '组内节点', { x: 360, y: 360 });
+  const target = model.createGenerator('image', { x: 800, y: 0 });
+  const unrelated = model.createPrompt({ x: 800, y: 360 }, '无关');
+  let document = {
+    ...empty,
+    nodes: [source, selected, groupMember, target, unrelated],
+  };
+  document = model.createGroup(document, [selected.id, groupMember.id]);
+  const group = document.groups[0];
+  document = model.addEdge(document, source.id, selected.id);
+  document = model.addEdge(document, selected.id, target.id);
+  document = model.addEdge(document, group.id, target.id);
+  document = model.addEdge(document, target.id, unrelated.id);
+
+  const incoming = document.edges.find((edge) => edge.target === selected.id);
+  const outgoing = document.edges.find((edge) => edge.source === selected.id);
+  const groupEdge = document.edges.find((edge) => edge.source === group.id);
+  const unrelatedEdge = document.edges.find((edge) => edge.target === unrelated.id);
+
+  assert.equal(model.edgeTouchesSelection(document, incoming, [selected.id]), true);
+  assert.equal(model.edgeTouchesSelection(document, outgoing, [selected.id]), true);
+  assert.equal(model.edgeTouchesSelection(document, groupEdge, [selected.id]), true);
+  assert.equal(model.edgeTouchesSelection(document, groupEdge, [], group.id), true);
+  assert.equal(model.edgeTouchesSelection(document, unrelatedEdge, [selected.id]), false);
+  assert.equal(
+    model.edgeTouchesSelection(document, unrelatedEdge, [selected.id, unrelated.id]),
+    true,
+  );
+});
+
 test('shares connection geometry across ports and scaled minimap coordinates', () => {
   const start = { x: 120, y: 80 };
   const end = { x: 40, y: 180 };
