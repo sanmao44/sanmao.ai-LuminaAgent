@@ -8850,9 +8850,10 @@ function CanvasNodeEditorPopover({
     const stageWidth = stage.clientWidth;
     const stageHeight = stage.clientHeight;
     const nextCompact = stageWidth < 960 || zoom < 0.58;
+    const microEditor = zoom < 0.35;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
-    const popoverWidth = popoverRef.current?.offsetWidth || (nextCompact ? 510 : 640);
-    const popoverHeight = popoverRef.current?.offsetHeight || (nextCompact ? 500 : 580);
+    const popoverWidth = popoverRef.current?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
+    const popoverHeight = popoverRef.current?.offsetHeight || (microEditor ? 400 : nextCompact ? 500 : 580);
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -8877,11 +8878,28 @@ function CanvasNodeEditorPopover({
       { width: popoverWidth, height: popoverHeight },
       14,
     );
+    const viewportMargin = 12;
+    const constrainedLeft = Math.min(
+      Math.max(position.left, viewportMargin),
+      Math.max(viewportMargin, stageWidth - popoverWidth - viewportMargin),
+    );
+    const belowLimit = stageHeight - popoverHeight - viewportMargin;
+    const canPlaceAbove = anchor.top - popoverHeight - 14 >= viewportMargin;
+    const useTopPlacement = !promptExpanded && position.top > belowLimit && canPlaceAbove;
+    const constrainedTop = promptExpanded
+      ? position.top
+      : useTopPlacement
+        ? anchor.top - popoverHeight - 14
+        : Math.min(
+            Math.max(position.top, viewportMargin),
+            Math.max(viewportMargin, belowLimit),
+          );
     setPosition({
-      ...position,
-      placement: "bottom",
+      left: promptExpanded ? position.left : constrainedLeft,
+      top: constrainedTop,
+      placement: useTopPlacement ? "top" : "bottom",
     });
-  }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, size.h, size.w, stageRef]);
+  }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
 
   useLayoutEffect(() => {
     reposition();
@@ -8914,7 +8932,7 @@ function CanvasNodeEditorPopover({
       ref={popoverRef}
       className={`canvas-node-editor-popover canvas-node-editor-dock${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement={position.placement}
-      data-density={isCompact ? "compact" : "comfortable"}
+      data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
       data-node-id={node.id}
@@ -8929,7 +8947,7 @@ function CanvasNodeEditorPopover({
           <span className="canvas-node-editor-status-dot" aria-hidden="true" />
           <div>
             <b>{nodeLabel(node)}</b>
-            <small>{node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : "图片节点"} · 节点内编辑</small>
+            <small>{promptExpanded ? "文本编辑 · 专注输入" : node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : "图片节点"} · 节点内编辑</small>
           </div>
         </div>
         <div className="canvas-node-editor-head-actions">
@@ -9050,6 +9068,7 @@ function CanvasNodeEditorPopover({
             )}
             {editorParams && (
               <CreationParameterEditor
+                key={node.id}
                 settings={editorParams}
                 runtime={runtime}
                 referenceCount={branchDraft ? branchReferences.length : editorReferences.length}

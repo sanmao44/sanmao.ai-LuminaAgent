@@ -59,6 +59,7 @@ function ImageEditor({
 }) {
   const [advanced, setAdvanced] = useState(false);
   const flat = variant === "canvas-flat";
+  const [parameterDrawerOpen, setParameterDrawerOpen] = useState(false);
   const update = <K extends keyof ImageCreationSettings>(
     key: K,
     value: ImageCreationSettings[K],
@@ -67,8 +68,15 @@ function ImageEditor({
   const provider = runtime?.providers.find(
     (item) => item.id === runtime.settings.defaultProviderId,
   );
+  const qualityLabel = IMAGE_QUALITY_OPTIONS.find(
+    (option) => option.value === settings.quality,
+  )?.label.replace("质量", "") || settings.quality;
+  const sizeLabel = settings.sizeMode === "system"
+    ? settings.resolution
+    : `${settings.width}×${settings.height}`;
+  const parameterSummary = `${settings.aspect} · ${qualityLabel} · ${sizeLabel} · ${settings.count} 张`;
   return (
-    <div className="creation-parameter-editor image">
+    <div className={`creation-parameter-editor image${flat ? " canvas-flat" : ""}`}>
       {unavailableModelId && (
         <div className="creation-model-warning">
           <b>原模型当前不可用</b>
@@ -78,6 +86,163 @@ function ImageEditor({
           </span>
         </div>
       )}
+      {flat ? (
+        <>
+          <div className="canvas-parameter-model">
+            <label className="creation-field model">
+              <small>图片模型</small>
+              <ModelPicker
+                models={models}
+                value={settings.model}
+                capability="generate"
+                defaultProviderId={runtime?.settings.defaultProviderId}
+                defaultProviderName={provider?.name}
+                defaultModelId={runtime?.settings.defaultImageModelId}
+                onChange={(value) => update("model", value)}
+              />
+            </label>
+          </div>
+          <div className={`canvas-parameter-collection ${parameterDrawerOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="canvas-parameter-trigger"
+              aria-expanded={parameterDrawerOpen}
+              aria-controls="canvas-image-parameter-drawer"
+              onClick={() => setParameterDrawerOpen((value) => !value)}
+            >
+              <span>
+                <b>生成参数</b>
+                <small>{parameterSummary}</small>
+              </span>
+              <i aria-hidden="true">{parameterDrawerOpen ? "⌃" : "⌄"}</i>
+            </button>
+            {parameterDrawerOpen && (
+              <div className="canvas-parameter-drawer" id="canvas-image-parameter-drawer">
+                <div className="canvas-parameter-drawer-head">
+                  <span>
+                    <b>参数集合</b>
+                    <small>质量 · 清晰度 · 比例 · 数量</small>
+                  </span>
+                  <em>可随时调整</em>
+                </div>
+                <div className="canvas-parameter-group">
+                  <span className="canvas-parameter-group-label">质量</span>
+                  <div className="canvas-parameter-options quality" role="group" aria-label="图片质量">
+                    {IMAGE_QUALITY_OPTIONS.map((option) => (
+                      <button
+                        type="button"
+                        key={option.value}
+                        className={settings.quality === option.value ? "active" : ""}
+                        aria-pressed={settings.quality === option.value}
+                        title={option.description}
+                        onClick={() => update("quality", option.value)}
+                      >
+                        {option.label.replace("质量", "")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="canvas-parameter-group">
+                  <span className="canvas-parameter-group-label">尺寸方式</span>
+                  <div className="canvas-parameter-options size-mode" role="group" aria-label="图片尺寸方式">
+                    <button type="button" className={settings.sizeMode === "system" ? "active" : ""} aria-pressed={settings.sizeMode === "system"} onClick={() => update("sizeMode", "system")}>标准尺寸</button>
+                    <button type="button" className={settings.sizeMode === "custom" ? "active" : ""} aria-pressed={settings.sizeMode === "custom"} onClick={() => update("sizeMode", "custom")}>自定义</button>
+                  </div>
+                </div>
+                {settings.sizeMode === "system" ? (
+                  <div className="canvas-parameter-group">
+                    <span className="canvas-parameter-group-label">清晰度</span>
+                    <div className="canvas-parameter-options resolution" role="group" aria-label="图片分辨率">
+                      {IMAGE_SIZE_TIERS.map((item) => (
+                        <button type="button" key={item.value} className={settings.resolution === item.value ? "active" : ""} aria-pressed={settings.resolution === item.value} title={`长边约 ${item.longEdge}px`} onClick={() => update("resolution", item.value)}>{item.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="canvas-parameter-group">
+                    <span className="canvas-parameter-group-label">自定义尺寸</span>
+                    <div className="creation-pixel-fields canvas-parameter-pixels">
+                      <label><small>宽度</small><input type="number" min={1} max={16384} value={settings.width} onChange={(event) => update("width", Math.max(1, Number(event.target.value) || 1))} /></label>
+                      <b>×</b>
+                      <label><small>高度</small><input type="number" min={1} max={16384} value={settings.height} onChange={(event) => update("height", Math.max(1, Number(event.target.value) || 1))} /></label>
+                    </div>
+                  </div>
+                )}
+                <div className="canvas-parameter-group">
+                  <span className="canvas-parameter-group-label">比例</span>
+                  <div className="canvas-parameter-options aspect" role="group" aria-label="图片比例">
+                    {IMAGE_RATIOS.map((value) => (
+                      <button type="button" key={value} className={settings.aspect === value ? "active" : ""} aria-pressed={settings.aspect === value} data-ratio={value} title={ratioDescriptions[value]} onClick={() => update("aspect", value)}>
+                        <i className="canvas-parameter-ratio-icon" aria-hidden="true" />
+                        <span>{value === "自动" ? "自动" : value}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {settings.aspect === "自定义" && (
+                  <div className="creation-custom-ratio canvas-parameter-custom-ratio">
+                    <span>自定义比例</span>
+                    <input type="number" min={1} value={settings.customAspectWidth} onChange={(event) => update("customAspectWidth", Math.max(1, Number(event.target.value) || 1))} />
+                    <b>:</b>
+                    <input type="number" min={1} value={settings.customAspectHeight} onChange={(event) => update("customAspectHeight", Math.max(1, Number(event.target.value) || 1))} />
+                  </div>
+                )}
+                <div className="canvas-parameter-group">
+                  <span className="canvas-parameter-group-label">生成数量</span>
+                  <div className="canvas-parameter-options count" role="group" aria-label="生成数量">
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((value) => (
+                      <button type="button" key={value} className={settings.count === value ? "active" : ""} aria-pressed={settings.count === value} onClick={() => update("count", value)}>{value} 张</button>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
+                  onClick={() => setAdvanced((value) => !value)}
+                  aria-expanded={advanced}
+                  title={advanced ? "收起格式与背景参数" : "展开格式与背景参数"}
+                >
+                  <span>{advanced ? "收起更多参数" : "更多参数"}</span>
+                  <small>格式与背景</small>
+                  <b>{advanced ? "⌃" : "⌄"}</b>
+                </button>
+                {advanced && (
+                  <div className="creation-parameter-grid advanced canvas-parameter-extra-grid">
+                    <label className="creation-field">
+                      <small>输出格式</small>
+                      <SelectMenu
+                        value={settings.outputFormat}
+                        onChange={(value) => update("outputFormat", value)}
+                        options={[
+                          { value: "png", label: "PNG · 无损" },
+                          { value: "jpeg", label: "JPEG · 体积更小" },
+                          { value: "webp", label: "WebP · 适合网页" },
+                        ]}
+                        ariaLabel="输出格式"
+                      />
+                    </label>
+                    <label className="creation-field">
+                      <small>背景限制</small>
+                      <SelectMenu
+                        value={settings.backgroundMode}
+                        onChange={(value) => onChange({ ...settings, backgroundMode: value, ...(value === "api-transparent" || value === "local-transparent" ? { outputFormat: "png" as const } : {}) })}
+                        options={[
+                          { value: "auto", label: "自动" },
+                          { value: "api-transparent", label: "API 透明", description: "仅支持部分模型" },
+                          { value: "local-transparent", label: "本地透明", description: "自动去白底并输出 PNG" },
+                          { value: "opaque", label: "不透明" },
+                        ]}
+                        ariaLabel="背景限制"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
       <div className="creation-parameter-grid primary">
         <label className="creation-field model">
           <small>图片模型</small>
@@ -288,6 +453,8 @@ function ImageEditor({
             />
           </label>
         </div>
+      )}
+        </>
       )}
     </div>
   );

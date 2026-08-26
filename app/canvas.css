@@ -786,3 +786,200 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   .canvas-node-editor-popover .canvas-node-editor-head-actions>span{display:none}
   .canvas-node-editor-popover .canvas-node-editor-head-actions{gap:4px}
 }
+
+/* Compact canvas parameters: the regular card keeps only the model and one
+   summary row in view. The detailed controls live in an anchored collection
+   drawer, so zooming the canvas does not leave a tall form floating over it. */
+.canvas-node-editor-popover .creation-parameter-editor.canvas-flat{gap:7px}
+.canvas-node-editor-popover .canvas-parameter-model{display:grid;min-width:0}
+.canvas-node-editor-popover .canvas-parameter-model .creation-field{gap:4px}
+.canvas-node-editor-popover .canvas-parameter-collection{position:relative;min-width:0}
+.canvas-node-editor-popover .canvas-parameter-trigger{width:100%;min-width:0;min-height:38px;display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 52%,var(--panel-2)),var(--panel-2));color:var(--text);text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease}
+.canvas-node-editor-popover .canvas-parameter-trigger:hover,.canvas-node-editor-popover .canvas-parameter-collection.open .canvas-parameter-trigger{border-color:color-mix(in srgb,var(--accent) 56%,var(--line));background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel-2));box-shadow:0 5px 16px color-mix(in srgb,var(--accent) 9%,transparent)}
+.canvas-node-editor-popover .canvas-parameter-trigger>span{display:flex;align-items:baseline;gap:9px;min-width:0;flex:1}
+.canvas-node-editor-popover .canvas-parameter-trigger b{flex:none;color:var(--text);font-size:10px;font-weight:900;white-space:nowrap}
+.canvas-node-editor-popover .canvas-parameter-trigger small{min-width:0;overflow:hidden;color:var(--muted);font-size:9px;line-height:1.2;white-space:nowrap;text-overflow:ellipsis}
+.canvas-node-editor-popover .canvas-parameter-trigger>i{width:20px;height:20px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--accent-text);font-size:12px;font-style:normal;line-height:1}
+.canvas-node-editor-popover .canvas-parameter-drawer{display:grid;gap:11px;margin-top:7px;padding:12px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:15px;background:color-mix(in srgb,var(--panel-2) 96%,transparent);box-shadow:0 12px 28px rgba(0,0,0,.2);animation:canvas-parameter-drawer-in .16s ease-out}
+.canvas-node-editor-popover .canvas-parameter-drawer-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.canvas-node-editor-popover .canvas-parameter-drawer-head>span{display:flex;align-items:baseline;gap:8px;min-width:0}
+.canvas-node-editor-popover .canvas-parameter-drawer-head b{font-size:10px;font-weight:900}
+.canvas-node-editor-popover .canvas-parameter-drawer-head small{overflow:hidden;color:var(--muted);font-size:8px;white-space:nowrap;text-overflow:ellipsis}
+.canvas-node-editor-popover .canvas-parameter-drawer-head em{flex:none;color:var(--accent-text);font-size:8px;font-style:normal;white-space:nowrap}
+.canvas-node-editor-popover .canvas-parameter-group{display:grid;gap:6px;min-width:0}
+.canvas-node-editor-popover .canvas-parameter-group-label{color:var(--text-2);font-size:9px;font-weight:850}
+.canvas-node-editor-popover .canvas-parameter-options{display:grid;gap:6px;min-width:0}
+.canvas-node-editor-popover .canvas-parameter-options.quality{grid-template-columns:repeat(4,minmax(0,1fr))}
+.canvas-node-editor-popover .canvas-parameter-options.size-mode{grid-template-columns:repeat(2,minmax(0,1fr))}
+.canvas-node-editor-popover .canvas-parameter-options.resolution{grid-template-columns:repeat(3,minmax(0,1fr))}
+.canvas-node-editor-popover .canvas-parameter-options.aspect{grid-template-columns:repeat(5,minmax(0,1fr))}
+.canvas-node-editor-popover .canvas-parameter-options.count{grid-template-columns:repeat(4,minmax(0,1fr))}
+.canvas-node-editor-popover .canvas-parameter-options>button{min-width:0;height:31px;padding:0 5px;overflow:hidden;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text-2);font-size:9px;font-weight:800;white-space:nowrap;text-overflow:ellipsis;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease,transform .16s ease}
+.canvas-node-editor-popover .canvas-parameter-options>button:hover{border-color:color-mix(in srgb,var(--accent) 52%,var(--line));background:var(--accent-soft);color:var(--accent-text)}
+.canvas-node-editor-popover .canvas-parameter-options>button.active{border-color:var(--accent);background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 4px 12px color-mix(in srgb,var(--accent) 20%,transparent)}
+.canvas-node-editor-popover .canvas-parameter-options>button:focus-visible,.canvas-node-editor-popover .canvas-parameter-trigger:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
+.canvas-node-editor-popover .canvas-parameter-pixels{padding:0;border:0;background:transparent}
+.canvas-node-editor-popover .canvas-parameter-pixels input{height:31px}
+.canvas-node-editor-popover .canvas-parameter-custom-ratio{margin:0;padding:7px 8px;border-radius:9px}
+.canvas-node-editor-popover .canvas-parameter-extra-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important;padding-top:9px!important}
+@keyframes canvas-parameter-drawer-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+
+/* The editor itself scales by layout density rather than by the world zoom.
+   This keeps a 20% canvas from being covered by a full-size floating card. */
+.canvas-node-editor-popover:not(.is-prompt-expanded){width:min(620px,calc(100vw - 24px));max-height:min(560px,calc(100vh - 24px));border-radius:18px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-head{min-height:50px;padding:8px 12px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-body{padding:9px 12px 8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-columns{gap:8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-copy,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings{gap:8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{padding:10px 11px;border-radius:13px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>textarea{min-height:104px;max-height:220px;height:104px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-references,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-reference-draft-strip{padding:9px 10px;border-radius:13px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{padding:9px 10px;border-radius:13px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-actions{min-height:49px;padding:7px 12px 9px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"]{width:min(500px,calc(100vw - 24px));max-height:min(500px,calc(100vh - 24px));border-radius:17px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"]{width:min(360px,calc(100vw - 24px));max-height:min(400px,calc(100vh - 24px));border-radius:15px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-head{min-height:46px;padding:7px 10px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-body{padding:6px 8px 5px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-columns{gap:6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-copy,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-settings{gap:6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-prompt-wrap,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-editor-references,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-reference-draft-strip,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-settings>.creation-parameter-editor{padding:6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-prompt-label{margin-bottom:5px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-prompt-wrap>textarea{min-height:78px;max-height:150px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-actions{min-height:42px;padding:5px 8px 6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-generate{height:28px;padding:0 12px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-identity>div,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-identity>div{display:flex;align-items:baseline;gap:7px;min-width:0}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-identity small,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-identity small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.canvas-node-editor-popover .creation-parameter-editor.canvas-flat{grid-template-columns:minmax(0,1.08fr) minmax(180px,.92fr)!important;align-items:end}
+.canvas-node-editor-popover .creation-parameter-editor.canvas-flat>.creation-model-warning{grid-column:1/-1}
+.canvas-node-editor-popover .creation-parameter-editor.canvas-flat>.canvas-parameter-collection.open{grid-column:1/-1}
+.canvas-node-editor-popover .creation-parameter-editor.canvas-flat>.canvas-parameter-collection.open .canvas-parameter-drawer{max-height:min(390px,calc(100vh - 120px));overflow-y:auto;scrollbar-width:thin}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"]{max-height:min(400px,calc(100vh - 24px))}
+@media(max-width:540px){
+  .canvas-node-editor-popover .creation-parameter-editor.canvas-flat{grid-template-columns:minmax(0,1fr)!important}
+  .canvas-node-editor-popover .creation-parameter-editor.canvas-flat>.canvas-parameter-model,.canvas-node-editor-popover .creation-parameter-editor.canvas-flat>.canvas-parameter-collection{grid-column:1/-1}
+}
+
+/* The parameter collection opens upward like a small floating palette. It
+   does not add another scroll area or push the prompt and references down. */
+.canvas-node-editor-popover:has(.canvas-parameter-drawer){z-index:240;overflow:visible}
+.canvas-node-editor-popover:has(.canvas-parameter-drawer) .canvas-node-editor-body{overflow:visible}
+.canvas-node-editor-popover .canvas-parameter-drawer{position:absolute;z-index:220;left:50%;bottom:calc(100% + 8px);width:min(390px,calc(100vw - 24px));max-height:none!important;overflow:visible!important;margin:0;padding:9px;gap:7px;border-color:color-mix(in srgb,var(--accent) 38%,var(--line-strong));border-radius:16px;background:color-mix(in srgb,var(--panel) 98%,#0a0b10);box-shadow:0 20px 54px rgba(0,0,0,.42),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);transform:translateX(-50%);animation:canvas-parameter-popover-in .16s ease-out}
+.canvas-node-editor-popover .canvas-parameter-drawer::after{content:"";position:absolute;right:30px;bottom:-7px;width:12px;height:12px;border-right:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));border-bottom:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));background:color-mix(in srgb,var(--panel) 98%,#0a0b10);transform:rotate(45deg)}
+.canvas-node-editor-popover .canvas-parameter-drawer-head{display:none}
+.canvas-node-editor-popover .canvas-parameter-group{gap:3px}
+.canvas-node-editor-popover .canvas-parameter-group-label{font-size:8px;letter-spacing:.02em}
+.canvas-node-editor-popover .canvas-parameter-options{gap:4px}
+.canvas-node-editor-popover .canvas-parameter-options>button{height:28px;border-radius:8px;background:color-mix(in srgb,var(--panel-2) 88%,#000);font-size:8px}
+.canvas-node-editor-popover .canvas-parameter-options.quality>button,.canvas-node-editor-popover .canvas-parameter-options.resolution>button{height:29px}
+.canvas-node-editor-popover .canvas-parameter-options.aspect{grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+.canvas-node-editor-popover .canvas-parameter-options.aspect>button{height:44px;display:grid;place-items:center;align-content:center;gap:3px;padding:3px 2px;color:var(--muted);font-size:7px}
+.canvas-node-editor-popover .canvas-parameter-options.aspect>button>span{line-height:1}
+.canvas-node-editor-popover .canvas-parameter-ratio-icon{width:13px;height:9px;display:block;border:1px solid currentColor;border-radius:2px;opacity:.9}
+.canvas-node-editor-popover .canvas-parameter-options.aspect>button[data-ratio="1:1"] .canvas-parameter-ratio-icon{width:11px;height:11px}
+.canvas-node-editor-popover .canvas-parameter-options.aspect>button[data-ratio="16:9"] .canvas-parameter-ratio-icon,.canvas-node-editor-popover .canvas-parameter-options.aspect>button[data-ratio="2:1"] .canvas-parameter-ratio-icon,.canvas-node-editor-popover .canvas-parameter-options.aspect>button[data-ratio="21:9"] .canvas-parameter-ratio-icon{width:16px;height:9px}
+.canvas-node-editor-popover .canvas-parameter-options.aspect>button[data-ratio="9:16"] .canvas-parameter-ratio-icon,.canvas-node-editor-popover .canvas-parameter-options.aspect>button[data-ratio="1:2"] .canvas-parameter-ratio-icon,.canvas-node-editor-popover .canvas-parameter-options.aspect>button[data-ratio="9:21"] .canvas-parameter-ratio-icon{width:7px;height:12px}
+.canvas-node-editor-popover .canvas-parameter-options.aspect>button.active{color:#fff}
+.canvas-node-editor-popover .canvas-parameter-options.aspect>button.active .canvas-parameter-ratio-icon{border-color:rgba(255,255,255,.86)}
+.canvas-node-editor-popover .canvas-parameter-options.count{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.canvas-node-editor-popover .canvas-parameter-custom-ratio{background:var(--panel-2)}
+@keyframes canvas-parameter-popover-in{from{opacity:0;transform:translate(-50%,5px) scale(.98)}to{opacity:1;transform:translate(-50%,0) scale(1)}}
+@media(max-width:540px){
+  .canvas-node-editor-popover .canvas-parameter-drawer{width:min(360px,calc(100vw - 24px));padding:11px}
+  .canvas-node-editor-popover .canvas-parameter-options.aspect{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .canvas-node-editor-popover .canvas-parameter-options.aspect>button{height:58px}
+  .canvas-node-editor-popover .canvas-parameter-options.count{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+
+/* The generic head rule styles every direct div as a stack. The action rail
+   is the exception: keep status, expand and close on one polished row. */
+.canvas-node-editor-popover .canvas-node-editor-head>.canvas-node-editor-head-actions{display:flex;align-items:center;gap:5px;width:auto;max-width:45%;flex:none}
+.canvas-node-editor-popover .canvas-node-editor-head>.canvas-node-editor-head-actions>span{display:block}
+@media(max-width:540px){
+  .canvas-node-editor-popover .canvas-parameter-trigger{min-height:36px;padding:6px 8px}
+  .canvas-node-editor-popover .canvas-parameter-trigger>span{gap:6px}
+  .canvas-node-editor-popover .canvas-parameter-trigger b{font-size:9px}
+  .canvas-node-editor-popover .canvas-parameter-trigger small{font-size:8px}
+  .canvas-node-editor-popover .canvas-parameter-drawer{padding:9px;gap:7px}
+  .canvas-node-editor-popover .canvas-parameter-drawer-head>span{gap:5px}
+  .canvas-node-editor-popover .canvas-parameter-drawer-head small{display:none}
+  .canvas-node-editor-popover .canvas-parameter-options>button{height:28px;font-size:8px}
+  .canvas-node-editor-popover .canvas-parameter-options.aspect{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .canvas-node-editor-popover .canvas-parameter-options.aspect>button{height:44px}
+}
+
+/* Node editor v7: match the main composer rhythm. The regular editor is a
+   single readable stack: prompt, references, parameter rows, then action.
+   Expanded mode deliberately becomes a writing surface instead of another
+   copy of the whole parameter form. */
+.canvas-node-editor-popover:not(.is-prompt-expanded){width:min(720px,calc(100vw - 24px));max-height:min(640px,calc(100vh - 24px));border-radius:20px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-head{min-height:56px;padding:10px 14px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-body{padding:12px 14px 10px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-columns{grid-template-columns:minmax(0,1fr);gap:11px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-copy,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings{gap:10px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{padding:12px 13px;border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:15px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent-soft) 34%,var(--panel-2)),color-mix(in srgb,var(--panel-2) 94%,var(--panel)));}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-label{margin:0 1px 8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-references,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-reference-draft-strip{padding:11px 12px;border:1px solid var(--line);border-radius:15px;background:color-mix(in srgb,var(--panel-2) 70%,transparent)}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-reference-slot{border-style:solid;border-color:color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--panel) 46%,transparent)}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;padding:11px 12px;border:1px solid var(--line);border-radius:15px;background:color-mix(in srgb,var(--panel-2) 70%,transparent)}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.image .creation-parameter-grid.primary{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:end}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.image .creation-parameter-grid.primary>.creation-field.model{grid-column:1/-1}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.image .creation-parameter-grid.advanced{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.video .creation-parameter-grid.primary{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:end}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.video .creation-parameter-grid.primary>.creation-field.model{grid-column:1/-1}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.agent .creation-parameter-grid.agent-primary{grid-template-columns:minmax(0,1fr) minmax(170px,.65fr);gap:8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.agent .creation-parameter-grid.agent-primary>.creation-field.model{grid-column:1/-1}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-actions{min-height:55px;padding:9px 14px 11px}
+
+.canvas-node-editor-popover.is-prompt-expanded{height:min(760px,calc(100vh - 32px));max-height:calc(100vh - 32px);border-radius:22px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-head{min-height:62px;padding:12px 17px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-body{display:flex;flex:1;min-height:0;overflow:hidden;padding:16px 17px 12px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-columns{display:block;flex:1;min-height:0}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-copy{display:flex;height:100%;min-height:0}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-settings,.canvas-node-editor-popover.is-prompt-expanded .canvas-editor-references,.canvas-node-editor-popover.is-prompt-expanded .canvas-reference-draft-strip{display:none!important}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap{display:flex;flex:1;flex-direction:column;min-height:0;padding:18px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:19px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent-soft) 34%,var(--panel-2)),color-mix(in srgb,var(--panel-2) 96%,var(--panel)));box-shadow:0 12px 28px color-mix(in srgb,var(--shadow-color,#111827) 10%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 6%,transparent)}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-label{margin:0 2px 11px;font-size:10px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-label span{font-size:12px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-label small{font-size:8px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>textarea{flex:1 1 auto;min-height:0;max-height:none;height:auto;border-color:color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--panel) 78%,var(--panel-2));padding:16px;font-size:13px;line-height:1.75;overflow-y:auto;resize:none}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions{min-height:64px;padding:11px 17px 14px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions>span{font-size:8px}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-generate{height:36px;padding:0 21px;font-size:10px;border-radius:11px}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover:not(.is-prompt-expanded){max-height:calc(100vh - 80px)}
+  .canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.image .creation-parameter-grid.primary,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.video .creation-parameter-grid.primary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.image .creation-parameter-grid.primary>.creation-field.model,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor.video .creation-parameter-grid.primary>.creation-field.model{grid-column:1/-1}
+  .canvas-node-editor-popover.is-prompt-expanded{height:calc(100vh - 32px);max-height:calc(100vh - 32px);top:50%!important}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-head{min-height:54px;padding:10px 12px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-body{padding:11px 12px 8px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap{padding:12px;border-radius:16px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-label span{font-size:10px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>textarea{font-size:12px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions{min-height:54px;padding:8px 12px 10px}
+}
+
+/* Final compact overrides: these intentionally come after the editor v7
+   defaults above, so canvas zoom density wins over the comfortable layout. */
+.canvas-node-editor-popover:not(.is-prompt-expanded){width:min(620px,calc(100vw - 24px));max-height:min(560px,calc(100vh - 24px));border-radius:18px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-head{min-height:50px;padding:8px 12px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-body{padding:9px 12px 8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-columns{gap:8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-copy,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings{gap:8px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{padding:10px 11px;border-radius:13px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>textarea{min-height:104px;max-height:220px;height:104px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-references,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-reference-draft-strip{padding:9px 10px;border-radius:13px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{padding:9px 10px;border-radius:13px}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-actions{min-height:49px;padding:7px 12px 9px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"]{width:min(500px,calc(100vw - 24px));max-height:min(500px,calc(100vh - 24px));border-radius:17px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"]{width:min(360px,calc(100vw - 24px));max-height:min(400px,calc(100vh - 24px));border-radius:15px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-head{min-height:46px;padding:7px 10px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-body{padding:6px 8px 5px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-columns{gap:6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-copy,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-settings{gap:6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-prompt-wrap,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-editor-references,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-settings>.creation-parameter-editor{padding:6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-prompt-label{margin-bottom:5px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-prompt-wrap>textarea{min-height:78px;max-height:150px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-actions{min-height:42px;padding:5px 8px 6px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-generate{height:28px;padding:0 12px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-identity>div,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-identity>div{display:flex;align-items:baseline;gap:7px;min-width:0}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-identity small,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-identity small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
