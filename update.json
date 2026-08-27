@@ -1,17 +1,23 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.10",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.10",
+  "latestVersion": "0.7.11",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.11",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.10/SANMAO.AI-0.7.10.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip"
   ],
-  "sha256": "a8294bcbe9c8cbcabf32383315b49b068499c22215e64efcf8ce09256e842d3a",
-  "publishedAt": "2026-08-25T00:00:00+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-27T09:31:46+08:00",
   "notes": [
+    "Windows 新增局域网共享入口，同一可信网络内的其他设备可通过管理员密码访问主机画布，密码以本机加密密文保存。",
+    "新增工作区同步接口与约 5 秒一次的多设备刷新，以最新保存的工作区为准，减少旧页面覆盖新内容；该模式不是实时多人协同。",
+    "超级画布节点编辑器采用紧凑参数抽屉和可展开提示词编辑，修复 Agent 节点输入、提示词与工作区同步不一致的问题。",
+    "大图上传会在本地自动压缩并保留宽高比与透明通道，界面会明确显示上传优化结果。",
+    "优化画布连线动画、选中流光、顶部栏、节点遮挡与生成耗时显示，并移除重复编辑入口。",
+    "Windows 本机、Windows 局域网和 macOS 启动入口增加独立品牌图标，Windows 备用脚本可自动生成或刷新快捷方式。",
     "Agent 节点可独立选择对话模型和服务商，不同节点可以并行使用不同服务商。",
     "节点模型选择保存到当前节点，不会修改全局默认助手模型；选择自动或模型不可用时才回退默认模型。",
     "模型选择器支持按服务商筛选并显示服务商与模型名称，手动模型失效时会显示回退提示。",
