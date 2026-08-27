@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { GeneratedImage } from './types';
 import type { RuntimeProvider } from './providers';
 import { resolveStoredImageReference } from './image-storage';
-import { resolveJimengCliCommand, runJimengCli } from './jimeng-cli';
+import { parseJimengJsonLines, resolveJimengCliCommand, runJimengCli } from './jimeng-cli';
 
 type ImageInput = {
   prompt: string;
@@ -36,8 +36,9 @@ export const jimengImageModels = [
 export function jimengImageModelVersion(rawId?: string) {
   const value = String(rawId || '').trim().toLowerCase();
   if (!value || value === 'jimeng-cli-image' || value === 'auto') return undefined;
-  if (/seedream[-_. ]?5\.0[-_. ]?pro/.test(value)) return 'seedream5.0pro';
-  if (/seedream[-_. ]?4\.7/.test(value)) return 'seedream4.7';
+  if (/seedream[-_. ]?5\.0[-_. ]?pro/.test(value)) return '5.0Pro';
+  if (/seedream[-_. ]?5\.0/.test(value)) return '5.0';
+  if (/seedream[-_. ]?4\.7/.test(value)) return '4.7';
   return String(rawId || '').trim() || undefined;
 }
 
@@ -121,7 +122,7 @@ function addImage(value: unknown, key: string, output: GeneratedImage[], seen: S
   }
 }
 
-function imagesFrom(output: string): { images: GeneratedImage[]; taskId?: string; failed?: string } {
+function legacyImagesFrom(output: string): { images: GeneratedImage[]; taskId?: string; failed?: string } {
   const parsed = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line) => {
     try { return [JSON.parse(line)]; } catch { return []; }
   });
@@ -134,12 +135,77 @@ function imagesFrom(output: string): { images: GeneratedImage[]; taskId?: string
   return { images, taskId: String(last.submit_id || last.submitId || last.task_id || last.taskId || '').trim() || undefined, failed: /(fail|error|reject|cancel|expired)/.test(status) ? String(error || '即梦图片任务失败') : undefined };
 }
 
-async function waitForResult(command: string, taskId: string, deadline: number, signal?: AbortSignal) {
+function findJimengField(value: unknown, names: RegExp, depth = 0): unknown {
+  if (depth > 12 || value === null || value === undefined || typeof value !== 'object') return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findJimengField(item, names, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (names.test(key) && child !== undefined && child !== null && String(child).trim()) return child;
+    const found = findJimengField(child, names, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function jimengTaskId(values: unknown[]) {
+  const value = findJimengField(values, /^(submit_id|submitId|task_id|taskId)$/i)
+    ?? findJimengField(values, /^(request_id|requestId)$/i);
+  return String(value ?? '').trim() || undefined;
+}
+
+function jimengError(values: unknown[]) {
+  const value = findJimengField(values, /^(error_message|errorMessage|error|message|detail)$/i);
+  if (value && typeof value === 'object') {
+    const nested = findJimengField(value, /^(message|detail)$/i);
+    return String(nested ?? JSON.stringify(value));
+  }
+  return String(value ?? '').trim();
+}
+
+export function imagesFrom(output: string): { images: GeneratedImage[]; taskId?: string; failed?: string } {
+  const parsed = parseJimengJsonLines(output);
+  const images: GeneratedImage[] = [];
+  const seen = new Set<string>();
+  parsed.forEach((item) => addImage(item, 'result', images, seen));
+  const status = String(findJimengField(parsed, /^(status|state|gen_status|genStatus)$/i) ?? '').toLowerCase();
+  return {
+    images,
+    taskId: jimengTaskId(parsed),
+    failed: /(fail|error|reject|cancel|expired|aborted)/.test(status)
+      ? (jimengError(parsed) || 'Jimeng image task failed')
+      : undefined,
+  };
+}
+
+function imageMime(file: string) {
+  const extension = path.extname(file).toLowerCase();
+  return extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : extension === '.webp' ? 'image/webp' : 'image/png';
+}
+
+async function downloadedImages(directory: string): Promise<GeneratedImage[]> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  const files = entries
+    .filter((entry) => entry.isFile() && /\.(?:png|jpe?g|webp)$/i.test(entry.name))
+    .map((entry) => path.join(directory, entry.name));
+  return Promise.all(files.map(async (file) => ({
+    url: `data:${imageMime(file)};base64,${(await readFile(file)).toString('base64')}`,
+  })));
+}
+
+async function waitForResult(command: string, taskId: string, outputDirectory: string, deadline: number, signal?: AbortSignal) {
   while (Date.now() < deadline) {
-    const result = await runJimengCli(command, ['query_result', `--submit_id=${taskId}`], 45_000, signal);
+    const result = await runJimengCli(command, ['query_result', `--submit_id=${taskId}`, `--download_dir=${outputDirectory}`], 45_000, signal);
     const parsed = imagesFrom(`${result.stdout}\n${result.stderr}`);
     if (parsed.failed) throw new Error(parsed.failed);
+    const files = await downloadedImages(outputDirectory);
+    if (files.length) return files;
     if (parsed.images.length) return parsed.images;
+    if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || 'Jimeng image query failed');
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, 2_000);
       const abort = () => { clearTimeout(timer); reject(signal?.reason || new Error('即梦图片任务已取消')); };
@@ -152,15 +218,17 @@ async function waitForResult(command: string, taskId: string, deadline: number, 
 export async function runJimengImage(provider: RuntimeProvider, rawModelId: string, input: ImageInput, references: string[] = [], signal?: AbortSignal) {
   const command = resolveJimengCliCommand(provider.jimengCliPath);
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-'));
+  const outputDirectory = path.join(directory, 'results');
   try {
+    await mkdir(outputDirectory, { recursive: true });
     const files = await Promise.all(references.slice(0, 10).map((reference, index) => materialize(reference, directory, index)));
     const operation = files.length ? 'image2image' : 'text2image';
-    const result = await runJimengCli(command, [...buildJimengImageCliArgs(operation, input, files, rawModelId), '--poll', '30'], 90_000, signal);
+    const result = await runJimengCli(command, [...buildJimengImageCliArgs(operation, input, files, rawModelId), '--poll', '0'], 90_000, signal);
     if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || '即梦图片生成失败');
     const parsed = imagesFrom(`${result.stdout}\n${result.stderr}`);
     if (parsed.failed) throw new Error(parsed.failed);
     if (parsed.images.length) return parsed.images.slice(0, Math.max(1, Math.min(10, Number(input.count || 1))));
-    if (parsed.taskId) return waitForResult(command, parsed.taskId, Date.now() + 30 * 60 * 1000, signal);
+    if (parsed.taskId) return (await waitForResult(command, parsed.taskId, outputDirectory, Date.now() + 30 * 60 * 1000, signal)).slice(0, Math.max(1, Math.min(10, Number(input.count || 1))));
     throw new Error('即梦 CLI 已响应，但没有解析到图片结果');
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);
@@ -170,14 +238,16 @@ export async function runJimengImage(provider: RuntimeProvider, rawModelId: stri
 export async function runJimengImageUpscale(provider: RuntimeProvider, input: { reference: string; size: string }, signal?: AbortSignal) {
   const command = resolveJimengCliCommand(provider.jimengCliPath);
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-upscale-'));
+  const outputDirectory = path.join(directory, 'results');
   try {
+    await mkdir(outputDirectory, { recursive: true });
     const file = await materialize(input.reference, directory, 0);
-    const result = await runJimengCli(command, buildJimengImageUpscaleCliArgs(file, input.size), 90_000, signal);
+    const result = await runJimengCli(command, [...buildJimengImageUpscaleCliArgs(file, input.size).filter((value) => value !== '--poll' && value !== '30'), '--poll', '0'], 90_000, signal);
     if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || '即梦图片超清失败');
     const parsed = imagesFrom(`${result.stdout}\n${result.stderr}`);
     if (parsed.failed) throw new Error(parsed.failed);
     if (parsed.images.length) return parsed.images.slice(0, 1);
-    if (parsed.taskId) return waitForResult(command, parsed.taskId, Date.now() + 30 * 60 * 1000, signal);
+    if (parsed.taskId) return (await waitForResult(command, parsed.taskId, outputDirectory, Date.now() + 30 * 60 * 1000, signal)).slice(0, 1);
     throw new Error('即梦 CLI 已响应，但没有解析到超清图片结果');
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);

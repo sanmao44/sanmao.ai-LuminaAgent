@@ -5,7 +5,8 @@ import ts from 'typescript';
 
 const sourceUrl = new URL('../lib/jimeng-image.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
-const standaloneSource = source.replace(/^import .+;\r?\n/gm, '');
+const cliSource = await readFile(new URL('../lib/jimeng-cli.ts', import.meta.url), 'utf8');
+const standaloneSource = `${cliSource}\n${source}`.replace(/^import .+;\r?\n/gm, '');
 const compiled = ts.transpileModule(standaloneSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,
@@ -21,19 +22,29 @@ test('exposes the documented Jimeng image models for the image panel', () => {
 });
 
 test('maps the selected Jimeng image model to the official CLI version', () => {
-  assert.equal(image.jimengImageModelVersion('seedream-5.0-pro'), 'seedream5.0pro');
-  assert.equal(image.jimengImageModelVersion('seedream5.0'), 'seedream5.0');
-  assert.equal(image.jimengImageModelVersion('seedream4.7'), 'seedream4.7');
+  assert.equal(image.jimengImageModelVersion('seedream-5.0-pro'), '5.0Pro');
+  assert.equal(image.jimengImageModelVersion('seedream5.0'), '5.0');
+  assert.equal(image.jimengImageModelVersion('seedream4.7'), '4.7');
   assert.equal(image.jimengImageModelVersion('jimeng-cli-image'), undefined);
 });
 
 test('passes the selected image model version to text2image and image2image', () => {
   assert.deepEqual(image.buildJimengImageCliArgs('text2image', { prompt: 'a red fox', aspectRatio: '16:9', resolution: '2K', count: 2 }, [], 'seedream5.0pro'), [
-    'text2image', '--model_version', 'seedream5.0pro', '--prompt', 'a red fox', '--resolution_type', '2k', '--generate_num', '2', '--ratio', '16:9',
+    'text2image', '--model_version', '5.0Pro', '--prompt', 'a red fox', '--resolution_type', '2k', '--generate_num', '2', '--ratio', '16:9',
   ]);
   assert.deepEqual(image.buildJimengImageCliArgs('image2image', { prompt: 'make it cinematic', resolution: '4K' }, ['reference.png'], 'seedream4.7'), [
-    'image2image', '--model_version', 'seedream4.7', '--prompt', 'make it cinematic', '--resolution_type', '4k', '--generate_num', '1', '--images', 'reference.png',
+    'image2image', '--model_version', '4.7', '--prompt', 'make it cinematic', '--resolution_type', '4k', '--generate_num', '1', '--images', 'reference.png',
   ]);
+});
+
+test('parses formatted async responses and nested image results', () => {
+  const parsed = image.imagesFrom(`\n${JSON.stringify({
+    submit_id: 'task-123',
+    gen_status: 'success',
+    result_json: { images: [{ image_url: 'https://cdn.example.test/result.png' }] },
+  }, null, 2)}\n`);
+  assert.equal(parsed.taskId, 'task-123');
+  assert.deepEqual(parsed.images, [{ url: 'https://cdn.example.test/result.png' }]);
 });
 
 test('exposes and maps the installed Jimeng image upscale command', () => {
