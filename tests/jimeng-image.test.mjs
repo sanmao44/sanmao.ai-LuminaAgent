@@ -48,6 +48,12 @@ test('parses formatted async responses and nested image results', () => {
   assert.deepEqual(parsed.images, [{ url: 'https://cdn.example.test/result.png' }]);
 });
 
+test('recognizes the CLI numeric success status', () => {
+  const parsed = image.imagesFrom(JSON.stringify({ submit_id: 'task-456', result_json: { task: { status: 50 } } }));
+  assert.equal(parsed.taskId, 'task-456');
+  assert.equal(parsed.done, true);
+});
+
 test('exposes and maps the installed Jimeng image upscale command', () => {
   assert.equal(image.jimengImageModels.find((model) => model.id === 'jimeng-cli-image').capabilities.includes('upscale'), true);
   assert.deepEqual(image.buildJimengImageUpscaleCliArgs('input.png', '2048x1536'), [
