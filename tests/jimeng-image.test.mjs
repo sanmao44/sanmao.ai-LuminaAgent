@@ -44,6 +44,7 @@ test('parses formatted async responses and nested image results', () => {
     result_json: { images: [{ image_url: 'https://cdn.example.test/result.png' }] },
   }, null, 2)}\n`);
   assert.equal(parsed.taskId, 'task-123');
+  assert.equal(parsed.done, true);
   assert.deepEqual(parsed.images, [{ url: 'https://cdn.example.test/result.png' }]);
 });
 

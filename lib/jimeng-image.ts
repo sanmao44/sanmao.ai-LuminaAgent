@@ -167,7 +167,7 @@ function jimengError(values: unknown[]) {
   return String(value ?? '').trim();
 }
 
-export function imagesFrom(output: string): { images: GeneratedImage[]; taskId?: string; failed?: string } {
+export function imagesFrom(output: string): { images: GeneratedImage[]; taskId?: string; failed?: string; done?: boolean } {
   const parsed = parseJimengJsonLines(output);
   const images: GeneratedImage[] = [];
   const seen = new Set<string>();
@@ -176,6 +176,7 @@ export function imagesFrom(output: string): { images: GeneratedImage[]; taskId?:
   return {
     images,
     taskId: jimengTaskId(parsed),
+    done: /(success|succeed|completed|complete|finished|ready)/.test(status),
     failed: /(fail|error|reject|cancel|expired|aborted)/.test(status)
       ? (jimengError(parsed) || 'Jimeng image task failed')
       : undefined,
@@ -206,6 +207,7 @@ async function waitForResult(command: string, taskId: string, outputDirectory: s
     if (files.length) return files;
     if (parsed.images.length) return parsed.images;
     if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || 'Jimeng image query failed');
+    if (parsed.done) throw new Error('Jimeng image task completed, but the CLI did not provide a downloadable image');
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, 2_000);
       const abort = () => { clearTimeout(timer); reject(signal?.reason || new Error('即梦图片任务已取消')); };
