@@ -4,6 +4,8 @@ import './provider-library.css';
 import './agent-upgrades.css';
 import './desktop-readability.css';
 import './canvas.css';
+import './motion.css';
+import MotionPreference from '@/components/MotionPreference';
 
 export const viewport: Viewport = {
   colorScheme: 'light dark',
@@ -24,6 +26,8 @@ const themeBootScript = `
     var theme = saved === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+    var motion = localStorage.getItem('sanmao-motion-preference');
+    if (motion === 'on' || motion === 'off') document.documentElement.dataset.motion = motion;
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#0f1117' : '#f5f6f8');
   } catch (e) {
@@ -36,7 +40,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="zh-CN" data-theme="light" suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: themeBootScript }} /></head>
-      <body>{children}</body>
+      <body><MotionPreference />{children}</body>
     </html>
   );
 }

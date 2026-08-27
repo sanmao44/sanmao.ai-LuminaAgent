@@ -1,0 +1,9 @@
+/*
+ * Some managed workstations force prefers-reduced-motion: reduce for every
+ * browser tab. The app still respects that default, but MotionPreference can
+ * opt this app back in without changing the user's OS/browser setting.
+ */
+.motion-compat-notice{position:fixed;right:16px;bottom:16px;z-index:700;display:flex;align-items:center;gap:12px;width:min(430px,calc(100vw - 32px));padding:11px 12px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:13px;background:color-mix(in srgb,var(--panel) 96%,var(--accent-soft));box-shadow:0 14px 38px color-mix(in srgb,var(--accent) 14%,transparent),var(--shadow-soft);color:var(--text)}
+.motion-compat-notice>span{display:grid;gap:3px;min-width:0;flex:1}.motion-compat-notice strong{font-size:10px}.motion-compat-notice small{color:var(--muted);font-size:8px;line-height:1.4}.motion-compat-notice button{height:30px;flex:none;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;padding:0 10px;font-size:8px;font-weight:850;cursor:pointer}.motion-compat-notice button:hover{background:var(--accent-2);border-color:var(--accent-2)}
+html[data-motion="on"] .motion-compat-notice{display:none}
+@media(max-width:620px){.motion-compat-notice{right:10px;bottom:10px;width:calc(100vw - 20px);align-items:flex-start;flex-direction:column;gap:8px}.motion-compat-notice button{width:100%}}

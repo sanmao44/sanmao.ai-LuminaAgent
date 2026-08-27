@@ -4714,7 +4714,7 @@ export default function Page() {
             if (!(target instanceof Element)) return;
             const button = target.closest('button');
             if (!(button instanceof HTMLButtonElement) || button.disabled || !isCelebrationButton(button)) return;
-            const reducedMotion = motionQuery.matches;
+            const reducedMotion = motionQuery.matches && document.documentElement.dataset.motion !== 'on';
             button.classList.remove('celebration-button-active');
             void button.offsetWidth;
             button.classList.add('celebration-button-active');
