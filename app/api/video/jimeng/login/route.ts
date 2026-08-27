@@ -1,6 +1,6 @@
 import { isAdminRequest } from '@/lib/auth';
 import { getProviderWithKey } from '@/lib/store';
-import { extractJimengAuthChallenge, isJimengAuthenticatedOutput, isJimengAuthorizationPendingOutput, parseJimengJsonLines, resolveJimengCliCommand, runJimengCli } from '@/lib/jimeng-cli';
+import { extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutput, isJimengAuthorizationPendingOutput, parseJimengJsonLines, queryJimengAccount, resolveJimengCliCommand, runJimengCli } from '@/lib/jimeng-cli';
 
 export const runtime = 'nodejs';
 
@@ -39,6 +39,11 @@ export async function POST(request: Request) {
     const provider = await providerFromRequest(body);
     const command = commandFor(provider);
 
+    if (action === 'account' || action === 'refresh-account') {
+      const inspected = await inspectJimengCli(provider);
+      return Response.json({ ok: inspected.installed, installed: inspected.installed, version: inspected.version, officialUrl: OFFICIAL_CLI_URL, ...await queryJimengAccount(inspected.command, inspected.installed) });
+    }
+
     if (action === 'inspect') {
       try {
         const result = await runJimengCli(command, ['--version'], 12_000);
@@ -53,7 +58,7 @@ export async function POST(request: Request) {
       const output = `${result.stdout}\n${result.stderr}`.trim();
       const challenge = extractJimengAuthChallenge(output);
       if (result.code === 0 && isJimengAuthenticatedOutput(output)) {
-        return Response.json({ ok: true, status: 'authorized', authorized: true, officialUrl: OFFICIAL_CLI_URL, message: '即梦已有有效登录，可以直接生成视频。' });
+        return Response.json({ ok: true, status: 'authorized', officialUrl: OFFICIAL_CLI_URL, message: '即梦已有有效登录，可以直接生成视频。', ...await queryJimengAccount(command) });
       }
       if (result.code !== 0 && !challenge.deviceCode) throw new Error(output || '即梦 CLI 登录初始化失败');
       if (!challenge.deviceCode) throw new Error('即梦 CLI 没有返回 device_code，请确认 CLI 版本并重试');
@@ -66,10 +71,11 @@ export async function POST(request: Request) {
       const result = await runJimengCli(command, ['login', 'checklogin', `--device_code=${deviceCode}`, '--poll=30'], 45_000);
       const output = `${result.stdout}\n${result.stderr}`.trim();
       const parsed = parseJimengJsonLines(output);
-      const status = isJimengAuthenticatedOutput(output, parsed) ? 'authorized' : statusFrom(output, parsed);
+      const status: string = isJimengAuthenticatedOutput(output, parsed) ? 'authorized' : statusFrom(output, parsed);
       const pending = isJimengAuthorizationPendingOutput(output);
-      if (result.code !== 0 && status !== 'authorized' && !pending) return Response.json({ ok: false, status: 'failed', error: output || '即梦授权检查失败' }, { status: 200 });
-      return Response.json({ ok: status === 'authorized', status: status === 'authorized' ? 'authorized' : 'pending', message: status === 'authorized' ? '即梦 CLI 已登录，可以生成视频。' : '尚未检测到授权，完成网页登录后会继续检查。' });
+      if (status === 'authorized') return Response.json({ ok: true, status: 'authorized', message: '即梦 CLI 已登录，可以生成视频。', ...await queryJimengAccount(command) });
+      if (result.code !== 0 && !pending) return Response.json({ ok: false, status: 'failed', error: output || '即梦授权检查失败' }, { status: 200 });
+      return Response.json({ ok: false, status: 'pending', message: '尚未检测到授权，完成网页登录后会继续检查。' });
     }
     return Response.json({ error: '不支持的登录操作。' }, { status: 400 });
   } catch (error) {

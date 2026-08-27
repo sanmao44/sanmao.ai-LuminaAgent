@@ -195,6 +195,21 @@ test('reconstructs a usable device-flow URL when an older CLI prints only user_c
   assert.notEqual(challenge.verificationUri, 'https://jimeng.jianying.com/cli');
 });
 
+test('parses formatted Jimeng video results and numeric completion statuses', () => {
+  const parsed = video.parseJimengCliVideoOutput(JSON.stringify({
+    submit_id: 'video-task-1',
+    result_json: { task: { status: 50 }, video_url: 'https://cdn.example.test/result.mp4' },
+  }, null, 2));
+  assert.equal(parsed.taskId, 'video-task-1');
+  assert.equal(parsed.status, 'done');
+  assert.deepEqual(parsed.videos, [{ url: 'https://cdn.example.test/result.mp4' }]);
+});
+
+test('uses asynchronous Jimeng submission and download-aware result polling', () => {
+  assert.match(source, /cliArgs\(cliInput, rawModelId\).*--poll.*0/s);
+  assert.match(source, /query_result.*--submit_id=\$\{providerTaskId\}.*--download_dir=\$\{outputDirectory\}/s);
+});
+
 test('extracts device-flow fields from JSON output', () => {
   const challenge = jimengCli.extractJimengAuthChallenge(JSON.stringify({
     device_code: 'json-device',
@@ -212,6 +227,35 @@ test('recognizes a reused Dreamina OAuth session as authenticated', () => {
   assert.equal(jimengCli.isJimengAuthenticatedOutput('{\n  "total_credit": 1233,\n  "user_id": 2071909462453816,\n  "vip_level": "maestro"\n}'), true);
   assert.equal(jimengCli.isJimengAuthenticatedOutput('login required'), false);
   assert.equal(jimengCli.isJimengAuthenticatedOutput('not logged in'), false);
+});
+
+test('parses Dreamina account credits, including a zero balance', () => {
+  assert.deepEqual(jimengCli.parseJimengAccountOutput(JSON.stringify({
+    total_credit: 0,
+    user_id: 2071909462453816,
+    user_name: '',
+    vip_level: 'maestro',
+  })), {
+    totalCredit: 0,
+    userId: '2071909462453816',
+    userName: '',
+    vipLevel: 'maestro',
+  });
+  assert.deepEqual(jimengCli.parseJimengAccountOutput(JSON.stringify({ data: { account: {
+    totalCredit: '1,225', userId: 'user-1', userName: 'demo', vipLevel: 'pro',
+  } } })), {
+    totalCredit: 1225,
+    userId: 'user-1',
+    userName: 'demo',
+    vipLevel: 'pro',
+  });
+});
+
+test('maps common Dreamina generation failures to actionable messages', () => {
+  assert.equal(jimengCli.jimengErrorCode('AigcComplianceConfirmationRequired'), 'JIMENG_FIRST_USE_REQUIRED');
+  assert.match(jimengCli.jimengErrorMessage('AigcComplianceConfirmationRequired', 'fallback'), /即梦网页端/);
+  assert.equal(jimengCli.jimengErrorCode('insufficient credit balance'), 'JIMENG_CREDIT_INSUFFICIENT');
+  assert.match(jimengCli.jimengErrorMessage('login required', 'fallback'), /重新授权/);
 });
 
 test('keeps an unfinished Dreamina device flow pending after a polling timeout', () => {

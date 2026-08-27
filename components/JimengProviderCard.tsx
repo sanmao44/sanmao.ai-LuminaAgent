@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { ProviderConnection, PublicState } from '@/lib/types';
+import type { JimengAccount } from '@/lib/jimeng-cli';
+import JimengAccountSummary from '@/components/JimengAccountSummary';
 
 const OFFICIAL_URL = 'https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg';
 const INSTALL_COMMAND = 'curl -fsSL https://jimeng.jianying.com/cli | bash';
@@ -22,14 +24,18 @@ type AuthState = {
   deviceCode: string;
   message: string;
   error: string;
+  account: JimengAccount | null;
+  accountCheckedAt: string;
+  accountError: string;
 };
 
-const initialAuth: AuthState = { status: 'idle', installed: false, version: '', command: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '' };
+const initialAuth: AuthState = { status: 'idle', installed: false, version: '', command: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' };
 
 export default function JimengProviderCard({ providers, onStateChanged, onNotify }: Props) {
   const provider = useMemo(() => providers.find((item) => item.platform === 'jimeng-cli' || item.videoTransport === 'jimeng-cli'), [providers]);
   const [auth, setAuth] = useState<AuthState>(initialAuth);
   const [busy, setBusy] = useState(false);
+  const [accountBusy, setAccountBusy] = useState(false);
 
   async function request(action: string, extra: Record<string, unknown> = {}) {
     const response = await fetch('/api/providers/jimeng', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...extra }) });
@@ -48,6 +54,18 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
     } catch (error) {
       setAuth((old) => ({ ...old, status: 'failed', error: error instanceof Error ? error.message : '检测失败' }));
     }
+  }
+
+  async function refreshAccount() {
+    if (accountBusy) return;
+    setAccountBusy(true);
+    setAuth((old) => ({ ...old, accountError: '' }));
+    try {
+      const data = await request('refresh-account');
+      setAuth((old) => ({ ...old, ...data, account: data.account || null, accountError: data.accountError || '' }));
+    } catch (error) {
+      setAuth((old) => ({ ...old, accountError: error instanceof Error ? error.message : '读取即梦账户信息失败，请稍后重试。' }));
+    } finally { setAccountBusy(false); }
   }
 
   useEffect(() => { void detect(); }, []);
@@ -87,6 +105,7 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
       else window.open(started.verificationUri, '_blank', 'noopener,noreferrer');
       setAuth((old) => ({ ...old, ...started, status: 'checking', message: started.message || '授权页面已自动打开，请完成网页授权…' }));
       const checked = await waitForAuthorization(started.deviceCode);
+      setAuth((old) => ({ ...old, ...checked }));
       await syncProvider(started.providerId);
       setAuth((old) => ({ ...old, status: 'authorized', message: '即梦已连接，图片和视频模型已同步。', error: '' }));
       onNotify(switchAccount ? '即梦账号已切换' : '即梦已连接');
@@ -120,6 +139,7 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
         <button type="button" className="ghost-button" disabled={auth.status === 'detecting'} onClick={() => void detect()}>{auth.status === 'detecting' ? '检测中…' : '重新检测'}</button>
       </div>
     </div>
+    <JimengAccountSummary account={auth.account} checkedAt={auth.accountCheckedAt} error={auth.accountError} loading={accountBusy || auth.status === 'detecting' || auth.status === 'starting' || auth.status === 'checking'} onRefresh={provider ? () => void refreshAccount() : undefined} />
     {auth.verificationUri && <div className="jimeng-provider-auth-box"><div><span>授权窗口已准备</span><a href={auth.verificationUri} target="_blank" rel="noreferrer">如果没有自动打开，点击这里继续授权 ↗</a></div><b>{auth.userCode || '—'}</b></div>}
     {!installed && <div className="jimeng-provider-install"><span>未找到即梦 CLI？请先安装，安装后重新检测。</span><a href={OFFICIAL_URL} target="_blank" rel="noreferrer">官方安装说明 ↗</a><button type="button" onClick={() => void copyInstallCommand()}>复制安装命令</button><code>{INSTALL_COMMAND}</code></div>}
   </article>;

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
@@ -57,13 +57,35 @@ function headers(provider: RuntimeProvider, idempotencyKey?: string) {
 }
 
 function taskIdFrom(data: any) {
-  const values = [data?.submit_id, data?.submitId, data?.task_id, data?.taskId, data?.request_id, data?.requestId, data?.id, data?.data?.submit_id, data?.data?.submitId, data?.data?.task_id, data?.data?.taskId, data?.data?.id, data?.task?.id, data?.data?.task?.id];
-  return String(values.find((value) => value !== undefined && value !== null && String(value).trim()) || '').trim();
+  const visit = (value: any, depth = 0): string => {
+    if (depth > 10 || value === null || value === undefined || typeof value !== 'object') return '';
+    if (Array.isArray(value)) {
+      for (const item of value) { const found = visit(item, depth + 1); if (found) return found; }
+      return '';
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if (/^(submit_id|submitId|task_id|taskId|request_id|requestId)$/i.test(key) && item !== undefined && item !== null && String(item).trim()) return String(item).trim();
+      const found = visit(item, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  };
+  return visit(data);
 }
 
 function statusFrom(data: any): VideoProviderTask['status'] {
-  const value = String(data?.status || data?.state || data?.data?.status || data?.data?.state || data?.task?.status || data?.data?.task?.status || '').toLowerCase();
-  if (/(done|success|succeed|completed|complete|finished|ready)/.test(value)) return 'done';
+  const values: string[] = [];
+  const visit = (value: any, depth = 0) => {
+    if (depth > 10 || value === null || value === undefined || typeof value !== 'object') return;
+    if (Array.isArray(value)) return value.forEach((item) => visit(item, depth + 1));
+    for (const [key, item] of Object.entries(value)) {
+      if (/^(status|state|gen_status|genStatus)$/i.test(key)) values.push(String(item).toLowerCase());
+      visit(item, depth + 1);
+    }
+  };
+  visit(data);
+  const value = values.join(' ');
+  if (/(done|success|succeed|completed|complete|finished|ready)/.test(value) || values.includes('50')) return 'done';
   if (/(fail|error|cancel|reject|expired|aborted)/.test(value)) return 'failed';
   if (/(running|processing|in_progress|generating)/.test(value)) return 'running';
   return 'pending';
@@ -92,6 +114,25 @@ function videosFrom(data: any): GeneratedVideo[] {
 function errorFrom(data: any, fallback: string) {
   const value = data?.error?.message || data?.error_message || data?.error || data?.message || data?.detail;
   return typeof value === 'string' ? value.slice(0, 900) : value ? JSON.stringify(value).slice(0, 900) : fallback;
+}
+
+function jimengErrorCode(value: unknown) {
+  const text = String(value ?? '');
+  if (/AigcComplianceConfirmationRequired/i.test(text)) return 'JIMENG_FIRST_USE_REQUIRED';
+  if (/(insufficient|not enough|credit|积分|点数).*(balance|credit|enough|不足)|余额不足|积分不足/i.test(text)) return 'JIMENG_CREDIT_INSUFFICIENT';
+  if (/(login required|not logged[ -]?in|unauthorized|session expired|未登录|登录失效|授权失效)/i.test(text)) return 'JIMENG_AUTH_REQUIRED';
+  if (/timed? out|timeout|超时/i.test(text)) return 'JIMENG_TIMEOUT';
+  return undefined;
+}
+
+function jimengErrorMessage(value: unknown, fallback: string) {
+  const text = String(value ?? '').trim();
+  const code = jimengErrorCode(text);
+  if (code === 'JIMENG_FIRST_USE_REQUIRED') return '即梦要求先在即梦网页端使用该模型完成一次生成，请先完成首次生成后再回来重试。';
+  if (code === 'JIMENG_CREDIT_INSUFFICIENT') return '即梦账户积分不足，请到即梦账户充值或更换账户后重试。';
+  if (code === 'JIMENG_AUTH_REQUIRED') return '即梦登录已失效，请到设置中重新授权即梦 CLI。';
+  if (code === 'JIMENG_TIMEOUT') return '即梦任务查询超时，任务可能仍在生成，请稍后刷新任务状态。';
+  return text.slice(0, 900) || fallback;
 }
 
 async function requestJson(url: string, init: RequestInit, signal?: AbortSignal) {
@@ -329,17 +370,103 @@ export function buildJimengCliArgs(input: VideoGenerationInput, rawModelId?: str
 // the descriptive exported name above.
 function cliArgs(input: VideoGenerationInput, rawModelId?: string) { return buildJimengCliArgs(input, rawModelId); }
 
-function parseCliOutput(stdout: string) {
-  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse();
-  for (const line of lines) {
+function parseCliJsonValues(output: string) {
+  const values: any[] = [];
+  const trimmed = output.trim();
+  if (trimmed) {
+    try { values.push(JSON.parse(trimmed)); } catch {}
+  }
+  for (const line of output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
     try {
       const parsed = JSON.parse(line);
-      const videos = videosFrom(parsed);
-      if (videos.length || taskIdFrom(parsed)) return { parsed, videos, taskId: taskIdFrom(parsed) };
+      if (!values.some((item) => JSON.stringify(item) === JSON.stringify(parsed))) values.push(parsed);
     } catch {}
   }
-  const url = stdout.match(/https?:\/\/[^\s"']+\.(?:mp4|webm|mov)(?:\?[^\s"']*)?/i)?.[0];
-  return { parsed: { raw: stdout }, videos: url ? [{ url }] : [], taskId: '' };
+  const start = output.indexOf('{');
+  const end = output.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      if (!values.some((item) => JSON.stringify(item) === JSON.stringify(parsed))) values.push(parsed);
+    } catch {}
+  }
+  return values;
+}
+
+export function parseJimengCliVideoOutput(output: string) {
+  const values = parseCliJsonValues(output);
+  const videos: GeneratedVideo[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    for (const video of videosFrom(value)) {
+      if (!seen.has(video.url)) { seen.add(video.url); videos.push(video); }
+    }
+  }
+  const url = output.match(/https?:\/\/[^\s"']+\.(?:mp4|webm|mov)(?:\?[^\s"']*)?/i)?.[0];
+  if (url && !seen.has(url)) videos.push({ url });
+  const parsed = values.slice().reverse().find((value) => videosFrom(value).length || taskIdFrom(value) || statusFrom(value) !== 'pending') || values[values.length - 1] || { raw: output };
+  const status = statusFrom(parsed);
+  const error = errorFrom(parsed, '');
+  return { parsed, videos, taskId: values.map((value) => taskIdFrom(value)).find(Boolean) || '', status, error: status === 'failed' ? error : '' };
+}
+
+function runJimengVideoCli(command: string, args: string[], timeoutMs: number, signal?: AbortSignal) {
+  return new Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }>((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true, shell: jimengCliShell(command) });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (result: { code: number; stdout: string; stderr: string; timedOut: boolean }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      resolve(result);
+    };
+    const abort = () => {
+      try { child.kill(); } catch {}
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        reject(new VideoProviderError('即梦 CLI 任务已取消。', { code: 'JIMENG_ABORTED' }));
+      }
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      finish({ code: 0, stdout, stderr, timedOut: true });
+    }, timeoutMs);
+    signal?.addEventListener('abort', abort, { once: true });
+    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      reject(new VideoProviderError(`无法启动即梦 CLI：${error.message}`, { code: 'JIMENG_CLI_START_FAILED' }));
+    });
+    child.on('close', (code) => finish({ code: code ?? 1, stdout, stderr, timedOut: false }));
+  });
+}
+
+function videoMime(file: string) {
+  const extension = path.extname(file).toLowerCase();
+  return extension === '.webm' ? 'video/webm' : extension === '.mov' ? 'video/quicktime' : extension === '.ogv' ? 'video/ogg' : 'video/mp4';
+}
+
+async function downloadedVideoFiles(directory: string): Promise<GeneratedVideo[]> {
+  const files: string[] = [];
+  const visit = async (current: string) => {
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const file = path.join(current, entry.name);
+      if (entry.isDirectory()) await visit(file);
+      else if (entry.isFile() && /\.(?:mp4|webm|mov|ogv|m4v)$/i.test(entry.name)) files.push(file);
+    }
+  };
+  await visit(directory);
+  return Promise.all(files.map(async (file) => ({ url: `data:${videoMime(file)};base64,${(await readFile(file)).toString('base64')}` })));
 }
 
 export async function runJimengVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, signal?: AbortSignal): Promise<VideoProviderTask> {
@@ -372,19 +499,15 @@ export async function runJimengVideo(provider: RuntimeProvider, rawModelId: stri
       audio: audios[0],
       referenceImages: await Promise.all((input.referenceImages || []).map((item, index) => materialize(item, `reference-${index + 1}`) as Promise<string>)),
     };
-    const args = cliArgs(cliInput, rawModelId);
-    const output = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(command, args, { windowsHide: true, shell: jimengCliShell(command) });
-    let stdout = ''; let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    const abort = () => { child.kill(); reject(new VideoProviderError('即梦 CLI 任务已取消')); };
-    signal?.addEventListener('abort', abort, { once: true });
-    child.on('error', (error) => { signal?.removeEventListener('abort', abort); reject(new VideoProviderError(`无法启动即梦 CLI：${error.message}`)); });
-    child.on('close', (code) => { signal?.removeEventListener('abort', abort); resolve({ code: code ?? 1, stdout, stderr }); });
-    });
-    if (output.code !== 0) throw new VideoProviderError(output.stderr.trim() || '即梦 CLI 生成失败');
-    const parsed = parseCliOutput(output.stdout);
+    const args = [...cliArgs(cliInput, rawModelId), '--poll', '0'];
+    const output = await runJimengVideoCli(command, args, 120_000, signal);
+    if (output.timedOut) throw new VideoProviderError('即梦视频提交超时，请稍后在任务列表刷新状态。', { code: 'JIMENG_TIMEOUT' });
+    if (output.code !== 0) {
+      const message = jimengErrorMessage(output.stderr.trim() || output.stdout.trim(), '即梦 CLI 视频生成失败');
+      throw new VideoProviderError(message, { code: jimengErrorCode(message) });
+    }
+    const parsed = parseJimengCliVideoOutput(`${output.stdout}\n${output.stderr}`);
+    if (parsed.status === 'failed') return { providerTaskId: parsed.taskId || undefined, status: 'failed', videos: [], raw: parsed.parsed, error: jimengErrorMessage(parsed.error, '即梦视频任务失败'), errorCode: jimengErrorCode(parsed.error) };
     if (!parsed.videos.length && !parsed.taskId) throw new VideoProviderError('即梦 CLI 已完成，但没有解析到视频地址；请检查 CLI 输出格式');
     return { providerTaskId: parsed.taskId || undefined, status: parsed.videos.length ? 'done' : 'pending', videos: parsed.videos, raw: parsed.parsed };
   } finally {
@@ -394,20 +517,24 @@ export async function runJimengVideo(provider: RuntimeProvider, rawModelId: stri
 
 export async function pollJimengVideo(provider: RuntimeProvider, providerTaskId: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   const command = cliCommand(provider);
-  const output = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(command, ['query_result', `--submit_id=${providerTaskId}`], { windowsHide: true, shell: jimengCliShell(command) });
-    let stdout = ''; let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    const abort = () => { child.kill(); reject(new VideoProviderError('即梦 CLI 查询已取消')); };
-    signal?.addEventListener('abort', abort, { once: true });
-    child.on('error', (error) => { signal?.removeEventListener('abort', abort); reject(new VideoProviderError(`无法启动即梦 CLI：${error.message}`)); });
-    child.on('close', (code) => { signal?.removeEventListener('abort', abort); resolve({ code: code ?? 1, stdout, stderr }); });
-  });
-  if (output.code !== 0) throw new VideoProviderError(output.stderr.trim() || '即梦 CLI 查询失败');
-  const parsed = parseCliOutput(output.stdout);
-  const status = parsed.videos.length ? 'done' : statusFrom(parsed.parsed);
-  return { providerTaskId, status, videos: parsed.videos, raw: parsed.parsed, ...(status === 'failed' ? { error: errorFrom(parsed.parsed, '即梦视频任务失败') } : {}) };
+  const outputDirectory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-result-'));
+  try {
+    const downloadedOutput = await runJimengVideoCli(command, ['query_result', `--submit_id=${providerTaskId}`, `--download_dir=${outputDirectory}`], 120_000, signal);
+    if (downloadedOutput.timedOut) return { providerTaskId, status: 'pending', videos: [], raw: { timedOut: true } };
+    const parsed = parseJimengCliVideoOutput(`${downloadedOutput.stdout}\n${downloadedOutput.stderr}`);
+    const downloadedVideos = await downloadedVideoFiles(outputDirectory);
+    if (downloadedVideos.length) return { providerTaskId, status: 'done', videos: downloadedVideos, raw: parsed.parsed };
+    if (parsed.videos.length) return { providerTaskId, status: 'done', videos: parsed.videos, raw: parsed.parsed };
+    if (downloadedOutput.code !== 0) {
+      const message = jimengErrorMessage(downloadedOutput.stderr.trim() || downloadedOutput.stdout.trim(), '即梦 CLI 查询视频结果失败');
+      throw new VideoProviderError(message, { code: jimengErrorCode(message) });
+    }
+    if (parsed.status === 'failed') return { providerTaskId, status: 'failed', videos: [], raw: parsed.parsed, error: jimengErrorMessage(parsed.error, '即梦视频任务失败'), errorCode: jimengErrorCode(parsed.error) };
+    if (parsed.status === 'done') return { providerTaskId, status: 'done', videos: [], raw: parsed.parsed, error: '即梦任务已完成，但 CLI 没有下载到视频结果。', errorCode: 'VIDEO_RESULT_MISSING' };
+    return { providerTaskId, status: parsed.status, videos: parsed.videos, raw: parsed.parsed };
+  } finally {
+    await rm(outputDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 export function idempotencyKey() { return randomUUID(); }

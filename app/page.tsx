@@ -13,6 +13,7 @@ import MaskEditor from '@/components/MaskEditor';
 import VideoStudio from '@/components/VideoStudio';
 import SelectMenu from '@/components/SelectMenu';
 import JimengProviderCard from '@/components/JimengProviderCard';
+import JimengAccountSummary from '@/components/JimengAccountSummary';
 import VideoRecordCard from '@/components/VideoRecordCard';
 import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
@@ -4763,7 +4764,7 @@ export default function Page() {
     const [providerBusy, setProviderBusy] = useState(false);
     const [providerTestBusy, setProviderTestBusy] = useState(false);
     const [providerTestResult, setProviderTestResult] = useState('');
-    const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '' });
+    const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
     const [syncingId, setSyncingId] = useState(null);
     const [providerForm, setProviderForm] = useState(emptyProviderForm);
     const selectedProviderPreset = getProviderPreset(providerForm.platform);
@@ -6873,14 +6874,14 @@ export default function Page() {
     function openAddProvider() {
         setProviderEditId(null);
         setProviderTestResult('');
-        setJimengLogin({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '' });
+        setJimengLogin({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
         setProviderForm(emptyProviderForm());
         setProviderEditor(true);
     }
     function openEditProvider(provider) {
         setProviderEditId(provider.id);
         setProviderTestResult('');
-        setJimengLogin({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '' });
+        setJimengLogin({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
         setProviderForm({
             name: provider.name,
             type: provider.type,
@@ -6959,12 +6960,12 @@ export default function Page() {
     }
     async function jimengLoginAction(action) {
         if (!providerEditId) return notify('请先保存即梦 CLI 服务配置，再开始登录');
-        setJimengLogin((old) => ({ ...old, status: action === 'check' ? 'checking' : action === 'inspect' ? 'inspecting' : 'starting', error: '' }));
+        setJimengLogin((old) => ({ ...old, status: action === 'check' ? 'checking' : action === 'inspect' ? 'inspecting' : action === 'account' || action === 'refresh-account' ? 'accounting' : 'starting', error: '', accountError: '' }));
         try {
             const res = await fetch('/api/video/jimeng/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: providerEditId, action, deviceCode: jimengLogin.deviceCode }) });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error || '即梦 CLI 操作失败');
-            setJimengLogin((old) => ({ ...old, ...data, status: data.status || (action === 'inspect' ? data.installed ? 'ready' : 'failed' : old.status), error: data.error || '' }));
+            setJimengLogin((old) => ({ ...old, ...data, status: data.status || (action === 'inspect' ? data.installed ? 'ready' : 'failed' : action === 'account' || action === 'refresh-account' ? data.authorized ? 'authorized' : 'idle' : old.status), error: data.error || '' }));
             if (data.error) notify(data.error);
         } catch (error) {
             const message = error instanceof Error ? error.message : '即梦 CLI 操作失败';
@@ -13560,8 +13561,9 @@ export default function Page() {
                                                                         ] }),
                                                                         /*#__PURE__*/ _jsx("button", { type: "button", className: "primary-action compact", disabled: jimengLogin.status === 'checking', onClick: () => void jimengLoginAction('check'), children: jimengLogin.status === 'checking' ? "检查中…" : "检查授权" })
                                                                     ] }),
-                                                                    jimengLogin.message && /*#__PURE__*/ _jsx("small", { className: `jimeng-login-note ${jimengLogin.status === 'authorized' ? 'success' : ''}`, children: jimengLogin.message }),
-                                                                    jimengLogin.error && /*#__PURE__*/ _jsx("small", { className: "jimeng-login-note error", children: jimengLogin.error })
+                                                                     jimengLogin.message && /*#__PURE__*/ _jsx("small", { className: `jimeng-login-note ${jimengLogin.status === 'authorized' ? 'success' : ''}`, children: jimengLogin.message }),
+                                                                     /*#__PURE__*/ _jsx(JimengAccountSummary, { account: jimengLogin.account, checkedAt: jimengLogin.accountCheckedAt, error: jimengLogin.accountError, loading: jimengLogin.status === 'accounting', onRefresh: providerEditId ? () => void jimengLoginAction('refresh-account') : undefined }),
+                                                                     jimengLogin.error && /*#__PURE__*/ _jsx("small", { className: "jimeng-login-note error", children: jimengLogin.error })
                                                                 ]
                                                             })
                                                         ]

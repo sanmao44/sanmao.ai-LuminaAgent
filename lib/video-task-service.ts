@@ -221,6 +221,7 @@ export async function refreshVideoTask(id: string) {
   try {
     const result = await callPoll(provider, task.providerTaskId);
     if (result.status === 'done' && result.videos.length) return persistResult(task, result);
+    if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING');
     if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode);
     const pollCount = task.pollCount + 1;
     const interval = Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);

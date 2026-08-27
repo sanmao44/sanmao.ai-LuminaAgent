@@ -5,6 +5,13 @@ import path from 'node:path';
 
 export type JimengCliResult = { code: number; stdout: string; stderr: string; timedOut: boolean };
 
+export type JimengAccount = {
+  totalCredit: number | null;
+  userId: string;
+  userName: string;
+  vipLevel: string;
+};
+
 function candidates(explicit?: string) {
   const values = [explicit, process.env.JIMENG_CLI_PATH];
   if (process.platform === 'win32') {
@@ -118,6 +125,85 @@ function findJsonField(values: any[], names: string[]) {
   return '';
 }
 
+function findJsonValue(values: any[], names: string[]) {
+  const wanted = new Set(names.map(normalizedFieldName));
+  const visit = (value: any): unknown => {
+    if (!value || typeof value !== 'object') return undefined;
+    for (const [key, item] of Object.entries(value)) {
+      if (wanted.has(normalizedFieldName(key)) && item !== undefined && item !== null) return item;
+      const nested = visit(item);
+      if (nested !== undefined) return nested;
+    }
+    return undefined;
+  };
+  for (const value of values) {
+    const found = visit(value);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function accountNumber(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = String(value ?? '').trim().replace(/,/g, '');
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Parse the documented `dreamina user_credit` response, including nested JSON. */
+export function parseJimengAccountOutput(output: string): JimengAccount | null {
+  const parsed = parseJimengJsonLines(output);
+  const creditValue = findJsonValue(parsed, ['total_credit', 'totalCredit', 'credit', 'credits']);
+  const userIdValue = findJsonValue(parsed, ['user_id', 'userId']);
+  const userNameValue = findJsonValue(parsed, ['user_name', 'userName', 'name']);
+  const vipValue = findJsonValue(parsed, ['vip_level', 'vipLevel', 'vip']);
+  const totalCredit = accountNumber(creditValue);
+  const userId = String(userIdValue ?? '').trim();
+  const userName = String(userNameValue ?? '').trim();
+  const vipLevel = String(vipValue ?? '').trim();
+  // A zero balance is valid. Do not use truthiness for the credit check.
+  if (totalCredit === null && !userId && !userName && !vipLevel) return null;
+  return { totalCredit, userId, userName, vipLevel };
+}
+
+export function jimengErrorCode(value: unknown) {
+  const text = String(value ?? '');
+  if (/AigcComplianceConfirmationRequired/i.test(text)) return 'JIMENG_FIRST_USE_REQUIRED';
+  if (/(insufficient|not enough|credit|积分|点数).*(balance|credit|enough|不足)|余额不足|积分不足/i.test(text)) return 'JIMENG_CREDIT_INSUFFICIENT';
+  if (/(login required|not logged[ -]?in|unauthorized|session expired|未登录|登录失效|授权失效)/i.test(text)) return 'JIMENG_AUTH_REQUIRED';
+  if (/timed? out|timeout|超时/i.test(text)) return 'JIMENG_TIMEOUT';
+  return undefined;
+}
+
+export function jimengErrorMessage(value: unknown, fallback: string) {
+  const text = String(value ?? '').trim();
+  if (/AigcComplianceConfirmationRequired/i.test(text)) return '即梦要求先在即梦网页端使用该模型完成一次生成，请先完成首次生成后再回来重试。';
+  if (jimengErrorCode(text) === 'JIMENG_CREDIT_INSUFFICIENT') return '即梦账户积分不足，请到即梦账户充值或更换账户后重试。';
+  if (jimengErrorCode(text) === 'JIMENG_AUTH_REQUIRED') return '即梦登录已失效，请到设置中重新授权即梦 CLI。';
+  if (jimengErrorCode(text) === 'JIMENG_TIMEOUT') return '即梦任务查询超时，任务可能仍在生成，请稍后刷新任务状态。';
+  return text.slice(0, 900) || fallback;
+}
+
+export async function queryJimengAccount(commandOrPath: string | undefined, installed = true) {
+  const accountCheckedAt = new Date().toISOString();
+  if (!installed) return { authorized: false, account: null, accountCheckedAt, accountError: '未检测到即梦 CLI，暂时无法查询账户积分。' };
+  try {
+    const result = await runJimengCli(commandOrPath, ['user_credit'], 5_000);
+    const output = `${result.stdout}\n${result.stderr}`;
+    const account = result.code === 0 ? parseJimengAccountOutput(output) : null;
+    if (account && isJimengAuthenticatedOutput(output, parseJimengJsonLines(output))) return { authorized: true, account, accountCheckedAt, accountError: '' };
+    const accountError = result.timedOut
+      ? '查询即梦账户积分超时，请稍后点击刷新重试。'
+      : /login\s+required|not\s+(?:logged[ -]?in|authenticated)|unauthorized|未登录|登录失效|授权失效/i.test(output)
+        ? '即梦账号尚未授权或登录已失效，请重新授权。'
+        : jimengErrorMessage(output, '暂时无法读取即梦账户信息，请稍后刷新重试。');
+    return { authorized: false, account: null, accountCheckedAt, accountError };
+  } catch (error) {
+    return { authorized: false, account: null, accountCheckedAt, accountError: error instanceof Error ? error.message : '读取即梦账户信息失败，请稍后重试。' };
+  }
+}
+
 function cleanAuthValue(value: string) {
   return value.trim().replace(/^['"]|['"]$/g, '').replace(/[),.;]+$/, '');
 }
@@ -127,10 +213,8 @@ export function isJimengAuthenticatedOutput(output: string, parsed = parseJimeng
   const lower = output.toLowerCase();
   if (/login\s+required|not\s+(?:logged[ -]?in|authenticated)|unauthorized|session\s+(?:expired|invalid)|未登录|登录后/.test(lower)) return false;
   if (/already\s+(?:logged[ -]?in|authenticated)|logged[ -]?in|oauth\s+session|登录成功|登录完成|授权成功|已登录|登录态有效|\u5df2\u590d\u7528\u5f53\u524d\u672c\u5730\s*oauth\s*\u767b\u5f55\u6001/.test(lower)) return true;
-  return Boolean(
-    findJsonField(parsed, ['user_id', 'userId']) &&
-    (findJsonField(parsed, ['total_credit', 'totalCredit', 'vip_level', 'vipLevel', 'credit']) || findJsonField(parsed, ['account', 'email'])),
-  );
+  const account = parseJimengAccountOutput(output);
+  return Boolean(account?.userId && (account.totalCredit !== null || account.vipLevel || findJsonField(parsed, ['account', 'email'])));
 }
 
 /** checklogin uses a non-zero exit code when its polling window ends without

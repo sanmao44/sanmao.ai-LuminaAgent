@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
+import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
+import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
 import { is65535Provider, isJimengProvider } from '@/lib/video-platform';
 
@@ -328,6 +330,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [jimengAccount, setJimengAccount] = useState<JimengAccount | null>(null);
+  const [jimengAccountCheckedAt, setJimengAccountCheckedAt] = useState('');
+  const [jimengAccountError, setJimengAccountError] = useState('');
+  const [jimengAccountBusy, setJimengAccountBusy] = useState(false);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -344,6 +350,35 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   const selectedModel = models.find((model) => model.id === modelId) || models.find((model) => model.id === defaultModelId) || models[0];
   const selectedProvider = providers.find((provider) => provider.id === selectedModel?.providerId);
+  const jimengProvider = useMemo(() => providers.find((provider) => provider.platform === 'jimeng-cli' || provider.videoTransport === 'jimeng-cli'), [providers]);
+
+  async function refreshJimengAccount() {
+    if (!jimengProvider || jimengAccountBusy) return;
+    setJimengAccountBusy(true);
+    setJimengAccountError('');
+    try {
+      const response = await fetch('/api/providers/jimeng', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'refresh-account' }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '读取即梦账户信息失败，请稍后重试。');
+      setJimengAccount(data.account || null);
+      setJimengAccountCheckedAt(data.accountCheckedAt || new Date().toISOString());
+      setJimengAccountError(data.accountError || '');
+    } catch (error) {
+      setJimengAccount(null);
+      setJimengAccountError(error instanceof Error ? error.message : '读取即梦账户信息失败，请稍后重试。');
+    } finally { setJimengAccountBusy(false); }
+  }
+
+  useEffect(() => {
+    if (!jimengProvider) {
+      setJimengAccount(null);
+      setJimengAccountCheckedAt('');
+      setJimengAccountError('');
+      return;
+    }
+    void refreshJimengAccount();
+  }, [jimengProvider?.id]);
+
   const nativeTask = selectedProvider?.videoTransport === 'native-task' || selectedProvider?.platform === '65535';
   const uses65535Policy = is65535Provider(selectedProvider);
   const usesJimengCli = isJimengProvider(selectedProvider);
@@ -689,8 +724,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       </div>
     </> : <div className="video-studio-grid">
       <div className="video-compose-column">
-        {hero}
-        <form className="video-compose-card" onSubmit={submit}>
+         {hero}
+         {jimengProvider && <JimengAccountSummary account={jimengAccount} checkedAt={jimengAccountCheckedAt} error={jimengAccountError} loading={jimengAccountBusy} onRefresh={() => void refreshJimengAccount()} />}
+         <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
           <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className="video-live-pill">● 已连接</span></div>
       <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onClick={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyUp={(event) => { if (event.key !== 'Escape') setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart)); }} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图'} maxLength={6000} />{supportsReferenceMentions && referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
