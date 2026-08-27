@@ -60,13 +60,13 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
   }
 
   async function waitForAuthorization(deviceCode: string) {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       const checked = await request('poll', { deviceCode });
       if (checked.status === 'authorized') return checked;
       if (checked.status === 'failed') throw new Error(checked.error || '即梦授权失败');
       setAuth((old) => ({ ...old, status: 'checking', message: '授权页面已打开，等待完成网页授权…' }));
     }
-    throw new Error('等待即梦授权超时，请完成网页授权后点击重新连接');
+    throw new Error('等待即梦授权超时，请完成网页授权后点击重新连接；如果授权页面未打开，请点击下方授权链接。');
   }
 
   async function authorize(switchAccount = false) {
@@ -75,6 +75,13 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
     setAuth((old) => ({ ...old, status: 'starting', error: '', message: '' }));
     try {
       const started = await request(switchAccount ? 'switch-account' : 'authorize');
+      if (started.status === 'authorized' || started.authorized === true) {
+        if (popup && !popup.closed) popup.close();
+        if (started.providerId) await syncProvider(started.providerId);
+        setAuth((old) => ({ ...old, ...started, status: 'authorized', message: '即梦已连接，图片和视频模型已同步。', error: '' }));
+        onNotify(switchAccount ? '即梦账号已切换' : '即梦已连接');
+        return;
+      }
       if (!started.verificationUri) throw new Error('即梦 CLI 未返回有效授权地址，请更新 CLI 后重试');
       if (popup) popup.location.href = started.verificationUri;
       else window.open(started.verificationUri, '_blank', 'noopener,noreferrer');

@@ -381,17 +381,17 @@ export async function setProviderModelLibraryEnabled(id: string, enabled: boolea
   });
 }
 
-export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection }>) {
+export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ReadonlyArray<ModelCapability>; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection }>) {
   return mutateState((state) => {
     const existing = new Map(state.models.filter((m) => m.providerId === providerId).map((m) => [m.rawId, m]));
     const next = rawModels.map((raw) => {
       const previous = existing.get(raw.id);
       if (previous) {
-        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities });
+        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
         return normalizeModel({ ...previous, providerName, ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, state.providers.find((provider) => provider.id === providerId)?.platform);
       }
       const platform = state.providers.find((provider) => provider.id === providerId)?.platform;
-      const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities });
+      const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
       return normalizeModel({
         id: randomUUID(), providerId, providerName, rawId: raw.id,
         displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,

@@ -22,9 +22,26 @@ $legacyPortRange = 3000..3010
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
 Write-SanmaoLauncherLog "停止器开始运行，端口范围：$portStart..$portEnd" 'INFO'
 
+function Stop-SanmaoLanLauncherProcesses {
+  $rootPattern = [regex]::Escape($root)
+  $launchers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.ProcessId -ne $PID -and
+      $_.CommandLine -and
+      $_.CommandLine -match '(?i)lan-launcher\.ps1' -and
+      $_.CommandLine -match $rootPattern
+    })
+  foreach ($launcher in $launchers) {
+    Write-SanmaoLauncherLog "停止局域网图形启动器 PID $($launcher.ProcessId)。" 'INFO'
+    try { & taskkill.exe /PID ([int]$launcher.ProcessId) /T /F 2>$null | Out-Null } catch {}
+  }
+  return $launchers.Count
+}
+
 $targets = @(Get-SanmaoOwnedServerProcesses -Ports @($legacyPortRange + $portRange))
 
 if (-not $targets) {
+  if (-not $DryRun) { Stop-SanmaoLanLauncherProcesses | Out-Null }
   Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
   Write-Host 'SANMAO.AI local service is not running.' -ForegroundColor Yellow
   Write-SanmaoLauncherLog '没有发现正在运行的 SANMAO.AI 本地服务。' 'INFO'
@@ -41,6 +58,8 @@ foreach ($target in $targets) {
   Write-SanmaoLauncherLog "停止 PID $($target.ProcessId) 端口 $($target.Port) 命令 $($target.CommandLine)" 'INFO'
   Stop-SanmaoOwnedProcess -Process $target | Out-Null
 }
+
+if (-not $DryRun) { Stop-SanmaoLanLauncherProcesses | Out-Null }
 
 $portsToVerify = @($targets | Select-Object -ExpandProperty Port -Unique)
 if ($DryRun) {

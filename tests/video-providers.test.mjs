@@ -194,3 +194,29 @@ test('reconstructs a usable device-flow URL when an older CLI prints only user_c
   assert.equal(challenge.verificationUri, 'https://jimeng.jianying.com/ai-tool/cli-auth?verification_uri=https%3A%2F%2Fjimeng.jianying.com%2Fpassport%2Fopen%2Fscan_user_code%2F%3Fuser_code%3Donly-code');
   assert.notEqual(challenge.verificationUri, 'https://jimeng.jianying.com/cli');
 });
+
+test('extracts device-flow fields from JSON output', () => {
+  const challenge = jimengCli.extractJimengAuthChallenge(JSON.stringify({
+    device_code: 'json-device',
+    user_code: 'JSON-CODE',
+    verification_uri: 'https://jimeng.jianying.com/ai-tool/cli-auth?verification_uri=json',
+  }));
+  assert.equal(challenge.deviceCode, 'json-device');
+  assert.equal(challenge.userCode, 'JSON-CODE');
+  assert.equal(challenge.verificationUri, 'https://jimeng.jianying.com/ai-tool/cli-auth?verification_uri=json');
+});
+
+test('recognizes a reused Dreamina OAuth session as authenticated', () => {
+  assert.equal(jimengCli.isJimengAuthenticatedOutput('已复用当前本地 OAuth 登录态。'), true);
+  assert.equal(jimengCli.isJimengAuthenticatedOutput(JSON.stringify({ total_credit: 1233, user_id: '2071909462453816', vip_level: 'maestro' })), true);
+  assert.equal(jimengCli.isJimengAuthenticatedOutput('{\n  "total_credit": 1233,\n  "user_id": 2071909462453816,\n  "vip_level": "maestro"\n}'), true);
+  assert.equal(jimengCli.isJimengAuthenticatedOutput('login required'), false);
+  assert.equal(jimengCli.isJimengAuthenticatedOutput('not logged in'), false);
+});
+
+test('keeps an unfinished Dreamina device flow pending after a polling timeout', () => {
+  assert.equal(jimengCli.isJimengAuthorizationPendingOutput('等待登录超时，请重试'), true);
+  assert.equal(jimengCli.isJimengAuthorizationPendingOutput('登录尚未完成，请稍后重试'), true);
+  assert.equal(jimengCli.isJimengAuthorizationPendingOutput('invalid device code'), false);
+  assert.equal(jimengCli.isJimengAuthenticatedOutput('登录成功'), true);
+});

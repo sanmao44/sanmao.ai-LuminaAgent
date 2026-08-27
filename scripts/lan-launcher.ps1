@@ -5,6 +5,16 @@ $passwordPath = Join-Path $root '.data\lan-password'
 $startScript = Join-Path $PSScriptRoot 'start.ps1'
 $launcherLogPath = Join-Path $root '.data\logs\launcher.log'
 $script:FormsReady = $false
+$script:StartingForm = $null
+$script:StartingStatus = $null
+$script:LanLauncherMutex = New-Object System.Threading.Mutex($false, 'SanmaoAILanLauncher')
+$script:LanLauncherMutexAcquired = $false
+try {
+  $script:LanLauncherMutexAcquired = $script:LanLauncherMutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+  $script:LanLauncherMutexAcquired = $true
+}
+if (-not $script:LanLauncherMutexAcquired) { exit 0 }
 
 function Get-SanmaoText([string]$base64) {
   return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($base64))
@@ -39,6 +49,11 @@ $ui = @{
   ServerNotFound = Get-SanmaoText '5pyN5Yqh5bey6YCA5Ye677yM5L2G5rKh5pyJ5qOA5rWL5Yiw5bGA5Z+f572R5pyN5Yqh56uv5Y+j77yM6K+35p+l55yLIC5kYXRhXFxsb2dzXFxsYXVuY2hlci5sb2fjgII='
   LogReady = Get-SanmaoText '5bGA5Z+f572R5pyN5Yqh5bey5bCx57uq77yM56uv5Y+j77yaezB944CC'
   LogFailed = Get-SanmaoText '5Zu+5b2i5bGA5Z+f572R5ZCv5Yqo5YWl5Y+j5aSx6LSl77yaezB9'
+  StartingTitle = Get-SanmaoText 'U0FOTUFPLkFJIOato+WcqOWQr+WKqA=='
+  StartingPasswordDone = Get-SanmaoText '5a+G56CB5bey6K6+572u5oiQ5Yqf77yM5q2j5Zyo5ZCv5Yqo5bGA5Z+f572R5pyN5Yqh4oCm4oCm'
+  StartingService = Get-SanmaoText '5q2j5Zyo5ZCv5Yqo5bGA5Z+f572R5pyN5Yqh77yM6K+356iN5YCZ4oCm4oCm'
+  StartingReady = Get-SanmaoText '5pyN5Yqh5bey5ZCv5Yqo77yM5q2j5Zyo5omT5byA55S75biD4oCm4oCm'
+  StartingNote = Get-SanmaoText '6aaW5qyh5ZCv5Yqo5Y+v6IO96ZyA6KaBIDEw4oCTMzAg56eS77yM6K+35LiN6KaB6YeN5aSN54K55Ye75ZCv5Yqo5Zmo44CC'
 }
 
 function Write-SanmaoLanLauncherLog([string]$message) {
@@ -198,7 +213,7 @@ function Show-SanmaoLanPasswordDialog {
     $form.Close()
   })
 
-  $passwordBox.Focus()
+  $passwordBox.Focus() | Out-Null
   $form.ShowDialog() | Out-Null
   $result = [string]$form.Tag
   $form.Dispose()
@@ -344,6 +359,65 @@ function Show-SanmaoLanAccessDialog([int]$port) {
   $form.Dispose()
 }
 
+function Show-SanmaoLanStartingForm([string]$message) {
+  Initialize-SanmaoLanForms
+
+  $form = New-Object System.Windows.Forms.Form
+  $form.Text = $ui.WindowTitle
+  $form.StartPosition = 'CenterScreen'
+  $form.FormBorderStyle = 'FixedDialog'
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.ControlBox = $false
+  $form.ShowInTaskbar = $true
+  $form.ClientSize = New-Object System.Drawing.Size(500, 190)
+
+  $title = New-Object System.Windows.Forms.Label
+  $title.Text = $ui.StartingTitle
+  $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 14, [System.Drawing.FontStyle]::Bold)
+  $title.AutoSize = $true
+  $title.Location = New-Object System.Drawing.Point(24, 22)
+
+  $status = New-Object System.Windows.Forms.Label
+  $status.Text = $message
+  $status.AutoSize = $false
+  $status.Size = New-Object System.Drawing.Size(450, 30)
+  $status.Location = New-Object System.Drawing.Point(24, 64)
+
+  $progress = New-Object System.Windows.Forms.ProgressBar
+  $progress.Style = [System.Windows.Forms.ProgressBarStyle]::Marquee
+  $progress.MarqueeAnimationSpeed = 30
+  $progress.Size = New-Object System.Drawing.Size(450, 20)
+  $progress.Location = New-Object System.Drawing.Point(24, 101)
+
+  $note = New-Object System.Windows.Forms.Label
+  $note.Text = $ui.StartingNote
+  $note.ForeColor = [System.Drawing.Color]::DimGray
+  $note.AutoSize = $false
+  $note.Size = New-Object System.Drawing.Size(450, 30)
+  $note.Location = New-Object System.Drawing.Point(24, 137)
+
+  $form.Controls.AddRange(@($title, $status, $progress, $note))
+  $script:StartingForm = $form
+  $script:StartingStatus = $status
+  $form.Show()
+  [System.Windows.Forms.Application]::DoEvents()
+}
+
+function Update-SanmaoLanStartingForm([string]$message) {
+  if ($script:StartingStatus) { $script:StartingStatus.Text = $message }
+  if ($script:StartingForm) { [System.Windows.Forms.Application]::DoEvents() }
+}
+
+function Close-SanmaoLanStartingForm {
+  if ($script:StartingForm) {
+    try { $script:StartingForm.Close() } catch {}
+    try { $script:StartingForm.Dispose() } catch {}
+    $script:StartingForm = $null
+    $script:StartingStatus = $null
+  }
+}
+
 function Show-SanmaoLanError([string]$message) {
   try {
     Initialize-SanmaoLanForms
@@ -363,15 +437,21 @@ try {
   $configured = $env:SANMAO_ADMIN_PASSWORD
   $hasConfiguredPassword = $configured -and $configured.Trim().Length -ge 8
   $passwordFileValid = Test-SanmaoLanPasswordFile
+  $passwordResetRequested = $false
   Write-SanmaoLanLauncherLog "Password ciphertext file available: $passwordFileValid."
   if (-not $hasConfiguredPassword -and -not $passwordFileValid) {
     $password = Show-SanmaoLanPasswordDialog
     if ([string]::IsNullOrWhiteSpace($password)) { exit 0 }
     Save-SanmaoLanPassword $password
+    $env:SANMAO_ADMIN_PASSWORD = $password
+    $passwordResetRequested = $true
     Write-SanmaoLanLauncherLog $ui.LogPasswordSaved
   }
 
-  $startArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$startScript`" -Lan -NonInteractive"
+  $startingMessage = if ($passwordResetRequested) { $ui.StartingPasswordDone } else { $ui.StartingService }
+  Show-SanmaoLanStartingForm $startingMessage
+  $startArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScript, '-Lan', '-NonInteractive')
+  if ($passwordResetRequested) { $startArguments += '-ForceRestart' }
   Write-SanmaoLanLauncherLog $ui.LogStarting
   Use-SanmaoWindowsPowerShellModules
   $startProcess = Start-Process `
@@ -379,28 +459,45 @@ try {
     -ArgumentList $startArguments `
     -WorkingDirectory $root `
     -WindowStyle Hidden `
-    -Wait `
     -PassThru
-  if ($startProcess.ExitCode -ne 0) {
-    throw ($ui.StartFailed -f $startProcess.ExitCode)
-  }
-
+  # Do not use Start-Process -Wait here. Windows PowerShell can wait for the
+  # long-running Node descendant created by start.ps1, which prevents this
+  # launcher from reaching the browser-open step on the first click.
+  $startDeadline = [DateTime]::UtcNow.AddMinutes(15)
   $server = $null
-  for ($attempt = 0; $attempt -lt 15 -and -not $server; $attempt++) {
+  while (-not $server -and [DateTime]::UtcNow -lt $startDeadline) {
+    Start-Sleep -Milliseconds 250
+    $startProcess.Refresh()
     $server = Get-SanmaoLanServerInfo
-    if (-not $server) { Start-Sleep -Milliseconds 300 }
+    if (-not $server) { Update-SanmaoLanStartingForm $ui.StartingService }
   }
+  # Open the canvas as soon as the health endpoint responds. The launcher
+  # script may still be finishing cleanup, but the service is already usable.
   if (-not $server) {
+    $startProcess.Refresh()
+    if ($startProcess.HasExited -and $startProcess.ExitCode -ne 0) {
+      throw ($ui.StartFailed -f $startProcess.ExitCode)
+    }
     throw $ui.ServerNotFound
   }
 
-  Start-Process "http://localhost:$($server.Port)/canvas"
+  Update-SanmaoLanStartingForm $ui.StartingReady
+  $openUrl = "http://localhost:$($server.Port)/canvas"
+  Start-Process $openUrl | Out-Null
+  Write-SanmaoLanLauncherLog "Opened LAN canvas: $openUrl."
   Write-SanmaoLanLauncherLog ($ui.LogReady -f $server.Port)
+  Close-SanmaoLanStartingForm
   Show-SanmaoLanAccessDialog $server.Port
   exit 0
 } catch {
+  Close-SanmaoLanStartingForm
   $message = $_.Exception.Message
   Write-SanmaoLanLauncherLog ($ui.LogFailed -f $message)
   Show-SanmaoLanError $message
   exit 1
+} finally {
+  if ($script:LanLauncherMutexAcquired -and $script:LanLauncherMutex) {
+    try { $script:LanLauncherMutex.ReleaseMutex() } catch {}
+    try { $script:LanLauncherMutex.Dispose() } catch {}
+  }
 }

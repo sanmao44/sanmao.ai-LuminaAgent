@@ -1,7 +1,8 @@
 ﻿param(
   [int]$Port = 0,
   [switch]$NonInteractive = $false,
-  [switch]$Lan = $false
+  [switch]$Lan = $false,
+  [switch]$ForceRestart = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -324,9 +325,9 @@ if ($existing) {
   $existingPort = [int]$existing.Port
   $modeMismatch = $existing.NetworkMode -ne $networkMode
   $buildStale = Test-SanmaoBuildStale
-  if (($modeMismatch -or $buildStale) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
-  if ($modeMismatch -or $buildStale) {
-    $reason = if ($modeMismatch) { '正在切换为局域网共享模式' } else { '检测到源码比当前构建更新' }
+  if (($modeMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
+  if ($modeMismatch -or $buildStale -or $ForceRestart.IsPresent) {
+    $reason = if ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换为局域网共享模式' } else { '检测到源码比当前构建更新' }
     Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {

@@ -3,7 +3,7 @@
 ## 启动器
 
 - Windows 本机：优先双击蓝色 Logo 的 `启动 SANMAO.AI - Windows.lnk`
-- Windows 局域网共享：优先双击绿色 Logo 的 `启动 SANMAO.AI - 局域网共享.lnk`
+- Windows 局域网共享：优先双击绿色 Logo 的 `启动 SANMAO.AI - 局域网共享.lnk`；首次设置密码后会自动启动并打开网页，不需要再次点击
 - macOS：优先双击带橙色 Logo 的 `SANMAO.AI.app`
 - 备用入口：Windows 使用对应 `.cmd`，macOS 使用 `启动 SANMAO.AI - macOS.command`
 

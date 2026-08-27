@@ -1,6 +1,8 @@
 import { isAdminRequest } from '@/lib/auth';
-import { extractJimengAuthChallenge, inspectJimengCli, resolveJimengCliCommand, runJimengCli, parseJimengJsonLines } from '@/lib/jimeng-cli';
-import { addProvider, getProviderWithKey, getPublicState } from '@/lib/store';
+import { extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutput, isJimengAuthorizationPendingOutput, resolveJimengCliCommand, runJimengCli, parseJimengJsonLines } from '@/lib/jimeng-cli';
+import { jimengImageModels } from '@/lib/jimeng-image';
+import { jimengVideoModels } from '@/lib/jimeng-video';
+import { addProvider, enableProviderModels, getProviderWithKey, getPublicState, replaceProviderModels, setProviderStatus } from '@/lib/store';
 
 export const runtime = 'nodejs';
 
@@ -23,6 +25,18 @@ async function ensureProvider() {
   return (await getPublicState()).providers.find((provider) => provider.id === id)!;
 }
 
+async function syncJimengProvider(provider: { id: string; name: string }) {
+  try {
+    await replaceProviderModels(provider.id, provider.name, [...jimengImageModels, ...jimengVideoModels]);
+    await enableProviderModels(provider.id);
+    await setProviderStatus(provider.id, 'healthy', new Date().toLocaleString('zh-CN', { hour12: false }));
+    return { ok: true, state: await getPublicState(), error: '' };
+  } catch (error) {
+    await setProviderStatus(provider.id, 'error');
+    return { ok: false, state: await getPublicState(), error: error instanceof Error ? error.message : '即梦模型同步失败' };
+  }
+}
+
 function statusFrom(output: string, parsed: any[]) {
   const text = output.toLowerCase();
   const data = parsed.find((item) => item && typeof item === 'object' && (item.status || item.state || item.gen_status));
@@ -39,8 +53,8 @@ async function accountAuthorized(command: string, installed: boolean) {
     // network/session initialization; a short probe is enough to distinguish
     // an installed binary from a confirmed account.
     const result = await runJimengCli(command, ['user_credit'], 5_000);
-    const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
-    return result.code === 0 && !result.timedOut && !/(login required|not logged|unauthorized|未登录|登录后)/.test(output);
+    const output = `${result.stdout}\n${result.stderr}`;
+    return result.code === 0 && isJimengAuthenticatedOutput(output, parseJimengJsonLines(output));
   } catch { return false; }
 }
 
@@ -57,9 +71,8 @@ export async function POST(request: Request) {
       const authorized = await accountAuthorized(inspected.command, inspected.installed);
       if (authorized) {
         const provider = await ensureProvider();
-        const synced = await fetch(new URL(`/api/providers/${provider.id}/sync`, request.url), { method: 'POST', headers: request.headers });
-        const syncedData = await synced.json().catch(() => ({}));
-        return Response.json({ ok: true, providerId: provider.id, installed: inspected.installed, authorized: true, version: inspected.version, command: inspected.command, officialUrl: OFFICIAL_GUIDE_URL, state: syncedData.state || await getPublicState(), error: synced.ok ? '' : syncedData.error || '即梦模型同步失败' });
+        const synced = await syncJimengProvider(provider);
+        return Response.json({ ok: true, providerId: provider.id, installed: inspected.installed, authorized: true, version: inspected.version, command: inspected.command, officialUrl: OFFICIAL_GUIDE_URL, state: synced.state, error: synced.error });
       }
       return Response.json({ ok: inspected.installed, providerId: '', installed: inspected.installed, authorized, version: inspected.version, command: inspected.command, officialUrl: OFFICIAL_GUIDE_URL, error: inspected.installed ? '' : `${inspected.loginHint}。安装命令：${INSTALL_COMMAND}` });
     }
@@ -75,7 +88,21 @@ export async function POST(request: Request) {
     if (action === 'authorize' || action === 'switch-account') {
       const result = await runJimengCli(command, [action === 'switch-account' ? 'relogin' : 'login', '--headless'], 25_000);
       const output = `${result.stdout}\n${result.stderr}`.trim();
+      const parsed = parseJimengJsonLines(output);
       const challenge = extractJimengAuthChallenge(output);
+      if (result.code === 0 && isJimengAuthenticatedOutput(output, parsed)) {
+        const synced = await syncJimengProvider(provider);
+        return Response.json({
+          ok: true,
+          status: 'authorized',
+          authorized: true,
+          providerId: provider.id,
+          officialUrl: OFFICIAL_GUIDE_URL,
+          state: synced.state,
+          message: '即梦已有有效登录，图片和视频模型已同步。',
+          error: synced.error,
+        });
+      }
       if (result.code !== 0 && !challenge.deviceCode) throw new Error(output || '即梦授权初始化失败');
       if (!challenge.deviceCode) throw new Error('即梦 CLI 没有返回 device_code，请更新 CLI 后重试');
       return Response.json({ ok: true, status: 'pending', providerId: provider.id, ...challenge, officialUrl: OFFICIAL_GUIDE_URL, message: action === 'switch-account' ? '授权页面已自动打开，请完成账号切换。' : '授权页面已自动打开，请完成即梦授权。' });
@@ -85,9 +112,11 @@ export async function POST(request: Request) {
       if (!deviceCode) return Response.json({ error: '缺少 device_code。' }, { status: 400 });
       const result = await runJimengCli(command, ['login', 'checklogin', `--device_code=${deviceCode}`, '--poll=30'], 45_000);
       const output = `${result.stdout}\n${result.stderr}`.trim();
-      const status = statusFrom(output, parseJimengJsonLines(output));
-      if (result.code !== 0 && status !== 'authorized') return Response.json({ ok: false, status: 'failed', providerId: provider.id, error: output || '即梦授权检查失败' });
-      return Response.json({ ok: status === 'authorized', status, providerId: provider.id, message: status === 'authorized' ? '即梦已连接，图片和视频模型正在同步。' : '暂未完成授权，请继续完成网页授权。' });
+      const parsed = parseJimengJsonLines(output);
+      const status = isJimengAuthenticatedOutput(output, parsed) ? 'authorized' : statusFrom(output, parsed);
+      const pending = isJimengAuthorizationPendingOutput(output);
+      if (result.code !== 0 && status !== 'authorized' && !pending) return Response.json({ ok: false, status: 'failed', providerId: provider.id, error: output || '即梦授权检查失败' });
+      return Response.json({ ok: status === 'authorized', status: status === 'authorized' ? 'authorized' : 'pending', providerId: provider.id, message: status === 'authorized' ? '即梦已连接，图片和视频模型正在同步。' : '尚未检测到授权，完成网页授权后会继续检查。' });
     }
     return Response.json({ error: '不支持的即梦操作。' }, { status: 400 });
   } catch (error) {

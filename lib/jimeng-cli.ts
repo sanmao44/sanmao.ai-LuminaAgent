@@ -75,24 +75,88 @@ export async function runJimengCli(commandOrPath: string | undefined, args: stri
 }
 
 export function parseJimengJsonLines(output: string) {
-  return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line) => {
+  const trimmed = output.trim();
+  if (trimmed) {
+    try { return [JSON.parse(trimmed)]; } catch {}
+  }
+  const values = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line) => {
     try { return [JSON.parse(line)]; } catch { return []; }
   });
+  const start = output.indexOf('{');
+  const end = output.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      if (!values.includes(parsed)) values.push(parsed);
+    } catch {}
+  }
+  return values;
+}
+
+function normalizedFieldName(value: string) {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function findJsonField(values: any[], names: string[]) {
+  const wanted = new Set(names.map(normalizedFieldName));
+  const visit = (value: any): string => {
+    if (!value || typeof value !== 'object') return '';
+    for (const [key, item] of Object.entries(value)) {
+      if (wanted.has(normalizedFieldName(key)) && item !== undefined && item !== null) {
+        const text = String(item).trim();
+        if (text) return text;
+      }
+      const nested = visit(item);
+      if (nested) return nested;
+    }
+    return '';
+  };
+  for (const value of values) {
+    const found = visit(value);
+    if (found) return found;
+  }
+  return '';
+}
+
+function cleanAuthValue(value: string) {
+  return value.trim().replace(/^['"]|['"]$/g, '').replace(/[),.;]+$/, '');
+}
+
+/** Returns true when Dreamina has confirmed an existing OAuth session. */
+export function isJimengAuthenticatedOutput(output: string, parsed = parseJimengJsonLines(output)) {
+  const lower = output.toLowerCase();
+  if (/login\s+required|not\s+(?:logged[ -]?in|authenticated)|unauthorized|session\s+(?:expired|invalid)|未登录|登录后/.test(lower)) return false;
+  if (/already\s+(?:logged[ -]?in|authenticated)|logged[ -]?in|oauth\s+session|登录成功|登录完成|授权成功|已登录|登录态有效|\u5df2\u590d\u7528\u5f53\u524d\u672c\u5730\s*oauth\s*\u767b\u5f55\u6001/.test(lower)) return true;
+  return Boolean(
+    findJsonField(parsed, ['user_id', 'userId']) &&
+    (findJsonField(parsed, ['total_credit', 'totalCredit', 'vip_level', 'vipLevel', 'credit']) || findJsonField(parsed, ['account', 'email'])),
+  );
+}
+
+/** checklogin uses a non-zero exit code when its polling window ends without
+ * authorization. That is still a recoverable pending state, not a failure. */
+export function isJimengAuthorizationPendingOutput(output: string) {
+  const lower = output.toLowerCase();
+  return /等待登录超时|登录尚未完成|请稍后重试|authorization\s+(?:is\s+)?pending|login\s+(?:is\s+)?pending|timed?\s*out\s*while\s*waiting\s*for\s*(?:login|authorization)/.test(lower);
 }
 
 export function extractJimengAuthChallenge(output: string) {
+  const parsed = parseJimengJsonLines(output);
+  const jsonUserCode = cleanAuthValue(findJsonField(parsed, ['user_code', 'userCode']));
+  const jsonVerificationUri = cleanAuthValue(findJsonField(parsed, ['verification_uri', 'verificationUri', 'verification_url', 'verificationUrl']));
+  const jsonDeviceCode = cleanAuthValue(findJsonField(parsed, ['device_code', 'deviceCode']));
   const normalized = output
     .replace(/\\\//g, '/')
     .replace(/\r?\n/g, ' ');
   const pick = (patterns: RegExp[]) => {
     for (const pattern of patterns) {
       const match = normalized.match(pattern);
-      if (match?.[1]) return match[1].trim().replace(/[),.;]+$/, '');
+      if (match?.[1]) return cleanAuthValue(match[1]);
     }
     return '';
   };
-  const userCode = pick([/user[_ -]?code\s*[:=]\s*["']?([A-Z0-9-]+)/i, /验证码\s*[:：]\s*([A-Z0-9-]+)/i]);
-  let verificationUri = pick([
+  const userCode = jsonUserCode || pick([/user[_ -]?code\s*[:=]\s*["']?([^\s"',}]+)/i, /验证码\s*[:：]\s*([A-Z0-9-]+)/i]);
+  let verificationUri = jsonVerificationUri || pick([
     /verification[_ -]?uri\s*[:=]\s*["']?(https?:\/\/[^\s"'<>}]+)/i,
     /verification\s+(?:url|link)\s*[:=]\s*["']?(https?:\/\/[^\s"'<>}]+)/i,
     /(https?:\/\/[^\s"'<>]+(?:login|authorize|verification|cli-auth)[^\s"'<>]*)/i,
@@ -108,7 +172,7 @@ export function extractJimengAuthChallenge(output: string) {
   return {
     verificationUri,
     userCode,
-    deviceCode: pick([/device[_ -]?code\s*[:=]\s*["']?(\S+)/i]),
+    deviceCode: jsonDeviceCode || pick([/device[_ -]?code\s*[:=]\s*["']?([^\s"',}]+)/i]),
   };
 }
 
