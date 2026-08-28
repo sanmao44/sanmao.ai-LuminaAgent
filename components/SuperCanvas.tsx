@@ -403,6 +403,7 @@ type Interaction =
       nodeId: string;
       nodeIds: string[];
       positions: Record<string, Point>;
+      shiftKey: boolean;
       doubleClick?: boolean;
       originGroupId?: string;
       originGroupBounds?: { x: number; y: number; w: number; h: number };
@@ -1981,6 +1982,7 @@ export default function SuperCanvas() {
         nodeId: node.id,
         nodeIds: dragIds,
         positions,
+        shiftKey: event.shiftKey,
         doubleClick,
         originGroupId: node.groupId,
         originGroupBounds,
@@ -2447,7 +2449,7 @@ export default function SuperCanvas() {
             if (isCanvasReferenceableNode(node))
               setLightbox({ nodeId: node.id, compare: false });
             else if (node.type === "prompt") setTextLightboxNodeId(node.id);
-          } else {
+          } else if (!interaction.shiftKey) {
             // A click is confirmed on pointer-up. Dragging has already been
             // promoted to `drag` in moveInteraction, so it cannot open the
             // editor accidentally.
