@@ -5,6 +5,9 @@ import { extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutp
 export const runtime = 'nodejs';
 
 const OFFICIAL_CLI_URL = 'https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg';
+const INSTALL_COMMAND = process.platform === 'win32'
+  ? 'powershell -NoProfile -ExecutionPolicy Bypass -File ".\\scripts\\install-jimeng.ps1"'
+  : 'bash "./scripts/install-jimeng.sh"';
 
 function commandFor(provider: { jimengCliPath?: string }) {
   return resolveJimengCliCommand(provider.jimengCliPath);
@@ -34,7 +37,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const action = String(body.action || 'start').trim();
     if (action === 'install') {
-      return Response.json({ ok: true, officialUrl: OFFICIAL_CLI_URL, command: 'curl -fsSL https://jimeng.jianying.com/cli | bash' });
+      return Response.json({ ok: true, officialUrl: OFFICIAL_CLI_URL, command: INSTALL_COMMAND });
     }
     const provider = await providerFromRequest(body);
     const command = commandFor(provider);
