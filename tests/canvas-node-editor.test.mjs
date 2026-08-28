@@ -81,6 +81,17 @@ test("selected related canvas edges become dashed and animate their flow", () =>
   assert.match(styles, /canvas-edge-related-flow,html:not\(\[data-motion="on"\]\) \.canvas-edge\.related\{animation:none!important\}/);
 });
 
+test("nested node scrolling does not trigger canvas zoom", () => {
+  assert.match(component, /function isCanvasWheelIsolatedTarget\(target: EventTarget \| null\)/);
+  assert.match(component, /target\.closest\(selector\)/);
+  assert.match(component, /onWheel=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.match(component, /if \(isCanvasWheelIsolatedTarget\(event\.target\)\)/);
+  assert.match(component, /Do not preventDefault/);
+  assert.match(styles, /\.canvas-node,\.canvas-node-editor-popover,\.canvas-node-quick-toolbar/);
+  assert.match(styles, /\.canvas-prompt-preview,\.canvas-node-editor-body/);
+  assert.match(styles, /overscroll-behavior:contain/);
+});
+
 test("image node editing persists parameters without turning uploads into generated media", () => {
   assert.match(component, /role: "参考素材",\s*params: defaultParams\(asset\.kind, runtime\)/);
   assert.match(component, /generation: item\.data\.generation/);
