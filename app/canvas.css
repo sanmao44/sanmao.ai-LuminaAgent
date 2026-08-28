@@ -772,7 +772,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>textarea{min-height:220px;max-height:460px}
 .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-actions{min-height:59px;padding:10px 15px 12px}
 @media(max-width:720px){
-  .canvas-node-editor-popover:not(.is-prompt-expanded){position:fixed;left:8px!important;right:8px;top:72px!important;width:auto!important;max-width:none;max-height:calc(100vh - 80px);border-radius:18px}
+  .canvas-node-editor-popover:not(.is-prompt-expanded){width:calc(100vw - 16px);max-width:calc(100vw - 16px);border-radius:18px}
   .canvas-node-editor-popover .canvas-node-editor-prompt-wrap{padding:10px}
   .canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea{min-height:104px;max-height:220px}
   .canvas-node-editor-popover.is-prompt-expanded{width:calc(100vw - 16px)!important;max-width:calc(100vw - 16px);max-height:calc(100vh - 96px);top:calc(50% + 24px)!important;border-radius:18px}
@@ -849,6 +849,13 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-generate{height:28px;padding:0 12px}
 .canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-identity>div,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-identity>div{display:flex;align-items:baseline;gap:7px;min-width:0}
 .canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-identity small,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-identity small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+
+/* Multi-select alignment controls. Keep them grouped so the toolbar remains
+   readable on desktop and horizontally scrollable on narrow screens. */
+.canvas-selection-align-actions{display:flex;align-items:center;gap:2px;flex:none;padding:2px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--panel-2) 72%,transparent)}
+.canvas-selection-align-actions button{min-height:25px;padding:0 6px;border:0;border-radius:6px;background:transparent;color:var(--text-2);font-size:8px;white-space:nowrap;cursor:pointer}
+.canvas-selection-align-actions button:hover,.canvas-selection-align-actions button:focus-visible{background:var(--accent-soft);color:var(--accent-text);outline:none}
+@media(max-width:720px){.canvas-selection-align-actions{flex:none}.canvas-selection-align-actions button{padding-inline:6px}}
 .canvas-node-editor-popover .creation-parameter-editor.canvas-flat{grid-template-columns:minmax(0,1.08fr) minmax(180px,.92fr)!important;align-items:end}
 .canvas-node-editor-popover .creation-parameter-editor.canvas-flat>.creation-model-warning{grid-column:1/-1}
 .canvas-node-editor-popover .creation-parameter-editor.canvas-flat>.canvas-parameter-collection.open{grid-column:1/-1}

@@ -53,15 +53,60 @@ test("editor keeps references, variant requirements, parameters, mentions and ge
   assert.match(component, /setPromptExpanded\(false\)/);
 });
 
-test("regular editor follows the stacked main-composer layout", () => {
-  assert.match(component, /const viewportMargin = 12/);
-  assert.match(component, /const constrainedLeft = Math\.min\(/);
-  assert.match(component, /const useTopPlacement = !promptExpanded/);
-  assert.match(component, /const constrainedTop = promptExpanded/);
+test("image continuation uses the ordinary image API and keeps lineage on image nodes", () => {
+  const start = component.indexOf("const runImageContinuation = useCallback");
+  const end = component.indexOf("const runReuseGeneration = useCallback", start);
+  assert.ok(start >= 0 && end > start, "image continuation implementation should be present");
+  const continuation = component.slice(start, end);
+
+  assert.match(continuation, /generateCanvasImage\(/);
+  assert.match(continuation, /addReference\(\s*source\.id/);
+  assert.match(continuation, /referenceIds: \[\.\.\.resolvedReferenceIds\]/);
+  assert.match(continuation, /parentNodeId: source\.id/);
+  assert.match(continuation, /reuseSourceNodeId: source\.id/);
+  assert.match(continuation, /kind: "lineage"/);
+  assert.match(continuation, /createMedia\(\s*"image"/);
+  assert.match(continuation, /result\.images\.forEach/);
+  assert.match(continuation, /status: "failed"/);
+  assert.match(continuation, /referenceEdges\.map/);
+  assert.doesNotMatch(continuation, /sourceGeneratorId/);
+  assert.doesNotMatch(continuation, /variantBatchId|variantIndex/);
+  assert.doesNotMatch(continuation, /createGenerator\(/);
+});
+
+test("image node editing persists parameters without turning uploads into generated media", () => {
+  assert.match(component, /role: "参考素材",\s*params: defaultParams\(asset\.kind, runtime\)/);
+  assert.match(component, /generation: item\.data\.generation/);
+  assert.match(component, /params: clone\(settings\)/);
+  assert.match(component, /prompt: value/);
+  assert.match(component, /if \(item\.type === "prompt"\)/);
+  const start = component.indexOf("const updatePrompt = useCallback");
+  const end = component.indexOf("const updateVariantRequirements = useCallback", start);
+  const updatePrompt = component.slice(start, end);
+  assert.match(updatePrompt, /node\.data\.generation\s*\?/);
+  assert.doesNotMatch(updatePrompt, /generation:\s*\{\s*kind:/);
+});
+
+test("regular editor stays below its node in the stacked main-composer layout", () => {
+  assert.match(component, /fitCanvasNodeEditorBelow\(/);
+  assert.match(component, /data-placement="bottom"/);
+  assert.match(component, /maxHeight: promptExpanded \? undefined : position\.maxHeight/);
+  assert.doesNotMatch(component, /useTopPlacement/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-columns\{grid-template-columns:minmax\(0,1fr\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-settings>.creation-parameter-editor\.image \.creation-parameter-grid\.primary\{grid-template-columns:repeat\(4,minmax\(0,1fr\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-settings>.creation-parameter-editor\.image \.creation-parameter-grid\.primary>.creation-field\.model\{grid-column:1\/-1\}/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-actions\{min-height:55px/);
+});
+
+test("multi-select toolbar exposes six alignment actions only for ordinary nodes", () => {
+  assert.match(component, /const CANVAS_ALIGNMENT_OPTIONS/);
+  assert.match(component, /alignCanvasNodes\(docRef\.current, \[\.\.\.selectedIds\], alignment\)/);
+  assert.match(component, /!selectedGroupId && \(\s*<div className="canvas-selection-align-actions"/);
+  ["左对齐", "水平居中", "右对齐", "顶部对齐", "垂直居中", "底部对齐"].forEach((label) => {
+    assert.match(component, new RegExp(`label: "${label}"`));
+  });
+  assert.match(component, /commit\(\(\) => result\.document\)/);
+  assert.match(styles, /\.canvas-selection-align-actions\{display:flex/);
 });
 
 test("canvas image parameters collapse into a compact one-line collection", () => {

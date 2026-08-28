@@ -541,6 +541,88 @@ test('handles cycles, empty selections, and deterministic output', () => {
   assert.deepEqual(emptySelection.arrangedIds, []);
 });
 
+test('aligns selected nodes to their outer bounds across all six directions', () => {
+  const left = model.createPrompt({ x: 120, y: 340 }, '左');
+  left.w = 240;
+  left.h = 140;
+  const middle = model.createMedia('image', '/middle.png', '中', { x: 430, y: 210 });
+  middle.w = 380;
+  middle.h = 270;
+  const right = model.createGenerator('image', { x: 880, y: 470 });
+  right.w = 300;
+  right.h = 220;
+  const outside = model.createMedia('image', '/outside.png', '未选中', { x: 1800, y: 20 });
+  const document = arrangeDocument([left, middle, right, outside]);
+  const selected = [left.id, middle.id, right.id];
+  const originalOutside = { x: outside.x, y: outside.y };
+  const originalSizes = selected.map((id) => {
+    const node = document.nodes.find((item) => item.id === id);
+    return { id, w: node.w, h: node.h };
+  });
+  const bounds = {
+    left: Math.min(left.x, middle.x, right.x),
+    top: Math.min(left.y, middle.y, right.y),
+    right: Math.max(left.x + left.w, middle.x + middle.w, right.x + right.w),
+    bottom: Math.max(left.y + left.h, middle.y + middle.h, right.y + right.h),
+  };
+  const centerX = (bounds.left + bounds.right) / 2;
+  const centerY = (bounds.top + bounds.bottom) / 2;
+
+  const expectations = {
+    left: (node) => ({ x: bounds.left, y: node.y }),
+    'center-x': (node) => ({ x: centerX - node.w / 2, y: node.y }),
+    right: (node) => ({ x: bounds.right - node.w, y: node.y }),
+    top: (node) => ({ x: node.x, y: bounds.top }),
+    'center-y': (node) => ({ x: node.x, y: centerY - node.h / 2 }),
+    bottom: (node) => ({ x: node.x, y: bounds.bottom - node.h }),
+  };
+
+  Object.entries(expectations).forEach(([alignment, expectedPosition]) => {
+    const result = model.alignCanvasNodes(document, selected, alignment);
+    assert.equal(result.changed, true);
+    assert.deepEqual(result.alignedIds, selected);
+    selected.forEach((id) => {
+      const before = document.nodes.find((node) => node.id === id);
+      const after = result.document.nodes.find((node) => node.id === id);
+      assert.deepEqual({ x: after.x, y: after.y }, expectedPosition(before));
+    });
+    assert.deepEqual(
+      result.document.nodes.find((node) => node.id === outside.id),
+      document.nodes.find((node) => node.id === outside.id),
+    );
+    assert.deepEqual(
+      selected.map((id) => {
+        const node = result.document.nodes.find((item) => item.id === id);
+        return { id, w: node.w, h: node.h };
+      }),
+      originalSizes,
+    );
+  });
+  assert.deepEqual({ x: outside.x, y: outside.y }, originalOutside);
+  assert.deepEqual(
+    document.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y })),
+    [left, middle, right, outside].map((node) => ({ id: node.id, x: node.x, y: node.y })),
+  );
+});
+
+test('does not change the document when alignment has fewer than two valid nodes', () => {
+  const node = model.createPrompt({ x: 100, y: 200 }, '单个');
+  const document = arrangeDocument([node]);
+  const result = model.alignCanvasNodes(document, [node.id, 'missing'], 'top');
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.alignedIds, [node.id]);
+  assert.deepEqual(result.document, document);
+});
+
+test('reports an already aligned selection as unchanged', () => {
+  const first = model.createPrompt({ x: 100, y: 240 }, '第一');
+  const second = model.createMedia('image', '/second.png', '第二', { x: 600, y: 240 });
+  const document = arrangeDocument([first, second]);
+  const result = model.alignCanvasNodes(document, [first.id, second.id], 'top');
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.document, document);
+});
+
 test('NOVA localStorage keys have a one-way migration target and no independent API config', () => {
   assert.match(storageSource, /nova\.v1\.projects/);
   assert.match(storageSource, /nova\.v1\.active/);

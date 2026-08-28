@@ -582,7 +582,7 @@ export default function MediaViewer({
 
         {showParameters && parameters && onParametersChange && (
           <section className="canvas-media-parameters">
-            <header><b>生成参数</b><small>修改后用于生成新分支，原图不会被覆盖</small></header>
+            <header><b>生成参数</b><small>{surface === "canvas" && item.kind === "image" ? "修改后从当前图片生成右侧新图，原图不会被覆盖" : "修改后用于生成新分支，原图不会被覆盖"}</small></header>
             <CreationParameterEditor settings={parameters} runtime={runtime as never} onChange={onParametersChange} />
           </section>
         )}
@@ -599,7 +599,7 @@ export default function MediaViewer({
           {onAngle && item.kind === "image" && <button type="button" onClick={onAngle}>◌ 调整角度</button>}
           {onUpscale && item.kind === "image" && <button type="button" onClick={onUpscale}>↗ 超分</button>}
           {onContinue && <button type="button" onClick={onContinue}>{item.kind === "video" ? "▶ 继续生成 / 变体" : "▶ 继续生成"}</button>}
-          {onReuse && <button type="button" className="primary" onClick={onReuse}>⧉ 用此参数再生成</button>}
+          {onReuse && <button type="button" className="primary" onClick={onReuse}>⧉ 用此参数继续生成</button>}
           {onUseAsReference && <button type="button" onClick={onUseAsReference}>⌁ 作为参考图</button>}
           {onAddToAssets && <button type="button" onClick={onAddToAssets}>＋ 加入资产库</button>}
           {onDelete && <button type="button" className="danger" onClick={onDelete}>⌫ 删除</button>}

@@ -16,6 +16,7 @@ import {
 } from "react";
 import {
   addEdge,
+  alignCanvasNodes,
   arrangeCanvas,
   clone,
   connectionPath,
@@ -47,6 +48,7 @@ import {
   smartPrompt,
   snapshot,
   uid,
+  type CanvasAlignment,
 } from "@/lib/canvas/model";
 import {
   getCanvasVideoTask,
@@ -86,7 +88,7 @@ import {
 } from "@/lib/creation/settings";
 import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
 import {
-  placeCanvasNodeEditor,
+  fitCanvasNodeEditorBelow,
   placeCanvasNodeToolbar,
 } from "@/lib/canvas/editor-layout";
 import { recordCanvasImages } from "@/lib/creation/history";
@@ -135,10 +137,10 @@ import type {
   CanvasVariantState,
 } from "@/lib/canvas/types";
 import {
+  CANVAS_MAX_REFERENCES,
   addReferenceDrafts,
   cloneReuseDraft,
   dedupeReferenceDrafts,
-  referenceIdsForDraft,
   removeReferenceDraft,
   reorderReferenceDrafts,
   reuseDraftFromNode,
@@ -346,6 +348,18 @@ type ConnectionNodePicker = {
 };
 
 const CANVAS_SETTINGS_KEY = "sanmao.canvas.settings";
+const CANVAS_ALIGNMENT_OPTIONS: Array<{
+  value: CanvasAlignment;
+  label: string;
+  title: string;
+}> = [
+  { value: "left", label: "左对齐", title: "将选中节点左边缘对齐" },
+  { value: "center-x", label: "水平居中", title: "将选中节点水平居中" },
+  { value: "right", label: "右对齐", title: "将选中节点右边缘对齐" },
+  { value: "top", label: "顶部对齐", title: "将选中节点顶部对齐" },
+  { value: "center-y", label: "垂直居中", title: "将选中节点垂直居中" },
+  { value: "bottom", label: "底部对齐", title: "将选中节点底部对齐" },
+];
 const CONNECTION_STYLE_OPTIONS: Array<{
   value: ConnectionStyle;
   label: string;
@@ -1557,7 +1571,7 @@ export default function SuperCanvas() {
       window.removeEventListener("blur", handleWindowBlur);
     };
   }, []);
-  const openNodePosition = useCallback((position: Point, node: CanvasNode) => {
+  const openNodePosition = useCallback((position: Point, node: CanvasNode, extraOccupied: CanvasNode[] = []) => {
     const size = nodeSize(node);
     const candidates: Point[] = [{ x: position.x, y: position.y }];
     for (let ring = 1; ring <= 8; ring += 1) {
@@ -1571,7 +1585,7 @@ export default function SuperCanvas() {
         { x: position.x - distance, y: position.y + distance },
       );
     }
-    const occupied = docRef.current.nodes.map((item) => {
+    const occupied = [...docRef.current.nodes, ...extraOccupied].map((item) => {
       const metric = nodeSize(item);
       return { x: item.x, y: item.y, w: metric.w, h: metric.h };
     });
@@ -2579,6 +2593,23 @@ export default function SuperCanvas() {
     fitView(result.arrangedIds);
   }, [addLog, fitView, notify, selectedIds, setDoc]);
 
+  const alignSelection = useCallback(
+    (alignment: CanvasAlignment) => {
+      if (selectedGroupId || selectedIds.size < 2) return;
+      const option = CANVAS_ALIGNMENT_OPTIONS.find((item) => item.value === alignment);
+      const result = alignCanvasNodes(docRef.current, [...selectedIds], alignment);
+      const label = option?.label || "对齐";
+      if (!result.changed) {
+        notify("已对齐");
+        return;
+      }
+      commit(() => result.document);
+      addLog(`已将 ${result.alignedIds.length} 个节点${label}`);
+      notify(`已将 ${result.alignedIds.length} 个节点${label}`);
+    },
+    [addLog, commit, notify, selectedGroupId, selectedIds],
+  );
+
   const undo = useCallback(() => {
     const previous = undoStack.at(-1);
     if (!previous) return;
@@ -3183,18 +3214,15 @@ export default function SuperCanvas() {
                   ...node,
                   data: {
                     ...node.data,
-                    generation: {
-                      kind: node.data.kind === "video" ? "video" : "image",
-                      params: copyParams(
-                        node.data.generation?.params || node.data.params,
-                        node.data.kind === "video" ? "video" : "image",
-                        runtime,
-                      ),
-                      referenceIds: node.data.referenceOrder || [],
-                      createdAt: node.data.generation?.createdAt || Date.now(),
-                      ...node.data.generation,
-                      prompt: value,
-                    },
+                    prompt: value,
+                    ...(node.data.generation
+                      ? {
+                          generation: {
+                            ...node.data.generation,
+                            prompt: value,
+                          },
+                        }
+                      : {}),
                   },
                 }
               : node,
@@ -3205,7 +3233,7 @@ export default function SuperCanvas() {
         [mode]: { ...current[mode], prompt: value },
       }));
     },
-    [mode, runtime, selectedSingle, updateDoc],
+    [mode, selectedSingle, updateDoc],
   );
 
   const updateVariantRequirements = useCallback(
@@ -3299,6 +3327,33 @@ export default function SuperCanvas() {
       }
       if (source.target && settings.kind !== "text") {
         const target = source.target;
+        if (target.data.kind === "image" && settings.kind === "image") {
+          updateDoc((valueDoc) => ({
+            ...valueDoc,
+            nodes: valueDoc.nodes.map((node) =>
+              node.id === target.id
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      params: clone(settings),
+                      ...(node.data.generation
+                        ? {
+                            generation: {
+                              ...node.data.generation,
+                              params: clone(settings),
+                            },
+                          }
+                        : {}),
+                    },
+                  }
+                : node,
+            ),
+          }));
+          setMode("image");
+          writeSharedCreationSettings(settings);
+          return;
+        }
         const references = incomingReferences(docRef.current, target.id)
           .map(canvasReferenceDraftFromNode)
           .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
@@ -4237,14 +4292,302 @@ export default function SuperCanvas() {
     }
   }, [notify, reuseDraft, runtime]);
 
-  const runReuseGeneration = useCallback(async (draftInput: CanvasReuseDraft) => {
+  const runImageContinuation = useCallback(async (draftInput: CanvasReuseDraft) => {
     const draft = cloneReuseDraft(draftInput);
+    if (draft.kind !== "image") return;
     if (!draft.prompt.trim()) return notify("请输入生成提示词。", "error");
     if (draft.references.some((reference) => reference.pending || reference.error)) {
       return notify("请等待参考图准备完成，或移除失败的参考图。", "error");
     }
-    if (draft.kind === "image" && draft.references.some((reference) => reference.kind !== "image")) {
+    if (draft.references.some((reference) => reference.kind !== "image")) {
       return notify("图片生成只能使用图片参考，请移除视频素材。", "error");
+    }
+    const source = draft.sourceNodeId
+      ? nodeById(docRef.current, draft.sourceNodeId)
+      : undefined;
+    if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url) {
+      return notify("图片续生成需要一个已完成的图片节点。", "error");
+    }
+    const activeKey = `reuse:${source.id}`;
+    if (generationKeysRef.current.has(activeKey)) {
+      return notify("这个图片续生成任务正在处理，请稍候。", "error");
+    }
+
+    const params = copyParams(draft.params, "image", runtime) as ImageCreationSettings;
+    const createdAt = Date.now();
+    const taskId = uid("image-task");
+    const outputPosition = {
+      x: source.x + nodeSize(source).w + 90,
+      y: source.y,
+    };
+    const resolvedReferenceIds: string[] = [];
+    const referenceKeys = new Set<string>();
+    const apiReferences: Array<{ url: string; name: string }> = [];
+    const materializedReferences: CanvasNode[] = [];
+    const referenceEdges: CanvasEdge[] = [];
+    let skippedReferenceCount = 0;
+    const outputReservation = createMedia(
+      "image",
+      "",
+      "图片生成中",
+      outputPosition,
+    );
+
+    const addReference = (
+      id: string,
+      url: string,
+      name: string,
+    ) => {
+      const normalizedUrl = url.trim();
+      const key = `${id}:${normalizedUrl}`;
+      if (!normalizedUrl || referenceKeys.has(key) || referenceKeys.has(`url:${normalizedUrl}`)) return false;
+      referenceKeys.add(key);
+      referenceKeys.add(`url:${normalizedUrl}`);
+      resolvedReferenceIds.push(id);
+      apiReferences.push({ url: normalizedUrl, name: name || "参考图片" });
+      if (id !== source.id) {
+        referenceEdges.push({
+          id: uid("edge"),
+          source: id,
+          target: "",
+          sourcePort: "right",
+          targetPort: "left",
+          inputRole: "reference-image",
+          order: resolvedReferenceIds.length - 1,
+          kind: "reference",
+        });
+      }
+      return true;
+    };
+
+    addReference(
+      source.id,
+      String(source.data.url),
+      String(source.data.name || "当前图片"),
+    );
+
+    for (const [index, reference] of draft.references.entries()) {
+      const existing = reference.nodeId
+        ? nodeById(docRef.current, reference.nodeId)
+        : undefined;
+      const existingUrl = existing?.type === "media" ? String(existing.data.url || "") : "";
+      const url = existingUrl || reference.url;
+      const name = existing?.type === "media"
+        ? String(existing.data.name || reference.name || "参考图片")
+        : reference.name;
+      const normalizedUrl = url.trim();
+      if (normalizedUrl && referenceKeys.has(`url:${normalizedUrl}`)) continue;
+      if (resolvedReferenceIds.length >= CANVAS_MAX_REFERENCES) {
+        skippedReferenceCount += 1;
+        continue;
+      }
+      const beforeCount = resolvedReferenceIds.length;
+      if (existing?.type === "media" && existing.data.kind === "image" && existing.data.url) {
+        addReference(existing.id, url, name);
+      } else if (url.trim()) {
+        const materialized = createMedia(
+          "image",
+          url,
+          name,
+          { x: outputPosition.x - 430, y: outputPosition.y + index * 300 },
+          { role: "续生成参考素材", params: defaultParams("image", runtime) },
+        );
+        const placed = {
+          ...materialized,
+          ...openNodePosition(
+            { x: materialized.x, y: materialized.y },
+            materialized,
+            [...materializedReferences, outputReservation],
+          ),
+        };
+        if (addReference(placed.id, url, name)) materializedReferences.push(placed);
+      }
+      if (resolvedReferenceIds.length === beforeCount && !url.trim()) {
+        notify("有参考图片地址为空，已跳过该参考。", "error");
+      }
+    }
+    if (skippedReferenceCount)
+      notify(`图片参考最多 ${CANVAS_MAX_REFERENCES} 张，已跳过 ${skippedReferenceCount} 张多余参考。`, "error");
+
+    const createOutput = (
+      url: string,
+      name: string,
+      position: Point,
+      status: "running" | "completed" | "failed",
+    ) => createMedia("image", url, name, position, {
+      role: "图片续生成结果",
+      model: params.model,
+      params: clone(params),
+      status,
+      ...(status === "running" ? { processingStartedAt: createdAt } : {}),
+      statusLabel: status === "running" ? "图片续生成中" : status === "completed" ? "图片已完成" : "图片生成失败",
+      generation: {
+        kind: "image",
+        prompt: draft.prompt,
+        params: clone(params),
+        operation: "edit",
+        referenceIds: [...resolvedReferenceIds],
+        parentNodeId: source.id,
+        reuseSourceNodeId: source.id,
+        taskId,
+        createdAt,
+      },
+      referenceOrder: [...resolvedReferenceIds],
+    });
+
+    const pending = createOutput("", "图片生成中", outputPosition, "running");
+    const pendingPositioned = {
+      ...pending,
+      ...openNodePosition(outputPosition, pending, materializedReferences),
+    };
+    const inputEdges = [
+      {
+        id: uid("edge"),
+        source: source.id,
+        target: pendingPositioned.id,
+        sourcePort: "right" as const,
+        targetPort: "left" as const,
+        kind: "lineage" as const,
+      },
+      ...referenceEdges.map((edge) => ({ ...edge, target: pendingPositioned.id })),
+    ];
+    const initialDocument: CanvasDocument = {
+      ...docRef.current,
+      nodes: [...docRef.current.nodes, ...materializedReferences, pendingPositioned],
+      edges: [...docRef.current.edges, ...inputEdges],
+    };
+    generationKeysRef.current.add(activeKey);
+    setGenerationKeys(new Set(generationKeysRef.current));
+    commit(() => initialDocument);
+    setSelectedIds(new Set([pendingPositioned.id]));
+    setSelectedGroupId(null);
+
+    try {
+      const result = await generateCanvasImage({
+        taskId,
+        prompt: draft.prompt,
+        model: params.model,
+        count: params.count,
+        aspect: params.aspect === "自定义"
+          ? `${params.customAspectWidth}:${params.customAspectHeight}`
+          : params.aspect,
+        resolution: params.resolution,
+        quality: params.quality,
+        ...(params.sizeMode === "custom" ? { width: params.width, height: params.height } : {}),
+        outputFormat: params.outputFormat,
+        background: params.backgroundMode === "api-transparent"
+          ? "transparent"
+          : params.backgroundMode === "opaque"
+            ? "opaque"
+            : undefined,
+        maskUrl: params.mask?.url,
+        references: apiReferences,
+      });
+      if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
+
+      const outputs: CanvasNode[] = [];
+      result.images.forEach((image, index) => {
+        if (index === 0) return;
+        const output = createOutput(
+          image.url,
+          `继续生成图片 ${index + 1}`,
+          {
+            x: pendingPositioned.x + (index % 2) * 350,
+            y: pendingPositioned.y + Math.floor(index / 2) * 280,
+          },
+          "completed",
+        );
+        outputs.push({
+          ...output,
+          ...openNodePosition(
+            { x: output.x, y: output.y },
+            output,
+            outputs,
+          ),
+        });
+      });
+      const firstData = createOutput(result.images[0].url, "继续生成图片 1", pendingPositioned, "completed").data;
+      const extraEdges = outputs.flatMap((output) => [
+        {
+          id: uid("edge"),
+          source: source.id,
+          target: output.id,
+          sourcePort: "right" as const,
+          targetPort: "left" as const,
+          kind: "lineage" as const,
+        },
+        ...referenceEdges
+          .filter((edge) => edge.source !== source.id)
+          .map((edge) => ({ ...edge, id: uid("edge"), target: output.id })),
+      ]);
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes
+          .map((node) => node.id === pendingPositioned.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  ...firstData,
+                  url: result.images[0].url,
+                  name: "继续生成图片 1",
+                  model: result.model?.name || params.model,
+                  status: "completed" as const,
+                  statusLabel: "图片已完成",
+                  processingStartedAt: undefined,
+                },
+              }
+            : node,
+          )
+          .concat(outputs),
+        edges: [...value.edges, ...extraEdges],
+      }));
+      setSelectedIds(new Set([pendingPositioned.id, ...outputs.map((output) => output.id)]));
+      writeSharedCreationSettings(params);
+      setReuseDraft(null);
+      setEditorDrafts((current) => {
+        const next = { ...current };
+        delete next[source.id];
+        return next;
+      });
+      void recordCanvasImages(result.images, {
+        prompt: draft.prompt,
+        source: "canvas",
+        modelId: params.model,
+        modelName: result.model?.name,
+        providerName: result.model?.provider,
+        aspectRatio: params.aspect,
+        outputSize: params.sizeMode === "custom" ? `${params.width}x${params.height}` : params.resolution,
+        outputFormat: params.outputFormat,
+        parentId: source.id,
+      }).then(() => setAssetRefresh((value) => value + 1)).catch(() => addLog("图片续生成完成，但写入主界面历史失败"));
+      notify(`已生成 ${result.images.length} 张新图片，原图已保留`);
+      addLog(`图片续生成完成：${result.images.length} 张`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "图片续生成失败";
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === pendingPositioned.id
+          ? { ...node, data: { ...node.data, status: "failed" as const, statusLabel: message } }
+          : node),
+      }));
+      notify(message, "error");
+      addLog(`图片续生成失败：${message}`);
+    } finally {
+      generationKeysRef.current.delete(activeKey);
+      setGenerationKeys(new Set(generationKeysRef.current));
+    }
+  }, [addLog, commit, notify, openNodePosition, runtime, updateDoc]);
+
+  const runReuseGeneration = useCallback(async (draftInput: CanvasReuseDraft) => {
+    const draft = cloneReuseDraft(draftInput);
+    if (draft.kind === "image") {
+      await runImageContinuation(draft);
+      return;
+    }
+    if (!draft.prompt.trim()) return notify("请输入生成提示词。", "error");
+    if (draft.references.some((reference) => reference.pending || reference.error)) {
+      return notify("请等待参考图准备完成，或移除失败的参考图。", "error");
     }
     const activeKey = `reuse:${draft.sourceNodeId || draft.kind}`;
     if (generationKeysRef.current.has(activeKey)) return notify("这个复用任务正在生成，请稍候。", "error");
@@ -4323,35 +4666,6 @@ export default function SuperCanvas() {
     setSelectedIds(new Set([generator.id]));
     setSelectedGroupId(null);
     try {
-      if (draft.kind === "image") {
-        const params = draft.params as ImageCreationSettings;
-        const result = await generateCanvasImage({
-          taskId: uid("image-task"), prompt: draft.prompt, model: params.model, count: params.count,
-          aspect: params.aspect === "自定义" ? `${params.customAspectWidth}:${params.customAspectHeight}` : params.aspect,
-          resolution: params.resolution, quality: params.quality,
-          ...(params.sizeMode === "custom" ? { width: params.width, height: params.height } : {}),
-          outputFormat: params.outputFormat,
-          background: params.backgroundMode === "api-transparent" ? "transparent" : params.backgroundMode === "opaque" ? "opaque" : undefined,
-          maskUrl: params.mask?.url,
-          references: draft.references.filter((reference) => reference.kind === "image").map((reference) => ({ url: reference.url, name: reference.name })),
-        });
-        if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
-        const extraOutputs = result.images.slice(1).map((image, index) => createMedia("image", image.url, `复用生成图片 ${index + 2}`, { x: output.x + 350 * (index + 1), y: output.y }, {
-          role: "复用生成结果", model: result.model?.name || params.model,
-          generation: { kind: "image", prompt: draft.prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, createdAt: Date.now() }, referenceOrder: resolvedReferenceIds,
-        }));
-        updateDoc((value) => ({
-          ...value,
-          nodes: value.nodes.map((node) => node.id === generator.id ? { ...node, data: { ...node.data, status: "completed" as const, statusLabel: "复用生成完成" } } : node.id === output.id ? { ...node, data: { ...node.data, url: result.images[0].url, name: "复用生成图片 1", status: "completed" as const, statusLabel: "图片已完成", model: result.model?.name || params.model, generation: { kind: "image" as const, prompt: draft.prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, createdAt: Date.now() }, referenceOrder: resolvedReferenceIds } } : node).concat(extraOutputs),
-          edges: [...value.edges, ...extraOutputs.map((item) => ({ id: uid("edge"), source: generator.id, target: item.id, sourcePort: "right" as const, targetPort: "left" as const, kind: "variant" as const }))],
-        }));
-        setSelectedIds(new Set([output.id, ...extraOutputs.map((item) => item.id)]));
-        writeSharedCreationSettings(params);
-        void recordCanvasImages(result.images, { prompt: draft.prompt, source: "canvas", modelId: params.model, modelName: result.model?.name, providerName: result.model?.provider, aspectRatio: params.aspect, outputSize: params.sizeMode === "custom" ? `${params.width}x${params.height}` : params.resolution, outputFormat: params.outputFormat, parentId: source?.id }).then(() => setAssetRefresh((value) => value + 1));
-        notify(`已生成 ${result.images.length} 张新分支图片`);
-        addLog(`复用参数生成完成：${result.images.length} 张图片`);
-        setReuseDraft(null);
-      } else {
         const params = draft.params as VideoCreationSettings;
         const sourceNode = draft.sourceNodeId
           ? nodeById(docRef.current, draft.sourceNodeId)
@@ -4387,7 +4701,6 @@ export default function SuperCanvas() {
         if (task.status === "done") notify("视频复用生成完成");
         else { void pollVideo(output.id, task.id); notify("视频新分支任务已提交"); }
         addLog(`视频复用任务已提交：${task.id}`);
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "复用生成失败";
       updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id || node.id === output.id ? { ...node, data: { ...node.data, status: "failed", statusLabel: message } } : node) }));
@@ -4397,7 +4710,7 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, notify, openNodePosition, pollVideo, runtime, screenToWorld, selectedSingle]);
+  }, [addLog, commit, notify, openNodePosition, pollVideo, runImageContinuation, runtime, screenToWorld, selectedSingle]);
 
   const runGeneration = useCallback(async () => {
     if (reuseDraft) {
@@ -5108,6 +5421,32 @@ export default function SuperCanvas() {
     [editorDrafts, runtime],
   );
 
+  const openImageEditor = useCallback(
+    (node: CanvasNode, overrides?: { prompt?: string; params?: CanvasGenerationParams }) => {
+      if (node.type !== "media" || node.data.kind !== "image") return;
+      let params: CanvasGenerationParams | undefined;
+      try {
+        params = overrides?.params ? clone(overrides.params) : editorParamsFor(node);
+      } catch {
+        params = undefined;
+      }
+      setEditorDrafts((current) => ({
+        ...current,
+        [node.id]: {
+          prompt: overrides?.prompt ?? editorPromptFor(node),
+          params,
+        },
+      }));
+      if (reuseDraft?.sourceNodeId !== node.id) setReuseDraft(null);
+      setExpandedEditorId(node.id);
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setMode("image");
+      setLightbox(null);
+    },
+    [editorParamsFor, editorPromptFor, reuseDraft],
+  );
+
   const toggleEditor = useCallback(
     (node: CanvasNode) => {
       if (expandedEditorId === node.id) {
@@ -5115,8 +5454,12 @@ export default function SuperCanvas() {
         if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
         return;
       }
-      if (node.type === "media" && node.data.url) {
+      if (node.type === "media" && node.data.url && node.data.kind === "video") {
         openReuseDraft(node);
+        return;
+      }
+      if (node.type === "media" && node.data.kind === "image") {
+        openImageEditor(node);
         return;
       }
       // A card can be draggable, so keep editor opening independent from the
@@ -5140,7 +5483,7 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
     },
-    [editorParamsFor, editorPromptFor, expandedEditorId, openReuseDraft, reuseDraft],
+    [editorParamsFor, editorPromptFor, expandedEditorId, openImageEditor, openReuseDraft, reuseDraft],
   );
 
   useEffect(() => {
@@ -5187,9 +5530,9 @@ export default function SuperCanvas() {
             data: {
               ...item.data,
               prompt: value,
-              generation: item.data.generation
-                ? { ...item.data.generation, prompt: value }
-                : item.data.generation,
+              ...(item.data.generation
+                ? { generation: { ...item.data.generation, prompt: value } }
+                : {}),
               editor: { ...item.data.editor, draftPrompt: value, dirty: true },
             },
           };
@@ -5365,6 +5708,15 @@ export default function SuperCanvas() {
                     ...item.data,
                     ...(item.type === "prompt" ? { text: draft.prompt, agentPrompt: draft.prompt } : { prompt: draft.prompt }),
                     ...(draft.params ? { params: clone(draft.params) } : {}),
+                    ...(item.type === "media" && item.data.generation
+                      ? {
+                          generation: {
+                            ...item.data.generation,
+                            prompt: draft.prompt,
+                            ...(draft.params ? { params: clone(draft.params) } : {}),
+                          },
+                        }
+                      : {}),
                     editor: { ...item.data.editor, dirty: false, draftPrompt: draft.prompt, draftParams: draft.params },
                   },
                 }
@@ -5437,21 +5789,22 @@ export default function SuperCanvas() {
           "image",
           runtime,
         ) as ImageCreationSettings;
-        setReuseDraft({
-          ...existingDraft,
-          params: {
-            ...settings,
-            mask: { assetId: uploaded.id, url: uploaded.url },
-          },
-          dirty: true,
-        });
-        setExpandedEditorId(node.id);
-        setSelectedIds(new Set([node.id]));
-        setSelectedGroupId(null);
-        setLightbox(null);
+        const params = {
+          ...settings,
+          mask: { assetId: uploaded.id, url: uploaded.url },
+        } satisfies ImageCreationSettings;
+        if (reuseDraft?.sourceNodeId === node.id) {
+          setReuseDraft({ ...existingDraft, params, dirty: true });
+          setExpandedEditorId(node.id);
+          setSelectedIds(new Set([node.id]));
+          setSelectedGroupId(null);
+          setLightbox(null);
+        } else {
+          openImageEditor(node, { params });
+        }
         setMaskNodeId(null);
         notify(
-          "蒙版已加入画布编辑器，点击生成即可创建新分支；原节点保持不变",
+          "蒙版已加入图片编辑器，点击生成即可创建右侧新图；原图保持不变",
           "ok",
         );
       } catch (error) {
@@ -5461,7 +5814,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [maskNodeId, notify, reuseDraft, runtime],
+    [maskNodeId, notify, openImageEditor, reuseDraft, runtime],
   );
 
   const runUpscale = useCallback(async (sourceOverride?: CanvasNode) => {
@@ -5563,6 +5916,7 @@ export default function SuperCanvas() {
       const draft = createMedia(asset.kind, asset.url, asset.name, seed, {
         role: "资产中心",
         sourceAssetId: asset.id,
+        params: defaultParams(asset.kind, runtime),
       });
       const targetGroup = position
         ? groupAtPoint(docRef.current, seed)
@@ -5597,6 +5951,7 @@ export default function SuperCanvas() {
       commit,
       notify,
       openNodePosition,
+      runtime,
       screenToWorld,
       stageSize.height,
       stageSize.width,
@@ -5628,7 +5983,7 @@ export default function SuperCanvas() {
             asset.url,
             asset.name,
             { x: ownerBounds.x - 430, y: ownerBounds.y },
-            { role: "参考素材", sourceAssetId: asset.id },
+            { role: "参考素材", sourceAssetId: asset.id, params: defaultParams(asset.kind, runtime) },
           );
       const sourceNode =
         existing ||
@@ -5656,7 +6011,7 @@ export default function SuperCanvas() {
         existing ? "已复用现有素材并建立参考连线" : "已添加素材并建立参考连线",
       );
     },
-    [commit, notify, openNodePosition, selectedGroupId, selectedSingle?.id],
+    [commit, notify, openNodePosition, runtime, selectedGroupId, selectedSingle?.id],
   );
 
   const locateAsset = useCallback(
@@ -5908,13 +6263,17 @@ export default function SuperCanvas() {
   );
   const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
     if (node.type !== "media") return;
-    openReuseDraft(node, {
-      prompt: value,
-      operation: "generate",
-      includeSourceReference: true,
-    });
+    if (node.data.kind === "image") {
+      openImageEditor(node, { prompt: value });
+    } else {
+      openReuseDraft(node, {
+        prompt: value,
+        operation: "generate",
+        includeSourceReference: true,
+      });
+    }
     notify("提示词已复制到画布编辑器，原节点保持不变");
-  }, [notify, openReuseDraft]);
+  }, [notify, openImageEditor, openReuseDraft]);
   const runOneTakeFromSelection = useCallback(async () => {
     const source = selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url);
     if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
@@ -5979,9 +6338,9 @@ export default function SuperCanvas() {
             ? { params: { ...params, operation: "extend" }, operation: "extend" }
             : { operation: "extend" },
         );
-      } else openReuseDraft(node);
+      } else openImageEditor(node);
     },
-    [openReuseDraft],
+    [openImageEditor, openReuseDraft],
   );
   const updateViewerParams = useCallback(
     (node: CanvasNode, settings: CreationSettings) => {
@@ -5993,9 +6352,10 @@ export default function SuperCanvas() {
         notify("参数已复制到画布编辑器，原节点保持不变");
         return;
       }
-      openReuseDraft(node, { params: settings });
+      if (node.data.kind === "image") openImageEditor(node, { params: settings });
+      else openReuseDraft(node, { params: settings });
     },
-    [notify, openReuseDraft, reuseDraft],
+    [notify, openImageEditor, openReuseDraft, reuseDraft],
   );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
     if (node.type !== "media" || !node.data.url) return null;
@@ -6105,7 +6465,8 @@ export default function SuperCanvas() {
         return;
       }
       if (selectedSingle?.type === "media") {
-        openReuseDraft(selectedSingle, { prompt: value });
+        if (selectedSingle.data.kind === "image") updatePrompt(value);
+        else openReuseDraft(selectedSingle, { prompt: value });
         setMentionState(mentionStateForValue(value, cursor));
         return;
       }
@@ -6122,7 +6483,10 @@ export default function SuperCanvas() {
       const value = reuseDraft?.prompt || deck.prompt;
       const next = `${value.slice(0, mentionState.start)}@${index + 1} ${value.slice(mentionState.end)}`;
       if (reuseDraft) setReuseDraft((current) => current ? { ...current, prompt: next, dirty: true } : current);
-      else if (selectedSingle?.type === "media") openReuseDraft(selectedSingle, { prompt: next });
+      else if (selectedSingle?.type === "media") {
+        if (selectedSingle.data.kind === "image") updatePrompt(next);
+        else openReuseDraft(selectedSingle, { prompt: next });
+      }
       else updatePrompt(next);
       setMentionState(null);
       window.requestAnimationFrame(() => deckPromptRef.current?.focus());
@@ -6270,20 +6634,26 @@ export default function SuperCanvas() {
   const runButtonLabel = generationBusy
     ? "处理中"
     : reuseDraft
-      ? "生成新分支"
+      ? reuseDraft.kind === "image" ? "生成新图" : "生成新分支"
     : mode === "text"
       ? "运行"
       : selectedSingle?.type === "generator"
         ? "生成变体"
+      : selectedSingle?.type === "media" && selectedSingle.data.kind === "image" && selectedSingle.data.url
+        ? "生成新图"
       : "生成";
   const runButtonTitle = generationBusy
     ? "正在处理中"
     : reuseDraft
-      ? "使用当前参数和参考图生成独立新分支"
+      ? reuseDraft.kind === "image"
+        ? "以当前图片为参考直接生成右侧新图片，原图保留"
+        : "使用当前参数和参考图生成独立新分支"
     : mode === "text"
       ? "运行 Agent"
       : selectedSingle?.type === "generator"
         ? "生成图片/视频变体"
+      : selectedSingle?.type === "media" && selectedSingle.data.kind === "image" && selectedSingle.data.url
+        ? "以当前图片为参考直接生成右侧新图片，原图保留"
       : deck.target
         ? "生成到此节点"
         : "生成";
@@ -6323,9 +6693,9 @@ export default function SuperCanvas() {
         {
           id: "regenerate",
           icon: "↻",
-          label: "再生成",
+          label: "编辑并生成",
           disabled: !hasMedia,
-          onClick: () => openReuseDraft(node),
+          onClick: () => openImageEditor(node),
         },
         {
           id: "reference",
@@ -6435,6 +6805,7 @@ export default function SuperCanvas() {
     deleteSelection,
     downloadCanvasNode,
     generationKeys,
+    openImageEditor,
     openReuseDraft,
     retryFailedVariants,
     runUpscale,
@@ -7114,6 +7485,21 @@ export default function SuperCanvas() {
             </b>
             <span />
             {!selectedGroupId && (
+              <div className="canvas-selection-align-actions" aria-label="节点对齐">
+                {CANVAS_ALIGNMENT_OPTIONS.map((option) => (
+                  <button
+                    type="button"
+                    key={option.value}
+                    title={option.title}
+                    aria-label={option.title}
+                    onClick={() => alignSelection(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!selectedGroupId && (
               <button type="button" onClick={makeGroup}>
                 ⌘ 成组
               </button>
@@ -7644,11 +8030,11 @@ export default function SuperCanvas() {
           onWriteResult={(value) => writeViewerPrompt(viewerNode, value)}
           onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
-          onEdit={() => openReuseDraft(viewerNode)}
+          onEdit={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
           onMask={viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
           onUpscale={viewerNode.data.kind === "image" ? () => void runUpscale(viewerNode) : undefined}
           onContinue={() => continueFromMedia(viewerNode)}
-          onReuse={() => openReuseDraft(viewerNode)}
+          onReuse={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
           onUseAsReference={() => addCurrentNodeToReuse(viewerNode)}
           onAddToAssets={() => void addViewerAsset(viewerNode)}
           onDelete={removeViewerNode}
@@ -8762,7 +9148,7 @@ function CanvasNodeEditorPopover({
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
-  const [position, setPosition] = useState({ left: 18, top: 86, placement: "bottom" });
+  const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [mentionState, setMentionState] = useState<MentionState>(null);
@@ -8853,7 +9239,10 @@ function CanvasNodeEditorPopover({
     const microEditor = zoom < 0.35;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
     const popoverWidth = popoverRef.current?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
-    const popoverHeight = popoverRef.current?.offsetHeight || (microEditor ? 400 : nextCompact ? 500 : 580);
+    // Use the density's preferred height instead of the currently rendered
+    // height. A previously constrained panel can then grow again after the
+    // node is panned upward or the viewport becomes taller.
+    const popoverHeight = microEditor ? 400 : nextCompact ? 520 : 580;
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -8872,33 +9261,14 @@ function CanvasNodeEditorPopover({
           width: size.w * zoom,
           height: size.h * zoom,
         };
-    const position = placeCanvasNodeEditor(
+    const position = fitCanvasNodeEditorBelow(
       anchor,
       { width: stageWidth, height: stageHeight },
       { width: popoverWidth, height: popoverHeight },
       14,
+      12,
     );
-    const viewportMargin = 12;
-    const constrainedLeft = Math.min(
-      Math.max(position.left, viewportMargin),
-      Math.max(viewportMargin, stageWidth - popoverWidth - viewportMargin),
-    );
-    const belowLimit = stageHeight - popoverHeight - viewportMargin;
-    const canPlaceAbove = anchor.top - popoverHeight - 14 >= viewportMargin;
-    const useTopPlacement = !promptExpanded && position.top > belowLimit && canPlaceAbove;
-    const constrainedTop = promptExpanded
-      ? position.top
-      : useTopPlacement
-        ? anchor.top - popoverHeight - 14
-        : Math.min(
-            Math.max(position.top, viewportMargin),
-            Math.max(viewportMargin, belowLimit),
-          );
-    setPosition({
-      left: promptExpanded ? position.left : constrainedLeft,
-      top: constrainedTop,
-      placement: useTopPlacement ? "top" : "bottom",
-    });
+    setPosition(position);
   }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
 
   useLayoutEffect(() => {
@@ -8931,13 +9301,17 @@ function CanvasNodeEditorPopover({
     <div
       ref={popoverRef}
       className={`canvas-node-editor-popover canvas-node-editor-dock${promptExpanded ? " is-prompt-expanded" : ""}`}
-      data-placement={position.placement}
+      data-placement="bottom"
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
       data-node-id={node.id}
       aria-label={`${nodeLabel(node)}编辑器`}
-      style={{ left: position.left, top: position.top }}
+      style={{
+        left: position.left,
+        top: position.top,
+        maxHeight: promptExpanded ? undefined : position.maxHeight,
+      }}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
@@ -9080,8 +9454,8 @@ function CanvasNodeEditorPopover({
         </div>
       </div>
       <div className="canvas-node-editor-actions">
-        <span>{node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : "Ctrl/Cmd + Enter 生成"}</span>
-        <button type="button" className="canvas-node-editor-generate" disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "prompt" ? "发送" : "生成"}</button>
+        <span>{node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
+        <button type="button" className="canvas-node-editor-generate" disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "prompt" ? "发送" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
       </div>
     </div>
   );

@@ -35,3 +35,26 @@ test("keeps overlay offsets attached when the node is outside the viewport", () 
   assert.deepEqual(editor, { left: -94, top: 242 });
   assert.equal(editor.top - (anchor.top + anchor.height), 14);
 });
+
+test("fits a tall editor below its node without moving it across the anchor", () => {
+  const anchor = { left: 300, top: 180, width: 380, height: 260 };
+  const stage = { width: 1280, height: 720 };
+  const editor = layout.fitCanvasNodeEditorBelow(
+    anchor,
+    stage,
+    { width: 640, height: 580 },
+  );
+
+  assert.deepEqual(editor, { left: 170, top: 454, maxHeight: 254 });
+  assert.equal(editor.top, anchor.top + anchor.height + 14);
+});
+
+test("keeps a below-node editor inside the horizontal viewport margins", () => {
+  const editor = layout.fitCanvasNodeEditorBelow(
+    { left: -80, top: 60, width: 280, height: 180 },
+    { width: 900, height: 700 },
+    { width: 640, height: 300 },
+  );
+
+  assert.deepEqual(editor, { left: 12, top: 254, maxHeight: 300 });
+});

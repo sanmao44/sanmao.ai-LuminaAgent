@@ -376,6 +376,88 @@ export function entityBounds(document: CanvasDocument, id: string) {
   return { x: node.x, y: node.y, w: size.w, h: size.h };
 }
 
+export type CanvasAlignment =
+  | "left"
+  | "center-x"
+  | "right"
+  | "top"
+  | "center-y"
+  | "bottom";
+
+export type CanvasAlignResult = {
+  document: CanvasDocument;
+  alignedIds: string[];
+  changed: boolean;
+};
+
+/** Aligns ordinary nodes to the outer bounds of the current selection. */
+export function alignCanvasNodes(
+  document: CanvasDocument,
+  nodeIds: readonly string[],
+  alignment: CanvasAlignment,
+): CanvasAlignResult {
+  const selectedIds = [...new Set(nodeIds)].filter((id) =>
+    document.nodes.some((node) => node.id === id),
+  );
+  const selected = selectedIds
+    .map((id) => nodeById(document, id))
+    .filter((node): node is CanvasNode => Boolean(node));
+  const next = clone(document);
+  if (selected.length < 2) {
+    return { document: next, alignedIds: selectedIds, changed: false };
+  }
+
+  const bounds = selected.map((node) => {
+    const size = nodeSize(node);
+    return {
+      node,
+      right: node.x + size.w,
+      bottom: node.y + size.h,
+    };
+  });
+  const left = Math.min(...bounds.map((item) => item.node.x));
+  const top = Math.min(...bounds.map((item) => item.node.y));
+  const right = Math.max(...bounds.map((item) => item.right));
+  const bottom = Math.max(...bounds.map((item) => item.bottom));
+  const centerX = (left + right) / 2;
+  const centerY = (top + bottom) / 2;
+  const selectedSet = new Set(selectedIds);
+  let changed = false;
+
+  next.nodes = next.nodes.map((node) => {
+    if (!selectedSet.has(node.id)) return node;
+    const size = nodeSize(node);
+    let x = node.x;
+    let y = node.y;
+    switch (alignment) {
+      case "left":
+        x = left;
+        break;
+      case "center-x":
+        x = centerX - size.w / 2;
+        break;
+      case "right":
+        x = right - size.w;
+        break;
+      case "top":
+        y = top;
+        break;
+      case "center-y":
+        y = centerY - size.h / 2;
+        break;
+      case "bottom":
+        y = bottom - size.h;
+        break;
+      default:
+        return node;
+    }
+    if (x !== node.x || y !== node.y) changed = true;
+    return { ...node, x, y };
+  });
+
+  return { document: next, alignedIds: selectedIds, changed };
+}
+
 export type CanvasArrangeResult = {
   document: CanvasDocument;
   arrangedIds: string[];
