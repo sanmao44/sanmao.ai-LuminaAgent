@@ -82,6 +82,58 @@ test('allows multiple image references on the same target after legacy migration
   assert.deepEqual(model.incomingReferences(withSecond, target.id).map((node) => node.id), [first.id, second.id]);
 });
 
+test('migrates legacy standalone upscale results into the owning node', () => {
+  const source = model.createMedia('image', '/source.png', '原图', { x: 0, y: 0 });
+  const upscale = model.createUpscaleNode({ x: 480, y: 0 });
+  const legacyResult = model.createMedia('image', '/upscaled.png', '原图 · 超分', { x: 900, y: 0 }, {
+    role: '超分结果',
+    nativeWidth: 2048,
+    nativeHeight: 2048,
+    generation: {
+      kind: 'image',
+      prompt: 'Upscale this image',
+      params: {
+        kind: 'upscale',
+        model: 'upscale-model',
+        scale: 4,
+        target: '2K',
+        seed: 7,
+        colorCorrection: 'none',
+        algorithm: 'bicubic',
+      },
+      operation: 'upscale',
+      referenceIds: [source.id],
+      parentNodeId: upscale.id,
+      createdAt: 100,
+    },
+  });
+  const consumer = model.createGenerator('image', { x: 1320, y: 0 });
+  const result = model.normalizeDocument({
+    nodes: [source, upscale, legacyResult, consumer],
+    groups: [{ id: 'upscale-group', name: '超分链路', nodeIds: [source.id, legacyResult.id] }],
+    edges: [
+      { id: 'input', source: source.id, target: upscale.id, inputRole: 'upscale-image' },
+      { id: 'legacy-output', source: upscale.id, target: legacyResult.id, kind: 'lineage' },
+      { id: 'follow-up', source: legacyResult.id, target: consumer.id, kind: 'lineage' },
+    ],
+  });
+
+  const migrated = result.nodes.find((node) => node.id === upscale.id);
+  assert.ok(migrated);
+  assert.equal(result.nodes.some((node) => node.id === legacyResult.id), false);
+  assert.equal(migrated.data.url, '/upscaled.png');
+  assert.equal(migrated.data.resultSource, 'upscale-node');
+  assert.equal(migrated.data.statusLabel, '超分节点生成的结果');
+  assert.equal(migrated.data.params.scale, 4);
+  assert.equal(migrated.data.params.algorithm, 'bicubic');
+  assert.equal(migrated.data.generation.parentNodeId, upscale.id);
+  assert.deepEqual(result.groups[0].nodeIds, [source.id, upscale.id]);
+  assert.equal(migrated.groupId, 'upscale-group');
+  assert.equal(result.edges.some((edge) => edge.source === source.id && edge.target === upscale.id), true);
+  assert.equal(result.edges.some((edge) => edge.source === upscale.id && edge.target === consumer.id), true);
+  assert.equal(result.edges.some((edge) => edge.target === legacyResult.id), false);
+});
+
 test('creates media, prompt, generator, groups, edges and reference order', () => {
   const empty = model.normalizeDocument(null);
   const image = model.createMedia('image', '/image.png', '参考图', { x: 0, y: 0 });

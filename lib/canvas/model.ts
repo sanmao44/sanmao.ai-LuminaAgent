@@ -178,7 +178,9 @@ function normalizeNode(value: unknown): CanvasNode | null {
       ...data.generation,
       kind,
       params:
-        kind === "image"
+        data.generation.operation === "upscale"
+          ? normalizeUpscaleParams(data.generation.params)
+          : kind === "image"
           ? normalizeCreationSettings("image", data.generation.params)
           : normalizeCreationSettings("video", data.generation.params),
     };
@@ -285,7 +287,91 @@ export function normalizeDocument(
   const nodes = Array.isArray(raw.nodes)
     ? (raw.nodes.map(normalizeNode).filter(Boolean) as CanvasNode[])
     : [];
-  const nodeIds = new Set(nodes.map((node) => node.id));
+  const originalNodeIds = new Set(nodes.map((node) => node.id));
+  const legacyUpscaleResultIds = new Set<string>();
+  const legacyUpscaleResultParentIds = new Map<string, string>();
+  const latestLegacyUpscaleResults = new Map<string, CanvasNode>();
+  const legacyResultTimestamp = (node: CanvasNode) => {
+    const generation = node.data.generation;
+    const values = [
+      generation?.updatedAt,
+      generation?.createdAt,
+      node.data.updatedAt,
+    ];
+    return values
+      .map((value) => Number(value))
+      .find((value) => Number.isFinite(value)) || 0;
+  };
+
+  nodes.forEach((node) => {
+    if (node.type !== "media" || node.data.generation?.operation !== "upscale") return;
+    const parentNodeId = node.data.generation.parentNodeId;
+    const parent = nodes.find((candidate) => candidate.id === parentNodeId);
+    if (!parent || parent.type !== "upscale") return;
+    legacyUpscaleResultIds.add(node.id);
+    legacyUpscaleResultParentIds.set(node.id, parent.id);
+    const current = latestLegacyUpscaleResults.get(parent.id);
+    if (!current || legacyResultTimestamp(node) >= legacyResultTimestamp(current)) {
+      latestLegacyUpscaleResults.set(parent.id, node);
+    }
+  });
+
+  // Before results were written directly to the upscale node, each run added
+  // a separate media card. Fold those saved results into their owning node so
+  // existing canvases converge on the current single-node representation.
+  const migratedNodes = nodes
+    .filter((node) => !legacyUpscaleResultIds.has(node.id))
+    .map((node) => {
+      const legacyResult = latestLegacyUpscaleResults.get(node.id);
+      if (!legacyResult) return node;
+      const legacyGeneration = legacyResult.data.generation;
+      const resultParams = normalizeUpscaleParams(
+        legacyGeneration?.params || legacyResult.data.params || node.data.params,
+      );
+      const prompt = String(
+        legacyGeneration?.prompt ||
+          legacyResult.data.prompt ||
+          node.data.generation?.prompt ||
+          node.data.prompt ||
+          "Upscale this image",
+      );
+      const data: CanvasNodeData = {
+        ...node.data,
+        kind: "image",
+        role: "超分结果",
+        resultSource: "upscale-node",
+        status: legacyResult.data.status || "completed",
+        statusLabel: "超分节点生成的结果",
+        progress: Number.isFinite(Number(legacyResult.data.progress))
+          ? Number(legacyResult.data.progress)
+          : 100,
+        params: resultParams,
+        generation: {
+          ...(legacyGeneration || {}),
+          kind: "image",
+          prompt,
+          params: resultParams,
+          operation: "upscale",
+          parentNodeId: node.id,
+        },
+      };
+      [
+        "url",
+        "name",
+        "model",
+        "assetId",
+        "sourceAssetId",
+        "autoFit",
+        "nativeWidth",
+        "nativeHeight",
+        "jobId",
+        "processingStartedAt",
+      ].forEach((key) => {
+        if (legacyResult.data[key] !== undefined) data[key] = legacyResult.data[key];
+      });
+      return { ...node, data };
+    });
+  const nodeIds = new Set(migratedNodes.map((node) => node.id));
   const groups = Array.isArray(raw.groups)
     ? raw.groups
         .filter((group): group is CanvasGroup =>
@@ -295,7 +381,7 @@ export function normalizeDocument(
           id: String(group.id || uid("group")),
           name: String(group.name || "对象组"),
           nodeIds: Array.isArray(group.nodeIds)
-            ? [...new Set(group.nodeIds.map(String))].filter((id) =>
+            ? [...new Set(group.nodeIds.map(String).map((id) => legacyUpscaleResultParentIds.get(id) || id))].filter((id) =>
                 nodeIds.has(id),
               )
             : [],
@@ -313,7 +399,7 @@ export function normalizeDocument(
       if (!groupMembership.has(id)) groupMembership.set(id, group.id);
     }),
   );
-  const normalizedNodes = nodes.map((node) =>
+  const normalizedNodes = migratedNodes.map((node) =>
     groupMembership.has(node.id)
       ? { ...node, groupId: groupMembership.get(node.id) }
       : withoutGroupId(node),
@@ -323,14 +409,27 @@ export function normalizeDocument(
         .map(normalizeEdge)
         .filter(Boolean)
         .filter(
-          (edge) => nodeIds.has(edge!.source) || groupIds.has(edge!.source),
+          (edge) => originalNodeIds.has(edge!.source) || groupIds.has(edge!.source),
         )
         .filter(
-          (edge) => nodeIds.has(edge!.target) || groupIds.has(edge!.target),
+          (edge) => originalNodeIds.has(edge!.target) || groupIds.has(edge!.target),
         ) as CanvasEdge[])
     : [];
+  const migratedEdges = rawEdges
+    .filter((edge) => !legacyUpscaleResultIds.has(edge.target))
+    .map((edge) => ({
+      ...edge,
+      source: legacyUpscaleResultParentIds.get(edge.source) || edge.source,
+    }))
+    .filter((edge) => edge.source !== edge.target)
+    .filter(
+      (edge) => nodeIds.has(edge.source) || groupIds.has(edge.source),
+    )
+    .filter(
+      (edge) => nodeIds.has(edge.target) || groupIds.has(edge.target),
+    );
   const upscaleTargets = new Set<string>();
-  const edges = rawEdges.filter((edge) => {
+  const edges = migratedEdges.filter((edge) => {
     const targetNode = normalizedNodes.find((node) => node.id === edge.target);
     if (targetNode?.type !== "upscale") return true;
     const sourceNode = normalizedNodes.find((node) => node.id === edge.source);
