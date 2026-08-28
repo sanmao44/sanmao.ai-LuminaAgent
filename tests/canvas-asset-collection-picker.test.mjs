@@ -17,6 +17,8 @@ test("all canvas asset actions open the collection picker before writing", () =>
   assert.match(component, /onClick: close\(\(\) => openAssetCollectionPicker\(node\)\)/);
   assert.match(component, /onAddToAssets=\{canAddCanvasAsset\(viewerNode\) \? \(\) => openAssetCollectionPicker\(viewerNode\) : undefined\}/);
   assert.match(component, /onConfirm=\{\(collectionId\) => addViewerAsset\(pickerNode, collectionId\)\}/);
+  assert.match(component, /setAssetCollectionPickerNodeId\(null\)/);
+  assert.match(component, /assetCollectionPickerNodeId\);/);
 });
 
 test("collection picker exposes only uncategorized and custom collections", () => {
