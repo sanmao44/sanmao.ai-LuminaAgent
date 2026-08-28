@@ -98,6 +98,10 @@ import {
   placeCanvasContextMenu,
   placeCanvasNodeToolbar,
 } from "@/lib/canvas/editor-layout";
+import {
+  createCanvasImageZip,
+  orderCanvasImageItems,
+} from "@/lib/canvas/download";
 import { recordCanvasImages } from "@/lib/creation/history";
 import {
   requestPromptOptimization,
@@ -1072,6 +1076,7 @@ export default function SuperCanvas() {
     text: { prompt: "", params: readSharedCreationSettings("text") },
   });
   const [saving, setSaving] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>("idle");
   const [generationKeys, setGenerationKeys] = useState<Set<string>>(new Set());
@@ -1192,6 +1197,20 @@ export default function SuperCanvas() {
   );
   const selectedNodes = useMemo(
     () => document.nodes.filter((node) => selectedIds.has(node.id)),
+    [document.nodes, selectedIds],
+  );
+  const selectedImageDownloads = useMemo(
+    () =>
+      orderCanvasImageItems(
+        document.nodes
+          .filter((node) => isCanvasReadyImageSource(node))
+          .map((node) => ({
+            id: node.id,
+            name: node.data.name,
+            url: String(node.data.url),
+          })),
+        selectedIds,
+      ),
     [document.nodes, selectedIds],
   );
   const selectedSingle = selectedNodes.length === 1 ? selectedNodes[0] : null;
@@ -6944,6 +6963,29 @@ export default function SuperCanvas() {
     anchor.click();
     notify("已开始下载");
   }, [notify]);
+  const downloadSelectedImages = useCallback(async () => {
+    if (selectedImageDownloads.length < 2 || batchDownloading) return;
+    setBatchDownloading(true);
+    try {
+      const { blob } = await createCanvasImageZip(selectedImageDownloads);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = window.document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = objectUrl;
+      anchor.download = `SANMAO-画布图片-${stamp}.zip`;
+      anchor.rel = "noreferrer";
+      anchor.style.display = "none";
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      notify(`已开始下载 ${selectedImageDownloads.length} 张图片`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "批量下载图片失败", "error");
+    } finally {
+      setBatchDownloading(false);
+    }
+  }, [batchDownloading, notify, selectedImageDownloads]);
   const copyCanvasImage = useCallback(async (node: CanvasNode) => {
     if (node.type !== "media" || node.data.kind !== "image" || !node.data.url) {
       notify("当前节点没有可复制的图片。", "error");
@@ -8352,6 +8394,17 @@ export default function SuperCanvas() {
             )}
             {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
               <button type="button" onClick={() => void runOneTakeFromSelection()}>🎬 一镜到底</button>
+            )}
+            {selectedImageDownloads.length >= 2 && (
+              <button
+                type="button"
+                title="按选择顺序打包下载图片"
+                aria-label={`批量下载 ${selectedImageDownloads.length} 张图片`}
+                disabled={batchDownloading}
+                onClick={() => void downloadSelectedImages()}
+              >
+                {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageDownloads.length} 张`}
+              </button>
             )}
             {selectedGroupId && (
               <button type="button" onClick={breakGroup}>
