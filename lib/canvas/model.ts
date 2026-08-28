@@ -384,6 +384,8 @@ export type CanvasAlignment =
   | "center-y"
   | "bottom";
 
+export type CanvasDistribution = "horizontal" | "vertical";
+
 export type CanvasAlignResult = {
   document: CanvasDocument;
   alignedIds: string[];
@@ -453,6 +455,64 @@ export function alignCanvasNodes(
     }
     if (x !== node.x || y !== node.y) changed = true;
     return { ...node, x, y };
+  });
+
+  return { document: next, alignedIds: selectedIds, changed };
+}
+
+/** Distributes ordinary nodes with equal edge-to-edge gaps along one axis. */
+export function distributeCanvasNodes(
+  document: CanvasDocument,
+  nodeIds: readonly string[],
+  direction: CanvasDistribution,
+): CanvasAlignResult {
+  const selectedIds = [...new Set(nodeIds)].filter((id) =>
+    document.nodes.some((node) => node.id === id),
+  );
+  const selected = selectedIds
+    .map((id) => nodeById(document, id))
+    .filter((node): node is CanvasNode => Boolean(node));
+  const next = clone(document);
+  if (selected.length < 3) {
+    return { document: next, alignedIds: selectedIds, changed: false };
+  }
+
+  const axis = direction === "horizontal" ? "x" : "y";
+  const sizeAxis = direction === "horizontal" ? "w" : "h";
+  const sorted = selected
+    .map((node, index) => ({
+      node,
+      index,
+      coordinate: node[axis],
+      size: nodeSize(node)[sizeAxis],
+    }))
+    .sort((left, right) => left.coordinate - right.coordinate || left.index - right.index);
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const start = first.coordinate;
+  const end = last.coordinate + last.size;
+  const totalSize = sorted.reduce((sum, item) => sum + item.size, 0);
+  const gap = (end - start - totalSize) / (sorted.length - 1);
+  const positions = new Map<string, number>();
+  let cursor = start;
+
+  sorted.forEach((item, index) => {
+    const coordinate =
+      index === 0
+        ? start
+        : index === sorted.length - 1
+          ? end - item.size
+          : cursor + gap;
+    positions.set(item.node.id, coordinate);
+    cursor = coordinate + item.size;
+  });
+
+  let changed = false;
+  next.nodes = next.nodes.map((node) => {
+    const coordinate = positions.get(node.id);
+    if (coordinate === undefined) return node;
+    if (coordinate !== node[axis]) changed = true;
+    return { ...node, [axis]: coordinate };
   });
 
   return { document: next, alignedIds: selectedIds, changed };

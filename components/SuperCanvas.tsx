@@ -26,6 +26,7 @@ import {
   createMedia,
   createPrompt,
   detachNodesFromGroups,
+  distributeCanvasNodes,
   edgeTouchesSelection,
   edgePath,
   entityBounds,
@@ -49,6 +50,7 @@ import {
   snapshot,
   uid,
   type CanvasAlignment,
+  type CanvasDistribution,
 } from "@/lib/canvas/model";
 import {
   getCanvasVideoTask,
@@ -224,6 +226,82 @@ function ConnectionOptionIcon({
   );
 }
 
+type CanvasLayoutIconKind = CanvasAlignment | CanvasDistribution;
+
+function CanvasLayoutIcon({
+  kind,
+}: {
+  kind: CanvasLayoutIconKind;
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {kind === "left" && (
+        <>
+          <path d="M5 4v16" />
+          <path d="M8 7h11M8 12h7M8 17h11" />
+        </>
+      )}
+      {kind === "center-x" && (
+        <>
+          <path d="M12 4v16" strokeDasharray="2 2" />
+          <path d="M5 7h14M7 12h10M5 17h14" />
+        </>
+      )}
+      {kind === "right" && (
+        <>
+          <path d="M19 4v16" />
+          <path d="M5 7h11M9 12h7M5 17h11" />
+        </>
+      )}
+      {kind === "top" && (
+        <>
+          <path d="M4 5h16" />
+          <path d="M7 8v11M12 8v7M17 8v11" />
+        </>
+      )}
+      {kind === "center-y" && (
+        <>
+          <path d="M4 12h16" strokeDasharray="2 2" />
+          <path d="M7 5v14M12 7v10M17 5v14" />
+        </>
+      )}
+      {kind === "bottom" && (
+        <>
+          <path d="M4 19h16" />
+          <path d="M7 5v11M12 9v7M17 5v11" />
+        </>
+      )}
+      {kind === "horizontal" && (
+        <>
+          <rect x="4" y="8" width="3" height="8" rx="1" />
+          <rect x="10.5" y="8" width="3" height="8" rx="1" />
+          <rect x="17" y="8" width="3" height="8" rx="1" />
+          <path d="M7 19h3.5M13.5 19H17" />
+        </>
+      )}
+      {kind === "vertical" && (
+        <>
+          <rect x="8" y="4" width="8" height="3" rx="1" />
+          <rect x="8" y="10.5" width="8" height="3" rx="1" />
+          <rect x="8" y="17" width="8" height="3" rx="1" />
+          <path d="M19 7v3.5M19 13.5V17" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 function mentionStateForValue(value: string, cursor: number): MentionState {
   const safeCursor = Number.isFinite(cursor)
     ? Math.max(0, Math.min(cursor, value.length))
@@ -352,13 +430,33 @@ const CANVAS_ALIGNMENT_OPTIONS: Array<{
   value: CanvasAlignment;
   label: string;
   title: string;
+  icon: CanvasLayoutIconKind;
 }> = [
-  { value: "left", label: "左对齐", title: "将选中节点左边缘对齐" },
-  { value: "center-x", label: "水平居中", title: "将选中节点水平居中" },
-  { value: "right", label: "右对齐", title: "将选中节点右边缘对齐" },
-  { value: "top", label: "顶部对齐", title: "将选中节点顶部对齐" },
-  { value: "center-y", label: "垂直居中", title: "将选中节点垂直居中" },
-  { value: "bottom", label: "底部对齐", title: "将选中节点底部对齐" },
+  { value: "left", label: "左对齐", title: "将选中节点左边缘对齐", icon: "left" },
+  { value: "center-x", label: "水平居中", title: "将选中节点水平居中", icon: "center-x" },
+  { value: "right", label: "右对齐", title: "将选中节点右边缘对齐", icon: "right" },
+  { value: "top", label: "顶部对齐", title: "将选中节点顶部对齐", icon: "top" },
+  { value: "center-y", label: "垂直居中", title: "将选中节点垂直居中", icon: "center-y" },
+  { value: "bottom", label: "底部对齐", title: "将选中节点底部对齐", icon: "bottom" },
+];
+const CANVAS_DISTRIBUTION_OPTIONS: Array<{
+  value: CanvasDistribution;
+  label: string;
+  title: string;
+  icon: CanvasLayoutIconKind;
+}> = [
+  {
+    value: "horizontal",
+    label: "水平均匀分布",
+    title: "将选中节点按边缘等间隙水平分布",
+    icon: "horizontal",
+  },
+  {
+    value: "vertical",
+    label: "垂直均匀分布",
+    title: "将选中节点按边缘等间隙垂直分布",
+    icon: "vertical",
+  },
 ];
 const CONNECTION_STYLE_OPTIONS: Array<{
   value: ConnectionStyle;
@@ -1666,7 +1764,7 @@ export default function SuperCanvas() {
       const target = event.target as HTMLElement;
       if (
         target.closest(
-          ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+          ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
         )
       )
         return;
@@ -2595,9 +2693,13 @@ export default function SuperCanvas() {
 
   const alignSelection = useCallback(
     (alignment: CanvasAlignment) => {
-      if (selectedGroupId || selectedIds.size < 2) return;
+      if (selectedGroupId || selectedNodes.length < 2) return;
       const option = CANVAS_ALIGNMENT_OPTIONS.find((item) => item.value === alignment);
-      const result = alignCanvasNodes(docRef.current, [...selectedIds], alignment);
+      const result = alignCanvasNodes(
+        docRef.current,
+        [...selectedIds],
+        alignment,
+      );
       const label = option?.label || "对齐";
       if (!result.changed) {
         notify("已对齐");
@@ -2607,7 +2709,30 @@ export default function SuperCanvas() {
       addLog(`已将 ${result.alignedIds.length} 个节点${label}`);
       notify(`已将 ${result.alignedIds.length} 个节点${label}`);
     },
-    [addLog, commit, notify, selectedGroupId, selectedIds],
+    [addLog, commit, notify, selectedGroupId, selectedIds, selectedNodes.length],
+  );
+
+  const distributeSelection = useCallback(
+    (direction: CanvasDistribution) => {
+      if (selectedGroupId || selectedNodes.length < 3) return;
+      const option = CANVAS_DISTRIBUTION_OPTIONS.find(
+        (item) => item.value === direction,
+      );
+      const result = distributeCanvasNodes(
+        docRef.current,
+        [...selectedIds],
+        direction,
+      );
+      const label = option?.label || "均匀分布";
+      if (!result.changed) {
+        notify("已均匀分布");
+        return;
+      }
+      commit(() => result.document);
+      addLog(`已将 ${result.alignedIds.length} 个节点${label}`);
+      notify(`已将 ${result.alignedIds.length} 个节点${label}`);
+    },
+    [addLog, commit, notify, selectedGroupId, selectedIds, selectedNodes.length],
   );
 
   const undo = useCallback(() => {
@@ -6168,7 +6293,7 @@ export default function SuperCanvas() {
       if (
         target instanceof Element &&
         target.closest(
-          ".canvas-node,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+          ".canvas-node,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
         )
       )
         return;
@@ -7485,21 +7610,6 @@ export default function SuperCanvas() {
             </b>
             <span />
             {!selectedGroupId && (
-              <div className="canvas-selection-align-actions" aria-label="节点对齐">
-                {CANVAS_ALIGNMENT_OPTIONS.map((option) => (
-                  <button
-                    type="button"
-                    key={option.value}
-                    title={option.title}
-                    aria-label={option.title}
-                    onClick={() => alignSelection(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            {!selectedGroupId && (
               <button type="button" onClick={makeGroup}>
                 ⌘ 成组
               </button>
@@ -7524,6 +7634,58 @@ export default function SuperCanvas() {
             <button type="button" className="danger" onClick={deleteSelection}>
               ⌫ 删除
             </button>
+          </div>
+        )}
+        {selectedNodes.length >= 2 && !selectedGroupId && (
+          <div
+            className="canvas-selection-layout-toolbar"
+            aria-label="节点布局工具"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="canvas-selection-layout-group alignment" aria-label="节点对齐">
+              {CANVAS_ALIGNMENT_OPTIONS.map((option) => (
+                <span
+                  className="canvas-selection-layout-tooltip"
+                  data-tooltip={option.title}
+                  key={option.value}
+                >
+                  <button
+                    type="button"
+                    title={option.title}
+                    aria-label={option.title}
+                    onClick={() => alignSelection(option.value)}
+                  >
+                    <CanvasLayoutIcon kind={option.icon} />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <span className="canvas-selection-layout-divider" aria-hidden="true" />
+            <div className="canvas-selection-layout-group distribution" aria-label="节点均匀分布">
+              {CANVAS_DISTRIBUTION_OPTIONS.map((option) => {
+                const disabled = selectedNodes.length < 3;
+                const tooltip = disabled
+                  ? `至少选择 3 个节点后可${option.label}`
+                  : option.title;
+                return (
+                  <span
+                    className="canvas-selection-layout-tooltip"
+                    data-tooltip={tooltip}
+                    key={option.value}
+                  >
+                    <button
+                      type="button"
+                      title={tooltip}
+                      aria-label={tooltip}
+                      disabled={disabled}
+                      onClick={() => distributeSelection(option.value)}
+                    >
+                      <CanvasLayoutIcon kind={option.icon} />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
           </div>
         )}
         <div ref={deckRef} className={`canvas-deck legacy-deck-hidden ${deckCollapsed ? "collapsed" : ""}`}>

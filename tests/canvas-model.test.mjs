@@ -623,6 +623,95 @@ test('reports an already aligned selection as unchanged', () => {
   assert.deepEqual(result.document, document);
 });
 
+test('distributes different-sized nodes with equal horizontal edge gaps', () => {
+  const first = model.createPrompt({ x: 100, y: 40 }, '第一');
+  first.w = 100;
+  first.h = 70;
+  const middle = model.createMedia('image', '/middle.png', '中间', { x: 300, y: 240 });
+  middle.w = 200;
+  middle.h = 150;
+  const last = model.createGenerator('image', { x: 700, y: 520 });
+  last.w = 80;
+  last.h = 110;
+  const outside = model.createMedia('image', '/outside.png', '未选中', { x: 1200, y: 900 });
+  const document = arrangeDocument([first, middle, last, outside]);
+  const original = model.clone(document);
+  const result = model.distributeCanvasNodes(
+    document,
+    [first.id, middle.id, last.id],
+    'horizontal',
+  );
+
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.alignedIds, [first.id, middle.id, last.id]);
+  const nextFirst = result.document.nodes.find((node) => node.id === first.id);
+  const nextMiddle = result.document.nodes.find((node) => node.id === middle.id);
+  const nextLast = result.document.nodes.find((node) => node.id === last.id);
+  const firstGap = nextMiddle.x - (nextFirst.x + nextFirst.w);
+  const secondGap = nextLast.x - (nextMiddle.x + nextMiddle.w);
+  assert.equal(firstGap, 150);
+  assert.equal(secondGap, 150);
+  assert.deepEqual({ x: nextFirst.x, y: nextFirst.y }, { x: first.x, y: first.y });
+  assert.deepEqual({ x: nextLast.x, y: nextLast.y }, { x: last.x, y: last.y });
+  assert.equal(nextMiddle.y, middle.y);
+  assert.deepEqual(
+    result.document.nodes.find((node) => node.id === outside.id),
+    document.nodes.find((node) => node.id === outside.id),
+  );
+  assert.deepEqual(document, original);
+});
+
+test('distributes different-sized nodes with equal vertical edge gaps', () => {
+  const first = model.createPrompt({ x: 40, y: 50 }, '第一');
+  first.w = 90;
+  first.h = 100;
+  const middle = model.createMedia('image', '/middle.png', '中间', { x: 300, y: 300 });
+  middle.w = 170;
+  middle.h = 200;
+  const last = model.createGenerator('image', { x: 700, y: 700 });
+  last.w = 110;
+  last.h = 80;
+  const document = arrangeDocument([first, middle, last]);
+  const result = model.distributeCanvasNodes(
+    document,
+    [first.id, middle.id, last.id],
+    'vertical',
+  );
+
+  assert.equal(result.changed, true);
+  const nextFirst = result.document.nodes.find((node) => node.id === first.id);
+  const nextMiddle = result.document.nodes.find((node) => node.id === middle.id);
+  const nextLast = result.document.nodes.find((node) => node.id === last.id);
+  const firstGap = nextMiddle.y - (nextFirst.y + nextFirst.h);
+  const secondGap = nextLast.y - (nextMiddle.y + nextMiddle.h);
+  assert.equal(firstGap, 175);
+  assert.equal(secondGap, 175);
+  assert.equal(nextMiddle.x, middle.x);
+  assert.deepEqual({ x: nextFirst.x, y: nextFirst.y }, { x: first.x, y: first.y });
+  assert.deepEqual({ x: nextLast.x, y: nextLast.y }, { x: last.x, y: last.y });
+  assert.deepEqual(
+    result.document.nodes.map((node) => ({ id: node.id, w: node.w, h: node.h })),
+    document.nodes.map((node) => ({ id: node.id, w: node.w, h: node.h })),
+  );
+});
+
+test('does not distribute fewer than three valid nodes or an already even selection', () => {
+  const first = model.createPrompt({ x: 100, y: 100 }, '第一');
+  const second = model.createMedia('image', '/second.png', '第二', { x: 400, y: 400 });
+  const third = model.createGenerator('image', { x: 700, y: 700 });
+  const document = arrangeDocument([first, second, third]);
+
+  const tooFew = model.distributeCanvasNodes(document, [first.id, 'missing'], 'horizontal');
+  assert.equal(tooFew.changed, false);
+  assert.deepEqual(tooFew.alignedIds, [first.id]);
+  assert.deepEqual(tooFew.document, document);
+
+  const distributed = model.distributeCanvasNodes(document, [first.id, second.id, third.id], 'horizontal');
+  const even = model.distributeCanvasNodes(distributed.document, [first.id, second.id, third.id], 'horizontal');
+  assert.equal(even.changed, false);
+  assert.deepEqual(even.document, distributed.document);
+});
+
 test('NOVA localStorage keys have a one-way migration target and no independent API config', () => {
   assert.match(storageSource, /nova\.v1\.projects/);
   assert.match(storageSource, /nova\.v1\.active/);

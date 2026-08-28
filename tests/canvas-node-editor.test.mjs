@@ -98,15 +98,33 @@ test("regular editor stays below its node in the stacked main-composer layout", 
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-actions\{min-height:55px/);
 });
 
-test("multi-select toolbar exposes six alignment actions only for ordinary nodes", () => {
+test("multi-select layout toolbar exposes alignment and distribution icons only for ordinary nodes", () => {
   assert.match(component, /const CANVAS_ALIGNMENT_OPTIONS/);
-  assert.match(component, /alignCanvasNodes\(docRef\.current, \[\.\.\.selectedIds\], alignment\)/);
-  assert.match(component, /!selectedGroupId && \(\s*<div className="canvas-selection-align-actions"/);
+  assert.match(component, /const CANVAS_DISTRIBUTION_OPTIONS/);
+  assert.match(component, /alignCanvasNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*alignment,?\s*\)/);
+  assert.match(component, /distributeCanvasNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*direction,?\s*\)/);
+  assert.match(component, /selectedNodes\.length >= 2 && !selectedGroupId/);
+  assert.match(component, /className="canvas-selection-layout-toolbar"/);
+  assert.match(component, /className="canvas-selection-layout-group alignment"/);
+  assert.match(component, /className="canvas-selection-layout-group distribution"/);
+  assert.match(component, /disabled=\{disabled\}/);
+  assert.match(component, /至少选择 3 个节点后可/);
   ["左对齐", "水平居中", "右对齐", "顶部对齐", "垂直居中", "底部对齐"].forEach((label) => {
     assert.match(component, new RegExp(`label: "${label}"`));
   });
+  ["水平均匀分布", "垂直均匀分布"].forEach((label) => {
+    assert.match(component, new RegExp(`label: "${label}"`));
+  });
+  assert.match(component, /function CanvasLayoutIcon/);
+  assert.match(component, /title=\{option\.title\}/);
+  assert.match(component, /aria-label=\{option\.title\}/);
+  assert.match(component, /canvas-selection-toolbar,\.canvas-selection-layout-toolbar/);
   assert.match(component, /commit\(\(\) => result\.document\)/);
-  assert.match(styles, /\.canvas-selection-align-actions\{display:flex/);
+  assert.doesNotMatch(component, /canvas-selection-align-actions/);
+  assert.match(styles, /\.canvas-selection-layout-toolbar\{position:absolute/);
+  assert.match(styles, /\.canvas-selection-layout-group\.alignment/);
+  assert.match(styles, /\.canvas-selection-layout-group\.distribution/);
+  assert.match(styles, /\.canvas-selection-layout-tooltip::after/);
 });
 
 test("canvas image parameters collapse into a compact one-line collection", () => {
