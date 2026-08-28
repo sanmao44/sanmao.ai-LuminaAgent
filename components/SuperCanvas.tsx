@@ -6584,10 +6584,11 @@ export default function SuperCanvas() {
       const centerY =
         (stageRect?.top || 0) + (stageRect?.height || stageSize.height) / 2;
       if (event.key === "Escape") {
-        const hadOverlay = Boolean(contextMenu || lightbox || textLightboxNodeId || activePanel || reusePreview);
+        const hadOverlay = Boolean(contextMenu || lightbox || textLightboxNodeId || activePanel || reusePreview || assetCollectionPickerNodeId);
         setContextMenu(null);
         setLightbox(null);
         setReusePreview(null);
+        setAssetCollectionPickerNodeId(null);
         setActivePanel(null);
         interactionRef.current = null;
         setConnection(null);
@@ -6656,6 +6657,7 @@ export default function SuperCanvas() {
     redo,
     runGeneration,
     activePanel,
+    assetCollectionPickerNodeId,
     lightbox,
     reusePreview,
     selectedEdgeId,
@@ -7841,7 +7843,7 @@ export default function SuperCanvas() {
           const target = event.target as HTMLElement;
           if (
             target.closest(
-              "button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+              "button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
             )
           )
             return;
@@ -7855,6 +7857,9 @@ export default function SuperCanvas() {
           } else if (node?.type === "prompt") {
             cancelPendingNodeClick();
             setEditingNodeId(node.id);
+          } else if (node) {
+            event.preventDefault();
+            return;
           } else {
             event.preventDefault();
             const point = stagePoint(event.clientX, event.clientY);
