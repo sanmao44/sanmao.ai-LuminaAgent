@@ -120,6 +120,22 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   });
 });
 
+test('canvas image generation only sends a mask when one is present', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/generated.png' }] });
+  }, () => api.generateCanvasImage({
+    prompt: '局部修改',
+    model: 'image-model',
+    maskUrl: 'data:image/png;base64,mask',
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.mask, 'data:image/png;base64,mask');
+  assert.equal('maskUrl' in payload, false);
+});
+
 test('canvas upload keeps small images and videos unchanged', async () => {
   const mocks = withImageCanvas({ width: 1200, height: 800 });
   try {

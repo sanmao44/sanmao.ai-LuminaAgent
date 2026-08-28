@@ -7,12 +7,14 @@ import type {
   CanvasGroup,
   CanvasInputRole,
   CanvasMediaKind,
+  CanvasMaskState,
   CanvasNode,
   CanvasNodeData,
   CanvasSnapshot,
   CanvasUpscaleParams,
 } from "./types";
 import { normalizeCreationSettings } from "../creation/settings";
+import { normalizeCanvasMaskState } from "./mask";
 
 export const CANVAS_VERSION = "sanmao-canvas-2";
 export const MAX_CANVAS_VARIANTS = 8;
@@ -184,6 +186,22 @@ function normalizeNode(value: unknown): CanvasNode | null {
           ? normalizeCreationSettings("image", data.generation.params)
           : normalizeCreationSettings("video", data.generation.params),
     };
+  }
+  if (type === "media" && data.kind === "image") {
+    const generationParams = data.generation?.params;
+    const paramsMask =
+      data.params && typeof data.params === "object"
+        ? (data.params as Record<string, unknown>).mask
+        : undefined;
+    const generationMask =
+      generationParams && typeof generationParams === "object"
+        ? (generationParams as Record<string, unknown>).mask
+        : undefined;
+    const mask = normalizeCanvasMaskState(
+      data.mask,
+      generationMask || paramsMask,
+    );
+    if (mask) data.mask = mask as CanvasMaskState;
   }
   return {
     id: String(raw.id),

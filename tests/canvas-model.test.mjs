@@ -12,7 +12,9 @@ async function loadTypeScript(path) {
   }).outputText;
   if (sourceUrl.pathname.endsWith('/lib/canvas/model.ts')) {
     const settingsUrl = new URL('../lib/creation/settings.ts', import.meta.url);
+    const maskUrl = new URL('../lib/canvas/mask.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
+    const maskSource = await readFile(maskUrl, 'utf8');
     const settingsCompiled = ts.transpileModule(settingsSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: settingsUrl.pathname,
@@ -20,11 +22,20 @@ async function loadTypeScript(path) {
       /^\s*import\s+\{\s*getLastModelCall\s*\}\s+from\s+["']\.\.\/model-preferences["'];?\s*$/m,
       'const getLastModelCall = () => null;',
     );
+    const maskCompiled = ts.transpileModule(maskSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: maskUrl.pathname,
+    }).outputText
+      .replace(/\bobjectValue\b/g, 'maskObjectValue')
+      .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber');
     const modelCompiled = compiled.replace(
       /^\s*import\s+\{\s*normalizeCreationSettings\s*\}\s+from\s+["']\.\.\/creation\/settings["'];?\s*$/m,
       '',
+    ).replace(
+      /^\s*import\s+\{\s*normalizeCanvasMaskState\s*\}\s+from\s+["']\.\/mask["'];?\s*$/m,
+      '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${maskCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
@@ -50,6 +61,44 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.deepEqual(result.groups[0].nodeIds, ['image-1', 'text-1']);
   assert.equal(result.edges.length, 1);
   assert.equal(result.camera.zoom, 3);
+});
+
+test('migrates legacy image params.mask into persistent pending mask metadata', () => {
+  const result = model.normalizeDocument({
+    nodes: [
+      {
+        id: 'legacy-mask-image',
+        type: 'media',
+        x: 0,
+        y: 0,
+        data: {
+          kind: 'image',
+          url: '/source.png',
+          params: { mask: { assetId: 'legacy-mask', url: '/legacy-mask.png' } },
+        },
+      },
+      {
+        id: 'legacy-generation-mask-image',
+        type: 'media',
+        x: 400,
+        y: 0,
+        data: {
+          kind: 'image',
+          url: '/source-2.png',
+          generation: {
+            kind: 'image',
+            prompt: '局部修改',
+            params: { mask: { assetId: 'legacy-mask-2', url: '/legacy-mask-2.png' } },
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(result.nodes.map((node) => node.data.mask), [
+    { assetId: 'legacy-mask', url: '/legacy-mask.png', status: 'pending' },
+    { assetId: 'legacy-mask-2', url: '/legacy-mask-2.png', status: 'pending' },
+  ]);
 });
 
 test('maps legacy base-image connections to ordered references without losing assets', () => {

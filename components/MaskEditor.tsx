@@ -6,7 +6,7 @@ import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 export type MaskEditorProps = {
   imageUrl: string;
   initialMaskDataUrl?: string;
-  onApply: (maskDataUrl: string) => void;
+  onApply: (maskDataUrl: string, coverage: number) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -21,6 +21,7 @@ export default function MaskEditor({ imageUrl, initialMaskDataUrl, onApply, onCa
   const [tool, setTool] = useState<'brush' | 'eraser'>('brush');
   const [brushSize, setBrushSize] = useState(48);
   const [ready, setReady] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -90,24 +91,38 @@ export default function MaskEditor({ imageUrl, initialMaskDataUrl, onApply, onCa
   function clearOverlay() { const c = overlayCanvasRef.current; c?.getContext('2d')?.clearRect(0, 0, c.width, c.height); }
   function setFullMask() { const c = maskCanvasRef.current; if (!c) return; const ctx = c.getContext('2d'); if (!ctx) return; ctx.clearRect(0, 0, c.width, c.height); clearOverlay(); const o = overlayCanvasRef.current?.getContext('2d'); if (o) { o.fillStyle = 'rgba(239,68,68,.38)'; o.fillRect(0, 0, o.canvas.width, o.canvas.height); } }
   function protectAll() { const c = maskCanvasRef.current; if (!c) return; const ctx = c.getContext('2d'); if (!ctx) return; ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); clearOverlay(); }
-  function applyMask() {
+  async function applyMask() {
+    if (!ready || saving) return;
     try {
-      const mask = maskCanvasRef.current?.toDataURL('image/png');
-      if (mask) onApply(mask);
-      else setError('蒙版导出失败，请重试');
+      const canvas = maskCanvasRef.current;
+      const context = canvas?.getContext('2d');
+      if (!canvas || !context) {
+        setError('蒙版导出失败，请重试');
+        return;
+      }
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let editablePixels = 0;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] < 128) editablePixels += 1;
+      }
+      const mask = canvas.toDataURL('image/png');
+      setSaving(true);
+      await onApply(mask, pixels.length ? editablePixels / (pixels.length / 4) : 0);
     } catch {
       setError('蒙版导出失败，图片可能受跨域保护');
+    } finally {
+      setSaving(false);
     }
   }
 
-  return <div className="mask-editor-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+  return <div className="mask-editor-backdrop" onMouseDown={(e) => { if (!saving && e.target === e.currentTarget) onCancel(); }}>
     <div className="mask-editor surface">
       {error && <div className="mask-editor-error" role="alert">{error}</div>}
-      <div className="mask-editor-head"><div><span>局部修改</span><h2>绘制蒙版</h2><small>红色区域会交给模型重新绘制，未标红区域尽量保持不变</small></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div>
+      <div className="mask-editor-head"><div><span>局部修改</span><h2>绘制蒙版</h2><small>红色区域会交给模型重新绘制，未标红区域尽量保持不变</small></div><button type="button" className="icon-button" disabled={saving} onClick={onCancel}>×</button></div>
       <div className="mask-canvas-wrap">{!ready && <div className="mask-loading">正在读取图片…</div>}<canvas ref={imageCanvasRef} className="mask-canvas base"/><canvas ref={overlayCanvasRef} className="mask-canvas overlay" onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); drawingRef.current = true; paint(e); }} onPointerMove={(e) => { if (drawingRef.current) paint(e); }} onPointerUp={() => { drawingRef.current = false; }} onPointerCancel={() => { drawingRef.current = false; }}/><canvas ref={maskCanvasRef} className="mask-canvas mask-data" aria-hidden /></div>
-      <div className="mask-toolbar"><div className="mask-tools"><button type="button" className={tool === 'brush' ? 'active' : ''} onClick={() => setTool('brush')}>画笔</button><button type="button" className={tool === 'eraser' ? 'active' : ''} onClick={() => setTool('eraser')}>橡皮擦</button></div><label>笔刷大小 <input type="range" min="8" max="180" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))}/><b>{brushSize}px</b></label></div>
-      <div className="mask-presets"><button type="button" onClick={protectAll}>清除涂抹</button><button type="button" onClick={setFullMask}>全图修改</button><span>提示：画笔标红，橡皮擦恢复保护区域</span></div>
-      <div className="mask-editor-actions"><button type="button" className="secondary-action" onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready} onClick={applyMask}>应用蒙版</button></div>
+      <div className="mask-toolbar"><div className="mask-tools"><button type="button" disabled={!ready || saving} className={tool === 'brush' ? 'active' : ''} onClick={() => setTool('brush')}>画笔</button><button type="button" disabled={!ready || saving} className={tool === 'eraser' ? 'active' : ''} onClick={() => setTool('eraser')}>橡皮擦</button></div><label>笔刷大小 <input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving} onChange={(e) => setBrushSize(Number(e.target.value))}/><b>{brushSize}px</b></label></div>
+      <div className="mask-presets"><button type="button" disabled={!ready || saving} onClick={protectAll}>清除涂抹</button><button type="button" disabled={!ready || saving} onClick={setFullMask}>全图修改</button><span className="mask-legend"><i />红色 = 重新绘制 <i className="protected" />原图保护</span></div>
+      <div className="mask-editor-actions"><button type="button" className="secondary-action" disabled={saving} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving} onClick={() => void applyMask()}>{saving ? '正在保存…' : '应用蒙版'}</button></div>
     </div>
   </div>;
 }

@@ -135,6 +135,7 @@ import type {
   CanvasGroup,
   CanvasInputRole,
   CanvasMediaKind,
+  CanvasMaskState,
   CanvasNode,
   CanvasProject,
   CanvasRuntimeState,
@@ -142,6 +143,12 @@ import type {
   CanvasVariantState,
   CanvasUpscaleParams,
 } from "@/lib/canvas/types";
+import {
+  canvasMaskStateFromParams,
+  canvasMaskStatusLabel,
+  normalizeCanvasMaskState,
+  updateCanvasMaskState,
+} from "@/lib/canvas/mask";
 import { canvasUpscaleSize, loadImageDimensions, seedVrTargetSize } from "@/lib/canvas/upscale";
 import {
   CANVAS_MAX_REFERENCES,
@@ -4701,6 +4708,7 @@ export default function SuperCanvas() {
     ) => createMedia("image", url, name, position, {
       role: "图片续生成结果",
       model: params.model,
+      ...(params.mask ? { maskApplied: true, maskSourceNodeId: source.id } : {}),
       params: clone(params),
       status,
       ...(status === "running" ? { processingStartedAt: createdAt } : {}),
@@ -4745,6 +4753,15 @@ export default function SuperCanvas() {
     commit(() => initialDocument);
     setSelectedIds(new Set([pendingPositioned.id]));
     setSelectedGroupId(null);
+    if (params.mask) {
+      updateDoc((value) =>
+        updateCanvasMaskState(value, source.id, {
+          status: "running",
+          taskId,
+          error: undefined,
+        }),
+      );
+    }
 
     try {
       const result = await generateCanvasImage({
@@ -4804,9 +4821,17 @@ export default function SuperCanvas() {
           .filter((edge) => edge.source !== source.id)
           .map((edge) => ({ ...edge, id: uid("edge"), target: output.id })),
       ]);
-      updateDoc((value) => ({
-        ...value,
-        nodes: value.nodes
+      updateDoc((value) => {
+        const withMask = params.mask
+          ? updateCanvasMaskState(value, source.id, {
+              status: "used",
+              taskId,
+              error: undefined,
+            })
+          : value;
+        return {
+        ...withMask,
+        nodes: withMask.nodes
           .map((node) => node.id === pendingPositioned.id
             ? {
                 ...node,
@@ -4825,7 +4850,8 @@ export default function SuperCanvas() {
           )
           .concat(outputs),
         edges: [...value.edges, ...extraEdges],
-      }));
+        };
+      });
       setSelectedIds(new Set([pendingPositioned.id, ...outputs.map((output) => output.id)]));
       writeSharedCreationSettings(params);
       setReuseDraft(null);
@@ -4849,6 +4875,15 @@ export default function SuperCanvas() {
       addLog(`图片续生成完成：${result.images.length} 张`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "图片续生成失败";
+      if (params.mask) {
+        updateDoc((value) =>
+          updateCanvasMaskState(value, source.id, {
+            status: "failed",
+            taskId,
+            error: message,
+          }),
+        );
+      }
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) => node.id === pendingPositioned.id
@@ -5332,6 +5367,11 @@ export default function SuperCanvas() {
         const imageParams = effectiveParams as ImageCreationSettings;
         const taskId = uid("image-task");
         const base = sourceTarget || sourceNode;
+        const maskOwner = sourceTarget?.type === "media" && sourceTarget.data.kind === "image"
+          ? sourceTarget
+          : sourceNode?.type === "media" && sourceNode.data.kind === "image"
+            ? sourceNode
+            : undefined;
         const position = base
           ? {
               x:
@@ -5371,6 +5411,15 @@ export default function SuperCanvas() {
             nodes: [...value.nodes, pending],
           }));
         }
+        if (imageParams.mask && maskOwner) {
+          updateDoc((value) =>
+            updateCanvasMaskState(value, maskOwner.id, {
+              status: "running",
+              taskId,
+              error: undefined,
+            }),
+          );
+        }
         const result = await generateCanvasImage({
           taskId,
           prompt,
@@ -5408,6 +5457,9 @@ export default function SuperCanvas() {
             {
               role: "生成结果",
               model: result.model?.name || imageParams.model,
+              ...(imageParams.mask
+                ? { maskApplied: true, maskSourceNodeId: maskOwner?.id }
+                : {}),
               generation: {
                 kind: "image",
                 prompt,
@@ -5506,6 +5558,12 @@ export default function SuperCanvas() {
                   : node,
               ),
             };
+          if (imageParams.mask && maskOwner)
+            next = updateCanvasMaskState(next, maskOwner.id, {
+              status: "used",
+              taskId,
+              error: undefined,
+            });
           return next;
         });
         setSelectedIds(new Set(selectedOutputIds));
@@ -5644,6 +5702,23 @@ export default function SuperCanvas() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "生成失败";
+      const failedMaskOwner = sourceTarget?.type === "media" && sourceTarget.data.kind === "image"
+        ? sourceTarget
+        : sourceNode?.type === "media" && sourceNode.data.kind === "image"
+          ? sourceNode
+          : undefined;
+      if (
+        kind === "image" &&
+        failedMaskOwner &&
+        (effectiveParams as ImageCreationSettings).mask
+      ) {
+        updateDoc((value) =>
+          updateCanvasMaskState(value, failedMaskOwner.id, {
+            status: "failed",
+            error: message,
+          }),
+        );
+      }
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) =>
@@ -6057,7 +6132,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string) => {
+    async (maskDataUrl: string, coverage = 0) => {
       const node = maskNodeId
         ? nodeById(docRef.current, maskNodeId)
         : undefined;
@@ -6066,9 +6141,6 @@ export default function SuperCanvas() {
         return;
       }
       try {
-        const uploaded = await uploadCanvasAsset(
-          dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
-        );
         const existingDraft =
           reuseDraft?.sourceNodeId === node.id
             ? cloneReuseDraft(reuseDraft)
@@ -6088,6 +6160,9 @@ export default function SuperCanvas() {
               );
         if (!existingDraft)
           throw new Error("当前节点没有完整生成参数，无法使用蒙版。");
+        const uploaded = await uploadCanvasAsset(
+          dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
+        );
         const settings = copyParams(
           existingDraft.params,
           "image",
@@ -6097,6 +6172,38 @@ export default function SuperCanvas() {
           ...settings,
           mask: { assetId: uploaded.id, url: uploaded.url },
         } satisfies ImageCreationSettings;
+        const maskCoverage = Math.max(0, Math.min(1, coverage));
+        const mask: CanvasMaskState = {
+          assetId: uploaded.id,
+          url: uploaded.url,
+          status: "pending",
+          coverage: maskCoverage,
+          createdAt: node.data.mask?.createdAt || Date.now(),
+          updatedAt: Date.now(),
+        };
+        updateDoc((value) => ({
+          ...value,
+          nodes: value.nodes.map((item) =>
+            item.id === node.id
+              ? {
+                  ...item,
+                  data: {
+                    ...item.data,
+                    mask,
+                    params: clone(params),
+                    ...(item.data.generation
+                      ? {
+                          generation: {
+                            ...item.data.generation,
+                            params: clone(params),
+                          },
+                        }
+                      : {}),
+                  },
+                }
+              : item,
+          ),
+        }));
         if (reuseDraft?.sourceNodeId === node.id) {
           setReuseDraft({ ...existingDraft, params, dirty: true });
           setExpandedEditorId(node.id);
@@ -6108,7 +6215,7 @@ export default function SuperCanvas() {
         }
         setMaskNodeId(null);
         notify(
-          "蒙版已加入图片编辑器，点击生成即可创建右侧新图；原图保持不变",
+          `蒙版已保存（覆盖 ${Math.round(maskCoverage * 100)}%），点击生成即可创建右侧新图；原图保持不变`,
           "ok",
         );
       } catch (error) {
@@ -6118,7 +6225,60 @@ export default function SuperCanvas() {
         );
       }
     },
-    [maskNodeId, notify, openImageEditor, reuseDraft, runtime],
+    [maskNodeId, notify, openImageEditor, reuseDraft, runtime, updateDoc],
+  );
+
+  const removeCanvasMask = useCallback(
+    (node: CanvasNode) => {
+      if (node.type !== "media" || node.data.kind !== "image") return;
+      const cleanedParams = maskParamsWithoutMask(
+        editorDrafts[node.id]?.params ||
+          node.data.generation?.params ||
+          node.data.params,
+        runtime,
+      );
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((item) =>
+          item.id === node.id
+            ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  mask: undefined,
+                  params: clone(cleanedParams),
+                  ...(item.data.generation
+                    ? {
+                        generation: {
+                          ...item.data.generation,
+                          params: clone(cleanedParams),
+                        },
+                      }
+                    : {}),
+                },
+              }
+            : item,
+        ),
+      }));
+      setEditorDrafts((current) => ({
+        ...current,
+        [node.id]: {
+          ...current[node.id],
+          prompt:
+            current[node.id]?.prompt ||
+            String(node.data.generation?.prompt || node.data.prompt || ""),
+          params: clone(cleanedParams),
+        },
+      }));
+      if (reuseDraft?.sourceNodeId === node.id)
+        setReuseDraft((current) =>
+          current?.sourceNodeId === node.id
+            ? { ...current, params: clone(cleanedParams), dirty: true }
+            : current,
+        );
+      notify("蒙版已移除，下一次生成不会再携带蒙版");
+    },
+    [editorDrafts, notify, reuseDraft, runtime, updateDoc],
   );
 
   const createUpscaleFromSource = useCallback((sourceOverride?: CanvasNode) => {
@@ -7012,7 +7172,10 @@ export default function SuperCanvas() {
         {
           id: "mask",
           icon: "◌",
-          label: "蒙版",
+          label: node.data.mask ? "查看蒙版" : "绘制蒙版",
+          title: node.data.mask
+            ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
+            : "为当前图片绘制蒙版",
           disabled: !hasMedia,
           onClick: () => setMaskNodeId(node.id),
         },
@@ -7210,7 +7373,10 @@ export default function SuperCanvas() {
         {
           id: "mask",
           icon: "◌",
-          label: "蒙版",
+          label: node.data.mask ? "查看蒙版" : "绘制蒙版",
+          title: node.data.mask
+            ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
+            : "为当前图片绘制蒙版",
           disabled: !hasMedia,
           onClick: close(() => setMaskNodeId(node.id)),
         },
@@ -7870,10 +8036,11 @@ export default function SuperCanvas() {
                    onConnect={startConnection}
                    onSelect={(event) => selectNode(node, event.shiftKey)}
                    onRemoveFromGroup={() => removeNodeFromGroup(node.id)}
-                   onPreview={() =>
+                  onPreview={() =>
                     setLightbox({ nodeId: node.id, compare: false })
                   }
                   onOutputPreview={(output) => setLightbox({ nodeId: output.id, compare: false })}
+                  onMaskEdit={() => setMaskNodeId(node.id)}
                   onTextPreview={() => setTextLightboxNodeId(node.id)}
                   onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
                   onRetryVariant={(variantIndex) =>
@@ -7975,6 +8142,9 @@ export default function SuperCanvas() {
               onReferenceRemove={removeNodeReference}
               onReferenceDrop={addNodeReference}
               onAddReferenceFiles={addEditorReferenceFiles}
+              maskState={maskStateForNode(editorNode)}
+              onMaskEdit={() => setMaskNodeId(editorNode.id)}
+              onMaskRemove={() => removeCanvasMask(editorNode)}
               branchDraft={reuseDraft?.sourceNodeId === editorNode.id ? reuseDraft : null}
               onDraftReferenceFiles={addReuseFiles}
               onDraftReferenceRemove={removeReuseReference}
@@ -8274,7 +8444,7 @@ export default function SuperCanvas() {
                       type="button"
                       className="canvas-context-add"
                       aria-label="导入参考素材"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => openFilePicker()}
                     >
                       ＋
                     </button>
@@ -8736,8 +8906,8 @@ export default function SuperCanvas() {
       {maskNode?.data.url && (
         <MaskEditor
           imageUrl={String(maskNode.data.url)}
-          initialMaskDataUrl={maskSettings?.mask?.url}
-          onApply={(value) => void applyCanvasMask(value)}
+          initialMaskDataUrl={maskNode.data.mask?.url || maskSettings?.mask?.url}
+          onApply={(value, coverage) => applyCanvasMask(value, coverage)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}
@@ -9699,6 +9869,9 @@ type CanvasNodeEditorPopoverProps = {
   runtime: CanvasRuntimeState | null;
   editorPrompt: string;
   editorParams?: CanvasGenerationParams;
+  maskState?: CanvasMaskState;
+  onMaskEdit?: () => void;
+  onMaskRemove?: () => void;
   onToggleEditor: (node: CanvasNode) => void;
   onGenerate: (node: CanvasNode) => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
@@ -9848,6 +10021,20 @@ function CanvasNodeQuickToolbar({
       </div>
     </div>
   );
+}
+
+function maskParamsWithoutMask(value: unknown, runtime: CanvasRuntimeState | null) {
+  const params = copyParams(value, "image", runtime) as ImageCreationSettings;
+  const { mask: _mask, ...withoutMask } = params;
+  return withoutMask as ImageCreationSettings;
+}
+
+function maskStateForNode(node: CanvasNode) {
+  if (node.type !== "media" || node.data.kind !== "image") return undefined;
+  const legacyMask =
+    canvasMaskStateFromParams(node.data.generation?.params) ||
+    canvasMaskStateFromParams(node.data.params);
+  return normalizeCanvasMaskState(node.data.mask, legacyMask);
 }
 
 function CanvasContextMenuFrame({
@@ -10003,6 +10190,9 @@ function CanvasNodeEditorPopover({
   runtime,
   editorPrompt,
   editorParams,
+  maskState,
+  onMaskEdit,
+  onMaskRemove,
   onToggleEditor,
   onGenerate,
   onEditorPromptChange,
@@ -10290,6 +10480,13 @@ function CanvasNodeEditorPopover({
                 </div>
               )}
             </div>
+            {node.type === "media" && node.data.kind === "image" && node.data.url && onMaskEdit && (
+              <CanvasMaskSummary
+                mask={maskState}
+                onEdit={onMaskEdit}
+                onRemove={onMaskRemove}
+              />
+            )}
             {branchDraft ? (
               <CanvasReferenceDraftStrip
                 references={branchReferences}
@@ -10352,6 +10549,46 @@ function CanvasNodeEditorPopover({
   );
 }
 
+function CanvasMaskSummary({
+  mask,
+  onEdit,
+  onRemove,
+}: {
+  mask?: CanvasMaskState;
+  onEdit: () => void;
+  onRemove?: () => void;
+}) {
+  if (!mask) {
+    return (
+      <div className="canvas-mask-summary empty" data-canvas-wheel-isolate>
+        <div>
+          <b>局部蒙版</b>
+          <small>尚未设置，绘制后只重新生成指定区域</small>
+        </div>
+        <button type="button" onClick={onEdit}>绘制蒙版</button>
+      </div>
+    );
+  }
+  const coverage = typeof mask.coverage === "number"
+    ? `覆盖 ${Math.round(mask.coverage * 100)}%`
+    : "覆盖范围待计算";
+  return (
+    <div className={`canvas-mask-summary ${mask.status}`} data-canvas-wheel-isolate>
+      <button type="button" className="canvas-mask-summary-preview" onClick={onEdit} title="查看红色蒙版区域并重新绘制">
+        <span className="canvas-mask-thumb"><img src={mask.url} alt="蒙版缩略图" /></span>
+        <span>
+          <b>蒙版 · {canvasMaskStatusLabel(mask.status)}</b>
+          <small>{coverage}{mask.error ? ` · ${mask.error}` : ""}</small>
+        </span>
+      </button>
+      <div className="canvas-mask-summary-actions">
+        <button type="button" onClick={onEdit}>{mask.status === "used" ? "再次使用" : "查看 / 重绘"}</button>
+        {onRemove && <button type="button" className="danger" onClick={onRemove}>移除</button>}
+      </div>
+    </div>
+  );
+}
+
 function CanvasNodeCard({
   node,
   selected,
@@ -10364,6 +10601,7 @@ function CanvasNodeCard({
   onRemoveFromGroup,
   onPreview,
   onTextPreview,
+  onMaskEdit,
   onUseAsImagePrompt,
   onRetryVariant,
   onRetryFailedVariants,
@@ -10403,6 +10641,7 @@ function CanvasNodeCard({
   onRemoveFromGroup: () => void;
   onPreview: () => void;
   onTextPreview: () => void;
+  onMaskEdit: () => void;
   onUseAsImagePrompt: () => void;
   onRetryVariant: (variantIndex: number) => void;
   onRetryFailedVariants: () => void;
@@ -10444,6 +10683,7 @@ function CanvasNodeCard({
       : null;
   const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
   const failed = data.status === "failed" && !data.url;
+  const maskState = maskStateForNode(node);
   const agentResponse =
     node.type === "prompt" &&
     (data.agentResponse || String(data.role || "").includes("回复"))
@@ -10661,6 +10901,25 @@ function CanvasNodeCard({
               >
                 ↗
               </span>
+            )}
+            {data.url && data.maskApplied && (
+              <span className="canvas-node-mask-badge used" title="本次生成请求使用了蒙版">
+                ◌ 本次使用蒙版
+              </span>
+            )}
+            {data.url && maskState && !data.maskApplied && (
+              <button
+                type="button"
+                className={`canvas-node-mask-badge ${maskState.status}`}
+                title={`蒙版 · ${canvasMaskStatusLabel(maskState.status)} · 点击查看或重绘`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onMaskEdit();
+                }}
+              >
+                ◌ 蒙版 · {canvasMaskStatusLabel(maskState.status)}
+              </button>
             )}
           </div>
           <div className="canvas-node-footer">

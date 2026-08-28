@@ -138,6 +138,22 @@ test("image node editing persists parameters without turning uploads into genera
   assert.doesNotMatch(updatePrompt, /generation:\s*\{\s*kind:/);
 });
 
+test("mask removal clears both current and persisted generation parameters", () => {
+  assert.match(component, /const \{ mask: _mask, \.\.\.withoutMask \} = params/);
+  assert.match(component, /mask: undefined/);
+  assert.match(component, /generation:\s*\{[\s\S]*params: clone\(cleanedParams\)/);
+  assert.match(component, /maskUrl: imageParams\.mask\?\.url/);
+});
+
+test("mask editor reports saving state and passes coverage into the attached image state", () => {
+  assert.match(component, /onApply=\{\(value, coverage\) => applyCanvasMask\(value, coverage\)\}/);
+  assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
+  assert.match(component, /status: "pending"/);
+  assert.match(component, /coverage: maskCoverage/);
+  assert.match(styles, /\.canvas-node-mask-badge/);
+  assert.match(styles, /\.canvas-mask-summary/);
+});
+
 test("regular editor stays below its node in the stacked main-composer layout", () => {
   assert.match(component, /fitCanvasNodeEditorBelow\(/);
   assert.match(component, /data-placement="bottom"/);
