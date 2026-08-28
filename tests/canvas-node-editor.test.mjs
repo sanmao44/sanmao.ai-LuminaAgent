@@ -23,6 +23,39 @@ test("node editor exposes an accessible expand/collapse control", () => {
   assert.match(component, /data-prompt-expanded=\{promptExpanded \? "true" : "false"\}/);
 });
 
+test("upscale runs in place and keeps a visible processing state on the node", () => {
+  const start = component.indexOf("const runUpscaleNode = useCallback");
+  const end = component.indexOf("runUpscaleNodeRef.current = runUpscaleNode", start);
+  assert.ok(start >= 0 && end > start, "upscale implementation should be present");
+  const upscaleRun = component.slice(start, end);
+  assert.doesNotMatch(upscaleRun, /createMedia\(/);
+  assert.doesNotMatch(upscaleRun, /addEdge\(/);
+  assert.match(upscaleRun, /resultSource: "upscale-node"/);
+  assert.match(upscaleRun, /url: resultUrl/);
+  assert.match(upscaleRun, /statusLabel: "超分节点生成的结果"/);
+  assert.match(component, /setExpandedEditorId\(\(current\) => current === node\.id \? null : current\)/);
+  assert.match(component, /className="canvas-upscale-card-loading"/);
+  assert.match(component, /className="canvas-upscale-result-badge"/);
+  assert.match(styles, /\.canvas-upscale-card-result/);
+  assert.match(styles, /\.canvas-upscale-card-loading \.canvas-processing-indicator/);
+});
+
+test("image cards show intrinsic resolution only after a valid image has loaded", () => {
+  assert.match(component, /const imageResolution =/);
+  assert.match(component, /node\.type === "media"/);
+  assert.match(component, /data\.kind === "image"/);
+  assert.match(component, /Boolean\(data\.url\)/);
+  assert.match(component, /!pending/);
+  assert.match(component, /data\.status !== "failed"/);
+  assert.match(component, /Number\(data\.nativeWidth\) > 0/);
+  assert.match(component, /Number\(data\.nativeHeight\) > 0/);
+  assert.match(component, /className="canvas-image-resolution"/);
+  assert.match(component, /title=\{`图片分辨率 \$\{imageResolution\}`\}/);
+  assert.match(styles, /\.canvas-image-resolution\{[^}]*right:10px[^}]*bottom:10px/);
+  assert.match(styles, /font-variant-numeric:tabular-nums/);
+  assert.match(styles, /@media\(max-width:720px\)\{\.canvas-image-resolution/);
+});
+
 test("prompt editor measures content and caps scrolling in both display modes", () => {
   assert.match(component, /const promptRef = useRef<HTMLTextAreaElement \| null>\(null\)/);
   assert.match(component, /textarea\.style\.height = "auto"/);

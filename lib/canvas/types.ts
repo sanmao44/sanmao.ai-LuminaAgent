@@ -108,6 +108,8 @@ export type CanvasNodeData = {
   autoFit?: boolean;
   nativeWidth?: number;
   nativeHeight?: number;
+  /** Identifies the node operation that produced the current media URL. */
+  resultSource?: "upscale-node";
   referenceOrder?: string[];
   generation?: CanvasGenerationMeta;
   /** One line per requested batch variation on a generator node. */

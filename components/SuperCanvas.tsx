@@ -6076,16 +6076,50 @@ export default function SuperCanvas() {
     const activeKey = `upscale-node:${node.id}`;
     if (generationKeysRef.current.has(activeKey)) return;
     generationKeysRef.current.add(activeKey); setGenerationKeys(new Set(generationKeysRef.current));
-    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", processingStartedAt: Date.now() } } : item) }));
+    // Processing belongs to this node. Hide the editor after submission so
+    // the canvas stays usable; selecting the node again can reopen it while
+    // the card continues to show progress.
+    setExpandedEditorId((current) => current === node.id ? null : current);
+    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", progress: undefined, processingStartedAt: Date.now() } } : item) }));
     try {
       const result = await generateCanvasUpscale({ prompt: params.prompt || "Upscale this image", model: selectedModel, referenceUrl: String(source.data.url), scale: params.scale || 2, size, seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", resizeMethod: params.algorithm || "lanczos" });
       if (!result.images?.length) throw new Error("服务端没有返回超分结果");
-      const output = createMedia("image", result.images[0].url, `${source.data.name || "图片"} · 超分`, { x: node.x + nodeSize(node).w + 90, y: node.y }, { role: "超分结果", model: result.model?.name || params.model, generation: { kind: "image", prompt: params.prompt || "Upscale this image", params: { ...params } as any, operation: "upscale", referenceIds: [source.id], parentNodeId: node.id, createdAt: Date.now() }, referenceOrder: [source.id], nativeWidth: targetDimensions.width, nativeHeight: targetDimensions.height });
-      commit((value) => addEdge({ ...value, nodes: [...value.nodes, output] }, node.id, output.id, "right", "left", "lineage"));
-      updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "completed", statusLabel: "超分完成", processingStartedAt: undefined } } : item) }));
-      setSelectedIds(new Set([output.id])); setSelectedGroupId(null);
+      const resultCreatedAt = Date.now();
+      const resultUrl = String(result.images[0].url || "");
+      if (!resultUrl) throw new Error("服务端没有返回超分图片");
+      // Keep the upscale node as the output node. The incoming source edge is
+      // retained, while the node itself now carries the generated image and
+      // an explicit marker for UI/history consumers.
+      commit((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? {
+        ...item,
+        data: {
+          ...item.data,
+          kind: "image",
+          url: resultUrl,
+          name: `${source.data.name || "图片"} · 超分结果`,
+          role: "超分结果",
+          resultSource: "upscale-node",
+          model: result.model?.name || params.model || "自动超分模型",
+          nativeWidth: targetDimensions.width,
+          nativeHeight: targetDimensions.height,
+          status: "completed",
+          statusLabel: "超分节点生成的结果",
+          progress: 100,
+          processingStartedAt: undefined,
+          generation: {
+            kind: "image",
+            prompt: params.prompt || "Upscale this image",
+            params: { ...params } as any,
+            operation: "upscale",
+            referenceIds: [source.id],
+            parentNodeId: item.id,
+            createdAt: resultCreatedAt,
+          },
+        },
+      } : item) }));
+      setSelectedIds(new Set([node.id])); setSelectedGroupId(null);
       recordModelCall({ context: "upscale", mode: selectedModel === "auto" ? "auto" : "manual", modelId: result.model?.id || selectedModel, params: { scale: params.scale || 2, target: params.target || "auto", seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", algorithm: params.algorithm || "lanczos" } });
-      notify("超分完成，已创建结果分支"); addLog(`图片超分完成：${source.data.name || source.id}`);
+      notify("超分完成，结果已写入当前节点"); addLog(`图片超分完成：${source.data.name || source.id}`);
       void recordCanvasImages(result.images, { prompt: params.prompt || "Upscale this image", source: "canvas", modelId: result.model?.id || params.model, modelName: result.model?.name, providerName: result.model?.provider, outputSize: size, parentId: node.id })
         .then(() => setAssetRefresh((value) => value + 1))
         .catch(() => addLog("图片超分完成，但写入主界面历史失败"));
@@ -9637,7 +9671,13 @@ function CanvasNodeEditorPopover({
           >
             <span aria-hidden="true">{promptExpanded ? "⤡" : "⤢"}</span>
           </button>
-          <button type="button" onClick={() => onToggleEditor(node)} aria-label="关闭节点参数">×</button>
+          <button
+            type="button"
+            className={node.type === "upscale" && pending ? "canvas-node-editor-collapse" : undefined}
+            title={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
+            onClick={() => onToggleEditor(node)}
+            aria-label={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
+          >×</button>
         </div>
       </div>
       <div className="canvas-node-editor-body">
@@ -9843,6 +9883,17 @@ function CanvasNodeCard({
   const colorKey = canvasNodeColorKey(node);
   const status = data.status || "idle";
   const pending = data.status === "queued" || data.status === "running";
+  const imageResolution =
+    node.type === "media" &&
+    data.kind === "image" &&
+    Boolean(data.url) &&
+    !pending &&
+    data.status !== "failed" &&
+    Number(data.nativeWidth) > 0 &&
+    Number(data.nativeHeight) > 0
+      ? `${Math.round(Number(data.nativeWidth))} × ${Math.round(Number(data.nativeHeight))}`
+      : null;
+  const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
   const failed = data.status === "failed" && !data.url;
   const agentResponse =
     node.type === "prompt" &&
@@ -10032,6 +10083,15 @@ function CanvasNodeCard({
             {data.kind === "video" && data.url && (
               <span className="canvas-video-mark">▶</span>
             )}
+            {imageResolution && (
+              <span
+                className="canvas-image-resolution"
+                title={`图片分辨率 ${imageResolution}`}
+                aria-label={`图片分辨率 ${imageResolution}`}
+              >
+                {imageResolution}
+              </span>
+            )}
             {data.url && (
               <span
                 className="canvas-node-asset-drag-handle"
@@ -10067,10 +10127,27 @@ function CanvasNodeCard({
         </div>
       )}
       {node.type === "upscale" && (
-        <div className="canvas-upscale-card">
-          <div className="canvas-upscale-card-head"><span>↗</span><div><b>图片超分</b><small>独立超分节点</small></div></div>
-          <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>
-          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
+        <div className={`canvas-upscale-card${hasUpscaleResult ? " has-result" : ""}`}>
+          <div className="canvas-upscale-card-head"><span>↗</span><div><b>图片超分</b><small>{hasUpscaleResult ? "超分节点生成的结果" : "独立超分节点"}</small></div></div>
+          {pending ? (
+            <div className="canvas-upscale-card-loading">
+              <CanvasProcessingIndicator
+                label={processingLabel}
+                progress={processingProgress}
+                startedAt={data.processingStartedAt || data.generation?.createdAt}
+                waiting={data.status === "queued"}
+                compact
+              />
+            </div>
+          ) : hasUpscaleResult ? (
+            <div className="canvas-upscale-card-result">
+              <img src={String(data.url)} alt={String(data.name || "超分结果")} draggable={false} />
+              <span className="canvas-upscale-result-badge"><i>↗</i>{data.status === "failed" ? "上次超分结果" : "超分节点生成的结果"}</span>
+            </div>
+          ) : (
+            <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>
+          )}
+          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : hasUpscaleResult ? "已写入当前节点 · 可再次提交超分" : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
         </div>
       )}
       {node.type === "prompt" && (
