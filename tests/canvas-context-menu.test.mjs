@@ -48,7 +48,8 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(component, /canvas-context-menu-body/);
   assert.doesNotMatch(component, /window\.innerHeight - 640/);
   assert.match(styles, /\.canvas-node-context-menu\{width:min\(320px,calc\(100vw - 16px\)\)/);
-  assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-y:auto/);
+  assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-x:hidden[^}]*overflow-y:auto/);
+  assert.match(styles, /\.canvas-context-menu-body\{[^}]*scrollbar-gutter:stable/);
   assert.match(styles, /max-height:min\(560px,calc\(100dvh - 16px\)\)/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-group-title small\{display:none\}/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);

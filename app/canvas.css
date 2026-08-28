@@ -715,7 +715,8 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 
 /* Context menu v2: grouped actions with a dedicated media import entry. */
 .canvas-context-menu{position:fixed;z-index:350;width:min(300px,calc(100vw - 16px));max-height:min(560px,calc(100vh - 16px));max-height:min(560px,calc(100dvh - 16px));display:flex;flex-direction:column;min-height:0;overflow:hidden;box-sizing:border-box;padding:12px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line-strong));border-radius:18px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 18px 46px rgba(0,0,0,.28),0 0 0 1px color-mix(in srgb,var(--accent) 7%,transparent);backdrop-filter:blur(20px);animation:canvas-context-menu-in .16s ease-out}
-.canvas-context-menu-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.canvas-context-menu-body{width:100%;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin}
+.canvas-context-menu-body>.canvas-menu-group,.canvas-context-menu-body>button{min-width:0;max-width:100%;box-sizing:border-box}
 .canvas-menu-title{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;padding:2px 4px 10px;color:var(--text);font-size:12px;font-weight:900;line-height:1.1}
 .canvas-menu-title small{max-width:155px;overflow:hidden;color:var(--muted);font-size:9px;font-weight:500;line-height:1.25;text-align:right;white-space:nowrap;text-overflow:ellipsis}
 .canvas-menu-group{display:grid;gap:4px}
