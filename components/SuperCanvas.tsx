@@ -225,6 +225,33 @@ type CanvasContextMenuState = {
 };
 type MentionState = { start: number; end: number; query: string } | null;
 
+const CANVAS_ASSET_UNCATEGORIZED_ID = "uncategorized";
+const CANVAS_ASSET_SMART_COLLECTION_IDS = new Set([
+  "all",
+  "recent",
+  "favorite",
+  "generated",
+  "reference",
+  "image",
+  "video",
+]);
+const CANVAS_ASSET_NON_READY_STATUSES = new Set(["queued", "running", "failed"]);
+
+function isAssignableCanvasAssetCollection(collectionId: string) {
+  return (
+    collectionId === CANVAS_ASSET_UNCATEGORIZED_ID ||
+    !CANVAS_ASSET_SMART_COLLECTION_IDS.has(collectionId)
+  );
+}
+
+function canAddCanvasAsset(node: CanvasNode) {
+  return (
+    node.type === "media" &&
+    Boolean(node.data.url) &&
+    !CANVAS_ASSET_NON_READY_STATUSES.has(String(node.data.status || ""))
+  );
+}
+
 function ConnectionOptionIcon({
   value,
 }: {
@@ -1118,6 +1145,8 @@ export default function SuperCanvas() {
   const [panActive, setPanActive] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [assetRefresh, setAssetRefresh] = useState(0);
+  const [assetCollectionPickerNodeId, setAssetCollectionPickerNodeId] =
+    useState<string | null>(null);
   const [assetDropGroupId, setAssetDropGroupId] = useState<string | null>(
     null,
   );
@@ -6499,12 +6528,22 @@ export default function SuperCanvas() {
   );
 
   const addNodeToCollection = useCallback(async (nodeId: string, collectionId: string) => {
+    if (!isAssignableCanvasAssetCollection(collectionId)) {
+      notify("请先选择未分类或自定义资产集合。", "error");
+      return;
+    }
     const node = nodeById(docRef.current, nodeId);
     if (!node || node.type !== "media" || !node.data.url) return;
-    const asset = canvasAssets.find((item) => item.url === node.data.url && item.kind === node.data.kind);
+    const asset = (await listUnifiedAssets(canvasAssets)).find(
+      (item) => item.url === node.data.url && item.kind === node.data.kind,
+    );
     if (!asset) return notify("节点素材尚未登记到资产库。", "error");
     try {
-      await updateUnifiedAssetMetadata(asset, { collectionIds: [...new Set([...(asset.collectionIds || []), collectionId])] });
+      const currentCollectionIds = asset.collectionIds || [];
+      const collectionIds = collectionId === CANVAS_ASSET_UNCATEGORIZED_ID
+        ? currentCollectionIds
+        : [...new Set([...currentCollectionIds, collectionId])];
+      await updateUnifiedAssetMetadata(asset, { collectionIds });
       setAssetRefresh((value) => value + 1);
       notify("节点素材已加入资产集合");
     } catch (error) { notify(error instanceof Error ? error.message : "资产集合保存失败", "error"); }
@@ -6844,7 +6883,7 @@ export default function SuperCanvas() {
     [notify, openImageEditor, openReuseDraft, reuseDraft],
   );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
-    if (node.type !== "media" || !node.data.url) return null;
+    if (!canAddCanvasAsset(node)) return null;
     return {
       id: `canvas:${activeProjectId}:${node.id}`,
       kind: node.data.kind === "video" ? "video" : "image",
@@ -6863,11 +6902,37 @@ export default function SuperCanvas() {
       tags: [],
     };
   }, [activeProjectId]);
-  const addViewerAsset = useCallback(async (node: CanvasNode) => {
+  const addViewerAsset = useCallback(async (
+    node: CanvasNode,
+    collectionId: string,
+  ): Promise<boolean> => {
     const asset = viewerAsset(node);
-    if (!asset) return;
-    try { await registerCanvasAsset(asset); setAssetRefresh((value) => value + 1); notify("已加入资产库"); }
-    catch (error) { notify(error instanceof Error ? error.message : "资产登记失败", "error"); }
+    if (!asset || !isAssignableCanvasAssetCollection(collectionId)) return false;
+    try {
+      const existing = (await listUnifiedAssets()).find(
+        (item) => item.kind === asset.kind && item.url === asset.url,
+      );
+      const currentCollectionIds = existing?.collectionIds || [];
+      const collectionIds = collectionId === CANVAS_ASSET_UNCATEGORIZED_ID
+        ? currentCollectionIds
+        : [...new Set([...currentCollectionIds, collectionId])];
+      if (existing)
+        await updateUnifiedAssetMetadata(existing, { collectionIds });
+      else
+        await registerCanvasAsset({ ...asset, collectionIds });
+      setAssetRefresh((value) => value + 1);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "资产登记失败", "error");
+      return false;
+    }
+  }, [notify, viewerAsset]);
+  const openAssetCollectionPicker = useCallback((node: CanvasNode) => {
+    if (!viewerAsset(node)) {
+      notify("当前节点没有可加入资产库的媒体。", "error");
+      return;
+    }
+    setAssetCollectionPickerNodeId(node.id);
   }, [notify, viewerAsset]);
   const downloadCanvasNode = useCallback((node: CanvasNode) => {
     if (node.type !== "media" || !node.data.url) {
@@ -7166,6 +7231,7 @@ export default function SuperCanvas() {
     if (!node || selectedGroupId || selectedNodes.length !== 1) return [];
     if (node.type === "media" && node.data.kind === "image") {
       const hasMedia = Boolean(node.data.url);
+      const canAddAsset = canAddCanvasAsset(node);
       return [
         {
           id: "preview",
@@ -7216,8 +7282,8 @@ export default function SuperCanvas() {
           id: "asset",
           icon: "＋",
           label: "加入资产",
-          disabled: !hasMedia,
-          onClick: () => void addViewerAsset(node),
+          disabled: !canAddAsset,
+          onClick: () => openAssetCollectionPicker(node),
         },
         {
           id: "delete",
@@ -7230,6 +7296,7 @@ export default function SuperCanvas() {
     }
     if (node.type === "media" && node.data.kind === "video") {
       const hasMedia = Boolean(node.data.url);
+      const canAddAsset = canAddCanvasAsset(node);
       return [
         {
           id: "preview",
@@ -7263,8 +7330,8 @@ export default function SuperCanvas() {
           id: "asset",
           icon: "＋",
           label: "加入资产",
-          disabled: !hasMedia,
-          onClick: () => void addViewerAsset(node),
+          disabled: !canAddAsset,
+          onClick: () => openAssetCollectionPicker(node),
         },
         {
           id: "delete",
@@ -7301,7 +7368,7 @@ export default function SuperCanvas() {
     ];
   }, [
     addCurrentNodeToReuse,
-    addViewerAsset,
+    openAssetCollectionPicker,
     continueFromMedia,
     deleteSelection,
     downloadCanvasNode,
@@ -7323,6 +7390,7 @@ export default function SuperCanvas() {
     const node = contextNode;
     if (!node) return [];
     const hasMedia = node.type === "media" && Boolean(node.data.url);
+    const canAddAsset = canAddCanvasAsset(node);
     const close = (action: () => void) => () => {
       setContextMenu(null);
       action();
@@ -7418,8 +7486,8 @@ export default function SuperCanvas() {
           id: "asset",
           icon: "★",
           label: "加入资产",
-          disabled: !hasMedia,
-          onClick: close(() => void addViewerAsset(node)),
+          disabled: !canAddAsset,
+          onClick: close(() => openAssetCollectionPicker(node)),
         },
       ];
       return [
@@ -7463,8 +7531,8 @@ export default function SuperCanvas() {
           id: "asset",
           icon: "★",
           label: "加入资产",
-          disabled: !hasMedia,
-          onClick: close(() => void addViewerAsset(node)),
+          disabled: !canAddAsset,
+          onClick: close(() => openAssetCollectionPicker(node)),
         },
       ];
       return [
@@ -7525,7 +7593,7 @@ export default function SuperCanvas() {
     ];
   }, [
     addCurrentNodeToReuse,
-    addViewerAsset,
+    openAssetCollectionPicker,
     contextNode,
     contextMenu?.world,
     continueFromMedia,
@@ -8883,7 +8951,7 @@ export default function SuperCanvas() {
           onContinue={() => continueFromMedia(viewerNode)}
           onReuse={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
           onUseAsReference={() => addCurrentNodeToReuse(viewerNode)}
-          onAddToAssets={() => void addViewerAsset(viewerNode)}
+          onAddToAssets={canAddCanvasAsset(viewerNode) ? () => openAssetCollectionPicker(viewerNode) : undefined}
           onDelete={removeViewerNode}
         />;
       })()}
@@ -8916,6 +8984,19 @@ export default function SuperCanvas() {
           onCancel={() => setMaskNodeId(null)}
         />
       )}
+      {assetCollectionPickerNodeId && (() => {
+        const pickerNode = nodeById(document, assetCollectionPickerNodeId);
+        if (!pickerNode || pickerNode.type !== "media" || !pickerNode.data.url)
+          return null;
+        return (
+          <CanvasAssetCollectionPicker
+            node={pickerNode}
+            onClose={() => setAssetCollectionPickerNodeId(null)}
+            onConfirm={(collectionId) => addViewerAsset(pickerNode, collectionId)}
+            onNotify={notify}
+          />
+        );
+      })()}
       {activePanel === "assets" && (
         <CanvasAssetDrawer
           extraAssets={canvasAssets}
@@ -9008,6 +9089,204 @@ const ASSET_SOURCE_LABELS: Record<AssetSource, string> = {
   "canvas-output": "画布生成",
 };
 
+const CANVAS_ASSET_LAST_COLLECTION_KEY = "sanmao.canvas.asset.lastCollection";
+
+function CanvasAssetCollectionPicker({
+  node,
+  onClose,
+  onConfirm,
+  onNotify,
+}: {
+  node: CanvasNode;
+  onClose: () => void;
+  onConfirm: (collectionId: string) => Promise<boolean>;
+  onNotify: (message: string, kind?: Notice["kind"]) => void;
+}) {
+  const [collections, setCollections] = useState<AssetCollection[]>(
+    DEFAULT_ASSET_COLLECTIONS,
+  );
+  const [collectionId, setCollectionId] = useState(() => {
+    if (typeof window === "undefined") return CANVAS_ASSET_UNCATEGORIZED_ID;
+    try {
+      return (
+        window.localStorage.getItem(CANVAS_ASSET_LAST_COLLECTION_KEY) ||
+        CANVAS_ASSET_UNCATEGORIZED_ID
+      );
+    } catch {
+      return CANVAS_ASSET_UNCATEGORIZED_ID;
+    }
+  });
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void listAssetCollections()
+      .then((items) => {
+        if (!active) return;
+        setCollections(items);
+        const assignableIds = new Set([
+          CANVAS_ASSET_UNCATEGORIZED_ID,
+          ...items.filter((item) => item.builtin === false).map((item) => item.id),
+        ]);
+        setCollectionId((current) =>
+          assignableIds.has(current)
+            ? current
+            : CANVAS_ASSET_UNCATEGORIZED_ID,
+        );
+      })
+      .catch(() => {
+        if (active) onNotify("资产集合读取失败，请稍后重试。", "error");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [onNotify]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const assignableCollections = [
+    {
+      id: CANVAS_ASSET_UNCATEGORIZED_ID,
+      name: "未分类",
+    },
+    ...collections
+      .filter((item) => item.builtin === false)
+      .map((item) => ({ id: item.id, name: item.name })),
+  ];
+  const selectedCollection =
+    assignableCollections.find((item) => item.id === collectionId) ||
+    assignableCollections[0];
+
+  const createCollection = async () => {
+    const name = newCollectionName.trim();
+    if (!name) return;
+    if (collections.some((item) => item.name.trim() === name)) {
+      onNotify("已经存在同名资产集合。", "error");
+      return;
+    }
+    const now = Date.now();
+    const item: AssetCollection = {
+      id: `collection_${now.toString(36)}`,
+      name,
+      createdAt: now,
+      updatedAt: now,
+      builtin: false,
+    };
+    const next = [...collections, item];
+    try {
+      await saveAssetCollections(next);
+      setCollections(next);
+      setCollectionId(item.id);
+      setNewCollectionName("");
+      onNotify(`已创建资产集合“${name}”。`);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "资产集合创建失败。", "error");
+    }
+  };
+
+  const confirm = async () => {
+    if (saving || loading || !selectedCollection) return;
+    setSaving(true);
+    try {
+      const success = await onConfirm(selectedCollection.id);
+      if (!success) return;
+      try {
+        window.localStorage.setItem(
+          CANVAS_ASSET_LAST_COLLECTION_KEY,
+          selectedCollection.id,
+        );
+      } catch {
+        /* 记忆失败不应阻断资产登记 */
+      }
+      onNotify(`已加入资产库 · ${selectedCollection.name}`);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="canvas-modal-backdrop canvas-asset-collection-picker-backdrop"
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="canvas-asset-target-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="canvas-asset-collection-picker-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <span>＋</span>
+            <div>
+              <b id="canvas-asset-collection-picker-title">加入资产库</b>
+              <small>{String(node.data.name || "画布素材")}</small>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="关闭加入资产弹窗">×</button>
+        </header>
+        <div className="canvas-asset-collection-picker-body">
+          <label>
+            <span>选择资产集合</span>
+            <SelectMenu
+              value={collectionId}
+              onChange={setCollectionId}
+              ariaLabel="加入目标资产集合"
+              options={assignableCollections.map((item) => ({
+                value: item.id,
+                label: item.name,
+              }))}
+            />
+          </label>
+          <small className="canvas-asset-collection-picker-hint">
+            自定义集合会保留已有归类；未分类不会清除已有集合。
+          </small>
+          <div className="canvas-asset-collection-picker-new">
+            <input
+              value={newCollectionName}
+              onChange={(event) => setNewCollectionName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void createCollection();
+              }}
+              placeholder="新建集合…"
+              aria-label="新建资产集合"
+            />
+            <button
+              type="button"
+              onClick={() => void createCollection()}
+              disabled={!newCollectionName.trim()}
+            >
+              新建
+            </button>
+          </div>
+        </div>
+        <footer>
+          <button type="button" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" className="primary" onClick={() => void confirm()} disabled={saving || loading}>
+            {saving ? "加入中…" : `加入“${selectedCollection?.name || "未分类"}”`}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function CanvasAssetDrawer({
   extraAssets,
   refresh,
@@ -9099,8 +9378,8 @@ function CanvasAssetDrawer({
     );
     setNodeDropActive(false);
     if (!nodeId) return;
-    if (collection === "all") {
-      onNotify("请先选择一个具体资产集合，再放入节点。", "error");
+    if (!isAssignableCanvasAssetCollection(collection)) {
+      onNotify("请先选择未分类或自定义资产集合，再放入节点。", "error");
       return;
     }
     onAddNodeToCollection(nodeId, collection);
@@ -9374,8 +9653,8 @@ function CanvasAssetDrawer({
             要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。
           </div>
         )}
-        <div className={`canvas-asset-collection-dropzone ${collection === "all" ? "needs-collection" : ""}`}>
-          <span>⌘</span><b>{collection === "all" ? "先选择集合，再拖入节点" : "把画布节点拖到这里归类"}</b><small>{collection === "all" ? "下拉框中可删除自定义集合" : "拖动节点右上角 ↗，节点不会从画布移除"}</small>
+        <div className={`canvas-asset-collection-dropzone ${isAssignableCanvasAssetCollection(collection) ? "" : "needs-collection"}`}>
+          <span>⌘</span><b>{isAssignableCanvasAssetCollection(collection) ? "把画布节点拖到这里归类" : "先选择未分类或自定义集合"}</b><small>{isAssignableCanvasAssetCollection(collection) ? "拖动节点右上角 ↗，节点不会从画布移除" : "智能筛选视图不能作为归类目标"}</small>
         </div>
         <div className="canvas-asset-new-collection"><input value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="新建集合…" onKeyDown={(event) => { if (event.key === "Enter") void createCollection(); }} /><button type="button" onClick={() => void createCollection()}>＋</button></div>
         {selectedAssetIds.size > 0 && <div className="canvas-asset-bulk-bar"><b>已选 {selectedAssetIds.size} 个</b><button type="button" onClick={() => void addSelectedAssetsToCollection()}>加入当前集合</button><button type="button" onClick={() => setSelectedAssetIds(new Set())}>清除选择</button></div>}
@@ -9845,24 +10124,84 @@ function CanvasUpscaleSettingsPanel({
   }, [sourceUrl]);
   const target = sourceSize ? seedVrTargetSize(sourceSize.width, sourceSize.height, params.scale, params.target) : null;
   const models = (runtime?.models || []).filter((model) => model.enabled && model.published && (model.capabilities || []).includes("upscale"));
+  const modelOptions = [
+    {
+      value: "auto",
+      label: "自动选择 / Automatic",
+      description: "按能力自动选择 / Select by capability",
+    },
+    ...models.map((model) => ({
+      value: model.id,
+      label: model.displayName,
+      description: `${model.providerName || "服务商 / Provider"} · ${model.id}`,
+    })),
+  ];
+  const colorCorrectionOptions: Array<{
+    value: CanvasUpscaleParams["colorCorrection"];
+    label: string;
+    description: string;
+  }> = [
+    { value: "wavelet", label: "Wavelet / 小波校正", description: "保留细节 / Preserve detail" },
+    { value: "none", label: "关闭 / Off", description: "不进行色彩校正 / No correction" },
+  ];
+  const algorithmOptions: Array<{
+    value: CanvasUpscaleParams["algorithm"];
+    label: string;
+    description: string;
+  }> = [
+    { value: "lanczos", label: "Lanczos / Lanczos", description: "高质量平滑 / High-quality smoothing" },
+    { value: "bicubic", label: "Bicubic / 双三次", description: "平衡速度与质量 / Balanced quality and speed" },
+    { value: "nearest", label: "Nearest / 最近邻", description: "硬边像素放大 / Pixel-preserving scaling" },
+  ];
   return (
     <div className="canvas-upscale-settings" aria-label="超分设置">
       <div className="canvas-upscale-setting-row">
-        <label>超分模型<select value={params.model} onChange={(event) => onChange({ ...params, model: event.target.value })}>
-          <option value="auto">自动选择</option>{models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
-        </select></label>
-        <label>倍率<div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div></label>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>超分模型</strong><small>Upscale model</small></div>
+          <SelectMenu
+            value={params.model}
+            onChange={(value) => onChange({ ...params, model: value })}
+            ariaLabel="超分模型 / Upscale model"
+            className="canvas-upscale-select"
+            menuClassName="canvas-upscale-select-popover"
+            options={modelOptions}
+          />
+        </div>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>倍率</strong><small>Scale</small></div>
+          <div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} aria-pressed={params.scale === scale} aria-label={`${scale}× 放大 / ${scale}× upscale`} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div>
+        </div>
       </div>
-      <div className="canvas-upscale-size-readout"><span>原图<strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败" : "读取中…"}</strong></span><b>→</b><span>目标<strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算" : "计算中…"}</strong></span></div>
+      <div className="canvas-upscale-size-readout"><span><small>原图 / Source</small><strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败 / Failed" : "读取中… / Reading…"}</strong></span><b>→</b><span><small>目标 / Target</small><strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算 / Unavailable" : "计算中… / Calculating…"}</strong></span></div>
       <div className="canvas-upscale-setting-row">
-        <label>随机种子<input type="number" min={0} value={params.seed} onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
-        <label>色彩校正<select value={params.colorCorrection} onChange={(event) => onChange({ ...params, colorCorrection: event.target.value === "none" ? "none" : "wavelet" })}><option value="wavelet">Wavelet</option><option value="none">关闭</option></select></label>
+        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>随机种子</strong><small>Random seed</small></span><input type="number" min={0} value={params.seed} aria-label="随机种子 / Random seed" onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>色彩校正</strong><small>Color correction</small></div>
+          <SelectMenu
+            value={params.colorCorrection}
+            onChange={(value) => onChange({ ...params, colorCorrection: value })}
+            ariaLabel="色彩校正 / Color correction"
+            className="canvas-upscale-select"
+            menuClassName="canvas-upscale-select-popover"
+            options={[...colorCorrectionOptions]}
+          />
+        </div>
       </div>
       <div className="canvas-upscale-setting-row">
-        <label>缩放算法<select value={params.algorithm} onChange={(event) => onChange({ ...params, algorithm: event.target.value as CanvasUpscaleParams["algorithm"] })}><option value="lanczos">Lanczos</option><option value="bicubic">Bicubic</option><option value="nearest">Nearest</option></select></label>
-        <label>说明文字<input value={params.prompt || ""} placeholder="可选" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>缩放算法</strong><small>Scaling algorithm</small></div>
+          <SelectMenu
+            value={params.algorithm}
+            onChange={(value) => onChange({ ...params, algorithm: value })}
+            ariaLabel="缩放算法 / Scaling algorithm"
+            className="canvas-upscale-select"
+            menuClassName="canvas-upscale-select-popover"
+            options={[...algorithmOptions]}
+          />
+        </div>
+        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>说明文字</strong><small>Prompt</small></span><input value={params.prompt || ""} aria-label="说明文字 / Prompt" placeholder="可选 / Optional" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
       </div>
-      {!sourceUrl && <small className="canvas-upscale-empty-hint">请连接一张已完成的图片后再提交</small>}
+      {!sourceUrl && <small className="canvas-upscale-empty-hint">请连接一张已完成的图片后再提交 / Connect a completed image before submitting</small>}
     </div>
   );
 }
@@ -10485,7 +10824,7 @@ function CanvasNodeEditorPopover({
                 </div>
               )}
             </div>
-            {node.type === "media" && node.data.kind === "image" && node.data.url && onMaskEdit && (
+            {node.type === "media" && node.data.kind === "image" && node.data.url && onMaskEdit && maskState && (
               <CanvasMaskSummary
                 mask={maskState}
                 onEdit={onMaskEdit}
@@ -10559,21 +10898,10 @@ function CanvasMaskSummary({
   onEdit,
   onRemove,
 }: {
-  mask?: CanvasMaskState;
+  mask: CanvasMaskState;
   onEdit: () => void;
   onRemove?: () => void;
 }) {
-  if (!mask) {
-    return (
-      <div className="canvas-mask-summary empty" data-canvas-wheel-isolate>
-        <div>
-          <b>局部蒙版</b>
-          <small>尚未设置，绘制后只重新生成指定区域</small>
-        </div>
-        <button type="button" onClick={onEdit}>绘制蒙版</button>
-      </div>
-    );
-  }
   const coverage = typeof mask.coverage === "number"
     ? `覆盖 ${Math.round(mask.coverage * 100)}%`
     : "覆盖范围待计算";

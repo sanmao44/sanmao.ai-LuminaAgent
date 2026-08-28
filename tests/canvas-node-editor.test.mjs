@@ -40,6 +40,33 @@ test("upscale runs in place and keeps a visible processing state on the node", (
   assert.match(styles, /\.canvas-upscale-card-loading \.canvas-processing-indicator/);
 });
 
+test("upscale settings use the main bilingual custom select menu", () => {
+  const start = component.indexOf("function CanvasUpscaleSettingsPanel");
+  const end = component.indexOf("type CanvasNodeEditorPopoverProps", start);
+  assert.ok(start >= 0 && end > start, "upscale settings panel should be present");
+  const panel = component.slice(start, end);
+  assert.equal((panel.match(/<SelectMenu/g) || []).length, 3);
+  assert.doesNotMatch(panel, /<select\b/);
+  [
+    "超分模型",
+    "Upscale model",
+    "色彩校正",
+    "Color correction",
+    "缩放算法",
+    "Scaling algorithm",
+  ].forEach((label) => assert.match(panel, new RegExp(label)));
+  [
+    "自动选择 / Automatic",
+    "关闭 / Off",
+    "高质量平滑 / High-quality smoothing",
+    "平衡速度与质量 / Balanced quality and speed",
+  ].forEach((label) => assert.match(panel, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))));
+  assert.match(panel, /className="canvas-upscale-select"/);
+  assert.match(panel, /menuClassName="canvas-upscale-select-popover"/);
+  assert.match(styles, /\.canvas-upscale-select-popover\{z-index:390/);
+  assert.match(styles, /\.canvas-upscale-field-label/);
+});
+
 test("image cards show intrinsic resolution only after a valid image has loaded", () => {
   assert.match(component, /const imageResolution =/);
   assert.match(component, /node\.type === "media"/);
@@ -152,6 +179,17 @@ test("mask editor reports saving state and passes coverage into the attached ima
   assert.match(component, /coverage: maskCoverage/);
   assert.match(styles, /\.canvas-node-mask-badge/);
   assert.match(styles, /\.canvas-mask-summary/);
+});
+
+test("mask summary only occupies editor space when a mask exists", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  const summaryStart = component.indexOf("function CanvasMaskSummary");
+  assert.ok(editorStart >= 0 && summaryStart > editorStart, "mask editor components should be present");
+  const editor = component.slice(editorStart, summaryStart);
+  assert.match(editor, /onMaskEdit && maskState && \(/);
+  assert.doesNotMatch(editor, /尚未设置，绘制后只重新生成指定区域/);
+  assert.doesNotMatch(styles, /\.canvas-mask-summary\.empty/);
+  assert.match(component, /label: node\.data\.mask \? "查看蒙版" : "绘制蒙版"/);
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {
