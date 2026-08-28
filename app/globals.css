@@ -3162,6 +3162,46 @@ html[data-theme="dark"] .agent-page{
 @media(max-width:760px){.history-toolbar,.logs-toolbar{align-items:stretch;flex-wrap:wrap}.record-tab-switcher{order:-2}.media-filter-chips{width:100%;order:-1}.creative-video-grid{grid-template-columns:1fr 1fr}.creative-record-group{padding:12px;border-radius:16px}}
 @media(max-width:480px){.creative-video-grid{grid-template-columns:1fr}.record-tab-switcher button{padding:0 13px}}
 
+/* Keep the works toolbar actions on one visual baseline. The source filters,
+   multi-select action, and page-size menu used different control heights,
+   which made the right side of the toolbar look vertically uneven. */
+.history-page:not(.logs-page) .history-toolbar .filter-chips button,
+.history-page:not(.logs-page) .history-toolbar .history-controls .ghost-button,
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-trigger{
+  height:34px;
+  min-height:34px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  box-sizing:border-box;
+}
+.history-page:not(.logs-page) .history-toolbar .filter-chips button{
+  line-height:1;
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls{
+  align-items:center;
+  gap:6px;
+  flex:none;
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-trigger{
+  padding:0 10px;
+  gap:8px;
+  border-radius:10px;
+  background:var(--panel-2);
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-trigger-copy{
+  font-size:10px;
+  line-height:1.2;
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-chevron{
+  font-size:15px;
+  line-height:12px;
+  transform:translateY(-1px);
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu.open .select-menu-chevron{
+  transform:rotate(180deg) translateY(1px);
+}
+
 /* Selected Agent text actions: keep image and video targets distinct without
    turning the floating toolbar into a long, hard-to-scan row. */
 .selection-push{width:min(340px,calc(100vw - 24px));display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:8px;border-radius:16px}
