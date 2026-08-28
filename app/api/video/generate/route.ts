@@ -24,6 +24,15 @@ export async function POST(request: Request) {
       referenceVideo: raw.referenceVideo || raw.video,
       audios: raw.audios || raw.audio_urls,
       audio: raw.audio,
+      videoMode: raw.videoMode || raw.mode,
+      width: raw.width,
+      height: raw.height,
+      numFrames: raw.numFrames ?? raw.num_frames,
+      frameRate: raw.frameRate ?? raw.frame_rate,
+      videoSize: raw.videoSize ?? raw.size,
+      referenceVideoStartSeconds: raw.referenceVideoStartSeconds ?? raw.start_seconds,
+      referenceVideoEndSeconds: raw.referenceVideoEndSeconds ?? raw.end_seconds,
+      requireAudio: raw.requireAudio ?? raw.require_audio,
     };
     const key = request.headers.get('Idempotency-Key') || String(body.idempotencyKey || '');
     const task = await createVideoGeneration({ modelId: String(body.model || 'auto'), input, idempotencyKey: key, source: normalizeGenerationSource(body.source, 'workspace') });

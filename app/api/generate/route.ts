@@ -113,6 +113,7 @@ export async function POST(request: Request) {
     if (rawMask && !mask) return Response.json({ error: '蒙版必须是 PNG 格式。' }, { status: 400 });
     if (mask && !references.length) return Response.json({ error: '使用蒙版前请先添加一张参考图。' }, { status: 400 });
     const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
+    const responseFormat = ['url', 'b64_json'].includes(String(body.responseFormat || '').toLowerCase()) ? String(body.responseFormat).toLowerCase() as 'url' | 'b64_json' : undefined;
     const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
     const input = {
       prompt: generationPrompt,
@@ -121,8 +122,9 @@ export async function POST(request: Request) {
       width: Number(body.width || 0),
       height: Number(body.height || 0),
       quality: String(body.quality || '自动'),
-      resolution: ['1K', '2K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
+      resolution: ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
       outputFormat,
+      responseFormat,
       background,
     };
     aspectRatioForLog = input.aspectRatio;

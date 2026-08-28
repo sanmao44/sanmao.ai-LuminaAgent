@@ -1,5 +1,6 @@
-import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderType } from './types';
+import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType } from './types';
 import { inferNativeSearch } from './native-search-detection';
+import { agnesModelCatalog } from './agnes';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
@@ -19,12 +20,14 @@ export type RuntimeProvider = {
   imageUpscalePath?: string;
   imageUpscaleStatusPath?: string;
   responsesPath?: string;
-  videoTransport?: 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli';
+  textProtocol?: ProviderTextProtocol;
+  videoTransport?: 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos';
   videoBaseUrl?: string;
   videoApiKey?: string;
   videoTaskPath?: string;
   videoTaskStatusPath?: string;
   videoGenerationPath?: string;
+  videoQueryPath?: string;
   videoModelsPath?: string;
   videoPricingPath?: string;
   jimengCliPath?: string;
@@ -39,7 +42,27 @@ export type DiscoveredModel = {
   capabilities?: ModelCapability[];
   nativeSearchProtocol?: 'openai-responses' | 'gemini-grounding' | 'native-chat';
   nativeSearchDetection?: 'metadata' | 'model-id' | 'provider' | 'manual';
+  billing?: 'free' | 'paid' | 'temporary-free';
+  enabledByDefault?: boolean;
+  contextWindow?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
 };
+
+async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
+  const input = String(value || '').trim();
+  if (!input || /^https?:\/\//i.test(input)) return input;
+  return (await import('./signed-media')).prepareAgnesMediaUrl(input, kind);
+}
+
+async function prepareAgnesChatMessages<T extends { content: unknown }>(messages: T[]) {
+  return Promise.all(messages.map(async (message) => {
+    if (!Array.isArray(message.content)) return message;
+    const content = await Promise.all(message.content.map(async (part: any) => part?.type === 'image_url' && typeof part?.image_url?.url === 'string'
+      ? { ...part, image_url: { ...part.image_url, url: await prepareAgnesMediaUrl(part.image_url.url, 'image') } } : part));
+    return { ...message, content };
+  }));
+}
 
 function jimengCommand(explicit?: string) {
   const profile = process.env.USERPROFILE || os.homedir();
@@ -109,6 +132,10 @@ function imageMimeFromContentType(contentType: string) {
 export function runtimeBaseUrl(provider: RuntimeProvider) {
   if (provider.type === 'google-gemini') return 'https://generativelanguage.googleapis.com/v1beta/openai';
   return trimSlash(provider.baseUrl);
+}
+
+export function isAgnesProvider(provider: Pick<RuntimeProvider, 'platform' | 'baseUrl'>) {
+  return provider.platform === 'agnes' || /(^|\.)apihub\.agnes-ai\.com$/i.test((() => { try { return new URL(provider.baseUrl || '').hostname; } catch { return ''; } })());
 }
 
 function providerEndpoint(provider: RuntimeProvider, path: string | undefined, fallback: string) {
@@ -371,6 +398,7 @@ export function normalizeDiscoveredModels(data: any, provider?: RuntimeProvider)
 }
 
 export async function discoverModels(provider: RuntimeProvider) {
+  if (isAgnesProvider(provider)) return agnesModelCatalog;
   if (isApimartProvider(provider)) return apimartModelCatalog;
   if (provider.type === 'google-gemini') {
     const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(provider.apiKey)}`;
@@ -467,6 +495,12 @@ export function mapRatioToSize(ratio: string, width?: number, height?: number) {
   const targetWidth = rawWidth >= rawHeight ? longEdge : nearest16(longEdge * rawWidth / rawHeight);
   const targetHeight = rawHeight >= rawWidth ? longEdge : nearest16(longEdge * rawHeight / rawWidth);
   return `${targetWidth}x${targetHeight}`;
+}
+
+function exactImageSize(width?: number, height?: number) {
+  const w = Number(width);
+  const h = Number(height);
+  return Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && h <= 16384 ? `${w}x${h}` : undefined;
 }
 
 // Image generation providers can legitimately take much longer than chat APIs.
@@ -577,6 +611,45 @@ function normalizeImages(data: any): GeneratedImage[] {
   return normalizeProviderImages(data);
 }
 
+export function buildAgnesImagePayload(rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' }, references: string[] = []) {
+  const count = Math.max(1, Math.min(8, Number(input.count || 1)));
+  const is21 = /agnes-image-2\.1/i.test(rawModelId);
+  const ratio = input.aspectRatio && input.aspectRatio !== '自动' && new Set(['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9']).has(input.aspectRatio) ? input.aspectRatio : undefined;
+  const tier = String(input.resolution || '').toUpperCase();
+  const exact = exactImageSize(input.width, input.height);
+  const size = is21 && /^(1K|2K|3K|4K)$/.test(tier) ? tier : exact || mapRatioToSize(input.aspectRatio || '自动');
+  const extraBody: Record<string, unknown> = {};
+  if (references.length) extraBody.image = references.length === 1 ? references[0] : references;
+  // Agnes accepts only url/b64_json here; png/jpeg/webp describes the stored
+  // asset in SANMAO.AI, not the response transport encoding.
+  extraBody.response_format = input.responseFormat || 'url';
+  return {
+    model: rawModelId,
+    prompt: input.prompt,
+    n: count,
+    size,
+    ...(is21 && ratio ? { ratio } : {}),
+    ...(input.quality && input.quality !== '自动' ? { quality: input.quality } : {}),
+    ...(input.background ? { background: input.background } : {}),
+    extra_body: extraBody,
+  };
+}
+
+async function generateAgnesImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; references?: string[]; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; mask?: string }, references: string[] = [], signal?: AbortSignal) {
+  const media = await Promise.all(references.map((reference) => prepareAgnesMediaUrl(reference, 'image')));
+  const payload = buildAgnesImagePayload(rawModelId, input, media);
+  if (input.mask) payload.extra_body.mask = await prepareAgnesMediaUrl(input.mask, 'image');
+  const data = await fetchJson(providerEndpoint(provider, provider.imageGenerationPath, '/images/generations'), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, IMAGE_REQUEST_TIMEOUT, signal);
+  const images = extractImages(data);
+  if (images.length) return images.slice(0, Math.max(1, Math.min(8, Number(input.count || 1))));
+  if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
+  return normalizeImages(data);
+}
+
 function taskIdFrom(data: any) {
   const values = [
     data?.task_id, data?.taskId, data?.request_id, data?.requestId, data?.id,
@@ -677,9 +750,10 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   throw new Error('图片超分任务等待超时，请稍后到服务商控制台查看任务状态');
 }
 
-export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, [], signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
+  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, [], signal);
   const body: Record<string, unknown> = {
     model: rawModelId,
     prompt: input.prompt,
@@ -763,10 +837,13 @@ async function refToBlob(ref: string, index: number) {
   throw new Error(`第 ${index + 1} 张参考图格式无效`);
 }
 
-export async function editImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  const references = input.references.map(normalizeReference).slice(0, 16);
+export async function editImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  // Agnes can consume the local storage URL through the signed-media bridge;
+  // other providers keep the historical data-URL normalization path.
+  const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference)).slice(0, 16);
   if (!references.length) throw new Error('修改图片至少需要一张参考图');
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
+  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   const size = mapRatioToSize(input.aspectRatio || '自动', input.width, input.height);
   const jsonBody: Record<string, unknown> = {
@@ -894,7 +971,92 @@ export type ChatMessage = {
   tool_calls?: any[];
 };
 
+function agnesUsage(usage: any) {
+  if (!usage || typeof usage !== 'object') return undefined;
+  const input = Number(usage.input_tokens ?? usage.prompt_tokens);
+  const output = Number(usage.output_tokens ?? usage.completion_tokens);
+  return {
+    ...(Number.isFinite(input) ? { prompt_tokens: input, input_tokens: input } : {}),
+    ...(Number.isFinite(output) ? { completion_tokens: output, output_tokens: output } : {}),
+    ...(Number.isFinite(input) && Number.isFinite(output) ? { total_tokens: input + output } : {}),
+  };
+}
+
+export function extractAgnesText(data: any) {
+  const output: string[] = [];
+  const visit = (value: any, depth = 0) => {
+    if (depth > 8 || value === null || value === undefined) return;
+    if (typeof value === 'string') { output.push(value); return; }
+    if (Array.isArray(value)) { value.forEach((item) => visit(item, depth + 1)); return; }
+    if (typeof value !== 'object') return;
+    if ((value.type === 'text' || value.type === 'output_text' || typeof value.text === 'string') && typeof value.text === 'string') { output.push(value.text); return; }
+    if (typeof value.output_text === 'string') output.push(value.output_text);
+    if (Array.isArray(value.output)) value.output.forEach((item: any) => visit(item?.content ?? item, depth + 1));
+    if (Array.isArray(value.content)) value.content.forEach((item: any) => visit(item, depth + 1));
+  };
+  if (Array.isArray(data?.output)) data.output.forEach((item: any) => visit(item?.content ?? item));
+  if (Array.isArray(data?.content)) data.content.forEach((item: any) => visit(item));
+  if (!output.length && typeof data?.output_text === 'string') output.push(data.output_text);
+  if (!output.length && typeof data?.text === 'string') output.push(data.text);
+  return Array.from(new Set(output.map((item) => item.trim()).filter(Boolean))).join('\n').trim();
+}
+
+export function normalizeAgnesResponse(data: any, protocol: ProviderTextProtocol = 'chat-completions') {
+  if (protocol === 'chat-completions') return data;
+  const text = extractAgnesText(data);
+  const usage = agnesUsage(data?.usage);
+  return {
+    ...data,
+    model: data?.model || data?.model_id,
+    choices: [{ index: 0, message: { role: 'assistant', content: text || null }, finish_reason: data?.stop_reason || data?.status || 'stop' }],
+    ...(usage ? { usage } : {}),
+  };
+}
+
+export function serializeAgnesMessages(messages: ChatMessage[], protocol: ProviderTextProtocol) {
+  if (protocol === 'messages') {
+    const system = messages.filter((message) => message.role === 'system').map((message) => typeof message.content === 'string' ? message.content : '').filter(Boolean).join('\n');
+    const content = messages.filter((message) => message.role !== 'system').map((message) => ({ role: message.role === 'tool' ? 'user' : message.role, content: message.content }));
+    return { ...(system ? { system } : {}), messages: content };
+  }
+  return messages;
+}
+
+function agnesTextProtocol(provider: RuntimeProvider) { return provider.textProtocol || 'chat-completions'; }
+
+function agnesTextHeaders(provider: RuntimeProvider, protocol: ProviderTextProtocol) {
+  if (protocol === 'messages') {
+    return {
+      'x-api-key': provider.apiKey,
+      'anthropic-version': '2023-06-01',
+    };
+  }
+  return authHeaders(provider);
+}
+
+function agnesTextEndpoint(provider: RuntimeProvider, protocol: ProviderTextProtocol) {
+  if (protocol === 'responses') return providerEndpoint(provider, provider.responsesPath, '/responses');
+  if (protocol === 'messages') return providerEndpoint(provider, '/messages', '/messages');
+  return providerEndpoint(provider, provider.chatPath, '/chat/completions');
+}
+
+async function agnesChatRequest(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, options: { stream?: boolean } = {}) {
+  const protocol = agnesTextProtocol(provider);
+  const messages = await prepareAgnesChatMessages(payload.messages);
+  const body: Record<string, unknown> = protocol === 'responses'
+      ? { model: rawModelId, input: messages, max_output_tokens: 65536, ...(payload.tools?.length ? { tools: payload.tools } : {}), ...(options.stream ? { stream: true } : {}) }
+      : protocol === 'messages'
+      ? { model: rawModelId, ...serializeAgnesMessages(messages, protocol), max_tokens: 65536, ...(payload.tools?.length ? { tools: payload.tools } : {}), ...(options.stream ? { stream: true } : {}) }
+      : { model: rawModelId, messages, max_tokens: 65536, ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}), ...(options.stream ? { stream: true } : {}) };
+  return { protocol, body, endpoint: agnesTextEndpoint(provider, protocol) };
+}
+
 export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }) {
+  if (isAgnesProvider(provider)) {
+    const request = await agnesChatRequest(provider, rawModelId, payload);
+    const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000);
+    return normalizeAgnesResponse(data, request.protocol);
+  }
   const data = await fetchJson(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
@@ -908,6 +1070,11 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
 }
 
 export async function responsesCompletion(provider: RuntimeProvider, rawModelId: string, input: string | ChatMessage[], options: { tools?: any[]; stream?: boolean } = {}) {
+  if (isAgnesProvider(provider)) {
+    const messages: ChatMessage[] = typeof input === 'string' ? [{ role: 'user', content: input }] : input;
+    const request = await agnesChatRequest(provider, rawModelId, { messages, tools: options.tools }, { stream: options.stream });
+    return normalizeAgnesResponse(await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000), request.protocol);
+  }
   const body: Record<string, unknown> = {
     model: rawModelId,
     input,
@@ -933,6 +1100,19 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
 }
 
 export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }) {
+  if (isAgnesProvider(provider) && agnesTextProtocol(provider) !== 'chat-completions') {
+    const data = await chatCompletion(provider, rawModelId, payload);
+    const encoder = new TextEncoder();
+    const chunk = { model: data?.model || rawModelId, choices: [{ delta: { content: data?.choices?.[0]?.message?.content || '' }, index: 0 }] };
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)); controller.close(); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  }
+  if (isAgnesProvider(provider)) {
+    const request = await agnesChatRequest(provider, rawModelId, payload, { stream: true });
+    return fetch(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body), cache: 'no-store', signal: AbortSignal.timeout(180000) }).then(async (response) => {
+      if (!response.ok) throw new Error(`Agnes 流式接口返回 HTTP ${response.status}`);
+      return response;
+    });
+  }
   const response = await fetch(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' },

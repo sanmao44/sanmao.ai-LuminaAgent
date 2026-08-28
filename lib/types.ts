@@ -1,9 +1,11 @@
 export type ProviderType = 'openai-compatible' | 'google-gemini';
-export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli';
+export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes';
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
 export type ModelKind = 'chat' | 'image' | 'video' | 'unknown';
 export type MediaKind = 'image' | 'video' | 'audio';
-export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli';
+export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos';
+export type ProviderTextProtocol = 'chat-completions' | 'responses' | 'messages';
+export type ModelBilling = 'free' | 'paid' | 'temporary-free';
 export type WebSearchApiProvider = 'anysearch' | 'baidu-qianfan';
 export type NativeSearchProtocol = 'openai-responses' | 'gemini-grounding' | 'native-chat';
 export type NativeSearchOverride = 'auto' | 'enabled' | 'disabled';
@@ -44,11 +46,13 @@ export type ProviderConnection = {
   imageUpscalePath?: string;
   imageUpscaleStatusPath?: string;
   responsesPath?: string;
+  textProtocol?: ProviderTextProtocol;
   videoTransport?: VideoTransport;
   videoBaseUrl?: string;
   videoTaskPath?: string;
   videoTaskStatusPath?: string;
   videoGenerationPath?: string;
+  videoQueryPath?: string;
   videoModelsPath?: string;
   videoPricingPath?: string;
   videoApiKeyMasked?: string;
@@ -91,6 +95,11 @@ export type RegistryModel = {
   enabled: boolean;
   published: boolean;
   capabilities: ModelCapability[];
+  billing?: ModelBilling;
+  enabledByDefault?: boolean;
+  contextWindow?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
   nativeSearchProtocol?: NativeSearchProtocol;
   nativeSearchOverride?: NativeSearchOverride;
   nativeSearchDetection?: NativeSearchDetection;
@@ -131,6 +140,8 @@ export type GeneratedVideo = {
   width?: number;
   height?: number;
   localPath?: string;
+  providerStatus?: string;
+  progress?: number;
 };
 
 export type VideoGenerationInput = {
@@ -147,6 +158,15 @@ export type VideoGenerationInput = {
   referenceVideo?: string;
   audios?: string[];
   audio?: string;
+  videoMode?: 'text' | 'keyframe' | 'reference';
+  width?: number;
+  height?: number;
+  numFrames?: number;
+  frameRate?: number;
+  videoSize?: '720P' | '960P' | '2K';
+  referenceVideoStartSeconds?: number;
+  referenceVideoEndSeconds?: number;
+  requireAudio?: boolean;
 };
 
 /** A persisted reference image used by a generation request. */

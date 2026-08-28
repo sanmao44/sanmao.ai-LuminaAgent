@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
@@ -9,6 +9,10 @@ import type { RuntimeProvider } from './providers';
 
 export type VideoProviderTask = {
   providerTaskId?: string;
+  videoId?: string;
+  model?: string;
+  providerStatus?: string;
+  progress?: number;
   status: 'pending' | 'running' | 'done' | 'failed';
   videos: GeneratedVideo[];
   costUsd?: number;
@@ -32,7 +36,28 @@ function is65535Provider(provider: RuntimeProvider) {
   return provider.platform === '65535' || /65535\.space/i.test(provider.baseUrl || '') || /65535\.space/i.test(provider.videoBaseUrl || '');
 }
 
+function isAgnesProvider(provider: RuntimeProvider) {
+  const host = (value: string) => { try { return new URL(value).hostname; } catch { return value; } };
+  return provider.platform === 'agnes' || provider.videoTransport === 'agnes-videos' || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.baseUrl || '')) || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.videoBaseUrl || ''));
+}
+
+function isAgnesVideoProvider(provider: RuntimeProvider) {
+  return isAgnesProvider(provider) || provider.videoTransport === 'agnes-videos';
+}
+
+async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
+  const input = String(value || '').trim();
+  if (!input || /^https?:\/\//i.test(input)) return input;
+  return (await import('./signed-media')).prepareAgnesMediaUrl(input, kind);
+}
+
 function videoBaseUrl(provider: RuntimeProvider) {
+  if (isAgnesVideoProvider(provider)) {
+    if (provider.videoBaseUrl) {
+      try { return new URL(provider.videoBaseUrl).origin; } catch { return provider.videoBaseUrl.replace(/\/+$/, ''); }
+    }
+    try { return new URL(provider.baseUrl).origin; } catch { return 'https://apihub.agnes-ai.com'; }
+  }
   return (provider.videoBaseUrl || (is65535Provider(provider) ? 'https://task-api-1-cn.65535.space' : provider.baseUrl)).replace(/\/+$/, '');
 }
 
@@ -234,7 +259,189 @@ function openAiPayload(model: string, input: VideoGenerationInput) {
   };
 }
 
+const AGNES_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16', '2:3', '3:2']);
+
+function agnesPrompt(prompt: string) {
+  return String(prompt || '').replace(/@(\d+)\b/g, '<Picture $1>');
+}
+
+function agnesDimensions(input: VideoGenerationInput) {
+  const explicitWidth = Number(input.width);
+  const explicitHeight = Number(input.height);
+  if (Number.isInteger(explicitWidth) && explicitWidth > 0 && Number.isInteger(explicitHeight) && explicitHeight > 0) return { width: explicitWidth, height: explicitHeight };
+  const ratio = input.aspectRatio;
+  const presets: Record<string, { width: number; height: number }> = {
+    '21:9': { width: 1680, height: 720 }, '16:9': { width: 1280, height: 720 }, '4:3': { width: 960, height: 720 },
+    '1:1': { width: 720, height: 720 }, '3:4': { width: 720, height: 960 }, '9:16': { width: 720, height: 1280 },
+  };
+  return presets[ratio || '16:9'] || presets['16:9'];
+}
+
+function agnesV20SizeMapping(width: number, height: number) {
+  const longEdge = Math.max(width, height);
+  const shortEdge = Math.min(width, height);
+  const standard = longEdge <= 854 || shortEdge <= 480 ? '480p' : longEdge <= 1280 || shortEdge <= 720 ? '720p' : '1080p';
+  return { requested: `${width}x${height}`, normalized: standard, width, height };
+}
+
+export function buildAgnesVideoPayload(rawModelId: string, input: VideoGenerationInput, media: { firstFrame?: string; lastFrame?: string; referenceImages?: string[]; referenceVideos?: string[]; audios?: string[] } = {}) {
+  const model = String(rawModelId || '').trim();
+  const images = media.referenceImages || input.referenceImages || [];
+  const videos = media.referenceVideos || videoReferenceValues(input);
+  const audios = media.audios || audioValues(input);
+  const isV20 = /agnes-video-v2\.0/i.test(model);
+  if (isV20) {
+    if (videos.length || audios.length) throw new VideoProviderError('Agnes Video V2.0 不接受参考视频或音频输入。', { code: 'AGNES_UNSUPPORTED_MEDIA' });
+    const { width, height } = agnesDimensions(input);
+    const numFrames = Number(input.numFrames ?? 81);
+    const frameRate = Number(input.frameRate ?? 24);
+    if (!Number.isInteger(numFrames) || numFrames < 1 || numFrames > 441 || (numFrames - 1) % 8 !== 0) throw new VideoProviderError('Agnes Video V2.0 的 num_frames 必须不超过 441 且满足 8n + 1。', { code: 'AGNES_INVALID_NUM_FRAMES' });
+    if (!Number.isInteger(frameRate) || frameRate < 1 || frameRate > 60) throw new VideoProviderError('Agnes Video V2.0 的 frame_rate 必须在 1–60 之间。', { code: 'AGNES_INVALID_FRAME_RATE' });
+    const extraBody: Record<string, unknown> = {};
+    let image: string | string[] | undefined;
+    if (input.videoMode === 'keyframe' || input.lastFrame) {
+      const keyframes = [media.firstFrame || input.firstFrame, media.lastFrame || input.lastFrame].filter(Boolean);
+      if (!keyframes.length) throw new VideoProviderError('Agnes Video V2.0 关键帧模式至少需要一张首帧或尾帧图片。', { code: 'AGNES_KEYFRAME_REQUIRED' });
+      extraBody.image = keyframes;
+      extraBody.mode = 'keyframes';
+    } else if (media.firstFrame || input.firstFrame || images.length) {
+      image = media.firstFrame || input.firstFrame || (images.length === 1 ? images[0] : images);
+    }
+    return {
+      model,
+      prompt: agnesPrompt(input.prompt),
+      width,
+      height,
+      num_frames: numFrames,
+      frame_rate: frameRate,
+      metadata: { size_mapping: agnesV20SizeMapping(width, height) },
+      ...(image ? { image } : {}),
+      ...(Object.keys(extraBody).length ? { extra_body: extraBody } : {}),
+    };
+  }
+
+  const flash = /agnes-video-2\.5-flash/i.test(model);
+  const seconds = String(Number(input.seconds || 5));
+  const secondsNumber = Number(seconds);
+  if (!Number.isInteger(secondsNumber) || secondsNumber < 4 || secondsNumber > 12) throw new VideoProviderError('Agnes Video 2.5 系列仅支持 4–12 秒。', { code: 'AGNES_INVALID_SECONDS' });
+  const size = flash ? '720P' : String(input.videoSize || input.resolution || '720P').toUpperCase();
+  if (!flash && !['720P', '960P', '2K'].includes(size)) throw new VideoProviderError('Agnes Video 2.5 仅支持 720P、960P、2K。', { code: 'AGNES_INVALID_SIZE' });
+  if (flash && size !== '720P') throw new VideoProviderError('Agnes Video 2.5 Flash 固定使用 720P。', { code: 'AGNES_INVALID_SIZE' });
+  if (flash && images.length > 5) throw new VideoProviderError('Agnes Video 2.5 Flash 最多接收 5 张参考图片。', { code: 'AGNES_REFERENCE_IMAGE_LIMIT' });
+  if (flash && videos.length) throw new VideoProviderError('Agnes Video 2.5 Flash 不支持参考视频。', { code: 'AGNES_REFERENCE_VIDEO_UNSUPPORTED' });
+  const mode = input.videoMode || (input.firstFrame || input.lastFrame ? 'keyframe' : images.length || videos.length || audios.length ? 'reference' : 'text');
+  if (!['text', 'keyframe', 'reference'].includes(mode)) throw new VideoProviderError('Agnes Video 2.5 的 mode 必须为 text、keyframe 或 reference。', { code: 'AGNES_INVALID_MODE' });
+  const hasFirstFrame = Boolean(input.firstFrame || media.firstFrame);
+  const hasLastFrame = Boolean(input.lastFrame || media.lastFrame);
+  if (mode === 'text' && (hasFirstFrame || hasLastFrame || images.length || videos.length || audios.length)) throw new VideoProviderError('Agnes text 模式不允许首尾帧、参考图片、参考视频或音频输入。', { code: 'AGNES_TEXT_MEDIA_NOT_ALLOWED' });
+  if (mode === 'keyframe' && !hasFirstFrame && !hasLastFrame) throw new VideoProviderError('Agnes keyframe 模式至少需要 first_frame 或 last_frame。', { code: 'AGNES_KEYFRAME_REQUIRED' });
+  if (mode === 'keyframe' && (images.length || videos.length || audios.length)) throw new VideoProviderError('Agnes keyframe 模式不允许参考图片、参考视频或音频输入。', { code: 'AGNES_KEYFRAME_MEDIA_NOT_ALLOWED' });
+  if (mode === 'reference' && (hasFirstFrame || hasLastFrame)) throw new VideoProviderError('Agnes reference 模式不允许 first_frame 或 last_frame。', { code: 'AGNES_REFERENCE_FRAME_NOT_ALLOWED' });
+  if (mode === 'reference' && !images.length && !videos.length && !audios.length) throw new VideoProviderError('Agnes reference 模式至少需要图片、音频或视频参考输入。', { code: 'AGNES_REFERENCE_REQUIRED' });
+  const ratio = AGNES_VIDEO_RATIOS.has(String(input.aspectRatio || '')) ? input.aspectRatio : undefined;
+  const referenceVideos = videos.map((url) => ({ url, ...(input.referenceVideoStartSeconds !== undefined ? { start_seconds: input.referenceVideoStartSeconds } : {}), ...(input.referenceVideoEndSeconds !== undefined ? { end_seconds: input.referenceVideoEndSeconds } : {}), ...(input.requireAudio !== undefined ? { require_audio: input.requireAudio } : {}) }));
+  return {
+    model,
+    prompt: agnesPrompt(input.prompt),
+    seconds,
+    size,
+    mode,
+    ...(ratio ? { aspect_ratio: ratio } : {}),
+    ...(mode === 'keyframe' ? {
+      ...(media.firstFrame || input.firstFrame ? { first_frame: media.firstFrame || input.firstFrame } : {}),
+      ...(media.lastFrame || input.lastFrame ? { last_frame: media.lastFrame || input.lastFrame } : {}),
+    } : {}),
+    ...(mode === 'reference' ? {
+      ...(images.length ? { images: images.map((url) => ({ url })) } : {}),
+      ...(audios.length ? { audios: audios.map((url) => ({ url })) } : {}),
+      ...(referenceVideos.length ? { videos: referenceVideos } : {}),
+    } : {}),
+  };
+}
+
+function agnesResponseValue(data: any, key: string) {
+  return data?.[key] ?? data?.data?.[key] ?? data?.result?.[key];
+}
+
+function agnesVideoIdFrom(data: any) {
+  const candidates = [
+    agnesResponseValue(data, 'video_id'),
+    agnesResponseValue(data, 'task_id'),
+    agnesResponseValue(data, 'id'),
+  ];
+  return String(candidates.find((value) => value !== undefined && value !== null && String(value).trim()) || '').trim();
+}
+
+function agnesStatusFrom(data: any): VideoProviderTask['status'] {
+  const status = String(agnesResponseValue(data, 'status') ?? agnesResponseValue(data, 'state') ?? '').toLowerCase();
+  if (status === 'completed') return 'done';
+  if (/failed|error|cancel|rejected|expired|aborted/.test(status)) return 'failed';
+  if (/running|processing|generating|in_progress/.test(status)) return 'running';
+  return 'pending';
+}
+
+function agnesVideosFrom(data: any): GeneratedVideo[] {
+  const url = data?.metadata?.url || data?.data?.metadata?.url || data?.result?.metadata?.url;
+  return typeof url === 'string' && /^https?:\/\//i.test(url) ? [{ url }] : [];
+}
+
+function agnesErrorFrom(data: any) {
+  const value = data?.error?.message || data?.data?.error?.message || data?.error || data?.message;
+  return typeof value === 'string' ? value.slice(0, 900) : value ? JSON.stringify(value).slice(0, 900) : 'Agnes 视频任务失败';
+}
+
+function agnesProgressFrom(data: any) {
+  const value = agnesResponseValue(data, 'progress');
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function agnesQueryUrl(provider: RuntimeProvider, videoId: string, rawModelId?: string) {
+  const configured = provider.videoQueryPath || '/agnesapi';
+  const base = videoBaseUrl(provider);
+  const url = /^https?:\/\//i.test(configured) ? new URL(configured) : new URL(`${base}${configured.startsWith('/') ? configured : `/${configured}`}`);
+  url.searchParams.set('video_id', videoId);
+  if (/agnes-video-2\.5/i.test(rawModelId || '')) url.searchParams.set('model_name', rawModelId || '');
+  return url.toString();
+}
+
+function agnesGenerationUrl(provider: RuntimeProvider) {
+  const configured = provider.videoGenerationPath || '/v1/videos';
+  if (/^https?:\/\//i.test(configured)) return configured.replace(/\/+$/, '');
+  return `${videoBaseUrl(provider)}${configured.startsWith('/') ? configured : `/${configured}`}`;
+}
+
+async function submitAgnesVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
+  const media = {
+    firstFrame: input.firstFrame ? await prepareAgnesMediaUrl(input.firstFrame, 'image') : undefined,
+    lastFrame: input.lastFrame ? await prepareAgnesMediaUrl(input.lastFrame, 'image') : undefined,
+    referenceImages: await Promise.all((input.referenceImages || []).map((url) => prepareAgnesMediaUrl(url, 'image'))),
+    referenceVideos: await Promise.all(videoReferenceValues(input).map((url) => prepareAgnesMediaUrl(url, 'video'))),
+    audios: await Promise.all(audioValues(input).map((url) => prepareAgnesMediaUrl(url, 'audio'))),
+  };
+  const body = buildAgnesVideoPayload(rawModelId, input, media);
+  const response = await requestJsonWithRateLimitRetry(agnesGenerationUrl(provider), { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal);
+  const data = response.data;
+  const videoId = agnesVideoIdFrom(data);
+  const status = agnesStatusFrom(data);
+  const videos = status === 'done' ? agnesVideosFrom(data) : [];
+  const providerStatus = String(agnesResponseValue(data, 'status') || '').trim() || undefined;
+  const progress = agnesProgressFrom(data);
+  if (status === 'failed') return { providerTaskId: videoId || undefined, videoId: videoId || undefined, model: rawModelId, providerStatus, progress, status, videos, raw: data, error: agnesErrorFrom(data), errorCode: 'AGNES_VIDEO_FAILED' };
+  if (!videos.length && !videoId) throw new VideoProviderError('Agnes 视频接口已响应，但没有返回 video_id、task_id 或 id。', { code: 'AGNES_VIDEO_ID_MISSING' });
+  return { providerTaskId: videoId || undefined, videoId: videoId || undefined, model: rawModelId, providerStatus, progress, status, videos, raw: data };
+}
+
+async function pollAgnesVideo(provider: RuntimeProvider, videoId: string, rawModelId?: string, signal?: AbortSignal): Promise<VideoProviderTask> {
+  const response = await requestJson(agnesQueryUrl(provider, videoId, rawModelId), { method: 'GET', headers: headers(provider) }, signal);
+  const data = response.data;
+  const status = agnesStatusFrom(data);
+  const videos = status === 'done' ? agnesVideosFrom(data) : [];
+  return { providerTaskId: videoId, videoId, model: rawModelId, providerStatus: String(agnesResponseValue(data, 'status') || '').trim() || undefined, progress: agnesProgressFrom(data), status, videos, raw: data, ...(status === 'failed' ? { error: agnesErrorFrom(data), errorCode: 'AGNES_VIDEO_FAILED' } : {}) };
+}
+
 export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
+  if (isAgnesVideoProvider(provider)) return submitAgnesVideo(provider, rawModelId, input, idempotencyKey, signal);
   const transport = resolveVideoTransport(provider);
   const url = transport === 'native-task' ? endpoint(provider, provider.videoTaskPath, '/v1/tasks') : endpoint(provider, provider.videoGenerationPath, '/v1/videos');
   const body = transport === 'native-task'
@@ -250,7 +457,8 @@ export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: s
   return { providerTaskId: providerTaskId || undefined, status: videos.length ? 'done' : status, videos, costUsd: Number(data?.cost_usd || data?.costUsd || data?.data?.cost_usd || 0) || undefined, raw: data };
 }
 
-export async function pollRemoteVideo(provider: RuntimeProvider, providerTaskId: string, signal?: AbortSignal): Promise<VideoProviderTask> {
+export async function pollRemoteVideo(provider: RuntimeProvider, providerTaskId: string, signal?: AbortSignal, rawModelId?: string): Promise<VideoProviderTask> {
+  if (isAgnesVideoProvider(provider)) return pollAgnesVideo(provider, providerTaskId, rawModelId, signal);
   const transport = resolveVideoTransport(provider);
   // Old configurations stored /v1/tasks/{id} for every provider. In auto
   // mode that value must not override the standard OpenAI-compatible status

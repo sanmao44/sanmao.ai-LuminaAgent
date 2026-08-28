@@ -1,4 +1,7 @@
-import type { ProviderConnection, ProviderPlatform, ProviderType, VideoTransport } from './types';
+import type { ProviderConnection, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
+const AGNES_API_BASE_URL = 'https://apihub.agnes-ai.com/v1';
+const AGNES_API_KEY_URL = 'https://platform.agnes-ai.cn/settings/apiKeys';
+const AGNES_VIDEO_BASE_URL = 'https://apihub.agnes-ai.com';
 
 export type ProviderPreset = {
   value: ProviderPlatform;
@@ -20,6 +23,8 @@ export type ProviderPreset = {
   videoTaskPath?: string;
   videoTaskStatusPath?: string;
   videoGenerationPath?: string;
+  textProtocol?: ProviderTextProtocol;
+  videoQueryPath?: string;
 };
 
 export type ResolvedProviderConfiguration = {
@@ -42,6 +47,8 @@ export type ResolvedProviderConfiguration = {
   videoTaskPath: string;
   videoTaskStatusPath: string;
   videoGenerationPath: string;
+  textProtocol: ProviderTextProtocol;
+  videoQueryPath: string;
 };
 
 const standardCompatibility = {
@@ -78,6 +85,7 @@ export const providerPresets: ProviderPreset[] = [
   { value: 'deepseek', label: 'DeepSeek', short: 'DeepSeek', description: '官方 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.deepseek.com/api_keys' },
   { value: 'google-gemini', label: 'Google Gemini', short: 'Gemini', description: '官方地址和协议由系统处理', type: 'google-gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsBaseUrl: false, apiKeyUrl: 'https://aistudio.google.com/apikey' },
   { value: 'apimart', label: 'APIMart', short: 'APIMart', description: '内置余额校验、预置模型和异步图片任务适配', type: 'openai-compatible', baseUrl: 'https://api.apimart.ai/v1', needsBaseUrl: false, apiKeyUrl: 'https://apimart.ai/console', recommended: true },
+  { value: 'agnes', label: 'Agnes AI', short: 'Agnes', description: '文本、多模态、图片与异步视频模型，官方地址已内置', type: 'openai-compatible', baseUrl: AGNES_API_BASE_URL, needsBaseUrl: false, apiKeyUrl: AGNES_API_KEY_URL, notice: '有免费/限时免费额度，可先体验', noticeTone: 'success', recommended: true, textProtocol: 'chat-completions', videoTransport: 'agnes-videos', videoBaseUrl: AGNES_VIDEO_BASE_URL, videoGenerationPath: '/v1/videos', videoQueryPath: '/agnesapi' },
   { value: 'jimeng-cli', label: '即梦 CLI', short: '即梦 CLI', description: '本机调用即梦图片与视频能力', type: 'openai-compatible', baseUrl: '', needsBaseUrl: false, showInPicker: false, videoTransport: 'jimeng-cli' },
   { value: 'custom', label: '其他兼容平台', short: '其他平台', description: '适用于 New API、One API 和自建中转等 OpenAI 兼容地址', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, recommended: true },
 ];
@@ -114,6 +122,8 @@ export function resolveProviderConfiguration(
     videoTaskPath?: string;
     videoTaskStatusPath?: string;
     videoGenerationPath?: string;
+    textProtocol?: ProviderTextProtocol;
+    videoQueryPath?: string;
   },
   existing?: Partial<ProviderConnection> | null,
 ): ResolvedProviderConfiguration {
@@ -146,5 +156,7 @@ export function resolveProviderConfiguration(
     videoTaskPath: pick('videoTaskPath', preset.videoTaskPath || standardCompatibility.videoTaskPath),
     videoTaskStatusPath: pick('videoTaskStatusPath', preset.videoTaskStatusPath || defaultVideoTaskStatusPath),
     videoGenerationPath: pick('videoGenerationPath', preset.videoGenerationPath || standardCompatibility.videoGenerationPath),
+    textProtocol: input.textProtocol || (preserveExisting ? existing?.textProtocol : undefined) || preset.textProtocol || 'chat-completions',
+    videoQueryPath: String(input.videoQueryPath || (preserveExisting ? existing?.videoQueryPath : '') || preset.videoQueryPath || '').trim(),
   };
 }

@@ -1,5 +1,11 @@
 import { is65535Provider, isJimengProvider, type VideoProviderIdentity } from './video-platform';
 
+function isAgnesProvider(provider?: VideoProviderIdentity | null) {
+  if (!provider) return false;
+  const host = (value: string) => { try { return new URL(value).hostname; } catch { return value; } };
+  return provider.platform === 'agnes' || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.baseUrl || '')) || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.videoBaseUrl || ''));
+}
+
 export type VideoModelLimits = {
   minSeconds: number;
   maxSeconds: number;
@@ -21,7 +27,7 @@ export const VIDEO_INPUT_SAFETY_LIMITS = {
   maxAudios: 10,
 } as const;
 
-const allRatios = ['auto', '16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3'];
+const allRatios = ['auto', '21:9', '16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3'];
 
 const defaults: VideoModelLimits = {
   minSeconds: 1,
@@ -36,6 +42,38 @@ const defaults: VideoModelLimits = {
 };
 
 const jimengDurations = (min: number, max: number) => Array.from({ length: max - min + 1 }, (_, index) => min + index);
+const agnesDurations = (min: number, max: number) => Array.from({ length: max - min + 1 }, (_, index) => min + index);
+
+function agnesLimits(rawId: string): VideoModelLimits {
+  if (/agnes-video-v2\.0/i.test(rawId)) {
+    return {
+      ...defaults,
+      minSeconds: 1,
+      maxSeconds: 60,
+      resolutions: ['480p', '720p', '1080p'],
+      maxReferenceImages: 16,
+      maxReferenceVideos: 0,
+      maxAudios: 0,
+      notes: ['Agnes Video V2.0：使用宽高、帧数和帧率', 'num_frames 不超过 441，且必须为 8n+1', '平台可能将尺寸标准化到 480p/720p/1080p'],
+    };
+  }
+  const flash = /agnes-video-2\.5-flash/i.test(rawId);
+  return {
+    ...defaults,
+    minSeconds: 4,
+    maxSeconds: 12,
+    allowedSeconds: agnesDurations(4, 12),
+    resolutions: flash ? ['720P'] : ['720P', '960P', '2K'],
+    maxReferenceImages: flash ? 5 : 16,
+    maxReferenceVideos: flash ? 0 : 10,
+    maxAudios: 10,
+    notes: [
+      `Agnes Video ${flash ? '2.5 Flash' : '2.5'}：4–12 秒`,
+      flash ? '固定 720P，参考图片最多 5 张且不支持参考视频' : '支持 720P/960P/2K 与 text/keyframe/reference 模式',
+      '本地图片、视频和音频需要配置 SANMAO_PUBLIC_BASE_URL',
+    ],
+  };
+}
 
 function jimengLimits(rawId: string): VideoModelLimits {
   const base: VideoModelLimits = {
@@ -107,6 +145,7 @@ function seedanceLimits(rawId: string): VideoModelLimits | null {
 export function getVideoModelLimits(model?: { rawId?: string; displayName?: string }, provider?: VideoProviderIdentity | string): VideoModelLimits {
   const providerIdentity: VideoProviderIdentity = typeof provider === 'string' ? { platform: provider } : (provider || {});
   const rawId = String(model?.rawId || model?.displayName || '').toLowerCase();
+  if (isAgnesProvider(providerIdentity) || rawId.startsWith('agnes-video-')) return agnesLimits(rawId);
   if (isJimengProvider(providerIdentity)) return jimengLimits(rawId);
   if (!is65535Provider(providerIdentity)) return { ...defaults };
 

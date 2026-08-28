@@ -6,7 +6,7 @@ import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
-import { is65535Provider, isJimengProvider } from '@/lib/video-platform';
+import { is65535Provider, isJimengProvider, isAgnesProvider } from '@/lib/video-platform';
 
 type VideoTask = {
   id: string;
@@ -171,6 +171,10 @@ type VideoRestorePlan = {
   referenceImages: UploadSlot[];
   referenceVideo: UploadSlot | null;
   audios: UploadSlot[];
+  agnesWidth: number;
+  agnesHeight: number;
+  agnesNumFrames: number;
+  agnesFrameRate: number;
   warnings: string[];
 };
 
@@ -182,6 +186,10 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   const modelForLimits = targetModel || defaultModel || models[0];
   const modelId = targetModel?.id || defaultModel?.id || 'auto';
   const provider = providers.find((item) => item.id === modelForLimits?.providerId);
+  const usesAgnes = isAgnesProvider(provider) || modelForLimits?.rawId?.toLowerCase().startsWith('agnes-');
+  const usesAgnesV20 = usesAgnes && /agnes-video-v2\.0/i.test(modelForLimits?.rawId || '');
+  const usesAgnes25 = usesAgnes && /agnes-video-2\.5/i.test(modelForLimits?.rawId || '');
+  const usesAgnesFlash = usesAgnes && /agnes-video-2\.5-flash/i.test(modelForLimits?.rawId || '');
   const capabilities = modelForLimits?.capabilities || [];
   const can = (name: string) => capabilities.includes(name as never);
   const uses65535Policy = is65535Provider(provider);
@@ -258,7 +266,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   }
 
   const inputReferenceVideo = typeof input.referenceVideo === 'string' ? input.referenceVideo : '';
-  const referenceVideo = inputReferenceVideo && operation !== 'generate' ? uploadSlot(inputReferenceVideo, '参考视频', 'video') : null;
+  const referenceVideo = inputReferenceVideo && (operation !== 'generate' || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) ? uploadSlot(inputReferenceVideo, '参考视频', 'video') : null;
   if (inputReferenceVideo && !referenceVideo) warnings.push('当前操作不使用参考视频，已清除该素材');
 
   const sourceAudioUrls = Array.isArray(input.audios) && input.audios.length
@@ -308,6 +316,10 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     referenceImages,
     referenceVideo,
     audios,
+    agnesWidth: usesAgnesV20 && Number.isInteger(Number(input.width)) && Number(input.width) > 0 ? Number(input.width) : 1152,
+    agnesHeight: usesAgnesV20 && Number.isInteger(Number(input.height)) && Number(input.height) > 0 ? Number(input.height) : 768,
+    agnesNumFrames: usesAgnesV20 && Number.isInteger(Number(input.numFrames)) && Number(input.numFrames) >= 1 && Number(input.numFrames) <= 441 && (Number(input.numFrames) - 1) % 8 === 0 ? Number(input.numFrames) : 81,
+    agnesFrameRate: usesAgnesV20 && Number.isInteger(Number(input.frameRate)) && Number(input.frameRate) >= 1 && Number(input.frameRate) <= 60 ? Number(input.frameRate) : 24,
     warnings,
   };
 }
@@ -320,6 +332,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [seconds, setSeconds] = useState(5);
   const [ratio, setRatio] = useState('16:9');
   const [resolution, setResolution] = useState('720p');
+  const [agnesWidth, setAgnesWidth] = useState(1152);
+  const [agnesHeight, setAgnesHeight] = useState(768);
+  const [agnesNumFrames, setAgnesNumFrames] = useState(81);
+  const [agnesFrameRate, setAgnesFrameRate] = useState(24);
   const [firstFrame, setFirstFrame] = useState<UploadSlot | null>(null);
   const [lastFrame, setLastFrame] = useState<UploadSlot | null>(null);
   const [referenceImages, setReferenceImages] = useState<UploadSlot[]>([]);
@@ -382,6 +398,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const nativeTask = selectedProvider?.videoTransport === 'native-task' || selectedProvider?.platform === '65535';
   const uses65535Policy = is65535Provider(selectedProvider);
   const usesJimengCli = isJimengProvider(selectedProvider);
+  const usesAgnes = isAgnesProvider(selectedProvider) || selectedModel?.rawId?.toLowerCase().startsWith('agnes-');
+  const usesAgnesV20 = usesAgnes && /agnes-video-v2\.0/i.test(selectedModel?.rawId || '');
+  const usesAgnes25 = usesAgnes && /agnes-video-2\.5/i.test(selectedModel?.rawId || '');
+  const usesAgnesFlash = usesAgnes && /agnes-video-2\.5-flash/i.test(selectedModel?.rawId || '');
   const supportsReferenceMentions = !usesJimengCli;
   const baseModelLimits = useMemo(() => getVideoModelLimits(selectedModel, selectedProvider), [selectedModel?.rawId, selectedModel?.displayName, selectedProvider?.platform, selectedProvider?.videoTransport, selectedProvider?.baseUrl, selectedProvider?.videoBaseUrl]);
   const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
@@ -405,7 +425,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   // 65535's documented native task schema currently has no audio input field.
   // Only expose audio there when the model metadata explicitly advertises it;
   // other compatible providers keep the existing flexible control.
-  const supportsAudio = can('video-audio') || !uses65535Policy;
+  const supportsAudio = !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
   const modelOptions = [{ value: 'auto', label: '自动选择', description: '使用当前默认视频模型' }, ...models.map((model) => ({ value: model.id, label: model.displayName, description: model.providerName }))];
   const operationOptions = [{ value: 'generate' as const, label: '生成视频', description: '根据提示词和画面输入生成视频' }, ...(supportsEdit ? [{ value: 'edit' as const, label: '视频编辑', description: '参考已有视频进行修改' }] : []), ...(supportsExtend ? [{ value: 'extend' as const, label: '视频扩展', description: '延续已有视频的镜头' }] : [])];
   const inputModeOptions = useMemo(() => [{ value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' }, ...(supportsFirst ? [{ value: 'first-frame' as const, label: '首帧 · 控制开场画面', description: '上传一张开场参考图' }, { value: 'frames' as const, label: '首尾帧 · 约束镜头起止', description: '上传首帧和尾帧' }] : []), ...(supportsReference ? [{ value: 'reference' as const, label: '参考图 · 保持主体风格', description: `最多添加 ${modelLimits.maxReferenceImages} 张参考图` }] : [])], [modelLimits.maxReferenceImages, supportsFirst, supportsReference]);
@@ -631,6 +651,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setReferenceImages(plan.referenceImages);
     setReferenceVideo(plan.referenceVideo);
     setAudios(plan.audios);
+    setAgnesWidth(plan.agnesWidth);
+    setAgnesHeight(plan.agnesHeight);
+    setAgnesNumFrames(plan.agnesNumFrames);
+    setAgnesFrameRate(plan.agnesFrameRate);
     setReferenceMentionOpen(false);
     setPreviewImage(null);
     setSelectedTaskId(task.id);
@@ -643,9 +667,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (!models.length) return onNotify('请先在模型库启用一个视频模型');
     if (inputMode === 'first-frame' && !firstFrame) return onNotify('请先添加首帧图片');
     if (inputMode === 'frames' && (!firstFrame || !lastFrame)) return onNotify('首尾帧模式请先添加首帧和尾帧图片');
-    if (inputMode === 'reference' && !referenceImages.length) return onNotify('参考图模式请先添加至少一张图片');
+    if (inputMode === 'reference' && !referenceImages.length && !(usesAgnes25 && (referenceVideo || audios.length))) return onNotify('参考图模式请先添加图片、视频或音频素材');
     if (referenceImages.length > modelLimits.maxReferenceImages) return onNotify(`当前模型最多接收 ${modelLimits.maxReferenceImages} 张参考图`);
     if (audios.length > modelLimits.maxAudios) return onNotify(`当前模型最多接收 ${modelLimits.maxAudios} 段音频`);
+    if (usesAgnesV20 && (!Number.isInteger(agnesNumFrames) || agnesNumFrames < 1 || agnesNumFrames > 441 || (agnesNumFrames - 1) % 8 !== 0)) return onNotify('Agnes V2.0 帧数必须不超过 441 且满足 8n + 1');
+    if (usesAgnesV20 && (!Number.isInteger(agnesFrameRate) || agnesFrameRate < 1 || agnesFrameRate > 60)) return onNotify('Agnes V2.0 帧率必须在 1–60 之间');
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
     const mentionedReferenceNumbers = Array.from(prompt.matchAll(/@(\d+)\b/g), (match) => Number(match[1]));
     if (mentionedReferenceNumbers.length && inputMode !== 'reference') return onNotify('提示词中有 @引用，请先切换到参考图输入方式');
@@ -662,9 +688,12 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         firstFrame: inputMode === 'first-frame' || inputMode === 'frames' ? firstFrame?.url : undefined,
         lastFrame: inputMode === 'frames' ? lastFrame?.url : undefined,
         referenceImages: inputMode === 'reference' ? referenceImages.map((item) => item.url) : [],
-        referenceVideo: referenceVideo?.url,
-        audios: audios.map((item) => item.url),
-        audio: audios[0]?.url,
+        referenceVideo: usesAgnes ? (!usesAgnesV20 && !usesAgnesFlash && inputMode === 'reference' ? referenceVideo?.url : undefined) : referenceVideo?.url,
+        audios: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios.map((item) => item.url) : []) : audios.map((item) => item.url),
+        audio: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios[0]?.url : undefined) : audios[0]?.url,
+        ...(usesAgnes && !usesAgnesV20 ? { videoMode: inputMode === 'text' ? 'text' as const : inputMode === 'reference' ? 'reference' as const : 'keyframe' as const } : {}),
+        ...(usesAgnesV20 ? { width: agnesWidth, height: agnesHeight, numFrames: agnesNumFrames, frameRate: agnesFrameRate } : {}),
+        ...(usesAgnes25 ? { videoSize: resolution.toUpperCase() as '720P' | '960P' | '2K' } : {}),
       };
       const [compressedFirstFrame, compressedLastFrame, compressedReferences] = await Promise.all([
         input.firstFrame ? compressVideoImageDataUrl(input.firstFrame) : null,
@@ -730,22 +759,23 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         <div className="video-compose-scroll">
           <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className="video-live-pill">● 已连接</span></div>
       <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onClick={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyUp={(event) => { if (event.key !== 'Escape') setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart)); }} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图'} maxLength={6000} />{supportsReferenceMentions && referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
-        <div className={`video-fields-two ${operationOptions.length === 1 ? 'video-fields-single' : ''}`}>
+         <div className={`video-fields-two ${operationOptions.length === 1 ? 'video-fields-single' : ''}`}>
           <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
           <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>
         </div>
         {inputModeOptions.length > 1 && <div className="video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? '图生视频 · 首尾帧' : '参考图生视频' }))} ariaLabel="生成方式" /></div>}
-        {modelLimits.notes.length > 0 && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}</span></div>}
+         {modelLimits.notes.length > 0 && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
         {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 支持图片 data URI；本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
         {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
         {operation !== 'generate' && !modelLimits.inheritVideoSettingsFor?.includes(operation) && modelLimits.omitAspectRatioResolutionFor?.includes(operation) && <div className="video-model-notice warning"><strong>比例与分辨率沿用原视频</strong><span>当前续写操作不提交自定义比例和分辨率，仅使用续写时长。</span></div>}
-        <div className="video-option-segment"><span>基础参数</span><div><label>{usesJimengMultiframe ? '转场时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={usesJimengMultiframe ? '转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={ratio} onChange={setRatio} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>
+         <div className="video-option-segment"><span>{usesAgnesV20 ? 'V2.0 帧参数' : '基础参数'}</span><div><label>{usesJimengMultiframe ? '转场时长' : usesAgnesV20 ? '时长（兼容）' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={usesJimengMultiframe ? '转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={ratio} onChange={setRatio} options={ratioOptions} ariaLabel="视频比例" /></label>{!usesAgnesV20 && <label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label>}</div></div>
+         {usesAgnesV20 && <div className="video-option-segment"><span>宽高、帧数与帧率</span><div><label>宽度<input type="number" min={1} max={3840} step={1} value={agnesWidth} onChange={(event) => setAgnesWidth(Math.max(1, Number(event.target.value) || 1))} /></label><label>高度<input type="number" min={1} max={3840} step={1} value={agnesHeight} onChange={(event) => setAgnesHeight(Math.max(1, Number(event.target.value) || 1))} /></label><label>帧数<input type="number" min={1} max={441} step={8} value={agnesNumFrames} onChange={(event) => setAgnesNumFrames(Math.max(1, Number(event.target.value) || 1))} /></label><label>帧率<input type="number" min={1} max={60} step={1} value={agnesFrameRate} onChange={(event) => setAgnesFrameRate(Math.max(1, Number(event.target.value) || 1))} /></label></div></div>}
         <div className="video-input-heading"><span>画面与素材</span><small>模型不支持的输入会自动收起</small></div>
           <div className="video-upload-grid">
           {(inputMode === 'first-frame' || inputMode === 'frames') && <UploadSlot label="首帧" value={firstFrame} onClick={() => inputRefs.current.first?.click()} onRemove={() => setFirstFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.first = node; }} accept="image/*" onChange={() => void selectFile('first', setFirstFrame, 'image')} />}
           {inputMode === 'frames' && <UploadSlot label="尾帧" value={lastFrame} onClick={() => inputRefs.current.last?.click()} onRemove={() => setLastFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.last = node; }} accept="image/*" onChange={() => void selectFile('last', setLastFrame, 'image')} />}
           {inputMode === 'reference' && <ReferenceImageTray items={referenceImages} maxItems={modelLimits.maxReferenceImages} onAdd={addReferences} onRemove={(index) => setReferenceImages((old) => old.filter((_, itemIndex) => itemIndex !== index))} onClear={clearReferences} onMove={moveReference} onReorder={reorderReferences} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.refs = node; }} />}
-          {(operation === 'edit' || operation === 'extend') && <UploadSlot label="参考视频" value={referenceVideo} onClick={() => inputRefs.current.video?.click()} onRemove={() => setReferenceVideo(null)} inputRef={(node) => { inputRefs.current.video = node; }} accept="video/*" onChange={() => void selectFile('video', setReferenceVideo, 'video')} />}
+           {((operation === 'edit' || operation === 'extend') || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) && <UploadSlot label="参考视频" value={referenceVideo} onClick={() => inputRefs.current.video?.click()} onRemove={() => setReferenceVideo(null)} inputRef={(node) => { inputRefs.current.video = node; }} accept="video/*" onChange={() => void selectFile('video', setReferenceVideo, 'video')} />}
           {supportsAudio && <AudioUploadTray items={audios} maxItems={modelLimits.maxAudios} onAdd={addAudios} onRemove={(index) => setAudios((old) => old.filter((_, itemIndex) => itemIndex !== index))} inputRef={(node) => { inputRefs.current.audio = node; }} />}
           </div>
         </div>

@@ -7,6 +7,7 @@ import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
+import { agnesBillingLabel } from '@/lib/agnes';
 import { listChatSessions, listGallery, loadImageDirectoryHandle, patchGalleryItem, removeChatSession, removeGalleryItems, replaceChatSessions, replaceGalleryItems, saveChatSession, saveGalleryItems, saveImageDirectoryHandle } from '@/lib/client-history';
 import Link from 'next/link';
 import MaskEditor from '@/components/MaskEditor';
@@ -120,6 +121,11 @@ const sizeTiers = [
         longEdge: 2048
     },
     {
+        value: '3k',
+        label: '3K',
+        longEdge: 3072
+    },
+    {
         value: '4k',
         label: '4K',
         longEdge: 3840
@@ -207,10 +213,10 @@ function ratioLabel(ratio, customWidth, customHeight) {
 }
 function resolutionFromDimensions(width, height) {
     const longEdge = Math.max(width, height);
-    return longEdge <= 1536 ? '1K' : longEdge <= 3072 ? '2K' : '4K';
+    return longEdge <= 1536 ? '1K' : longEdge <= 2304 ? '2K' : longEdge <= 3072 ? '3K' : '4K';
 }
 function logResolutionLabel(log, spec) {
-    return log.resolution || log.outputSize?.match(/^(1K|2K|4K)/i)?.[1]?.toUpperCase() || spec?.resolution || '未记录';
+    return log.resolution || log.outputSize?.match(/^(1K|2K|3K|4K)/i)?.[1]?.toUpperCase() || spec?.resolution || '未记录';
 }
 function logOutputSizeLabel(log, spec) {
     return log.outputSize || (spec ? `${spec.width}×${spec.height}` : '尺寸未记录');
@@ -408,7 +414,7 @@ function outputDimensions(outputSize) {
 }
 function sizeTierFromDimensions(width, height) {
     const longEdge = Math.max(width, height);
-    return longEdge > 3072 ? '4k' : longEdge > 1536 ? '2k' : '1k';
+    return longEdge > 3072 ? '4k' : longEdge > 2304 ? '3k' : longEdge > 1536 ? '2k' : '1k';
 }
 function editorRatio(editor) {
     if (editor.ratio !== '自动') return editor.ratio;
@@ -9197,8 +9203,12 @@ export default function Page() {
                                     children: model.displayName
                                 }),
                                 /*#__PURE__*/ _jsx("span", {
-                                    className: `kind-badge ${model.kind}`,
+                                className: `kind-badge ${model.kind}`,
                                     children: kindLabel(model.kind)
+                                }),
+                                model.billing && /*#__PURE__*/ _jsx("span", {
+                                    className: `billing-badge ${model.billing}`,
+                                    children: agnesBillingLabel(model.billing)
                                 }),
                                 inUse && /*#__PURE__*/ _jsx("span", {
                                     children: "使用中"

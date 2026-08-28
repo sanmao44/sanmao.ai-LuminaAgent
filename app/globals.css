@@ -3228,3 +3228,10 @@ html[data-theme="dark"] .agent-page{
 
 /* Primary Angle actions follow the same high-contrast treatment as the rest of SANMAO. */
 .angle-submit .primary-action,.angle-result-foot .angle-result-primary,.angle-result-divider>span,.angle-workflow .current i{color:#fff}
+
+/* Agnes model billing is advisory: free labels describe the current offer,
+   while paid models remain visible and manually selectable. */
+.billing-badge{font-size:7px!important;border-radius:999px;padding:3px 6px;font-weight:850}
+.billing-badge.free{background:var(--success-soft);color:var(--success)}
+.billing-badge.temporary-free{background:var(--accent-soft);color:var(--accent-text)}
+.billing-badge.paid{background:var(--warning-soft,var(--panel-3));color:var(--warning)}

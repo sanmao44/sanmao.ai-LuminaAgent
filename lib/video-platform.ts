@@ -24,3 +24,12 @@ export function isJimengProvider(provider?: VideoProviderIdentity | null) {
     || provider.videoTransport === 'jimeng-cli'
   ));
 }
+
+export function isAgnesProvider(provider?: VideoProviderIdentity | null) {
+  const host = (value: string) => { try { return new URL(value).hostname; } catch { return value; } };
+  return Boolean(provider && (
+    provider.platform === 'agnes'
+    || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.baseUrl || ''))
+    || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.videoBaseUrl || ''))
+  ));
+}

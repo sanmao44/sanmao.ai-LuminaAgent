@@ -5,7 +5,7 @@ import { createVideoTask, findVideoTask, updateVideoTask, type VideoTask } from 
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import { getVideoModelLimits, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
-import { is65535Provider, isJimengProvider } from './video-platform';
+import { is65535Provider, isJimengProvider, isAgnesProvider } from './video-platform';
 import { prepareVideoInputMedia } from './video-input-media';
 import type { GenerationSource } from './generation-source';
 
@@ -32,6 +32,15 @@ function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGener
     referenceImages: Array.isArray(input.referenceImages) ? input.referenceImages.filter((item): item is string => typeof item === 'string' && item.length > 0).slice(0, 16) : [],
     ...(referenceVideos.length ? { referenceVideos, referenceVideo: referenceVideos[0] } : {}),
     ...(audios.length ? { audios, audio: audios[0] } : {}),
+    ...(input.videoMode ? { videoMode: input.videoMode } : {}),
+    ...(Number.isFinite(Number(input.width)) ? { width: Math.round(Number(input.width)) } : {}),
+    ...(Number.isFinite(Number(input.height)) ? { height: Math.round(Number(input.height)) } : {}),
+    ...(Number.isFinite(Number(input.numFrames)) ? { numFrames: Math.round(Number(input.numFrames)) } : {}),
+    ...(Number.isFinite(Number(input.frameRate)) ? { frameRate: Math.round(Number(input.frameRate)) } : {}),
+    ...(input.videoSize ? { videoSize: input.videoSize } : {}),
+    ...(Number.isFinite(Number(input.referenceVideoStartSeconds)) ? { referenceVideoStartSeconds: Number(input.referenceVideoStartSeconds) } : {}),
+    ...(Number.isFinite(Number(input.referenceVideoEndSeconds)) ? { referenceVideoEndSeconds: Number(input.referenceVideoEndSeconds) } : {}),
+    ...(input.requireAudio !== undefined ? { requireAudio: Boolean(input.requireAudio) } : {}),
   };
 }
 
@@ -53,7 +62,7 @@ function assertGenericInputLimits(input: VideoGenerationInput) {
   if (audios > VIDEO_INPUT_SAFETY_LIMITS.maxAudios) throw new Error(`音频最多支持 ${VIDEO_INPUT_SAFETY_LIMITS.maxAudios} 段，请减少后再提交。`);
 }
 
-function validateModelInput(input: VideoGenerationInput, rawInput: VideoGenerationInput, limits: ReturnType<typeof getVideoModelLimits>, providerLabel: '65535' | '即梦') {
+function validateModelInput(input: VideoGenerationInput, rawInput: VideoGenerationInput, limits: ReturnType<typeof getVideoModelLimits>, providerLabel: '65535' | '即梦' | 'Agnes') {
   if (input.referenceImages && input.referenceImages.length > limits.maxReferenceImages) throw new Error(`当前${providerLabel}模型最多接收 ${limits.maxReferenceImages} 张参考图，请减少后再提交。`);
   const referenceVideos = input.referenceVideos || (input.referenceVideo ? [input.referenceVideo] : []);
   if (referenceVideos.length > limits.maxReferenceVideos) throw new Error(`当前${providerLabel}模型最多接收 ${limits.maxReferenceVideos} 个参考视频，请减少后再提交。`);
@@ -72,6 +81,40 @@ function validateModelInput(input: VideoGenerationInput, rawInput: VideoGenerati
   if (rawInput.resolution !== undefined && !omitsAspectRatioResolution && !limits.resolutions.includes(String(input.resolution))) {
     throw new Error(`当前${providerLabel}模型仅支持 ${limits.resolutions.join('、')}。`);
   }
+}
+
+function validateAgnesInput(input: VideoGenerationInput, rawInput: VideoGenerationInput, modelId: string) {
+  const lower = modelId.toLowerCase();
+  if (/agnes-video-v2\.0/.test(lower)) {
+    if (input.referenceVideos?.length || input.referenceVideo || input.audios?.length || input.audio) throw new Error('Agnes Video V2.0 不接受参考视频或音频输入。');
+    const frames = Number(input.numFrames ?? 81);
+    const rate = Number(input.frameRate ?? 24);
+    if (!Number.isInteger(frames) || frames > 441 || frames < 1 || (frames - 1) % 8 !== 0) throw new Error('Agnes Video V2.0 的帧数必须不超过 441 且满足 8n + 1。');
+    if (!Number.isInteger(rate) || rate < 1 || rate > 60) throw new Error('Agnes Video V2.0 的帧率必须在 1–60 之间。');
+    return;
+  }
+  const flash = /agnes-video-2\.5-flash/.test(lower);
+  const mode = input.videoMode || (input.firstFrame || input.lastFrame ? 'keyframe' : input.referenceImages?.length || input.referenceVideo || input.audios?.length ? 'reference' : 'text');
+  if (!['text', 'keyframe', 'reference'].includes(mode)) throw new Error('Agnes 视频 mode 必须为 text、keyframe 或 reference。');
+  if (Number(input.seconds) < 4 || Number(input.seconds) > 12) throw new Error('Agnes Video 2.5 系列仅支持 4–12 秒。');
+  const hasFirstFrame = Boolean(input.firstFrame);
+  const hasLastFrame = Boolean(input.lastFrame);
+  const hasImages = Boolean(input.referenceImages?.length);
+  const hasVideos = Boolean(input.referenceVideos?.length || input.referenceVideo);
+  const hasAudios = Boolean(input.audios?.length || input.audio);
+  if (mode === 'text' && (hasFirstFrame || hasLastFrame || hasImages || hasVideos || hasAudios)) throw new Error('Agnes text 模式不允许首尾帧、参考图片、参考视频或音频输入。');
+  if (mode === 'keyframe' && !hasFirstFrame && !hasLastFrame) throw new Error('Agnes keyframe 模式至少需要首帧或尾帧。');
+  if (mode === 'keyframe' && (hasImages || hasVideos || hasAudios)) throw new Error('Agnes keyframe 模式不允许参考图片、参考视频或音频输入。');
+  if (mode === 'reference' && (hasFirstFrame || hasLastFrame)) throw new Error('Agnes reference 模式不允许首帧或尾帧。');
+  if (mode === 'reference' && !hasImages && !hasVideos && !hasAudios) throw new Error('Agnes reference 模式至少需要图片、视频或音频参考输入。');
+  if (flash && (input.referenceImages?.length || 0) > 5) throw new Error('Agnes Video 2.5 Flash 最多接收 5 张参考图片。');
+  if (flash && (input.referenceVideos?.length || input.referenceVideo)) throw new Error('Agnes Video 2.5 Flash 不支持参考视频。');
+  if (!flash && input.resolution && !['720P', '960P', '2K'].includes(String(input.resolution).toUpperCase())) throw new Error('Agnes Video 2.5 仅支持 720P、960P、2K。');
+}
+
+function isRetryableAgnesPollError(error: unknown) {
+  if (!(error instanceof VideoProviderError)) return false;
+  return error.status === undefined || error.status === 429 || error.status >= 500;
 }
 
 function effectiveJimengLimits(input: VideoGenerationInput, limits: ReturnType<typeof getVideoModelLimits>) {
@@ -112,9 +155,9 @@ async function callSubmit(runtime: NonNullable<Awaited<ReturnType<typeof getRunt
     : submitRemoteVideo(runtime.provider, runtime.model.rawId, input, key);
 }
 
-async function callPoll(provider: Awaited<ReturnType<typeof getProviderWithKey>>, taskId: string) {
+async function callPoll(provider: Awaited<ReturnType<typeof getProviderWithKey>>, taskId: string, rawModelId?: string) {
   if (!provider) throw new VideoProviderError('视频服务商不存在');
-  return isJimengProvider(provider) ? pollJimengVideo(provider, taskId) : pollRemoteVideo(provider, taskId);
+  return isJimengProvider(provider) ? pollJimengVideo(provider, taskId) : pollRemoteVideo(provider, taskId, undefined, rawModelId);
 }
 
 async function persistResult(task: VideoTask, result: VideoProviderTask) {
@@ -161,9 +204,9 @@ export async function saveVideoTaskLocally(id: string) {
   });
 }
 
-async function failTask(task: VideoTask, error: unknown, code?: string) {
+async function failTask(task: VideoTask, error: unknown, code?: string, providerResponse?: unknown) {
   const message = error instanceof Error ? error.message : String(error || '视频任务失败');
-  const updated = await updateVideoTask(task.id, { status: 'failed', error: message, errorCode: code, completedAt: new Date().toISOString(), nextPollAt: undefined });
+  const updated = await updateVideoTask(task.id, { status: 'failed', error: message, errorCode: code, ...(providerResponse !== undefined ? { providerResponse } : {}), completedAt: new Date().toISOString(), nextPollAt: undefined });
   await finishGenerationLog(task.id, { status: 'error', durationMs: Date.now() - new Date(task.createdAt).getTime(), error: message, errorCode: code }).catch(() => undefined);
   return updated;
 }
@@ -177,6 +220,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   const modelLimits = isJimengProvider(runtime.provider) ? effectiveJimengLimits(input, baseModelLimits) : baseModelLimits;
   if (!input.prompt) throw new Error('请输入视频提示词');
   if (is65535Provider(runtime.provider) || isJimengProvider(runtime.provider)) validateModelInput(input, options.input, modelLimits, isJimengProvider(runtime.provider) ? '即梦' : '65535');
+  if (isAgnesProvider(runtime.provider) || runtime.provider.videoTransport === 'agnes-videos') validateAgnesInput(input, options.input, runtime.model.rawId);
   if (isNativeTaskProvider(runtime.provider)) {
     if (is65535Provider(runtime.provider) && input.audios?.length && !runtime.model.capabilities.includes('video-audio')) throw new Error('当前 65535 视频模型未声明音频输入，请移除音频后再提交。');
     const inlineBytes = inlineMediaBytes(input);
@@ -200,13 +244,13 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   await startGenerationLog({ mode: 'video', mediaKind: 'video', source: task.source || 'workspace', prompt: input.prompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, operation: input.operation || 'generate', idempotencyKey: key }, task.id);
   try {
     const result = await callSubmit(runtime, input, key);
-    if (result.status === 'done' && result.videos.length) return persistResult({ ...task, providerTaskId: result.providerTaskId }, result);
-    if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode);
+    if (result.status === 'done' && result.videos.length) return persistResult({ ...task, providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId }, result);
+    if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
     if (result.status === 'done') return failTask(task, '服务商已完成任务，但没有返回可下载的视频地址', 'VIDEO_RESULT_MISSING');
-    const updated = await updateVideoTask(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, startedAt: new Date().toISOString(), nextPollAt: Date.now() + 2000, costUsd: result.costUsd });
+    const updated = await updateVideoTask(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + (isAgnesProvider(runtime.provider) ? 1500 : 2000), costUsd: result.costUsd });
     return updated;
   } catch (error) {
-    return failTask(task, error, error instanceof VideoProviderError ? error.code : undefined);
+    return failTask(task, error, error instanceof VideoProviderError ? error.code : typeof (error as any)?.code === 'string' ? (error as any).code : undefined);
   }
 }
 
@@ -216,22 +260,28 @@ export async function refreshVideoTask(id: string) {
   if (task.status === 'done' || task.status === 'failed') return task;
   if (!task.providerTaskId) return task;
   if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
+  const quickProvider = await getProviderWithKey(task.providerId);
+  if ((isAgnesProvider(quickProvider || undefined) || quickProvider?.videoTransport === 'agnes-videos') && Date.now() - new Date(task.createdAt).getTime() > 30 * 60 * 1000) return failTask(task, 'Agnes 视频任务轮询超过最大等待时长。', 'AGNES_VIDEO_POLL_TIMEOUT');
   const provider = await getProviderWithKey(task.providerId);
   if (!provider) return failTask(task, '视频服务商配置已删除', 'PROVIDER_NOT_FOUND');
   try {
-    const result = await callPoll(provider, task.providerTaskId);
+    const result = await callPoll(provider, task.videoId || task.providerTaskId, task.providerModel);
     if (result.status === 'done' && result.videos.length) return persistResult(task, result);
-    if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING');
-    if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode);
+    if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING', result.raw);
+    if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
     const pollCount = task.pollCount + 1;
-    const interval = Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);
-    return updateVideoTask(id, { status: result.status, pollCount, nextPollAt: Date.now() + interval });
+    const interval = isAgnesProvider(provider) ? Math.round(1000 + Math.random() * 1000) : Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);
+    return updateVideoTask(id, { status: result.status, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, pollCount, nextPollAt: Date.now() + interval });
   } catch (error) {
-    if (error instanceof VideoProviderError && error.status === 429) {
+    if (isAgnesProvider(provider) && isRetryableAgnesPollError(error)) {
       const pollCount = task.pollCount + 1;
-      const backoff = error.retryAfterMs || Math.min(30_000, 2000 * 2 ** Math.min(4, pollCount));
-      return updateVideoTask(id, { pollCount, nextPollAt: Date.now() + backoff });
+      const providerError = error as VideoProviderError;
+      const baseDelay = providerError.status === 429 && providerError.retryAfterMs
+        ? providerError.retryAfterMs
+        : Math.min(60_000, 1000 * 2 ** Math.min(6, pollCount - 1));
+      const backoff = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+      return updateVideoTask(id, { pollCount, nextPollAt: Date.now() + backoff, providerStatus: providerError.status ? `HTTP ${providerError.status}` : 'network_error' });
     }
-    return failTask(task, error, error instanceof VideoProviderError ? error.code : undefined);
+    return failTask(task, error, error instanceof VideoProviderError ? error.code : typeof (error as any)?.code === 'string' ? (error as any).code : undefined);
   }
 }
