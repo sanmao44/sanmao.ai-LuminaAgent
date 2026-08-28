@@ -252,3 +252,4 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
   .video-compose-column .video-compose-card{height:auto;min-height:0}
   .video-preview-column{height:auto;min-height:0;grid-template-rows:none}
 }
+.jimeng-provider-install>span{min-width:0;line-height:1.5}
