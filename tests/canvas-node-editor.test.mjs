@@ -74,6 +74,13 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.doesNotMatch(continuation, /createGenerator\(/);
 });
 
+test("selected related canvas edges become dashed and animate their flow", () => {
+  assert.match(component, /related \? "related"/);
+  assert.match(styles, /\.canvas-edge-visual \.canvas-edge\.related\{[^}]*stroke-dasharray:11 9[^}]*animation:canvas-edge-related-dashes 1\.8s linear infinite/);
+  assert.match(styles, /@keyframes canvas-edge-related-dashes\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:-40\}\}/);
+  assert.match(styles, /canvas-edge-related-flow,html:not\(\[data-motion="on"\]\) \.canvas-edge\.related\{animation:none!important\}/);
+});
+
 test("image node editing persists parameters without turning uploads into generated media", () => {
   assert.match(component, /role: "参考素材",\s*params: defaultParams\(asset\.kind, runtime\)/);
   assert.match(component, /generation: item\.data\.generation/);

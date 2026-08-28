@@ -903,7 +903,7 @@ function CanvasEdgeVisual({
         onPointerDown={handlePointerDown}
       />
       <path
-        className={`canvas-edge ${selected ? "selected" : ""}`}
+        className={`canvas-edge ${related ? "related" : ""} ${selected ? "selected" : ""}`}
         d={path}
         markerEnd={`url(#canvas-arrow-${colorKey})`}
         onPointerEnter={handlePointerEnter}

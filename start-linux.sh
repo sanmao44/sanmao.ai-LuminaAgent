@@ -10,4 +10,5 @@ case "$PORT" in
   ''|*[!0-9]*) PORT=3210 ;;
 esac
 if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65525 ]; then PORT=3210; fi
+export SANMAO_LIFECYCLE=1
 node node_modules/next/dist/bin/next start -H 127.0.0.1 -p "$PORT"

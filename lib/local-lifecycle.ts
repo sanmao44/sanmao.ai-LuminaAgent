@@ -31,7 +31,7 @@ function scheduleShutdown() {
     shutdownTimer = null;
     removeExpiredSessions();
     if (sessions.size === 0 && isLocalLifecycleEnabled()) process.exit(0);
-  }, SHUTDOWN_GRACE_MS);
+  }, delay);
 }
 
 function removeExpiredSessions() {

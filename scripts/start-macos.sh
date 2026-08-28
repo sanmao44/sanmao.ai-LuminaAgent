@@ -25,6 +25,19 @@ server_is_ready() {
   sanmao_server_health "$1"
 }
 
+server_lifecycle_enabled() {
+  PORT_TO_CHECK=$1
+  BODY="${TMPDIR:-/tmp}/sanmao-lifecycle-health-$$.json"
+  rm -f "$BODY"
+  STATUS=$(curl --noproxy '*' -sS -o "$BODY" -w '%{http_code}' --connect-timeout 0.3 --max-time 1 "http://127.0.0.1:$PORT_TO_CHECK/api/health" 2>/dev/null || true)
+  if [ "$STATUS" = 200 ] && grep -Eq '"lifecycleEnabled"[[:space:]]*:[[:space:]]*true' "$BODY" 2>/dev/null; then
+    rm -f "$BODY"
+    return 0
+  fi
+  rm -f "$BODY"
+  return 1
+}
+
 find_existing_server() {
   PORT_TO_CHECK=$PORT_START
   while [ $PORT_TO_CHECK -le $PORT_END ]; do
@@ -79,7 +92,11 @@ acquire_lock() {
 }
 
 EXISTING_PORT=`find_existing_server`
-if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null; then
+if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && ! server_lifecycle_enabled "$EXISTING_PORT"; then
+  sanmao_log "检测到旧服务未启用网页关闭自动停止，正在重启端口 $EXISTING_PORT" WARN
+  sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
+fi
+if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && server_lifecycle_enabled "$EXISTING_PORT"; then
   printf 'SANMAO.AI 已在运行：http://localhost:%s\n' $EXISTING_PORT
   rm -f "$LEGACY_MARKER"
   open "http://localhost:$EXISTING_PORT"
@@ -196,7 +213,7 @@ SERVER_STDOUT="${TMPDIR:-/tmp}/sanmao-ai-server.out.log"
 SERVER_STDERR="${TMPDIR:-/tmp}/sanmao-ai-server.err.log"
 rm -f "$SERVER_STDOUT" "$SERVER_STDERR"
 NEXT_CLI="$ROOT_DIR/node_modules/next/dist/bin/next"
-unset SANMAO_LIFECYCLE
+export SANMAO_LIFECYCLE=1
 node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" &
 SERVER_PID=$!
 sanmao_log "已启动服务进程 PID $SERVER_PID，等待端口 $PORT 就绪。" INFO

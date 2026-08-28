@@ -5,6 +5,7 @@ import './agent-upgrades.css';
 import './desktop-readability.css';
 import './canvas.css';
 import './motion.css';
+import LocalLifecycle from '@/components/LocalLifecycle';
 import MotionPreference from '@/components/MotionPreference';
 
 export const viewport: Viewport = {
@@ -40,7 +41,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="zh-CN" data-theme="light" suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: themeBootScript }} /></head>
-      <body><MotionPreference />{children}</body>
+      <body><MotionPreference /><LocalLifecycle />{children}</body>
     </html>
   );
 }

@@ -70,6 +70,7 @@ function Get-SanmaoServerInfo([int]$port) {
     return [pscustomobject]@{
       Port = $port
       NetworkMode = if ($data.networkMode -eq 'lan') { 'lan' } else { 'local' }
+      LifecycleEnabled = [bool]$data.lifecycleEnabled
     }
   } catch { return $null }
 }
@@ -324,10 +325,11 @@ $existing = Find-ExistingServer
 if ($existing) {
   $existingPort = [int]$existing.Port
   $modeMismatch = $existing.NetworkMode -ne $networkMode
+  $lifecycleMismatch = $existing.LifecycleEnabled -ne (-not $Lan.IsPresent)
   $buildStale = Test-SanmaoBuildStale
-  if (($modeMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
-  if ($modeMismatch -or $buildStale -or $ForceRestart.IsPresent) {
-    $reason = if ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换为局域网共享模式' } else { '检测到源码比当前构建更新' }
+  if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
+  if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) {
+    $reason = if ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新网页关闭自动停止设置' } else { '检测到源码比当前构建更新' }
     Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {
@@ -536,7 +538,11 @@ if ($port -gt $portEnd) {
   }
 }
 
-Remove-Item Env:SANMAO_LIFECYCLE -ErrorAction SilentlyContinue
+if ($Lan.IsPresent) {
+  Remove-Item Env:SANMAO_LIFECYCLE -ErrorAction SilentlyContinue
+} else {
+  $env:SANMAO_LIFECYCLE = '1'
+}
 $env:SANMAO_NETWORK_MODE = $networkMode
 Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
