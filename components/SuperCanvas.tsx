@@ -93,6 +93,7 @@ import { recordModelCall } from "@/lib/model-preferences";
 import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
 import {
   fitCanvasNodeEditorBelow,
+  placeCanvasContextMenu,
   placeCanvasNodeToolbar,
 } from "@/lib/canvas/editor-layout";
 import { recordCanvasImages } from "@/lib/creation/history";
@@ -163,6 +164,13 @@ type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
 type Point = { x: number; y: number };
+function hasExternalFileTransfer(dataTransfer: DataTransfer) {
+  return (
+    dataTransfer.types.includes("Files") ||
+    [...dataTransfer.items].some((item) => item.kind === "file")
+  );
+}
+
 type Notice = { message: string; kind: "ok" | "error" };
 type CanvasGenerationLog = {
   id: string;
@@ -1098,6 +1106,7 @@ export default function SuperCanvas() {
   const [assetDropGroupId, setAssetDropGroupId] = useState<string | null>(
     null,
   );
+  const [fileDropActive, setFileDropActive] = useState(false);
 
   useEffect(() => {
     setTheme(
@@ -7568,7 +7577,7 @@ export default function SuperCanvas() {
       </header>
       <div
         ref={stageRef}
-        className={`canvas-stage ${panActive ? "is-panning" : ""}`}
+        className={`canvas-stage ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""}`}
         tabIndex={-1}
         aria-keyshortcuts="Delete"
         onPointerDown={handleStagePointerDown}
@@ -7605,6 +7614,12 @@ export default function SuperCanvas() {
           if (!isReferenceDrag && !isCanvasNodeDrag) event.preventDefault();
         }}
         onDragOver={(event) => {
+          if (hasExternalFileTransfer(event.dataTransfer)) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            setFileDropActive(true);
+            return;
+          }
           if (event.dataTransfer.types.includes("application/x-sanmao-asset")) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
@@ -7617,10 +7632,26 @@ export default function SuperCanvas() {
           }
         }}
         onDragLeave={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setAssetDropGroupId(null);
+            setFileDropActive(false);
+          }
         }}
-        onDrop={handleAssetDrop}
+        onDrop={(event) => {
+          if (hasExternalFileTransfer(event.dataTransfer)) {
+            event.preventDefault();
+            event.stopPropagation();
+            setFileDropActive(false);
+            if (event.dataTransfer.files.length) {
+              void handleFiles(
+                event.dataTransfer.files,
+                screenToWorld(event.clientX, event.clientY),
+              );
+            }
+            return;
+          }
+          handleAssetDrop(event);
+        }}
         onContextMenu={handleContextMenu}
         onWheel={(event) => {
           if (isCanvasWheelIsolatedTarget(event.target)) {
@@ -7637,6 +7668,12 @@ export default function SuperCanvas() {
           );
         }}
       >
+        {fileDropActive && (
+          <div className="canvas-file-drop-hint" aria-hidden="true">
+            <span>↥</span>
+            <b>松开以导入图片或视频</b>
+          </div>
+        )}
         <div className="canvas-grid" />
         {snapGuides.length > 0 && (
           <div className="canvas-snap-guides" aria-hidden="true">
@@ -8419,29 +8456,16 @@ export default function SuperCanvas() {
             position={contextMenu}
           />
         ) : contextMenu ? (
-          <div
-            className="canvas-context-menu"
-            style={{
-              left: Math.max(
-                8,
-                Math.min(
-                  contextMenu.x,
-                  window.innerWidth <= 420
-                    ? 8
-                    : Math.max(8, window.innerWidth - 308),
-                ),
-              ),
-              top: Math.max(
-                8,
-                Math.min(contextMenu.y, Math.max(8, window.innerHeight - 640)),
-              ),
-            }}
-            onClick={(event) => event.stopPropagation()}
+          <CanvasContextMenuFrame
+            position={contextMenu}
+            ariaLabel="添加节点菜单"
           >
             <div className="canvas-menu-title">
               <span>添加节点</span>
               <small>选择操作放置到当前画布</small>
             </div>
+
+            <div className="canvas-context-menu-body">
 
             <button type="button" className="canvas-menu-item canvas-menu-item-tool" onClick={() => addNode("upscale", contextMenu.world)}>
               <span className="canvas-menu-icon" aria-hidden="true">↗</span>
@@ -8586,7 +8610,8 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
             </div>
-          </div>
+            </div>
+          </CanvasContextMenuFrame>
         ) : null}
       </div>
       {lightbox && (() => {
@@ -9776,6 +9801,94 @@ function CanvasNodeQuickToolbar({
   );
 }
 
+function CanvasContextMenuFrame({
+  position,
+  className,
+  ariaLabel,
+  dataNodeId,
+  children,
+}: {
+  position: { x: number; y: number };
+  className?: string;
+  ariaLabel: string;
+  dataNodeId?: string;
+  children: ReactNode;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [placement, setPlacement] = useState({
+    left: position.x + 10,
+    top: position.y + 10,
+  });
+  const [measured, setMeasured] = useState(false);
+
+  const reposition = useCallback(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    const viewport = {
+      width: Math.max(1, window.visualViewport?.width || window.innerWidth),
+      height: Math.max(1, window.visualViewport?.height || window.innerHeight),
+    };
+    const next = placeCanvasContextMenu(
+      { left: position.x, top: position.y },
+      viewport,
+      { width: rect.width, height: rect.height },
+    );
+    setPlacement((current) =>
+      current.left === next.left && current.top === next.top ? current : next,
+    );
+    setMeasured(true);
+  }, [position.x, position.y]);
+
+  useLayoutEffect(() => {
+    setMeasured(false);
+    reposition();
+    let frame = 0;
+    const schedule = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        reposition();
+      });
+    };
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(schedule)
+      : null;
+    if (observer && menuRef.current) observer.observe(menuRef.current);
+    window.addEventListener("resize", schedule);
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener("resize", schedule);
+    visualViewport?.addEventListener("scroll", schedule);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      visualViewport?.removeEventListener("resize", schedule);
+      visualViewport?.removeEventListener("scroll", schedule);
+    };
+  }, [reposition]);
+
+  return (
+    <div
+      ref={menuRef}
+      className={`canvas-context-menu${className ? ` ${className}` : ""}`}
+      data-node-id={dataNodeId}
+      role="menu"
+      aria-label={ariaLabel}
+      style={{
+        left: placement.left,
+        top: placement.top,
+        visibility: measured ? "visible" : "hidden",
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
 function CanvasNodeContextMenu({
   node,
   selectionCount,
@@ -9788,58 +9901,49 @@ function CanvasNodeContextMenu({
   position: { x: number; y: number };
 }) {
   return (
-    <div
-      className="canvas-context-menu canvas-node-context-menu"
-      data-node-id={node.id}
-      aria-label={`${nodeLabel(node)}右键菜单`}
-      style={{
-        left: Math.max(
-          8,
-          Math.min(position.x, Math.max(8, window.innerWidth - 350)),
-        ),
-        top: Math.max(
-          8,
-          Math.min(position.y, Math.max(8, window.innerHeight - 640)),
-        ),
-      }}
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={(event) => event.stopPropagation()}
-      onWheel={(event) => event.stopPropagation()}
+    <CanvasContextMenuFrame
+      className="canvas-node-context-menu"
+      dataNodeId={node.id}
+      ariaLabel={`${nodeLabel(node)}右键菜单`}
+      position={position}
     >
       <div className="canvas-menu-title">
         <span>{nodeLabel(node)}</span>
         <small>{selectionCount > 1 ? `已选择 ${selectionCount} 个对象` : "节点操作"}</small>
       </div>
-      {groups.map((group) => (
-        <div className="canvas-menu-group" key={group.label}>
-          <div className="canvas-menu-group-title">
-            <span className="canvas-menu-group-mark" aria-hidden="true">⌘</span>
-            <span>
-              <b>{group.label}</b>
-              <small>快捷操作</small>
-            </span>
+      <div className="canvas-context-menu-body">
+        {groups.map((group) => (
+          <div className="canvas-menu-group" key={group.label}>
+            <div className="canvas-menu-group-title">
+              <span className="canvas-menu-group-mark" aria-hidden="true">⌘</span>
+              <span>
+                <b>{group.label}</b>
+                <small>快捷操作</small>
+              </span>
+            </div>
+            {group.actions.map((action) => (
+              <button
+                type="button"
+                role="menuitem"
+                key={action.id}
+                className={`canvas-menu-item canvas-menu-item-context ${action.danger ? "danger" : ""}`}
+                title={action.title || action.label}
+                aria-label={action.label}
+                disabled={action.disabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  action.onClick();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">{action.icon}</span>
+                <span className="canvas-menu-copy"><b>{action.label}</b></span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            ))}
           </div>
-          {group.actions.map((action) => (
-            <button
-              type="button"
-              key={action.id}
-              className={`canvas-menu-item canvas-menu-item-context ${action.danger ? "danger" : ""}`}
-              title={action.title || action.label}
-              aria-label={action.label}
-              disabled={action.disabled}
-              onClick={(event) => {
-                event.stopPropagation();
-                action.onClick();
-              }}
-            >
-              <span className="canvas-menu-icon" aria-hidden="true">{action.icon}</span>
-              <span className="canvas-menu-copy"><b>{action.label}</b></span>
-              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-            </button>
-          ))}
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </CanvasContextMenuFrame>
   );
 }
 

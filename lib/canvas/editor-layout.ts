@@ -24,6 +24,33 @@ export type CanvasOverlayFit = CanvasOverlayPosition & {
   maxHeight: number;
 };
 
+/**
+ * Places a fixed context menu next to its pointer while keeping it inside the
+ * visible viewport. The measured menu size is intentionally supplied by the
+ * caller so the same rule works for every menu variant.
+ */
+export function placeCanvasContextMenu(
+  pointer: CanvasOverlayPosition,
+  viewport: CanvasOverlayStage,
+  menu: CanvasOverlaySize,
+  gap = 10,
+  margin = 8,
+): CanvasOverlayPosition {
+  const right = pointer.left + gap;
+  const left = pointer.left - menu.width - gap;
+  const below = pointer.top + gap;
+  const above = pointer.top - menu.height - gap;
+  const maxLeft = Math.max(margin, viewport.width - menu.width - margin);
+  const maxTop = Math.max(margin, viewport.height - menu.height - margin);
+  const fitsRight = right + menu.width <= viewport.width - margin;
+  const fitsBelow = below + menu.height <= viewport.height - margin;
+
+  return {
+    left: Math.min(Math.max(fitsRight ? right : left, margin), maxLeft),
+    top: Math.min(Math.max(fitsBelow ? below : above, margin), maxTop),
+  };
+}
+
 function centeredLeft(
   anchor: CanvasOverlayAnchor,
   _stage: CanvasOverlayStage,

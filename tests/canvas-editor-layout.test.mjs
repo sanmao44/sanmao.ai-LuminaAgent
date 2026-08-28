@@ -58,3 +58,47 @@ test("keeps a below-node editor inside the horizontal viewport margins", () => {
 
   assert.deepEqual(editor, { left: 12, top: 254, maxHeight: 300 });
 });
+
+test("places a context menu below and to the right when there is room", () => {
+  assert.deepEqual(
+    layout.placeCanvasContextMenu(
+      { left: 120, top: 80 },
+      { width: 1024, height: 768 },
+      { width: 240, height: 180 },
+    ),
+    { left: 130, top: 90 },
+  );
+});
+
+test("flips a context menu above and to the left near the viewport edge", () => {
+  assert.deepEqual(
+    layout.placeCanvasContextMenu(
+      { left: 980, top: 700 },
+      { width: 1024, height: 768 },
+      { width: 240, height: 180 },
+    ),
+    { left: 730, top: 510 },
+  );
+});
+
+test("clamps an oversized context menu to the viewport safety margin", () => {
+  assert.deepEqual(
+    layout.placeCanvasContextMenu(
+      { left: 20, top: 20 },
+      { width: 220, height: 180 },
+      { width: 300, height: 400 },
+    ),
+    { left: 8, top: 8 },
+  );
+});
+
+test("keeps context menus bounded with a short dynamic viewport", () => {
+  assert.deepEqual(
+    layout.placeCanvasContextMenu(
+      { left: 380, top: 270 },
+      { width: 390, height: 280 },
+      { width: 300, height: 250 },
+    ),
+    { left: 70, top: 10 },
+  );
+});

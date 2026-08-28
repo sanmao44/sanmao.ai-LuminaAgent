@@ -714,7 +714,8 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 @media(max-width:720px){.canvas-topbar.collapsed .canvas-topbar-toggle{top:0;width:48px;min-width:48px;height:24px}.canvas-topbar-toggle{width:40px;min-width:40px}}
 
 /* Context menu v2: grouped actions with a dedicated media import entry. */
-.canvas-context-menu{position:fixed;z-index:350;width:min(300px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line-strong));border-radius:18px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 18px 46px rgba(0,0,0,.28),0 0 0 1px color-mix(in srgb,var(--accent) 7%,transparent);backdrop-filter:blur(20px);scrollbar-width:thin;animation:canvas-context-menu-in .16s ease-out}
+.canvas-context-menu{position:fixed;z-index:350;width:min(300px,calc(100vw - 16px));max-height:min(560px,calc(100vh - 16px));max-height:min(560px,calc(100dvh - 16px));display:flex;flex-direction:column;min-height:0;overflow:hidden;box-sizing:border-box;padding:12px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line-strong));border-radius:18px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 18px 46px rgba(0,0,0,.28),0 0 0 1px color-mix(in srgb,var(--accent) 7%,transparent);backdrop-filter:blur(20px);animation:canvas-context-menu-in .16s ease-out}
+.canvas-context-menu-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
 .canvas-menu-title{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;padding:2px 4px 10px;color:var(--text);font-size:12px;font-weight:900;line-height:1.1}
 .canvas-menu-title small{max-width:155px;overflow:hidden;color:var(--muted);font-size:9px;font-weight:500;line-height:1.25;text-align:right;white-space:nowrap;text-overflow:ellipsis}
 .canvas-menu-group{display:grid;gap:4px}
@@ -754,17 +755,18 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 
 /* Card context menu: reuse the canvas menu language while keeping node
    actions separate from the blank-canvas creation menu. */
-.canvas-node-context-menu{width:min(340px,calc(100vw - 16px));padding:10px;max-height:calc(100vh - 16px)}
-.canvas-node-context-menu .canvas-menu-title{padding:3px 5px 9px}
+.canvas-node-context-menu{width:min(320px,calc(100vw - 16px));padding:8px}
+.canvas-node-context-menu .canvas-menu-title{padding:2px 4px 6px}
 .canvas-node-context-menu .canvas-menu-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.canvas-node-context-menu .canvas-menu-group{gap:3px}
-.canvas-node-context-menu .canvas-menu-group+.canvas-menu-group{margin-top:8px;padding-top:8px}
-.canvas-node-context-menu .canvas-menu-group-title{padding:0 4px 3px}
-.canvas-node-context-menu .canvas-menu-group-mark{width:21px;height:18px;border-radius:5px;font-size:9px}
-.canvas-node-context-menu button.canvas-menu-item-context{min-height:40px;gap:8px;padding:5px 6px;border-radius:10px}
-.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:27px;height:27px;border-radius:8px;font-size:12px}
+.canvas-node-context-menu .canvas-menu-group{gap:2px}
+.canvas-node-context-menu .canvas-menu-group+.canvas-menu-group{margin-top:5px;padding-top:5px}
+.canvas-node-context-menu .canvas-menu-group-title{padding:0 4px 2px}
+.canvas-node-context-menu .canvas-menu-group-title small{display:none}
+.canvas-node-context-menu .canvas-menu-group-mark{width:20px;height:18px;border-radius:5px;font-size:9px}
+.canvas-node-context-menu button.canvas-menu-item-context{min-height:35px;gap:6px;padding:4px 5px;border-radius:9px}
+.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:25px;height:25px;border-radius:7px;font-size:11px}
 .canvas-node-context-menu .canvas-menu-item-context .canvas-menu-copy b{font-size:10px}
-.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-arrow{font-size:17px}
+.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-arrow{font-size:16px}
 .canvas-node-context-menu .canvas-menu-item-context.danger{color:var(--danger)}
 .canvas-node-context-menu .canvas-menu-item-context.danger .canvas-menu-icon{border-color:color-mix(in srgb,var(--danger) 34%,var(--line));background:var(--danger-soft);color:var(--danger)}
 .canvas-node-context-menu .canvas-menu-item-context.danger .canvas-menu-copy b{color:var(--danger)}
@@ -772,7 +774,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-context-menu .canvas-menu-item-context.danger:hover{border-color:color-mix(in srgb,var(--danger) 42%,var(--line));background:var(--danger-soft);box-shadow:none}
 .canvas-node-context-menu .canvas-menu-item-context:disabled{opacity:.42;cursor:not-allowed;transform:none}
 .canvas-node-context-menu .canvas-menu-item-context:disabled:hover{border-color:transparent;background:transparent;box-shadow:none}
-@media(max-width:420px){.canvas-node-context-menu{width:calc(100vw - 16px);padding:9px}.canvas-node-context-menu .canvas-menu-item-context{min-height:38px}.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:25px;height:25px}}
+@media(max-width:420px){.canvas-node-context-menu{width:calc(100vw - 16px);padding:7px}.canvas-node-context-menu .canvas-menu-item-context{min-height:34px}.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:24px;height:24px}}
 
 .canvas-workspace-sync-state{display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--muted);font-size:8px;white-space:nowrap}.canvas-workspace-sync-state i{width:6px;height:6px;border-radius:50%;background:var(--success)}.canvas-workspace-sync-state.syncing i{background:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 12%,transparent)}.canvas-workspace-sync-state.offline i,.canvas-workspace-sync-state.error i{background:var(--danger)}
 
@@ -1093,3 +1095,5 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-identity small,.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-identity small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .canvas-image-resolution{position:absolute;right:10px;bottom:10px;z-index:3;display:inline-flex;align-items:center;max-width:calc(100% - 20px);overflow:hidden;padding:5px 7px;border:1px solid rgba(255,255,255,.28);border-radius:999px;background:rgba(0,0,0,.58);color:#fff;font-size:8px;font-variant-numeric:tabular-nums;letter-spacing:.02em;line-height:1;white-space:nowrap;text-overflow:ellipsis;pointer-events:none;backdrop-filter:blur(8px)}
 @media(max-width:720px){.canvas-image-resolution{right:8px;bottom:8px;padding:4px 6px;font-size:7px}}
+
+.canvas-stage.is-file-drop-target{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--accent) 74%,transparent),inset 0 0 90px color-mix(in srgb,var(--accent) 16%,transparent)}.canvas-file-drop-hint{position:absolute;z-index:115;left:50%;top:50%;display:flex;align-items:center;gap:10px;padding:13px 18px;border:1px solid color-mix(in srgb,var(--accent) 56%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--panel) 92%,var(--accent-soft));box-shadow:var(--shadow);color:var(--accent-text);pointer-events:none;transform:translate(-50%,-50%);backdrop-filter:blur(12px)}.canvas-file-drop-hint span{font-size:22px;line-height:1}.canvas-file-drop-hint b{font-size:11px;white-space:nowrap}

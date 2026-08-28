@@ -16,7 +16,8 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /nodeId\?: string/);
   assert.match(component, /if \(!selectedIds\.has\(node\.id\)\) selectNode\(node\)/);
   assert.match(component, /<CanvasNodeContextMenu/);
-  assert.match(component, /className="canvas-context-menu canvas-node-context-menu"/);
+  assert.match(component, /className="canvas-node-context-menu"/);
+  assert.match(component, /className=\{`canvas-context-menu\$\{className/);
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
   assert.match(component, /label: "复制图片"/);
@@ -40,7 +41,16 @@ test("context paste uses the right-click world position while keyboard paste kee
 test("context menu keeps native controls isolated and remains bounded on small screens", () => {
   assert.match(component, /button,textarea,input,select/);
   assert.match(component, /event\.preventDefault\(\);\s+const point = stagePoint/);
-  assert.match(styles, /\.canvas-node-context-menu\{width:min\(340px,calc\(100vw - 16px\)\)/);
+  assert.match(component, /function CanvasContextMenuFrame/);
+  assert.match(component, /placeCanvasContextMenu\(/);
+  assert.match(component, /getBoundingClientRect\(\)/);
+  assert.match(component, /new ResizeObserver\(schedule\)/);
+  assert.match(component, /canvas-context-menu-body/);
+  assert.doesNotMatch(component, /window\.innerHeight - 640/);
+  assert.match(styles, /\.canvas-node-context-menu\{width:min\(320px,calc\(100vw - 16px\)\)/);
+  assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-y:auto/);
+  assert.match(styles, /max-height:min\(560px,calc\(100dvh - 16px\)\)/);
+  assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-group-title small\{display:none\}/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
 });
