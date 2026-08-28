@@ -21,6 +21,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /className=\{`canvas-context-menu\$\{className/);
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
+  assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*\)/);
   assert.match(component, /label: "复制图片"/);
   assert.match(component, /label: "调整参数"/);
   assert.match(component, /label: selectedIds\.size > 1 \? `删除/);

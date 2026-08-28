@@ -2973,7 +2973,12 @@ export default function SuperCanvas() {
   }, [clearSelection, commit, notify, selectedIds]);
   const duplicateSelection = useCallback(() => {
     if (!selectedIds.size) return;
-    const copies = duplicateNodes(docRef.current, [...selectedIds]);
+    const copies = duplicateNodes(
+      docRef.current,
+      [...selectedIds],
+      { x: 48, y: 48 },
+      true,
+    );
     commit((value) => ({
       ...value,
       nodes: [...value.nodes, ...copies.nodes],
@@ -2984,7 +2989,7 @@ export default function SuperCanvas() {
     setSelectedGroupId(
       copies.groupIds.length === 1 ? copies.groupIds[0] : null,
     );
-    notify(`已复制 ${copies.nodes.length} 个对象`);
+    notify(`已复制 ${copies.nodes.length} 个对象，并保留输入连线`);
   }, [commit, notify, selectedIds]);
   const makeGroup = useCallback(() => {
     if (selectedIds.size < 2)
