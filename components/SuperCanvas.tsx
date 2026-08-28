@@ -213,6 +213,7 @@ type CanvasContextMenuState = {
   x: number;
   y: number;
   world: Point;
+  menu: "node" | "create" | "tools";
   nodeId?: string;
 };
 type MentionState = { start: number; end: number; query: string } | null;
@@ -545,6 +546,8 @@ const CONNECTION_NODE_OPTIONS: Array<{
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Esc"], label: "关闭弹层、取消当前操作并清除选择" },
   { keys: ["左键"], label: "拖动空白区域平移画布" },
+  { keys: ["双击左键"], label: "打开创建节点菜单" },
+  { keys: ["右键"], label: "打开画布操作菜单" },
   { keys: ["中键"], label: "拖动平移画布" },
   { keys: ["Space", "左键"], label: "按住 Space 拖动空白区域平移画布" },
   { keys: ["Shift", "左键"], label: "追加选择节点或对象组" },
@@ -991,7 +994,12 @@ export default function SuperCanvas() {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingFilePositionRef = useRef<Point | null>(null);
   const workflowInputRef = useRef<HTMLInputElement | null>(null);
+  const openFilePicker = useCallback((position?: Point) => {
+    pendingFilePositionRef.current = position || null;
+    fileInputRef.current?.click();
+  }, []);
   const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
   const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
@@ -6476,6 +6484,7 @@ export default function SuperCanvas() {
         setContextMenu({
           x: event.clientX,
           y: event.clientY,
+          menu: "node",
           nodeId: node.id,
           world: {
             x: (point.x - document.camera.x) / document.camera.zoom,
@@ -6487,6 +6496,7 @@ export default function SuperCanvas() {
       setContextMenu({
         x: event.clientX,
         y: event.clientY,
+        menu: "tools",
         world: {
           x: (point.x - document.camera.x) / document.camera.zoom,
           y: (point.y - document.camera.y) / document.camera.zoom,
@@ -7138,7 +7148,7 @@ export default function SuperCanvas() {
     useAgentResponseAsImagePrompt,
   ]);
 
-  const contextNode = contextMenu?.nodeId
+  const contextNode = contextMenu?.menu === "node" && contextMenu.nodeId
     ? nodeById(document, contextMenu.nodeId)
     : undefined;
   const contextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
@@ -7438,7 +7448,7 @@ export default function SuperCanvas() {
           <button
             type="button"
             className="canvas-soft-button canvas-import-button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => openFilePicker()}
           >
             ＋ 导入素材
           </button>
@@ -7590,7 +7600,12 @@ export default function SuperCanvas() {
           // dblclick to the stage. Resolve the node from the pointer position
           // so double-clicking a media card always opens its full viewer.
           const target = event.target as HTMLElement;
-          if (target.closest("button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize")) return;
+          if (
+            target.closest(
+              "button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+            )
+          )
+            return;
           const hit = target.closest("[data-canvas-node-id]") ||
             window.document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-canvas-node-id]");
           const nodeId = hit?.getAttribute("data-canvas-node-id");
@@ -7601,6 +7616,18 @@ export default function SuperCanvas() {
           } else if (node?.type === "prompt") {
             cancelPendingNodeClick();
             setEditingNodeId(node.id);
+          } else {
+            event.preventDefault();
+            const point = stagePoint(event.clientX, event.clientY);
+            setContextMenu({
+              x: event.clientX,
+              y: event.clientY,
+              menu: "create",
+              world: {
+                x: (point.x - document.camera.x) / document.camera.zoom,
+                y: (point.y - document.camera.y) / document.camera.zoom,
+              },
+            });
           }
         }}
         onDragStart={(event) => {
@@ -8277,7 +8304,7 @@ export default function SuperCanvas() {
                       onReorder={reorderReference}
                       onRemove={removeComposerReference}
                       onClear={clearComposerReferences}
-                      onAdd={() => fileInputRef.current?.click()}
+                      onAdd={() => openFilePicker()}
                       onPaste={() => void pasteFromClipboard()}
                       variant="deck"
                     />
@@ -8448,21 +8475,22 @@ export default function SuperCanvas() {
           onNavigate={panToWorld}
           onMoveNodes={moveMinimapNodes}
         />
-        {contextNode && contextMenu?.nodeId ? (
+        {contextNode && contextMenu?.menu === "node" && contextMenu.nodeId ? (
           <CanvasNodeContextMenu
             node={contextNode}
             selectionCount={selectedIds.size}
             groups={contextMenuGroups}
             position={contextMenu}
           />
-        ) : contextMenu ? (
+        ) : contextMenu?.menu === "create" ? (
           <CanvasContextMenuFrame
+            className="canvas-create-context-menu"
             position={contextMenu}
-            ariaLabel="添加节点菜单"
+            ariaLabel="创建节点菜单"
           >
             <div className="canvas-menu-title">
-              <span>添加节点</span>
-              <small>选择操作放置到当前画布</small>
+              <span>创建节点</span>
+              <small>选择节点放置到双击位置</small>
             </div>
 
             <div className="canvas-context-menu-body">
@@ -8518,25 +8546,6 @@ export default function SuperCanvas() {
               </button>
             </div>
 
-            <button
-              type="button"
-              className="canvas-menu-media"
-              onClick={() => {
-                setContextMenu(null);
-                fileInputRef.current?.click();
-              }}
-            >
-              <span className="canvas-menu-media-icons" aria-hidden="true">
-                <i>▧</i>
-                <i>▶</i>
-              </span>
-              <span className="canvas-menu-copy">
-                <b>导入图片 / 视频</b>
-                <small>支持多选，自动识别类型</small>
-              </span>
-              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-            </button>
-
             <div className="canvas-menu-group">
               <div className="canvas-menu-group-title">
                 <span className="canvas-menu-group-mark" aria-hidden="true">02</span>
@@ -8571,14 +8580,51 @@ export default function SuperCanvas() {
               </button>
             </div>
 
-            <div className="canvas-menu-group">
-              <div className="canvas-menu-group-title">
-                <span className="canvas-menu-group-mark" aria-hidden="true">03</span>
-                <span>
-                  <b>画布工具</b>
-                  <small>快速整理当前视图</small>
+            </div>
+          </CanvasContextMenuFrame>
+        ) : contextMenu?.menu === "tools" ? (
+          <CanvasContextMenuFrame
+            className="canvas-tools-context-menu"
+            position={contextMenu}
+            ariaLabel="画布操作菜单"
+          >
+            <div className="canvas-menu-title">
+              <span>画布操作</span>
+              <small>粘贴、导入与视图工具</small>
+            </div>
+            <div className="canvas-context-menu-body">
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  const position = contextMenu.world;
+                  setContextMenu(null);
+                  void pasteFromClipboard(position);
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⌘</span>
+                <span className="canvas-menu-copy">
+                  <b>粘贴</b>
+                  <small>粘贴节点或剪贴板图片</small>
                 </span>
-              </div>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  const position = contextMenu.world;
+                  setContextMenu(null);
+                  openFilePicker(position);
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
+                <span className="canvas-menu-copy">
+                  <b>导入图片 / 视频</b>
+                  <small>支持多选，放置到右键位置</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-tool"
@@ -8604,12 +8650,11 @@ export default function SuperCanvas() {
               >
                 <span className="canvas-menu-icon" aria-hidden="true">⌗</span>
                 <span className="canvas-menu-copy">
-                  <b>适应全部</b>
+                  <b>适应视图</b>
                   <small>缩放至完整显示画布</small>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
-            </div>
             </div>
           </CanvasContextMenuFrame>
         ) : null}
@@ -8758,7 +8803,11 @@ export default function SuperCanvas() {
         multiple
         hidden
         onChange={(event) => {
-          if (event.target.files) void handleFiles(event.target.files);
+          if (event.target.files) {
+            const position = pendingFilePositionRef.current;
+            pendingFilePositionRef.current = null;
+            void handleFiles(event.target.files, position || undefined);
+          }
           event.currentTarget.value = "";
         }}
       />

@@ -13,6 +13,7 @@ const styles = await readFile(
 
 test("card context menus select the target and preserve selected multi-actions", () => {
   assert.match(component, /type CanvasContextMenuState/);
+  assert.match(component, /menu: "node" \| "create" \| "tools"/);
   assert.match(component, /nodeId\?: string/);
   assert.match(component, /if \(!selectedIds\.has\(node\.id\)\) selectNode\(node\)/);
   assert.match(component, /<CanvasNodeContextMenu/);
@@ -54,4 +55,17 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-group-title small\{display:none\}/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
+});
+
+test("blank canvas separates creation from compact canvas operations", () => {
+  assert.match(component, /menu: "create"/);
+  assert.match(component, /menu: "tools"/);
+  assert.match(component, /ariaLabel="创建节点菜单"/);
+  assert.match(component, /ariaLabel="画布操作菜单"/);
+  assert.match(component, /className="canvas-tools-context-menu"/);
+  assert.match(component, /pasteFromClipboard\(position\)/);
+  assert.match(component, /支持多选，放置到右键位置/);
+  assert.match(component, /<b>适应视图<\/b>/);
+  assert.match(styles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
+  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
 });
