@@ -157,6 +157,7 @@ import {
   snapCanvasNodePositions,
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
+import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
 
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
@@ -199,6 +200,12 @@ type CanvasClipboardPayload = {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: CanvasGroup[];
+};
+type CanvasContextMenuState = {
+  x: number;
+  y: number;
+  world: Point;
+  nodeId?: string;
 };
 type MentionState = { start: number; end: number; query: string } | null;
 
@@ -1021,11 +1028,7 @@ export default function SuperCanvas() {
   const cancelPendingNodeClick = useCallback(() => {
     setPendingClickNodeId(null);
   }, []);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    world: Point;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [lightbox, setLightbox] = useState<{
     nodeId: string;
     compare: boolean;
@@ -1813,13 +1816,13 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.button !== 0 && event.button !== 1) return;
       const target = event.target as HTMLElement;
+      setContextMenu(null);
       if (
         target.closest(
           ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
         )
       )
         return;
-      setContextMenu(null);
       setConnectionNodePicker(null);
       setDraggingNodeIds(new Set());
       cancelPendingNodeClick();
@@ -3128,21 +3131,30 @@ export default function SuperCanvas() {
         try {
           const asset = await uploadCanvasAsset(file);
           if (asset.kind === "image" && asset.optimized) optimizedImageCount += 1;
-          nodes.push(
-            createMedia(
-              asset.kind,
-              asset.url,
-              asset.name,
-              {
-                x: base.x + (index % 3) * 350,
-                y: base.y + Math.floor(index / 3) * 270,
-              },
-              {
-                role: "参考素材",
-                params: defaultParams(asset.kind, runtime),
-              },
-            ),
+          const draft = createMedia(
+            asset.kind,
+            asset.url,
+            asset.name,
+            {
+              x: base.x + (index % 3) * 350,
+              y: base.y + Math.floor(index / 3) * 270,
+            },
+            {
+              role: "参考素材",
+              params: defaultParams(asset.kind, runtime),
+            },
           );
+          const point = position
+            ? openNodePosition(
+                {
+                  x: base.x + (index % 3) * 350,
+                  y: base.y + Math.floor(index / 3) * 270,
+                },
+                draft,
+                nodes,
+              )
+            : draft;
+          nodes.push({ ...draft, x: point.x, y: point.y });
           addLog(
             `已导入${asset.kind === "video" ? "视频" : "图片"}：${file.name}`,
           );
@@ -3168,6 +3180,7 @@ export default function SuperCanvas() {
       addLog,
       commit,
       notify,
+      openNodePosition,
       runtime,
       screenToWorld,
       stageSize.height,
@@ -3190,7 +3203,7 @@ export default function SuperCanvas() {
   }, [notify, selectedIds]);
 
   const pasteCanvasPayload = useCallback(
-    (payload: CanvasClipboardPayload) => {
+    (payload: CanvasClipboardPayload, position?: Point) => {
       const source = payload.nodes;
       if (!source.length) return notify("剪贴板中没有可粘贴的节点。", "error");
       const minX = Math.min(...source.map((node) => node.x));
@@ -3200,12 +3213,12 @@ export default function SuperCanvas() {
         x: (rect?.left || 0) + (rect?.width || stageSize.width) / 2,
         y: (rect?.top || 0) + (rect?.height || stageSize.height) / 2,
       };
-      const target = screenToWorld(center.x, center.y);
+      const target = position || screenToWorld(center.x, center.y);
       const idMap = new Map(source.map((node) => [node.id, uid("node")]));
       const groupMap = new Map(
         payload.groups.map((group) => [group.id, uid("group")]),
       );
-      const nodes = source.map((node) => {
+      let nodes = source.map((node) => {
         const copy = remapNodeReferences(clone(node), idMap);
         return {
           ...copy,
@@ -3217,6 +3230,33 @@ export default function SuperCanvas() {
             : { groupId: undefined }),
         };
       });
+      if (position && nodes.length) {
+        const maxX = Math.max(...source.map((node) => node.x + nodeSize(node).w));
+        const maxY = Math.max(...source.map((node) => node.y + nodeSize(node).h));
+        const desiredOrigin = {
+          x: target.x - minX + 48,
+          y: target.y - minY + 48,
+        };
+        const probe = {
+          ...nodes[0],
+          x: desiredOrigin.x,
+          y: desiredOrigin.y,
+          w: Math.max(1, maxX - minX),
+          h: Math.max(1, maxY - minY),
+        };
+        const placedOrigin = openNodePosition(desiredOrigin, probe);
+        const offset = {
+          x: placedOrigin.x - desiredOrigin.x,
+          y: placedOrigin.y - desiredOrigin.y,
+        };
+        if (offset.x || offset.y) {
+          nodes = nodes.map((node) => ({
+            ...node,
+            x: node.x + offset.x,
+            y: node.y + offset.y,
+          }));
+        }
+      }
       const groups = payload.groups.map((group) => ({
         ...clone(group),
         id: groupMap.get(group.id)!,
@@ -3241,10 +3281,10 @@ export default function SuperCanvas() {
       setSelectedGroupId(groups.length === 1 ? groups[0].id : null);
       notify(`已粘贴 ${nodes.length} 个节点`);
     },
-    [commit, notify, screenToWorld, stageSize.height, stageSize.width],
+    [commit, notify, openNodePosition, screenToWorld, stageSize.height, stageSize.width],
   );
 
-  const pasteFromClipboard = useCallback(async () => {
+  const pasteFromClipboard = useCallback(async (position?: Point) => {
     let clipboardText = "";
     try {
       if (navigator.clipboard?.read) {
@@ -3261,7 +3301,7 @@ export default function SuperCanvas() {
                 `剪贴板图片.${imageType.split("/")[1] || "png"}`,
                 { type: imageType },
               ),
-            ]);
+            ], position);
             return;
           }
         }
@@ -3275,20 +3315,20 @@ export default function SuperCanvas() {
           clipboardText = await blob.text();
           const parsed: unknown = JSON.parse(clipboardText);
           if (isCanvasClipboardPayload(parsed))
-            return pasteCanvasPayload(parsed);
+            return pasteCanvasPayload(parsed, position);
         }
       }
       if (!clipboardText)
         clipboardText = (await navigator.clipboard?.readText()) || "";
       if (clipboardText) {
         const parsed: unknown = JSON.parse(clipboardText);
-        if (isCanvasClipboardPayload(parsed)) return pasteCanvasPayload(parsed);
+        if (isCanvasClipboardPayload(parsed)) return pasteCanvasPayload(parsed, position);
       }
       if (canvasClipboardRef.current)
-        pasteCanvasPayload(canvasClipboardRef.current);
+        pasteCanvasPayload(canvasClipboardRef.current, position);
     } catch {
       if (!clipboardText && canvasClipboardRef.current)
-        pasteCanvasPayload(canvasClipboardRef.current);
+        pasteCanvasPayload(canvasClipboardRef.current, position);
       else
         notify(
           clipboardText
@@ -6307,7 +6347,7 @@ export default function SuperCanvas() {
       const centerY =
         (stageRect?.top || 0) + (stageRect?.height || stageSize.height) / 2;
       if (event.key === "Escape") {
-        const hadOverlay = Boolean(lightbox || textLightboxNodeId || activePanel || reusePreview);
+        const hadOverlay = Boolean(contextMenu || lightbox || textLightboxNodeId || activePanel || reusePreview);
         setContextMenu(null);
         setLightbox(null);
         setReusePreview(null);
@@ -6368,6 +6408,7 @@ export default function SuperCanvas() {
     breakGroup,
     clearSelection,
     commit,
+    contextMenu,
     copySelection,
     deleteSelection,
     duplicateSelection,
@@ -6391,16 +6432,33 @@ export default function SuperCanvas() {
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      event.preventDefault();
       const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(
-          ".canvas-node,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
-        )
-      )
+      const element = target instanceof Element ? target : null;
+      const nodeElement = element?.closest<HTMLElement>("[data-canvas-node-id]");
+      const nodeId = nodeElement?.dataset.canvasNodeId;
+      const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+      const isolatedTarget = element?.closest(
+        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+      );
+      if (isolatedTarget) {
+        if (isolatedTarget.closest(".canvas-context-menu")) event.preventDefault();
         return;
+      }
+      event.preventDefault();
       const point = stagePoint(event.clientX, event.clientY);
+      if (node) {
+        if (!selectedIds.has(node.id)) selectNode(node);
+        setContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId: node.id,
+          world: {
+            x: (point.x - document.camera.x) / document.camera.zoom,
+            y: (point.y - document.camera.y) / document.camera.zoom,
+          },
+        });
+        return;
+      }
       setContextMenu({
         x: event.clientX,
         y: event.clientY,
@@ -6410,7 +6468,7 @@ export default function SuperCanvas() {
         },
       });
     },
-    [document.camera, stagePoint],
+    [document.camera, selectNode, selectedIds, stagePoint],
   );
   const deck = deckSource();
   const deckKind = deck.kind;
@@ -6622,6 +6680,18 @@ export default function SuperCanvas() {
     anchor.rel = "noreferrer";
     anchor.click();
     notify("已开始下载");
+  }, [notify]);
+  const copyCanvasImage = useCallback(async (node: CanvasNode) => {
+    if (node.type !== "media" || node.data.kind !== "image" || !node.data.url) {
+      notify("当前节点没有可复制的图片。", "error");
+      return;
+    }
+    try {
+      await copyCanvasImageToClipboard(String(node.data.url));
+      notify("图片已复制到系统剪贴板");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "复制图片失败，请检查浏览器的剪贴板权限。", "error");
+    }
   }, [notify]);
   const focusGenerationLog = useCallback(
     (log: CanvasGenerationLog, openMedia = false) => {
@@ -7043,6 +7113,231 @@ export default function SuperCanvas() {
     useAgentResponseAsImagePrompt,
   ]);
 
+  const contextNode = contextMenu?.nodeId
+    ? nodeById(document, contextMenu.nodeId)
+    : undefined;
+  const contextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
+    const node = contextNode;
+    if (!node) return [];
+    const hasMedia = node.type === "media" && Boolean(node.data.url);
+    const close = (action: () => void) => () => {
+      setContextMenu(null);
+      action();
+    };
+    const editAction: CanvasQuickAction = {
+      id: "adjust",
+      icon: "⚙",
+      label: "调整参数",
+      onClick: close(() => toggleEditor(node)),
+    };
+    const canvasActions: CanvasQuickAction[] = [
+      {
+        id: "copy-nodes",
+        icon: "⧉",
+        label: "复制节点",
+        title: "复制当前选中的画布节点",
+        onClick: close(() => void copySelection()),
+      },
+      {
+        id: "paste",
+        icon: "⌘",
+        label: "粘贴",
+        title: "粘贴节点或剪贴板图片到右键位置附近",
+        onClick: close(() => void pasteFromClipboard(contextMenu?.world)),
+      },
+      {
+        id: "duplicate",
+        icon: "＋",
+        label: "创建副本",
+        title: "在画布中直接创建当前选区的副本",
+        onClick: close(duplicateSelection),
+      },
+    ];
+    const cleanupActions: CanvasQuickAction[] = [
+      {
+        id: "delete",
+        icon: "⌫",
+        label: selectedIds.size > 1 ? `删除 ${selectedIds.size} 个对象` : "删除",
+        danger: true,
+        onClick: close(deleteSelection),
+      },
+    ];
+    if (node.type === "media" && node.data.kind === "image") {
+      const mediaActions: CanvasQuickAction[] = [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasMedia,
+          onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+        },
+        editAction,
+        {
+          id: "mask",
+          icon: "◌",
+          label: "蒙版",
+          disabled: !hasMedia,
+          onClick: close(() => setMaskNodeId(node.id)),
+        },
+        {
+          id: "upscale",
+          icon: "↗",
+          label: "超分",
+          disabled: !hasMedia,
+          onClick: close(() => createUpscaleFromSource(node)),
+        },
+        {
+          id: "reference",
+          icon: "⌁",
+          label: "作为参考",
+          disabled: !hasMedia,
+          onClick: close(() => addCurrentNodeToReuse(node)),
+        },
+        {
+          id: "copy-image",
+          icon: "▣",
+          label: "复制图片",
+          title: "将图片复制到系统图片剪贴板",
+          disabled: !hasMedia,
+          onClick: close(() => void copyCanvasImage(node)),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          disabled: !hasMedia,
+          onClick: close(() => downloadCanvasNode(node)),
+        },
+        {
+          id: "asset",
+          icon: "★",
+          label: "加入资产",
+          disabled: !hasMedia,
+          onClick: close(() => void addViewerAsset(node)),
+        },
+      ];
+      return [
+        { label: "快速操作", actions: mediaActions },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "media" && node.data.kind === "video") {
+      const mediaActions: CanvasQuickAction[] = [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasMedia,
+          onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+        },
+        editAction,
+        {
+          id: "continue",
+          icon: "▶",
+          label: "继续生成 / 变体",
+          disabled: !hasMedia,
+          onClick: close(() => continueFromMedia(node)),
+        },
+        {
+          id: "reference",
+          icon: "⌁",
+          label: "作为参考",
+          disabled: !hasMedia,
+          onClick: close(() => addCurrentNodeToReuse(node)),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          disabled: !hasMedia,
+          onClick: close(() => downloadCanvasNode(node)),
+        },
+        {
+          id: "asset",
+          icon: "★",
+          label: "加入资产",
+          disabled: !hasMedia,
+          onClick: close(() => void addViewerAsset(node)),
+        },
+      ];
+      return [
+        { label: "快速操作", actions: mediaActions },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "prompt") {
+      const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
+      const promptActions: CanvasQuickAction[] = [
+        editAction,
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "放大查看",
+          disabled: !hasResponse,
+          onClick: close(() => setTextLightboxNodeId(node.id)),
+        },
+        {
+          id: "image",
+          icon: "✦",
+          label: "转图片",
+          disabled: !hasResponse,
+          onClick: close(() => useAgentResponseAsImagePrompt(node)),
+        },
+      ];
+      return [
+        { label: "快速操作", actions: promptActions },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "generator") {
+      const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
+      return [
+        {
+          label: "快速操作",
+          actions: [
+            editAction,
+            {
+              id: "retry",
+              icon: "↻",
+              label: failedCount ? `重试失败项 (${failedCount})` : "重试失败项",
+              disabled: failedCount === 0 || generationKeys.has(node.id),
+              onClick: close(() => retryFailedVariants(node.id)),
+            },
+          ],
+        },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    return [
+      { label: "快速操作", actions: [editAction] },
+      { label: "复制与整理", actions: canvasActions },
+      { label: "删除", actions: cleanupActions },
+    ];
+  }, [
+    addCurrentNodeToReuse,
+    addViewerAsset,
+    contextNode,
+    contextMenu?.world,
+    continueFromMedia,
+    copyCanvasImage,
+    copySelection,
+    createUpscaleFromSource,
+    deleteSelection,
+    downloadCanvasNode,
+    duplicateSelection,
+    generationKeys,
+    pasteFromClipboard,
+    retryFailedVariants,
+    selectedIds.size,
+    setMaskNodeId,
+    toggleEditor,
+    useAgentResponseAsImagePrompt,
+  ]);
+
   if (!ready)
     return (
       <section className="canvas-workspace canvas-loading">
@@ -7059,7 +7354,10 @@ export default function SuperCanvas() {
     <section
       className="canvas-workspace"
       aria-label="SANMAO 无限画布"
-      onClick={() => projectMenuOpen && setProjectMenuOpen(false)}
+      onClick={() => {
+        setContextMenu(null);
+        if (projectMenuOpen) setProjectMenuOpen(false);
+      }}
     >
       <header className={`canvas-topbar ${topbarCollapsed ? "collapsed" : ""}`}>
         <div className="canvas-topbar-main">
@@ -8094,7 +8392,14 @@ export default function SuperCanvas() {
           onNavigate={panToWorld}
           onMoveNodes={moveMinimapNodes}
         />
-        {contextMenu && (
+        {contextNode && contextMenu?.nodeId ? (
+          <CanvasNodeContextMenu
+            node={contextNode}
+            selectionCount={selectedIds.size}
+            groups={contextMenuGroups}
+            position={contextMenu}
+          />
+        ) : contextMenu ? (
           <div
             className="canvas-context-menu"
             style={{
@@ -8263,7 +8568,7 @@ export default function SuperCanvas() {
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
       {lightbox && (() => {
         const viewerNode = nodeById(document, lightbox.nodeId);
@@ -9335,6 +9640,11 @@ type CanvasQuickAction = {
   onClick: () => void;
 };
 
+type CanvasContextMenuGroup = {
+  label: string;
+  actions: CanvasQuickAction[];
+};
+
 function CanvasNodeQuickToolbar({
   node,
   document,
@@ -9443,6 +9753,73 @@ function CanvasNodeQuickToolbar({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function CanvasNodeContextMenu({
+  node,
+  selectionCount,
+  groups,
+  position,
+}: {
+  node: CanvasNode;
+  selectionCount: number;
+  groups: CanvasContextMenuGroup[];
+  position: { x: number; y: number };
+}) {
+  return (
+    <div
+      className="canvas-context-menu canvas-node-context-menu"
+      data-node-id={node.id}
+      aria-label={`${nodeLabel(node)}右键菜单`}
+      style={{
+        left: Math.max(
+          8,
+          Math.min(position.x, Math.max(8, window.innerWidth - 350)),
+        ),
+        top: Math.max(
+          8,
+          Math.min(position.y, Math.max(8, window.innerHeight - 640)),
+        ),
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      <div className="canvas-menu-title">
+        <span>{nodeLabel(node)}</span>
+        <small>{selectionCount > 1 ? `已选择 ${selectionCount} 个对象` : "节点操作"}</small>
+      </div>
+      {groups.map((group) => (
+        <div className="canvas-menu-group" key={group.label}>
+          <div className="canvas-menu-group-title">
+            <span className="canvas-menu-group-mark" aria-hidden="true">⌘</span>
+            <span>
+              <b>{group.label}</b>
+              <small>快捷操作</small>
+            </span>
+          </div>
+          {group.actions.map((action) => (
+            <button
+              type="button"
+              key={action.id}
+              className={`canvas-menu-item canvas-menu-item-context ${action.danger ? "danger" : ""}`}
+              title={action.title || action.label}
+              aria-label={action.label}
+              disabled={action.disabled}
+              onClick={(event) => {
+                event.stopPropagation();
+                action.onClick();
+              }}
+            >
+              <span className="canvas-menu-icon" aria-hidden="true">{action.icon}</span>
+              <span className="canvas-menu-copy"><b>{action.label}</b></span>
+              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+            </button>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

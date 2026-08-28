@@ -752,6 +752,28 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 @media(max-width:420px){.canvas-context-menu{width:calc(100vw - 16px);padding:10px;border-radius:16px}.canvas-menu-title{padding-bottom:8px}.canvas-menu-title small{max-width:130px}.canvas-menu-group+.canvas-menu-group{margin-top:8px;padding-top:8px}.canvas-menu-group-title{padding-bottom:3px}.canvas-menu-copy b{font-size:11px}.canvas-menu-copy small{font-size:9px}.canvas-menu-media{margin-top:8px!important}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-context-menu,html:not([data-motion="on"]) .canvas-menu-item,html:not([data-motion="on"]) .canvas-menu-media,html:not([data-motion="on"]) .canvas-menu-arrow{animation:none;transition:none}}
 
+/* Card context menu: reuse the canvas menu language while keeping node
+   actions separate from the blank-canvas creation menu. */
+.canvas-node-context-menu{width:min(340px,calc(100vw - 16px));padding:10px;max-height:calc(100vh - 16px)}
+.canvas-node-context-menu .canvas-menu-title{padding:3px 5px 9px}
+.canvas-node-context-menu .canvas-menu-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-node-context-menu .canvas-menu-group{gap:3px}
+.canvas-node-context-menu .canvas-menu-group+.canvas-menu-group{margin-top:8px;padding-top:8px}
+.canvas-node-context-menu .canvas-menu-group-title{padding:0 4px 3px}
+.canvas-node-context-menu .canvas-menu-group-mark{width:21px;height:18px;border-radius:5px;font-size:9px}
+.canvas-node-context-menu button.canvas-menu-item-context{min-height:40px;gap:8px;padding:5px 6px;border-radius:10px}
+.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:27px;height:27px;border-radius:8px;font-size:12px}
+.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-copy b{font-size:10px}
+.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-arrow{font-size:17px}
+.canvas-node-context-menu .canvas-menu-item-context.danger{color:var(--danger)}
+.canvas-node-context-menu .canvas-menu-item-context.danger .canvas-menu-icon{border-color:color-mix(in srgb,var(--danger) 34%,var(--line));background:var(--danger-soft);color:var(--danger)}
+.canvas-node-context-menu .canvas-menu-item-context.danger .canvas-menu-copy b{color:var(--danger)}
+.canvas-node-context-menu .canvas-menu-item-context:hover{border-color:color-mix(in srgb,var(--accent) 28%,var(--line));background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel));box-shadow:0 4px 12px color-mix(in srgb,var(--accent) 8%,transparent);transform:translateX(2px)}
+.canvas-node-context-menu .canvas-menu-item-context.danger:hover{border-color:color-mix(in srgb,var(--danger) 42%,var(--line));background:var(--danger-soft);box-shadow:none}
+.canvas-node-context-menu .canvas-menu-item-context:disabled{opacity:.42;cursor:not-allowed;transform:none}
+.canvas-node-context-menu .canvas-menu-item-context:disabled:hover{border-color:transparent;background:transparent;box-shadow:none}
+@media(max-width:420px){.canvas-node-context-menu{width:calc(100vw - 16px);padding:9px}.canvas-node-context-menu .canvas-menu-item-context{min-height:38px}.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:25px;height:25px}}
+
 .canvas-workspace-sync-state{display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--muted);font-size:8px;white-space:nowrap}.canvas-workspace-sync-state i{width:6px;height:6px;border-radius:50%;background:var(--success)}.canvas-workspace-sync-state.syncing i{background:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 12%,transparent)}.canvas-workspace-sync-state.offline i,.canvas-workspace-sync-state.error i{background:var(--danger)}
 
 /* Keep connections behind cards, and lift the cards involved in a drag. */
