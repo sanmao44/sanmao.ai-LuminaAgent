@@ -16,7 +16,11 @@ test("all canvas asset actions open the collection picker before writing", () =>
   assert.match(component, /onClick: \(\) => openAssetCollectionPicker\(node\)/);
   assert.match(component, /onClick: close\(\(\) => openAssetCollectionPicker\(node\)\)/);
   assert.match(component, /onAddToAssets=\{canAddCanvasAsset\(viewerNode\) \? \(\) => openAssetCollectionPicker\(viewerNode\) : undefined\}/);
-  assert.match(component, /onConfirm=\{\(collectionId\) => addViewerAsset\(pickerNode, collectionId\)\}/);
+  assert.match(component, /preferredCollectionId=\{assetLibraryCollectionId\}/);
+  assert.match(component, /const success = await addViewerAsset\(pickerNode, collectionId\)/);
+  assert.match(component, /collectionSelection=\{assetLibraryCollectionId\}/);
+  assert.match(component, /onCollectionSelectionChange=\{setAssetLibraryCollectionId\}/);
+  assert.match(component, /listUnifiedAssets\(canvasAssets\)/);
   assert.match(component, /setAssetCollectionPickerNodeId\(null\)/);
   assert.match(component, /assetCollectionPickerNodeId\);/);
 });
@@ -30,6 +34,7 @@ test("collection picker exposes only uncategorized and custom collections", () =
   assert.match(picker, /\.filter\(\(item\) => item\.builtin === false\)/);
   assert.match(picker, /saveAssetCollections\(next\)/);
   assert.match(picker, /CANVAS_ASSET_LAST_COLLECTION_KEY/);
+  assert.match(picker, /全局资产中心的“\{selectedCollection\?\.name/);
   assert.match(styles, /\.canvas-asset-target-dialog\{/);
   assert.match(styles, /\.canvas-asset-collection-picker-backdrop\{/);
 });
@@ -38,7 +43,7 @@ test("asset registration preserves existing collections and rejects smart views 
   assert.match(component, /function isAssignableCanvasAssetCollection/);
   assert.match(component, /const CANVAS_ASSET_SMART_COLLECTION_IDS = new Set/);
   assert.match(component, /if \(!isAssignableCanvasAssetCollection\(collectionId\)\)/);
-  assert.match(component, /const existing = \(await listUnifiedAssets\(\)\)\.find/);
+  assert.match(component, /const existing = \(await listUnifiedAssets\((?:canvasAssets)?\)\)\.find/);
   assert.match(component, /\[\.\.\.new Set\(\[\.\.\.currentCollectionIds, collectionId\]\)\]/);
   assert.match(component, /collectionId === CANVAS_ASSET_UNCATEGORIZED_ID/);
   assert.match(component, /function canAddCanvasAsset/);

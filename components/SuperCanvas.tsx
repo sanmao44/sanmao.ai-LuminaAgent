@@ -1143,6 +1143,8 @@ export default function SuperCanvas() {
   const [panActive, setPanActive] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [assetRefresh, setAssetRefresh] = useState(0);
+  const [assetLibraryCollectionId, setAssetLibraryCollectionId] =
+    useState("all");
   const [assetCollectionPickerNodeId, setAssetCollectionPickerNodeId] =
     useState<string | null>(null);
   const [assetDropGroupId, setAssetDropGroupId] = useState<string | null>(
@@ -6903,7 +6905,7 @@ export default function SuperCanvas() {
     const asset = viewerAsset(node);
     if (!asset || !isAssignableCanvasAssetCollection(collectionId)) return false;
     try {
-      const existing = (await listUnifiedAssets()).find(
+      const existing = (await listUnifiedAssets(canvasAssets)).find(
         (item) => item.kind === asset.kind && item.url === asset.url,
       );
       const currentCollectionIds = existing?.collectionIds || [];
@@ -6920,7 +6922,7 @@ export default function SuperCanvas() {
       notify(error instanceof Error ? error.message : "资产登记失败", "error");
       return false;
     }
-  }, [notify, viewerAsset]);
+  }, [canvasAssets, notify, viewerAsset]);
   const openAssetCollectionPicker = useCallback((node: CanvasNode) => {
     if (!viewerAsset(node)) {
       notify("当前节点没有可加入资产库的媒体。", "error");
@@ -8991,8 +8993,13 @@ export default function SuperCanvas() {
         return (
           <CanvasAssetCollectionPicker
             node={pickerNode}
+            preferredCollectionId={assetLibraryCollectionId}
             onClose={() => setAssetCollectionPickerNodeId(null)}
-            onConfirm={(collectionId) => addViewerAsset(pickerNode, collectionId)}
+            onConfirm={async (collectionId) => {
+              const success = await addViewerAsset(pickerNode, collectionId);
+              if (success) setAssetLibraryCollectionId(collectionId);
+              return success;
+            }}
             onNotify={notify}
           />
         );
@@ -9001,6 +9008,8 @@ export default function SuperCanvas() {
         <CanvasAssetDrawer
           extraAssets={canvasAssets}
           refresh={assetRefresh}
+          collectionSelection={assetLibraryCollectionId}
+          onCollectionSelectionChange={setAssetLibraryCollectionId}
           canReference={Boolean(selectedGroupId || selectedSingle)}
           onAdd={addAssetToCanvas}
           onReference={addAssetAsReference}
@@ -9093,11 +9102,13 @@ const CANVAS_ASSET_LAST_COLLECTION_KEY = "sanmao.canvas.asset.lastCollection";
 
 function CanvasAssetCollectionPicker({
   node,
+  preferredCollectionId,
   onClose,
   onConfirm,
   onNotify,
 }: {
   node: CanvasNode;
+  preferredCollectionId?: string;
   onClose: () => void;
   onConfirm: (collectionId: string) => Promise<boolean>;
   onNotify: (message: string, kind?: Notice["kind"]) => void;
@@ -9106,6 +9117,8 @@ function CanvasAssetCollectionPicker({
     DEFAULT_ASSET_COLLECTIONS,
   );
   const [collectionId, setCollectionId] = useState(() => {
+    if (preferredCollectionId && isAssignableCanvasAssetCollection(preferredCollectionId))
+      return preferredCollectionId;
     if (typeof window === "undefined") return CANVAS_ASSET_UNCATEGORIZED_ID;
     try {
       return (
@@ -9243,11 +9256,11 @@ function CanvasAssetCollectionPicker({
         </header>
         <div className="canvas-asset-collection-picker-body">
           <label>
-            <span>选择资产集合</span>
+            <span>选择资产库分类</span>
             <SelectMenu
               value={collectionId}
               onChange={setCollectionId}
-              ariaLabel="加入目标资产集合"
+              ariaLabel="加入目标资产库分类"
               options={assignableCollections.map((item) => ({
                 value: item.id,
                 label: item.name,
@@ -9255,7 +9268,7 @@ function CanvasAssetCollectionPicker({
             />
           </label>
           <small className="canvas-asset-collection-picker-hint">
-            自定义集合会保留已有归类；未分类不会清除已有集合。
+            加入后可在全局资产中心的“{selectedCollection?.name || "未分类"}”分类中筛选；已有归类会保留。
           </small>
           <div className="canvas-asset-collection-picker-new">
             <input
@@ -9279,7 +9292,7 @@ function CanvasAssetCollectionPicker({
         <footer>
           <button type="button" onClick={onClose} disabled={saving}>取消</button>
           <button type="button" className="primary" onClick={() => void confirm()} disabled={saving || loading}>
-            {saving ? "加入中…" : `加入“${selectedCollection?.name || "未分类"}”`}
+            {saving ? "加入中…" : `加入“${selectedCollection?.name || "未分类"}”分类`}
           </button>
         </footer>
       </div>
@@ -9290,6 +9303,8 @@ function CanvasAssetCollectionPicker({
 function CanvasAssetDrawer({
   extraAssets,
   refresh,
+  collectionSelection,
+  onCollectionSelectionChange,
   canReference,
   onAdd,
   onReference,
@@ -9301,6 +9316,8 @@ function CanvasAssetDrawer({
 }: {
   extraAssets: AssetRecord[];
   refresh: number;
+  collectionSelection: string;
+  onCollectionSelectionChange: (collectionId: string) => void;
   canReference: boolean;
   onAdd: (asset: AssetRecord) => void;
   onReference: (asset: AssetRecord) => void;
@@ -9320,13 +9337,35 @@ function CanvasAssetDrawer({
   const [preview, setPreview] = useState<AssetRecord | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [collections, setCollections] = useState<AssetCollection[]>(DEFAULT_ASSET_COLLECTIONS);
-  const [collection, setCollection] = useState("all");
+  const [collection, setCollection] = useState(collectionSelection || "all");
   const [newCollectionName, setNewCollectionName] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [nodeDropActive, setNodeDropActive] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => { void listAssetCollections().then(setCollections); }, []);
+  useEffect(() => {
+    let active = true;
+    void listAssetCollections().then((items) => {
+      if (!active) return;
+      setCollections(items);
+      const valid = collectionSelection === "all" || items.some((item) => item.id === collectionSelection);
+      const next = valid ? collectionSelection : "all";
+      setCollection(next);
+      onCollectionSelectionChange(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [collectionSelection, onCollectionSelectionChange]);
+
+  useEffect(() => {
+    setCollection((current) => current === collectionSelection ? current : collectionSelection);
+  }, [collectionSelection]);
+
+  const changeCollection = (next: string) => {
+    setCollection(next);
+    onCollectionSelectionChange(next);
+  };
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -9426,6 +9465,7 @@ function CanvasAssetDrawer({
     setCollections(next); setNewCollectionName("");
     await saveAssetCollections(next);
     setCollection(item.id);
+    onCollectionSelectionChange(item.id);
   };
 
   const deleteCollection = async (collectionId: string) => {
@@ -9454,7 +9494,7 @@ function CanvasAssetDrawer({
             : asset,
         ),
       );
-      if (collection === collectionId) setCollection("all");
+      if (collection === collectionId) changeCollection("all");
       onNotify(`已删除资产集合“${target.name}”，其中的资产已保留。`);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "资产集合删除失败。", "error");
@@ -9614,7 +9654,7 @@ function CanvasAssetDrawer({
             <div className="canvas-asset-collection-picker">
               <SelectMenu
                 value={collection}
-                onChange={setCollection}
+                onChange={changeCollection}
                 onDelete={(id) => void deleteCollection(id)}
                 ariaLabel="资产集合"
                 options={collections.map((item) => ({
