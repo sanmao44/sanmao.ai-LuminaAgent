@@ -1009,6 +1009,9 @@ export default function SuperCanvas() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [expandedEditorId, setExpandedEditorId] = useState<string | null>(null);
   const [nodeGestureActive, setNodeGestureActive] = useState(false);
+  const [quickToolbarNodeId, setQuickToolbarNodeId] = useState<string | null>(
+    null,
+  );
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
@@ -1825,6 +1828,7 @@ export default function SuperCanvas() {
         return;
       setConnectionNodePicker(null);
       setDraggingNodeIds(new Set());
+      setQuickToolbarNodeId(null);
       cancelPendingNodeClick();
       hideConnectionCancel();
       if (
@@ -1873,6 +1877,7 @@ export default function SuperCanvas() {
       event.stopPropagation();
       cancelPendingNodeClick();
       setNodeGestureActive(true);
+      setQuickToolbarNodeId(null);
       const now = Date.now();
       const doubleClick = Boolean(
         lastNodePressRef.current &&
@@ -1970,6 +1975,7 @@ export default function SuperCanvas() {
           })();
       setDraggingNodeIds(new Set(ids));
       setSelectedEdgeId(null);
+      setQuickToolbarNodeId(null);
       const positions = Object.fromEntries(
         ids.map((id) => {
           const item = nodeById(docRef.current, id);
@@ -2033,6 +2039,7 @@ export default function SuperCanvas() {
       event.stopPropagation();
       hideConnectionCancel();
       connectionHoverEdgeRef.current = null;
+      setQuickToolbarNodeId(null);
       setDraggingNodeIds(new Set([node.id]));
       const size = nodeSize(node);
       interactionRef.current = {
@@ -2153,6 +2160,7 @@ export default function SuperCanvas() {
             preserveInputConnections: press.preserveInputConnections,
           };
           setDraggingNodeIds(new Set(press.nodeIds));
+          setQuickToolbarNodeId(null);
           lastNodePressRef.current = null;
           interaction = interactionRef.current;
         }
@@ -2379,6 +2387,7 @@ export default function SuperCanvas() {
         if (node) {
           if (interaction.doubleClick) {
             cancelPendingNodeClick();
+            setQuickToolbarNodeId(null);
             setExpandedEditorId(null);
             if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
             if (node.type === "media" && node.data.url)
@@ -2388,6 +2397,7 @@ export default function SuperCanvas() {
             // A click is confirmed on pointer-up. Dragging has already been
             // promoted to `drag` in moveInteraction, so it cannot open the
             // editor accidentally.
+            setQuickToolbarNodeId(node.id);
             setPendingClickNodeId(node.id);
           }
         }
@@ -2563,6 +2573,12 @@ export default function SuperCanvas() {
           }
         }
       }
+      if (
+        interaction.kind === "drag" ||
+        interaction.kind === "resize" ||
+        interaction.kind === "resizeGroup"
+      )
+        setQuickToolbarNodeId(null);
       setNodeGestureActive(false);
       interactionRef.current = null;
       setDraggingNodeIds(new Set());
@@ -7840,7 +7856,10 @@ export default function SuperCanvas() {
            </div>
           </div>
         </div>
-        {selectedSingle && !nodeGestureActive && quickActions.length > 0 && (
+        {selectedSingle &&
+          quickToolbarNodeId === selectedSingle.id &&
+          !nodeGestureActive &&
+          quickActions.length > 0 && (
           <CanvasNodeQuickToolbar
             node={selectedSingle}
             document={document}
