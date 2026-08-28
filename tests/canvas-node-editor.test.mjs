@@ -48,19 +48,21 @@ test("upscale settings use the main bilingual custom select menu", () => {
   assert.equal((panel.match(/<SelectMenu/g) || []).length, 3);
   assert.doesNotMatch(panel, /<select\b/);
   [
-    "超分模型",
-    "Upscale model",
-    "色彩校正",
-    "Color correction",
+    "模型",
+    "放大倍率",
+    "颜色校正",
     "缩放算法",
-    "Scaling algorithm",
+    "可选说明",
   ].forEach((label) => assert.match(panel, new RegExp(label)));
   [
-    "自动选择 / Automatic",
-    "关闭 / Off",
-    "高质量平滑 / High-quality smoothing",
-    "平衡速度与质量 / Balanced quality and speed",
+    "自动选择",
+    "wavelet · 接近原图",
+    "关闭",
+    "lanczos · 锐利",
+    "bicubic · 平滑",
+    "nearest · 像素",
   ].forEach((label) => assert.match(panel, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))));
+  assert.doesNotMatch(panel, /Upscale model|Color correction|Scaling algorithm|High-quality smoothing|Balanced quality and speed/);
   assert.match(panel, /className="canvas-upscale-select"/);
   assert.match(panel, /menuClassName="canvas-upscale-select-popover"/);
   assert.match(styles, /\.canvas-upscale-select-popover\{z-index:390/);

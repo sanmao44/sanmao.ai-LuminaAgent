@@ -36,6 +36,8 @@ import {
   groupBounds,
   groupById,
   groupNodes,
+  isCanvasReadyImageSource,
+  isCanvasReferenceableNode,
   incomingContext,
   incomingReferences,
   normalizeVariantRequirements,
@@ -663,11 +665,7 @@ function nodeLabel(node: CanvasNode) {
 
 function canvasUpscaleSource(document: CanvasDocument, nodeId: string) {
   return incomingReferences(document, nodeId).find(
-    (item) =>
-      item.type === "media" &&
-      item.data.kind === "image" &&
-      Boolean(item.data.url) &&
-      !["queued", "running", "failed"].includes(item.data.status || ""),
+    (item) => isCanvasReadyImageSource(item),
   );
 }
 
@@ -800,11 +798,11 @@ function mentionLabel(node: CanvasNode, index: number) {
 }
 
 function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | null {
-  if (node.type !== "media" || !node.data.url || !node.data.kind) return null;
+  if (!isCanvasReferenceableNode(node)) return null;
   return {
     id: `node-ref:${node.id}`,
     nodeId: node.id,
-    kind: node.data.kind,
+    kind: node.data.kind === "video" ? "video" : "image",
     url: String(node.data.url),
     name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : "图片素材")),
     origin: "node",
@@ -1236,8 +1234,8 @@ export default function SuperCanvas() {
   const selectedGroup = selectedGroupId
     ? groupById(document, selectedGroupId)
     : undefined;
-  const mediaNodes = useMemo(
-    () => document.nodes.filter((node) => node.type === "media"),
+  const referenceNodes = useMemo(
+    () => document.nodes.filter((node) => isCanvasReferenceableNode(node)),
     [document.nodes],
   );
   const canvasAssets = useMemo<AssetRecord[]>(
@@ -1271,12 +1269,12 @@ export default function SuperCanvas() {
     () =>
       selectedGroupId
         ? groupNodes(document, selectedGroupId).filter(
-            (node) => node.type === "media" && Boolean(node.data.url),
+            (node) => isCanvasReferenceableNode(node),
           )
         : referenceOwnerId
           ? incomingReferences(document, referenceOwnerId)
-          : mediaNodes.filter((node) => Boolean(node.data.url)),
-    [document, mediaNodes, referenceOwnerId, selectedGroupId],
+          : referenceNodes,
+    [document, referenceNodes, referenceOwnerId, selectedGroupId],
   );
 
   const setDoc = useCallback((next: CanvasDocument) => {
@@ -1438,7 +1436,8 @@ export default function SuperCanvas() {
     if (selectedSingle?.type === "prompt") setMode("text");
     else if (
       selectedSingle?.type === "media" ||
-      selectedSingle?.type === "generator"
+      selectedSingle?.type === "generator" ||
+      selectedSingle?.type === "upscale"
     )
       setMode(selectedSingle.data.kind === "video" ? "video" : "image");
   }, [selectedSingle?.id, selectedSingle?.type, selectedSingle?.data.kind]);
@@ -2443,7 +2442,7 @@ export default function SuperCanvas() {
             setQuickToolbarNodeId(null);
             setExpandedEditorId(null);
             if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
-            if (node.type === "media" && node.data.url)
+            if (isCanvasReferenceableNode(node))
               setLightbox({ nodeId: node.id, compare: false });
             else if (node.type === "prompt") setTextLightboxNodeId(node.id);
           } else {
@@ -2885,7 +2884,7 @@ export default function SuperCanvas() {
         const draft = createUpscaleNode(seed);
         const point = position ? seed : openNodePosition(seed, draft);
         const node = { ...draft, x: point.x, y: point.y };
-        const source = selectedSingle && selectedSingle.type === "media" && selectedSingle.data.kind === "image" && selectedSingle.data.url && !["queued", "running", "failed"].includes(selectedSingle.data.status || "") ? selectedSingle : undefined;
+        const source = selectedSingle && isCanvasReadyImageSource(selectedSingle) ? selectedSingle : undefined;
         const connected = source ? addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, node] }, source.id, node.id, "right", "left", "manual", "upscale-image") : { ...docRef.current, nodes: [...docRef.current.nodes, node] };
         commit(() => connected);
         setSelectedIds(new Set([node.id]));
@@ -2944,11 +2943,7 @@ export default function SuperCanvas() {
       const sourceNode = nodeById(docRef.current, picker.sourceId);
       if (
         kind === "upscale" &&
-        (!sourceNode ||
-          sourceNode.type !== "media" ||
-          sourceNode.data.kind !== "image" ||
-          !sourceNode.data.url ||
-          ["queued", "running", "failed"].includes(sourceNode.data.status || ""))
+        !isCanvasReadyImageSource(sourceNode)
       ) {
         setConnectionNodePicker(null);
         return notify("超分节点只接受一张已完成的图片", "error");
@@ -5117,10 +5112,7 @@ export default function SuperCanvas() {
           content: String(node.data.text),
         }));
       const referenceNodes = incoming.filter(
-        (node) =>
-          node.type === "media" &&
-          node.data.kind === "image" &&
-          Boolean(node.data.url),
+        (node) => isCanvasReferenceableNode(node) && node.data.kind === "image",
       );
       const configuredAgentModel = runtime?.settings.agentModelId;
       const hasUsableConfiguredAgentModel = Boolean(
@@ -5328,9 +5320,9 @@ export default function SuperCanvas() {
     const baseLinked = ownerId
       ? [
           ...(sourceTarget?.data.url ? [sourceTarget] : []),
-          ...incoming.filter((node) => node.type === "media" && node.data.url),
+          ...incoming.filter((node) => isCanvasReferenceableNode(node)),
         ]
-      : selectedNodes.filter((node) => node.type === "media" && node.data.url);
+      : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
     const linked = [
       ...new Map(
         [
@@ -5994,7 +5986,7 @@ export default function SuperCanvas() {
           : source.data.kind === "video" ? "video" : "reference-image";
       } else if (source.type === "prompt" || source.type === "generator") {
         inputRole = "context";
-      } else if (source.type === "media") {
+      } else if (isCanvasReferenceableNode(source)) {
         if (target.data.kind === "image" && source.data.kind !== "image") {
           notify("图片节点不能接收视频作为图片参考。", "error");
           return;
@@ -6317,7 +6309,7 @@ export default function SuperCanvas() {
 
   const createUpscaleFromSource = useCallback((sourceOverride?: CanvasNode) => {
     const source = sourceOverride || selectedSingle;
-    if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url || ["queued", "running", "failed"].includes(source.data.status || ""))
+    if (!source || !isCanvasReadyImageSource(source))
       return notify("请先选择一张已完成的图片", "error");
     const draft = createUpscaleNode({ x: source.x + nodeSize(source).w + 90, y: source.y });
     const next = addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, draft] }, source.id, draft.id, "right", "left", "manual", "upscale-image");
@@ -6731,7 +6723,7 @@ export default function SuperCanvas() {
         .filter((node): node is CanvasNode => Boolean(node))
     : referenceOwnerId
     ? incomingReferences(document, referenceOwnerId)
-    : selectedNodes.filter((node) => node.type === "media" && node.data.url);
+    : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
   const composerReferences = reuseDraft ? reuseDraft.references : references;
   const composerPrompt = reuseDraft ? reuseDraft.prompt : deck.prompt;
   const composerSemanticBadges = useMemo(() => {
@@ -6802,7 +6794,7 @@ export default function SuperCanvas() {
     notify("提示词已复制到画布编辑器，原节点保持不变");
   }, [notify, openImageEditor, openReuseDraft]);
   const runOneTakeFromSelection = useCallback(async () => {
-    const source = selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url);
+    const source = selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image");
     if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
     const model = runtime?.settings.agentModelId || undefined;
     try {
@@ -7851,7 +7843,7 @@ export default function SuperCanvas() {
             window.document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-canvas-node-id]");
           const nodeId = hit?.getAttribute("data-canvas-node-id");
           const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
-          if (node?.type === "media" && node.data.url) {
+          if (node && isCanvasReferenceableNode(node)) {
             cancelPendingNodeClick();
             setLightbox({ nodeId: node.id, compare: false });
           } else if (node?.type === "prompt") {
@@ -8354,7 +8346,7 @@ export default function SuperCanvas() {
                 ⌘ 成组
               </button>
             )}
-            {selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url).length >= 2 && (
+            {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
               <button type="button" onClick={() => void runOneTakeFromSelection()}>🎬 一镜到底</button>
             )}
             {selectedGroupId && (
@@ -8909,12 +8901,13 @@ export default function SuperCanvas() {
       </div>
       {lightbox && (() => {
         const viewerNode = nodeById(document, lightbox.nodeId);
-        if (!viewerNode || viewerNode.type !== "media" || !viewerNode.data.url || !viewerNode.data.kind) return null;
+        if (!viewerNode || !isCanvasReferenceableNode(viewerNode)) return null;
+        const viewerIsMedia = viewerNode.type === "media";
         const viewerItem: MediaViewerItem = {
           id: viewerNode.id,
-          kind: viewerNode.data.kind,
+          kind: viewerNode.data.kind === "video" ? "video" : "image",
           url: String(viewerNode.data.url),
-          name: String(viewerNode.data.name || "画布素材"),
+          name: String(viewerNode.data.name || (viewerNode.type === "upscale" ? "超分结果" : "画布素材")),
           prompt: String(viewerNode.data.generation?.prompt || viewerNode.data.prompt || ""),
           width: Number(viewerNode.data.nativeWidth) || undefined,
           height: Number(viewerNode.data.nativeHeight) || undefined,
@@ -8941,21 +8934,23 @@ export default function SuperCanvas() {
           model={runtime?.settings.agentModelId || undefined}
           agentAvailable={chatModelsAvailable}
           runtime={runtime}
-          parameters={viewerNode.data.kind === "video"
+          parameters={viewerIsMedia && viewerNode.data.kind === "video"
             ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "video", runtime) as VideoCreationSettings
-            : copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings}
+            : viewerIsMedia
+            ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings
+            : undefined}
           onClose={() => setLightbox(null)}
-          onParametersChange={(settings) => updateViewerParams(viewerNode, settings)}
-          onPromptSave={(value) => writeViewerPrompt(viewerNode, value)}
-          onWriteResult={(value) => writeViewerPrompt(viewerNode, value)}
+          onParametersChange={viewerIsMedia ? (settings) => updateViewerParams(viewerNode, settings) : undefined}
+          onPromptSave={viewerIsMedia ? (value) => writeViewerPrompt(viewerNode, value) : undefined}
+          onWriteResult={viewerIsMedia ? (value) => writeViewerPrompt(viewerNode, value) : undefined}
           onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
-          onEdit={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
-          onMask={viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
-          onUpscale={viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
-          onContinue={() => continueFromMedia(viewerNode)}
-          onReuse={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
-          onUseAsReference={() => addCurrentNodeToReuse(viewerNode)}
+          onEdit={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
+          onMask={viewerIsMedia && viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
+          onUpscale={viewerIsMedia && viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
+          onContinue={viewerIsMedia ? () => continueFromMedia(viewerNode) : undefined}
+          onReuse={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
+          onUseAsReference={viewerIsMedia ? () => addCurrentNodeToReuse(viewerNode) : undefined}
           onAddToAssets={canAddCanvasAsset(viewerNode) ? () => openAssetCollectionPicker(viewerNode) : undefined}
           onDelete={removeViewerNode}
         />;
@@ -10132,60 +10127,58 @@ function CanvasUpscaleSettingsPanel({
   const modelOptions = [
     {
       value: "auto",
-      label: "自动选择 / Automatic",
-      description: "按能力自动选择 / Select by capability",
+      label: "自动选择",
+      description: "使用默认厂商，失败时自动回退",
     },
     ...models.map((model) => ({
       value: model.id,
       label: model.displayName,
-      description: `${model.providerName || "服务商 / Provider"} · ${model.id}`,
+      description: `${model.providerName} · ${model.rawId}`,
     })),
   ];
   const colorCorrectionOptions: Array<{
     value: CanvasUpscaleParams["colorCorrection"];
     label: string;
-    description: string;
   }> = [
-    { value: "wavelet", label: "Wavelet / 小波校正", description: "保留细节 / Preserve detail" },
-    { value: "none", label: "关闭 / Off", description: "不进行色彩校正 / No correction" },
+    { value: "wavelet", label: "wavelet · 接近原图" },
+    { value: "none", label: "关闭" },
   ];
   const algorithmOptions: Array<{
     value: CanvasUpscaleParams["algorithm"];
     label: string;
-    description: string;
   }> = [
-    { value: "lanczos", label: "Lanczos / Lanczos", description: "高质量平滑 / High-quality smoothing" },
-    { value: "bicubic", label: "Bicubic / 双三次", description: "平衡速度与质量 / Balanced quality and speed" },
-    { value: "nearest", label: "Nearest / 最近邻", description: "硬边像素放大 / Pixel-preserving scaling" },
+    { value: "lanczos", label: "lanczos · 锐利" },
+    { value: "bicubic", label: "bicubic · 平滑" },
+    { value: "nearest", label: "nearest · 像素" },
   ];
   return (
     <div className="canvas-upscale-settings" aria-label="超分设置">
       <div className="canvas-upscale-setting-row">
         <div className="canvas-upscale-field">
-          <div className="canvas-upscale-field-label"><strong>超分模型</strong><small>Upscale model</small></div>
+          <div className="canvas-upscale-field-label"><strong>模型</strong></div>
           <SelectMenu
             value={params.model}
             onChange={(value) => onChange({ ...params, model: value })}
-            ariaLabel="超分模型 / Upscale model"
+            ariaLabel="模型"
             className="canvas-upscale-select"
             menuClassName="canvas-upscale-select-popover"
             options={modelOptions}
           />
         </div>
         <div className="canvas-upscale-field">
-          <div className="canvas-upscale-field-label"><strong>倍率</strong><small>Scale</small></div>
-          <div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} aria-pressed={params.scale === scale} aria-label={`${scale}× 放大 / ${scale}× upscale`} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div>
+          <div className="canvas-upscale-field-label"><strong>放大倍率</strong></div>
+          <div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} aria-pressed={params.scale === scale} aria-label={`${scale}×`} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div>
         </div>
       </div>
-      <div className="canvas-upscale-size-readout"><span><small>原图 / Source</small><strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败 / Failed" : "读取中… / Reading…"}</strong></span><b>→</b><span><small>目标 / Target</small><strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算 / Unavailable" : "计算中… / Calculating…"}</strong></span></div>
+      <div className="canvas-upscale-size-readout"><span><small>原图</small><strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败" : "读取中…"}</strong></span><b>→</b><span><small>目标</small><strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算" : "计算中…"}</strong></span></div>
       <div className="canvas-upscale-setting-row">
-        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>随机种子</strong><small>Random seed</small></span><input type="number" min={0} value={params.seed} aria-label="随机种子 / Random seed" onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
+        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>随机种子</strong></span><input type="number" min={0} value={params.seed} aria-label="随机种子" onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
         <div className="canvas-upscale-field">
-          <div className="canvas-upscale-field-label"><strong>色彩校正</strong><small>Color correction</small></div>
+          <div className="canvas-upscale-field-label"><strong>颜色校正</strong></div>
           <SelectMenu
             value={params.colorCorrection}
             onChange={(value) => onChange({ ...params, colorCorrection: value })}
-            ariaLabel="色彩校正 / Color correction"
+            ariaLabel="颜色校正"
             className="canvas-upscale-select"
             menuClassName="canvas-upscale-select-popover"
             options={[...colorCorrectionOptions]}
@@ -10194,19 +10187,19 @@ function CanvasUpscaleSettingsPanel({
       </div>
       <div className="canvas-upscale-setting-row">
         <div className="canvas-upscale-field">
-          <div className="canvas-upscale-field-label"><strong>缩放算法</strong><small>Scaling algorithm</small></div>
+          <div className="canvas-upscale-field-label"><strong>缩放算法</strong></div>
           <SelectMenu
             value={params.algorithm}
             onChange={(value) => onChange({ ...params, algorithm: value })}
-            ariaLabel="缩放算法 / Scaling algorithm"
+            ariaLabel="缩放算法"
             className="canvas-upscale-select"
             menuClassName="canvas-upscale-select-popover"
             options={[...algorithmOptions]}
           />
         </div>
-        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>说明文字</strong><small>Prompt</small></span><input value={params.prompt || ""} aria-label="说明文字 / Prompt" placeholder="可选 / Optional" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
+        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>可选说明</strong></span><input value={params.prompt || ""} aria-label="可选说明" placeholder="SeedVR2 超分不会根据提示词修改画面…" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
       </div>
-      {!sourceUrl && <small className="canvas-upscale-empty-hint">请连接一张已完成的图片后再提交 / Connect a completed image before submitting</small>}
+      {!sourceUrl && <small className="canvas-upscale-empty-hint">请连接一张已完成的图片后再提交</small>}
     </div>
   );
 }
@@ -10575,9 +10568,7 @@ function CanvasNodeEditorPopover({
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
-  const editorReferences = incomingContext(document, node.id).filter(
-    (item) => item.type === "media" && Boolean(item.data.url),
-  );
+  const editorReferences = incomingReferences(document, node.id);
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
   const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
@@ -11073,9 +11064,7 @@ function CanvasNodeCard({
       : 0;
   const referenceCount =
     node.type === "generator" ? incomingReferences(document, node.id).length : 0;
-  const editorReferences = incomingContext(document, node.id).filter((item) =>
-    item.type === "media" && Boolean(item.data.url),
-  );
+  const editorReferences = incomingReferences(document, node.id);
   const editorOutputs =
     node.type === "generator"
       ? document.nodes.filter(
@@ -11126,7 +11115,7 @@ function CanvasNodeCard({
       onDoubleClick={(event) => {
         event.stopPropagation();
         if (node.type === "prompt") onEdit(true);
-        else if (node.type === "media" && data.url) onPreview();
+        else if (isCanvasReferenceableNode(node)) onPreview();
         else onToggleEditor(node);
       }}
     >
@@ -11286,14 +11275,14 @@ function CanvasNodeCard({
               />
             </div>
           ) : hasUpscaleResult ? (
-            <div className="canvas-upscale-card-result">
+            <div className="canvas-upscale-card-result" title="双击查看大图；拖动此节点到其他节点可作为图片参考">
               <img src={String(data.url)} alt={String(data.name || "超分结果")} draggable={false} />
               <span className="canvas-upscale-result-badge"><i>↗</i>{data.status === "failed" ? "上次超分结果" : "超分节点生成的结果"}</span>
             </div>
           ) : (
             <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>
           )}
-          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : hasUpscaleResult ? "已写入当前节点 · 可再次提交超分" : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
+          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : hasUpscaleResult ? "双击预览 · 拖到其他节点作为图片参考" : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
         </div>
       )}
       {node.type === "prompt" && (

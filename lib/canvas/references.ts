@@ -3,11 +3,11 @@ import type { CanvasNode } from "./types";
 export type CanvasInputMode = "image" | "video" | "agent";
 
 export type CanvasInputSemantics = {
-  /** Media nodes remain in their visible canvas order. */
+  /** Image/video-producing nodes remain in their visible canvas order. */
   media: CanvasNode[];
-  /** Only image media can be sent to an image model or multimodal Agent. */
+  /** Only image-producing nodes can be sent to an image model or multimodal Agent. */
   imageReferences: CanvasNode[];
-  /** Video media is kept separate so it is never accidentally sent as an image. */
+  /** Video-producing nodes are kept separate so they are never sent as images. */
   videoReferences: CanvasNode[];
   /** Prompt nodes become conversation/context text, never image references. */
   textContext: CanvasNode[];
@@ -24,7 +24,10 @@ export function resolveCanvasInputSemantics(
   inputMode?: "text" | "first-frame" | "frames" | "reference",
 ): CanvasInputSemantics {
   const media = nodes.filter(
-    (node) => node.type === "media" && Boolean(node.data.url),
+    (node) =>
+      (node.type === "media" || node.type === "upscale") &&
+      Boolean(node.data.kind) &&
+      Boolean(node.data.url),
   );
   const imageReferences = media.filter(
     (node) => node.data.kind === "image",

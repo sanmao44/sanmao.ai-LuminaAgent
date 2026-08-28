@@ -131,6 +131,33 @@ test('allows multiple image references on the same target after legacy migration
   assert.deepEqual(model.incomingReferences(withSecond, target.id).map((node) => node.id), [first.id, second.id]);
 });
 
+test('exposes completed upscale output as an image reference for downstream nodes', () => {
+  const source = model.createMedia('image', '/source.png', '原图', { x: 0, y: 0 });
+  const upscaleBase = model.createUpscaleNode({ x: 420, y: 0 });
+  const upscale = {
+    ...upscaleBase,
+    data: {
+      ...upscaleBase.data,
+      url: '/upscaled.png',
+      name: '超分结果',
+      status: 'completed',
+    },
+  };
+  const consumer = model.createGenerator('image', { x: 840, y: 0 });
+  const nextUpscale = model.createUpscaleNode({ x: 1260, y: 0 });
+  let document = model.normalizeDocument({
+    nodes: [source, upscale, consumer, nextUpscale],
+    edges: [
+      { id: 'upscale-input', source: source.id, target: upscale.id, inputRole: 'upscale-image' },
+      { id: 'upscale-output', source: upscale.id, target: consumer.id, inputRole: 'reference-image' },
+    ],
+  });
+
+  assert.deepEqual(model.incomingReferences(document, consumer.id).map((node) => node.id), [upscale.id]);
+  document = model.addEdge(document, upscale.id, nextUpscale.id, 'right', 'left', 'manual', 'upscale-image');
+  assert.equal(document.edges.some((edge) => edge.source === upscale.id && edge.target === nextUpscale.id), true);
+});
+
 test('migrates legacy standalone upscale results into the owning node', () => {
   const source = model.createMedia('image', '/source.png', '原图', { x: 0, y: 0 });
   const upscale = model.createUpscaleNode({ x: 480, y: 0 });

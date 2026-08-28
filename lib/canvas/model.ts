@@ -71,6 +71,25 @@ function mediaKind(value: unknown): CanvasMediaKind {
   return value === "video" ? "video" : "image";
 }
 
+/** Nodes that currently expose a usable image/video URL to other nodes. */
+export function isCanvasReferenceableNode(node: CanvasNode | undefined) {
+  return Boolean(
+    node &&
+      (node.type === "media" || node.type === "upscale") &&
+      node.data.kind &&
+      node.data.url,
+  );
+}
+
+/** Only completed image outputs can feed the dedicated upscale input. */
+export function isCanvasReadyImageSource(node: CanvasNode | undefined) {
+  if (!node || !isCanvasReferenceableNode(node)) return false;
+  return (
+    node.data.kind === "image" &&
+    !["queued", "running", "failed"].includes(node.data.status || "")
+  );
+}
+
 function normalizeUpscaleParams(value: unknown): CanvasUpscaleParams {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const scaleValue = Number(raw.scale ?? raw.upscaleScale);
@@ -284,7 +303,7 @@ export function canConnect(
   const targetNode = nodeById(document, target);
   if (targetNode?.type === "upscale") {
     const sourceNode = nodeById(document, source);
-    if (!sourceNode || sourceNode.type !== "media" || sourceNode.data.kind !== "image" || !sourceNode.data.url || ["queued", "running", "failed"].includes(sourceNode.data.status || ""))
+    if (!isCanvasReadyImageSource(sourceNode))
       return { ok: false, reason: "超分节点只接受一张已完成的图片" };
     if (document.edges.some((edge) => edge.target === target))
       return { ok: false, reason: "超分节点只能连接一张图片" };
@@ -1556,7 +1575,7 @@ export function incomingContext(document: CanvasDocument, entityId: string) {
     .map((id) => nodeById(document, id))
     .filter(
       (node): node is CanvasNode =>
-        node?.type === "media" && Boolean(node.data.url),
+        isCanvasReferenceableNode(node),
     );
   const seen = new Set<string>();
   return [...virtual, ...direct].filter(
@@ -1565,9 +1584,7 @@ export function incomingContext(document: CanvasDocument, entityId: string) {
 }
 
 export function incomingReferences(document: CanvasDocument, entityId: string) {
-  return incomingContext(document, entityId).filter(
-    (node) => node.type === "media" && Boolean(node.data.url),
-  );
+  return incomingContext(document, entityId).filter(isCanvasReferenceableNode);
 }
 
 export function reorderReferences(
@@ -1612,7 +1629,7 @@ export function smartPrompt(prompt: string, context: CanvasNode[]) {
     .map((node) => node.data.text?.trim())
     .filter(Boolean) as string[];
   const output = [prompt.trim(), ...texts].filter(Boolean).join("\n");
-  const refs = context.filter((node) => node.type === "media" && node.data.url);
+  const refs = context.filter(isCanvasReferenceableNode);
   if (
     refs.length > 1 &&
     /(融合|合并|组合|结合|一张图|共同|全部参考|merge|combine|blend|composite|all references)/i.test(

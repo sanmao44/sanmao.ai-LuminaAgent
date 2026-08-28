@@ -27,3 +27,17 @@ test("node editors and node quick panels stay outside the canvas double-click ha
   assert.match(handler, /\.canvas-node-parameters/);
   assert.match(handler, /\.canvas-node-quick-toolbar/);
 });
+
+test("completed upscale results use the same image preview path as media nodes", () => {
+  const cardStart = component.indexOf("function CanvasNodeCard");
+  const cardEnd = component.indexOf("function CanvasMinimap", cardStart);
+  assert.ok(cardStart >= 0 && cardEnd > cardStart, "canvas node card should exist");
+  const card = component.slice(cardStart, cardEnd);
+
+  assert.match(component, /if \(isCanvasReferenceableNode\(node\)\)\s*setLightbox\(\{ nodeId: node\.id, compare: false \}\)/);
+  assert.match(card, /else if \(isCanvasReferenceableNode\(node\)\) onPreview\(\)/);
+  assert.match(component, /if \(!viewerNode \|\| !isCanvasReferenceableNode\(viewerNode\)\) return null/);
+  assert.match(component, /const viewerIsMedia = viewerNode\.type === "media"/);
+  assert.match(component, /parameters=\{viewerIsMedia && viewerNode\.data\.kind === "video"/);
+  assert.match(component, /onEdit=\{viewerIsMedia \?/);
+});
