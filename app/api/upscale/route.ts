@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) { errorStatus = 400; throw new Error('目标尺寸无效，请使用正整数 WIDTHxHEIGHT。'); }
     const seed = Number.isFinite(Number(body.seed)) ? Number(body.seed) : 42;
     const colorCorrection = ['wavelet', 'none'].includes(String(body.colorCorrection || '')) ? String(body.colorCorrection) : 'wavelet';
-    const resizeMethod = String(body.resizeMethod || '') === 'bicubic' ? 'bicubic' : 'lanczos';
+    const resizeMethod = String(body.resizeMethod || '') === 'bicubic' ? 'bicubic' : String(body.resizeMethod || '') === 'nearest' ? 'nearest' : 'lanczos';
     const longEdge = Math.max(width, height);
     const resolution = longEdge <= 1536 ? '1K' : longEdge <= 3072 ? '2K' : '4K';
     logId = await startGenerationLog({ mode: 'upscale', source: sourceForLog, prompt: promptForLog, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, resolution, outputSize: `${width}×${height}`, count: 1, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));

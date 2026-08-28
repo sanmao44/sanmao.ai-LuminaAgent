@@ -10,6 +10,7 @@ import type {
   CanvasNode,
   CanvasNodeData,
   CanvasSnapshot,
+  CanvasUpscaleParams,
 } from "./types";
 import { normalizeCreationSettings } from "../creation/settings";
 
@@ -61,11 +62,31 @@ export function normalizeCamera(
 }
 
 function nodeType(value: unknown): CanvasNode["type"] {
-  return value === "prompt" || value === "generator" ? value : "media";
+  return value === "prompt" || value === "generator" || value === "upscale" ? value : "media";
 }
 
 function mediaKind(value: unknown): CanvasMediaKind {
   return value === "video" ? "video" : "image";
+}
+
+function normalizeUpscaleParams(value: unknown): CanvasUpscaleParams {
+  const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const scaleValue = Number(raw.scale ?? raw.upscaleScale);
+  const scale = [1, 2, 3, 4].includes(scaleValue)
+    ? scaleValue as CanvasUpscaleParams["scale"]
+    : 2;
+  const target = raw.target ?? raw.targetSize ?? raw.upscaleTarget;
+  const algorithm = raw.algorithm ?? raw.upscaleAlgorithm;
+  return {
+    kind: "upscale",
+    model: typeof (raw.model ?? raw.modelId ?? raw.upscaleModelId) === "string" ? String(raw.model ?? raw.modelId ?? raw.upscaleModelId) : "auto",
+    scale,
+    target: target === "1K" || target === "2K" || target === "4K" ? target : "auto",
+    seed: Number.isFinite(Number(raw.seed ?? raw.upscaleSeed)) ? Math.max(0, Math.round(Number(raw.seed ?? raw.upscaleSeed))) : 42,
+    colorCorrection: raw.colorCorrection === "none" || raw.upscaleColorCorrection === "none" ? "none" : "wavelet",
+    algorithm: algorithm === "bicubic" ? "bicubic" : algorithm === "nearest" ? "nearest" : "lanczos",
+    ...(typeof raw.prompt === "string" ? { prompt: raw.prompt } : {}),
+  };
 }
 
 function normalizeNode(value: unknown): CanvasNode | null {
@@ -86,6 +107,27 @@ function normalizeNode(value: unknown): CanvasNode | null {
     data.kind = mediaKind(data.kind);
   if (type === "prompt")
     data.params = normalizeCreationSettings("text", data.params);
+  if (type === "upscale") {
+    data.params = normalizeUpscaleParams({
+      ...(data as Record<string, unknown>),
+      ...(data.params && typeof data.params === "object" ? data.params : {}),
+    });
+    data.kind = "image";
+    data.status = data.status || "draft";
+    data.statusLabel = data.statusLabel || "等待连接图片";
+    if (data.generation && typeof data.generation === "object") {
+      data.generation = {
+        ...data.generation,
+        kind: "image",
+        operation: "upscale",
+        prompt: String(data.generation.prompt || data.prompt || "Upscale this image"),
+        params: normalizeUpscaleParams({
+          ...(data.generation.params && typeof data.generation.params === "object" ? data.generation.params : {}),
+          ...(data.params && typeof data.params === "object" ? data.params : {}),
+        }),
+      };
+    }
+  }
   if (type === "generator") {
     const kind = mediaKind(data.kind || "image");
     data.params =
@@ -188,7 +230,8 @@ function normalizeInputRole(value: unknown): CanvasInputRole | undefined {
     value === "mask" ||
     value === "video" ||
     value === "first-frame" ||
-    value === "last-frame"
+    value === "last-frame" ||
+    value === "upscale-image"
     ? value
     : undefined;
 }
@@ -218,6 +261,15 @@ export function canConnect(
   if (!nodeById(document, source) && !groupById(document, source)) return { ok: false, reason: "源节点不存在" };
   if (!nodeById(document, target) && !groupById(document, target)) return { ok: false, reason: "目标节点不存在" };
   if (hasPath(document, source, target)) return { ok: false, reason: "这条连接会形成循环" };
+  const targetNode = nodeById(document, target);
+  if (targetNode?.type === "upscale") {
+    const sourceNode = nodeById(document, source);
+    if (!sourceNode || sourceNode.type !== "media" || sourceNode.data.kind !== "image" || !sourceNode.data.url || ["queued", "running", "failed"].includes(sourceNode.data.status || ""))
+      return { ok: false, reason: "超分节点只接受一张已完成的图片" };
+    if (document.edges.some((edge) => edge.target === target))
+      return { ok: false, reason: "超分节点只能连接一张图片" };
+    inputRole = "upscale-image";
+  }
   return { ok: true as const };
 }
 
@@ -266,7 +318,7 @@ export function normalizeDocument(
       ? { ...node, groupId: groupMembership.get(node.id) }
       : withoutGroupId(node),
   );
-  const edges = Array.isArray(raw.edges)
+  const rawEdges = Array.isArray(raw.edges)
     ? (raw.edges
         .map(normalizeEdge)
         .filter(Boolean)
@@ -277,6 +329,15 @@ export function normalizeDocument(
           (edge) => nodeIds.has(edge!.target) || groupIds.has(edge!.target),
         ) as CanvasEdge[])
     : [];
+  const upscaleTargets = new Set<string>();
+  const edges = rawEdges.filter((edge) => {
+    const targetNode = normalizedNodes.find((node) => node.id === edge.target);
+    if (targetNode?.type !== "upscale") return true;
+    const sourceNode = normalizedNodes.find((node) => node.id === edge.source);
+    if (!sourceNode || sourceNode.type !== "media" || sourceNode.data.kind !== "image" || !sourceNode.data.url || upscaleTargets.has(targetNode.id)) return false;
+    upscaleTargets.add(targetNode.id);
+    return true;
+  }).map((edge) => normalizedNodes.find((node) => node.id === edge.target)?.type === "upscale" ? { ...edge, inputRole: "upscale-image" as CanvasInputRole } : edge);
   return {
     version: CANVAS_VERSION,
     nodes: normalizedNodes,
@@ -306,10 +367,10 @@ export function nodeSize(node: Pick<CanvasNode, "type" | "w" | "h">) {
   return {
     w:
       node.w ||
-      (node.type === "media" ? 320 : node.type === "prompt" ? 270 : 306),
+      (node.type === "media" ? 320 : node.type === "prompt" ? 270 : node.type === "upscale" ? 360 : 306),
     h:
       node.h ||
-      (node.type === "media" ? 220 : node.type === "prompt" ? 170 : 238),
+      (node.type === "media" ? 220 : node.type === "prompt" ? 170 : node.type === "upscale" ? 260 : 238),
   };
 }
 
@@ -473,7 +534,7 @@ export function distributeCanvasNodes(
     .map((id) => nodeById(document, id))
     .filter((node): node is CanvasNode => Boolean(node));
   const next = clone(document);
-  if (selected.length < 3) {
+  if ((direction !== "horizontal" && direction !== "vertical") || selected.length < 3) {
     return { document: next, alignedIds: selectedIds, changed: false };
   }
 
@@ -1073,6 +1134,34 @@ export function createEmptyMedia(
   };
 }
 
+export function createUpscaleNode(position: { x: number; y: number } = { x: 0, y: 0 }, params?: Partial<CanvasUpscaleParams>): CanvasNode {
+  const normalized = normalizeUpscaleParams(params);
+  return {
+    id: uid("node"),
+    type: "upscale",
+    x: position.x,
+    y: position.y,
+    w: 360,
+    h: 260,
+    data: {
+      kind: "image",
+      role: "独立超分",
+      status: "draft",
+      statusLabel: "等待连接图片",
+      params: normalized,
+      prompt: normalized.prompt || "Upscale this image",
+      generation: {
+        kind: "image",
+        prompt: normalized.prompt || "Upscale this image",
+        params: normalized,
+        operation: "upscale",
+        referenceIds: [],
+        createdAt: Date.now(),
+      },
+    },
+  };
+}
+
 export function addEdge(
   document: CanvasDocument,
   source: string,
@@ -1104,6 +1193,9 @@ export function addEdge(
     )
   )
     return document;
+  const effectiveInputRole = nodeById(document, target)?.type === "upscale"
+    ? "upscale-image" as CanvasInputRole
+    : inputRole;
   return {
     ...document,
     edges: [
@@ -1115,7 +1207,7 @@ export function addEdge(
         sourcePort,
         targetPort,
         kind,
-        ...(inputRole ? { inputRole } : {}),
+        ...(effectiveInputRole ? { inputRole: effectiveInputRole } : {}),
         ...(Number.isFinite(Number(order)) ? { order: Number(order) } : {}),
       },
     ],

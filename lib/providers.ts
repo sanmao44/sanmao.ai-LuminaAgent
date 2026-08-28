@@ -836,7 +836,7 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
     size: input.size,
     seed: Number.isFinite(input.seed) ? input.seed : 42,
     color_correction: input.colorCorrection || 'wavelet',
-    resize_method: input.resizeMethod === 'bicubic' ? 'bicubic' : 'lanczos',
+    resize_method: input.resizeMethod === 'bicubic' ? 'bicubic' : input.resizeMethod === 'nearest' ? 'nearest' : 'lanczos',
     response_format: 'b64_json',
   };
   const compactParameters = Object.fromEntries(Object.entries(parameters).filter(([, value]) => value !== undefined));

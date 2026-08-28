@@ -18,6 +18,7 @@ export function canvasNodeColorKey(
     return node.data.kind === "video"
       ? "video-generator"
       : "image-generator";
+  if (node.type === "upscale") return "image-generator";
   return node.data.kind === "video" ? "video" : "image";
 }
 

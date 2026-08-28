@@ -1,7 +1,7 @@
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from '../creation/settings';
 import type { PublicState } from '../types';
 
-export type CanvasNodeType = 'media' | 'prompt' | 'generator';
+export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale';
 export type CanvasMediaKind = 'image' | 'video';
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
@@ -13,7 +13,8 @@ export type CanvasInputRole =
   | 'mask'
   | 'video'
   | 'first-frame'
-  | 'last-frame';
+  | 'last-frame'
+  | 'upscale-image';
 
 export type CanvasVariantState = {
   id: string;
@@ -30,10 +31,24 @@ export type CanvasImageGenerationParams = ImageCreationSettings;
 export type CanvasVideoGenerationParams = VideoCreationSettings;
 export type CanvasGenerationParams = CreationSettings;
 
+/** Settings owned by an independent canvas upscale node. */
+export type CanvasUpscaleParams = {
+  kind: "upscale";
+  model: string;
+  scale: 1 | 2 | 3 | 4;
+  target: "auto" | "1K" | "2K" | "4K";
+  seed: number;
+  colorCorrection: "wavelet" | "none";
+  algorithm: "lanczos" | "bicubic" | "nearest";
+  prompt?: string;
+};
+
+export type CanvasNodeParams = CanvasGenerationParams | CanvasUpscaleParams;
+
 export type CanvasGenerationMeta = {
   kind: CanvasMediaKind;
   prompt: string;
-  params: CanvasGenerationParams;
+  params: CanvasNodeParams;
   operation?: "generate" | "edit" | "upscale" | "extend";
   referenceIds?: string[];
   sourceGeneratorId?: string;
@@ -52,7 +67,7 @@ export type CanvasHistoryEntry = {
   id: string;
   operation: "generate" | "edit" | "inpaint" | "outpaint" | "upscale" | "extend";
   prompt: string;
-  params?: CanvasGenerationParams;
+  params?: CanvasNodeParams;
   referenceIds: string[];
   resultIds?: string[];
   parentNodeId?: string;
@@ -87,7 +102,7 @@ export type CanvasNodeData = {
   /** Latest Agent response rendered in the prompt card. */
   agentResponse?: string;
   prompt?: string;
-  params?: CanvasGenerationParams;
+  params?: CanvasNodeParams;
   assetId?: string;
   sourceAssetId?: string;
   autoFit?: boolean;

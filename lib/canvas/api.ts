@@ -488,7 +488,7 @@ export async function generateCanvasUpscale(input: {
       reference,
       referenceImages: [{ name: "超分原图", url: input.referenceUrl }],
       scale: Math.max(1, Math.min(4, Number(input.scale || 2))),
-      ...(input.size ? { size: input.size } : {}),
+      size: input.size || "1024x1024",
       seed: Math.max(0, Number(input.seed || 0)),
       colorCorrection: input.colorCorrection || "wavelet",
       resizeMethod: input.resizeMethod || "lanczos",

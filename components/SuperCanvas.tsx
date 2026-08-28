@@ -25,6 +25,7 @@ import {
   createGroup,
   createMedia,
   createPrompt,
+  createUpscaleNode,
   detachNodesFromGroups,
   distributeCanvasNodes,
   edgeTouchesSelection,
@@ -88,6 +89,7 @@ import {
   type ImageCreationSettings,
   type VideoCreationSettings,
 } from "@/lib/creation/settings";
+import { recordModelCall } from "@/lib/model-preferences";
 import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
 import {
   fitCanvasNodeEditorBelow,
@@ -137,7 +139,9 @@ import type {
   CanvasRuntimeState,
   CanvasSnapshot,
   CanvasVariantState,
+  CanvasUpscaleParams,
 } from "@/lib/canvas/types";
+import { canvasUpscaleSize, loadImageDimensions, seedVrTargetSize } from "@/lib/canvas/upscale";
 import {
   CANVAS_MAX_REFERENCES,
   addReferenceDrafts,
@@ -416,7 +420,8 @@ type ConnectableNodeKind =
   | "video"
   | "text"
   | "workflowImage"
-  | "workflowVideo";
+  | "workflowVideo"
+  | "upscale";
 type ConnectionNodePicker = {
   x: number;
   y: number;
@@ -515,6 +520,12 @@ const CONNECTION_NODE_OPTIONS: Array<{
     label: "视频变体生成器",
     description: "按多条要求串行生成视频变体",
   },
+  {
+    kind: "upscale",
+    icon: "↗",
+    label: "超分节点",
+    description: "连接一张已完成图片并打开超分设置",
+  },
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Esc"], label: "关闭弹层、取消当前操作并清除选择" },
@@ -591,10 +602,21 @@ function dataUrlFile(dataUrl: string, name: string) {
 }
 
 function nodeLabel(node: CanvasNode) {
+  if (node.type === "upscale") return "图片超分";
   if (node.type === "prompt") return "Agent 节点";
   if (node.type === "generator")
     return node.data.kind === "video" ? "视频变体生成器" : "图片变体生成器";
   return node.data.kind === "video" ? "视频卡片" : "图片卡片";
+}
+
+function canvasUpscaleSource(document: CanvasDocument, nodeId: string) {
+  return incomingReferences(document, nodeId).find(
+    (item) =>
+      item.type === "media" &&
+      item.data.kind === "image" &&
+      Boolean(item.data.url) &&
+      !["queued", "running", "failed"].includes(item.data.status || ""),
+  );
 }
 
 function canvasConnectableId(target: EventTarget | null) {
@@ -964,6 +986,7 @@ export default function SuperCanvas() {
   const pollTimersRef = useRef<Set<number>>(new Set());
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
   const runGenerationRef = useRef<(() => Promise<void>) | null>(null);
+  const runUpscaleNodeRef = useRef<((node: CanvasNode) => Promise<void>) | null>(null);
   const mountedRef = useRef(true);
   const generationKeysRef = useRef<Set<string>>(new Set());
   const registeredAssetUrlsRef = useRef<Set<string>>(new Set());
@@ -2782,9 +2805,24 @@ export default function SuperCanvas() {
 
   const addNode = useCallback(
     (
-      kind: "image" | "video" | "text" | "workflowImage" | "workflowVideo",
+      kind: "image" | "video" | "text" | "workflowImage" | "workflowVideo" | "upscale",
       position?: Point,
     ) => {
+      if (kind === "upscale") {
+        const seed = position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
+        const draft = createUpscaleNode(seed);
+        const point = position ? seed : openNodePosition(seed, draft);
+        const node = { ...draft, x: point.x, y: point.y };
+        const source = selectedSingle && selectedSingle.type === "media" && selectedSingle.data.kind === "image" && selectedSingle.data.url && !["queued", "running", "failed"].includes(selectedSingle.data.status || "") ? selectedSingle : undefined;
+        const connected = source ? addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, node] }, source.id, node.id, "right", "left", "manual", "upscale-image") : { ...docRef.current, nodes: [...docRef.current.nodes, node] };
+        commit(() => connected);
+        setSelectedIds(new Set([node.id]));
+        setSelectedGroupId(null);
+        setExpandedEditorId(node.id);
+        setContextMenu(null);
+        notify("已添加超分节点");
+        return;
+      }
       const mediaKind =
         kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const params = defaultParams(mediaKind, runtime);
@@ -2815,6 +2853,7 @@ export default function SuperCanvas() {
       screenToWorld,
       stageSize.height,
       stageSize.width,
+      selectedSingle,
     ],
   );
   const connectNewNode = useCallback(
@@ -2826,11 +2865,29 @@ export default function SuperCanvas() {
         setConnectionNodePicker(null);
         return notify("源节点已不存在，请重新发起连线。", "error");
       }
+      if (kind === "upscale" && groupById(docRef.current, picker.sourceId)) {
+        setConnectionNodePicker(null);
+        return notify("对象组不能作为超分输入，请连接单张图片", "error");
+      }
+      const sourceNode = nodeById(docRef.current, picker.sourceId);
+      if (
+        kind === "upscale" &&
+        (!sourceNode ||
+          sourceNode.type !== "media" ||
+          sourceNode.data.kind !== "image" ||
+          !sourceNode.data.url ||
+          ["queued", "running", "failed"].includes(sourceNode.data.status || ""))
+      ) {
+        setConnectionNodePicker(null);
+        return notify("超分节点只接受一张已完成的图片", "error");
+      }
       const mediaKind =
         kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const params = defaultParams(mediaKind, runtime);
       const draft =
-        kind === "text"
+        kind === "upscale"
+          ? createUpscaleNode(picker.world)
+          : kind === "text"
           ? createPrompt(picker.world)
           : kind === "workflowImage" || kind === "workflowVideo"
             ? createGenerator(mediaKind, picker.world, params)
@@ -2857,6 +2914,7 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       setMode(kind === "text" ? "text" : mediaKind);
+      if (kind === "upscale") setExpandedEditorId(node.id);
       notify(
         `已添加并连接${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : "图片"}节点`,
       );
@@ -5737,6 +5795,16 @@ export default function SuperCanvas() {
       const source = nodeById(docRef.current, sourceId);
       const target = nodeById(docRef.current, targetId);
       if (!source || !target || source.id === target.id) return;
+      if (target.type === "upscale") {
+        const next = addEdge(docRef.current, sourceId, targetId, "right", "left", "manual", "upscale-image");
+        if (next === docRef.current) {
+          notify("超分节点只允许连接一张已完成的图片", "error");
+          return;
+        }
+        commit(() => next);
+        notify("已连接超分原图");
+        return;
+      }
       let inputRole: CanvasInputRole | undefined = requestedRole;
       if (target.type === "prompt") {
         inputRole = source.type === "prompt" || source.type === "generator"
@@ -5842,6 +5910,10 @@ export default function SuperCanvas() {
 
   const runEditorGeneration = useCallback(
     (node: CanvasNode) => {
+      if (node.type === "upscale") {
+        void runUpscaleNodeRef.current?.(node);
+        return;
+      }
       if (reuseDraft?.sourceNodeId === node.id) {
         const draft = cloneReuseDraft(reuseDraft);
         setExpandedEditorId(null);
@@ -5885,6 +5957,12 @@ export default function SuperCanvas() {
     },
     [commit, editorDrafts, reuseDraft, runReuseGeneration],
   );
+
+  const updateUpscaleParams = useCallback((node: CanvasNode, params: CanvasUpscaleParams) => {
+    if (node.type !== "upscale") return;
+    const prompt = params.prompt || "Upscale this image";
+    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, params: clone(params), prompt, generation: item.data.generation ? { ...item.data.generation, params: clone(params), prompt } : item.data.generation } } : item) }));
+  }, [updateDoc]);
 
   const retryVariant = useCallback(
     (generatorId: string, variantIndex: number) => {
@@ -5970,92 +6048,55 @@ export default function SuperCanvas() {
     [maskNodeId, notify, openImageEditor, reuseDraft, runtime],
   );
 
-  const runUpscale = useCallback(async (sourceOverride?: CanvasNode) => {
+  const createUpscaleFromSource = useCallback((sourceOverride?: CanvasNode) => {
     const source = sourceOverride || selectedSingle;
-    if (
-      !source ||
-      source.type !== "media" ||
-      source.data.kind !== "image" ||
-      !source.data.url
-    )
-      return notify("请先选择一张已完成的图片。", "error");
+    if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url || ["queued", "running", "failed"].includes(source.data.status || ""))
+      return notify("请先选择一张已完成的图片", "error");
+    const draft = createUpscaleNode({ x: source.x + nodeSize(source).w + 90, y: source.y });
+    const next = addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, draft] }, source.id, draft.id, "right", "left", "manual", "upscale-image");
+    if (next === docRef.current) return notify("无法连接超分节点", "error");
+    commit(() => next);
+    setSelectedIds(new Set([draft.id]));
+    setSelectedGroupId(null);
+    setExpandedEditorId(draft.id);
     setLightbox(null);
-    const activeKey = `upscale:${source.id}`;
+    notify("已创建超分节点，请设置参数后提交");
+  }, [commit, notify, selectedSingle]);
+
+  const runUpscaleNode = useCallback(async (node: CanvasNode) => {
+    if (node.type !== "upscale") return;
+    const source = canvasUpscaleSource(docRef.current, node.id);
+    if (!source?.data.url) return notify("请连接一张已完成的图片", "error");
+    const params = (node.data.params && typeof node.data.params === "object" ? node.data.params : {}) as CanvasUpscaleParams;
+    const dimensions = await loadImageDimensions(String(source.data.url)).catch(() => null);
+    if (!dimensions) return notify("无法读取原图尺寸", "error");
+    const size = canvasUpscaleSize(dimensions.width, dimensions.height, params.scale || 2, params.target || "auto");
+    const targetDimensions = seedVrTargetSize(dimensions.width, dimensions.height, params.scale || 2, params.target || "auto");
+    const selectedModel = runtime?.models?.some((model) => model.id === params.model && model.enabled && model.published && (model.capabilities || []).includes("upscale")) ? params.model : "auto";
+    const activeKey = `upscale-node:${node.id}`;
     if (generationKeysRef.current.has(activeKey)) return;
-    const settings = copyParams(
-      source.data.generation?.params || source.data.params,
-      "image",
-      runtime,
-    ) as ImageCreationSettings;
-    generationKeysRef.current.add(activeKey);
-    setGenerationKeys(new Set(generationKeysRef.current));
+    generationKeysRef.current.add(activeKey); setGenerationKeys(new Set(generationKeysRef.current));
+    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", processingStartedAt: Date.now() } } : item) }));
     try {
-      const result = await generateCanvasUpscale({
-        prompt: source.data.generation?.prompt || "Upscale this image",
-        model: settings.model,
-        referenceUrl: String(source.data.url),
-        scale: settings.upscaleScale,
-        size:
-          settings.upscaleTarget === "auto"
-            ? undefined
-            : settings.upscaleTarget,
-        seed: settings.upscaleSeed,
-        colorCorrection: settings.upscaleColorCorrection,
-        resizeMethod: settings.upscaleAlgorithm,
-      });
-      if (!result.images?.length) throw new Error("服务端没有返回超分结果。");
-      const output = createMedia(
-        "image",
-        result.images[0].url,
-        `${source.data.name || "图片"} · 超分`,
-        { x: source.x + nodeSize(source).w + 90, y: source.y },
-        {
-          role: "超分结果",
-          model: result.model?.name || settings.model,
-          generation: {
-            kind: "image",
-            prompt: source.data.generation?.prompt || "Upscale this image",
-            params: clone(settings),
-            referenceIds: [source.id],
-            parentNodeId: source.id,
-            createdAt: Date.now(),
-          },
-          referenceOrder: [source.id],
-        },
-      );
-      commit((value) =>
-        addEdge(
-          { ...value, nodes: [...value.nodes, output] },
-          source.id,
-          output.id,
-          "right",
-          "left",
-          "lineage",
-        ),
-      );
-      setSelectedIds(new Set([output.id]));
-      setSelectedGroupId(null);
-      writeSharedCreationSettings(settings);
-      void recordCanvasImages(result.images, {
-        prompt: source.data.generation?.prompt || "Upscale this image",
-        source: "canvas",
-        modelId: settings.model,
-        modelName: result.model?.name,
-        providerName: result.model?.provider,
-        aspectRatio: settings.aspect,
-        outputSize: settings.upscaleTarget,
-        outputFormat: settings.outputFormat,
-        parentId: source.id,
-      }).then(() => setAssetRefresh((value) => value + 1));
-      notify("超分完成，已创建右侧分支");
-      addLog(`图片超分完成：${source.data.name || source.id}`);
+      const result = await generateCanvasUpscale({ prompt: params.prompt || "Upscale this image", model: selectedModel, referenceUrl: String(source.data.url), scale: params.scale || 2, size, seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", resizeMethod: params.algorithm || "lanczos" });
+      if (!result.images?.length) throw new Error("服务端没有返回超分结果");
+      const output = createMedia("image", result.images[0].url, `${source.data.name || "图片"} · 超分`, { x: node.x + nodeSize(node).w + 90, y: node.y }, { role: "超分结果", model: result.model?.name || params.model, generation: { kind: "image", prompt: params.prompt || "Upscale this image", params: { ...params } as any, operation: "upscale", referenceIds: [source.id], parentNodeId: node.id, createdAt: Date.now() }, referenceOrder: [source.id], nativeWidth: targetDimensions.width, nativeHeight: targetDimensions.height });
+      commit((value) => addEdge({ ...value, nodes: [...value.nodes, output] }, node.id, output.id, "right", "left", "lineage"));
+      updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "completed", statusLabel: "超分完成", processingStartedAt: undefined } } : item) }));
+      setSelectedIds(new Set([output.id])); setSelectedGroupId(null);
+      recordModelCall({ context: "upscale", mode: selectedModel === "auto" ? "auto" : "manual", modelId: result.model?.id || selectedModel, params: { scale: params.scale || 2, target: params.target || "auto", seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", algorithm: params.algorithm || "lanczos" } });
+      notify("超分完成，已创建结果分支"); addLog(`图片超分完成：${source.data.name || source.id}`);
+      void recordCanvasImages(result.images, { prompt: params.prompt || "Upscale this image", source: "canvas", modelId: result.model?.id || params.model, modelName: result.model?.name, providerName: result.model?.provider, outputSize: size, parentId: node.id })
+        .then(() => setAssetRefresh((value) => value + 1))
+        .catch(() => addLog("图片超分完成，但写入主界面历史失败"));
     } catch (error) {
-      notify(error instanceof Error ? error.message : "超分失败", "error");
-    } finally {
-      generationKeysRef.current.delete(activeKey);
-      setGenerationKeys(new Set(generationKeysRef.current));
-    }
-  }, [addLog, commit, notify, runtime, selectedSingle]);
+      const message = error instanceof Error ? error.message : "超分失败";
+      updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "failed", statusLabel: message, processingStartedAt: undefined } } : item) }));
+      notify(message, "error");
+    } finally { generationKeysRef.current.delete(activeKey); setGenerationKeys(new Set(generationKeysRef.current)); }
+  }, [addLog, commit, notify, runtime, updateDoc]);
+  runUpscaleNodeRef.current = runUpscaleNode;
+
 
   const addAssetToCanvas = useCallback(
     (asset: AssetRecord, position?: Point) => {
@@ -6839,9 +6880,9 @@ export default function SuperCanvas() {
         {
           id: "upscale",
           icon: "↗",
-          label: generationKeys.has(`upscale:${node.id}`) ? "处理中" : "超分",
-          disabled: !hasMedia || generationKeys.has(`upscale:${node.id}`),
-          onClick: () => void runUpscale(node),
+          label: "超分",
+          disabled: !hasMedia,
+          onClick: () => createUpscaleFromSource(node),
         },
         {
           id: "regenerate",
@@ -6961,7 +7002,7 @@ export default function SuperCanvas() {
     openImageEditor,
     openReuseDraft,
     retryFailedVariants,
-    runUpscale,
+    createUpscaleFromSource,
     selectedGroupId,
     selectedNodes.length,
     selectedSingle,
@@ -7532,6 +7573,9 @@ export default function SuperCanvas() {
                 cancelPendingNodeClick();
                 setLightbox({ nodeId: output.id, compare: false });
               }}
+              upscaleParams={editorNode.type === "upscale" ? editorNode.data.params as CanvasUpscaleParams : undefined}
+              upscaleSourceUrl={editorNode.type === "upscale" ? canvasUpscaleSource(document, editorNode.id)?.data.url : undefined}
+              onUpscaleParamsChange={(params) => updateUpscaleParams(editorNode, params)}
             />
           );
         })()}
@@ -8041,6 +8085,11 @@ export default function SuperCanvas() {
               <small>选择操作放置到当前画布</small>
             </div>
 
+            <button type="button" className="canvas-menu-item canvas-menu-item-tool" onClick={() => addNode("upscale", contextMenu.world)}>
+              <span className="canvas-menu-icon" aria-hidden="true">↗</span>
+              <span className="canvas-menu-copy"><b>超分节点</b><small>连接图片后在独立面板中提交</small></span>
+              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+            </button>
             <div className="canvas-menu-group">
               <div className="canvas-menu-group-title">
                 <span className="canvas-menu-group-mark" aria-hidden="true">01</span>
@@ -8227,7 +8276,7 @@ export default function SuperCanvas() {
           onNotify={notify}
           onEdit={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
           onMask={viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
-          onUpscale={viewerNode.data.kind === "image" ? () => void runUpscale(viewerNode) : undefined}
+          onUpscale={viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
           onContinue={() => continueFromMedia(viewerNode)}
           onReuse={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
           onUseAsReference={() => addCurrentNodeToReuse(viewerNode)}
@@ -9164,6 +9213,53 @@ function CanvasNodeReferenceStrip({
   );
 }
 
+function CanvasUpscaleSettingsPanel({
+  params,
+  runtime,
+  sourceUrl,
+  onChange,
+}: {
+  params: CanvasUpscaleParams;
+  runtime: CanvasRuntimeState | null;
+  sourceUrl?: string;
+  onChange: (params: CanvasUpscaleParams) => void;
+}) {
+  const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
+  const [sourceSizeError, setSourceSizeError] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setSourceSize(null);
+    setSourceSizeError(false);
+    if (!sourceUrl) return () => { cancelled = true; };
+    void loadImageDimensions(sourceUrl)
+      .then((size) => { if (!cancelled) setSourceSize(size); })
+      .catch(() => { if (!cancelled) setSourceSizeError(true); });
+    return () => { cancelled = true; };
+  }, [sourceUrl]);
+  const target = sourceSize ? seedVrTargetSize(sourceSize.width, sourceSize.height, params.scale, params.target) : null;
+  const models = (runtime?.models || []).filter((model) => model.enabled && model.published && (model.capabilities || []).includes("upscale"));
+  return (
+    <div className="canvas-upscale-settings" aria-label="超分设置">
+      <div className="canvas-upscale-setting-row">
+        <label>超分模型<select value={params.model} onChange={(event) => onChange({ ...params, model: event.target.value })}>
+          <option value="auto">自动选择</option>{models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
+        </select></label>
+        <label>倍率<div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div></label>
+      </div>
+      <div className="canvas-upscale-size-readout"><span>原图<strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败" : "读取中…"}</strong></span><b>→</b><span>目标<strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算" : "计算中…"}</strong></span></div>
+      <div className="canvas-upscale-setting-row">
+        <label>随机种子<input type="number" min={0} value={params.seed} onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
+        <label>色彩校正<select value={params.colorCorrection} onChange={(event) => onChange({ ...params, colorCorrection: event.target.value === "none" ? "none" : "wavelet" })}><option value="wavelet">Wavelet</option><option value="none">关闭</option></select></label>
+      </div>
+      <div className="canvas-upscale-setting-row">
+        <label>缩放算法<select value={params.algorithm} onChange={(event) => onChange({ ...params, algorithm: event.target.value as CanvasUpscaleParams["algorithm"] })}><option value="lanczos">Lanczos</option><option value="bicubic">Bicubic</option><option value="nearest">Nearest</option></select></label>
+        <label>说明文字<input value={params.prompt || ""} placeholder="可选" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
+      </div>
+      {!sourceUrl && <small className="canvas-upscale-empty-hint">请连接一张已完成的图片后再提交</small>}
+    </div>
+  );
+}
+
 type CanvasNodeEditorPopoverProps = {
   node: CanvasNode;
   document: CanvasDocument;
@@ -9190,6 +9286,9 @@ type CanvasNodeEditorPopoverProps = {
   editorContexts: CanvasNode[];
   mentionCandidates: CanvasNode[];
   onOutputPreview: (node: CanvasNode) => void;
+  upscaleParams?: CanvasUpscaleParams;
+  upscaleSourceUrl?: string;
+  onUpscaleParamsChange?: (params: CanvasUpscaleParams) => void;
 };
 
 type CanvasQuickAction = {
@@ -9287,7 +9386,7 @@ function CanvasNodeQuickToolbar({
       onWheel={(event) => event.stopPropagation()}
     >
       <span className="canvas-node-quick-title">
-        <i aria-hidden="true">{node.type === "prompt" ? "✦" : node.type === "generator" ? "⌁" : node.data.kind === "video" ? "▶" : "▣"}</i>
+        <i aria-hidden="true">{node.type === "upscale" ? "↗" : node.type === "prompt" ? "✦" : node.type === "generator" ? "⌁" : node.data.kind === "video" ? "▶" : "▣"}</i>
         <b>{nodeLabel(node)}</b>
       </span>
       <span className="canvas-node-quick-divider" aria-hidden="true" />
@@ -9340,6 +9439,9 @@ function CanvasNodeEditorPopover({
   editorContexts,
   mentionCandidates,
   onOutputPreview,
+  upscaleParams,
+  upscaleSourceUrl,
+  onUpscaleParamsChange,
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -9350,6 +9452,7 @@ function CanvasNodeEditorPopover({
   const data = node.data;
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
+  const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
   const editorReferences = incomingContext(document, node.id).filter(
     (item) => item.type === "media" && Boolean(item.data.url),
   );
@@ -9498,7 +9601,7 @@ function CanvasNodeEditorPopover({
       className={`canvas-node-editor-popover canvas-node-editor-dock${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement="bottom"
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
-      data-node-kind={node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
+      data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
       data-node-id={node.id}
       aria-label={`${nodeLabel(node)}编辑器`}
@@ -9609,6 +9712,8 @@ function CanvasNodeEditorPopover({
                 onPreview={onDraftReferencePreview}
                 emptyLabel="添加画布参考"
               />
+            ) : node.type === "upscale" ? (
+              <div className="canvas-upscale-input-note">输入：{upscaleSourceUrl ? "已连接一张图片" : "未连接图片"}</div>
             ) : (
               <CanvasNodeReferenceStrip
                 target={node}
@@ -9635,7 +9740,9 @@ function CanvasNodeEditorPopover({
                 />
               </div>
             )}
-            {editorParams && (
+            {node.type === "upscale" && upscaleParams && onUpscaleParamsChange ? (
+              <CanvasUpscaleSettingsPanel params={upscaleParams} runtime={runtime} sourceUrl={upscaleSourceUrl} onChange={onUpscaleParamsChange} />
+            ) : editorParams && (
               <CreationParameterEditor
                 key={node.id}
                 settings={editorParams}
@@ -9649,8 +9756,8 @@ function CanvasNodeEditorPopover({
         </div>
       </div>
       <div className="canvas-node-editor-actions">
-        <span>{node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
-        <button type="button" className="canvas-node-editor-generate" disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "prompt" ? "发送" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
+        <span>{node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
+        <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : undefined} disabled={pending || upscaleMissingInput} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "upscale" ? "提交超分" : node.type === "prompt" ? "发送" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
       </div>
     </div>
   );
@@ -9824,6 +9931,7 @@ function CanvasNodeCard({
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
+      data-node-kind={node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
       aria-busy={pending}
       style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
       // Node movement and typed connections use the canvas pointer model.
@@ -9956,6 +10064,13 @@ function CanvasNodeCard({
             </span>
             <em>{nodeStatus(node)}</em>
           </div>
+        </div>
+      )}
+      {node.type === "upscale" && (
+        <div className="canvas-upscale-card">
+          <div className="canvas-upscale-card-head"><span>↗</span><div><b>图片超分</b><small>独立超分节点</small></div></div>
+          <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>
+          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
         </div>
       )}
       {node.type === "prompt" && (

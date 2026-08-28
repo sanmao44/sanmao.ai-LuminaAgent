@@ -26,6 +26,7 @@ import { buildContinuationPrompt, extractAgentDirections, extractChatDirections,
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
+import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -246,17 +247,6 @@ function reorderReferenceItems(items, fromIndex, toIndex) {
     next.splice(toIndex, 0, moved);
     return next;
 }
-function loadImageDimensions(url) {
-    return new Promise((resolve, reject)=>{
-        const image = new Image();
-        image.onload = ()=>resolve({
-                width: image.naturalWidth,
-                height: image.naturalHeight
-            });
-        image.onerror = ()=>reject(new Error('无法读取原图尺寸，请重新上传图片后再试'));
-        image.src = url;
-    });
-}
 function cropSourceRect(width, height, ratio) {
     if (ratio === '原图' || ratio === '自由') return {
         x: 0,
@@ -395,21 +385,6 @@ async function renderLocalImage(url, mode, ratio, background, flipX, rotation, s
         dataUrl: canvas.toDataURL('image/png'),
         width: canvas.width,
         height: canvas.height
-    };
-}
-function seedVrTargetSize(width, height, scale, target) {
-    if (target === 'auto') return {
-        width: width * scale,
-        height: height * scale
-    };
-    const edge = target === '4K' ? 4096 : target === '2K' ? 2048 : 1024;
-    const divisor = gcd(width, height);
-    const unitWidth = width / divisor;
-    const unitHeight = height / divisor;
-    const multiple = Math.max(1, Math.round(edge / Math.max(unitWidth, unitHeight)));
-    return {
-        width: unitWidth * multiple,
-        height: unitHeight * multiple
     };
 }
 function presetDimensions(ratio, tier, customRatioWidth = 1, customRatioHeight = 1) {

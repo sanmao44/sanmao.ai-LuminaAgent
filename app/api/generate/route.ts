@@ -1,5 +1,5 @@
 import { editImage, generateImage } from '@/lib/providers';
-import { getPublicState, getRuntimeImageGenerationModel } from '@/lib/store';
+import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, normalizeAngleState } from '@/lib/angle-control';
@@ -98,13 +98,19 @@ export async function POST(request: Request) {
       : prompt;
     promptForLog = generationPrompt;
     if (!generationPrompt) return Response.json({ error: '请输入生图描述。' }, { status: 400 });
-    const runtime = await getRuntimeImageGenerationModel(String(body.model || 'auto'));
-    if (!runtime) return Response.json({ error: '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
-    const references = Array.isArray(body.references) ? body.references.filter((v: unknown) => typeof v === 'string').slice(0, 16) : [];
+    const references = Array.isArray(body.references)
+      ? body.references.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 16)
+      : [];
+    const hasEditInput = references.length > 0 || (typeof body.mask === 'string' && body.mask.trim().length > 0);
+    const runtime = hasEditInput
+      ? await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit') || await getRuntimeImageModelForCapability('auto', 'edit')
+      : await getRuntimeImageGenerationModel(String(body.model || 'auto'));
+    if (!runtime) return Response.json({ error: hasEditInput ? '没有可用的改图模型，请启用带 edit 能力的图片模型' : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
     if (camera && body.angleGuide === true && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始人物参考和 3D 构图导引。' }, { status: 400 });
-    const mask = typeof body.mask === 'string' && body.mask.startsWith('data:image/png') ? body.mask : undefined;
-    if (body.mask && !mask) return Response.json({ error: '蒙版必须是 PNG 格式。' }, { status: 400 });
+    const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
+    const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
+    if (rawMask && !mask) return Response.json({ error: '蒙版必须是 PNG 格式。' }, { status: 400 });
     if (mask && !references.length) return Response.json({ error: '使用蒙版前请先添加一张参考图。' }, { status: 400 });
     const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
     const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
