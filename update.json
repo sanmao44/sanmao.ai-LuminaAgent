@@ -1,17 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.11",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.11",
+  "latestVersion": "0.7.12",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.12",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.12/SANMAO.AI-0.7.12.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.11/SANMAO.AI-0.7.11.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.12/SANMAO.AI-0.7.12.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.12/SANMAO.AI-0.7.12.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.12/SANMAO.AI-0.7.12.zip"
   ],
-  "sha256": "385b2fd7e8b590c0da4e90a9e4ff94ec274f20403498cdcb0b0c53563d7fe59e",
-  "publishedAt": "2026-08-27T09:31:46+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-28T20:13:04+08:00",
   "notes": [
+    "超级画布新增独立超分节点，支持连接已完成图片、超分模型、1×～4×倍率、缩放算法、随机种子和色彩校正。",
+    "图片节点的超分快捷入口只创建并打开超分节点；提交成功后生成新的结果分支，不覆盖原图，失败时可重试。",
+    "修复画布蒙版绘制、应用和编辑模型选择链路，保留原图并通过节点编辑器生成新图。",
+    "对齐工具栏移动到底部图标栏，新增水平与垂直均匀分布，并保持撤销与重做支持。",
     "Windows 新增局域网共享入口，同一可信网络内的其他设备可通过管理员密码访问主机画布，密码以本机加密密文保存。",
     "新增工作区同步接口与约 5 秒一次的多设备刷新，以最新保存的工作区为准，减少旧页面覆盖新内容；该模式不是实时多人协同。",
     "超级画布节点编辑器采用紧凑参数抽屉和可展开提示词编辑，修复 Agent 节点输入、提示词与工作区同步不一致的问题。",

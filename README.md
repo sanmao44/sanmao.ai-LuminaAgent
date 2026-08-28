@@ -1,4 +1,4 @@
-# SANMAO.AI 0.7.11
+# SANMAO.AI 0.7.12
 
 ## 启动器
 
