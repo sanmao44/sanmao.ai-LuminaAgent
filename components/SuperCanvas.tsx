@@ -6952,7 +6952,7 @@ export default function SuperCanvas() {
     setAssetCollectionPickerNodeId(node.id);
   }, [notify, viewerAsset]);
   const downloadCanvasNode = useCallback((node: CanvasNode) => {
-    if (node.type !== "media" || !node.data.url) {
+    if ((node.type !== "media" && node.type !== "upscale") || !node.data.url) {
       notify("当前节点还没有可下载的媒体。", "error");
       return;
     }
@@ -7395,6 +7395,26 @@ export default function SuperCanvas() {
         },
       ];
     }
+    if (node.type === "upscale") {
+      const hasResult = Boolean(node.data.url);
+      return [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasResult,
+          onClick: () => setLightbox({ nodeId: node.id, compare: false }),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          title: "下载超分节点生成的图片",
+          disabled: !hasResult,
+          onClick: () => downloadCanvasNode(node),
+        },
+      ];
+    }
     const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
     return [
       {
@@ -7619,6 +7639,34 @@ export default function SuperCanvas() {
               label: failedCount ? `重试失败项 (${failedCount})` : "重试失败项",
               disabled: failedCount === 0 || generationKeys.has(node.id),
               onClick: close(() => retryFailedVariants(node.id)),
+            },
+          ],
+        },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "upscale") {
+      const hasResult = Boolean(node.data.url);
+      return [
+        {
+          label: "快速操作",
+          actions: [
+            editAction,
+            {
+              id: "preview",
+              icon: "⤢",
+              label: "预览",
+              disabled: !hasResult,
+              onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+            },
+            {
+              id: "download",
+              icon: "↓",
+              label: "下载",
+              title: "下载超分节点生成的图片",
+              disabled: !hasResult,
+              onClick: close(() => downloadCanvasNode(node)),
             },
           ],
         },

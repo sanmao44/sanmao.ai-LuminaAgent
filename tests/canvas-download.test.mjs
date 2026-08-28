@@ -79,3 +79,12 @@ test('canvas exposes a multi-image download action without replacing single down
   assert.match(component, /按选择顺序打包下载图片/);
   assert.match(component, /const downloadCanvasNode = useCallback/);
 });
+
+test('upscale results expose preview and download actions on the infinite canvas', async () => {
+  const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+  assert.match(component, /node\.type !== "media" && node\.type !== "upscale"/);
+  assert.match(
+    component,
+    /if \(node\.type === "upscale"\) \{[\s\S]*?const hasResult = Boolean\(node\.data\.url\)[\s\S]*?id: "preview"[\s\S]*?id: "download"[\s\S]*?下载超分节点生成的图片/,
+  );
+});
