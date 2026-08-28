@@ -7,6 +7,15 @@ export type ModelKindSignals = {
 };
 
 /**
+ * Known image-edit model families require a source image and must not be
+ * offered as pure text-to-image models.
+ */
+export function isImageEditOnlyModel({ rawId = '', displayName = '' }: ModelKindSignals) {
+  const text = `${rawId} ${displayName}`.toLowerCase();
+  return /\bimage[-_ ]?edit\b/.test(text);
+}
+
+/**
  * Infer the primary model category from provider metadata and common model
  * family names. This is deliberately conservative: embeddings, speech and
  * other models without a recognizable generation/chat signal stay unknown.

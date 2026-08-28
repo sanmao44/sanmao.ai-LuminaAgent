@@ -21,6 +21,15 @@ async function loadTypeScript(path) {
     }).outputText.replace(
       /^\s*import\s+\{\s*getLastModelCall\s*\}\s+from\s+["']\.\.\/model-preferences["'];?\s*$/m,
       'const getLastModelCall = () => null;',
+    ).replace(
+      /^\s*import\s+\{\s*selectAutomaticModel\s*\}\s+from\s+["']\.\.\/model-selection["'];?\s*$/m,
+      `const selectAutomaticModel = (models, defaultProviderId, defaultModelId) => {
+        const providerModels = defaultProviderId ? models.filter((model) => model.providerId === defaultProviderId) : [];
+        return providerModels.find((model) => model.id === defaultModelId)
+          || providerModels[0]
+          || models.find((model) => model.id === defaultModelId)
+          || models[0];
+      };`,
     );
     const maskCompiled = ts.transpileModule(maskSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },

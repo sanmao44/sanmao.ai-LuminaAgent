@@ -5,7 +5,7 @@ import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, Provi
 import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
-import { inferModelKind, resolveModelKind } from './model-kind';
+import { inferModelKind, isImageEditOnlyModel, resolveModelKind } from './model-kind';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -143,6 +143,7 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   if (inferredKind === 'video') return { kind: 'video', capabilities: ['video-generate'] };
   const imageish = /(image|imagen|flux|sdxl|stable-diffusion|dall-e|ideogram|recraft|seedream|nano[-_ ]?banana)/.test(id);
   if (imageish || inferredKind === 'image') {
+    if (isImageEditOnlyModel({ rawId, displayName: hints.displayName })) return { kind: 'image', capabilities: ['edit', 'reference'] };
     const capabilities: ModelCapability[] = ['generate'];
     if (/(gpt-image|gemini.*image|nano|recraft|flux)/.test(id)) capabilities.push('edit', 'reference');
     if (/(gpt-image|gemini.*image|ideogram|recraft)/.test(id)) capabilities.push('typography');
@@ -161,8 +162,9 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
 
 function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): RegistryModel {
   const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol, { displayName: model.displayName, capabilities: model.capabilities });
+  const editOnly = isImageEditOnlyModel({ rawId: model.rawId, displayName: model.displayName });
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
-  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search');
+  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search' && !(editOnly && capability === 'generate'));
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
   const nativeSearchDetection = model.nativeSearchDetection || inferred.nativeSearchDetection;

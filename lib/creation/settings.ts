@@ -1,5 +1,6 @@
 import type { PublicState, RegistryModel } from "../types";
 import { getLastModelCall } from "../model-preferences";
+import { selectAutomaticModel } from "../model-selection";
 
 export type ImageSizeMode = "system" | "custom";
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
@@ -153,7 +154,8 @@ export function imageModelOptions(runtime: PublicState | null | undefined) {
     (model) =>
       model.enabled &&
       model.published &&
-      (model.kind === "image" || model.capabilities.includes("generate")),
+      model.kind === "image" &&
+      model.capabilities.includes("generate"),
   );
 }
 
@@ -537,7 +539,20 @@ export function resolveAvailableCreationModel(
       : settings.kind === "video"
         ? videoModelOptions(runtime)
         : agentModelOptions(runtime);
-  if (settings.model === "auto") return { model: candidates[0] || null };
+  if (settings.model === "auto") {
+    const defaultModelId = settings.kind === "image"
+      ? runtime?.settings.defaultImageModelId
+      : settings.kind === "video"
+        ? runtime?.settings.defaultVideoModelId
+        : runtime?.settings.agentModelId;
+    return {
+      model: selectAutomaticModel(
+        candidates,
+        runtime?.settings.defaultProviderId,
+        defaultModelId,
+      ) || null,
+    };
+  }
   const selected =
     candidates.find((model) => model.id === settings.model) || null;
   return selected
