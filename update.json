@@ -9,7 +9,7 @@
     "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.12/SANMAO.AI-0.7.12.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.12/SANMAO.AI-0.7.12.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "2c312737395d00439e70b618a38d0a909ca384d40309604b592b79752eb1d12f",
   "publishedAt": "2026-08-28T20:13:04+08:00",
   "notes": [
     "超级画布新增独立超分节点，支持连接已完成图片、超分模型、1×～4×倍率、缩放算法、随机种子和色彩校正。",
