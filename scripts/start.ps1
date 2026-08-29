@@ -1,4 +1,4 @@
-﻿param(
+param(
   [int]$Port = 0,
   [switch]$NonInteractive = $false,
   [switch]$Lan = $false,

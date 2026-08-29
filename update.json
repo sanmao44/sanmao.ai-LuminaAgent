@@ -1,17 +1,22 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.13",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.13",
+  "latestVersion": "0.7.14",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.14",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.13/SANMAO.AI-0.7.13.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.14/SANMAO.AI-0.7.14.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.13/SANMAO.AI-0.7.13.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.13/SANMAO.AI-0.7.13.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.13/SANMAO.AI-0.7.13.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.14/SANMAO.AI-0.7.14.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.14/SANMAO.AI-0.7.14.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.14/SANMAO.AI-0.7.14.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "publishedAt": "2026-08-29T04:18:54+08:00",
+  "sha256": "12933a1f967e87ad822f1c0b96b2b37fe640211ba6bd1c031d79f1d5a8065c0f",
+  "publishedAt": "2026-08-29T19:42:32+08:00",
   "notes": [
+    "修复本地图片提交到需要公网媒体地址的视频服务商时无法生成视频的问题。",
+    "现有 Windows、macOS 和 Linux 启动器会按服务商或模型能力自动按需准备临时 HTTPS 通道，不增加新的启动器。",
+    "中转能力适用于所有需要公网媒体地址的远程图生视频接口，不只针对 Agnes；原生任务接口、本机 CLI 和文生视频不会误启用。",
+    "普通用户无需配置公网域名、.env 或手工设置；临时图片地址约 30 分钟后自动失效并清理。",
+    "公网图片 URL 不重复上传；中转不可用时不会创建无效任务，并显示可理解的重试提示。",
     "新增 Agnes AI 服务商，全面支持文本、多模态、图片生成/编辑和异步视频生成。",
     "Agnes 文本模型兼容 Chat Completions、Responses、Messages、图片理解、工具调用、流式输出和多轮消息。",
     "Agnes 图片模型支持 2.0/2.1 生成与编辑、精确尺寸、1K～4K 档位、画幅、多图参考和 URL/Base64 结果。",
