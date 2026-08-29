@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import sharp from 'sharp';
-import { AGNES_MEDIA_TTL_MS, storeSignedAgnesMedia } from '@/lib/signed-media';
+import { PUBLIC_MEDIA_TTL_MS, storeSignedMedia } from '@/lib/signed-media';
 
 export const runtime = 'nodejs';
 
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     const metadata = await sharp(bytes, { failOn: 'error' }).metadata();
     const mime = detectedMime(metadata.format);
     if (!mime) return Response.json({ error: '只支持 JPG、PNG、WebP 或 GIF 图片' }, { status: 415 });
-    const stored = await storeSignedAgnesMedia(bytes, mime, 'image', { ttlMs: AGNES_MEDIA_TTL_MS, pathPrefix: '/api/relay/media' });
+    const stored = await storeSignedMedia(bytes, mime, 'image', { ttlMs: PUBLIC_MEDIA_TTL_MS, pathPrefix: '/api/relay/media' });
     return Response.json({ ok: true, url: stored.url, expiresAt: new Date(stored.expiresAt).toISOString(), bytes: stored.bytes }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '图片中转失败' }, { status: 400 });

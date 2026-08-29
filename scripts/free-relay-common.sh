@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared free Agnes media relay for macOS and Linux launchers.
+# Shared free public media relay for macOS and Linux launchers.
 # This file is sourced by the existing launchers; it never creates another UI entry.
 
 free_relay_state_root() {
@@ -59,7 +59,7 @@ free_relay_download() {
     Linux:arm64|Linux:aarch64) ASSET='cloudflared-linux-arm64'; ARCHIVE=0 ;;
     Linux:i386|Linux:i686) ASSET='cloudflared-linux-386'; ARCHIVE=0 ;;
     Linux:armv7l|Linux:armv6l) ASSET='cloudflared-linux-arm'; ARCHIVE=0 ;;
-    *) printf '%s\n' '当前系统或处理器架构暂不支持免费图生视频通道。' >&2; return 1 ;;
+    *) printf '%s\n' '当前系统或处理器架构暂不支持免费媒体中转通道。' >&2; return 1 ;;
   esac
 
   mkdir -p "$BIN_ROOT" "$STATE_ROOT"
@@ -72,7 +72,7 @@ https://ghproxy.net/$DOWNLOAD_URL"
   rm -rf "$TEMP_ROOT"
   mkdir -p "$TEMP_ROOT"
   if ! command -v curl >/dev/null 2>&1; then
-    printf '%s\n' '系统没有 curl，无法自动准备免费图生视频通道。' >&2
+    printf '%s\n' '系统没有 curl，无法自动准备免费媒体中转通道。' >&2
     rm -rf "$TEMP_ROOT"
     return 1
   fi
@@ -90,25 +90,25 @@ https://ghfast.top/$DOWNLOAD_URL
 https://ghproxy.net/$DOWNLOAD_URL
 EOF
   if [ "$DOWNLOAD_OK" -ne 1 ]; then
-    printf '%s\n' '免费图生视频通道组件下载失败；文本和普通图片仍可使用。' >&2
+    printf '%s\n' '免费媒体中转通道组件下载失败；文本和普通图片仍可使用。' >&2
     rm -rf "$TEMP_ROOT"
     return 1
   fi
 
   if [ "$ARCHIVE" -eq 1 ]; then
     if ! tar -xzf "$TEMP_FILE" -C "$TEMP_ROOT" >/dev/null 2>&1 || [ ! -f "$TEMP_ROOT/cloudflared" ]; then
-      printf '%s\n' '免费图生视频通道组件解压失败；文本和普通图片仍可使用。' >&2
+      printf '%s\n' '免费媒体中转通道组件解压失败；文本和普通图片仍可使用。' >&2
       rm -rf "$TEMP_ROOT"
       return 1
     fi
   fi
   if [ ! -f "$TEMP_ROOT/cloudflared" ] && [ "$ARCHIVE" -eq 0 ]; then
-    printf '%s\n' '免费图生视频通道组件文件不完整；文本和普通图片仍可使用。' >&2
+    printf '%s\n' '免费媒体中转通道组件文件不完整；文本和普通图片仍可使用。' >&2
     rm -rf "$TEMP_ROOT"
     return 1
   fi
   if ! chmod 700 "$TEMP_ROOT/cloudflared" || ! mv "$TEMP_ROOT/cloudflared" "$LOCAL_BINARY"; then
-    printf '%s\n' '免费图生视频通道组件安装失败；文本和普通图片仍可使用。' >&2
+    printf '%s\n' '免费媒体中转通道组件安装失败；文本和普通图片仍可使用。' >&2
     rm -rf "$TEMP_ROOT"
     return 1
   fi
@@ -144,6 +144,6 @@ free_relay_start() {
   done
 
   free_relay_stop "$ROOT_TO_USE"
-  printf '%s\n' '免费图生视频通道没有返回地址；文本和普通图片仍可使用。' >&2
+  printf '%s\n' '免费媒体中转通道没有返回地址；文本和普通图片仍可使用。' >&2
   return 1
 }

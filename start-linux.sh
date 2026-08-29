@@ -18,22 +18,22 @@ case "$DATA_ROOT" in
   /*) ;;
   *) DATA_ROOT="$ROOT_DIR/$DATA_ROOT" ;;
 esac
-AGNES_CONFIGURED=0
-if [ -f "$DATA_ROOT/state.json" ] && node -e 'const fs=require("fs");let s;try{s=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch{process.exit(1)};const ok=(s.providers||[]).some(p=>((p.platform==="agnes")||/agnes-ai\.(cn|com)/i.test(String(p.baseUrl||"")))&&Boolean(String(p.encryptedApiKey||p.apiKey||"").trim()));process.exit(ok?0:1)' "$DATA_ROOT/state.json"; then
-  AGNES_CONFIGURED=1
+MEDIA_RELAY_REQUIRED=0
+if [ -f "$DATA_ROOT/state.json" ] && node -e 'const fs=require("fs");let s;try{s=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch{process.exit(1)};const models=s.models||[];const hasVideoModel=p=>models.some(m=>m.providerId===p.id&&(m.kind==="video"||(m.capabilities||[]).includes("video-generate")));const ok=(s.providers||[]).some(p=>{const t=String(p.videoTransport||"").toLowerCase();const credential=Boolean(String(p.encryptedApiKey||p.encryptedVideoApiKey||p.apiKey||"").trim());if(!credential)return false;if(t==="agnes-videos"||t==="openai-videos")return true;if(t==="native-task"||t==="jimeng-cli")return false;return (t==="auto"||!t)&&hasVideoModel(p)});process.exit(ok?0:1)' "$DATA_ROOT/state.json"; then
+  MEDIA_RELAY_REQUIRED=1
 fi
-if [ "$AGNES_CONFIGURED" -eq 1 ]; then
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
-  printf '%s\n' '正在准备免费图生视频通道（首次运行会自动下载组件）…'
+  printf '%s\n' '正在准备免费媒体中转通道（首次运行会自动下载组件）…'
   if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
     export SANMAO_RELAY_MODE=1
     export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"
     export SANMAO_MEDIA_RELAY_URL="$RELAY_URL"
   else
-    printf '%s\n' '免费图生视频通道暂时不可用；文本和普通图片功能仍可使用。'
+    printf '%s\n' '免费媒体中转通道暂时不可用；文本和普通图片功能仍可使用。'
   fi
 else
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL

@@ -22,7 +22,7 @@ LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
 sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
 sanmao_log "启动器开始运行，根目录：$ROOT_DIR，端口范围：$PORT_START..$PORT_END" INFO
 
-agnes_configured() {
+media_relay_required() {
   DATA_ROOT="${SANMAO_DATA_DIR:-$ROOT_DIR/.data}"
   case "$DATA_ROOT" in
     /*) ;;
@@ -31,11 +31,11 @@ agnes_configured() {
   STATE_PATH="$DATA_ROOT/state.json"
   [ -f "$STATE_PATH" ] || return 1
   command -v node >/dev/null 2>&1 || return 1
-  node -e 'const fs=require("fs");let s;try{s=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch{process.exit(1)};const ok=(s.providers||[]).some(p=>((p.platform==="agnes")||/agnes-ai\.(cn|com)/i.test(String(p.baseUrl||"")))&&Boolean(String(p.encryptedApiKey||p.apiKey||"").trim()));process.exit(ok?0:1)' "$STATE_PATH"
+  node -e 'const fs=require("fs");let s;try{s=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch{process.exit(1)};const models=s.models||[];const hasVideoModel=p=>models.some(m=>m.providerId===p.id&&(m.kind==="video"||(m.capabilities||[]).includes("video-generate")));const ok=(s.providers||[]).some(p=>{const t=String(p.videoTransport||"").toLowerCase();const credential=Boolean(String(p.encryptedApiKey||p.encryptedVideoApiKey||p.apiKey||"").trim());if(!credential)return false;if(t==="agnes-videos"||t==="openai-videos")return true;if(t==="native-task"||t==="jimeng-cli")return false;return (t==="auto"||!t)&&hasVideoModel(p)});process.exit(ok?0:1)' "$STATE_PATH"
 }
 
-AGNES_CONFIGURED=0
-if agnes_configured; then AGNES_CONFIGURED=1; fi
+MEDIA_RELAY_REQUIRED=0
+if media_relay_required; then MEDIA_RELAY_REQUIRED=1; fi
 
 server_is_ready() {
   sanmao_server_health "$1"
@@ -129,14 +129,14 @@ if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && ! server_lifecycle_enabled "$EXISTI
 fi
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && server_lifecycle_enabled "$EXISTING_PORT"; then
   EXISTING_RELAY_MODE=`server_media_relay_mode "$EXISTING_PORT"`
-  if [ "$AGNES_CONFIGURED" -eq 1 ] && [ "$EXISTING_RELAY_MODE" = relay ] && ! free_relay_is_running "$ROOT_DIR"; then
+  if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$EXISTING_RELAY_MODE" = relay ] && ! free_relay_is_running "$ROOT_DIR"; then
     sanmao_log "检测到免费临时通道已退出，正在重启端口 $EXISTING_PORT" WARN
     sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
-  elif [ "$AGNES_CONFIGURED" -eq 1 ] && { [ "$EXISTING_RELAY_MODE" = unavailable ] || [ "$EXISTING_RELAY_MODE" = unknown ]; }; then
-    sanmao_log "检测到旧服务没有 Agnes 图片通道，正在重启端口 $EXISTING_PORT" WARN
+  elif [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && { [ "$EXISTING_RELAY_MODE" = unavailable ] || [ "$EXISTING_RELAY_MODE" = unknown ]; }; then
+    sanmao_log "检测到旧服务没有媒体中转通道，正在重启端口 $EXISTING_PORT" WARN
     sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
-  elif [ "$AGNES_CONFIGURED" -eq 0 ] && [ "$EXISTING_RELAY_MODE" = relay ]; then
-    sanmao_log "检测到 Agnes 未配置，正在关闭不需要的临时通道并重启端口 $EXISTING_PORT" INFO
+  elif [ "$MEDIA_RELAY_REQUIRED" -eq 0 ] && [ "$EXISTING_RELAY_MODE" = relay ]; then
+    sanmao_log "检测到当前服务不需要媒体中转，正在关闭临时通道并重启端口 $EXISTING_PORT" INFO
     sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
   else
     printf 'SANMAO.AI 已在运行：http://localhost:%s\n' $EXISTING_PORT
@@ -251,20 +251,20 @@ if [ $PORT -gt $PORT_END ]; then
   fail "$PORT_START～$PORT_END 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
 fi
 
-if [ "$AGNES_CONFIGURED" -eq 1 ]; then
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
-  printf '%s\n' '正在准备免费图生视频通道（首次运行会自动下载组件）…'
+  printf '%s\n' '正在准备免费媒体中转通道（首次运行会自动下载组件）…'
   if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
     export SANMAO_RELAY_MODE=1
     export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"
     export SANMAO_MEDIA_RELAY_URL="$RELAY_URL"
     sanmao_log "已启动免费临时通道：$RELAY_URL" INFO
   else
-    printf '%s\n' '免费图生视频通道暂时不可用；文本和普通图片功能仍可使用。'
-    sanmao_log '免费临时通道未启动，Agnes 本地图生视频将提示重试。' WARN
+    printf '%s\n' '免费媒体中转通道暂时不可用；文本和普通图片功能仍可使用。'
+    sanmao_log '免费临时通道未启动，本地图生视频将提示重试。' WARN
   fi
 else
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL

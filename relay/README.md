@@ -1,6 +1,6 @@
 # SANMAO.AI 临时媒体中转服务
 
-这个服务用于让 Agnes 读取普通用户上传的本地图片。图片只保存短时间，默认 30 分钟后失效并由清理逻辑删除。服务不接收 Agnes API Key，也不接收提示词。
+这个服务用于让需要公网媒体地址的远程服务商读取普通用户上传的本地图片。图片只保存短时间，默认 30 分钟后失效并由清理逻辑删除。服务不接收任何服务商 API Key，也不接收提示词。
 
 ## 普通用户不需要部署
 
@@ -30,7 +30,7 @@ docker compose -f relay/docker-compose.yml --env-file relay/.env up -d --build
 ## 接口
 
 - `POST /api/relay/media`：上传图片，表单字段为 `file` 和 `kind=image`。
-- `GET /api/relay/media/<token>`：读取短期签名图片地址，供 Agnes 使用。
+- `GET /api/relay/media/<token>`：读取短期签名图片地址，供远程服务商使用。
 - `GET /api/health`：健康检查。
 
 客户端只会把压缩后的图片发送到上传接口，并校验返回地址必须是同一 HTTPS 中转域名。外部公网图片 URL 不会经过此服务。

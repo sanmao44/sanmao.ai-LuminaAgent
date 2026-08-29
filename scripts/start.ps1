@@ -17,7 +17,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-$script:AgnesConfigured = $false
+$script:MediaRelayRequired = $false
 $requestedPort = 0
 if ($Port -ge 1024 -and $Port -le 65525) {
   $requestedPort = $Port
@@ -64,7 +64,7 @@ function Test-SanmaoServerAtPort([int]$port) {
   return Test-SanmaoHealthEndpoint -Port $port
 }
 
-function Test-SanmaoAgnesConfigured {
+function Test-SanmaoMediaRelayRequired {
   $dataRoot = [string]$env:SANMAO_DATA_DIR
   if ([string]::IsNullOrWhiteSpace($dataRoot)) {
     $dataRoot = Join-Path $root '.data'
@@ -76,16 +76,21 @@ function Test-SanmaoAgnesConfigured {
   try {
     $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
     foreach ($provider in @($state.providers)) {
-      $baseUrl = [string]$provider.baseUrl
-      $isAgnes = [string]$provider.platform -eq 'agnes' -or $baseUrl -match '(?i)agnes-ai\.(cn|com)'
-      $hasCredential = -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.apiKey)
-      if ($isAgnes -and $hasCredential) { return $true }
+      $transport = ([string]$provider.videoTransport).ToLowerInvariant()
+      $hasCredential = -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedVideoApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.apiKey)
+      if (-not $hasCredential) { continue }
+      if ($transport -eq 'agnes-videos' -or $transport -eq 'openai-videos') { return $true }
+      if ($transport -eq 'native-task' -or $transport -eq 'jimeng-cli') { continue }
+      if ($transport -eq 'auto' -or -not $transport) {
+        $hasVideoModel = @($state.models | Where-Object { $_.providerId -eq $provider.id -and ($_.kind -eq 'video' -or @($_.capabilities) -contains 'video-generate') }).Count -gt 0
+        if ($hasVideoModel) { return $true }
+      }
     }
   } catch {}
   return $false
 }
 
-$script:AgnesConfigured = Test-SanmaoAgnesConfigured
+$script:MediaRelayRequired = Test-SanmaoMediaRelayRequired
 
 function Get-SanmaoServerInfo([int]$port) {
   $health = Invoke-SanmaoLocalHttp -Port $port -Path '/api/health' -TimeoutMs 1000
@@ -365,13 +370,13 @@ if ($existing) {
   $buildStale = Test-SanmaoBuildStale
   if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
   $freeRelayMismatch =
-    ($FreeRelay.IsPresent -and $script:AgnesConfigured -and (
+    ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and (
       $existing.MediaRelayMode -in @('unknown', 'unavailable') -or
       ($existing.MediaRelayMode -eq 'relay' -and -not (Test-SanmaoFreeRelayTunnel -Root $root))
     )) -or
-    (-not $script:AgnesConfigured -and $existing.MediaRelayMode -eq 'relay')
+    (-not $script:MediaRelayRequired -and $existing.MediaRelayMode -eq 'relay')
   if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent -or $freeRelayMismatch) {
-    $reason = if ($freeRelayMismatch -and $script:AgnesConfigured) { '正在准备免费图生视频通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新网页关闭自动停止设置' } else { '检测到源码比当前构建更新' }
+    $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新网页关闭自动停止设置' } else { '检测到源码比当前构建更新' }
     Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {
@@ -580,8 +585,8 @@ if ($port -gt $portEnd) {
   }
 }
 
-if ($FreeRelay.IsPresent -and $script:AgnesConfigured) {
-  Write-Host '正在准备免费图生视频通道…' -ForegroundColor Yellow
+if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
+  Write-Host '正在准备免费媒体中转通道…' -ForegroundColor Yellow
   Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
   if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
     Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
@@ -593,7 +598,7 @@ if ($FreeRelay.IsPresent -and $script:AgnesConfigured) {
     $env:SANMAO_MEDIA_RELAY_URL = $freeRelayInfo.PublicUrl
     Write-SanmaoLauncherLog "已启动免费临时通道：$($freeRelayInfo.PublicUrl)" 'INFO'
   }
-} elseif (-not $script:AgnesConfigured) {
+} elseif (-not $script:MediaRelayRequired) {
   Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
   if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
     Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue

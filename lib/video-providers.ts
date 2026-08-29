@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import type { RuntimeProvider } from './providers';
+import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';
 
 export type VideoProviderTask = {
   providerTaskId?: string;
@@ -32,28 +33,18 @@ export class VideoProviderError extends Error {
   }
 }
 
-function is65535Provider(provider: RuntimeProvider) {
-  return provider.platform === '65535' || /65535\.space/i.test(provider.baseUrl || '') || /65535\.space/i.test(provider.videoBaseUrl || '');
-}
-
-function isAgnesProvider(provider: RuntimeProvider) {
-  const host = (value: string) => { try { return new URL(value).hostname; } catch { return ''; } };
-  return provider.platform === 'agnes' || provider.videoTransport === 'agnes-videos'
-    || /(^|\.)api(?:hub)?\.agnes-ai\.(?:com|cn)$/i.test(host(provider.baseUrl || ''))
-    || /(^|\.)api(?:hub)?\.agnes-ai\.(?:com|cn)$/i.test(host(provider.videoBaseUrl || ''));
-}
-
 function isAgnesVideoProvider(provider: RuntimeProvider) {
   return isAgnesProvider(provider) || provider.videoTransport === 'agnes-videos';
 }
 
-async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
+async function preparePublicMediaUrl(provider: RuntimeProvider, value: string, kind: 'image' | 'video' | 'audio') {
   const input = String(value || '').trim();
-  if (!input || (/^https?:\/\//i.test(input) && !isLocalAgnesMediaUrl(input))) return input;
-  return (await import('./signed-media')).prepareAgnesMediaUrl(input, kind);
+  if (!input || (/^https?:\/\//i.test(input) && !isLocalMediaUrl(input))) return input;
+  if (!requiresPublicMediaRelay(provider, { hasVideoModel: true })) return input;
+  return (await import('./signed-media')).preparePublicMediaUrl(input, kind);
 }
 
-function isLocalAgnesMediaUrl(value: string) {
+function isLocalMediaUrl(value: string) {
   try {
     const parsed = new URL(value);
     const host = parsed.hostname.toLowerCase();
@@ -260,6 +251,24 @@ function videoReferenceValues(input: VideoGenerationInput) {
 
 function audioValues(input: VideoGenerationInput) {
   return input.audios?.length ? input.audios : input.audio ? [input.audio] : [];
+}
+
+async function prepareRemoteVideoMedia(provider: RuntimeProvider, input: VideoGenerationInput) {
+  const [firstFrame, lastFrame, referenceImages, referenceVideos, audios] = await Promise.all([
+    input.firstFrame ? preparePublicMediaUrl(provider, input.firstFrame, 'image') : undefined,
+    input.lastFrame ? preparePublicMediaUrl(provider, input.lastFrame, 'image') : undefined,
+    Promise.all((input.referenceImages || []).map((url) => preparePublicMediaUrl(provider, url, 'image'))),
+    Promise.all(videoReferenceValues(input).map((url) => preparePublicMediaUrl(provider, url, 'video'))),
+    Promise.all(audioValues(input).map((url) => preparePublicMediaUrl(provider, url, 'audio'))),
+  ]);
+  return {
+    ...input,
+    firstFrame,
+    lastFrame,
+    referenceImages,
+    ...(referenceVideos.length ? { referenceVideos, referenceVideo: referenceVideos[0] } : {}),
+    ...(audios.length ? { audios, audio: audios[0] } : {}),
+  };
 }
 
 function inputPayload(input: VideoGenerationInput) {
@@ -496,11 +505,11 @@ function agnesGenerationUrl(provider: RuntimeProvider) {
 
 async function submitAgnesVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   const media = {
-    firstFrame: input.firstFrame ? await prepareAgnesMediaUrl(input.firstFrame, 'image') : undefined,
-    lastFrame: input.lastFrame ? await prepareAgnesMediaUrl(input.lastFrame, 'image') : undefined,
-    referenceImages: await Promise.all((input.referenceImages || []).map((url) => prepareAgnesMediaUrl(url, 'image'))),
-    referenceVideos: await Promise.all(videoReferenceValues(input).map((url) => prepareAgnesMediaUrl(url, 'video'))),
-    audios: await Promise.all(audioValues(input).map((url) => prepareAgnesMediaUrl(url, 'audio'))),
+    firstFrame: input.firstFrame ? await preparePublicMediaUrl(provider, input.firstFrame, 'image') : undefined,
+    lastFrame: input.lastFrame ? await preparePublicMediaUrl(provider, input.lastFrame, 'image') : undefined,
+    referenceImages: await Promise.all((input.referenceImages || []).map((url) => preparePublicMediaUrl(provider, url, 'image'))),
+    referenceVideos: await Promise.all(videoReferenceValues(input).map((url) => preparePublicMediaUrl(provider, url, 'video'))),
+    audios: await Promise.all(audioValues(input).map((url) => preparePublicMediaUrl(provider, url, 'audio'))),
   };
   const body = buildAgnesVideoPayload(rawModelId, input, media);
   const response = await requestJsonWithRateLimitRetry(agnesGenerationUrl(provider), { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, { retry429: false });
@@ -526,10 +535,13 @@ async function pollAgnesVideo(provider: RuntimeProvider, videoId: string, rawMod
 export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   if (isAgnesVideoProvider(provider)) return submitAgnesVideo(provider, rawModelId, input, idempotencyKey, signal);
   const transport = resolveVideoTransport(provider);
+  const preparedInput = transport === 'openai-videos' && requiresPublicMediaRelay(provider, { hasVideoModel: true })
+    ? await prepareRemoteVideoMedia(provider, input)
+    : input;
   const url = transport === 'native-task' ? endpoint(provider, provider.videoTaskPath, '/v1/tasks') : endpoint(provider, provider.videoGenerationPath, '/v1/videos');
   const body = transport === 'native-task'
-    ? { kind: 'video', model: rawModelId, operation: input.operation || 'generate', input: inputPayload(input) }
-    : openAiPayload(rawModelId, input);
+    ? { kind: 'video', model: rawModelId, operation: preparedInput.operation || 'generate', input: inputPayload(preparedInput) }
+    : openAiPayload(rawModelId, preparedInput);
   const response = await requestJsonWithRateLimitRetry(url, { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, { retry429: false });
   const data = response.data;
   const videos = videosFrom(data);

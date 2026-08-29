@@ -125,12 +125,12 @@ html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height
 .video-model-notice strong{color:var(--accent-text);font-size:9px}
 .video-model-notice.warning{border-color:color-mix(in srgb,#e6a23c 45%,var(--line));background:color-mix(in srgb,#e6a23c 10%,var(--panel));}
 .video-model-notice.warning strong{color:#d9962f}
-.video-agnes-media-notice{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
-.video-agnes-media-notice>div:first-child{display:grid;gap:3px;min-width:0}
-.video-agnes-media-actions{display:flex;align-items:center;gap:5px;flex:none}
-.video-agnes-media-actions button{min-height:27px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text-2);font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}
-.video-agnes-media-actions button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
-.video-agnes-media-actions button:disabled{opacity:.5;cursor:wait}
+.video-media-relay-notice{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
+.video-media-relay-notice>div:first-child{display:grid;gap:3px;min-width:0}
+.video-media-relay-actions{display:flex;align-items:center;gap:5px;flex:none}
+.video-media-relay-actions button{min-height:27px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text-2);font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}
+.video-media-relay-actions button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.video-media-relay-actions button:disabled{opacity:.5;cursor:wait}
 .video-audio-tray{min-width:0;display:grid;gap:5px;padding:6px;border:1px dashed color-mix(in srgb,var(--accent) 32%,var(--line-strong));border-radius:13px;background:color-mix(in srgb,var(--accent-soft) 26%,var(--panel))}
 .video-audio-add{position:relative;min-width:0;min-height:54px;display:grid;place-items:center;align-content:center;gap:1px;border-radius:10px;color:var(--accent-text);cursor:pointer}
 .video-audio-add:hover{background:var(--accent-soft)}
@@ -218,8 +218,8 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
   .video-reference-tray-actions{padding:3px}
   .video-task-details{display:grid;gap:3px}
   .video-task-details small{white-space:nowrap}
-  .video-agnes-media-notice{grid-template-columns:1fr;align-items:stretch}
-  .video-agnes-media-actions{justify-content:flex-end}
+  .video-media-relay-notice{grid-template-columns:1fr;align-items:stretch}
+  .video-media-relay-actions{justify-content:flex-end}
 }
 
 /* Below desktop, let the stacked workspace grow with the document so the

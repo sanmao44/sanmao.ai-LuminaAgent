@@ -5,7 +5,19 @@ import ts from 'typescript';
 
 const sourceUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
+const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
+const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
+const signedCompiled = ts.transpileModule(signedSource
+  .replace(/import \{ resolveStoredFileWithFallback \} from '\.\/image-storage';\r?\n/, 'const resolveStoredFileWithFallback = () => null;\n')
+  .replace(/import \{ resolveStoredVideoFile \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFile = () => null;\n'), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  fileName: new URL('../lib/signed-media.ts', import.meta.url).pathname,
+}).outputText;
+const signedModuleUrl = `data:text/javascript;base64,${Buffer.from(signedCompiled).toString('base64')}`;
+const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${source
+  .replace("import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';", '')
+  .replace("(await import('./signed-media')).preparePublicMediaUrl", '__signedMedia.preparePublicMediaUrl')}`;
+const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,
 }).outputText;
@@ -92,6 +104,62 @@ test('normalizes done results from common video URL fields', async () => {
   assert.equal(result.status, 'done');
   assert.equal(result.videos[0].url, 'https://cdn.example/a.mp4');
   assert.equal(result.costUsd, 0.42);
+});
+
+test('relays local images for a non-Agnes OpenAI-compatible video provider', async () => {
+  const previous = {
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (String(url) === 'https://relay.example/api/relay/media') {
+      assert.equal(init.body.get('kind'), 'image');
+      assert.equal(init.body.get('file').type, 'image/png');
+      return new Response(JSON.stringify({ ok: true, url: 'https://relay.example/api/relay/media/signed-token' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ id: 'remote-video-task', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const result = await video.submitRemoteVideo(provider({ platform: 'custom', videoTransport: 'openai-videos', videoBaseUrl: 'https://compat.example' }), 'remote-video-model', {
+      prompt: 'a paper boat', seconds: 5, firstFrame: 'data:image/png;base64,AAECAw==',
+    }, 'idem-relay');
+    assert.equal(result.providerTaskId, 'remote-video-task');
+    assert.deepEqual(calls.map((call) => call.url), [
+      'https://relay.example/api/relay/media',
+      'https://compat.example/v1/videos',
+    ]);
+    const payload = JSON.parse(calls[1].init.body);
+    assert.equal(payload.first_frame, 'https://relay.example/api/relay/media/signed-token');
+    assert.equal(payload.input_reference, undefined);
+  } finally {
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+  }
+});
+
+test('does not contact the relay for non-Agnes text-to-video', async () => {
+  const previous = process.env.SANMAO_MEDIA_RELAY_URL;
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ id: 'remote-text-task', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await video.submitRemoteVideo(provider({ platform: 'custom', videoTransport: 'openai-videos', videoBaseUrl: 'https://compat.example' }), 'remote-video-model', {
+      prompt: 'a paper boat', seconds: 5,
+    }, 'idem-text-relay');
+    assert.deepEqual(calls, ['https://compat.example/v1/videos']);
+  } finally {
+    if (previous === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous;
+  }
 });
 
 test('accepts a top-level id as a native asynchronous task identifier', async () => {

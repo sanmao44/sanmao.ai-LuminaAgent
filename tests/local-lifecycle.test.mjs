@@ -51,7 +51,7 @@ test("health and official launchers expose the intended lifecycle modes", () => 
   assert.match(linuxLauncher, /export SANMAO_LIFECYCLE=1/);
 });
 
-test("every existing launcher prepares the optional free Agnes image relay only when Agnes is configured", () => {
+test("every existing launcher prepares the optional public media relay", () => {
   assert.match(windowsLauncher, /FreeRelay/);
   assert.match(lanLauncher, /FreeRelay/);
   assert.match(macLauncher, /free-relay-common\.sh/);
@@ -61,22 +61,26 @@ test("every existing launcher prepares the optional free Agnes image relay only 
   assert.match(freeRelaySh, /trycloudflare/);
 });
 
-test("launchers skip free relay setup without a saved Agnes credential", () => {
-  assert.match(windowsLauncher, /function Test-SanmaoAgnesConfigured/);
+test("launchers enable free relay only for configured providers that need public media", () => {
+  assert.match(windowsLauncher, /function Test-SanmaoMediaRelayRequired/);
   assert.match(windowsLauncher, /SANMAO_DATA_DIR/);
-  assert.match(windowsLauncher, /if \(\$FreeRelay\.IsPresent -and \$script:AgnesConfigured\)/);
-  assert.match(windowsLauncher, /elseif \(-not \$script:AgnesConfigured\)/);
+  assert.match(windowsLauncher, /if \(\$FreeRelay\.IsPresent -and \$script:MediaRelayRequired\)/);
+  assert.match(windowsLauncher, /elseif \(-not \$script:MediaRelayRequired\)/);
+  assert.match(windowsLauncher, /openai-videos/);
+  assert.match(windowsLauncher, /video-generate/);
   assert.match(windowsLauncher, /Stop-SanmaoFreeRelayTunnel -Root \$root/);
 
-  assert.match(macLauncher, /agnes_configured\(\)/);
+  assert.match(macLauncher, /media_relay_required\(\)/);
   assert.match(macLauncher, /SANMAO_DATA_DIR/);
-  assert.match(macLauncher, /if \[ "\$AGNES_CONFIGURED" -eq 1 \]; then/);
+  assert.match(macLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
+  assert.match(macLauncher, /openai-videos/);
   assert.match(macLauncher, /free_relay_stop "\$ROOT_DIR"/);
-  assert.match(linuxLauncher, /AGNES_CONFIGURED=0/);
+  assert.match(linuxLauncher, /MEDIA_RELAY_REQUIRED=0/);
   assert.match(linuxLauncher, /SANMAO_DATA_DIR/);
-  assert.match(linuxLauncher, /if \[ "\$AGNES_CONFIGURED" -eq 1 \]; then/);
+  assert.match(linuxLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
+  assert.match(linuxLauncher, /openai-videos/);
   assert.match(linuxLauncher, /free_relay_stop "\$ROOT_DIR"/);
 
-  assert.match(readme, /只有检测到已保存且有访问密钥的 Agnes 服务商/);
-  assert.match(readme, /没有 Agnes 配置时不会下载或启动中转/);
+  assert.match(readme, /只有检测到已保存且有访问密钥、且视频传输需要公网媒体地址的服务商/);
+  assert.match(readme, /没有此类配置时不会下载或启动中转/);
 });

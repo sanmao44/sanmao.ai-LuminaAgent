@@ -27,7 +27,8 @@ const providers = await importTypeScript(providersUrl, [
 ].join('\n'));
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
-const video = await importTypeScript(videoUrl, await readFile(videoUrl, 'utf8'));
+const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
+const video = await importTypeScript(videoUrl, `${videoPlatformSource}\n${(await readFile(videoUrl, 'utf8')).replace("import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';", '')}`);
 
 const signedUrl = new URL('../lib/signed-media.ts', import.meta.url);
 const signedSource = await readFile(signedUrl, 'utf8');

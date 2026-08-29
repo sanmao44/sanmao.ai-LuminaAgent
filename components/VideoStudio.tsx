@@ -6,7 +6,7 @@ import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
-import { is65535Provider, isJimengProvider, isAgnesProvider } from '@/lib/video-platform';
+import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
 
 type VideoTask = {
   id: string;
@@ -39,7 +39,7 @@ type Props = {
 type UploadSlot = { name: string; url: string; kind: 'image' | 'video' | 'audio' };
 type VideoOperation = 'generate' | 'edit' | 'extend';
 type VideoInputMode = 'text' | 'first-frame' | 'frames' | 'reference';
-type AgnesMediaTransport = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean };
+type MediaTransportStatus = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean };
 const MAX_65535_INLINE_BYTES = 64 * 1024 * 1024;
 const MAX_VIDEO_IMAGE_EDGE = 2048;
 const MAX_VIDEO_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -366,8 +366,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [agnesMediaStatus, setAgnesMediaStatus] = useState<AgnesMediaTransport | null>(null);
-  const [agnesMediaStatusBusy, setAgnesMediaStatusBusy] = useState(false);
+  const [mediaStatus, setMediaStatus] = useState<MediaTransportStatus | null>(null);
+  const [mediaStatusBusy, setMediaStatusBusy] = useState(false);
   const [jimengAccount, setJimengAccount] = useState<JimengAccount | null>(null);
   const [jimengAccountCheckedAt, setJimengAccountCheckedAt] = useState('');
   const [jimengAccountError, setJimengAccountError] = useState('');
@@ -424,28 +424,31 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const usesAgnesV20 = usesAgnes && /agnes-video-v2\.0/i.test(selectedModel?.rawId || '');
   const usesAgnes25 = usesAgnes && /agnes-video-2\.5/i.test(selectedModel?.rawId || '');
   const usesAgnesFlash = usesAgnes && /agnes-video-2\.5-flash/i.test(selectedModel?.rawId || '');
+  const usesMediaRelay = requiresPublicMediaRelay(selectedProvider, {
+    hasVideoModel: selectedModel?.kind === 'video' || selectedModel?.capabilities?.includes('video-generate'),
+  });
   const supportsReferenceMentions = !usesJimengCli;
 
-  async function refreshAgnesMediaStatus() {
-    if (agnesMediaStatusBusy) return;
-    setAgnesMediaStatusBusy(true);
+  async function refreshMediaStatus() {
+    if (mediaStatusBusy) return;
+    setMediaStatusBusy(true);
     try {
       const response = await fetch('/api/relay/status', { cache: 'no-store' });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !['relay', 'self-hosted', 'unavailable'].includes(data.mode)) throw new Error('status unavailable');
-      setAgnesMediaStatus(data as AgnesMediaTransport);
+      setMediaStatus(data as MediaTransportStatus);
     } catch {
-      setAgnesMediaStatus({ mode: 'unavailable', relayConfigured: false, publicBaseConfigured: false });
-    } finally { setAgnesMediaStatusBusy(false); }
+      setMediaStatus({ mode: 'unavailable', relayConfigured: false, publicBaseConfigured: false });
+    } finally { setMediaStatusBusy(false); }
   }
 
   useEffect(() => {
-    if (!usesAgnes) {
-      setAgnesMediaStatus(null);
+    if (!usesMediaRelay) {
+      setMediaStatus(null);
       return;
     }
-    void refreshAgnesMediaStatus();
-  }, [usesAgnes, selectedProvider?.id]);
+    void refreshMediaStatus();
+  }, [usesMediaRelay, selectedProvider?.id]);
 
   const baseModelLimits = useMemo(() => getVideoModelLimits(selectedModel, selectedProvider), [selectedModel?.rawId, selectedModel?.displayName, selectedProvider?.platform, selectedProvider?.videoTransport, selectedProvider?.baseUrl, selectedProvider?.videoBaseUrl]);
   const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
@@ -763,12 +766,12 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         lastFrame: compressedLastFrame?.value,
         referenceImages: compressedReferences.map((result) => result.value),
       };
-      const hasLocalAgnesImage = usesAgnes && [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || [])]
+      const hasLocalRelayImage = usesMediaRelay && [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || [])]
         .some((value) => Boolean(value && (/^data:image\//i.test(value) || /^\/(?:api\/)?storage\//i.test(value))));
       const compressionResults = [compressedFirstFrame, compressedLastFrame, ...compressedReferences].filter((result): result is NonNullable<typeof result> => Boolean(result));
       const compressedCount = compressionResults.filter((result) => result.changed).length;
       if (compressedCount) onNotify(`已自动压缩 ${compressedCount} 张视频参考图，保留原图比例后提交`);
-      if (hasLocalAgnesImage) onNotify('正在安全准备本地图片，完成后会自动清理临时副本…');
+      if (hasLocalRelayImage) onNotify('正在安全准备本地图片，完成后会自动清理临时副本…');
       if (nativeTask) {
         const localMedia = [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || []), compressedInput.referenceVideo, ...(compressedInput.audios || [])].filter((value): value is string => Boolean(value));
         const inlineBytes = localMedia.reduce((total, value) => total + dataUriBytes(value), 0);
@@ -825,10 +828,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         </div>
          {inputModeOptions.length > 1 && <div className="video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : '参考图生视频' }))} ariaLabel="生成方式" /></div>}
          {modelLimits.notes.length > 0 && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
-         {usesAgnes && inputMode !== 'text' && <div className={`video-model-notice video-agnes-media-notice ${agnesMediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
-          <div><strong>{agnesMediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : agnesMediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : '正在检查图片处理服务'}</strong>
-           <span>{agnesMediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : agnesMediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
-          <div className="video-agnes-media-actions"><button type="button" onClick={() => void refreshAgnesMediaStatus()} disabled={agnesMediaStatusBusy}>{agnesMediaStatusBusy ? '检查中…' : '重新检查'}</button>{agnesMediaStatus?.mode === 'unavailable' && onOpenProviders && <button type="button" onClick={onOpenProviders}>高级设置</button>}</div>
+         {usesMediaRelay && inputMode !== 'text' && <div className={`video-model-notice video-media-relay-notice ${mediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
+          <div><strong>{mediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : mediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : '正在检查图片处理服务'}</strong>
+           <span>{mediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : mediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
+          <div className="video-media-relay-actions"><button type="button" onClick={() => void refreshMediaStatus()} disabled={mediaStatusBusy}>{mediaStatusBusy ? '检查中…' : '重新检查'}</button>{mediaStatus?.mode === 'unavailable' && onOpenProviders && <button type="button" onClick={onOpenProviders}>高级设置</button>}</div>
          </div>}
         {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 仅接受 first_frame 或 reference；首尾帧会按两张参考图提交。本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
         {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
