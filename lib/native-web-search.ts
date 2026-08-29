@@ -112,9 +112,26 @@ function authHeaders(provider: NativeSearchProvider) {
   return { [header]: `${prefix}${provider.apiKey}` };
 }
 
-async function requestJson(url: string, init: RequestInit) {
-  const response = await fetch(url, { ...init, cache: 'no-store', signal: AbortSignal.timeout(180000) });
+function combineSignals(signal: AbortSignal | undefined, timeout: number) {
+  const timeoutSignal = AbortSignal.timeout(timeout);
+  if (!signal) return timeoutSignal;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeoutSignal]);
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason || new Error('请求已取消'));
+  if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+  timeoutSignal.addEventListener('abort', () => controller.abort(timeoutSignal.reason), { once: true });
+  return controller.signal;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw signal.reason || new Error('请求已取消');
+}
+
+async function requestJson(url: string, init: RequestInit, signal?: AbortSignal) {
+  throwIfAborted(signal);
+  const response = await fetch(url, { ...init, cache: 'no-store', signal: combineSignals(signal, 180000) });
   const raw = await response.text();
+  throwIfAborted(signal);
   let data: any = {};
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
   if (!response.ok) {
@@ -181,17 +198,18 @@ function openAiText(data: any) {
   return stripNativeSearchProcess(raw);
 }
 
-async function openAiResponsesSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[]) {
+async function openAiResponsesSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[], signal?: AbortSignal) {
   const url = endpoint(provider, provider.responsesPath, provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses');
   const headers = { ...authHeaders(provider), 'Content-Type': 'application/json' };
   const base = { model: model.rawId, input: messages.map((message) => ({ role: message.role, content: textFromValue(message.content) })), stream: false };
   let data: any;
   try {
-    data = await requestJson(url, { method: 'POST', headers, body: JSON.stringify({ ...base, tools: [{ type: 'web_search' }] }) });
+    data = await requestJson(url, { method: 'POST', headers, body: JSON.stringify({ ...base, tools: [{ type: 'web_search' }] }) }, signal);
   } catch (error) {
+    throwIfAborted(signal);
     const status = Number((error as Error & { status?: number }).status || 0);
     if (![400, 404, 422].includes(status)) throw error;
-    data = await requestJson(url, { method: 'POST', headers, body: JSON.stringify({ ...base, tools: [{ type: 'web_search_preview' }] }) });
+    data = await requestJson(url, { method: 'POST', headers, body: JSON.stringify({ ...base, tools: [{ type: 'web_search_preview' }] }) }, signal);
   }
   const text = openAiText(data);
   const citations = cleanCitations(data, text);
@@ -199,7 +217,7 @@ async function openAiResponsesSearch(provider: NativeSearchProvider, model: Nati
   return { text, citations };
 }
 
-async function geminiSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[]) {
+async function geminiSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[], signal?: AbortSignal) {
   const { system, contents } = messagesToGemini(messages);
   const root = String(provider.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai')
     .replace(/\/openai\/?$/i, '')
@@ -208,11 +226,12 @@ async function geminiSearch(provider: NativeSearchProvider, model: NativeSearchM
   const base = { ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}), contents };
   let data: any;
   try {
-    data = await requestJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...base, tools: [{ google_search: {} }] }) });
+    data = await requestJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...base, tools: [{ google_search: {} }] }) }, signal);
   } catch (error) {
+    throwIfAborted(signal);
     const status = Number((error as Error & { status?: number }).status || 0);
     if (![400, 404, 422].includes(status)) throw error;
-    data = await requestJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...base, tools: [{ google_search_retrieval: {} }] }) });
+    data = await requestJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...base, tools: [{ google_search_retrieval: {} }] }) }, signal);
   }
   const candidate = data?.candidates?.[0];
   const text = stripNativeSearchProcess(candidate?.content?.parts || candidate?.content || data?.text);
@@ -221,26 +240,27 @@ async function geminiSearch(provider: NativeSearchProvider, model: NativeSearchM
   return { text, citations };
 }
 
-async function nativeChatSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[]) {
+async function nativeChatSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[], signal?: AbortSignal) {
   const data = await requestJson(endpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: model.rawId, messages }),
-  });
+  }, signal);
   const text = openAiText(data);
   const citations = cleanCitations(data?.citations || data, text);
   if (!citations.length) throw new Error('原生搜索模型没有返回可核验的来源');
   return { text, citations };
 }
 
-export async function runNativeWebSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[], query: string): Promise<NativeSearchResult> {
+export async function runNativeWebSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[], query: string, signal?: AbortSignal): Promise<NativeSearchResult> {
+  throwIfAborted(signal);
   const protocol = resolveNativeSearchProtocol(provider, model);
   if (!protocol) throw new Error('当前模型没有可用的原生搜索协议');
   const result = protocol === 'gemini-grounding'
-    ? await geminiSearch(provider, model, messages)
+    ? await geminiSearch(provider, model, messages, signal)
     : protocol === 'native-chat'
-      ? await nativeChatSearch(provider, model, messages)
-      : await openAiResponsesSearch(provider, model, messages);
+      ? await nativeChatSearch(provider, model, messages, signal)
+      : await openAiResponsesSearch(provider, model, messages, signal);
   return {
     source: 'native',
     protocol,

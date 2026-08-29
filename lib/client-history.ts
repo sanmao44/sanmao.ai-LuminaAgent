@@ -40,6 +40,7 @@ export type ChatMessageVersion = {
   content: string;
   images?: GalleryItem[];
   files?: ChatFile[];
+  interrupted?: boolean;
   webSearch?: WebSearchMeta;
   webSearchDecision?: WebSearchDecisionMeta;
   createdAt: number;
@@ -58,6 +59,7 @@ export type ChatHistoryMessage = {
   images?: GalleryItem[];
   files?: ChatFile[];
   references?: ClientReferenceImage[];
+  interrupted?: boolean;
   versions?: ChatMessageVersion[];
   activeVersion?: number;
   followUp?: ChatFollowUp;

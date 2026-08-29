@@ -1073,9 +1073,14 @@ function formatFileSize(size) {
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
-async function readAgentStream(response, onEvent) {
+async function readAgentStream(response, onEvent, signal) {
     if (!response.body) throw new Error('助手没有返回可读取的流');
     const reader = response.body.getReader();
+    const cancelReader = ()=>{
+        void reader.cancel().catch(()=>undefined);
+    };
+    if (signal?.aborted) cancelReader();
+    else signal?.addEventListener('abort', cancelReader, { once: true });
     const decoder = new TextDecoder();
     let buffer = '';
     let final = {};
@@ -1095,14 +1100,19 @@ async function readAgentStream(response, onEvent) {
             } catch  {}
         }
     };
-    while(true){
-        const part = await reader.read();
-        if (part.done) break;
-        consume(decoder.decode(part.value, {
-            stream: true
-        }));
+    try {
+        while(true){
+            const part = await reader.read();
+            if (part.done) break;
+            consume(decoder.decode(part.value, {
+                stream: true
+            }));
+        }
+        consume(decoder.decode());
+    } finally {
+        signal?.removeEventListener('abort', cancelReader);
     }
-    consume(decoder.decode());
+    if (signal?.aborted) throw signal.reason || new Error('AGENT_CANCELLED');
     return final;
 }
 async function requestPromptOptimization(source, model, references = []) {
@@ -1342,6 +1352,13 @@ function Icon({ name, size = 18 }) {
                     d: "M7 12h13"
                 })
             ]
+        }),
+        stop: /*#__PURE__*/ _jsx("rect", {
+            x: "7",
+            y: "7",
+            width: "10",
+            height: "10",
+            rx: "1.5"
         }),
         download: /*#__PURE__*/ _jsxs(_Fragment, {
             children: [
@@ -4822,6 +4839,8 @@ export default function Page() {
     const activeChatIdRef = useRef(null);
     const busyChatIdsRef = useRef(new Set());
     const pendingChatMessagesRef = useRef(new Map());
+    const agentRequestsRef = useRef(new Map());
+    const chatSaveQueuesRef = useRef(new Map());
     const [agentMentionOpen, setAgentMentionOpen] = useState(false);
     useEffect(()=>{
         if (!messageReferencePreview) return;
@@ -6540,6 +6559,7 @@ export default function Page() {
                 content: message.content,
                 images: message.images,
                 files: message.files,
+                interrupted: message.interrupted,
                 webSearch: message.webSearch,
                 webSearchDecision: message.webSearchDecision,
                 createdAt: 0
@@ -6557,6 +6577,7 @@ export default function Page() {
             content: version.content,
             images: version.images,
             files: version.files,
+            interrupted: version.interrupted,
             webSearch: version.webSearch ?? message.webSearch,
             webSearchDecision: version.webSearchDecision ?? message.webSearchDecision,
             versions,
@@ -7713,11 +7734,20 @@ export default function Page() {
             updatedAt: now,
             messages: storedMessages
         };
-        await saveChatSession(session);
-        setChatSessions((old)=>[
-                session,
-                ...old.filter((item)=>item.id !== id)
-            ].sort((a, b)=>b.updatedAt - a.updatedAt));
+        const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
+        const operation = previous.catch(()=>undefined).then(async ()=>{
+            await saveChatSession(session);
+            setChatSessions((old)=>[
+                    session,
+                    ...old.filter((item)=>item.id !== id)
+                ].sort((a, b)=>b.updatedAt - a.updatedAt));
+        });
+        chatSaveQueuesRef.current.set(id, operation);
+        try {
+            await operation;
+        } finally {
+            if (chatSaveQueuesRef.current.get(id) === operation) chatSaveQueuesRef.current.delete(id);
+        }
     }
     function setChatBusy(id, busy) {
         const next = new Set(busyChatIdsRef.current);
@@ -7727,6 +7757,46 @@ export default function Page() {
         setBusyChatIds([
             ...next
         ]);
+    }
+    function isCurrentAgentRequest(sessionId, requestId) {
+        return agentRequestsRef.current.get(sessionId)?.requestId === requestId;
+    }
+    async function finalizeStoppedAgentRequest(sessionId, request) {
+        const currentMessages = pendingChatMessagesRef.current.get(sessionId) || (activeChatIdRef.current === sessionId ? messages : []);
+        const stoppedMessages = currentMessages.map((message)=>{
+            if (message.id !== request.pendingId) return message;
+            if (request.kind === 'retry') {
+                const versions = messageVersionsFor(message).map((version)=>version.id === request.retryVersionId ? {
+                        ...version,
+                        content: request.partialText?.trim() || '本轮回答已停止。',
+                        interrupted: true
+                    } : version);
+                return applyMessageVersion({
+                    ...message,
+                    retrying: false
+                }, versions, versions.findIndex((version)=>version.id === request.retryVersionId));
+            }
+            const { pending: _pending, activity: _activity, ...rest } = message;
+            return {
+                ...rest,
+                content: request.partialText?.trim() || '本轮回答已停止。',
+                interrupted: true
+            };
+        });
+        pendingChatMessagesRef.current.set(sessionId, stoppedMessages);
+        if (activeChatIdRef.current === sessionId) setMessages(stoppedMessages);
+        setChatBusy(sessionId, false);
+        await persistAgentSession(sessionId, stoppedMessages).catch(()=>undefined);
+    }
+    async function stopAgent() {
+        const sessionId = activeChatIdRef.current;
+        if (!sessionId) return;
+        const request = agentRequestsRef.current.get(sessionId);
+        if (!request) return;
+        request.stopped = true;
+        request.controller.abort(new Error('AGENT_CANCELLED'));
+        agentRequestsRef.current.delete(sessionId);
+        await finalizeStoppedAgentRequest(sessionId, request);
     }
     function resetMessageSelection() {
         setAgentMessageSelectionMode(false);
@@ -8027,9 +8097,14 @@ export default function Page() {
         ];
         const workingVersionIndex = workingVersions.length - 1;
         const workingMessages = messages.map((item)=>item.id === message.id ? applyMessageVersion(item, workingVersions, workingVersionIndex, true) : item);
+        const requestId = uid('agent-request');
+        const requestController = new AbortController();
+        const agentRequest = { requestId, controller: requestController, pendingId: message.id, retryVersionId, kind: 'retry', partialText: '', stopped: false };
+        agentRequestsRef.current.set(sessionId, agentRequest);
         pendingChatMessagesRef.current.set(sessionId, workingMessages);
         setMessages(workingMessages);
         setChatBusy(sessionId, true);
+        const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
         try {
             const latestUserId = [
                 ...contextMessages
@@ -8038,7 +8113,9 @@ export default function Page() {
                 ...contextMessages
             ].reverse().find((item)=>item.role === 'user' && item.references?.length);
             const referencesForRequest = await Promise.all((referenceSource?.references || []).slice(0, 16).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             const payloadMessages = contextMessages.slice(-12).map((item)=>({
                     role: item.role,
                     content: item.content,
@@ -8069,28 +8146,36 @@ export default function Page() {
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     stream: true
-                })
+                }),
+                signal: requestController.signal
             });
             let data;
             if (res.headers.get('content-type')?.includes('text/event-stream')) {
                 let streamedText = '';
                 const final = await readAgentStream(res, (event)=>{
-                    if (event.type === 'status') updatePendingActivity({
-                        stage: event.stage || 'answering',
-                        message: event.message || '正在处理…',
-                        model: event.model,
-                        mode: event.mode,
-                        count: event.count
-                    });
-                    if (event.type === 'delta') streamedText += String(event.text || '');
+                    if (event.type === 'delta') {
+                        streamedText += String(event.text || '');
+                        agentRequest.partialText = streamedText;
+                        if (isCurrentRequest()) {
+                            const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
+                            const updated = current.map((item)=>{
+                                if (item.id !== message.id) return item;
+                                const versions = messageVersionsFor(item).map((version)=>version.id === retryVersionId ? { ...version, content: streamedText } : version);
+                                return applyMessageVersion(item, versions, workingVersionIndex, true);
+                            });
+                            pendingChatMessagesRef.current.set(sessionId, updated);
+                            if (activeChatIdRef.current === sessionId) setMessages(updated);
+                        }
+                    }
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
-                });
+                }, requestController.signal);
                 data = {
                     ...final,
                     message: final.message || streamedText
                 };
             } else data = await res.json();
             if (!res.ok) throw new Error(data.error || '助手请求失败');
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
             let images = [];
             if (Array.isArray(data.images) && data.images.length) {
@@ -8106,6 +8191,7 @@ export default function Page() {
                 });
                 if (images.length) playSuccessSound();
             }
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && typeof file.content === 'string').map((file)=>({
                     id: uid('file'),
                     name: file.name,
@@ -8114,7 +8200,7 @@ export default function Page() {
                     encoding: file.encoding === 'base64' ? 'base64' : 'utf8',
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
-            const completedMessages = workingMessages.map((item)=>{
+            const completedMessages = (pendingChatMessagesRef.current.get(sessionId) || workingMessages).map((item)=>{
                 if (item.id !== message.id) return item;
                 const versions = messageVersionsFor(item).map((version)=>version.id === retryVersionId ? {
                         ...version,
@@ -8126,21 +8212,39 @@ export default function Page() {
                     } : version);
                 return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
             });
+            if (!isCurrentRequest()) return;
             pendingChatMessagesRef.current.delete(sessionId);
             if (activeChatIdRef.current === sessionId) {
                 setMessages(completedMessages);
                 restoreMessageViewport(message.id, beforeTop);
             }
+            agentRequestsRef.current.delete(sessionId);
+            setChatBusy(sessionId, false);
             await persistAgentSession(sessionId, completedMessages);
             notify(`已生成第 ${workingVersions.length} 个文本版本`);
         } catch (error) {
+            const errorName = error instanceof Error ? error.name : '';
+            const errorMessage = error instanceof Error ? error.message : '';
+            const cancelled = agentRequest.stopped || requestController.signal.aborted || errorName === 'AbortError' || errorMessage === 'AGENT_CANCELLED';
+            if (cancelled) {
+                if (isCurrentRequest()) {
+                    agentRequest.stopped = true;
+                    agentRequestsRef.current.delete(sessionId);
+                    await finalizeStoppedAgentRequest(sessionId, agentRequest);
+                }
+                return;
+            }
+            if (!isCurrentRequest()) return;
             const restoredMessages = messages.map((item)=>item.id === message.id ? applyMessageVersion(item, originalVersions, originalActiveVersion) : item);
             pendingChatMessagesRef.current.delete(sessionId);
             if (activeChatIdRef.current === sessionId) setMessages(restoredMessages);
             notify(error instanceof Error ? error.message : '重新生成失败');
             void refreshGenerationLogs();
         } finally{
-            setChatBusy(sessionId, false);
+            if (isCurrentRequest()) {
+                agentRequestsRef.current.delete(sessionId);
+                setChatBusy(sessionId, false);
+            }
         }
     }
     async function sendAgent(text = agentInput, task, overrideRefs) {
@@ -8151,6 +8255,7 @@ export default function Page() {
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
         const sessionId = activeChatId || uid('chat');
         if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，可点击左侧“新对话”并行进行');
+        const currentSessionMessages = pendingChatMessagesRef.current.get(sessionId) || messages;
         let refs = overrideRefs ? [
             ...overrideRefs
         ] : [
@@ -8158,7 +8263,7 @@ export default function Page() {
         ];
         let autoContinuation = false;
         if (!overrideRefs && !refs.length && isImageContinuationRequest(content)) {
-            const previousImage = latestAssistantImage(messages);
+            const previousImage = latestAssistantImage(currentSessionMessages);
             if (previousImage) {
                 try {
                     refs = [
@@ -8193,9 +8298,13 @@ export default function Page() {
             pending: true,
             activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' }
         };
+        const requestId = uid('agent-request');
+        const requestController = new AbortController();
+        const agentRequest = { requestId, controller: requestController, pendingId, partialText: '', stopped: false };
+        agentRequestsRef.current.set(sessionId, agentRequest);
         primeSuccessSound();
         const nextMessages = [
-            ...messages.filter((message)=>!message.pending),
+            ...currentSessionMessages.filter((message)=>!message.pending),
             user
         ];
         activeChatIdRef.current = sessionId;
@@ -8214,20 +8323,32 @@ export default function Page() {
         setAgentFiles([]);
         setAgentFollowUp(null);
         setChatBusy(sessionId, true);
+        const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
         await persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
+        if (requestController.signal.aborted || !isCurrentRequest()) return;
         try {
-            const updatePendingContent = (nextContent)=>{
-                if (activeChatIdRef.current === sessionId) setMessages((old)=>old.map((message)=>message.id === pendingId ? {
+            const updatePendingMessage = (patch)=>{
+                if (!isCurrentRequest()) return;
+                const current = pendingChatMessagesRef.current.get(sessionId) || [
+                    ...nextMessages,
+                    pending
+                ];
+                const updated = current.map((message)=>message.id === pendingId ? {
                             ...message,
-                            content: nextContent
-                        } : message));
+                            ...patch
+                        } : message);
+                pendingChatMessagesRef.current.set(sessionId, updated);
+                if (activeChatIdRef.current === sessionId) setMessages(updated);
+            };
+            const updatePendingContent = (nextContent)=>{
+                agentRequest.partialText = nextContent;
+                updatePendingMessage({ content: nextContent });
             };
             const updatePendingActivity = (activity)=>{
-                if (activeChatIdRef.current === sessionId) setMessages((old)=>old.map((message)=>message.id === pendingId ? {
-                            ...message,
-                            content: activity?.message || message.content,
-                            activity
-                        } : message));
+                updatePendingMessage({
+                    content: activity?.message,
+                    activity
+                });
             };
             const latestUserId = [
                 ...nextMessages
@@ -8236,7 +8357,9 @@ export default function Page() {
                 ...nextMessages
             ].reverse().find((message)=>message.role === 'user' && message.references?.length);
             const referencesForRequest = await Promise.all((referenceSource?.references || []).slice(0, 16).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             const payloadMessages = nextMessages.slice(-12).map((m)=>({
                     role: m.role,
                     content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : m.content,
@@ -8263,7 +8386,8 @@ export default function Page() {
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     stream: true
-                })
+                }),
+                signal: requestController.signal
             });
             let data;
             if (res.headers.get('content-type')?.includes('text/event-stream')) {
@@ -8281,13 +8405,14 @@ export default function Page() {
                         updatePendingContent(streamedText);
                     }
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
-                });
+                }, requestController.signal);
                 data = {
                     ...final,
                     message: final.message || streamedText
                 };
             } else data = await res.json();
             if (!res.ok) throw new Error(data.error || '助手请求失败');
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
             const submittedChatModel = activeAgentModelId !== 'auto' ? availableChatModels.find((model)=>model.id === activeAgentModelId) : undefined;
             const actualChatModelId = submittedChatModel?.id || (Array.isArray(data.generations) ? data.generations[0]?.modelId : undefined);
@@ -8317,6 +8442,7 @@ export default function Page() {
                 });
                 if (items.length) playSuccessSound();
             }
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && typeof file.content === 'string').map((file)=>({
                     id: uid('file'),
                     name: file.name,
@@ -8337,10 +8463,25 @@ export default function Page() {
                     webSearchDecision: data.webSearchDecision || undefined
                 }
             ];
+            if (!isCurrentRequest()) return;
             pendingChatMessagesRef.current.delete(sessionId);
             if (activeChatIdRef.current === sessionId) setMessages(completed);
+            agentRequestsRef.current.delete(sessionId);
+            setChatBusy(sessionId, false);
             await persistAgentSession(sessionId, completed);
         } catch (error) {
+            const errorName = error instanceof Error ? error.name : '';
+            const errorMessage = error instanceof Error ? error.message : '';
+            const cancelled = agentRequest.stopped || requestController.signal.aborted || errorName === 'AbortError' || errorMessage === 'AGENT_CANCELLED';
+            if (cancelled) {
+                if (isCurrentRequest()) {
+                    agentRequest.stopped = true;
+                    agentRequestsRef.current.delete(sessionId);
+                    await finalizeStoppedAgentRequest(sessionId, agentRequest);
+                }
+                return;
+            }
+            if (!isCurrentRequest()) return;
             const failed = [
                 ...nextMessages,
                 {
@@ -8354,7 +8495,10 @@ export default function Page() {
             await persistAgentSession(sessionId, failed).catch(()=>undefined);
             void refreshGenerationLogs();
         } finally{
-            setChatBusy(sessionId, false);
+            if (isCurrentRequest()) {
+                agentRequestsRef.current.delete(sessionId);
+                setChatBusy(sessionId, false);
+            }
         }
     }
     async function toggleFavorite(item) {
@@ -9969,7 +10113,7 @@ export default function Page() {
                                                 children: [
                                             messages.map((message)=>/*#__PURE__*/ _jsxs("article", {
                                                     id: `message-${message.id}`,
-                                                    className: `message ${message.role} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
+                                                    className: `message ${message.role} ${message.interrupted ? 'interrupted' : ''} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
                                                     children: [
                                                         /*#__PURE__*/ _jsx("div", {
                                                             className: "message-avatar",
@@ -10011,9 +10155,13 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("span", {
                                                                             children: message.role === 'user' ? '你' : 'SANMAO.AI'
                                                                         }),
-                                                                        message.role === 'assistant' && !message.pending && /*#__PURE__*/ _jsx("small", {
-                                                                            children: "选中文字可一键推送生图或下载文件"
-                                                                        }),
+                                                                         message.role === 'assistant' && !message.pending && /*#__PURE__*/ _jsx("small", {
+                                                                             children: "选中文字可一键推送生图或下载文件"
+                                                                         }),
+                                                                         message.role === 'assistant' && message.interrupted && /*#__PURE__*/ _jsx("small", {
+                                                                             className: "message-interrupted-badge",
+                                                                             children: "已停止"
+                                                                         }),
                                                                          message.role === 'assistant' && !message.pending && (message.webSearch || message.webSearchDecision) && /*#__PURE__*/ _jsxs("small", {
                                                                              className: "message-web-badge",
                                                                              children: [
@@ -10388,7 +10536,7 @@ export default function Page() {
                                                         if (e.key === 'Escape') setAgentMentionOpen(false);
                                                         if (e.key === 'Enter' && !e.shiftKey) {
                                                             e.preventDefault();
-                                                            void sendAgent();
+                                                            if (!activeAgentBusy) void sendAgent();
                                                         }
                                                     }
                                                 }),
@@ -10532,12 +10680,14 @@ export default function Page() {
                                                             ]
                                                         }),
                                                         /*#__PURE__*/ _jsx("button", {
-                                                            className: "send-button",
-                                                            disabled: !agentInput.trim() && !agentFiles.length && !agentRefs.length || activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
-                                                            onClick: ()=>void sendAgent(),
-                                                            title: agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : activeAgentBusy ? '当前对话正在回答，可新建对话继续' : '发送',
+                                                            type: "button",
+                                                            className: `send-button ${activeAgentBusy ? 'stop-button' : ''}`,
+                                                            disabled: activeAgentBusy ? false : !agentInput.trim() && !agentFiles.length && !agentRefs.length || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
+                                                            onClick: ()=>activeAgentBusy ? void stopAgent() : void sendAgent(),
+                                                            title: activeAgentBusy ? '停止当前回答' : agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : '发送',
+                                                            "aria-label": activeAgentBusy ? '停止当前回答' : '发送',
                                                             children: /*#__PURE__*/ _jsx(Icon, {
-                                                                name: "send",
+                                                                name: activeAgentBusy ? "stop" : "send",
                                                                 size: 18
                                                             })
                                                         })

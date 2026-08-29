@@ -326,6 +326,66 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
   .reference-thumb{height:58px;min-width:46px}
 }
 
+/* Keep reference actions readable as one compact toolbar beside the title. */
+.reference-head{
+  min-width:0;
+  gap:10px;
+}
+.reference-head>span{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  row-gap:3px;
+}
+.reference-head>div{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.reference-head>div>small{
+  flex:0 1 auto;
+  white-space:nowrap;
+}
+.local-upscale-reference,
+.paste-reference,
+.clear-references{
+  flex:none;
+  white-space:nowrap;
+}
+.local-upscale-reference{
+  min-width:68px;
+  height:28px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:4px;
+  padding:0 10px;
+}
+.paste-reference,
+.clear-references{
+  height:28px;
+  justify-content:center;
+}
+@media(max-width:520px){
+  .reference-head{
+    display:grid;
+    grid-template-columns:minmax(0,1fr);
+    align-items:start;
+    gap:7px;
+  }
+  .reference-head>div{
+    width:100%;
+    justify-content:flex-start;
+  }
+  .reference-head>div>small{
+    margin-left:auto;
+  }
+}
+
 /* Keep image-card actions inside the card: primary actions share one row and
    download/more always share a stable second row. */
 .image-actions{
@@ -3243,3 +3303,10 @@ html[data-theme="dark"] .agent-page{
 .provider-credential-badge{font-size:7px;padding:3px 6px;border-radius:999px;font-weight:850}.provider-credential-badge.verified{background:var(--success-soft);color:var(--success)}.provider-credential-badge.unverified{background:var(--warning-soft,var(--panel-3));color:var(--warning,var(--muted))}
 .agnes-connection-guide{display:grid;gap:10px;margin-top:13px;padding:14px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 48%,var(--panel)),var(--panel-2));color:var(--text-2)}.agnes-connection-guide.error{border-color:color-mix(in srgb,var(--danger) 44%,var(--line));background:linear-gradient(135deg,color-mix(in srgb,var(--danger-soft) 55%,var(--panel)),var(--panel-2))}.agnes-connection-guide.success{border-color:color-mix(in srgb,var(--success) 38%,var(--line))}.agnes-guide-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.agnes-guide-head>div{display:grid;gap:4px}.agnes-guide-kicker{font-size:7px;letter-spacing:.12em;font-weight:900;color:var(--accent-text)}.agnes-guide-head strong{font-size:12px;color:var(--text)}.agnes-guide-status{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:7px;font-weight:900;color:var(--muted);white-space:nowrap}.agnes-guide-status i{width:6px;height:6px;border-radius:50%;background:var(--accent)}.agnes-connection-guide.error .agnes-guide-status{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 30%,var(--line))}.agnes-connection-guide.error .agnes-guide-status i{background:var(--danger)}.agnes-connection-guide.success .agnes-guide-status{color:var(--success)}.agnes-connection-guide.success .agnes-guide-status i{background:var(--success)}.agnes-connection-guide p{margin:0;font-size:9px;line-height:1.65}.agnes-guide-meta{display:flex;flex-wrap:wrap;gap:7px}.agnes-guide-meta>span{min-width:0;display:grid;gap:3px;padding:7px 8px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--panel) 78%,transparent)}.agnes-guide-meta b{font-size:7px;color:var(--muted);font-weight:850}.agnes-guide-meta code{max-width:100%;overflow-wrap:anywhere;color:var(--text);font:600 8px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace}.agnes-guide-error{display:grid;gap:3px;padding:9px 10px;border-radius:10px;background:var(--danger-soft);color:var(--danger);font-size:8px;line-height:1.55}.agnes-guide-error strong{font-size:9px}.agnes-guide-link{width:max-content;max-width:100%;color:var(--accent-text);font-size:8px;font-weight:850;text-decoration:none}.agnes-guide-link:hover{text-decoration:underline}@media(max-width:620px){.agnes-guide-head{align-items:flex-start;flex-direction:column}.agnes-guide-status{align-self:flex-start}.agnes-guide-meta{display:grid}.agnes-guide-link{width:auto}}
 .agnes-guide-warning{display:grid;gap:3px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--warning,#b7791f) 35%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--warning,#b7791f) 10%,var(--panel));color:var(--text-2);font-size:8px;line-height:1.55}.agnes-guide-warning strong{color:var(--warning,#b7791f);font-size:9px}.agnes-guide-action{justify-self:start;min-height:30px;padding:0 10px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:9px;background:var(--accent-soft);color:var(--accent-text);font-size:8px;font-weight:850;cursor:pointer}.agnes-guide-action:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel))}
+
+/* The Agent submit action becomes a deliberate, high-contrast stop control while a reply is running. */
+.send-button.stop-button{background:linear-gradient(145deg,#e56a78,var(--danger));box-shadow:0 8px 18px color-mix(in srgb,var(--danger) 28%,transparent),inset 0 1px 0 rgba(255,255,255,.28)}
+.send-button.stop-button:hover:not(:disabled){background:linear-gradient(145deg,#ee7a86,#b93245);box-shadow:0 10px 24px color-mix(in srgb,var(--danger) 38%,transparent),inset 0 1px 0 rgba(255,255,255,.32)}
+.send-button.stop-button:focus-visible{outline:3px solid color-mix(in srgb,var(--danger) 42%,transparent);outline-offset:3px}
+.message.interrupted .message-body{border-color:color-mix(in srgb,var(--danger) 30%,var(--message-assistant-border));background:color-mix(in srgb,var(--danger-soft) 45%,var(--message-assistant-bg))}
+.message-interrupted-badge{display:inline-flex;align-items:center;margin-left:6px;padding:2px 6px;border:1px solid color-mix(in srgb,var(--danger) 32%,var(--line));border-radius:999px;background:var(--danger-soft);color:var(--danger);font-size:8px;font-weight:850;white-space:nowrap}

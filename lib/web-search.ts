@@ -32,6 +32,21 @@ const NEWS_CACHE_TTL_MS = 2 * 60 * 1000;
 const cache = new Map<string, CacheEntry>();
 const execFileAsync = promisify(execFile);
 
+function combineSignals(signal: AbortSignal | undefined, timeout: number) {
+  const timeoutSignal = AbortSignal.timeout(timeout);
+  if (!signal) return timeoutSignal;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeoutSignal]);
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason || new Error('搜索请求已取消'));
+  if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+  timeoutSignal.addEventListener('abort', () => controller.abort(timeoutSignal.reason), { once: true });
+  return controller.signal;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw signal.reason || new Error('搜索请求已取消');
+}
+
 function stripHtml(value: string) {
   return value
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -101,9 +116,11 @@ function upstreamRequestId(data: any) {
   return candidates.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
 }
 
-async function fetchJson(url: string, init: RequestInit, timeoutMs = 12_000, providerLabel = '搜索') {
-  const response = await fetch(url, { ...init, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+async function fetchJson(url: string, init: RequestInit, timeoutMs = 12_000, providerLabel = '搜索', signal?: AbortSignal) {
+  throwIfAborted(signal);
+  const response = await fetch(url, { ...init, cache: 'no-store', signal: combineSignals(signal, timeoutMs) });
   const raw = await response.text();
+  throwIfAborted(signal);
   let data: any = null;
   try { data = raw ? JSON.parse(raw) : null; } catch {}
   if (!response.ok) {
@@ -116,14 +133,16 @@ async function fetchJson(url: string, init: RequestInit, timeoutMs = 12_000, pro
   return data;
 }
 
-async function fetchWithWindowsProxy(url: string, accept: string, timeoutSec = 8) {
+async function fetchWithWindowsProxy(url: string, accept: string, timeoutSec = 8, signal?: AbortSignal) {
   if (process.platform !== 'win32') throw new Error('网页正文连接失败');
+  throwIfAborted(signal);
   const command = "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); (Invoke-WebRequest -UseBasicParsing -Uri $env:SANMAO_SEARCH_URL -Headers @{ Accept = $env:SANMAO_SEARCH_ACCEPT; 'User-Agent' = 'SANMAO.AI local assistant' } -TimeoutSec $env:SANMAO_SEARCH_TIMEOUT).Content";
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
     env: { ...process.env, SANMAO_SEARCH_URL: url, SANMAO_SEARCH_ACCEPT: accept, SANMAO_SEARCH_TIMEOUT: String(timeoutSec) },
     timeout: (timeoutSec + 3) * 1000,
     maxBuffer: 4_000_000,
     windowsHide: true,
+    signal,
   });
   return stdout;
 }
@@ -169,7 +188,7 @@ function baiduOfficialBody(query: string, news: boolean) {
   };
 }
 
-async function searchWithBaiduQianfan(query: string, config: ApiConfig, news: boolean) {
+async function searchWithBaiduQianfan(query: string, config: ApiConfig, news: boolean, signal?: AbortSignal) {
   const legacyUrl = 'https://qianfan.baidubce.com/v2/ai_search';
   const officialUrl = 'https://qianfan.baidubce.com/v2/ai_search/web_search';
   const legacyBody = JSON.stringify({ query: Array.from(query.trim()).slice(0, 160).join(''), max_results: 10 });
@@ -182,11 +201,12 @@ async function searchWithBaiduQianfan(query: string, config: ApiConfig, news: bo
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: legacyBody,
-    }, 12_000, '百度千帆搜索');
+    }, 12_000, '百度千帆搜索', signal);
     const rows = normalizeBaiduRows(data);
     if (rows.length) return rows;
   } catch (error) {
     lastError = error;
+    throwIfAborted(signal);
     if (!(error instanceof SearchApiError) || ![400, 401, 403, 404].includes(error.status || 0)) throw error;
   }
 
@@ -196,11 +216,12 @@ async function searchWithBaiduQianfan(query: string, config: ApiConfig, news: bo
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body,
-    }, 12_000, '百度千帆搜索');
+    }, 12_000, '百度千帆搜索', signal);
     const rows = normalizeBaiduRows(data);
     if (rows.length) return rows;
   } catch (error) {
     lastError = error;
+    throwIfAborted(signal);
   }
 
   // 部分 AppBuilder 应用只接受该兼容鉴权头，再尝试一次新版接口。
@@ -209,30 +230,32 @@ async function searchWithBaiduQianfan(query: string, config: ApiConfig, news: bo
       method: 'POST',
       headers: { 'X-Appbuilder-Authorization': `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body,
-    }, 12_000, '百度千帆搜索');
+    }, 12_000, '百度千帆搜索', signal);
     const rows = normalizeBaiduRows(data);
     if (rows.length) return rows;
   } catch (error) {
     lastError = error;
+    throwIfAborted(signal);
   }
 
   if (lastError instanceof Error) throw lastError;
   return [];
 }
 
-async function searchWithAnySearch(query: string, config: ApiConfig) {
+async function searchWithAnySearch(query: string, config: ApiConfig, signal?: AbortSignal) {
   const body = JSON.stringify({ query: Array.from(query.trim()).slice(0, 220).join(''), zone: 'cn', max_results: 8 });
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
   let lastError: unknown = null;
   for (const endpoint of ['https://api.anysearch.com/v1/search', 'https://api.anysearch.com/search']) {
     try {
-      const data = await fetchJson(endpoint, { method: 'POST', headers, body }, 12_000, 'AnySearch');
+      const data = await fetchJson(endpoint, { method: 'POST', headers, body }, 12_000, 'AnySearch', signal);
       const rows = normalizeBaiduRows(data);
       if (rows.length) return rows;
       lastError = new SearchApiError('AnySearch 接口没有返回可用搜索结果');
     } catch (error) {
       lastError = error;
+      throwIfAborted(signal);
       if (error instanceof SearchApiError && ![400, 404].includes(error.status || 0)) throw error;
     }
   }
@@ -240,36 +263,39 @@ async function searchWithAnySearch(query: string, config: ApiConfig) {
   return [];
 }
 
-async function searchWithApi(query: string, config: ApiConfig, news: boolean) {
-  if (config.provider === 'anysearch') return searchWithAnySearch(query, config);
-  if (config.provider === 'baidu-qianfan') return searchWithBaiduQianfan(query, config, news);
+async function searchWithApi(query: string, config: ApiConfig, news: boolean, signal?: AbortSignal) {
+  if (config.provider === 'anysearch') return searchWithAnySearch(query, config, signal);
+  if (config.provider === 'baidu-qianfan') return searchWithBaiduQianfan(query, config, news, signal);
   return [];
 }
 
 /* Kept as a narrow helper for the Windows-local transport used by page enrichment. */
-async function fetchText(url: string, accept: string, timeoutMs = 5_000) {
+async function fetchText(url: string, accept: string, timeoutMs = 5_000, signal?: AbortSignal) {
   try {
+    throwIfAborted(signal);
     const response = await fetch(url, {
       headers: { Accept: accept, 'User-Agent': 'SANMAO.AI local assistant' },
       cache: 'no-store',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: combineSignals(signal, timeoutMs),
     });
     if (!response.ok) throw new Error(`网页请求返回 HTTP ${response.status}`);
     return response.text();
   } catch (error) {
-    try { return await fetchWithWindowsProxy(url, accept, Math.max(5, Math.round(timeoutMs / 1000))); } catch { throw error; }
+    throwIfAborted(signal);
+    try { return await fetchWithWindowsProxy(url, accept, Math.max(5, Math.round(timeoutMs / 1000)), signal); } catch { throw error; }
   }
 }
 
-async function searchOne(query: string, preferNews: boolean, apiConfigs: ApiConfig[]): Promise<SearchAttempt> {
+async function searchOne(query: string, preferNews: boolean, apiConfigs: ApiConfig[], signal?: AbortSignal): Promise<SearchAttempt> {
   if (apiConfigs.length) {
     const errors: string[] = [];
     for (const apiConfig of apiConfigs) {
       try {
-        const ranked = rankResults(await searchWithApi(query, apiConfig, preferNews), query, preferNews);
+        const ranked = rankResults(await searchWithApi(query, apiConfig, preferNews, signal), query, preferNews);
         if (ranked.length) return { provider: apiConfig.provider, results: ranked };
         errors.push(`${apiConfig.provider === 'anysearch' ? 'AnySearch' : '百度千帆'}没有返回相关结果`);
       } catch (error) {
+        throwIfAborted(signal);
         errors.push(error instanceof Error ? error.message : `${apiConfig.provider} 搜索 API 请求失败`);
       }
     }
@@ -295,16 +321,17 @@ async function getSearchApiConfigs(): Promise<ApiConfig[]> {
  * Search is deliberately provider-agnostic here: the model decides whether
  * it needs this tool, while the server owns credentials, caching and fallback.
  */
-async function searchWithFallback(query: string, preferNews: boolean, apiConfigs: ApiConfig[]) {
-  return searchOne(query, preferNews, apiConfigs);
+async function searchWithFallback(query: string, preferNews: boolean, apiConfigs: ApiConfig[], signal?: AbortSignal) {
+  return searchOne(query, preferNews, apiConfigs, signal);
 }
 
-async function enrichResult(result: WebSearchResult) {
+async function enrichResult(result: WebSearchResult, signal?: AbortSignal) {
   try {
-    const html = await fetchText(result.url, 'text/html', 5_000);
+    const html = await fetchText(result.url, 'text/html', 5_000, signal);
     const content = stripHtml(html).slice(0, 3_000);
     return content.length > 120 ? { ...result, content } : result;
   } catch {
+    throwIfAborted(signal);
     return result;
   }
 }
@@ -399,7 +426,8 @@ function rankResults(results: WebSearchResult[], query: string, news: boolean) {
 }
 
 
-export async function searchWeb(query: string): Promise<SearchResponse> {
+export async function searchWeb(query: string, signal?: AbortSignal): Promise<SearchResponse> {
+  throwIfAborted(signal);
   const normalized = query.trim().replace(/\s+/g, ' ').slice(0, 320);
   if (!normalized) throw new Error('请输入要搜索的内容');
   const news = isNewsQuery(normalized);
@@ -409,15 +437,17 @@ export async function searchWeb(query: string): Promise<SearchResponse> {
 
   const queryVariants = buildQueries(normalized);
   const apiConfigs = await getSearchApiConfigs();
+  throwIfAborted(signal);
   if (!apiConfigs.length) throw new Error('AnySearch 匿名搜索暂不可用；可稍后重试，或设置 ANYSEARCH_API_KEY / QIANFAN_API_KEY 后继续使用');
-  const attempts = await Promise.all(queryVariants.map((variant) => searchWithFallback(variant, news, apiConfigs)));
+  const attempts = await Promise.all(queryVariants.map((variant) => searchWithFallback(variant, news, apiConfigs, signal)));
+  throwIfAborted(signal);
   const preferredProvider = attempts.find((attempt) => attempt.results.length)?.provider || apiConfigs[0].provider;
   const results = dedupeResults(attempts.flatMap((attempt) => attempt.results)).slice(0, 10);
   if (!results.length) {
     const errors = attempts.map((attempt) => attempt.error).filter(Boolean);
     if (errors.length === attempts.length && errors[0]) throw new Error(errors[0]);
   }
-  const enriched = await Promise.all(results.slice(0, 3).map(enrichResult));
+  const enriched = await Promise.all(results.slice(0, 3).map((result) => enrichResult(result, signal)));
   const response: SearchResponse = {
     source: 'external',
     provider: preferredProvider,
@@ -427,6 +457,7 @@ export async function searchWeb(query: string): Promise<SearchResponse> {
     searchedAt: new Date().toISOString(),
     results: [...enriched, ...results.slice(3)],
   };
+  throwIfAborted(signal);
   cache.set(cacheKey, { expiresAt: Date.now() + (news ? NEWS_CACHE_TTL_MS : NORMAL_CACHE_TTL_MS), response });
   if (cache.size > 64) cache.delete(cache.keys().next().value as string);
   return response;

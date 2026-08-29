@@ -298,7 +298,9 @@ async function fetchJson(url: string, init: RequestInit, timeout = 120000, signa
   const method = String(init.method || 'GET').toUpperCase();
   try {
     const response = await fetch(url, { ...init, cache: 'no-store', signal: combineSignals(signal || init.signal || undefined, timeout) });
-    return await parseResponse(response);
+    const data = await parseResponse(response);
+    if (signal?.aborted) throw signal.reason || new Error('请求已取消');
+    return data;
   } catch (error) {
     if (signal?.aborted) throw signal.reason || error;
     if (error instanceof Error && (error as Error & { providerResponse?: boolean }).providerResponse) throw error;
@@ -1104,10 +1106,10 @@ async function agnesChatRequest(provider: RuntimeProvider, rawModelId: string, p
   return { protocol, body, endpoint: agnesTextEndpoint(provider, protocol) };
 }
 
-export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }) {
+export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
   if (isAgnesProvider(provider)) {
     const request = await agnesChatRequest(provider, rawModelId, payload);
-    const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000);
+    const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
     return normalizeAgnesResponse(data, request.protocol);
   }
   const data = await fetchJson(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
@@ -1118,7 +1120,7 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
       messages: payload.messages,
       ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}),
     }),
-  }, 180000);
+  }, 180000, signal);
   return unwrapProviderData(provider, data);
 }
 
@@ -1152,16 +1154,16 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
   }
 }
 
-export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }) {
+export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
   if (isAgnesProvider(provider) && agnesTextProtocol(provider) !== 'chat-completions') {
-    const data = await chatCompletion(provider, rawModelId, payload);
+    const data = await chatCompletion(provider, rawModelId, payload, signal);
     const encoder = new TextEncoder();
     const chunk = { model: data?.model || rawModelId, choices: [{ delta: { content: data?.choices?.[0]?.message?.content || '' }, index: 0 }] };
     return new Response(new ReadableStream({ start(controller) { controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)); controller.close(); } }), { headers: { 'Content-Type': 'text/event-stream' } });
   }
   if (isAgnesProvider(provider)) {
     const request = await agnesChatRequest(provider, rawModelId, payload, { stream: true });
-    return fetch(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body), cache: 'no-store', signal: AbortSignal.timeout(180000) }).then(async (response) => {
+    return fetch(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body), cache: 'no-store', signal: combineSignals(signal, 180000) }).then(async (response) => {
       if (!response.ok) throw new Error(`Agnes 流式接口返回 HTTP ${response.status}`);
       return response;
     });
@@ -1176,7 +1178,7 @@ export async function chatCompletionStream(provider: RuntimeProvider, rawModelId
       ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}),
     }),
     cache: 'no-store',
-    signal: AbortSignal.timeout(180000),
+    signal: combineSignals(signal, 180000),
   });
   if (!response.ok) {
     const text = await response.text();
