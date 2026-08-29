@@ -49,8 +49,20 @@ function isAgnesVideoProvider(provider: RuntimeProvider) {
 
 async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
   const input = String(value || '').trim();
-  if (!input || /^https?:\/\//i.test(input)) return input;
+  if (!input || (/^https?:\/\//i.test(input) && !isLocalAgnesMediaUrl(input))) return input;
   return (await import('./signed-media')).prepareAgnesMediaUrl(input, kind);
+}
+
+function isLocalAgnesMediaUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return parsed.pathname === '/api/storage/file' || parsed.pathname === '/api/storage/video'
+      || host === 'localhost' || host === '::1' || host === '0.0.0.0'
+      || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
+      || (host.startsWith('172.') && Number(host.split('.')[1]) >= 16 && Number(host.split('.')[1]) <= 31)
+      || host.endsWith('.local');
+  } catch { return true; }
 }
 
 function videoBaseUrl(provider: RuntimeProvider) {

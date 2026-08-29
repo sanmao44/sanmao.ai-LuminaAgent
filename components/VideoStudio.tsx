@@ -32,12 +32,14 @@ type Props = {
   mediaPrefillToken?: number;
   onMediaPrefillConsumed?: () => void;
   onOpenModels: () => void;
+  onOpenProviders?: () => void;
   onNotify: (message: string) => void;
 };
 
 type UploadSlot = { name: string; url: string; kind: 'image' | 'video' | 'audio' };
 type VideoOperation = 'generate' | 'edit' | 'extend';
 type VideoInputMode = 'text' | 'first-frame' | 'frames' | 'reference';
+type AgnesMediaTransport = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean };
 const MAX_65535_INLINE_BYTES = 64 * 1024 * 1024;
 const MAX_VIDEO_IMAGE_EDGE = 2048;
 const MAX_VIDEO_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -342,7 +344,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   };
 }
 
-export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onNotify }: Props) {
+export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onOpenProviders, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState(defaultModelId || 'auto');
   const [operation, setOperation] = useState<VideoOperation>('generate');
@@ -364,6 +366,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [agnesMediaStatus, setAgnesMediaStatus] = useState<AgnesMediaTransport | null>(null);
+  const [agnesMediaStatusBusy, setAgnesMediaStatusBusy] = useState(false);
   const [jimengAccount, setJimengAccount] = useState<JimengAccount | null>(null);
   const [jimengAccountCheckedAt, setJimengAccountCheckedAt] = useState('');
   const [jimengAccountError, setJimengAccountError] = useState('');
@@ -421,6 +425,28 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const usesAgnes25 = usesAgnes && /agnes-video-2\.5/i.test(selectedModel?.rawId || '');
   const usesAgnesFlash = usesAgnes && /agnes-video-2\.5-flash/i.test(selectedModel?.rawId || '');
   const supportsReferenceMentions = !usesJimengCli;
+
+  async function refreshAgnesMediaStatus() {
+    if (agnesMediaStatusBusy) return;
+    setAgnesMediaStatusBusy(true);
+    try {
+      const response = await fetch('/api/relay/status', { cache: 'no-store' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !['relay', 'self-hosted', 'unavailable'].includes(data.mode)) throw new Error('status unavailable');
+      setAgnesMediaStatus(data as AgnesMediaTransport);
+    } catch {
+      setAgnesMediaStatus({ mode: 'unavailable', relayConfigured: false, publicBaseConfigured: false });
+    } finally { setAgnesMediaStatusBusy(false); }
+  }
+
+  useEffect(() => {
+    if (!usesAgnes) {
+      setAgnesMediaStatus(null);
+      return;
+    }
+    void refreshAgnesMediaStatus();
+  }, [usesAgnes, selectedProvider?.id]);
+
   const baseModelLimits = useMemo(() => getVideoModelLimits(selectedModel, selectedProvider), [selectedModel?.rawId, selectedModel?.displayName, selectedProvider?.platform, selectedProvider?.videoTransport, selectedProvider?.baseUrl, selectedProvider?.videoBaseUrl]);
   const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
   const modelLimits = useMemo(() => usesJimengMultiframe ? {
@@ -737,9 +763,12 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         lastFrame: compressedLastFrame?.value,
         referenceImages: compressedReferences.map((result) => result.value),
       };
+      const hasLocalAgnesImage = usesAgnes && [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || [])]
+        .some((value) => Boolean(value && (/^data:image\//i.test(value) || /^\/(?:api\/)?storage\//i.test(value))));
       const compressionResults = [compressedFirstFrame, compressedLastFrame, ...compressedReferences].filter((result): result is NonNullable<typeof result> => Boolean(result));
       const compressedCount = compressionResults.filter((result) => result.changed).length;
       if (compressedCount) onNotify(`已自动压缩 ${compressedCount} 张视频参考图，保留原图比例后提交`);
+      if (hasLocalAgnesImage) onNotify('正在安全准备本地图片，完成后会自动清理临时副本…');
       if (nativeTask) {
         const localMedia = [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || []), compressedInput.referenceVideo, ...(compressedInput.audios || [])].filter((value): value is string => Boolean(value));
         const inlineBytes = localMedia.reduce((total, value) => total + dataUriBytes(value), 0);
@@ -796,7 +825,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         </div>
          {inputModeOptions.length > 1 && <div className="video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : '参考图生视频' }))} ariaLabel="生成方式" /></div>}
          {modelLimits.notes.length > 0 && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
-         {usesAgnes && inputMode !== 'text' && <div className="video-model-notice warning"><strong>图生视频提交前检查</strong><span>Agnes 只能读取公网 HTTPS 图片；本地上传图片需要先配置 SANMAO_PUBLIC_BASE_URL，且不能填 localhost 或内网 IP。未满足时任务不会扣费，但会直接失败。</span></div>}
+         {usesAgnes && inputMode !== 'text' && <div className={`video-model-notice video-agnes-media-notice ${agnesMediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
+          <div><strong>{agnesMediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : agnesMediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : '正在检查图片处理服务'}</strong>
+           <span>{agnesMediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : agnesMediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
+          <div className="video-agnes-media-actions"><button type="button" onClick={() => void refreshAgnesMediaStatus()} disabled={agnesMediaStatusBusy}>{agnesMediaStatusBusy ? '检查中…' : '重新检查'}</button>{agnesMediaStatus?.mode === 'unavailable' && onOpenProviders && <button type="button" onClick={onOpenProviders}>高级设置</button>}</div>
+         </div>}
         {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 仅接受 first_frame 或 reference；首尾帧会按两张参考图提交。本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
         {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
         {operation !== 'generate' && !modelLimits.inheritVideoSettingsFor?.includes(operation) && modelLimits.omitAspectRatioResolutionFor?.includes(operation) && <div className="video-model-notice warning"><strong>比例与分辨率沿用原视频</strong><span>当前续写操作不提交自定义比例和分辨率，仅使用续写时长。</span></div>}

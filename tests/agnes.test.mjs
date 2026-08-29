@@ -273,15 +273,111 @@ test('does not retry a per-minute video submission limit and gives an actionable
   });
 });
 
+test('uses the Agnes media relay for local images without sending API credentials', async () => {
+  const previous = {
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+    uploadToken: process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN,
+  };
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    const form = init.body;
+    assert.equal(form.get('kind'), 'image');
+    assert.equal(form.get('file').type, 'image/png');
+    return new Response(JSON.stringify({ ok: true, url: 'https://relay.example/api/relay/media/signed-token', expiresAt: '2026-08-29T00:30:00.000Z' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const url = await signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    assert.equal(url, 'https://relay.example/api/relay/media/signed-token');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://relay.example/api/relay/media');
+    assert.equal(calls[0].init.headers, undefined);
+  } finally {
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    if (previous.uploadToken === undefined) delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN; else process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN = previous.uploadToken;
+  }
+});
+
+test('does not relay public Agnes image URLs and gives a recoverable error when relay is unavailable', async () => {
+  const previous = {
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  globalThis.fetch = async () => { throw new Error('relay offline'); };
+  try {
+    assert.equal(await signed.prepareAgnesMediaUrl('https://cdn.example/source.png', 'image'), 'https://cdn.example/source.png');
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image'), (error) => {
+      assert.equal(error.code, 'AGNES_MEDIA_RELAY_UNAVAILABLE');
+      assert.match(error.message, /中转服务不可用/);
+      return true;
+    });
+  } finally {
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+  }
+});
+
+test('does not contact the media relay for Agnes text-to-video', async () => {
+  const previous = process.env.SANMAO_MEDIA_RELAY_URL;
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  const previousDefaultRelay = process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ id: 'text-video-task', status: 'queued' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await video.submitRemoteVideo(agnesProvider(), 'agnes-video-2.5', { prompt: 'a quiet ocean', seconds: 5, videoMode: 'text' }, 'idem-text');
+    assert.deepEqual(calls, ['https://apihub.agnes-ai.com/v1/videos']);
+  } finally {
+    if (previous === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous;
+    if (previousDefaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previousDefaultRelay;
+  }
+});
+
+test('does not pass local HTTP storage URLs through to Agnes', async () => {
+  const previous = process.env.SANMAO_MEDIA_RELAY_URL;
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw new Error('local storage should be resolved before any network request'); };
+  try {
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('http://localhost:3210/api/storage/file?name=missing.png', 'image'), (error) => {
+      assert.notEqual(error.code, undefined);
+      return true;
+    });
+    assert.equal(calls, 0);
+  } finally {
+    if (previous === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous;
+  }
+});
+
 test('signs Agnes media, enforces expiry and protects the media path', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-agnes-media-'));
   const previous = {
     dataDir: process.env.SANMAO_DATA_DIR,
     publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
     signingKey: process.env.SANMAO_MEDIA_SIGNING_KEY,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
   };
   process.env.SANMAO_DATA_DIR = root;
   process.env.SANMAO_PUBLIC_BASE_URL = 'https://studio.example';
+  delete process.env.SANMAO_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
   process.env.SANMAO_MEDIA_SIGNING_KEY = 'test-signing-key';
   try {
     const url = await signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
@@ -311,13 +407,15 @@ test('signs Agnes media, enforces expiry and protects the media path', async () 
     assert.equal(await readFile(outside, 'utf8'), 'must survive');
 
     delete process.env.SANMAO_PUBLIC_BASE_URL;
-    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_PUBLIC_MEDIA_URL_REQUIRED');
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_MEDIA_RELAY_REQUIRED');
     process.env.SANMAO_PUBLIC_BASE_URL = 'http://localhost:3210';
     await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_PUBLIC_MEDIA_URL_INVALID');
     await assert.rejects(() => signed.prepareAgnesMediaUrl('data:video/mp4;base64,AA==', 'image'), (error) => error.code === 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
   } finally {
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
     if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
     if (previous.signingKey === undefined) delete process.env.SANMAO_MEDIA_SIGNING_KEY; else process.env.SANMAO_MEDIA_SIGNING_KEY = previous.signingKey;
     await rm(root, { recursive: true, force: true });
   }

@@ -18,8 +18,24 @@ LEGACY_MARKER="${TMPDIR:-/tmp}/sanmao-ai-studio-instance.lock"
 LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
 
 . "$SCRIPT_DIR/launcher-common.sh"
+. "$SCRIPT_DIR/free-relay-common.sh"
 sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
 sanmao_log "启动器开始运行，根目录：$ROOT_DIR，端口范围：$PORT_START..$PORT_END" INFO
+
+agnes_configured() {
+  DATA_ROOT="${SANMAO_DATA_DIR:-$ROOT_DIR/.data}"
+  case "$DATA_ROOT" in
+    /*) ;;
+    *) DATA_ROOT="$ROOT_DIR/$DATA_ROOT" ;;
+  esac
+  STATE_PATH="$DATA_ROOT/state.json"
+  [ -f "$STATE_PATH" ] || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  node -e 'const fs=require("fs");let s;try{s=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch{process.exit(1)};const ok=(s.providers||[]).some(p=>((p.platform==="agnes")||/agnes-ai\.(cn|com)/i.test(String(p.baseUrl||"")))&&Boolean(String(p.encryptedApiKey||p.apiKey||"").trim()));process.exit(ok?0:1)' "$STATE_PATH"
+}
+
+AGNES_CONFIGURED=0
+if agnes_configured; then AGNES_CONFIGURED=1; fi
 
 server_is_ready() {
   sanmao_server_health "$1"
@@ -38,6 +54,20 @@ server_lifecycle_enabled() {
   return 1
 }
 
+server_media_relay_mode() {
+  PORT_TO_CHECK=$1
+  BODY="${TMPDIR:-/tmp}/sanmao-relay-health-$$.json"
+  rm -f "$BODY"
+  STATUS=$(curl --noproxy '*' -sS -o "$BODY" -w '%{http_code}' --connect-timeout 0.3 --max-time 1 "http://127.0.0.1:$PORT_TO_CHECK/api/relay/status" 2>/dev/null || true)
+  if [ "$STATUS" = 200 ]; then
+    if grep -Eq '"mode"[[:space:]]*:[[:space:]]*"relay"' "$BODY" 2>/dev/null; then printf '%s' relay; rm -f "$BODY"; return 0; fi
+    if grep -Eq '"mode"[[:space:]]*:[[:space:]]*"self-hosted"' "$BODY" 2>/dev/null; then printf '%s' self-hosted; rm -f "$BODY"; return 0; fi
+    if grep -Eq '"mode"[[:space:]]*:[[:space:]]*"unavailable"' "$BODY" 2>/dev/null; then printf '%s' unavailable; rm -f "$BODY"; return 0; fi
+  fi
+  rm -f "$BODY"
+  printf '%s' unknown
+}
+
 find_existing_server() {
   PORT_TO_CHECK=$PORT_START
   while [ $PORT_TO_CHECK -le $PORT_END ]; do
@@ -51,6 +81,7 @@ find_existing_server() {
 }
 
 fail() {
+  free_relay_stop "$ROOT_DIR"
   sanmao_log "启动失败：$1" ERROR
   printf '\n启动失败：%s\n\n' "$1"
   if [ -n "${SERVER_STDERR:-}" ] && [ -s "$SERVER_STDERR" ]; then
@@ -97,10 +128,22 @@ if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && ! server_lifecycle_enabled "$EXISTI
   sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
 fi
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && server_lifecycle_enabled "$EXISTING_PORT"; then
-  printf 'SANMAO.AI 已在运行：http://localhost:%s\n' $EXISTING_PORT
-  rm -f "$LEGACY_MARKER"
-  open "http://localhost:$EXISTING_PORT"
-  exit 0
+  EXISTING_RELAY_MODE=`server_media_relay_mode "$EXISTING_PORT"`
+  if [ "$AGNES_CONFIGURED" -eq 1 ] && [ "$EXISTING_RELAY_MODE" = relay ] && ! free_relay_is_running "$ROOT_DIR"; then
+    sanmao_log "检测到免费临时通道已退出，正在重启端口 $EXISTING_PORT" WARN
+    sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
+  elif [ "$AGNES_CONFIGURED" -eq 1 ] && { [ "$EXISTING_RELAY_MODE" = unavailable ] || [ "$EXISTING_RELAY_MODE" = unknown ]; }; then
+    sanmao_log "检测到旧服务没有 Agnes 图片通道，正在重启端口 $EXISTING_PORT" WARN
+    sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
+  elif [ "$AGNES_CONFIGURED" -eq 0 ] && [ "$EXISTING_RELAY_MODE" = relay ]; then
+    sanmao_log "检测到 Agnes 未配置，正在关闭不需要的临时通道并重启端口 $EXISTING_PORT" INFO
+    sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
+  else
+    printf 'SANMAO.AI 已在运行：http://localhost:%s\n' $EXISTING_PORT
+    rm -f "$LEGACY_MARKER"
+    open "http://localhost:$EXISTING_PORT"
+    exit 0
+  fi
 fi
 rm -f "$LEGACY_MARKER"
 
@@ -208,6 +251,29 @@ if [ $PORT -gt $PORT_END ]; then
   fail "$PORT_START～$PORT_END 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
 fi
 
+if [ "$AGNES_CONFIGURED" -eq 1 ]; then
+  unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
+  case "${SANMAO_MEDIA_RELAY_URL:-}" in
+    https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
+  esac
+  printf '%s\n' '正在准备免费图生视频通道（首次运行会自动下载组件）…'
+  if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
+    export SANMAO_RELAY_MODE=1
+    export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"
+    export SANMAO_MEDIA_RELAY_URL="$RELAY_URL"
+    sanmao_log "已启动免费临时通道：$RELAY_URL" INFO
+  else
+    printf '%s\n' '免费图生视频通道暂时不可用；文本和普通图片功能仍可使用。'
+    sanmao_log '免费临时通道未启动，Agnes 本地图生视频将提示重试。' WARN
+  fi
+else
+  unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
+  case "${SANMAO_MEDIA_RELAY_URL:-}" in
+    https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
+  esac
+  free_relay_stop "$ROOT_DIR"
+fi
+
 URL=http://localhost:$PORT
 SERVER_STDOUT="${TMPDIR:-/tmp}/sanmao-ai-server.out.log"
 SERVER_STDERR="${TMPDIR:-/tmp}/sanmao-ai-server.err.log"
@@ -242,3 +308,4 @@ printf '%s\n' '本地服务会保持运行，下一次启动会直接打开已�
 sanmao_log "服务已就绪：$URL" INFO
 open $URL
 wait $SERVER_PID
+free_relay_stop "$ROOT_DIR"

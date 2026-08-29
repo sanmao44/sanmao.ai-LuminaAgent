@@ -12,8 +12,10 @@ if [ "$PORT_START" -lt 1024 ] || [ "$PORT_START" -gt 65525 ]; then PORT_START=32
 PORT_END=$((PORT_START + 10))
 
 . "$SCRIPT_DIR/launcher-common.sh"
+. "$SCRIPT_DIR/free-relay-common.sh"
 sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
 sanmao_log "停止器开始运行，端口范围：$PORT_START..$PORT_END" INFO
+free_relay_stop "$ROOT_DIR"
 
 TARGETS=$( (sanmao_owned_processes 3000 3010; sanmao_owned_processes "$PORT_START" "$PORT_END") | sort -u -k1,1 )
 

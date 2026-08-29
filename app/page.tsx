@@ -10595,6 +10595,7 @@ export default function Page() {
                                 mediaPrefillToken: videoMediaPrefillToken,
                                 onMediaPrefillConsumed: ()=>setVideoMediaPrefill(null),
                                 onOpenModels: ()=>setSection('models'),
+                                onOpenProviders: ()=>setSection('providers'),
                                 onNotify: notify
                             }),
                             section === 'generate' && /*#__PURE__*/ _jsxs("section", {

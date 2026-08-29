@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher] = await Promise.all([
+const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher, lanLauncher, freeRelayPs, freeRelaySh, readme] = await Promise.all([
   readFile(new URL("../components/LocalLifecycle.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -11,6 +11,10 @@ const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher,
   readFile(new URL("../scripts/start.ps1", import.meta.url), "utf8"),
   readFile(new URL("../scripts/start-macos.sh", import.meta.url), "utf8"),
   readFile(new URL("../start-linux.sh", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/lan-launcher.ps1", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/free-relay-common.ps1", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/free-relay-common.sh", import.meta.url), "utf8"),
+  readFile(new URL("../README.md", import.meta.url), "utf8"),
 ]);
 
 test("local lifecycle is mounted once for both the app and canvas routes", () => {
@@ -45,4 +49,34 @@ test("health and official launchers expose the intended lifecycle modes", () => 
   assert.match(windowsLauncher, /else \{[\s\S]*\$env:SANMAO_LIFECYCLE = '1'/);
   assert.match(macLauncher, /export SANMAO_LIFECYCLE=1/);
   assert.match(linuxLauncher, /export SANMAO_LIFECYCLE=1/);
+});
+
+test("every existing launcher prepares the optional free Agnes image relay only when Agnes is configured", () => {
+  assert.match(windowsLauncher, /FreeRelay/);
+  assert.match(lanLauncher, /FreeRelay/);
+  assert.match(macLauncher, /free-relay-common\.sh/);
+  assert.match(linuxLauncher, /free-relay-common\.sh/);
+  assert.match(freeRelayPs, /cloudflared/);
+  assert.match(freeRelayPs, /trycloudflare/);
+  assert.match(freeRelaySh, /trycloudflare/);
+});
+
+test("launchers skip free relay setup without a saved Agnes credential", () => {
+  assert.match(windowsLauncher, /function Test-SanmaoAgnesConfigured/);
+  assert.match(windowsLauncher, /SANMAO_DATA_DIR/);
+  assert.match(windowsLauncher, /if \(\$FreeRelay\.IsPresent -and \$script:AgnesConfigured\)/);
+  assert.match(windowsLauncher, /elseif \(-not \$script:AgnesConfigured\)/);
+  assert.match(windowsLauncher, /Stop-SanmaoFreeRelayTunnel -Root \$root/);
+
+  assert.match(macLauncher, /agnes_configured\(\)/);
+  assert.match(macLauncher, /SANMAO_DATA_DIR/);
+  assert.match(macLauncher, /if \[ "\$AGNES_CONFIGURED" -eq 1 \]; then/);
+  assert.match(macLauncher, /free_relay_stop "\$ROOT_DIR"/);
+  assert.match(linuxLauncher, /AGNES_CONFIGURED=0/);
+  assert.match(linuxLauncher, /SANMAO_DATA_DIR/);
+  assert.match(linuxLauncher, /if \[ "\$AGNES_CONFIGURED" -eq 1 \]; then/);
+  assert.match(linuxLauncher, /free_relay_stop "\$ROOT_DIR"/);
+
+  assert.match(readme, /只有检测到已保存且有访问密钥的 Agnes 服务商/);
+  assert.match(readme, /没有 Agnes 配置时不会下载或启动中转/);
 });
