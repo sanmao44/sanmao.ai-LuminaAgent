@@ -56,7 +56,7 @@ function agnesLimits(rawId: string): VideoModelLimits {
       maxReferenceImages: 16,
       maxReferenceVideos: 0,
       maxAudios: 0,
-      notes: ['Agnes Video V2.0：使用宽高、帧数和帧率', 'num_frames 不超过 441，且必须为 8n+1', '平台可能将尺寸标准化到 480p/720p/1080p'],
+      notes: ['Agnes Video V2.0：使用宽高、帧数和帧率', '宽高必须是 64 的倍数', 'num_frames 不超过 441，且必须为 8n+1', '图生视频的本地图片需要公网 HTTPS 地址', '平台可能将尺寸标准化到 480p/720p/1080p'],
     };
   }
   const flash = /agnes-video-2\.5-flash/i.test(rawId);

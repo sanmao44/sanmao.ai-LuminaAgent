@@ -441,6 +441,9 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 @keyframes image-card-spin{to{transform:rotate(360deg)}}
 @container (max-width:300px){
   .image-actions-main,.image-actions-secondary{gap:5px}
+  /* Four primary actions are too narrow in compact result cards; use two
+     columns so labels and touch targets have enough breathing room. */
+  .image-actions-main{grid-template-columns:repeat(2,minmax(0,1fr))}
   .image-actions-main>button,.image-actions-secondary>button,.image-actions .more-wrap>button{height:32px;padding:0 4px;font-size:8px}
   .image-actions-secondary{grid-template-columns:minmax(0,1fr) 36px}
   .image-actions .more-wrap{width:36px}

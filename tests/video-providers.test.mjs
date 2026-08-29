@@ -55,6 +55,24 @@ test('builds the 65535 native task payload and preserves idempotency', async () 
   });
 });
 
+test('maps native two-frame input to the documented reference mode', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ task_id: 'task-frames', status: 'pending' }), { status: 202, headers: { 'content-type': 'application/json' } });
+  };
+  await video.submitRemoteVideo(provider(), 'veo-omni-3-1', {
+    prompt: 'smooth transition', seconds: 5, aspectRatio: '16:9', resolution: '720p',
+    firstFrame: 'https://example.com/first.png', lastFrame: 'https://example.com/last.png',
+  }, 'idem-frames');
+  const payload = JSON.parse(calls[0].init.body);
+  assert.equal(payload.input.input_mode, 'reference');
+  assert.deepEqual(payload.input.reference_image_urls, ['https://example.com/first.png', 'https://example.com/last.png']);
+  assert.equal(payload.input.input_reference, undefined);
+  assert.equal(payload.input.last_frame_url, undefined);
+  assert.notEqual(payload.input.input_mode, 'frames');
+});
+
 test('keeps legacy 65535 hosts on the native task transport', async () => {
   const calls = [];
   globalThis.fetch = async (url, init) => {
@@ -74,6 +92,13 @@ test('normalizes done results from common video URL fields', async () => {
   assert.equal(result.status, 'done');
   assert.equal(result.videos[0].url, 'https://cdn.example/a.mp4');
   assert.equal(result.costUsd, 0.42);
+});
+
+test('accepts a top-level id as a native asynchronous task identifier', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ id: 'native-id-1', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
+  const result = await video.submitRemoteVideo(provider(), 'veo-omni-3-1', { prompt: 'a quiet lake', seconds: 8, resolution: '720p' }, 'idem-top-level-id');
+  assert.equal(result.providerTaskId, 'native-id-1');
+  assert.equal(result.status, 'pending');
 });
 
 test('maps pending and failed task status responses', async () => {

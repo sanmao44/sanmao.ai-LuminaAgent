@@ -6,6 +6,7 @@ import { resolveStoredFileWithFallback } from './image-storage';
 import { resolveStoredVideoFile } from './video-storage';
 
 export const AGNES_PUBLIC_MEDIA_URL_REQUIRED = 'AGNES_PUBLIC_MEDIA_URL_REQUIRED';
+export const AGNES_PUBLIC_MEDIA_URL_INVALID = 'AGNES_PUBLIC_MEDIA_URL_INVALID';
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
 const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 const MIME_PATTERN = /^(image|video|audio)\/[a-z0-9.+-]+$/i;
@@ -79,6 +80,23 @@ function parseDataUrl(value: string) {
 
 function publicBaseUrl() {
   return String(process.env.SANMAO_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+}
+
+function isPrivateOrLocalHostname(hostname: string) {
+  const value = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (value === 'localhost' || value.endsWith('.local') || value === '::1' || value === '0.0.0.0') return true;
+  if (/^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value) || /^169\.254\./.test(value)) return true;
+  const ipv4 = value.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!ipv4) return false;
+  const [, first, second] = ipv4.map(Number);
+  return first === 172 && second >= 16 && second <= 31;
+}
+
+function isUsablePublicBaseUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !isPrivateOrLocalHostname(parsed.hostname);
+  } catch { return false; }
 }
 
 async function readManifest(): Promise<MediaManifest> {
@@ -190,7 +208,8 @@ export async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video
   const mime = cleanMime(loaded.mime);
   if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new AgnesMediaError('Agnes 只接受与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
   const base = publicBaseUrl();
-  if (!base) throw new AgnesMediaError('Agnes 的本地媒体请求需要配置 SANMAO_PUBLIC_BASE_URL；纯文本请求不受影响。');
+  if (!base) throw new AgnesMediaError('Agnes 图生视频需要服务商可访问的公网媒体地址；当前本地素材未配置 SANMAO_PUBLIC_BASE_URL。请使用公网图片 URL，或设置为外网可访问的 HTTPS 地址后重启应用（localhost、127.0.0.1 和 192.168.x.x 均不可用）。纯文本请求不受影响。');
+  if (!isUsablePublicBaseUrl(base)) throw new AgnesMediaError('SANMAO_PUBLIC_BASE_URL 无效：必须是外网可访问的 HTTPS 地址，不能使用 localhost、127.0.0.1、192.168.x.x、10.x.x.x 或普通 HTTP 地址。修改后请重启应用。', AGNES_PUBLIC_MEDIA_URL_INVALID);
   const id = randomUUID();
   const expiresAt = Date.now() + Math.max(60_000, Math.min(24 * 60 * 60 * 1000, Number(ttlMs) || DEFAULT_TTL_MS));
   const filename = `${id}.${extensionForMime(mime)}`;

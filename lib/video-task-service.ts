@@ -89,6 +89,9 @@ function validateAgnesInput(input: VideoGenerationInput, rawInput: VideoGenerati
     if (input.referenceVideos?.length || input.referenceVideo || input.audios?.length || input.audio) throw new Error('Agnes Video V2.0 不接受参考视频或音频输入。');
     const frames = Number(input.numFrames ?? 81);
     const rate = Number(input.frameRate ?? 24);
+    const width = Number(input.width ?? 1152);
+    const height = Number(input.height ?? 768);
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > 3840 || height > 3840 || width % 64 !== 0 || height % 64 !== 0) throw new Error('Agnes Video V2.0 的宽度和高度必须是 64 的倍数，范围为 64–3840。');
     if (!Number.isInteger(frames) || frames > 441 || frames < 1 || (frames - 1) % 8 !== 0) throw new Error('Agnes Video V2.0 的帧数必须不超过 441 且满足 8n + 1。');
     if (!Number.isInteger(rate) || rate < 1 || rate > 60) throw new Error('Agnes Video V2.0 的帧率必须在 1–60 之间。');
     return;

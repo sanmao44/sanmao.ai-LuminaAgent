@@ -180,12 +180,16 @@ test('builds Agnes V2.0 image and keyframe video payloads', () => {
     model: 'agnes-video-v2.0', prompt: 'cat', width: 1152, height: 768, num_frames: 121, frame_rate: 24,
     metadata: { size_mapping: { requested: '1152x768', normalized: '720p', width: 1152, height: 768 } },
   });
+  const ratioPreset = video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'cat', aspectRatio: '16:9' });
+  assert.equal(ratioPreset.width, 1024);
+  assert.equal(ratioPreset.height, 576);
   const image = video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'cat', firstFrame: 'https://cdn.example/first.png', width: 1152, height: 768 });
   assert.equal(image.image, 'https://cdn.example/first.png');
   assert.equal(image.extra_body, undefined);
   const keyframes = video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'transition', videoMode: 'keyframe', firstFrame: 'https://cdn.example/first.png', lastFrame: 'https://cdn.example/last.png' });
   assert.deepEqual(keyframes.extra_body, { image: ['https://cdn.example/first.png', 'https://cdn.example/last.png'], mode: 'keyframes' });
   assert.equal(keyframes.image, undefined);
+  assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad size', width: 1153, height: 768 }), /宽度和高度必须是 64 的倍数/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad', referenceVideo: 'https://cdn.example/ref.mp4' }), /不接受参考视频/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad', numFrames: 82 }), /8n \+ 1/);
 });
@@ -254,6 +258,21 @@ test('surfaces Agnes failed and rate-limited polling responses without accepting
   });
 });
 
+test('does not retry a per-minute video submission limit and gives an actionable message', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: 'video generation rate limit exceeded: allows 1 requests per 1 minute(s)' } }), { status: 429, headers: { 'content-type': 'application/json' } });
+  };
+  await assert.rejects(() => video.submitRemoteVideo(agnesProvider(), 'agnes-video-2.5-flash', { prompt: 'a quiet ocean', seconds: 4, videoMode: 'text' }, 'idem-rate-limit'), (error) => {
+    assert.equal(calls, 1);
+    assert.equal(error.code, 'VIDEO_RATE_LIMITED');
+    assert.match(error.message, /每 1 分钟最多生成 1 个视频/);
+    assert.match(error.message, /等待约 60 秒/);
+    return true;
+  });
+});
+
 test('signs Agnes media, enforces expiry and protects the media path', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-agnes-media-'));
   const previous = {
@@ -293,6 +312,8 @@ test('signs Agnes media, enforces expiry and protects the media path', async () 
 
     delete process.env.SANMAO_PUBLIC_BASE_URL;
     await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_PUBLIC_MEDIA_URL_REQUIRED');
+    process.env.SANMAO_PUBLIC_BASE_URL = 'http://localhost:3210';
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_PUBLIC_MEDIA_URL_INVALID');
     await assert.rejects(() => signed.prepareAgnesMediaUrl('data:video/mp4;base64,AA==', 'image'), (error) => error.code === 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
   } finally {
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
