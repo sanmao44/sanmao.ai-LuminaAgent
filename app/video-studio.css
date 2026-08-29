@@ -282,3 +282,47 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
 .video-v20-advanced-label{padding-top:2px;border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent)}
 .video-v20-advanced-fields{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
 @media(max-width:620px){.video-v20-heading,.video-v20-preset-group,.video-v20-advanced-label{display:grid;gap:4px}.video-v20-preset-group>span{padding-top:0}.video-v20-preset-list{grid-template-columns:repeat(2,minmax(0,1fr));width:100%}.video-v20-advanced-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Make the primary action feel intentional instead of leaving the label and
+   arrow stranded at opposite ends of a full-width button. */
+.video-submit{
+  position:relative;
+  isolation:isolate;
+  overflow:hidden;
+  min-height:48px;
+  justify-content:center;
+  gap:10px;
+  border:1px solid color-mix(in srgb,#fff 24%,var(--accent));
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  box-shadow:0 12px 26px color-mix(in srgb,var(--accent) 24%,transparent),inset 0 1px 0 rgb(255 255 255 / 24%);
+}
+.video-submit::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:-1;
+  background:linear-gradient(110deg,transparent 20%,rgb(255 255 255 / 16%) 48%,transparent 76%);
+  transform:translateX(-120%);
+  transition:transform .45s ease;
+}
+.video-submit span,.video-submit b{position:relative;z-index:1}
+.video-submit span{font-size:12px;letter-spacing:.03em}
+.video-submit b{
+  width:28px;
+  height:28px;
+  display:grid;
+  place-items:center;
+  border:1px solid rgb(255 255 255 / 42%);
+  border-radius:50%;
+  background:rgb(255 255 255 / 16%);
+  font-size:15px;
+  line-height:1;
+  transition:transform .18s ease,background .18s ease;
+}
+.video-submit:hover{filter:brightness(1.05);transform:translateY(-2px);box-shadow:0 15px 30px color-mix(in srgb,var(--accent) 30%,transparent),inset 0 1px 0 rgb(255 255 255 / 28%)}
+.video-submit:hover::after{transform:translateX(120%)}
+.video-submit:hover b{background:rgb(255 255 255 / 24%);transform:translate(2px,-1px)}
+.video-submit:active{transform:translateY(0);filter:brightness(.98)}
+.video-submit:disabled{cursor:wait;opacity:.68;transform:none;box-shadow:0 7px 16px color-mix(in srgb,var(--accent) 15%,transparent)}
+@media(max-width:620px){.video-submit{min-height:46px}.video-submit span{font-size:11px}}
+@media(prefers-reduced-motion:reduce){.video-submit::after,.video-submit b{transition:none}.video-submit:hover::after{transform:none}}
