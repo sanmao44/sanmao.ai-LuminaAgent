@@ -514,6 +514,8 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 .size-drawer .dimension-ratios.drawer-options button{min-height:34px;display:flex;align-items:center;justify-content:flex-start;gap:7px;padding:7px 9px}
 .size-drawer .dimension-ratios.drawer-options button strong{font-size:10px;min-width:38px}
 .size-drawer .dimension-ratios.drawer-options button small{font-size:9px}
+.size-drawer .resolution-tiers.drawer-options{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:560px){.size-drawer .resolution-tiers.drawer-options{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .custom-ratio-card{grid-column:1/-1;margin-top:4px}
 .custom-ratio-card .custom-size-row{align-items:end}
 .custom-ratio-card .custom-size-row label{flex:1}
