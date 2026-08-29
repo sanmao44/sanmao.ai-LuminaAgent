@@ -17,16 +17,17 @@ test("local lifecycle is mounted once for both the app and canvas routes", () =>
   assert.match(layout, /import LocalLifecycle from ['"]@\/components\/LocalLifecycle['"]/);
   assert.match(layout, /<LocalLifecycle \/>/);
   assert.doesNotMatch(page, /['"]\/api\/lifecycle['"]/);
-  assert.match(component, /window\.addEventListener\("pagehide", handlePageHide\)/);
-  assert.match(component, /window\.addEventListener\("pageshow", handlePageShow\)/);
+  assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(component, /window\.addEventListener\("online", handleOnline\)/);
 });
 
-test("lifecycle client uses heartbeat, close beacon, and keepalive fallback", () => {
+test("lifecycle client keeps refresh safe and retries transient connection failures", () => {
   assert.match(component, /fetch\("\/api\/lifecycle", \{ cache: "no-store" \}\)/);
-  assert.match(component, /window\.setInterval\(heartbeat, 2_000\)/);
-  assert.match(component, /navigator\.sendBeacon\("\/api\/lifecycle", body\)/);
-  assert.match(component, /postEvent\("close", true\)/);
-  assert.match(component, /if \(event\.persisted\) return/);
+  assert.match(component, /window\.setInterval\(\(\) => void heartbeat\(\), HEARTBEAT_INTERVAL_MS\)/);
+  assert.match(component, /const RETRY_DELAYS_MS = \[1_000, 2_000, 5_000, 10_000\]/);
+  assert.match(component, /scheduleStart\(\)/);
+  assert.doesNotMatch(component, /sendBeacon/);
+  assert.doesNotMatch(component, /addEventListener\("pagehide"/);
 });
 
 test("server lifecycle keeps multiple sessions and applies startup grace", () => {
