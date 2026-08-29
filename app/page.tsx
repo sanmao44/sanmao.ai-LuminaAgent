@@ -5927,7 +5927,7 @@ export default function Page() {
         } catch  {}
     }
     function getSuccessAudioContext() {
-        if ("undefined" === 'undefined' || typeof window.AudioContext === 'undefined') return null;
+        if (typeof window === 'undefined' || typeof window.AudioContext === 'undefined') return null;
         if (!successAudioRef.current) successAudioRef.current = new window.AudioContext();
         return successAudioRef.current;
     }
