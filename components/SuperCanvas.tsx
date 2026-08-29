@@ -680,6 +680,9 @@ function canvasConnectableId(target: EventTarget | null) {
     ?.dataset.canvasConnectableId;
 }
 
+const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
+  "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop";
+
 // Wheel gestures inside a node or an overlay belong to that control. Keep
 // them out of the stage zoom handler so native text/list scrolling can work
 // without moving the whole canvas underneath it.
@@ -1040,6 +1043,7 @@ export default function SuperCanvas() {
   const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
   const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
+  const canvasPointerDownRef = useRef<{ pointerId: number; interactive: boolean } | null>(null);
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
   const docRef = useRef<CanvasDocument>(normalizeDocument(null));
   const saveTimerRef = useRef<number | null>(null);
@@ -1889,6 +1893,26 @@ export default function SuperCanvas() {
   const capture = useCallback((event: ReactPointerEvent) => {
     stageRef.current?.setPointerCapture(event.pointerId);
   }, []);
+  const handleStagePointerDownCapture = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const pointTarget = window.document.elementFromPoint(
+        event.clientX,
+        event.clientY,
+      );
+      const interactiveTarget =
+        target?.closest(CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR) ||
+        pointTarget?.closest(CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR);
+      canvasPointerDownRef.current = {
+        pointerId: event.pointerId,
+        interactive: Boolean(interactiveTarget),
+      };
+      // A click in a node or editor should dismiss an already-open create menu
+      // even when the child intentionally stops the bubbling pointer event.
+      setContextMenu(null);
+    },
+    [],
+  );
   const handleStagePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.button !== 0 && event.button !== 1) return;
@@ -7918,6 +7942,7 @@ export default function SuperCanvas() {
         tabIndex={-1}
         aria-keyshortcuts="Delete"
         onPointerDown={handleStagePointerDown}
+        onPointerDownCapture={handleStagePointerDownCapture}
         onPointerMove={moveInteraction}
         onPointerUp={finishInteraction}
         onPointerCancel={cancelPointerInteraction}
@@ -7928,11 +7953,14 @@ export default function SuperCanvas() {
           // so double-clicking a media card always opens its full viewer.
           const target = event.target instanceof Element ? event.target : null;
           const pointTarget = window.document.elementFromPoint(event.clientX, event.clientY);
-          const isolatedTarget = target?.closest(
-            "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
-          ) || pointTarget?.closest(
-            "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
-          );
+          const isolatedTarget =
+            canvasPointerDownRef.current?.interactive ||
+            target?.closest(
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+            ) ||
+            pointTarget?.closest(
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+            );
           if (isolatedTarget) return;
           const hit = target?.closest("[data-canvas-node-id]") ||
             pointTarget?.closest("[data-canvas-node-id]");
@@ -10869,6 +10897,7 @@ function CanvasNodeEditorPopover({
       }}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
       <div className="canvas-node-editor-head">
