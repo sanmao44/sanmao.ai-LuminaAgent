@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 
-type LifecycleEvent = "heartbeat" | "close";
+const HEARTBEAT_INTERVAL_MS = 2_000;
+const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
 
 /**
  * Keeps a local launcher-owned server alive while at least one browser page
@@ -14,74 +15,114 @@ export default function LocalLifecycle() {
   useEffect(() => {
     let cancelled = false;
     let active = false;
-    let closed = false;
+    let starting = false;
     let sessionId = "";
     let heartbeatTimer: number | null = null;
+    let retryTimer: number | null = null;
+    let retryAttempt = 0;
+    let retryRequested = false;
 
-    const postEvent = (event: LifecycleEvent, keepalive = false) => {
+    const postHeartbeat = async () => {
       if (!sessionId) return;
-      void fetch("/api/lifecycle", {
+      const response = await fetch("/api/lifecycle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, event }),
+        body: JSON.stringify({ sessionId, event: "heartbeat" }),
         cache: "no-store",
-        keepalive,
-      }).catch(() => undefined);
+      });
+      if (!response.ok) throw new Error(`Lifecycle heartbeat failed: ${response.status}`);
     };
 
-    const heartbeat = () => {
-      if (!active || closed) return;
-      postEvent("heartbeat");
+    const clearHeartbeatTimer = () => {
+      if (heartbeatTimer === null) return;
+      window.clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
     };
 
-    const closeSession = () => {
-      if (!active || closed || !sessionId) return;
-      closed = true;
-      const body = new Blob([
-        JSON.stringify({ sessionId, event: "close" }),
-      ], { type: "application/json" });
-      if (!navigator.sendBeacon("/api/lifecycle", body)) postEvent("close", true);
+    const scheduleStart = () => {
+      if (cancelled || active || retryTimer !== null) return;
+      if (starting) {
+        retryRequested = true;
+        return;
+      }
+      const delay = RETRY_DELAYS_MS[Math.min(retryAttempt, RETRY_DELAYS_MS.length - 1)];
+      retryAttempt += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        void start();
+      }, delay);
     };
 
-    const handlePageHide = (event: PageTransitionEvent) => {
-      // A BFCache navigation temporarily hides the page but does not close
-      // the document. Keep the session alive until pageshow restores it.
-      if (event.persisted) return;
-      closeSession();
-    };
-
-    const handlePageShow = () => {
-      if (!active || !closed) return;
-      closed = false;
-      heartbeat();
-    };
-
-    window.addEventListener("pagehide", handlePageHide);
-    window.addEventListener("pageshow", handlePageShow);
-
-    const start = async () => {
+    const heartbeat = async () => {
+      if (!active || !sessionId) return;
       try {
-        const response = await fetch("/api/lifecycle", { cache: "no-store" });
-        const data = await response.json() as { enabled?: unknown };
-        if (cancelled || !response.ok || data.enabled !== true) return;
-        sessionId = crypto.randomUUID();
-        active = true;
-        heartbeat();
-        heartbeatTimer = window.setInterval(heartbeat, 2_000);
+        await postHeartbeat();
+        retryAttempt = 0;
       } catch {
-        // Lifecycle support is optional; a failed probe must not affect the
-        // rest of the application.
+        active = false;
+        sessionId = "";
+        clearHeartbeatTimer();
+        scheduleStart();
       }
     };
+
+    const startHeartbeat = () => {
+      clearHeartbeatTimer();
+      heartbeatTimer = window.setInterval(() => void heartbeat(), HEARTBEAT_INTERVAL_MS);
+      void heartbeat();
+    };
+
+    const start = async () => {
+      if (cancelled || active || starting) return;
+      starting = true;
+      try {
+        const response = await fetch("/api/lifecycle", { cache: "no-store" });
+        if (!response.ok) throw new Error(`Lifecycle probe failed: ${response.status}`);
+        const data = await response.json() as { enabled?: unknown };
+        if (cancelled || data.enabled !== true) return;
+        sessionId = crypto.randomUUID();
+        active = true;
+        retryAttempt = 0;
+        startHeartbeat();
+      } catch {
+        // Lifecycle support is optional; retry a transient startup failure
+        // without affecting the rest of the application.
+        scheduleStart();
+      } finally {
+        starting = false;
+        if (retryRequested) {
+          retryRequested = false;
+          scheduleStart();
+        }
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (active) void heartbeat();
+      else void start();
+    };
+
+    const handleOnline = () => {
+      if (active) void heartbeat();
+      else void start();
+    };
+
+    // Do not close the session from pagehide/unmount. Browsers fire pagehide
+    // for reloads as well as tab/window closes, so an unload beacon can stop
+    // the local server before the newly refreshed page has mounted. The
+    // server-side heartbeat lease expires naturally when the page disappears.
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", handleOnline);
 
     void start();
 
     return () => {
       cancelled = true;
       if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
-      window.removeEventListener("pagehide", handlePageHide);
-      window.removeEventListener("pageshow", handlePageShow);
-      closeSession();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
     };
   }, []);
 
