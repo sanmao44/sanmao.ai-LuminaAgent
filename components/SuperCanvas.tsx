@@ -7926,15 +7926,16 @@ export default function SuperCanvas() {
           // Pointer capture used for node dragging can retarget the native
           // dblclick to the stage. Resolve the node from the pointer position
           // so double-clicking a media card always opens its full viewer.
-          const target = event.target as HTMLElement;
-          if (
-            target.closest(
-              "button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
-            )
-          )
-            return;
-          const hit = target.closest("[data-canvas-node-id]") ||
-            window.document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-canvas-node-id]");
+          const target = event.target instanceof Element ? event.target : null;
+          const pointTarget = window.document.elementFromPoint(event.clientX, event.clientY);
+          const isolatedTarget = target?.closest(
+            "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+          ) || pointTarget?.closest(
+            "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+          );
+          if (isolatedTarget) return;
+          const hit = target?.closest("[data-canvas-node-id]") ||
+            pointTarget?.closest("[data-canvas-node-id]");
           const nodeId = hit?.getAttribute("data-canvas-node-id");
           const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
           if (node && isCanvasReferenceableNode(node)) {
