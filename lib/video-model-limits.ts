@@ -2,8 +2,10 @@ import { is65535Provider, isJimengProvider, type VideoProviderIdentity } from '.
 
 function isAgnesProvider(provider?: VideoProviderIdentity | null) {
   if (!provider) return false;
-  const host = (value: string) => { try { return new URL(value).hostname; } catch { return value; } };
-  return provider.platform === 'agnes' || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.baseUrl || '')) || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.videoBaseUrl || ''));
+  const host = (value: string) => { try { return new URL(value).hostname; } catch { return ''; } };
+  return provider.platform === 'agnes'
+    || /(^|\.)api(?:hub)?\.agnes-ai\.(?:com|cn)$/i.test(host(provider.baseUrl || ''))
+    || /(^|\.)api(?:hub)?\.agnes-ai\.(?:com|cn)$/i.test(host(provider.videoBaseUrl || ''));
 }
 
 export type VideoModelLimits = {
@@ -54,7 +56,7 @@ function agnesLimits(rawId: string): VideoModelLimits {
       maxReferenceImages: 16,
       maxReferenceVideos: 0,
       maxAudios: 0,
-      notes: ['Agnes Video V2.0：使用宽高、帧数和帧率', 'num_frames 不超过 441，且必须为 8n+1', '平台可能将尺寸标准化到 480p/720p/1080p'],
+      notes: ['Agnes Video V2.0：使用宽高、帧数和帧率', '宽高必须是 64 的倍数', 'num_frames 不超过 441，且必须为 8n+1', '本地图片会自动安全准备，公网图片可直接使用', '平台可能将尺寸标准化到 480p/720p/1080p'],
     };
   }
   const flash = /agnes-video-2\.5-flash/i.test(rawId);
@@ -70,7 +72,7 @@ function agnesLimits(rawId: string): VideoModelLimits {
     notes: [
       `Agnes Video ${flash ? '2.5 Flash' : '2.5'}：4–12 秒`,
       flash ? '固定 720P，参考图片最多 5 张且不支持参考视频' : '支持 720P/960P/2K 与 text/keyframe/reference 模式',
-      '本地图片、视频和音频需要配置 SANMAO_PUBLIC_BASE_URL',
+      '本地图片会自动安全准备；参考视频和音频仍需使用服务商可访问的公网地址',
     ],
   };
 }

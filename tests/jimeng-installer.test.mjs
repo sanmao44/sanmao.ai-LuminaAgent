@@ -12,6 +12,9 @@ const providerCard = await read('components/JimengProviderCard.tsx');
 test('ships a native Windows Dreamina installer with official-source verification', () => {
   assert.match(windowsInstaller, /https:\/\/jimeng\.jianying\.com\/cli/);
   assert.match(windowsInstaller, /DOWNLOAD_BASE/);
+  assert.match(windowsInstaller, /function Resolve-OfficialUrl/);
+  assert.match(windowsInstaller, /\$\{DOWNLOAD_BASE\}/);
+  assert.match(windowsInstaller, /Resolve-OfficialUrl \(& \$readValue 'SKILL_URL'\) \$downloadBase/);
   assert.match(windowsInstaller, /dreamina_cli_windows_amd64\.exe/);
   assert.match(windowsInstaller, /USERPROFILE.*bin/);
   assert.match(windowsInstaller, /SetEnvironmentVariable\('Path',/);

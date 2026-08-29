@@ -6,6 +6,8 @@
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $PSScriptRoot
 $legacyMarkerPath = Join-Path $env:TEMP 'sanmao-ai-studio-instance.lock'
+. (Join-Path $PSScriptRoot 'free-relay-common.ps1')
+if (-not $DryRun) { Stop-SanmaoFreeRelayTunnel -Root $root }
 
 $requestedPort = 0
 if ($Port -ge 1024 -and $Port -le 65525) {

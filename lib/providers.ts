@@ -51,8 +51,20 @@ export type DiscoveredModel = {
 
 async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
   const input = String(value || '').trim();
-  if (!input || /^https?:\/\//i.test(input)) return input;
+  if (!input || (/^https?:\/\//i.test(input) && !isLocalAgnesMediaUrl(input))) return input;
   return (await import('./signed-media')).prepareAgnesMediaUrl(input, kind);
+}
+
+function isLocalAgnesMediaUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return parsed.pathname === '/api/storage/file' || parsed.pathname === '/api/storage/video'
+      || host === 'localhost' || host === '::1' || host === '0.0.0.0'
+      || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
+      || (host.startsWith('172.') && Number(host.split('.')[1]) >= 16 && Number(host.split('.')[1]) <= 31)
+      || host.endsWith('.local');
+  } catch { return true; }
 }
 
 async function prepareAgnesChatMessages<T extends { content: unknown }>(messages: T[]) {
@@ -134,8 +146,11 @@ export function runtimeBaseUrl(provider: RuntimeProvider) {
   return trimSlash(provider.baseUrl);
 }
 
-export function isAgnesProvider(provider: Pick<RuntimeProvider, 'platform' | 'baseUrl'>) {
-  return provider.platform === 'agnes' || /(^|\.)apihub\.agnes-ai\.com$/i.test((() => { try { return new URL(provider.baseUrl || '').hostname; } catch { return ''; } })());
+export function isAgnesProvider(provider: Pick<RuntimeProvider, 'platform' | 'baseUrl' | 'videoBaseUrl'>) {
+  const host = (value: string) => { try { return new URL(value).hostname; } catch { return ''; } };
+  return provider.platform === 'agnes'
+    || /(^|\.)api(?:hub)?\.agnes-ai\.(?:com|cn)$/i.test(host(provider.baseUrl || ''))
+    || /(^|\.)api(?:hub)?\.agnes-ai\.(?:com|cn)$/i.test(host(provider.videoBaseUrl || ''));
 }
 
 function providerEndpoint(provider: RuntimeProvider, path: string | undefined, fallback: string) {
@@ -320,7 +335,10 @@ async function fetchModelResponse(url: string, init: RequestInit, timeout = 2000
     const text = await response.text();
     let data: any = null;
     try { data = text ? JSON.parse(text) : {}; } catch {}
-    if (!response.ok) throw providerResponseError(response.status, data, text);
+    if (!response.ok) {
+      const error = providerResponseError(response.status, data, text, requestIdFrom(data, text, response.headers));
+      throw decorateProviderFailure(error, { providerUrl: url, providerMethod: 'GET' });
+    }
     return { data, contentType: response.headers.get('content-type') || '', text };
   } catch (error) {
     if (error instanceof Error && (error as Error & { providerResponse?: boolean }).providerResponse) throw error;
@@ -398,7 +416,32 @@ export function normalizeDiscoveredModels(data: any, provider?: RuntimeProvider)
 }
 
 export async function discoverModels(provider: RuntimeProvider) {
-  if (isAgnesProvider(provider)) return agnesModelCatalog;
+  if (isAgnesProvider(provider)) {
+    // The Agnes catalog is intentionally curated because the service may not
+    // publish every image/video model through /models.  The request itself is
+    // still mandatory: without it, an expired or mistyped key looked healthy
+    // while every real generation request failed with HTTP 401.
+    let lastUnrecognizedResponse: { contentType: string; text: string; url: string } | null = null;
+    const candidates = modelEndpointCandidates(provider);
+    for (const [index, candidate] of candidates.entries()) {
+      let response: { data: any; contentType: string; text: string };
+      try {
+        response = await fetchModelResponse(candidate.url, { method: 'GET', headers: authHeaders(provider) });
+      } catch (error) {
+        const status = Number((error as Error & { status?: number }).status || 0);
+        if (status === 404 && index < candidates.length - 1) continue;
+        throw error;
+      }
+      if (modelListFromResponse(response.data).found) {
+        if (candidate.inferredBaseUrl) provider.baseUrl = candidate.inferredBaseUrl;
+        return agnesModelCatalog.map((model) => ({ ...model, capabilities: [...(model.capabilities || [])] }));
+      }
+      lastUnrecognizedResponse = { contentType: response.contentType, text: response.text, url: candidate.url };
+    }
+    if (lastUnrecognizedResponse) {
+      throw new Error(`Agnes 模型验证接口返回了无法识别的内容：${lastUnrecognizedResponse.url}。国内 Key 请使用 https://api.agnes-ai.cn/v1，国际 Key 请使用 https://apihub.agnes-ai.com/v1。`);
+    }
+  }
   if (isApimartProvider(provider)) return apimartModelCatalog;
   if (provider.type === 'google-gemini') {
     const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(provider.apiKey)}`;
@@ -480,6 +523,16 @@ export async function testProviderConnection(provider: RuntimeProvider) {
     const data = await fetchJson(providerEndpoint(provider, '/balance', '/balance'), { method: 'GET', headers: authHeaders(provider) }, 20000);
     if (data?.success !== true) throw new Error(String(data?.message || 'APIMart 未确认此 API Key 有效'));
     return { mode: 'credential' as const, count: apimartModelCatalog.length, message: data.unlimited_quota ? '连接成功，密钥验证通过，当前密钥额度不限' : '连接成功，密钥验证通过，可读取并使用预置模型' };
+  }
+  if (isAgnesProvider(provider)) {
+    const models = await discoverModels(provider);
+    return {
+      mode: 'credential' as const,
+      verified: true,
+      count: models.length,
+      endpoint: provider.baseUrl,
+      message: `连接成功，Agnes API Key 已验证，可使用文本、图片和视频模型（${models.length} 个）`,
+    };
   }
   const models = await discoverModels(provider);
   return { mode: 'models' as const, count: models.length, sample: models.slice(0, 8) };

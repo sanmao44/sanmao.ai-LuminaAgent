@@ -111,8 +111,8 @@ export default function UpdateNotice() {
   }, [readProgress]);
 
   useEffect(() => {
-    if (!updateProgress || updateProgress.stage === 'failed') return;
-    if (updateProgress.stage === 'completed' && isVersionAtLeast(status?.currentVersion, updateProgress.version)) {
+    if (!updateProgress || updateProgress.stage === 'failed' || !status?.currentVersion) return;
+    if (isVersionAtLeast(status.currentVersion, updateProgress.version)) {
       setUpdateProgress(null);
       setApplyState('idle');
       return;

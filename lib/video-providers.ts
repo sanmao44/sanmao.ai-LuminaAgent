@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import type { RuntimeProvider } from './providers';
+import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';
 
 export type VideoProviderTask = {
   providerTaskId?: string;
@@ -32,23 +33,27 @@ export class VideoProviderError extends Error {
   }
 }
 
-function is65535Provider(provider: RuntimeProvider) {
-  return provider.platform === '65535' || /65535\.space/i.test(provider.baseUrl || '') || /65535\.space/i.test(provider.videoBaseUrl || '');
-}
-
-function isAgnesProvider(provider: RuntimeProvider) {
-  const host = (value: string) => { try { return new URL(value).hostname; } catch { return value; } };
-  return provider.platform === 'agnes' || provider.videoTransport === 'agnes-videos' || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.baseUrl || '')) || /(^|\.)apihub\.agnes-ai\.com$/i.test(host(provider.videoBaseUrl || ''));
-}
-
 function isAgnesVideoProvider(provider: RuntimeProvider) {
   return isAgnesProvider(provider) || provider.videoTransport === 'agnes-videos';
 }
 
-async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
+async function preparePublicMediaUrl(provider: RuntimeProvider, value: string, kind: 'image' | 'video' | 'audio') {
   const input = String(value || '').trim();
-  if (!input || /^https?:\/\//i.test(input)) return input;
-  return (await import('./signed-media')).prepareAgnesMediaUrl(input, kind);
+  if (!input || (/^https?:\/\//i.test(input) && !isLocalMediaUrl(input))) return input;
+  if (!requiresPublicMediaRelay(provider, { hasVideoModel: true })) return input;
+  return (await import('./signed-media')).preparePublicMediaUrl(input, kind);
+}
+
+function isLocalMediaUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return parsed.pathname === '/api/storage/file' || parsed.pathname === '/api/storage/video'
+      || host === 'localhost' || host === '::1' || host === '0.0.0.0'
+      || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
+      || (host.startsWith('172.') && Number(host.split('.')[1]) >= 16 && Number(host.split('.')[1]) <= 31)
+      || host.endsWith('.local');
+  } catch { return true; }
 }
 
 function videoBaseUrl(provider: RuntimeProvider) {
@@ -56,7 +61,7 @@ function videoBaseUrl(provider: RuntimeProvider) {
     if (provider.videoBaseUrl) {
       try { return new URL(provider.videoBaseUrl).origin; } catch { return provider.videoBaseUrl.replace(/\/+$/, ''); }
     }
-    try { return new URL(provider.baseUrl).origin; } catch { return 'https://apihub.agnes-ai.com'; }
+    try { return new URL(provider.baseUrl).origin; } catch { return 'https://api.agnes-ai.cn'; }
   }
   return (provider.videoBaseUrl || (is65535Provider(provider) ? 'https://task-api-1-cn.65535.space' : provider.baseUrl)).replace(/\/+$/, '');
 }
@@ -89,7 +94,11 @@ function taskIdFrom(data: any) {
       return '';
     }
     for (const [key, item] of Object.entries(value)) {
-      if (/^(submit_id|submitId|task_id|taskId|request_id|requestId)$/i.test(key) && item !== undefined && item !== null && String(item).trim()) return String(item).trim();
+      // Some 65535-compatible gateways return the asynchronous task handle
+      // as a top-level `id` instead of `task_id`/`request_id`.
+      const isTaskIdentifier = /^(submit_id|submitId|task_id|taskId|request_id|requestId)$/i.test(key)
+        || (key === 'id' && depth <= 1);
+      if (isTaskIdentifier && item !== undefined && item !== null && String(item).trim()) return String(item).trim();
       const found = visit(item, depth + 1);
       if (found) return found;
     }
@@ -197,18 +206,39 @@ function waitForRetry(delayMs: number, signal?: AbortSignal) {
   });
 }
 
+function videoRateLimitMessage(error: VideoProviderError) {
+  const detail = error.message || '';
+  const allowance = detail.match(/allows?\s+(\d+)\s+requests?\s+per\s+(\d+)\s+minute/i);
+  if (allowance) {
+    const count = Number(allowance[1]);
+    const minutes = Number(allowance[2]);
+    const waitSeconds = error.retryAfterMs ? Math.ceil(error.retryAfterMs / 1000) : minutes * 60;
+    return `视频服务商已限流：当前账号每 ${minutes} 分钟最多生成 ${count} 个视频，请等待约 ${waitSeconds} 秒后再试。`;
+  }
+  if (error.retryAfterMs) return `视频服务商已限流，请等待约 ${Math.ceil(error.retryAfterMs / 1000)} 秒后再试。`;
+  return '视频服务商暂时限流（HTTP 429），请稍后再试。';
+}
+
 /**
- * Rate limits are safe to retry here because every submission carries the
- * same idempotency key. This prevents a transient 429 from turning into a
- * failed task while still avoiding duplicate provider charges.
+ * A submission-level 429 should not be retried blindly. Agnes deliberately
+ * enforces one video request per minute, so a short exponential retry only
+ * creates more rejected requests and hides the real cause from the user.
  */
-async function requestJsonWithRateLimitRetry(url: string, init: RequestInit, signal?: AbortSignal) {
+async function requestJsonWithRateLimitRetry(url: string, init: RequestInit, signal?: AbortSignal, options: { retry429?: boolean } = {}) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await requestJson(url, init, signal);
     } catch (error) {
       const providerError = error instanceof VideoProviderError ? error : null;
-      if (!providerError || providerError.status !== 429 || attempt >= 3) throw error;
+      if (!providerError || providerError.status !== 429) throw error;
+      if (options.retry429 === false) {
+        throw new VideoProviderError(videoRateLimitMessage(providerError), {
+          status: providerError.status,
+          retryAfterMs: providerError.retryAfterMs,
+          code: 'VIDEO_RATE_LIMITED',
+        });
+      }
+      if (attempt >= 3) throw error;
       const backoff = providerError.retryAfterMs || Math.min(10_000, 1000 * 2 ** attempt);
       await waitForRetry(backoff, signal);
     }
@@ -223,18 +253,50 @@ function audioValues(input: VideoGenerationInput) {
   return input.audios?.length ? input.audios : input.audio ? [input.audio] : [];
 }
 
+async function prepareRemoteVideoMedia(provider: RuntimeProvider, input: VideoGenerationInput) {
+  const [firstFrame, lastFrame, referenceImages, referenceVideos, audios] = await Promise.all([
+    input.firstFrame ? preparePublicMediaUrl(provider, input.firstFrame, 'image') : undefined,
+    input.lastFrame ? preparePublicMediaUrl(provider, input.lastFrame, 'image') : undefined,
+    Promise.all((input.referenceImages || []).map((url) => preparePublicMediaUrl(provider, url, 'image'))),
+    Promise.all(videoReferenceValues(input).map((url) => preparePublicMediaUrl(provider, url, 'video'))),
+    Promise.all(audioValues(input).map((url) => preparePublicMediaUrl(provider, url, 'audio'))),
+  ]);
+  return {
+    ...input,
+    firstFrame,
+    lastFrame,
+    referenceImages,
+    ...(referenceVideos.length ? { referenceVideos, referenceVideo: referenceVideos[0] } : {}),
+    ...(audios.length ? { audios, audio: audios[0] } : {}),
+  };
+}
+
 function inputPayload(input: VideoGenerationInput) {
   const referenceVideos = videoReferenceValues(input);
   const audios = audioValues(input);
+  const firstFrame = String(input.firstFrame || '').trim();
+  const lastFrame = String(input.lastFrame || '').trim();
+  const referenceImageUrls = Array.from(new Set([
+    ...(input.referenceImages || []),
+    firstFrame,
+    lastFrame,
+  ].map((value) => String(value || '').trim()).filter(Boolean)));
+  // 65535's native schema has no `frames` mode. A single image is a genuine
+  // first-frame request; two frame images are sent as references so the
+  // upstream API receives one of its documented input modes.
+  const inputMode = firstFrame && !lastFrame && referenceImageUrls.length === 1
+    ? 'first_frame'
+    : referenceImageUrls.length
+      ? 'reference'
+      : undefined;
   return {
     prompt: input.prompt,
     seconds: input.seconds,
     aspect_ratio: input.aspectRatio === 'auto' ? undefined : input.aspectRatio,
     resolution: input.resolution,
-    input_mode: input.firstFrame && input.lastFrame ? 'frames' : input.firstFrame ? 'first_frame' : input.referenceImages?.length ? 'reference' : undefined,
-    input_reference: input.firstFrame ? { image_url: input.firstFrame } : undefined,
-    last_frame_url: input.lastFrame,
-    reference_image_urls: input.referenceImages || [],
+    input_mode: inputMode,
+    input_reference: inputMode === 'first_frame' ? { image_url: firstFrame } : undefined,
+    reference_image_urls: inputMode === 'reference' ? referenceImageUrls : [],
     video: referenceVideos.length > 1 ? referenceVideos : referenceVideos[0],
     audio_urls: audios,
   };
@@ -271,8 +333,10 @@ function agnesDimensions(input: VideoGenerationInput) {
   if (Number.isInteger(explicitWidth) && explicitWidth > 0 && Number.isInteger(explicitHeight) && explicitHeight > 0) return { width: explicitWidth, height: explicitHeight };
   const ratio = input.aspectRatio;
   const presets: Record<string, { width: number; height: number }> = {
-    '21:9': { width: 1680, height: 720 }, '16:9': { width: 1280, height: 720 }, '4:3': { width: 960, height: 720 },
-    '1:1': { width: 720, height: 720 }, '3:4': { width: 720, height: 960 }, '9:16': { width: 720, height: 1280 },
+    // V2.0 requires both dimensions to be multiples of 64. These presets
+    // preserve the requested aspect ratios while staying inside that rule.
+    '21:9': { width: 1792, height: 768 }, '16:9': { width: 1024, height: 576 }, '4:3': { width: 1024, height: 768 },
+    '1:1': { width: 768, height: 768 }, '3:4': { width: 768, height: 1024 }, '9:16': { width: 576, height: 1024 },
   };
   return presets[ratio || '16:9'] || presets['16:9'];
 }
@@ -284,6 +348,12 @@ function agnesV20SizeMapping(width: number, height: number) {
   return { requested: `${width}x${height}`, normalized: standard, width, height };
 }
 
+function validateAgnesV20Dimensions(width: number, height: number) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > 3840 || height > 3840 || width % 64 !== 0 || height % 64 !== 0) {
+    throw new VideoProviderError('Agnes Video V2.0 的宽度和高度必须是 64 的倍数，范围为 64–3840。', { code: 'AGNES_INVALID_DIMENSIONS' });
+  }
+}
+
 export function buildAgnesVideoPayload(rawModelId: string, input: VideoGenerationInput, media: { firstFrame?: string; lastFrame?: string; referenceImages?: string[]; referenceVideos?: string[]; audios?: string[] } = {}) {
   const model = String(rawModelId || '').trim();
   const images = media.referenceImages || input.referenceImages || [];
@@ -293,6 +363,7 @@ export function buildAgnesVideoPayload(rawModelId: string, input: VideoGeneratio
   if (isV20) {
     if (videos.length || audios.length) throw new VideoProviderError('Agnes Video V2.0 不接受参考视频或音频输入。', { code: 'AGNES_UNSUPPORTED_MEDIA' });
     const { width, height } = agnesDimensions(input);
+    validateAgnesV20Dimensions(width, height);
     const numFrames = Number(input.numFrames ?? 81);
     const frameRate = Number(input.frameRate ?? 24);
     if (!Number.isInteger(numFrames) || numFrames < 1 || numFrames > 441 || (numFrames - 1) % 8 !== 0) throw new VideoProviderError('Agnes Video V2.0 的 num_frames 必须不超过 441 且满足 8n + 1。', { code: 'AGNES_INVALID_NUM_FRAMES' });
@@ -360,7 +431,11 @@ export function buildAgnesVideoPayload(rawModelId: string, input: VideoGeneratio
 }
 
 function agnesResponseValue(data: any, key: string) {
-  return data?.[key] ?? data?.data?.[key] ?? data?.result?.[key];
+  return data?.[key]
+    ?? data?.data?.[key]
+    ?? data?.result?.[key]
+    ?? data?.data?.result?.[key]
+    ?? data?.result?.data?.[key];
 }
 
 function agnesVideoIdFrom(data: any) {
@@ -374,15 +449,32 @@ function agnesVideoIdFrom(data: any) {
 
 function agnesStatusFrom(data: any): VideoProviderTask['status'] {
   const status = String(agnesResponseValue(data, 'status') ?? agnesResponseValue(data, 'state') ?? '').toLowerCase();
-  if (status === 'completed') return 'done';
+  if (/^(completed?|complete|done|success(?:ful|ed)?|succeed(?:ed)?|finished|ready)$/i.test(status)) return 'done';
   if (/failed|error|cancel|rejected|expired|aborted/.test(status)) return 'failed';
   if (/running|processing|generating|in_progress/.test(status)) return 'running';
   return 'pending';
 }
 
 function agnesVideosFrom(data: any): GeneratedVideo[] {
-  const url = data?.metadata?.url || data?.data?.metadata?.url || data?.result?.metadata?.url;
-  return typeof url === 'string' && /^https?:\/\//i.test(url) ? [{ url }] : [];
+  const output: GeneratedVideo[] = [];
+  const seen = new Set<string>();
+  const urlKey = /^(?:url|uri|href|video[_-]?urls?|download[_-]?urls?|file[_-]?urls?|remixed_from_video_id)$/i;
+  const add = (value: unknown, key: string) => {
+    if (typeof value !== 'string') return;
+    const url = value.trim();
+    if (!(/^(?:https?:\/\/|data:video\/)/i.test(url)) || !(urlKey.test(key) || !key) || seen.has(url)) return;
+    seen.add(url);
+    output.push({ url });
+  };
+  const visit = (value: unknown, key = '', depth = 0) => {
+    if (depth > 10 || value === null || value === undefined) return;
+    if (typeof value === 'string') return add(value, key);
+    if (Array.isArray(value)) return value.forEach((item) => visit(item, key, depth + 1));
+    if (typeof value !== 'object') return;
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) visit(childValue, childKey, depth + 1);
+  };
+  visit(data);
+  return output;
 }
 
 function agnesErrorFrom(data: any) {
@@ -413,14 +505,14 @@ function agnesGenerationUrl(provider: RuntimeProvider) {
 
 async function submitAgnesVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   const media = {
-    firstFrame: input.firstFrame ? await prepareAgnesMediaUrl(input.firstFrame, 'image') : undefined,
-    lastFrame: input.lastFrame ? await prepareAgnesMediaUrl(input.lastFrame, 'image') : undefined,
-    referenceImages: await Promise.all((input.referenceImages || []).map((url) => prepareAgnesMediaUrl(url, 'image'))),
-    referenceVideos: await Promise.all(videoReferenceValues(input).map((url) => prepareAgnesMediaUrl(url, 'video'))),
-    audios: await Promise.all(audioValues(input).map((url) => prepareAgnesMediaUrl(url, 'audio'))),
+    firstFrame: input.firstFrame ? await preparePublicMediaUrl(provider, input.firstFrame, 'image') : undefined,
+    lastFrame: input.lastFrame ? await preparePublicMediaUrl(provider, input.lastFrame, 'image') : undefined,
+    referenceImages: await Promise.all((input.referenceImages || []).map((url) => preparePublicMediaUrl(provider, url, 'image'))),
+    referenceVideos: await Promise.all(videoReferenceValues(input).map((url) => preparePublicMediaUrl(provider, url, 'video'))),
+    audios: await Promise.all(audioValues(input).map((url) => preparePublicMediaUrl(provider, url, 'audio'))),
   };
   const body = buildAgnesVideoPayload(rawModelId, input, media);
-  const response = await requestJsonWithRateLimitRetry(agnesGenerationUrl(provider), { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal);
+  const response = await requestJsonWithRateLimitRetry(agnesGenerationUrl(provider), { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, { retry429: false });
   const data = response.data;
   const videoId = agnesVideoIdFrom(data);
   const status = agnesStatusFrom(data);
@@ -443,11 +535,14 @@ async function pollAgnesVideo(provider: RuntimeProvider, videoId: string, rawMod
 export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   if (isAgnesVideoProvider(provider)) return submitAgnesVideo(provider, rawModelId, input, idempotencyKey, signal);
   const transport = resolveVideoTransport(provider);
+  const preparedInput = transport === 'openai-videos' && requiresPublicMediaRelay(provider, { hasVideoModel: true })
+    ? await prepareRemoteVideoMedia(provider, input)
+    : input;
   const url = transport === 'native-task' ? endpoint(provider, provider.videoTaskPath, '/v1/tasks') : endpoint(provider, provider.videoGenerationPath, '/v1/videos');
   const body = transport === 'native-task'
-    ? { kind: 'video', model: rawModelId, operation: input.operation || 'generate', input: inputPayload(input) }
-    : openAiPayload(rawModelId, input);
-  const response = await requestJsonWithRateLimitRetry(url, { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal);
+    ? { kind: 'video', model: rawModelId, operation: preparedInput.operation || 'generate', input: inputPayload(preparedInput) }
+    : openAiPayload(rawModelId, preparedInput);
+  const response = await requestJsonWithRateLimitRetry(url, { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, { retry429: false });
   const data = response.data;
   const videos = videosFrom(data);
   const providerTaskId = taskIdFrom(data);

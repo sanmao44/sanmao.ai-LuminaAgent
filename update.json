@@ -9,8 +9,8 @@
     "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.13/SANMAO.AI-0.7.13.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.13/SANMAO.AI-0.7.13.zip"
   ],
-  "sha256": "bbfede76bccd5a911de3043533f8f531d86a15aec8cefc1630236c49947321a9",
-  "publishedAt": "2026-08-29T04:23:25+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-08-29T04:18:54+08:00",
   "notes": [
     "新增 Agnes AI 服务商，全面支持文本、多模态、图片生成/编辑和异步视频生成。",
     "Agnes 文本模型兼容 Chat Completions、Responses、Messages、图片理解、工具调用、流式输出和多轮消息。",

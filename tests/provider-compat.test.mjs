@@ -73,6 +73,27 @@ test('uses the OpenAI video task status default for a custom compatible provider
   assert.equal(config.videoTaskStatusPath, '/v1/videos/{id}');
 });
 
+test('keeps Agnes text and video gateways in the same selected region', () => {
+  const international = presets.resolveProviderConfiguration({
+    platform: 'agnes',
+    baseUrl: 'https://apihub.agnes-ai.com/v1',
+  });
+  assert.equal(international.baseUrl, 'https://apihub.agnes-ai.com/v1');
+  assert.equal(international.videoBaseUrl, 'https://apihub.agnes-ai.com');
+
+  const domestic = presets.resolveProviderConfiguration({
+    platform: 'agnes',
+    baseUrl: 'https://api.agnes-ai.cn/v1',
+    videoBaseUrl: 'https://apihub.agnes-ai.com',
+  });
+  assert.equal(domestic.baseUrl, 'https://api.agnes-ai.cn/v1');
+  assert.equal(domestic.videoBaseUrl, 'https://api.agnes-ai.cn');
+
+  const fresh = presets.resolveProviderConfiguration({ platform: 'agnes' });
+  assert.equal(fresh.baseUrl, 'https://api.agnes-ai.cn/v1');
+  assert.equal(fresh.videoBaseUrl, 'https://api.agnes-ai.cn');
+});
+
 test('recognizes provider-native search for standard OpenAI and Gemini model ids', () => {
   const openAiModels = providers.normalizeDiscoveredModels({ data: [{ id: 'gpt-5' }] }, { platform: 'openai' });
   const geminiModels = providers.normalizeDiscoveredModels({ data: [{ id: 'gemini-2.5-pro' }] }, { platform: 'google-gemini' });

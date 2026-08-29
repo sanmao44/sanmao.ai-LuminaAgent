@@ -2,7 +2,7 @@ import { editImage } from '@/lib/providers';
 import { resolveStoredImageReference } from '@/lib/image-storage';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
-import { getPublicState, getRuntimeImageModelForCapability } from '@/lib/store';
+import { getPublicState, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 
@@ -15,6 +15,7 @@ export async function POST(request: Request) {
   let promptForLog = '';
   let aspectRatioForLog = '自动';
   let logId: string | undefined;
+  let runtimeProviderId = '';
   const requestController = new AbortController();
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
   if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
     if (body.mask && !mask) return Response.json({ error: '蒙版必须是 PNG 格式。' }, { status: 400 });
     const runtime = await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit');
     if (!runtime) return Response.json({ error: '没有支持图片修改的可用模型。' }, { status: 400 });
+    runtimeProviderId = runtime.provider.id;
     const publicState = await getPublicState();
     const storagePath = publicState.settings.imageStoragePath;
     const resolvedReferences = await Promise.all(references.map((reference) => resolveStoredImageReference(reference, storagePath)));
@@ -60,6 +62,8 @@ export async function POST(request: Request) {
     const stored = await persistGenerationResult({ images, storagePath, startedAt, providerFinishedAt, logId });
     return Response.json({ ok: true, images: stored.images, storagePath: stored.path, model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name } });
   } catch (error) {
+    const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
+    if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
     const message = cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '修改图片失败。';
     const failure = { status: 'error' as const, mode: 'edit' as const, source: 'workspace' as const, prompt: promptForLog, aspectRatio: aspectRatioForLog, durationMs: Date.now() - startedAt, error: message };

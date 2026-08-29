@@ -58,6 +58,10 @@ export function isCompletedUpdateProgressStale(progress: Pick<UpdateProgress, 's
   return progress.stage === 'completed' && Boolean(currentVersion) && compareVersions(currentVersion, progress.version) >= 0;
 }
 
+export function isUpdateProgressStale(progress: Pick<UpdateProgress, 'stage' | 'version'>, currentVersion: string) {
+  return progress.stage !== 'failed' && Boolean(currentVersion) && compareVersions(currentVersion, progress.version) >= 0;
+}
+
 function persistUpdateProgress(progress: UpdateProgress) {
   const temporaryPath = `${progressFilePath}.${progress.jobId}.tmp`;
   progressWriteQueue = progressWriteQueue.then(async () => {
@@ -125,7 +129,7 @@ export async function getLatestUpdateProgress(jobId?: string, currentVersion?: s
     return !jobId || progress.jobId === jobId;
   });
   const latest = candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] || null;
-  if (latest && currentVersion && isCompletedUpdateProgressStale(latest, currentVersion)) {
+  if (latest && currentVersion && isUpdateProgressStale(latest, currentVersion)) {
     progressJobs.delete(latest.jobId);
     await clearPersistedUpdateProgress();
     return null;

@@ -216,9 +216,10 @@ export async function getPublicState(): Promise<PublicState> {
       jimengCliPath: p.jimengCliPath || '',
       jimengCliPollSeconds: p.jimengCliPollSeconds,
       authHeader: p.authHeader || 'Authorization',
-      authPrefix: p.authPrefix ?? 'Bearer ',
-      status: p.status,
-      lastSyncedAt: p.lastSyncedAt,
+       authPrefix: p.authPrefix ?? 'Bearer ',
+       status: p.status,
+       credentialVerifiedAt: p.credentialVerifiedAt,
+       lastSyncedAt: p.lastSyncedAt,
       createdAt: p.createdAt,
       enabledModelCount: state.models.filter((m) => m.providerId === p.id && m.enabled).length,
       maskedKey: key ? maskKey(key) : '••••••••',
@@ -350,10 +351,11 @@ export async function updateProvider(id: string, input: ProviderInput) {
       jimengCliPollSeconds: Number.isFinite(Number(input.jimengCliPollSeconds)) ? Math.max(1, Math.min(30, Number(input.jimengCliPollSeconds))) : current.jimengCliPollSeconds,
       authHeader: String(input.authHeader || 'Authorization').trim(),
       authPrefix: input.authPrefix ?? 'Bearer ',
-      encryptedApiKey: input.apiKey?.trim() ? await encryptSecret(input.apiKey.trim()) : current.encryptedApiKey,
-      ...(input.videoApiKey?.trim() ? { encryptedVideoApiKey: await encryptSecret(input.videoApiKey.trim()) } : {}),
-      status: 'idle',
-      lastSyncedAt: '配置已更新，待同步',
+       encryptedApiKey: input.apiKey?.trim() ? await encryptSecret(input.apiKey.trim()) : current.encryptedApiKey,
+       ...(input.videoApiKey?.trim() ? { encryptedVideoApiKey: await encryptSecret(input.videoApiKey.trim()) } : {}),
+       status: 'idle',
+       credentialVerifiedAt: undefined,
+       lastSyncedAt: '配置已更新，待同步',
     };
     state.models = state.models.map((m) => m.providerId === id ? { ...m, providerName: input.name.trim() } : m);
   });
@@ -378,7 +380,22 @@ export async function getProviderWithKey(id: string) {
 }
 
 export async function setProviderStatus(id: string, status: ProviderStatus, lastSyncedAt?: string) {
-  await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? { ...p, status, lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt } : p); });
+  await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? {
+    ...p,
+    status,
+    ...(p.platform === 'agnes' ? { credentialVerifiedAt: status === 'healthy' ? new Date().toISOString() : undefined } : {}),
+    lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt,
+  } : p); });
+}
+
+/** Mark a credential failure observed during a real generation request. */
+export async function markProviderCredentialFailure(id: string) {
+  await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? {
+    ...p,
+    status: 'error',
+    ...(p.platform === 'agnes' ? { credentialVerifiedAt: undefined } : {}),
+    lastSyncedAt: '鉴权失败，待更新 Key',
+  } : p); });
 }
 
 function normalizeVideoTransport(value: ProviderConnection['videoTransport']) {

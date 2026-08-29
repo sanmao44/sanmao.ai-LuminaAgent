@@ -30,6 +30,13 @@ test('completed progress is stale after the app reaches the recorded version', (
   assert.equal(local.isCompletedUpdateProgressStale({ stage: 'starting', version: '0.7.0' }, '0.7.2'), false);
 });
 
+test('any non-failed progress is stale after the app reaches the recorded version', () => {
+  assert.equal(local.isUpdateProgressStale({ stage: 'starting', version: '0.7.14' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'verifying', version: '0.7.13' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.13' }, '0.7.14'), false);
+  assert.equal(local.isUpdateProgressStale({ stage: 'starting', version: '0.7.15' }, '0.7.14'), false);
+});
+
 test('update archives remain the single source of installed updater code', async () => {
   const [localUpdate, windowsUpdater, windowsUpdaterCore, windowsUpdaterBootstrap, launcher, progressRoute] = await Promise.all([
     readFile(new URL('../lib/local-update.ts', import.meta.url), 'utf8'),
@@ -49,8 +56,7 @@ test('update archives remain the single source of installed updater code', async
   assert.match(windowsUpdater, /apply-update-core\.ps1/);
   assert.match(windowsUpdaterBootstrap, /apply-update-core\.ps1/);
   assert.match(launcher, /apply-update-bootstrap\.ps1/);
-  assert.match(progressRoute, /getLatestUpdateProgress\(jobId\)/);
-  assert.doesNotMatch(progressRoute, /getLatestUpdateProgress\(jobId,/);
+  assert.match(progressRoute, /getLatestUpdateProgress\(jobId, currentVersion\)/);
 });
 
 const originalFetch = globalThis.fetch;

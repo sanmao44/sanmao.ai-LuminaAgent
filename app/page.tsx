@@ -8,6 +8,7 @@ import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
 import { agnesBillingLabel } from '@/lib/agnes';
+import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
 import { listChatSessions, listGallery, loadImageDirectoryHandle, patchGalleryItem, removeChatSession, removeGalleryItems, replaceChatSessions, replaceGalleryItems, saveChatSession, saveGalleryItems, saveImageDirectoryHandle } from '@/lib/client-history';
 import Link from 'next/link';
 import MaskEditor from '@/components/MaskEditor';
@@ -1150,8 +1151,8 @@ function Icon({ name, size = 18 }) {
                 }),
                 /*#__PURE__*/ _jsx("path", {
                     d: "M6.5 12.5l.7 2 1.8.7-1.8.7-.7 2-.7-2-1.8-.7 1.8-.7.7-2Z"
-                })
-            ]
+                                                     })
+                                                 ]
         }),
         image: /*#__PURE__*/ _jsxs(_Fragment, {
             children: [
@@ -6861,7 +6862,11 @@ export default function Page() {
                 })
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || '连接测试失败');
+            if (!res.ok) {
+                const status = Number(data.providerStatus || res.status);
+                const hint = status === 401 ? '（HTTP 401：Agnes 已拒绝本次 Key；请确认国内 .cn Key 配套 https://api.agnes-ai.cn/v1，国际 .com Key 配套 https://apihub.agnes-ai.com/v1，Key 只填 sk- 开头内容，不要填 Bearer）' : '';
+                throw new Error(`${data.error || '连接测试失败'}${hint}`);
+            }
             const names = Array.isArray(data.sample) ? data.sample.map((m)=>m.id).slice(0, 4).join('、') : '';
             setProviderTestResult(data.message || `连接成功，发现 ${data.count} 个模型${names ? `：${names}${data.count > 4 ? '…' : ''}` : ''}`);
             return true;
@@ -10590,6 +10595,7 @@ export default function Page() {
                                 mediaPrefillToken: videoMediaPrefillToken,
                                 onMediaPrefillConsumed: ()=>setVideoMediaPrefill(null),
                                 onOpenModels: ()=>setSection('models'),
+                                onOpenProviders: ()=>setSection('providers'),
                                 onNotify: notify
                             }),
                             section === 'generate' && /*#__PURE__*/ _jsxs("section", {
@@ -13360,10 +13366,10 @@ export default function Page() {
                                                                 children: "API 地址（已内置）"
                                                             }),
                                                             /*#__PURE__*/ _jsx("strong", {
-                                                                children: selectedProviderPreset.baseUrl
+                                                                children: providerForm.baseUrl || selectedProviderPreset.baseUrl
                                                             }),
                                                             /*#__PURE__*/ _jsx("small", {
-                                                                children: "官方地址已经内置，无需填写。"
+                                                                children: providerForm.platform === 'agnes' && providerForm.baseUrl && providerForm.baseUrl !== selectedProviderPreset.baseUrl ? "当前保留已选 Agnes 区域地址；请让它与 API Key 所属站点一致。" : "官方地址已经内置，无需填写。"
                                                             })
                                                         ]
                                                     }),
@@ -13394,7 +13400,17 @@ export default function Page() {
                                                             })
                                                         ]
                                                     }),
-                                                    false && /*#__PURE__*/ _jsxs("div", {
+                                                     providerForm.platform === 'agnes' && /*#__PURE__*/ _jsx(AgnesConnectionGuide, {
+                                                         baseUrl: providerForm.baseUrl,
+                                                         videoBaseUrl: providerForm.videoBaseUrl,
+                                                         savedBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.baseUrl || '',
+                                                         savedVideoBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.videoBaseUrl || '',
+                                                         savedKeyMasked: state.providers.find((provider)=>provider.id === providerEditId)?.maskedKey || '',
+                                                         hasDraftKey: Boolean(providerForm.apiKey.trim()),
+                                                         testResult: providerTestResult,
+                                                         onUseDomesticEndpoint: () => applyProviderPreset('agnes')
+                                                     }),
+                                                     false && /*#__PURE__*/ _jsxs("div", {
                                                         className: "wide provider-video-settings",
                                                         children: [
                                                             /*#__PURE__*/ _jsxs("div", {
@@ -13532,12 +13548,16 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsx("strong", {
                                                                         children: provider.name
                                                                     }),
-                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                        className: "provider-platform",
-                                                                        children: platformLabel(provider.platform)
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                        className: `provider-status ${provider.status}`,
+                                                                     /*#__PURE__*/ _jsx("span", {
+                                                                         className: "provider-platform",
+                                                                         children: platformLabel(provider.platform)
+                                                                     }),
+                                                                     provider.platform === 'agnes' && /*#__PURE__*/ _jsx("span", {
+                                                                         className: `provider-credential-badge ${provider.credentialVerifiedAt ? 'verified' : 'unverified'}`,
+                                                                         children: provider.credentialVerifiedAt ? '上次验证通过' : '待验证 Key'
+                                                                     }),
+                                                                     /*#__PURE__*/ _jsx("span", {
+                                                                         className: `provider-status ${provider.status}`,
                                                                         children: provider.status === 'healthy' ? '连接正常' : provider.status === 'error' ? '连接异常' : '待读取'
                                                                     }),
                                                                     /*#__PURE__*/ _jsxs("label", {

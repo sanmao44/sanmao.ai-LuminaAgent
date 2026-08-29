@@ -1,12 +1,13 @@
 import { getLatestUpdateProgress } from '@/lib/local-update';
+import { currentVersion } from '@/lib/update';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const jobId = params.get('jobId') || undefined;
-  // Keep this request compatible with the updater runtime shipped by older
-  // releases. The client compares versions after the restarted app is ready.
-  const progress = await getLatestUpdateProgress(jobId);
+  // Clear progress left by an updater after the app has already reached the
+  // recorded version (including a restart that stopped at 98%).
+  const progress = await getLatestUpdateProgress(jobId, currentVersion);
   return Response.json({ progress }, { headers: { 'Cache-Control': 'no-store' } });
 }

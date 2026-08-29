@@ -2,7 +2,8 @@
   [int]$Port = 0,
   [switch]$NonInteractive = $false,
   [switch]$Lan = $false,
-  [switch]$ForceRestart = $false
+  [switch]$ForceRestart = $false,
+  [switch]$FreeRelay = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,6 +17,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+$script:MediaRelayRequired = $false
 $requestedPort = 0
 if ($Port -ge 1024 -and $Port -le 65525) {
   $requestedPort = $Port
@@ -35,6 +37,7 @@ $serverStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
 $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 
 . (Join-Path $PSScriptRoot 'launcher-common.ps1')
+. (Join-Path $PSScriptRoot 'free-relay-common.ps1')
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
 
 # Releases before 0.7.5 overwrote apply-update.ps1 with their running updater
@@ -61,16 +64,53 @@ function Test-SanmaoServerAtPort([int]$port) {
   return Test-SanmaoHealthEndpoint -Port $port
 }
 
+function Test-SanmaoMediaRelayRequired {
+  $dataRoot = [string]$env:SANMAO_DATA_DIR
+  if ([string]::IsNullOrWhiteSpace($dataRoot)) {
+    $dataRoot = Join-Path $root '.data'
+  } elseif (-not [System.IO.Path]::IsPathRooted($dataRoot)) {
+    $dataRoot = Join-Path $root $dataRoot
+  }
+  $statePath = Join-Path $dataRoot 'state.json'
+  if (-not (Test-Path -LiteralPath $statePath)) { return $false }
+  try {
+    $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($provider in @($state.providers)) {
+      $transport = ([string]$provider.videoTransport).ToLowerInvariant()
+      $hasCredential = -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedVideoApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.apiKey)
+      if (-not $hasCredential) { continue }
+      if ($transport -eq 'agnes-videos' -or $transport -eq 'openai-videos') { return $true }
+      if ($transport -eq 'native-task' -or $transport -eq 'jimeng-cli') { continue }
+      if ($transport -eq 'auto' -or -not $transport) {
+        $hasVideoModel = @($state.models | Where-Object { $_.providerId -eq $provider.id -and ($_.kind -eq 'video' -or @($_.capabilities) -contains 'video-generate') }).Count -gt 0
+        if ($hasVideoModel) { return $true }
+      }
+    }
+  } catch {}
+  return $false
+}
+
+$script:MediaRelayRequired = Test-SanmaoMediaRelayRequired
+
 function Get-SanmaoServerInfo([int]$port) {
   $health = Invoke-SanmaoLocalHttp -Port $port -Path '/api/health' -TimeoutMs 1000
   if (-not $health.Ok -or $health.StatusCode -lt 200 -or $health.StatusCode -ge 500) { return $null }
   try {
     $data = $health.Content | ConvertFrom-Json
     if ($data.service -ne 'sanmao-ai-studio') { return $null }
+    $relayMode = 'unknown'
+    $relay = Invoke-SanmaoLocalHttp -Port $port -Path '/api/relay/status' -TimeoutMs 1000
+    if ($relay.Ok -and $relay.StatusCode -ge 200 -and $relay.StatusCode -lt 300) {
+      try {
+        $relayData = $relay.Content | ConvertFrom-Json
+        if ($relayData.mode -in @('relay', 'self-hosted', 'unavailable')) { $relayMode = [string]$relayData.mode }
+      } catch {}
+    }
     return [pscustomobject]@{
       Port = $port
       NetworkMode = if ($data.networkMode -eq 'lan') { 'lan' } else { 'local' }
       LifecycleEnabled = [bool]$data.lifecycleEnabled
+      MediaRelayMode = $relayMode
     }
   } catch { return $null }
 }
@@ -222,6 +262,7 @@ function Stop-StartedServer {
 }
 function Fail([string]$text) {
   Stop-StartedServer
+  Stop-SanmaoFreeRelayTunnel -Root $root
   Write-SanmaoLauncherLog "启动失败：$text" 'ERROR'
   Write-Host ""
   Write-Host "启动失败：$text" -ForegroundColor Red
@@ -328,8 +369,14 @@ if ($existing) {
   $lifecycleMismatch = $existing.LifecycleEnabled -ne (-not $Lan.IsPresent)
   $buildStale = Test-SanmaoBuildStale
   if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
-  if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) {
-    $reason = if ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新网页关闭自动停止设置' } else { '检测到源码比当前构建更新' }
+  $freeRelayMismatch =
+    ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and (
+      $existing.MediaRelayMode -in @('unknown', 'unavailable') -or
+      ($existing.MediaRelayMode -eq 'relay' -and -not (Test-SanmaoFreeRelayTunnel -Root $root))
+    )) -or
+    (-not $script:MediaRelayRequired -and $existing.MediaRelayMode -eq 'relay')
+  if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent -or $freeRelayMismatch) {
+    $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新网页关闭自动停止设置' } else { '检测到源码比当前构建更新' }
     Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {
@@ -362,7 +409,7 @@ if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
 }
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.7.13' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.7.14' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js
@@ -538,6 +585,27 @@ if ($port -gt $portEnd) {
   }
 }
 
+if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
+  Write-Host '正在准备免费媒体中转通道…' -ForegroundColor Yellow
+  Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
+  if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
+    Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
+  }
+  $freeRelayInfo = Start-SanmaoFreeRelayTunnel -Root $root -OriginPort $port
+  if ($freeRelayInfo) {
+    $env:SANMAO_RELAY_MODE = '1'
+    $env:SANMAO_RELAY_PUBLIC_BASE_URL = $freeRelayInfo.PublicUrl
+    $env:SANMAO_MEDIA_RELAY_URL = $freeRelayInfo.PublicUrl
+    Write-SanmaoLauncherLog "已启动免费临时通道：$($freeRelayInfo.PublicUrl)" 'INFO'
+  }
+} elseif (-not $script:MediaRelayRequired) {
+  Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
+  if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
+    Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
+  }
+  Stop-SanmaoFreeRelayTunnel -Root $root
+}
+
 if ($Lan.IsPresent) {
   Remove-Item Env:SANMAO_LIFECYCLE -ErrorAction SilentlyContinue
 } else {
@@ -555,6 +623,18 @@ $script:serverProcess = Start-Process `
   -RedirectStandardOutput $serverStdoutPath `
   -RedirectStandardError $serverStderrPath `
   -PassThru
+
+if ($freeRelayInfo) {
+  try {
+    $watchScript = Join-Path $PSScriptRoot 'free-relay-watch.ps1'
+    Start-Process -FilePath 'powershell.exe' `
+      -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id) `
+      -WorkingDirectory $root `
+      -WindowStyle Hidden | Out-Null
+  } catch {
+    Write-SanmaoLauncherLog "免费临时通道自动清理监视器启动失败：$($_.Exception.Message)" 'WARN'
+  }
+}
 
 Write-Host "正在等待 http://localhost:$port 启动..." -ForegroundColor Yellow
 Write-SanmaoLauncherLog "已启动服务进程 PID $($script:serverProcess.Id)，等待端口 $port 就绪。" 'INFO'

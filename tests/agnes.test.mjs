@@ -27,7 +27,8 @@ const providers = await importTypeScript(providersUrl, [
 ].join('\n'));
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
-const video = await importTypeScript(videoUrl, await readFile(videoUrl, 'utf8'));
+const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
+const video = await importTypeScript(videoUrl, `${videoPlatformSource}\n${(await readFile(videoUrl, 'utf8')).replace("import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';", '')}`);
 
 const signedUrl = new URL('../lib/signed-media.ts', import.meta.url);
 const signedSource = await readFile(signedUrl, 'utf8');
@@ -59,6 +60,11 @@ function agnesProvider(overrides = {}) {
 }
 
 test('exposes the complete Agnes catalog with official billing defaults and limits', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [{ id: 'agnes-2.5-flash' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
   const models = await providers.discoverModels(agnesProvider());
   assert.deepEqual(models.map((model) => model.id), [
     'agnes-2.0-flash', 'agnes-2.5-flash', 'agnes-2.5-pro-alpha', 'agnes-2.5-pro-beta', 'agnes-2.5-pro',
@@ -69,6 +75,38 @@ test('exposes the complete Agnes catalog with official billing defaults and limi
   assert.equal(models.find((model) => model.id === 'agnes-2.5-pro').contextWindow, 1000000);
   assert.equal(models.find((model) => model.id === 'agnes-2.5-pro').enabledByDefault, false);
   assert.equal(models.find((model) => model.id === 'agnes-video-2.5-flash').billing, 'temporary-free');
+  assert.equal(calls[0].url, 'https://apihub.agnes-ai.com/v1/models');
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer server-only-key');
+});
+
+test('validates Agnes credentials before reporting a connection', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'invalid token' } }), { status: 401, headers: { 'content-type': 'application/json', 'x-request-id': 'agnes-test-401' } });
+  await assert.rejects(() => providers.testProviderConnection(agnesProvider()), (error) => {
+    assert.equal(error.status, 401);
+    assert.equal(error.providerStatus, 401);
+    assert.equal(error.providerRequestId, 'agnes-test-401');
+    assert.match(error.message, /API Key 无效/);
+    return true;
+  });
+});
+
+test('recognizes the domestic Agnes host', async () => {
+  globalThis.fetch = async (url) => {
+    assert.equal(String(url), 'https://api.agnes-ai.cn/v1/models');
+    return new Response(JSON.stringify({ data: [{ id: 'agnes-2.5-flash' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  assert.equal(providers.isAgnesProvider({ platform: 'custom', baseUrl: 'https://api.agnes-ai.cn/v1' }), true);
+  const result = await providers.testProviderConnection(agnesProvider({ platform: 'custom', baseUrl: 'https://api.agnes-ai.cn/v1', videoBaseUrl: 'https://api.agnes-ai.cn' }));
+  assert.equal(result.verified, true);
+});
+
+test('keeps the international Agnes gateway compatible', async () => {
+  globalThis.fetch = async (url) => {
+    assert.equal(String(url), 'https://apihub.agnes-ai.com/v1/models');
+    return new Response(JSON.stringify({ data: [{ id: 'agnes-2.5-flash' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  assert.equal(providers.isAgnesProvider({ platform: 'custom', baseUrl: 'https://apihub.agnes-ai.com/v1' }), true);
+  assert.equal(providers.isAgnesProvider({ platform: 'custom', baseUrl: 'https://api.agnes-ai.com/v1' }), true);
 });
 
 test('supports Agnes Chat Completions, Responses and Messages protocols', async () => {
@@ -143,12 +181,16 @@ test('builds Agnes V2.0 image and keyframe video payloads', () => {
     model: 'agnes-video-v2.0', prompt: 'cat', width: 1152, height: 768, num_frames: 121, frame_rate: 24,
     metadata: { size_mapping: { requested: '1152x768', normalized: '720p', width: 1152, height: 768 } },
   });
+  const ratioPreset = video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'cat', aspectRatio: '16:9' });
+  assert.equal(ratioPreset.width, 1024);
+  assert.equal(ratioPreset.height, 576);
   const image = video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'cat', firstFrame: 'https://cdn.example/first.png', width: 1152, height: 768 });
   assert.equal(image.image, 'https://cdn.example/first.png');
   assert.equal(image.extra_body, undefined);
   const keyframes = video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'transition', videoMode: 'keyframe', firstFrame: 'https://cdn.example/first.png', lastFrame: 'https://cdn.example/last.png' });
   assert.deepEqual(keyframes.extra_body, { image: ['https://cdn.example/first.png', 'https://cdn.example/last.png'], mode: 'keyframes' });
   assert.equal(keyframes.image, undefined);
+  assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad size', width: 1153, height: 768 }), /宽度和高度必须是 64 的倍数/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad', referenceVideo: 'https://cdn.example/ref.mp4' }), /不接受参考视频/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad', numFrames: 82 }), /8n \+ 1/);
 });
@@ -195,6 +237,13 @@ test('prioritizes video_id and queries Agnes at /agnesapi with model_name only f
   assert.equal(v20Url, 'https://apihub.agnes-ai.com/agnesapi?video_id=video-v20');
 });
 
+test('accepts documented Agnes completed video URL fields', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ status: 'succeeded', remixed_from_video_id: 'https://cdn.example/remixed.mp4' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const completed = await video.pollRemoteVideo(agnesProvider(), 'video-remixed', undefined, 'agnes-video-2.5');
+  assert.equal(completed.status, 'done');
+  assert.deepEqual(completed.videos, [{ url: 'https://cdn.example/remixed.mp4' }]);
+});
+
 test('surfaces Agnes failed and rate-limited polling responses without accepting non-completed media', async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ status: 'failed', error: { message: 'quota exceeded' }, metadata: { url: 'https://should-not-be-used.mp4' } }), { status: 200, headers: { 'content-type': 'application/json' } });
   const failed = await video.pollRemoteVideo(agnesProvider(), 'video-failed', undefined, 'agnes-video-2.5');
@@ -210,15 +259,126 @@ test('surfaces Agnes failed and rate-limited polling responses without accepting
   });
 });
 
+test('does not retry a per-minute video submission limit and gives an actionable message', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: 'video generation rate limit exceeded: allows 1 requests per 1 minute(s)' } }), { status: 429, headers: { 'content-type': 'application/json' } });
+  };
+  await assert.rejects(() => video.submitRemoteVideo(agnesProvider(), 'agnes-video-2.5-flash', { prompt: 'a quiet ocean', seconds: 4, videoMode: 'text' }, 'idem-rate-limit'), (error) => {
+    assert.equal(calls, 1);
+    assert.equal(error.code, 'VIDEO_RATE_LIMITED');
+    assert.match(error.message, /每 1 分钟最多生成 1 个视频/);
+    assert.match(error.message, /等待约 60 秒/);
+    return true;
+  });
+});
+
+test('uses the Agnes media relay for local images without sending API credentials', async () => {
+  const previous = {
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+    uploadToken: process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN,
+  };
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    const form = init.body;
+    assert.equal(form.get('kind'), 'image');
+    assert.equal(form.get('file').type, 'image/png');
+    return new Response(JSON.stringify({ ok: true, url: 'https://relay.example/api/relay/media/signed-token', expiresAt: '2026-08-29T00:30:00.000Z' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const url = await signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    assert.equal(url, 'https://relay.example/api/relay/media/signed-token');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://relay.example/api/relay/media');
+    assert.equal(calls[0].init.headers, undefined);
+  } finally {
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    if (previous.uploadToken === undefined) delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN; else process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN = previous.uploadToken;
+  }
+});
+
+test('does not relay public Agnes image URLs and gives a recoverable error when relay is unavailable', async () => {
+  const previous = {
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  globalThis.fetch = async () => { throw new Error('relay offline'); };
+  try {
+    assert.equal(await signed.prepareAgnesMediaUrl('https://cdn.example/source.png', 'image'), 'https://cdn.example/source.png');
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image'), (error) => {
+      assert.equal(error.code, 'AGNES_MEDIA_RELAY_UNAVAILABLE');
+      assert.match(error.message, /中转服务不可用/);
+      return true;
+    });
+  } finally {
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+  }
+});
+
+test('does not contact the media relay for Agnes text-to-video', async () => {
+  const previous = process.env.SANMAO_MEDIA_RELAY_URL;
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  const previousDefaultRelay = process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ id: 'text-video-task', status: 'queued' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await video.submitRemoteVideo(agnesProvider(), 'agnes-video-2.5', { prompt: 'a quiet ocean', seconds: 5, videoMode: 'text' }, 'idem-text');
+    assert.deepEqual(calls, ['https://apihub.agnes-ai.com/v1/videos']);
+  } finally {
+    if (previous === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous;
+    if (previousDefaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previousDefaultRelay;
+  }
+});
+
+test('does not pass local HTTP storage URLs through to Agnes', async () => {
+  const previous = process.env.SANMAO_MEDIA_RELAY_URL;
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw new Error('local storage should be resolved before any network request'); };
+  try {
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('http://localhost:3210/api/storage/file?name=missing.png', 'image'), (error) => {
+      assert.notEqual(error.code, undefined);
+      return true;
+    });
+    assert.equal(calls, 0);
+  } finally {
+    if (previous === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous;
+  }
+});
+
 test('signs Agnes media, enforces expiry and protects the media path', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-agnes-media-'));
   const previous = {
     dataDir: process.env.SANMAO_DATA_DIR,
     publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
     signingKey: process.env.SANMAO_MEDIA_SIGNING_KEY,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
   };
   process.env.SANMAO_DATA_DIR = root;
   process.env.SANMAO_PUBLIC_BASE_URL = 'https://studio.example';
+  delete process.env.SANMAO_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
   process.env.SANMAO_MEDIA_SIGNING_KEY = 'test-signing-key';
   try {
     const url = await signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
@@ -248,11 +408,15 @@ test('signs Agnes media, enforces expiry and protects the media path', async () 
     assert.equal(await readFile(outside, 'utf8'), 'must survive');
 
     delete process.env.SANMAO_PUBLIC_BASE_URL;
-    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_PUBLIC_MEDIA_URL_REQUIRED');
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_MEDIA_RELAY_REQUIRED');
+    process.env.SANMAO_PUBLIC_BASE_URL = 'http://localhost:3210';
+    await assert.rejects(() => signed.prepareAgnesMediaUrl('data:image/png;base64,AA==', 'image'), (error) => error.code === 'AGNES_PUBLIC_MEDIA_URL_INVALID');
     await assert.rejects(() => signed.prepareAgnesMediaUrl('data:video/mp4;base64,AA==', 'image'), (error) => error.code === 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
   } finally {
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
     if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
     if (previous.signingKey === undefined) delete process.env.SANMAO_MEDIA_SIGNING_KEY; else process.env.SANMAO_MEDIA_SIGNING_KEY = previous.signingKey;
     await rm(root, { recursive: true, force: true });
   }

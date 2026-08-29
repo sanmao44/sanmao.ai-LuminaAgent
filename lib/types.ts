@@ -61,6 +61,8 @@ export type ProviderConnection = {
   authHeader?: string;
   authPrefix?: string;
   status: ProviderStatus;
+  /** Set only after a real authenticated provider check succeeds. */
+  credentialVerifiedAt?: string;
   enabledModelCount: number;
   lastSyncedAt?: string;
   maskedKey?: string;

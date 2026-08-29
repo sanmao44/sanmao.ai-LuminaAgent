@@ -6,7 +6,20 @@ import { resolveStoredFileWithFallback } from './image-storage';
 import { resolveStoredVideoFile } from './video-storage';
 
 export const AGNES_PUBLIC_MEDIA_URL_REQUIRED = 'AGNES_PUBLIC_MEDIA_URL_REQUIRED';
-const DEFAULT_TTL_MS = 15 * 60 * 1000;
+export const AGNES_PUBLIC_MEDIA_URL_INVALID = 'AGNES_PUBLIC_MEDIA_URL_INVALID';
+export const AGNES_MEDIA_RELAY_REQUIRED = 'AGNES_MEDIA_RELAY_REQUIRED';
+export const AGNES_MEDIA_RELAY_UNAVAILABLE = 'AGNES_MEDIA_RELAY_UNAVAILABLE';
+export const AGNES_MEDIA_RELAY_REJECTED = 'AGNES_MEDIA_RELAY_REJECTED';
+export const AGNES_MEDIA_TTL_MS = 30 * 60 * 1000;
+// Generic names are used by the provider-agnostic relay. The Agnes names
+// above remain exported for compatibility with existing local state and
+// integrations.
+export const PUBLIC_MEDIA_URL_REQUIRED = AGNES_PUBLIC_MEDIA_URL_REQUIRED;
+export const PUBLIC_MEDIA_URL_INVALID = AGNES_PUBLIC_MEDIA_URL_INVALID;
+export const MEDIA_RELAY_REQUIRED = AGNES_MEDIA_RELAY_REQUIRED;
+export const MEDIA_RELAY_UNAVAILABLE = AGNES_MEDIA_RELAY_UNAVAILABLE;
+export const MEDIA_RELAY_REJECTED = AGNES_MEDIA_RELAY_REJECTED;
+export const PUBLIC_MEDIA_TTL_MS = AGNES_MEDIA_TTL_MS;
 const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 const MIME_PATTERN = /^(image|video|audio)\/[a-z0-9.+-]+$/i;
 let manifestMutationChain: Promise<unknown> = Promise.resolve();
@@ -21,14 +34,17 @@ type MediaManifestEntry = {
 
 type MediaManifest = Record<string, MediaManifestEntry>;
 
-export class AgnesMediaError extends Error {
+export class PublicMediaError extends Error {
   code: string;
   constructor(message: string, code = AGNES_PUBLIC_MEDIA_URL_REQUIRED) {
     super(message);
-    this.name = 'AgnesMediaError';
+    this.name = 'PublicMediaError';
     this.code = code;
   }
 }
+
+// Compatibility class for callers that imported the old Agnes-specific name.
+export class AgnesMediaError extends PublicMediaError {}
 
 function dataDir() { return process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data'); }
 function mediaDir() { return path.join(dataDir(), 'agnes-media'); }
@@ -79,6 +95,45 @@ function parseDataUrl(value: string) {
 
 function publicBaseUrl() {
   return String(process.env.SANMAO_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+}
+
+function mediaRelayUrl() {
+  return String(process.env.SANMAO_MEDIA_RELAY_URL || process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL || '').trim().replace(/\/+$/, '');
+}
+
+function relayPublicBaseUrl() {
+  return String(process.env.SANMAO_RELAY_PUBLIC_BASE_URL || process.env.SANMAO_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+}
+
+function isPrivateOrLocalHostname(hostname: string) {
+  const value = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (value === 'localhost' || value.endsWith('.local') || value === '::1' || value === '0.0.0.0') return true;
+  if (/^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value) || /^169\.254\./.test(value)) return true;
+  const ipv4 = value.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!ipv4) return false;
+  const [, first, second] = ipv4.map(Number);
+  return first === 172 && second >= 16 && second <= 31;
+}
+
+function isLocalHttpUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && isPrivateOrLocalHostname(parsed.hostname);
+  } catch { return false; }
+}
+
+function isUsablePublicBaseUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !isPrivateOrLocalHostname(parsed.hostname);
+  } catch { return false; }
+}
+
+function assertUsablePublicBaseUrl(value: string, code = AGNES_PUBLIC_MEDIA_URL_INVALID) {
+  if (!isUsablePublicBaseUrl(value)) {
+    throw new PublicMediaError('图片中转服务地址无效：必须是外网可访问的 HTTPS 地址。', code);
+  }
+  return value;
 }
 
 async function readManifest(): Promise<MediaManifest> {
@@ -165,7 +220,7 @@ async function loadLocalReference(value: string, kind: 'image' | 'video' | 'audi
   return { data, mime };
 }
 
-export async function cleanupExpiredAgnesMedia(now = Date.now()) {
+export async function cleanupExpiredMedia(now = Date.now()) {
   return mutateManifest(async (manifest) => {
     const remaining: MediaManifest = {};
     for (const [id, entry] of Object.entries(manifest)) {
@@ -180,35 +235,105 @@ export async function cleanupExpiredAgnesMedia(now = Date.now()) {
   });
 }
 
-export async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio', ttlMs = DEFAULT_TTL_MS) {
-  const input = String(value || '').trim();
-  if (!input) return input;
-  if (/^https?:\/\//i.test(input)) return input;
-  let loaded = parseDataUrl(input);
-  if (!loaded) loaded = await loadLocalReference(input, kind);
-  if (!loaded) throw new AgnesMediaError('Agnes 需要可公开访问的媒体地址；请提供有效的本地媒体或公网 URL。');
-  const mime = cleanMime(loaded.mime);
-  if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new AgnesMediaError('Agnes 只接受与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
-  const base = publicBaseUrl();
-  if (!base) throw new AgnesMediaError('Agnes 的本地媒体请求需要配置 SANMAO_PUBLIC_BASE_URL；纯文本请求不受影响。');
+export const cleanupExpiredAgnesMedia = cleanupExpiredMedia;
+
+export async function storeSignedMedia(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio', options: { ttlMs?: number; publicBase?: string; pathPrefix?: string } = {}) {
+  const clean = cleanMime(mime);
+  if (!MIME_PATTERN.test(clean) || kindForMime(clean) !== kind) throw new PublicMediaError('只允许上传与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  const base = assertUsablePublicBaseUrl(String(options.publicBase || relayPublicBaseUrl()).trim().replace(/\/+$/, ''));
   const id = randomUUID();
-  const expiresAt = Date.now() + Math.max(60_000, Math.min(24 * 60 * 60 * 1000, Number(ttlMs) || DEFAULT_TTL_MS));
-  const filename = `${id}.${extensionForMime(mime)}`;
+  const expiresAt = Date.now() + Math.max(60_000, Math.min(24 * 60 * 60 * 1000, Number(options.ttlMs) || AGNES_MEDIA_TTL_MS));
+  const filename = `${id}.${extensionForMime(clean)}`;
   await mkdir(mediaDir(), { recursive: true });
-  await writeFile(path.join(mediaDir(), filename), loaded.data, { flag: 'wx', mode: 0o600 });
-  const entry: MediaManifestEntry = { id, filename, mime, kind, expiresAt };
+  await writeFile(path.join(mediaDir(), filename), data, { flag: 'wx', mode: 0o600 });
+  const entry: MediaManifestEntry = { id, filename, mime: clean, kind, expiresAt };
   await mutateManifest((manifest) => { manifest[id] = entry; });
   const key = await signingKey();
   const token = tokenFor(entry, key);
-  await cleanupExpiredAgnesMedia();
-  return `${base}/api/media/${encodeURIComponent(token)}`;
+  await cleanupExpiredMedia();
+  const prefix = String(options.pathPrefix || '/api/media').replace(/\/+$/, '');
+  return { url: `${base}${prefix}/${encodeURIComponent(token)}`, expiresAt, bytes: data.byteLength, mime: clean, kind };
 }
 
-export async function prepareAgnesMediaUrls(values: string[], kind: 'image' | 'video' | 'audio') {
-  return Promise.all(values.map((value) => prepareAgnesMediaUrl(value, kind)));
+export const storeSignedAgnesMedia = storeSignedMedia;
+
+async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio') {
+  const relay = mediaRelayUrl();
+  if (!relay) return null;
+  const endpoint = assertUsablePublicBaseUrl(relay, AGNES_MEDIA_RELAY_UNAVAILABLE);
+  const form = new FormData();
+  const blobBytes = new Uint8Array(data.byteLength);
+  blobBytes.set(data);
+  form.append('file', new Blob([blobBytes.buffer], { type: mime }), `agnes-input.${extensionForMime(mime)}`);
+  form.append('kind', kind);
+  const uploadToken = String(process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN || '').trim();
+  try {
+    const response = await fetch(`${endpoint}/api/relay/media`, {
+      method: 'POST',
+      ...(uploadToken ? { headers: { 'x-sanmao-relay-token': uploadToken } } : {}),
+      body: form,
+    });
+    const payload = await response.json().catch(() => ({})) as { url?: unknown; expiresAt?: unknown; error?: unknown };
+    if (!response.ok || typeof payload.url !== 'string') {
+      const message = typeof payload.error === 'string' ? payload.error : response.status === 429 ? '上传过于频繁，请稍后重试' : '图片不符合中转服务要求';
+      if (response.status >= 400 && response.status < 500) throw new PublicMediaError(`图片暂时无法提交：${message}。`, MEDIA_RELAY_REJECTED);
+      throw new Error(message);
+    }
+    const url = payload.url.trim();
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { throw new Error('中转服务返回的图片地址无效'); }
+    if (!isUsablePublicBaseUrl(url) || parsed.origin !== new URL(endpoint).origin) throw new Error('中转服务返回的图片地址不安全');
+    return { url, expiresAt: typeof payload.expiresAt === 'string' ? payload.expiresAt : undefined };
+  } catch (error) {
+    if (error instanceof PublicMediaError) throw error;
+    throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
+  }
 }
 
-export async function readSignedAgnesMedia(token: string) {
+export function getPublicMediaTransportStatus() {
+  const relay = mediaRelayUrl();
+  const publicBase = publicBaseUrl();
+  return {
+    mode: relay ? 'relay' : publicBase ? 'self-hosted' : 'unavailable',
+    relayConfigured: Boolean(relay),
+    publicBaseConfigured: Boolean(publicBase),
+  } as const;
+}
+
+export const getAgnesMediaTransportStatus = getPublicMediaTransportStatus;
+
+export async function preparePublicMediaUrl(value: string, kind: 'image' | 'video' | 'audio', ttlMs = AGNES_MEDIA_TTL_MS) {
+  const input = String(value || '').trim();
+  if (!input) return input;
+  let loaded: { data: Buffer; mime: string } | null = null;
+  if (/^https?:\/\//i.test(input) && !isLocalHttpUrl(input)) return input;
+  loaded = parseDataUrl(input);
+  if (!loaded) loaded = await loadLocalReference(input, kind);
+  if (!loaded) throw new PublicMediaError('当前服务商需要可公开访问的媒体地址；请提供有效的本地媒体或公网 URL。');
+  const mime = cleanMime(loaded.mime);
+  if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new PublicMediaError('当前服务商只接受与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  if (mediaRelayUrl() && kind === 'image') {
+    const uploaded = await uploadToPublicMediaRelay(loaded.data, mime, kind);
+    if (uploaded) return uploaded.url;
+  }
+  const base = publicBaseUrl();
+  if (!base) throw new PublicMediaError('图片暂时无法提交：应用的自动中转服务尚未连接。请稍后重试，或在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_REQUIRED);
+  assertUsablePublicBaseUrl(base);
+  const stored = await storeSignedMedia(loaded.data, mime, kind, { ttlMs, publicBase: base, pathPrefix: '/api/media' });
+  return stored.url;
+}
+
+// Kept as a compatibility alias for existing Agnes integrations and backups.
+export const prepareAgnesMediaUrl = preparePublicMediaUrl;
+
+export async function preparePublicMediaUrls(values: string[], kind: 'image' | 'video' | 'audio') {
+  return Promise.all(values.map((value) => preparePublicMediaUrl(value, kind)));
+}
+
+export const prepareAgnesMediaUrls = preparePublicMediaUrls;
+
+export async function readSignedMedia(token: string) {
+  await cleanupExpiredMedia();
   let decoded = '';
   try { decoded = decodeURIComponent(String(token || '')); } catch { return null; }
   const parts = decoded.split('.');
@@ -227,6 +352,8 @@ export async function readSignedAgnesMedia(token: string) {
   if (!file) return null;
   try { return { data: await readFile(file), mime: entry.mime, expiresAt: entry.expiresAt }; } catch { return null; }
 }
+
+export const readSignedAgnesMedia = readSignedMedia;
 
 export async function prepareAgnesChatMessages<T extends { content: unknown }>(messages: T[]) {
   return Promise.all(messages.map(async (message) => {

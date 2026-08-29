@@ -1,7 +1,10 @@
 import type { ProviderConnection, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
-const AGNES_API_BASE_URL = 'https://apihub.agnes-ai.com/v1';
+// The domestic Agnes docs use api.agnes-ai.cn.  The international gateway is
+// intentionally not substituted here because a Key is commonly tied to the
+// region where it was created.
+const AGNES_API_BASE_URL = 'https://api.agnes-ai.cn/v1';
 const AGNES_API_KEY_URL = 'https://platform.agnes-ai.cn/settings/apiKeys';
-const AGNES_VIDEO_BASE_URL = 'https://apihub.agnes-ai.com';
+const AGNES_VIDEO_BASE_URL = 'https://api.agnes-ai.cn';
 
 export type ProviderPreset = {
   value: ProviderPlatform;
@@ -95,11 +98,49 @@ export function getProviderPreset(platform: ProviderPlatform | string | undefine
 }
 
 export function normalizeProviderBaseUrl(value: string, preset: ProviderPreset) {
+  const candidate = String(value || '').trim();
+  // Agnes has separate domestic and international gateways.  Preserve an
+  // explicitly selected Agnes gateway so a .com credential is not silently
+  // tested against .cn (or vice versa).  New Agnes connections still use the
+  // domestic preset when no address has been supplied.
+  if (preset.value === 'agnes') {
+    if (!candidate) return preset.baseUrl;
+    try {
+      const parsed = new URL(candidate);
+      if (/^(?:api|apihub)\.agnes-ai\.(?:cn|com)$/i.test(parsed.hostname)) {
+        return candidate.replace(/\/+$/, '');
+      }
+    } catch {
+      // Fall back to the preset below for malformed Agnes addresses.
+    }
+    return preset.baseUrl;
+  }
   if (!preset.needsBaseUrl) return preset.baseUrl;
-  return String(value || '')
+  return candidate
     .trim()
     .replace(/\/(models|chat\/completions|images\/(generations|edits))\/?$/i, '')
     .replace(/\/+$/, '');
+}
+
+function agnesGatewayRegion(value: string) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    if (/\.agnes-ai\.cn$/i.test(hostname)) return 'cn';
+    if (/\.agnes-ai\.com$/i.test(hostname)) return 'com';
+  } catch {
+    // Treat malformed or non-Agnes values as unknown and use the preset.
+  }
+  return '';
+}
+
+function agnesOrigin(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (/^(?:api|apihub)\.agnes-ai\.(?:cn|com)$/i.test(parsed.hostname)) return parsed.origin;
+  } catch {
+    // Use the official domestic fallback below.
+  }
+  return '';
 }
 
 export function resolveProviderConfiguration(
@@ -136,10 +177,19 @@ export function resolveProviderConfiguration(
     if (typeof value === 'string') return value;
     return preserveExisting && typeof existing?.[key] === 'string' ? String(existing[key]) : fallback;
   };
+  const baseUrl = normalizeProviderBaseUrl(String(input.baseUrl || existing?.baseUrl || ''), preset);
+  const explicitVideoBaseUrl = String(input.videoBaseUrl || (preserveExisting ? existing?.videoBaseUrl : '') || '').replace(/\/+$/, '');
+  const agnesBaseRegion = preset.value === 'agnes' ? agnesGatewayRegion(baseUrl) : '';
+  const agnesVideoRegion = preset.value === 'agnes' ? agnesGatewayRegion(explicitVideoBaseUrl) : '';
+  const videoBaseUrl = preset.value === 'agnes'
+    ? (explicitVideoBaseUrl && (!agnesBaseRegion || !agnesVideoRegion || agnesBaseRegion === agnesVideoRegion)
+      ? explicitVideoBaseUrl
+      : agnesOrigin(baseUrl) || preset.videoBaseUrl || '')
+    : explicitVideoBaseUrl || preset.videoBaseUrl || '';
   return {
     platform: preset.value,
     type: preset.type,
-    baseUrl: normalizeProviderBaseUrl(String(input.baseUrl || existing?.baseUrl || ''), preset),
+    baseUrl,
     modelsPath: pick('modelsPath', standardCompatibility.modelsPath),
     chatPath: pick('chatPath', standardCompatibility.chatPath),
     imageGenerationPath: pick('imageGenerationPath', standardCompatibility.imageGenerationPath),
@@ -150,7 +200,7 @@ export function resolveProviderConfiguration(
     authHeader: pick('authHeader', standardCompatibility.authHeader),
     authPrefix: pick('authPrefix', standardCompatibility.authPrefix),
     videoTransport,
-    videoBaseUrl: String(input.videoBaseUrl || (preserveExisting ? existing?.videoBaseUrl : '') || preset.videoBaseUrl || '').replace(/\/+$/, ''),
+    videoBaseUrl,
     videoModelsPath: pick('videoModelsPath', preset.videoModelsPath || standardCompatibility.videoModelsPath),
     videoPricingPath: pick('videoPricingPath', preset.videoPricingPath || standardCompatibility.videoPricingPath),
     videoTaskPath: pick('videoTaskPath', preset.videoTaskPath || standardCompatibility.videoTaskPath),

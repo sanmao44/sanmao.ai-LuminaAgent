@@ -450,7 +450,7 @@ try {
 
   $startingMessage = if ($passwordResetRequested) { $ui.StartingPasswordDone } else { $ui.StartingService }
   Show-SanmaoLanStartingForm $startingMessage
-  $startArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScript, '-Lan', '-NonInteractive')
+  $startArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScript, '-Lan', '-FreeRelay', '-NonInteractive')
   if ($passwordResetRequested) { $startArguments += '-ForceRestart' }
   Write-SanmaoLanLauncherLog $ui.LogStarting
   Use-SanmaoWindowsPowerShellModules

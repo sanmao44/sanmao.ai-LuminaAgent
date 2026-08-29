@@ -1,5 +1,5 @@
 import { finishGenerationLog, startGenerationLog } from './generation-log';
-import { getPublicState, getProviderWithKey, getRuntimeVideoModel } from './store';
+import { getPublicState, getProviderWithKey, getRuntimeVideoModel, markProviderCredentialFailure } from './store';
 import { persistGeneratedVideos } from './video-storage';
 import { createVideoTask, findVideoTask, updateVideoTask, type VideoTask } from './video-task-store';
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
@@ -89,6 +89,9 @@ function validateAgnesInput(input: VideoGenerationInput, rawInput: VideoGenerati
     if (input.referenceVideos?.length || input.referenceVideo || input.audios?.length || input.audio) throw new Error('Agnes Video V2.0 不接受参考视频或音频输入。');
     const frames = Number(input.numFrames ?? 81);
     const rate = Number(input.frameRate ?? 24);
+    const width = Number(input.width ?? 1152);
+    const height = Number(input.height ?? 768);
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > 3840 || height > 3840 || width % 64 !== 0 || height % 64 !== 0) throw new Error('Agnes Video V2.0 的宽度和高度必须是 64 的倍数，范围为 64–3840。');
     if (!Number.isInteger(frames) || frames > 441 || frames < 1 || (frames - 1) % 8 !== 0) throw new Error('Agnes Video V2.0 的帧数必须不超过 441 且满足 8n + 1。');
     if (!Number.isInteger(rate) || rate < 1 || rate > 60) throw new Error('Agnes Video V2.0 的帧率必须在 1–60 之间。');
     return;
@@ -250,6 +253,8 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
     const updated = await updateVideoTask(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + (isAgnesProvider(runtime.provider) ? 1500 : 2000), costUsd: result.costUsd });
     return updated;
   } catch (error) {
+    const upstreamStatus = Number((error as VideoProviderError & { status?: number }).status || 0);
+    if (isAgnesProvider(runtime.provider) && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtime.provider.id).catch(() => undefined);
     return failTask(task, error, error instanceof VideoProviderError ? error.code : typeof (error as any)?.code === 'string' ? (error as any).code : undefined);
   }
 }
@@ -282,6 +287,8 @@ export async function refreshVideoTask(id: string) {
       const backoff = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
       return updateVideoTask(id, { pollCount, nextPollAt: Date.now() + backoff, providerStatus: providerError.status ? `HTTP ${providerError.status}` : 'network_error' });
     }
+    const upstreamStatus = Number((error as VideoProviderError & { status?: number }).status || 0);
+    if (isAgnesProvider(provider) && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(provider.id).catch(() => undefined);
     return failTask(task, error, error instanceof VideoProviderError ? error.code : typeof (error as any)?.code === 'string' ? (error as any).code : undefined);
   }
 }

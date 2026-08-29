@@ -1,5 +1,5 @@
 import { editImage, generateImage } from '@/lib/providers';
-import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability } from '@/lib/store';
+import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, normalizeAngleState } from '@/lib/angle-control';
@@ -71,6 +71,7 @@ export async function POST(request: Request) {
   let modeForLog: 'generate' | 'edit' = 'generate';
   let sourceForLog: GenerationSource = 'workspace';
   let logId: string | undefined;
+  let runtimeProviderId = '';
   const startedAt = Date.now();
   const requestController = new AbortController();
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
@@ -106,6 +107,7 @@ export async function POST(request: Request) {
       ? await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit') || await getRuntimeImageModelForCapability('auto', 'edit')
       : await getRuntimeImageGenerationModel(String(body.model || 'auto'));
     if (!runtime) return Response.json({ error: hasEditInput ? '没有可用的改图模型，请启用带 edit 能力的图片模型' : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
+    runtimeProviderId = runtime.provider.id;
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
     if (camera && body.angleGuide === true && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始人物参考和 3D 构图导引。' }, { status: 400 });
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
@@ -144,6 +146,8 @@ export async function POST(request: Request) {
     const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId });
     return Response.json({ ok: true, images: stored.images, mode: references.length ? 'reference' : 'generate', model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {
+    const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
+    if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
     const failure = { status: 'error' as const, mode: modeForLog, source: sourceForLog, prompt: promptForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };
     if (logId) await finishGenerationLog(logId, failure).catch(() => undefined); else await appendGenerationLog(failure).catch(() => undefined);

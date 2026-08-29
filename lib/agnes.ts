@@ -1,8 +1,12 @@
 import type { DiscoveredModel } from './providers';
 import type { ModelBilling, ModelCapability, ModelKind } from './types';
 
-export const AGNES_API_BASE_URL = 'https://apihub.agnes-ai.com/v1';
-export const AGNES_VIDEO_BASE_URL = 'https://apihub.agnes-ai.com';
+// Agnes uses different API gateways per region.  The domestic documentation
+// currently publishes api.agnes-ai.cn, while the international documentation
+// publishes apihub.agnes-ai.com.  Keep the domestic gateway as the default for
+// this Chinese UI; existing .com configurations remain supported.
+export const AGNES_API_BASE_URL = 'https://api.agnes-ai.cn/v1';
+export const AGNES_VIDEO_BASE_URL = 'https://api.agnes-ai.cn';
 export const AGNES_API_KEY_URL = 'https://platform.agnes-ai.cn/settings/apiKeys';
 
 export type AgnesModelDefinition = {
