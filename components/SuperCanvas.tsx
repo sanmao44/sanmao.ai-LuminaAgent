@@ -56,6 +56,15 @@ import {
   type CanvasDistribution,
 } from "@/lib/canvas/model";
 import {
+  CANVAS_NODE_INTERACTION_OFFSET,
+  CANVAS_Z_INDEX,
+  normalizeCanvasDocumentLayers,
+  reorderCanvasNodes,
+  sortCanvasNodesByLayer,
+  type CanvasNodeLayerAction,
+} from "@/lib/canvas/layers";
+import { createPortal } from "react-dom";
+import {
   getCanvasVideoTask,
   generateCanvasAgent,
   generateCanvasImage,
@@ -230,6 +239,7 @@ type CanvasContextMenuState = {
   nodeId?: string;
 };
 type MentionState = { start: number; end: number; query: string } | null;
+type CanvasPanel = "assets" | "activity" | "settings" | "shortcuts";
 
 const CANVAS_ASSET_UNCATEGORIZED_ID = "uncategorized";
 const CANVAS_ASSET_SMART_COLLECTION_IDS = new Set([
@@ -1162,6 +1172,59 @@ export default function SuperCanvas() {
   );
   const [fileDropActive, setFileDropActive] = useState(false);
 
+  const closeCanvasOverlayConflicts = useCallback(() => {
+    setContextMenu(null);
+    setProjectMenuOpen(false);
+    setReusePreview(null);
+    setAgentResult(null);
+    setLightbox(null);
+    setTextLightboxNodeId(null);
+    setMaskNodeId(null);
+    setAssetCollectionPickerNodeId(null);
+    setActivePanel(null);
+    setEditingNodeId(null);
+    setExpandedEditorId(null);
+    setConnectionNodePicker(null);
+    setConnectionTargetId(null);
+    setConnection(null);
+    setMentionState(null);
+  }, []);
+  const openCanvasMediaViewer = useCallback(
+    (nodeId: string, compare = false) => {
+      closeCanvasOverlayConflicts();
+      setLightbox({ nodeId, compare });
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasTextViewer = useCallback(
+    (nodeId: string) => {
+      closeCanvasOverlayConflicts();
+      setTextLightboxNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasMaskEditor = useCallback(
+    (nodeId: string) => {
+      closeCanvasOverlayConflicts();
+      setMaskNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasAssetPicker = useCallback(
+    (nodeId: string) => {
+      closeCanvasOverlayConflicts();
+      setAssetCollectionPickerNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasPanel = useCallback(
+    (panel: CanvasPanel) => {
+      closeCanvasOverlayConflicts();
+      setActivePanel(panel);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+
   useEffect(() => {
     setTheme(
       window.document.documentElement.dataset.theme === "dark"
@@ -1250,7 +1313,7 @@ export default function SuperCanvas() {
     );
   }, [document.nodes]);
   const visibleCanvasNodes = useMemo(
-    () => document.nodes.filter((node) => !collapsedGeneratorOutputIds.has(node.id)),
+    () => sortCanvasNodesByLayer(document.nodes).filter((node) => !collapsedGeneratorOutputIds.has(node.id)),
     [collapsedGeneratorOutputIds, document.nodes],
   );
   const visibleCanvasNodeIds = useMemo(
@@ -1304,8 +1367,14 @@ export default function SuperCanvas() {
   );
 
   const setDoc = useCallback((next: CanvasDocument) => {
-    docRef.current = next;
-    setDocument(next);
+    const normalized = normalizeCanvasDocumentLayers(docRef.current, next);
+    docRef.current = normalized;
+    setDocument(normalized);
+  }, []);
+  const replaceDoc = useCallback((next: CanvasDocument) => {
+    const normalized = normalizeDocument(next);
+    docRef.current = normalized;
+    setDocument(normalized);
   }, []);
   const focusCanvasStage = useCallback(() => {
     stageRef.current?.focus({ preventScroll: true });
@@ -2490,8 +2559,8 @@ export default function SuperCanvas() {
             setExpandedEditorId(null);
             if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
             if (isCanvasReferenceableNode(node))
-              setLightbox({ nodeId: node.id, compare: false });
-            else if (node.type === "prompt") setTextLightboxNodeId(node.id);
+              openCanvasMediaViewer(node.id);
+            else if (node.type === "prompt") openCanvasTextViewer(node.id);
           } else if (!interaction.shiftKey) {
             // A click is confirmed on pointer-up. Dragging has already been
             // promoted to `drag` in moveInteraction, so it cannot open the
@@ -2860,6 +2929,31 @@ export default function SuperCanvas() {
     fitView(result.arrangedIds);
   }, [addLog, fitView, notify, selectedIds, setDoc]);
 
+  const reorderSelection = useCallback(
+    (action: CanvasNodeLayerAction, nodeIds?: string[]) => {
+      const ids = nodeIds?.length
+        ? nodeIds
+        : selectedIds.size
+          ? [...selectedIds]
+          : [];
+      if (!ids.length) return;
+      const next = reorderCanvasNodes(docRef.current, ids, action);
+      if (next === docRef.current) return;
+      commit(() => next);
+      setSelectedIds(new Set(ids));
+      const labels: Record<CanvasNodeLayerAction, string> = {
+        "bring-to-front": "置于顶层",
+        "bring-to-back": "置于底层",
+        raise: "上移一层",
+        lower: "下移一层",
+      };
+      const message = `已将 ${ids.length} 个节点${labels[action]}`;
+      addLog(message);
+      notify(message);
+    },
+    [addLog, commit, notify, selectedIds],
+  );
+
   const alignSelection = useCallback(
     (alignment: CanvasAlignment) => {
       if (selectedGroupId || selectedNodes.length < 2) return;
@@ -3119,7 +3213,7 @@ export default function SuperCanvas() {
       }
       saveCanvasDocument(activeProjectId, docRef.current);
       const next = loadCanvasDocument(id);
-      setDoc(next);
+      replaceDoc(next);
       setActiveProjectId(id);
       clearSelection();
       setUndoStack([]);
@@ -3129,7 +3223,7 @@ export default function SuperCanvas() {
         `已打开项目：${projects.find((project) => project.id === id)?.name || "未命名画布"}`,
       );
     },
-    [activeProjectId, addLog, clearSelection, projects, setDoc],
+    [activeProjectId, addLog, clearSelection, projects, replaceDoc],
   );
   const newProject = useCallback(() => {
     const project: CanvasProject = {
@@ -3178,7 +3272,7 @@ export default function SuperCanvas() {
       setProjects(next);
       if (id === activeProjectId) {
         const replacement = next[0];
-        setDoc(loadCanvasDocument(replacement.id));
+        replaceDoc(loadCanvasDocument(replacement.id));
         setActiveProjectId(replacement.id);
         clearSelection();
         setUndoStack([]);
@@ -3187,7 +3281,7 @@ export default function SuperCanvas() {
       }
       notify("画布项目已删除");
     },
-    [activeProjectId, clearSelection, notify, projects, setDoc],
+    [activeProjectId, clearSelection, notify, projects, replaceDoc],
   );
 
   const exportWorkflow = useCallback(() => {
@@ -3456,8 +3550,9 @@ export default function SuperCanvas() {
   }, [handleFiles, notify, pasteCanvasPayload]);
 
   const toggleAssetLibrary = useCallback(() => {
-    setActivePanel((value) => value === "assets" ? null : "assets");
-  }, []);
+    if (activePanel === "assets") setActivePanel(null);
+    else openCanvasPanel("assets");
+  }, [activePanel, openCanvasPanel]);
 
   const setMediaNaturalSize = useCallback(
     (nodeId: string, width: number, height: number) => {
@@ -6612,6 +6707,71 @@ export default function SuperCanvas() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (window.document.querySelector(".canvas-asset-preview-backdrop")) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest(
+          ".canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu-popover,.model-picker-panel,.model-picker-dialog-backdrop,.canvas-modal-backdrop,.canvas-asset-preview-backdrop,.canvas-asset-collection-picker-backdrop,.mask-editor-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
+        )) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (mentionState) {
+          setMentionState(null);
+          return;
+        }
+        if (connectionNodePicker || connectionTargetId || connectionCancelEdgeId) {
+          setConnectionNodePicker(null);
+          setConnectionTargetId(null);
+          hideConnectionCancel();
+          return;
+        }
+        if (expandedEditorId) {
+          setExpandedEditorId(null);
+          setReuseDraft(null);
+          return;
+        }
+        if (contextMenu || projectMenuOpen) {
+          setContextMenu(null);
+          setProjectMenuOpen(false);
+          return;
+        }
+        if (reusePreview) {
+          setReusePreview(null);
+          return;
+        }
+        if (agentResult) {
+          setAgentResult(null);
+          return;
+        }
+        if (lightbox) {
+          setLightbox(null);
+          return;
+        }
+        if (textLightboxNodeId) {
+          setTextLightboxNodeId(null);
+          return;
+        }
+        if (maskNodeId) {
+          setMaskNodeId(null);
+          return;
+        }
+        if (assetCollectionPickerNodeId) {
+          setAssetCollectionPickerNodeId(null);
+          return;
+        }
+        if (activePanel) {
+          setActivePanel(null);
+          return;
+        }
+        if (editingNodeId) {
+          setEditingNodeId(null);
+          return;
+        }
+        interactionRef.current = null;
+        setConnection(null);
+        clearSelection();
+        return;
+      }
       if (isEditableTarget(event.target)) return;
       const modifier = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
@@ -6622,22 +6782,7 @@ export default function SuperCanvas() {
         (stageRect?.left || 0) + (stageRect?.width || stageSize.width) / 2;
       const centerY =
         (stageRect?.top || 0) + (stageRect?.height || stageSize.height) / 2;
-      if (event.key === "Escape") {
-        const hadOverlay = Boolean(contextMenu || lightbox || textLightboxNodeId || activePanel || reusePreview || assetCollectionPickerNodeId);
-        setContextMenu(null);
-        setLightbox(null);
-        setReusePreview(null);
-        setAssetCollectionPickerNodeId(null);
-        setActivePanel(null);
-        interactionRef.current = null;
-        setConnection(null);
-        setConnectionNodePicker(null);
-        setConnectionTargetId(null);
-        hideConnectionCancel();
-        connectionHoverEdgeRef.current = null;
-        if (hadOverlay) return;
-        clearSelection();
-      } else if (!event.repeat && modifier && isKeyZ) {
+      if (!event.repeat && modifier && isKeyZ) {
         event.preventDefault();
         event.stopPropagation();
         event.shiftKey ? redo() : undo();
@@ -6688,16 +6833,24 @@ export default function SuperCanvas() {
     contextMenu,
     copySelection,
     deleteSelection,
+    editingNodeId,
+    expandedEditorId,
     duplicateSelection,
     fitView,
     hideConnectionCancel,
     makeGroup,
+    mentionState,
     pasteFromClipboard,
     redo,
     runGeneration,
     activePanel,
+    agentResult,
     assetCollectionPickerNodeId,
+    connectionCancelEdgeId,
+    connectionNodePicker,
+    connectionTargetId,
     lightbox,
+    maskNodeId,
     reusePreview,
     selectedEdgeId,
     stageSize.height,
@@ -6973,8 +7126,8 @@ export default function SuperCanvas() {
       notify("当前节点没有可加入资产库的媒体。", "error");
       return;
     }
-    setAssetCollectionPickerNodeId(node.id);
-  }, [notify, viewerAsset]);
+    openCanvasAssetPicker(node.id);
+  }, [notify, openCanvasAssetPicker, viewerAsset]);
   const downloadCanvasNode = useCallback((node: CanvasNode) => {
     if ((node.type !== "media" && node.type !== "upscale") || !node.data.url) {
       notify("当前节点还没有可下载的媒体。", "error");
@@ -7044,10 +7197,10 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setActivePanel(null);
       if (openMedia && node.type === "media" && node.data.url)
-        setLightbox({ nodeId: node.id, compare: false });
+        openCanvasMediaViewer(node.id);
       else fitView([node.id]);
     },
-    [fitView, notify],
+    [fitView, notify, openCanvasMediaViewer],
   );
   const retryGenerationLog = useCallback(
     (log: CanvasGenerationLog) => {
@@ -7302,7 +7455,7 @@ export default function SuperCanvas() {
           icon: "⤢",
           label: "预览",
           disabled: !hasMedia,
-          onClick: () => setLightbox({ nodeId: node.id, compare: false }),
+          onClick: () => openCanvasMediaViewer(node.id),
         },
         {
           id: "mask",
@@ -7312,7 +7465,7 @@ export default function SuperCanvas() {
             ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
             : "为当前图片绘制蒙版",
           disabled: !hasMedia,
-          onClick: () => setMaskNodeId(node.id),
+          onClick: () => openCanvasMaskEditor(node.id),
         },
         {
           id: "upscale",
@@ -7367,7 +7520,7 @@ export default function SuperCanvas() {
           icon: "⤢",
           label: "预览",
           disabled: !hasMedia,
-          onClick: () => setLightbox({ nodeId: node.id, compare: false }),
+          onClick: () => openCanvasMediaViewer(node.id),
         },
         {
           id: "continue",
@@ -7409,7 +7562,7 @@ export default function SuperCanvas() {
     if (node.type === "prompt") {
       const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
       return [
-        { id: "preview", icon: "⤢", label: "放大查看", onClick: () => setTextLightboxNodeId(node.id) },
+        { id: "preview", icon: "⤢", label: "放大查看", onClick: () => openCanvasTextViewer(node.id) },
         {
           id: "image",
           icon: "✦",
@@ -7427,7 +7580,7 @@ export default function SuperCanvas() {
           icon: "⤢",
           label: "预览",
           disabled: !hasResult,
-          onClick: () => setLightbox({ nodeId: node.id, compare: false }),
+          onClick: () => openCanvasMediaViewer(node.id),
         },
         {
           id: "download",
@@ -7453,6 +7606,9 @@ export default function SuperCanvas() {
   }, [
     addCurrentNodeToReuse,
     openAssetCollectionPicker,
+    openCanvasMaskEditor,
+    openCanvasMediaViewer,
+    openCanvasTextViewer,
     continueFromMedia,
     deleteSelection,
     downloadCanvasNode,
@@ -7508,6 +7664,36 @@ export default function SuperCanvas() {
         onClick: close(duplicateSelection),
       },
     ];
+    const layerTargetIds = selectedIds.has(node.id) ? [...selectedIds] : [node.id];
+    const layerActions: CanvasQuickAction[] = [
+      {
+        id: "bring-to-front",
+        icon: "⇈",
+        label: "置于顶层",
+        title: "将选中节点作为连续区块移到最上层",
+        onClick: close(() => reorderSelection("bring-to-front", layerTargetIds)),
+      },
+      {
+        id: "bring-to-back",
+        icon: "⇊",
+        label: "置于底层",
+        title: "将选中节点作为连续区块移到最底层",
+        onClick: close(() => reorderSelection("bring-to-back", layerTargetIds)),
+      },
+      {
+        id: "raise",
+        icon: "↑",
+        label: "上移一层",
+        onClick: close(() => reorderSelection("raise", layerTargetIds)),
+      },
+      {
+        id: "lower",
+        icon: "↓",
+        label: "下移一层",
+        onClick: close(() => reorderSelection("lower", layerTargetIds)),
+      },
+    ];
+    const layerGroup: CanvasContextMenuGroup = { label: "层级", actions: layerActions };
     const cleanupActions: CanvasQuickAction[] = [
       {
         id: "delete",
@@ -7524,7 +7710,7 @@ export default function SuperCanvas() {
           icon: "⤢",
           label: "预览",
           disabled: !hasMedia,
-          onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+          onClick: close(() => openCanvasMediaViewer(node.id)),
         },
         editAction,
         {
@@ -7535,7 +7721,7 @@ export default function SuperCanvas() {
             ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
             : "为当前图片绘制蒙版",
           disabled: !hasMedia,
-          onClick: close(() => setMaskNodeId(node.id)),
+          onClick: close(() => openCanvasMaskEditor(node.id)),
         },
         {
           id: "upscale",
@@ -7577,6 +7763,7 @@ export default function SuperCanvas() {
       return [
         { label: "快速操作", actions: mediaActions },
         { label: "复制与整理", actions: canvasActions },
+        layerGroup,
         { label: "删除", actions: cleanupActions },
       ];
     }
@@ -7587,7 +7774,7 @@ export default function SuperCanvas() {
           icon: "⤢",
           label: "预览",
           disabled: !hasMedia,
-          onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+          onClick: close(() => openCanvasMediaViewer(node.id)),
         },
         editAction,
         {
@@ -7622,6 +7809,7 @@ export default function SuperCanvas() {
       return [
         { label: "快速操作", actions: mediaActions },
         { label: "复制与整理", actions: canvasActions },
+        layerGroup,
         { label: "删除", actions: cleanupActions },
       ];
     }
@@ -7634,7 +7822,7 @@ export default function SuperCanvas() {
           icon: "⤢",
           label: "放大查看",
           disabled: !hasResponse,
-          onClick: close(() => setTextLightboxNodeId(node.id)),
+          onClick: close(() => openCanvasTextViewer(node.id)),
         },
         {
           id: "image",
@@ -7647,6 +7835,7 @@ export default function SuperCanvas() {
       return [
         { label: "快速操作", actions: promptActions },
         { label: "复制与整理", actions: canvasActions },
+        layerGroup,
         { label: "删除", actions: cleanupActions },
       ];
     }
@@ -7667,6 +7856,7 @@ export default function SuperCanvas() {
           ],
         },
         { label: "复制与整理", actions: canvasActions },
+        layerGroup,
         { label: "删除", actions: cleanupActions },
       ];
     }
@@ -7682,7 +7872,7 @@ export default function SuperCanvas() {
               icon: "⤢",
               label: "预览",
               disabled: !hasResult,
-              onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+              onClick: close(() => openCanvasMediaViewer(node.id)),
             },
             {
               id: "download",
@@ -7695,17 +7885,22 @@ export default function SuperCanvas() {
           ],
         },
         { label: "复制与整理", actions: canvasActions },
+        layerGroup,
         { label: "删除", actions: cleanupActions },
       ];
     }
     return [
       { label: "快速操作", actions: [editAction] },
       { label: "复制与整理", actions: canvasActions },
+      layerGroup,
       { label: "删除", actions: cleanupActions },
     ];
   }, [
     addCurrentNodeToReuse,
     openAssetCollectionPicker,
+    openCanvasMaskEditor,
+    openCanvasMediaViewer,
+    openCanvasTextViewer,
     contextNode,
     contextMenu?.world,
     continueFromMedia,
@@ -7719,9 +7914,10 @@ export default function SuperCanvas() {
     pasteFromClipboard,
     retryFailedVariants,
     selectedIds.size,
-    setMaskNodeId,
     toggleEditor,
     useAgentResponseAsImagePrompt,
+    reorderSelection,
+    selectedIds,
   ]);
 
   if (!ready)
@@ -7807,7 +8003,7 @@ export default function SuperCanvas() {
             type="button"
             className="canvas-soft-button canvas-shortcuts-button"
             onClick={() => {
-              setActivePanel("shortcuts");
+              openCanvasPanel("shortcuts");
             }}
           >
             ⌨ 快捷键
@@ -7816,7 +8012,7 @@ export default function SuperCanvas() {
             type="button"
             className="canvas-soft-button canvas-settings-button"
             onClick={() => {
-              setActivePanel("settings");
+              openCanvasPanel("settings");
             }}
           >
             ⚙ 设置
@@ -7834,7 +8030,7 @@ export default function SuperCanvas() {
           <button
             type="button"
             className={`canvas-soft-button canvas-panel-button canvas-activity-button ${activePanel === "activity" ? "active" : ""}`}
-            onClick={() => setActivePanel((value) => value === "activity" ? null : "activity")}
+            onClick={() => activePanel === "activity" ? setActivePanel(null) : openCanvasPanel("activity")}
           >
             ≡ 日志
           </button>
@@ -7874,68 +8070,58 @@ export default function SuperCanvas() {
           <span className="canvas-topbar-toggle-icon" aria-hidden="true">{topbarCollapsed ? "⌄" : "⌃"}</span>
           <span>{topbarCollapsed ? "展开工具栏" : "收起"}</span>
         </button>
-        <div className="canvas-project-popover-wrap">
-          {projectMenuOpen && (
-            <div
-              className="canvas-project-popover"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="canvas-popover-title">我的画布项目</div>
-              {projects.map((project) => (
-                <div
-                  className={`canvas-project-row ${project.id === activeProjectId ? "active" : ""}`}
-                  key={project.id}
-                >
-                  <button type="button" onClick={() => openProject(project.id)}>
-                    <span className="canvas-project-dot">✦</span>
-                    <span>
-                      <b>{project.name}</b>
-                      <small>
-                        {new Date(project.updatedAt).toLocaleDateString(
-                          "zh-CN",
-                        )}
-                      </small>
-                    </span>
-                  </button>
-                  {project.id === activeProjectId && <i>✓</i>}
-                </div>
-              ))}
-              <div className="canvas-popover-actions">
-                <button type="button" onClick={newProject}>
-                  ＋ 新建画布
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProjectRenameValue(currentProject?.name || "");
-                    setProjectRename(true);
-                  }}
-                >
-                  重命名
-                </button>
-              </div>
-              {projectRename && (
-                <div className="canvas-rename-row">
-                  <input
-                    value={projectRenameValue}
-                    onChange={(event) =>
-                      setProjectRenameValue(event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") saveProjectName();
-                      if (event.key === "Escape") setProjectRename(false);
-                    }}
-                    autoFocus
-                  />
-                  <button type="button" onClick={saveProjectName}>
-                    保存
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </header>
+      {projectMenuOpen && (
+        <div className="canvas-project-popover-wrap">
+          <div
+            className="canvas-project-popover"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="canvas-popover-title">我的画布项目</div>
+            {projects.map((project) => (
+              <div
+                className={`canvas-project-row ${project.id === activeProjectId ? "active" : ""}`}
+                key={project.id}
+              >
+                <button type="button" onClick={() => openProject(project.id)}>
+                  <span className="canvas-project-dot">✦</span>
+                  <span>
+                    <b>{project.name}</b>
+                    <small>{new Date(project.updatedAt).toLocaleDateString("zh-CN")}</small>
+                  </span>
+                </button>
+                {project.id === activeProjectId && <i>✓</i>}
+              </div>
+            ))}
+            <div className="canvas-popover-actions">
+              <button type="button" onClick={newProject}>＋ 新建画布</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectRenameValue(currentProject?.name || "");
+                  setProjectRename(true);
+                }}
+              >
+                重命名
+              </button>
+            </div>
+            {projectRename && (
+              <div className="canvas-rename-row">
+                <input
+                  value={projectRenameValue}
+                  onChange={(event) => setProjectRenameValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") saveProjectName();
+                    if (event.key === "Escape") setProjectRename(false);
+                  }}
+                  autoFocus
+                />
+                <button type="button" onClick={saveProjectName}>保存</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div
         ref={stageRef}
         className={`canvas-stage ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""}`}
@@ -7968,7 +8154,7 @@ export default function SuperCanvas() {
           const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
           if (node && isCanvasReferenceableNode(node)) {
             cancelPendingNodeClick();
-            setLightbox({ nodeId: node.id, compare: false });
+            openCanvasMediaViewer(node.id);
           } else if (node?.type === "prompt") {
             cancelPendingNodeClick();
             setEditingNodeId(node.id);
@@ -8230,11 +8416,11 @@ export default function SuperCanvas() {
                    onSelect={(event) => selectNode(node, event.shiftKey)}
                    onRemoveFromGroup={() => removeNodeFromGroup(node.id)}
                   onPreview={() =>
-                    setLightbox({ nodeId: node.id, compare: false })
+                    openCanvasMediaViewer(node.id)
                   }
-                  onOutputPreview={(output) => setLightbox({ nodeId: output.id, compare: false })}
-                  onMaskEdit={() => setMaskNodeId(node.id)}
-                  onTextPreview={() => setTextLightboxNodeId(node.id)}
+                  onOutputPreview={(output) => openCanvasMediaViewer(output.id)}
+                  onMaskEdit={() => openCanvasMaskEditor(node.id)}
+                  onTextPreview={() => openCanvasTextViewer(node.id)}
                   onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
                   onRetryVariant={(variantIndex) =>
                     retryVariant(node.id, variantIndex)
@@ -8336,7 +8522,7 @@ export default function SuperCanvas() {
               onReferenceDrop={addNodeReference}
               onAddReferenceFiles={addEditorReferenceFiles}
               maskState={maskStateForNode(editorNode)}
-              onMaskEdit={() => setMaskNodeId(editorNode.id)}
+              onMaskEdit={() => openCanvasMaskEditor(editorNode.id)}
               onMaskRemove={() => removeCanvasMask(editorNode)}
               branchDraft={reuseDraft?.sourceNodeId === editorNode.id ? reuseDraft : null}
               onDraftReferenceFiles={addReuseFiles}
@@ -8349,7 +8535,7 @@ export default function SuperCanvas() {
               mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
               onOutputPreview={(output) => {
                 cancelPendingNodeClick();
-                setLightbox({ nodeId: output.id, compare: false });
+                openCanvasMediaViewer(output.id);
               }}
               upscaleParams={editorNode.type === "upscale" ? editorNode.data.params as CanvasUpscaleParams : undefined}
               upscaleSourceUrl={editorNode.type === "upscale" ? canvasUpscaleSource(document, editorNode.id)?.data.url : undefined}
@@ -8829,6 +9015,8 @@ export default function SuperCanvas() {
                   runtime={runtime}
                   unavailableModelId={deckModelState.unavailableModelId}
                   referenceCount={composerReferences.length}
+                  portalZIndex={CANVAS_Z_INDEX.portalPopover}
+                  dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
                   onChange={(settings) => {
                     if (reuseDraft) setReuseDraft((current) => current ? { ...current, params: clone(settings), dirty: true } : current);
                     else updateParams(settings);
@@ -9080,7 +9268,7 @@ export default function SuperCanvas() {
           onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
           onEdit={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
-          onMask={viewerIsMedia && viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
+          onMask={viewerIsMedia && viewerNode.data.kind === "image" ? () => openCanvasMaskEditor(viewerNode.id) : undefined}
           onUpscale={viewerIsMedia && viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
           onContinue={viewerIsMedia ? () => continueFromMedia(viewerNode) : undefined}
           onReuse={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
@@ -9361,7 +9549,7 @@ function CanvasAssetCollectionPicker({
     }
   };
 
-  return (
+  const menu = (
     <div
       className="canvas-modal-backdrop canvas-asset-collection-picker-backdrop"
       role="presentation"
@@ -9393,6 +9581,7 @@ function CanvasAssetCollectionPicker({
               value={collectionId}
               onChange={setCollectionId}
               ariaLabel="加入目标资产库分类"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
               options={assignableCollections.map((item) => ({
                 value: item.id,
                 label: item.name,
@@ -9430,6 +9619,7 @@ function CanvasAssetCollectionPicker({
       </div>
     </div>
   );
+  return typeof document === "undefined" ? menu : createPortal(menu, document.body);
 }
 
 function CanvasAssetDrawer({
@@ -9474,6 +9664,18 @@ function CanvasAssetDrawer({
   const [tagFilter, setTagFilter] = useState("");
   const [nodeDropActive, setNodeDropActive] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!preview) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPreview(null);
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [preview]);
 
   useEffect(() => {
     let active = true;
@@ -9786,6 +9988,7 @@ function CanvasAssetDrawer({
             <div className="canvas-asset-collection-picker">
               <SelectMenu
                 value={collection}
+                portalZIndex={CANVAS_Z_INDEX.assetDrawer}
                 onChange={changeCollection}
                 onDelete={(id) => void deleteCollection(id)}
                 ariaLabel="资产集合"
@@ -9799,6 +10002,7 @@ function CanvasAssetDrawer({
             </div>
             <SelectMenu
               value={source}
+              portalZIndex={CANVAS_Z_INDEX.assetDrawer}
               onChange={setSource}
               ariaLabel="资产来源"
               options={[
@@ -9810,6 +10014,7 @@ function CanvasAssetDrawer({
             />
             <SelectMenu
               value={sort}
+              portalZIndex={CANVAS_Z_INDEX.assetDrawer}
               onChange={setSort}
               ariaLabel="资产排序"
               options={[
@@ -9952,9 +10157,15 @@ function CanvasAssetDrawer({
           )}
         </div>
       </aside>
-      {preview && (
+      {preview && typeof document !== "undefined" && createPortal(
         <div
           className="canvas-asset-preview-backdrop"
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setPreview(null);
+          }}
           onClick={(event) => {
             if (event.target === event.currentTarget) setPreview(null);
           }}
@@ -9995,7 +10206,8 @@ function CanvasAssetDrawer({
               </a>
             </footer>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
@@ -10275,11 +10487,13 @@ function CanvasUpscaleSettingsPanel({
   params,
   runtime,
   sourceUrl,
+  portalZIndex = CANVAS_Z_INDEX.modalPopover,
   onChange,
 }: {
   params: CanvasUpscaleParams;
   runtime: CanvasRuntimeState | null;
   sourceUrl?: string;
+  portalZIndex?: number;
   onChange: (params: CanvasUpscaleParams) => void;
 }) {
   const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
@@ -10330,6 +10544,7 @@ function CanvasUpscaleSettingsPanel({
           <div className="canvas-upscale-field-label"><strong>模型</strong></div>
           <SelectMenu
             value={params.model}
+            portalZIndex={portalZIndex}
             onChange={(value) => onChange({ ...params, model: value })}
             ariaLabel="模型"
             className="canvas-upscale-select"
@@ -10349,6 +10564,7 @@ function CanvasUpscaleSettingsPanel({
           <div className="canvas-upscale-field-label"><strong>颜色校正</strong></div>
           <SelectMenu
             value={params.colorCorrection}
+            portalZIndex={portalZIndex}
             onChange={(value) => onChange({ ...params, colorCorrection: value })}
             ariaLabel="颜色校正"
             className="canvas-upscale-select"
@@ -10362,6 +10578,7 @@ function CanvasUpscaleSettingsPanel({
           <div className="canvas-upscale-field-label"><strong>缩放算法</strong></div>
           <SelectMenu
             value={params.algorithm}
+            portalZIndex={portalZIndex}
             onChange={(value) => onChange({ ...params, algorithm: value })}
             ariaLabel="缩放算法"
             className="canvas-upscale-select"
@@ -10618,7 +10835,7 @@ function CanvasContextMenuFrame({
     };
   }, [reposition]);
 
-  return (
+  const menu = (
     <div
       ref={menuRef}
       className={`canvas-context-menu${className ? ` ${className}` : ""}`}
@@ -10637,6 +10854,7 @@ function CanvasContextMenuFrame({
       {children}
     </div>
   );
+  return typeof document === "undefined" ? menu : createPortal(menu, document.body);
 }
 
 function CanvasNodeContextMenu({
@@ -11048,6 +11266,8 @@ function CanvasNodeEditorPopover({
                 runtime={runtime}
                 referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
                 variant="canvas-flat"
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover}
                 onChange={(settings) => onEditorParamsChange(node, settings)}
               />
             )}
@@ -11273,7 +11493,14 @@ function CanvasNodeCard({
       data-node-color={colorKey}
       data-node-kind={node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
       aria-busy={pending}
-      style={{ left: node.x, top: node.y, width: size.w, height: size.h }}
+      style={{
+        left: node.x,
+        top: node.y,
+        width: size.w,
+        height: size.h,
+        zIndex: (typeof node.zIndex === "number" && Number.isFinite(node.zIndex) ? Math.trunc(node.zIndex) : CANVAS_Z_INDEX.node) +
+          (selected || dragging ? CANVAS_NODE_INTERACTION_OFFSET : 0),
+      }}
       // Node movement and typed connections use the canvas pointer model.
       // Do not enable native HTML dragging on the whole card: it steals click
       // events from the editor controls and makes the card feel unresponsive.
@@ -11756,6 +11983,8 @@ function CanvasNodeCard({
                 settings={editorParams!}
                 runtime={runtime}
                 referenceCount={editorReferences.length}
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover}
                 onChange={(settings) => onEditorParamsChange(node, settings)}
               />
             </details>
@@ -12526,7 +12755,7 @@ function CanvasActivityDrawer({
 function CanvasSettingsPanel({ theme, connectionStyle, onTheme, onConnectionStyleChange, onClose }: { theme: CanvasTheme; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onClose: () => void }) {
   return <CanvasPanelShell title="画布设置" subtitle="只保留画布与应用配置" onClose={onClose} className="canvas-settings-panel">
     <section className="canvas-setting-section"><b>界面主题</b><button type="button" onClick={onTheme}>{theme === "light" ? "☾ 切换深色" : "☀ 切换浅色"}</button></section>
-    <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon value={item.value} /> }))} /></section>
+    <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon value={item.value} /> }))} /></section>
     <p className="canvas-setting-note">选中节点后，直接关联的入边和出边会显示细流光。</p>
   </CanvasPanelShell>;
 }

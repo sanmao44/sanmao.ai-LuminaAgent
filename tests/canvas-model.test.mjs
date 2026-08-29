@@ -13,8 +13,10 @@ async function loadTypeScript(path) {
   if (sourceUrl.pathname.endsWith('/lib/canvas/model.ts')) {
     const settingsUrl = new URL('../lib/creation/settings.ts', import.meta.url);
     const maskUrl = new URL('../lib/canvas/mask.ts', import.meta.url);
+    const layersUrl = new URL('../lib/canvas/layers.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
     const maskSource = await readFile(maskUrl, 'utf8');
+    const layersSource = await readFile(layersUrl, 'utf8');
     const settingsCompiled = ts.transpileModule(settingsSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: settingsUrl.pathname,
@@ -37,14 +39,21 @@ async function loadTypeScript(path) {
     }).outputText
       .replace(/\bobjectValue\b/g, 'maskObjectValue')
       .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber');
+    const layersCompiled = ts.transpileModule(layersSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: layersUrl.pathname,
+    }).outputText;
     const modelCompiled = compiled.replace(
       /^\s*import\s+\{\s*normalizeCreationSettings\s*\}\s+from\s+["']\.\.\/creation\/settings["'];?\s*$/m,
       '',
     ).replace(
       /^\s*import\s+\{\s*normalizeCanvasMaskState\s*\}\s+from\s+["']\.\/mask["'];?\s*$/m,
       '',
+    ).replace(
+      /^\s*import\s+\{\s*normalizeCanvasNodeLayers\s*\}\s+from\s+["']\.\/layers["'];?\s*$/m,
+      '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${maskCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
@@ -70,6 +79,93 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.deepEqual(result.groups[0].nodeIds, ['image-1', 'text-1']);
   assert.equal(result.edges.length, 1);
   assert.equal(result.camera.zoom, 3);
+});
+
+function layerNode(id, zIndex) {
+  return {
+    id,
+    type: 'media',
+    x: 0,
+    y: 0,
+    ...(zIndex === undefined ? {} : { zIndex }),
+    data: { kind: 'image', url: `/${id}.png`, name: id },
+  };
+}
+
+function layerDocument(nodes) {
+  return {
+    version: 'sanmao-canvas-3',
+    nodes,
+    edges: [],
+    groups: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+test('migrates missing node layers from the legacy array order', () => {
+  const result = model.normalizeDocument({
+    nodes: [layerNode('first'), layerNode('second'), layerNode('third')],
+  });
+
+  assert.equal(result.version, 'sanmao-canvas-3');
+  assert.deepEqual(result.nodes.map((node) => node.zIndex), [30, 31, 32]);
+  assert.deepEqual(
+    model.sortCanvasNodesByLayer(result.nodes).map((node) => node.id),
+    ['first', 'second', 'third'],
+  );
+});
+
+test('normalizes duplicate, invalid, and missing layer values stably', () => {
+  const result = model.normalizeDocument({
+    nodes: [
+      layerNode('missing'),
+      layerNode('duplicate-a', 100),
+      layerNode('duplicate-b', 100),
+      layerNode('invalid', 'not-a-layer'),
+    ],
+  });
+
+  assert.deepEqual(
+    model.sortCanvasNodesByLayer(result.nodes).map((node) => node.id),
+    ['missing', 'invalid', 'duplicate-a', 'duplicate-b'],
+  );
+  assert.deepEqual(
+    [...result.nodes].sort((left, right) => left.zIndex - right.zIndex).map((node) => node.zIndex),
+    [30, 31, 32, 33],
+  );
+});
+
+test('reorders single and multi-selection layers without changing the node array', () => {
+  const document = layerDocument(['a', 'b', 'c', 'd'].map((id) => layerNode(id)));
+  const originalIds = document.nodes.map((node) => node.id);
+
+  const raised = model.reorderCanvasNodes(document, ['b'], 'raise');
+  assert.deepEqual(model.sortCanvasNodesByLayer(raised.nodes).map((node) => node.id), ['a', 'c', 'b', 'd']);
+  assert.deepEqual(raised.nodes.map((node) => node.id), originalIds);
+
+  const blockToFront = model.reorderCanvasNodes(document, ['b', 'd'], 'bring-to-front');
+  assert.deepEqual(model.sortCanvasNodesByLayer(blockToFront.nodes).map((node) => node.id), ['a', 'c', 'b', 'd']);
+  const blockToBack = model.reorderCanvasNodes(blockToFront, ['b', 'd'], 'lower');
+  assert.deepEqual(model.sortCanvasNodesByLayer(blockToBack.nodes).map((node) => node.id), ['a', 'b', 'd', 'c']);
+
+  const front = model.reorderCanvasNodes(document, ['a', 'c'], 'bring-to-front');
+  assert.deepEqual(model.sortCanvasNodesByLayer(front.nodes).map((node) => node.id), ['b', 'd', 'a', 'c']);
+  const back = model.reorderCanvasNodes(front, ['a', 'c'], 'bring-to-back');
+  assert.deepEqual(model.sortCanvasNodesByLayer(back.nodes).map((node) => node.id), ['a', 'c', 'b', 'd']);
+});
+
+test('new, copied, and imported nodes are appended above existing layers', () => {
+  const previous = layerDocument(['old-a', 'old-b'].map((id) => layerNode(id)));
+  const imported = layerNode('imported', 0);
+  const copied = layerNode('copied', 0);
+  const next = model.normalizeCanvasDocumentLayers(previous, {
+    ...previous,
+    nodes: [...previous.nodes, imported, copied],
+  });
+
+  assert.deepEqual(model.sortCanvasNodesByLayer(next.nodes).map((node) => node.id), ['old-a', 'old-b', 'imported', 'copied']);
+  assert.ok(next.nodes.find((node) => node.id === 'imported').zIndex > next.nodes.find((node) => node.id === 'old-b').zIndex);
+  assert.ok(next.nodes.find((node) => node.id === 'copied').zIndex > next.nodes.find((node) => node.id === 'imported').zIndex);
 });
 
 test('migrates legacy image params.mask into persistent pending mask metadata', () => {

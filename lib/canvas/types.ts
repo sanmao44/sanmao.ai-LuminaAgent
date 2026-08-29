@@ -160,6 +160,8 @@ export type CanvasNode = {
   y: number;
   w?: number;
   h?: number;
+  /** Persisted paint order inside the transformed canvas world. */
+  zIndex?: number;
   groupId?: string;
   data: CanvasNodeData;
 };

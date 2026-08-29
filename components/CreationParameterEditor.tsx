@@ -16,6 +16,7 @@ import {
 import { resolveAvailableCreationModel } from "@/lib/creation/settings";
 import { getVideoModelLimits } from "@/lib/video-model-limits";
 import type { ModelCapability, PublicState } from "@/lib/types";
+import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 
 type Props = {
   settings: CreationSettings;
@@ -23,6 +24,8 @@ type Props = {
   unavailableModelId?: string;
   referenceCount?: number;
   variant?: "default" | "canvas-flat";
+  portalZIndex?: number;
+  dialogPortalZIndex?: number;
   onChange: (settings: CreationSettings) => void;
 };
 
@@ -50,17 +53,32 @@ function ImageEditor({
   runtime,
   unavailableModelId,
   variant,
+  portalZIndex = CANVAS_Z_INDEX.portalPopover,
+  dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
   onChange,
 }: {
   settings: ImageCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
   variant?: Props["variant"];
+  portalZIndex?: number;
+  dialogPortalZIndex?: number;
   onChange: Props["onChange"];
 }) {
   const [advanced, setAdvanced] = useState(false);
   const flat = variant === "canvas-flat";
   const [parameterDrawerOpen, setParameterDrawerOpen] = useState(false);
+  useEffect(() => {
+    if (!parameterDrawerOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setParameterDrawerOpen(false);
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [parameterDrawerOpen]);
   const update = <K extends keyof ImageCreationSettings>(
     key: K,
     value: ImageCreationSettings[K],
@@ -96,6 +114,8 @@ function ImageEditor({
                 models={models}
                 value={settings.model}
                 capability="generate"
+                portalZIndex={portalZIndex}
+                dialogPortalZIndex={dialogPortalZIndex}
                 defaultProviderId={runtime?.settings.defaultProviderId}
                 defaultProviderName={provider?.name}
                 defaultModelId={runtime?.settings.defaultImageModelId}
@@ -212,6 +232,7 @@ function ImageEditor({
                     <label className="creation-field">
                       <small>输出格式</small>
                       <SelectMenu
+                        portalZIndex={portalZIndex}
                         value={settings.outputFormat}
                         onChange={(value) => update("outputFormat", value)}
                         options={[
@@ -225,6 +246,7 @@ function ImageEditor({
                     <label className="creation-field">
                       <small>背景限制</small>
                       <SelectMenu
+                        portalZIndex={portalZIndex}
                         value={settings.backgroundMode}
                         onChange={(value) => onChange({ ...settings, backgroundMode: value, ...(value === "api-transparent" || value === "local-transparent" ? { outputFormat: "png" as const } : {}) })}
                         options={[
@@ -251,6 +273,8 @@ function ImageEditor({
             models={models}
             value={settings.model}
             capability="generate"
+            portalZIndex={portalZIndex}
+            dialogPortalZIndex={dialogPortalZIndex}
             defaultProviderId={runtime?.settings.defaultProviderId}
             defaultProviderName={provider?.name}
             defaultModelId={runtime?.settings.defaultImageModelId}
@@ -260,6 +284,7 @@ function ImageEditor({
         <label className="creation-field">
           <small>比例</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             value={settings.aspect}
             onChange={(value) => update("aspect", value)}
             options={IMAGE_RATIOS.map((value) => ({
@@ -273,6 +298,7 @@ function ImageEditor({
         <label className="creation-field">
           <small>尺寸方式</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             value={settings.sizeMode}
             onChange={(value) => update("sizeMode", value)}
             options={[
@@ -294,6 +320,7 @@ function ImageEditor({
           <label className="creation-field">
             <small>分辨率</small>
             <SelectMenu
+              portalZIndex={portalZIndex}
               value={settings.resolution}
               onChange={(value) => update("resolution", value)}
               options={IMAGE_SIZE_TIERS.map((item) => ({
@@ -336,6 +363,7 @@ function ImageEditor({
         <label className="creation-field compact">
           <small>数量</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             value={settings.count}
             onChange={(value) => update("count", value)}
             options={[1, 2, 3, 4, 5, 6, 7, 8].map((value) => ({
@@ -349,6 +377,7 @@ function ImageEditor({
           <label className="creation-field compact">
             <small>质量</small>
             <SelectMenu
+              portalZIndex={portalZIndex}
               value={settings.quality}
               onChange={(value) => update("quality", value)}
               options={IMAGE_QUALITY_OPTIONS}
@@ -402,6 +431,7 @@ function ImageEditor({
             <label className="creation-field">
               <small>质量</small>
               <SelectMenu
+                portalZIndex={portalZIndex}
                 value={settings.quality}
                 onChange={(value) => update("quality", value)}
                 options={IMAGE_QUALITY_OPTIONS}
@@ -412,6 +442,7 @@ function ImageEditor({
           <label className="creation-field">
             <small>输出格式</small>
             <SelectMenu
+              portalZIndex={portalZIndex}
               value={settings.outputFormat}
               onChange={(value) => update("outputFormat", value)}
               options={[
@@ -425,6 +456,7 @@ function ImageEditor({
           <label className="creation-field">
             <small>背景限制</small>
             <SelectMenu
+              portalZIndex={portalZIndex}
               value={settings.backgroundMode}
               onChange={(value) =>
                 onChange({
@@ -483,10 +515,14 @@ function VideoEditor({
   runtime,
   unavailableModelId,
   onChange,
+  portalZIndex = CANVAS_Z_INDEX.portalPopover,
+  dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
 }: {
   settings: VideoCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  portalZIndex?: number;
+  dialogPortalZIndex?: number;
   onChange: Props["onChange"];
 }) {
   const update = <K extends keyof VideoCreationSettings>(
@@ -595,6 +631,8 @@ function VideoEditor({
             models={runtime?.models || []}
             value={settings.model}
             capability="video-generate"
+            portalZIndex={portalZIndex}
+            dialogPortalZIndex={dialogPortalZIndex}
             defaultProviderId={runtime?.settings.defaultProviderId}
             defaultProviderName={
               runtime?.providers.find(
@@ -609,6 +647,7 @@ function VideoEditor({
           <label className="creation-field">
             <small>操作</small>
             <SelectMenu
+              portalZIndex={portalZIndex}
               value={settings.operation}
               onChange={(value) => update("operation", value)}
               options={operationOptions}
@@ -619,6 +658,7 @@ function VideoEditor({
         <label className="creation-field">
           <small>生成方式</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             value={settings.inputMode}
             onChange={(value) => update("inputMode", value)}
             options={inputOptions}
@@ -628,6 +668,7 @@ function VideoEditor({
         <label className="creation-field">
           <small>时长</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             disabled={inheritSettings}
             value={settings.duration}
             onChange={(value) => update("duration", value)}
@@ -643,6 +684,7 @@ function VideoEditor({
         <label className="creation-field">
           <small>比例</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             disabled={omitRatio}
             value={settings.aspect}
             onChange={(value) => update("aspect", value)}
@@ -657,6 +699,7 @@ function VideoEditor({
         <label className="creation-field">
           <small>分辨率</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             disabled={omitRatio}
             value={settings.resolution}
             onChange={(value) => update("resolution", value)}
@@ -710,10 +753,14 @@ function AgentEditor({
   runtime,
   unavailableModelId,
   onChange,
+  portalZIndex = CANVAS_Z_INDEX.portalPopover,
+  dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
 }: {
   settings: AgentCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  portalZIndex?: number;
+  dialogPortalZIndex?: number;
   onChange: Props["onChange"];
 }) {
   const provider = runtime?.providers.find(
@@ -736,6 +783,8 @@ function AgentEditor({
             models={runtime?.models || []}
             value={settings.model}
             capability="chat"
+            portalZIndex={portalZIndex}
+            dialogPortalZIndex={dialogPortalZIndex}
             defaultProviderId={runtime?.settings.defaultProviderId}
             defaultProviderName={provider?.name}
             defaultModelId={runtime?.settings.agentModelId}
@@ -746,6 +795,7 @@ function AgentEditor({
         <label className="creation-field">
           <small>联网方式</small>
           <SelectMenu
+            portalZIndex={portalZIndex}
             value={settings.webMode}
             onChange={(webMode) => onChange({ ...settings, webMode })}
             options={[
@@ -782,6 +832,8 @@ export default function CreationParameterEditor({
   runtime,
   unavailableModelId,
   variant,
+  portalZIndex = CANVAS_Z_INDEX.portalPopover,
+  dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
   onChange,
 }: Props) {
   return settings.kind === "video" ? (
@@ -789,6 +841,8 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      portalZIndex={portalZIndex}
+      dialogPortalZIndex={dialogPortalZIndex}
       onChange={onChange}
     />
   ) : settings.kind === "text" ? (
@@ -796,6 +850,8 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      portalZIndex={portalZIndex}
+      dialogPortalZIndex={dialogPortalZIndex}
       onChange={onChange}
     />
   ) : (
@@ -804,6 +860,8 @@ export default function CreationParameterEditor({
       runtime={runtime}
       unavailableModelId={unavailableModelId}
       variant={variant}
+      portalZIndex={portalZIndex}
+      dialogPortalZIndex={dialogPortalZIndex}
       onChange={onChange}
     />
   );

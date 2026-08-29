@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import { requestPromptOptimization, runReversePrompt } from "@/lib/creation/agent";
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from "@/lib/creation/settings";
+import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 
 export type MediaViewerReference = {
   id: string;
@@ -252,7 +253,10 @@ export default function MediaViewer({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest(".select-menu-popover,.model-picker-panel,.model-picker-dialog-backdrop")) return;
         event.preventDefault();
+        event.stopPropagation();
         onClose();
       } else if (event.key === "ArrowLeft" && onNavigate) {
         if (event.target instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
@@ -583,7 +587,7 @@ export default function MediaViewer({
         {showParameters && parameters && onParametersChange && (
           <section className="canvas-media-parameters">
             <header><b>生成参数</b><small>{surface === "canvas" && item.kind === "image" ? "修改后从当前图片生成右侧新图，原图不会被覆盖" : "修改后用于生成新分支，原图不会被覆盖"}</small></header>
-            <CreationParameterEditor settings={parameters} runtime={runtime as never} onChange={onParametersChange} />
+            <CreationParameterEditor settings={parameters} runtime={runtime as never} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onParametersChange} />
           </section>
         )}
 

@@ -988,7 +988,6 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--control-hover-b
 .editor-seed-input{display:block;width:100%;height:40px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--text);padding:0 11px;font-size:11px;font-weight:750;line-height:1;font-variant-numeric:tabular-nums;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease;-moz-appearance:textfield}.editor-seed-input:hover{border-color:var(--control-border);background:var(--control-hover-bg)}.editor-seed-input:focus{outline:none;border-color:var(--control-hover-border);background:color-mix(in srgb,var(--accent) 4%,var(--panel-2));box-shadow:0 0 0 3px var(--control-focus-ring)}.editor-seed-input::-webkit-outer-spin-button,.editor-seed-input::-webkit-inner-spin-button{margin:0;-webkit-appearance:none}
 .drawer-backdrop:has(.edit-drawer){display:none!important}
 .editor-mask-control{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 13px;border:1px solid var(--line);border-radius:13px;background:var(--panel-2)}.editor-mask-control>div:first-child{display:grid;gap:4px;min-width:0}.editor-mask-control strong{font-size:10px}.editor-mask-control small{font-size:8px;color:var(--muted);line-height:1.45}.editor-mask-control.active{border-color:color-mix(in srgb,var(--accent) 42%,var(--line));background:var(--accent-soft-2)}.editor-mask-actions{display:flex;align-items:center;gap:5px;flex:none}.editor-mask-control button{flex:none;min-height:32px;padding:0 11px}.editor-mask-control .mask-clear{border:0;background:transparent;color:var(--danger);font-size:8px;padding:0 4px}
-.mask-editor-backdrop{z-index:240}
 .editor-modal-backdrop{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:28px;background:color-mix(in srgb,var(--overlay) 88%,#000 12%);backdrop-filter:blur(12px)}
 .editor-modal{width:min(980px,100%);max-height:min(820px,calc(100vh - 56px));display:flex;flex-direction:column;overflow:hidden;background:var(--panel);border:1px solid var(--line-strong);border-radius:22px;box-shadow:var(--shadow),0 0 0 1px color-mix(in srgb,var(--accent) 9%,transparent)}
 .editor-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:22px 24px 17px;border-bottom:1px solid var(--line)}
@@ -2695,7 +2694,6 @@ html[data-theme="dark"] .agent-page{
 .model-picker-quick-panel{width:min(430px,calc(100vw - 24px));min-width:300px}
 .model-picker-quick-panel .model-picker-scroll{padding-bottom:9px}
 .model-picker-quick-panel .model-picker-browse-all{margin-top:10px}
-.model-picker-quick-panel{z-index:320}
 @media(max-width:780px){
   .model-picker-quick-panel{left:0!important;right:0!important;top:auto!important;bottom:0!important;width:100%!important;max-width:none!important;max-height:min(72vh,560px)!important;border-right:0;border-bottom:0;border-left:0;border-radius:18px 18px 0 0;box-shadow:0 -24px 70px rgba(0,0,0,.38),0 0 0 1px color-mix(in srgb,var(--text) 5%,transparent)}
   .model-picker-quick-panel .model-picker-panel-head{padding:14px 16px 11px}
@@ -3310,3 +3308,9 @@ html[data-theme="dark"] .agent-page{
 .send-button.stop-button:focus-visible{outline:3px solid color-mix(in srgb,var(--danger) 42%,transparent);outline-offset:3px}
 .message.interrupted .message-body{border-color:color-mix(in srgb,var(--danger) 30%,var(--message-assistant-border));background:color-mix(in srgb,var(--danger-soft) 45%,var(--message-assistant-bg))}
 .message-interrupted-badge{display:inline-flex;align-items:center;margin-left:6px;padding:2px 6px;border:1px solid color-mix(in srgb,var(--danger) 32%,var(--line));border-radius:999px;background:var(--danger-soft);color:var(--danger);font-size:8px;font-weight:850;white-space:nowrap}
+
+/* Shared body-level portals use the canvas layer contract as their default.
+   Canvas callers may still provide a more specific portal token inline. */
+.model-picker-panel{z-index:var(--canvas-z-portal-popover,300)}
+.model-picker-dialog-backdrop{z-index:var(--canvas-z-model-dialog,560)}
+.mask-editor-backdrop{z-index:var(--canvas-z-modal,500)}

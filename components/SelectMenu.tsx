@@ -2,6 +2,7 @@
 
 import { createPortal } from 'react-dom';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
 
 export type SelectMenuOption<T extends string | number> = {
   value: T;
@@ -19,13 +20,14 @@ type Props<T extends string | number> = {
   ariaLabel: string;
   className?: string;
   menuClassName?: string;
+  portalZIndex?: number;
   disabled?: boolean;
   onDelete?: (value: T) => void;
 };
 
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-export default function SelectMenu<T extends string | number>({ value, options, onChange, ariaLabel, className = '', menuClassName = '', disabled = false, onDelete }: Props<T>) {
+export default function SelectMenu<T extends string | number>({ value, options, onChange, ariaLabel, className = '', menuClassName = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, disabled = false, onDelete }: Props<T>) {
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(value);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -183,7 +185,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       <span className="select-menu-trigger-copy">{selected?.label || '请选择'}</span>
       <span className="select-menu-chevron" aria-hidden="true">⌄</span>
     </button>
-    {open && typeof document !== 'undefined' && createPortal(<div ref={menuRef} id={menuId} style={menuStyle} className={`select-menu-popover ${menuClassName}`.trim()} role="listbox" aria-label={ariaLabel} tabIndex={-1} onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onPointerCancel={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} onKeyDown={handleMenuKeyDown}>
+    {open && typeof document !== 'undefined' && createPortal(<div ref={menuRef} id={menuId} style={{ ...menuStyle, zIndex: portalZIndex }} className={`select-menu-popover ${menuClassName}`.trim()} role="listbox" aria-label={ariaLabel} tabIndex={-1} onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onPointerCancel={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} onKeyDown={handleMenuKeyDown}>
       {options.map((option) => <button
         type="button"
         role="option"

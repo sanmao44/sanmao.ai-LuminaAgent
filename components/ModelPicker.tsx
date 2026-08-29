@@ -8,6 +8,7 @@ import { getFavoriteModelIds, getRecentModelIds, setModelFavorite, subscribeMode
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, takeUniqueModelSlice } from '@/lib/model-picker';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
+import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
 
 type ModelPickerProps = {
   models: RegistryModel[];
@@ -19,6 +20,8 @@ type ModelPickerProps = {
   defaultModelId?: string | null;
   placeholder?: string;
   className?: string;
+  portalZIndex?: number;
+  dialogPortalZIndex?: number;
 };
 
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
@@ -31,7 +34,7 @@ export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];
 }
 
-export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '' }: ModelPickerProps) {
+export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog }: ModelPickerProps) {
   const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
   const [quickOpen, setQuickOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -179,6 +182,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   const fullDialog = dialogOpen && typeof document !== 'undefined' ? createPortal(
     <div
       className="model-picker-dialog-backdrop"
+      style={{ zIndex: dialogPortalZIndex }}
       role="presentation"
       onPointerDown={(event) => event.stopPropagation()}
       onPointerMove={(event) => event.stopPropagation()}
@@ -212,7 +216,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     <div
       ref={quickPanelRef}
       className="model-picker-panel model-picker-quick-panel"
-      style={menuStyle}
+      style={{ ...menuStyle, zIndex: portalZIndex }}
       role="dialog"
       aria-label="快速选择模型"
       onPointerDown={(event) => event.stopPropagation()}

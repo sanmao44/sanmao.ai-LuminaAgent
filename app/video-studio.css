@@ -13,7 +13,7 @@
 .video-input-mode-field{display:grid;gap:8px;margin-top:16px}.video-input-mode-field>span{font-size:11px;font-weight:850;color:var(--text-2)}.video-input-mode-field .select-menu-popover{min-width:320px}
 @media(max-width:620px){.select-menu-popover{max-height:min(280px,42vh)}.provider-video-fields .select-menu-popover{min-width:0}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .select-menu-trigger,html:not([data-motion="on"]) .select-menu-option,html:not([data-motion="on"]) .select-menu-chevron{transition:none}}
-.select-menu-popover{outline:none;z-index:300}
+.select-menu-popover{outline:none;z-index:var(--canvas-z-portal-popover,300)}
 
 /* Optional icons keep compact, canvas-specific SelectMenu options easy to scan. */
 .select-menu-trigger-icon,.select-menu-option-icon{display:grid;place-items:center;flex:none;color:var(--accent-text)}

@@ -15,8 +15,9 @@ import type {
 } from "./types";
 import { normalizeCreationSettings } from "../creation/settings";
 import { normalizeCanvasMaskState } from "./mask";
+import { normalizeCanvasNodeLayers } from "./layers";
 
-export const CANVAS_VERSION = "sanmao-canvas-2";
+export const CANVAS_VERSION = "sanmao-canvas-3";
 export const MAX_CANVAS_VARIANTS = 8;
 
 export function normalizeVariantRequirements(value: unknown): string[] {
@@ -229,6 +230,9 @@ function normalizeNode(value: unknown): CanvasNode | null {
     y: Number(raw.y),
     ...(Number.isFinite(Number(raw.w)) ? { w: Number(raw.w) } : {}),
     ...(Number.isFinite(Number(raw.h)) ? { h: Number(raw.h) } : {}),
+    ...(typeof raw.zIndex === "number" && Number.isFinite(raw.zIndex)
+      ? { zIndex: Math.trunc(raw.zIndex) }
+      : {}),
     ...(raw.groupId ? { groupId: String(raw.groupId) } : {}),
     data,
   };
@@ -436,10 +440,12 @@ export function normalizeDocument(
       if (!groupMembership.has(id)) groupMembership.set(id, group.id);
     }),
   );
-  const normalizedNodes = migratedNodes.map((node) =>
-    groupMembership.has(node.id)
-      ? { ...node, groupId: groupMembership.get(node.id) }
-      : withoutGroupId(node),
+  const normalizedNodes = normalizeCanvasNodeLayers(
+    migratedNodes.map((node) =>
+      groupMembership.has(node.id)
+        ? { ...node, groupId: groupMembership.get(node.id) }
+        : withoutGroupId(node),
+    ),
   );
   const rawEdges = Array.isArray(raw.edges)
     ? (raw.edges

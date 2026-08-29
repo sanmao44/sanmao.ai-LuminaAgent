@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
+import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
 
 export type MaskEditorProps = {
   imageUrl: string;
@@ -23,6 +24,17 @@ export default function MaskEditor({ imageUrl, initialMaskDataUrl, onApply, onCa
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!saving) onCancel();
+    };
+    window.addEventListener('keydown', handleEscape, true);
+    return () => window.removeEventListener('keydown', handleEscape, true);
+  }, [onCancel, saving]);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +127,7 @@ export default function MaskEditor({ imageUrl, initialMaskDataUrl, onApply, onCa
     }
   }
 
-  return <div className="mask-editor-backdrop" onMouseDown={(e) => { if (!saving && e.target === e.currentTarget) onCancel(); }}>
+  return <div className="mask-editor-backdrop" style={{ zIndex: CANVAS_Z_INDEX.modal }} onMouseDown={(e) => { if (!saving && e.target === e.currentTarget) onCancel(); }}>
     <div className="mask-editor surface">
       {error && <div className="mask-editor-error" role="alert">{error}</div>}
       <div className="mask-editor-head"><div><span>局部修改</span><h2>绘制蒙版</h2><small>红色区域会交给模型重新绘制，未标红区域尽量保持不变</small></div><button type="button" className="icon-button" disabled={saving} onClick={onCancel}>×</button></div>

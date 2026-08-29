@@ -65,7 +65,7 @@ test("upscale settings use the main bilingual custom select menu", () => {
   assert.doesNotMatch(panel, /Upscale model|Color correction|Scaling algorithm|High-quality smoothing|Balanced quality and speed/);
   assert.match(panel, /className="canvas-upscale-select"/);
   assert.match(panel, /menuClassName="canvas-upscale-select-popover"/);
-  assert.match(styles, /\.canvas-upscale-select-popover\{z-index:390/);
+  assert.match(styles, /\.canvas-upscale-select-popover\{z-index:var\(--canvas-z-modal-popover\)/);
   assert.match(styles, /\.canvas-upscale-field-label/);
 });
 
@@ -246,12 +246,38 @@ test("canvas image parameters collapse into a compact one-line collection", () =
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-trigger\{[^}]*min-height:38px/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-trigger>span\{display:flex;align-items:baseline/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-options\.aspect\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
-  assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-drawer\{position:absolute;z-index:220/);
-  assert.match(styles, /\.canvas-node-editor-popover:has\(\.canvas-parameter-drawer\)\{z-index:240;overflow:visible\}/);
-  assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-drawer\{position:absolute;z-index:220[^}]*padding:9px;gap:7px/);
+  assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-drawer\{position:absolute;z-index:var\(--canvas-z-node-editor\)/);
+  assert.match(styles, /\.canvas-node-editor-popover:has\(\.canvas-parameter-drawer\)\{z-index:var\(--canvas-z-node-editor\);overflow:visible\}/);
+  assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-drawer\{position:absolute;z-index:var\(--canvas-z-node-editor\)[^}]*padding:9px;gap:7px/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-options\.aspect>button\{height:44px/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-options\.count\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\);gap:4px\}/);
   assert.match(styles, /data-density="compact"\]\{width:min\(500px/);
   assert.match(styles, /data-density="micro"\]\{width:min\(360px/);
   assert.match(styles, /data-density="micro"\]\{width:min\(360px,calc\(100vw - 24px\)\);max-height:min\(400px/);
+});
+
+test("canvas stacking rules are tokenized instead of using historical hard-coded values", () => {
+  [
+    "--canvas-z-grid:0",
+    "--canvas-z-edge:10",
+    "--canvas-z-group:20",
+    "--canvas-z-node:30",
+    "--canvas-z-stage-guide:50",
+    "--canvas-z-selection:70",
+    "--canvas-z-deck:80",
+    "--canvas-z-topbar:100",
+    "--canvas-z-node-quick:200",
+    "--canvas-z-node-editor:220",
+    "--canvas-z-asset-drawer:260",
+    "--canvas-z-portal-popover:300",
+    "--canvas-z-context-menu:360",
+    "--canvas-z-expanded-editor:450",
+    "--canvas-z-modal:500",
+    "--canvas-z-asset-preview:520",
+    "--canvas-z-asset-picker:540",
+    "--canvas-z-model-dialog:560",
+    "--canvas-z-modal-popover:580",
+    "--canvas-z-toast:700",
+  ].forEach((token) => assert.match(styles, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))));
+  assert.doesNotMatch(styles, /z-index\s*:\s*-?\d+!?/);
 });
