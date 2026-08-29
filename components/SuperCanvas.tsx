@@ -1976,6 +1976,7 @@ export default function SuperCanvas() {
         pointerId: event.pointerId,
         interactive: Boolean(interactiveTarget),
       };
+      if (target?.closest(".canvas-context-menu") || pointTarget?.closest(".canvas-context-menu")) return;
       // A click in a node or editor should dismiss an already-open create menu
       // even when the child intentionally stops the bubbling pointer event.
       setContextMenu(null);
@@ -6711,7 +6712,7 @@ export default function SuperCanvas() {
         if (window.document.querySelector(".canvas-asset-preview-backdrop")) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest(
-          ".canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu-popover,.model-picker-panel,.model-picker-dialog-backdrop,.canvas-modal-backdrop,.canvas-asset-preview-backdrop,.canvas-asset-collection-picker-backdrop,.mask-editor-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
+          ".canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu.open,.select-menu-popover,.model-picker-trigger.open,.model-picker-panel,.model-picker-dialog-backdrop,.media-viewer-backdrop,.canvas-asset-preview-backdrop,.mask-editor-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
         )) return;
         event.preventDefault();
         event.stopPropagation();
@@ -10854,7 +10855,10 @@ function CanvasContextMenuFrame({
       {children}
     </div>
   );
-  return typeof document === "undefined" ? menu : createPortal(menu, document.body);
+  // Keep the menu inside the canvas React tree. This is still a fixed,
+  // screen-space layer, but avoids losing synthetic events when the Next.js
+  // app is mounted directly on body and the menu is portaled to body.
+  return menu;
 }
 
 function CanvasNodeContextMenu({
@@ -11267,7 +11271,7 @@ function CanvasNodeEditorPopover({
                 referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
                 variant="canvas-flat"
                 portalZIndex={CANVAS_Z_INDEX.modalPopover}
-                dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
                 onChange={(settings) => onEditorParamsChange(node, settings)}
               />
             )}
@@ -11984,7 +11988,7 @@ function CanvasNodeCard({
                 runtime={runtime}
                 referenceCount={editorReferences.length}
                 portalZIndex={CANVAS_Z_INDEX.modalPopover}
-                dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
                 onChange={(settings) => onEditorParamsChange(node, settings)}
               />
             </details>
