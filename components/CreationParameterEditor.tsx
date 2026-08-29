@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ModelPicker from "./ModelPicker";
 import SelectMenu from "./SelectMenu";
 import {
@@ -13,6 +13,7 @@ import {
   type ImageCreationSettings,
   type VideoCreationSettings,
 } from "@/lib/creation/settings";
+import { resolveAvailableCreationModel } from "@/lib/creation/settings";
 import { getVideoModelLimits } from "@/lib/video-model-limits";
 import type { ModelCapability, PublicState } from "@/lib/types";
 
@@ -496,19 +497,26 @@ function VideoEditor({
   const provider = runtime?.providers.find(
     (item) => item.id === model?.providerId,
   );
+  const operationModel = runtime
+    ? resolveAvailableCreationModel(settings, runtime).model
+    : null;
   const limits = useMemo(
     () => getVideoModelLimits(model, provider),
     [model, provider],
   );
   const supports = (capability: ModelCapability) =>
     !model || model.capabilities.includes(capability);
+  const supportsOperationEdit =
+    !operationModel || operationModel.capabilities.includes("video-edit");
+  const supportsOperationExtend =
+    !operationModel || operationModel.capabilities.includes("video-extend");
   const operationOptions = [
     {
       value: "generate" as const,
       label: "生成视频",
       description: "根据提示词和画面输入生成",
     },
-    ...(supports("video-edit")
+    ...(supportsOperationEdit
       ? [
           {
             value: "edit" as const,
@@ -517,7 +525,7 @@ function VideoEditor({
           },
         ]
       : []),
-    ...(supports("video-extend")
+    ...(supportsOperationExtend
       ? [
           {
             value: "extend" as const,
@@ -553,6 +561,16 @@ function VideoEditor({
         ]
       : []),
   ];
+  const showOperationField = operationOptions.length > 1;
+  useEffect(() => {
+    const operationIsSupported =
+      settings.operation === "generate" ||
+      (settings.operation === "edit" && supportsOperationEdit) ||
+      (settings.operation === "extend" && supportsOperationExtend);
+    if (!operationIsSupported) {
+      onChange({ ...settings, operation: "generate" });
+    }
+  }, [onChange, settings, supportsOperationEdit, supportsOperationExtend]);
   const inheritSettings =
     settings.operation !== "generate" &&
     Boolean(limits.inheritVideoSettingsFor?.includes(settings.operation));
@@ -587,15 +605,17 @@ function VideoEditor({
             onChange={(value) => update("model", value)}
           />
         </label>
-        <label className="creation-field">
-          <small>操作</small>
-          <SelectMenu
-            value={settings.operation}
-            onChange={(value) => update("operation", value)}
-            options={operationOptions}
-            ariaLabel="视频操作"
-          />
-        </label>
+        {showOperationField && (
+          <label className="creation-field">
+            <small>操作</small>
+            <SelectMenu
+              value={settings.operation}
+              onChange={(value) => update("operation", value)}
+              options={operationOptions}
+              ariaLabel="视频操作"
+            />
+          </label>
+        )}
         <label className="creation-field">
           <small>生成方式</small>
           <SelectMenu
