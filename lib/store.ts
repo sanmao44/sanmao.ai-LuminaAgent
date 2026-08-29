@@ -1,11 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol } from './types';
+import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling } from './types';
 import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
-import { inferModelKind, resolveModelKind } from './model-kind';
+import { inferModelKind, isImageEditOnlyModel, resolveModelKind } from './model-kind';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -138,11 +138,17 @@ function maskKey(secret: string) {
 export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSearchProtocol?: NativeSearchProtocol, hints: { displayName?: string; capabilities?: ModelCapability[] } = {}): { kind: ModelKind; capabilities: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection } {
   const id = rawId.toLowerCase();
   const inferredKind = inferModelKind({ rawId, displayName: hints.displayName, capabilities: hints.capabilities });
+  if (platform === 'agnes' || id.startsWith('agnes-')) {
+    if (id.startsWith('agnes-video-')) return { kind: 'video', capabilities: ['video-generate', 'video-first-frame', 'video-reference', ...(id.includes('2.5') ? ['video-audio' as const] : [])] };
+    if (id.startsWith('agnes-image-')) return { kind: 'image', capabilities: ['generate', 'edit', 'reference'] };
+    return { kind: 'chat', capabilities: ['chat', 'vision'] };
+  }
   const upscaleish = /(seed[-_ ]?vr2?|real[-_ ]?esrgan|swinir|upscal|super[-_ ]?resolution)/.test(id);
   if (upscaleish) return { kind: 'image', capabilities: ['edit', 'reference', 'upscale'] };
   if (inferredKind === 'video') return { kind: 'video', capabilities: ['video-generate'] };
   const imageish = /(image|imagen|flux|sdxl|stable-diffusion|dall-e|ideogram|recraft|seedream|nano[-_ ]?banana)/.test(id);
   if (imageish || inferredKind === 'image') {
+    if (isImageEditOnlyModel({ rawId, displayName: hints.displayName })) return { kind: 'image', capabilities: ['edit', 'reference'] };
     const capabilities: ModelCapability[] = ['generate'];
     if (/(gpt-image|gemini.*image|nano|recraft|flux)/.test(id)) capabilities.push('edit', 'reference');
     if (/(gpt-image|gemini.*image|ideogram|recraft)/.test(id)) capabilities.push('typography');
@@ -161,8 +167,9 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
 
 function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): RegistryModel {
   const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol, { displayName: model.displayName, capabilities: model.capabilities });
+  const editOnly = isImageEditOnlyModel({ rawId: model.rawId, displayName: model.displayName });
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
-  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search');
+  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search' && !(editOnly && capability === 'generate'));
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
   const nativeSearchDetection = model.nativeSearchDetection || inferred.nativeSearchDetection;
@@ -197,19 +204,22 @@ export async function getPublicState(): Promise<PublicState> {
       imageUpscalePath: p.imageUpscalePath || p.imageEditPath || '/images/edits',
       imageUpscaleStatusPath: p.imageUpscaleStatusPath || '',
       responsesPath: p.responsesPath || (p.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
-      videoTransport: p.videoTransport || (legacy65535 ? 'native-task' : 'auto'),
+      textProtocol: p.textProtocol || 'chat-completions',
+      videoTransport: p.videoTransport || (legacy65535 ? 'native-task' : p.platform === 'agnes' ? 'agnes-videos' : 'auto'),
       videoBaseUrl: p.videoBaseUrl || (legacy65535 ? 'https://task-api-1-cn.65535.space' : ''),
       videoTaskPath: p.videoTaskPath || '/v1/tasks',
       videoTaskStatusPath: p.videoTaskStatusPath || '/v1/tasks/{id}',
       videoGenerationPath: p.videoGenerationPath || '/v1/videos',
+      videoQueryPath: p.videoQueryPath || '',
       videoModelsPath: p.videoModelsPath || '/v1/models',
       videoPricingPath: p.videoPricingPath || '/v1/pricing',
       jimengCliPath: p.jimengCliPath || '',
       jimengCliPollSeconds: p.jimengCliPollSeconds,
       authHeader: p.authHeader || 'Authorization',
-      authPrefix: p.authPrefix ?? 'Bearer ',
-      status: p.status,
-      lastSyncedAt: p.lastSyncedAt,
+       authPrefix: p.authPrefix ?? 'Bearer ',
+       status: p.status,
+       credentialVerifiedAt: p.credentialVerifiedAt,
+       lastSyncedAt: p.lastSyncedAt,
       createdAt: p.createdAt,
       enabledModelCount: state.models.filter((m) => m.providerId === p.id && m.enabled).length,
       maskedKey: key ? maskKey(key) : '••••••••',
@@ -254,7 +264,7 @@ export async function clearWebSearchApiConfig() {
   await mutateState((state) => { delete state.webSearch; });
 }
 
-type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; videoApiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; videoTransport?: ProviderConnection['videoTransport']; videoBaseUrl?: string; videoTaskPath?: string; videoTaskStatusPath?: string; videoGenerationPath?: string; videoModelsPath?: string; videoPricingPath?: string; jimengCliPath?: string; jimengCliPollSeconds?: number; authHeader?: string; authPrefix?: string };
+type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; videoApiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; textProtocol?: ProviderTextProtocol; videoTransport?: ProviderConnection['videoTransport']; videoBaseUrl?: string; videoTaskPath?: string; videoTaskStatusPath?: string; videoGenerationPath?: string; videoQueryPath?: string; videoModelsPath?: string; videoPricingPath?: string; jimengCliPath?: string; jimengCliPollSeconds?: number; authHeader?: string; authPrefix?: string };
 
 function normalizeEndpointPath(value: string | undefined, fallback: string) {
   const clean = String(value || fallback).trim();
@@ -285,11 +295,13 @@ export async function addProvider(input: ProviderInput & { apiKey: string }) {
       imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
       imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
       responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
+      textProtocol: input.textProtocol === 'responses' || input.textProtocol === 'messages' ? input.textProtocol : 'chat-completions',
       videoTransport: normalizeVideoTransport(input.videoTransport),
       videoBaseUrl: String(input.videoBaseUrl || '').replace(/\/+$/, ''),
       videoTaskPath: normalizeEndpointPath(input.videoTaskPath, '/v1/tasks'),
       videoTaskStatusPath: normalizeEndpointPath(input.videoTaskStatusPath, '/v1/tasks/{id}'),
       videoGenerationPath: normalizeEndpointPath(input.videoGenerationPath, '/v1/videos'),
+      videoQueryPath: normalizeOptionalEndpointPath(input.videoQueryPath),
       videoModelsPath: normalizeEndpointPath(input.videoModelsPath, '/v1/models'),
       videoPricingPath: normalizeEndpointPath(input.videoPricingPath, '/v1/pricing'),
       jimengCliPath: String(input.jimengCliPath || '').trim(),
@@ -326,21 +338,24 @@ export async function updateProvider(id: string, input: ProviderInput) {
       imageUpscalePath: normalizeEndpointPath(input.imageUpscalePath || input.imageEditPath, '/images/edits'),
       imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
       responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
+      textProtocol: input.textProtocol === 'responses' || input.textProtocol === 'messages' ? input.textProtocol : (current.textProtocol || 'chat-completions'),
       videoTransport: normalizeVideoTransport(input.videoTransport ?? current.videoTransport),
       videoBaseUrl: String(input.videoBaseUrl || current.videoBaseUrl || '').replace(/\/+$/, ''),
       videoTaskPath: normalizeEndpointPath(input.videoTaskPath, current.videoTaskPath || '/v1/tasks'),
       videoTaskStatusPath: normalizeEndpointPath(input.videoTaskStatusPath, current.videoTaskStatusPath || '/v1/tasks/{id}'),
       videoGenerationPath: normalizeEndpointPath(input.videoGenerationPath, current.videoGenerationPath || '/v1/videos'),
+      videoQueryPath: normalizeOptionalEndpointPath(input.videoQueryPath || current.videoQueryPath),
       videoModelsPath: normalizeEndpointPath(input.videoModelsPath, current.videoModelsPath || '/v1/models'),
       videoPricingPath: normalizeEndpointPath(input.videoPricingPath, current.videoPricingPath || '/v1/pricing'),
       jimengCliPath: String(input.jimengCliPath || current.jimengCliPath || '').trim(),
       jimengCliPollSeconds: Number.isFinite(Number(input.jimengCliPollSeconds)) ? Math.max(1, Math.min(30, Number(input.jimengCliPollSeconds))) : current.jimengCliPollSeconds,
       authHeader: String(input.authHeader || 'Authorization').trim(),
       authPrefix: input.authPrefix ?? 'Bearer ',
-      encryptedApiKey: input.apiKey?.trim() ? await encryptSecret(input.apiKey.trim()) : current.encryptedApiKey,
-      ...(input.videoApiKey?.trim() ? { encryptedVideoApiKey: await encryptSecret(input.videoApiKey.trim()) } : {}),
-      status: 'idle',
-      lastSyncedAt: '配置已更新，待同步',
+       encryptedApiKey: input.apiKey?.trim() ? await encryptSecret(input.apiKey.trim()) : current.encryptedApiKey,
+       ...(input.videoApiKey?.trim() ? { encryptedVideoApiKey: await encryptSecret(input.videoApiKey.trim()) } : {}),
+       status: 'idle',
+       credentialVerifiedAt: undefined,
+       lastSyncedAt: '配置已更新，待同步',
     };
     state.models = state.models.map((m) => m.providerId === id ? { ...m, providerName: input.name.trim() } : m);
   });
@@ -365,11 +380,26 @@ export async function getProviderWithKey(id: string) {
 }
 
 export async function setProviderStatus(id: string, status: ProviderStatus, lastSyncedAt?: string) {
-  await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? { ...p, status, lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt } : p); });
+  await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? {
+    ...p,
+    status,
+    ...(p.platform === 'agnes' ? { credentialVerifiedAt: status === 'healthy' ? new Date().toISOString() : undefined } : {}),
+    lastSyncedAt: lastSyncedAt ?? p.lastSyncedAt,
+  } : p); });
+}
+
+/** Mark a credential failure observed during a real generation request. */
+export async function markProviderCredentialFailure(id: string) {
+  await mutateState((state) => { state.providers = state.providers.map((p) => p.id === id ? {
+    ...p,
+    status: 'error',
+    ...(p.platform === 'agnes' ? { credentialVerifiedAt: undefined } : {}),
+    lastSyncedAt: '鉴权失败，待更新 Key',
+  } : p); });
 }
 
 function normalizeVideoTransport(value: ProviderConnection['videoTransport']) {
-  return value === 'auto' || value === 'native-task' || value === 'openai-videos' || value === 'jimeng-cli' ? value : 'auto';
+  return value === 'auto' || value === 'native-task' || value === 'openai-videos' || value === 'jimeng-cli' || value === 'agnes-videos' ? value : 'auto';
 }
 
 export async function setProviderModelLibraryEnabled(id: string, enabled: boolean) {
@@ -381,21 +411,27 @@ export async function setProviderModelLibraryEnabled(id: string, enabled: boolea
   });
 }
 
-export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ReadonlyArray<ModelCapability>; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection }>) {
+export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ReadonlyArray<ModelCapability>; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection; billing?: ModelBilling; enabledByDefault?: boolean; contextWindow?: number; maxInputTokens?: number; maxOutputTokens?: number }>) {
   return mutateState((state) => {
     const existing = new Map(state.models.filter((m) => m.providerId === providerId).map((m) => [m.rawId, m]));
     const next = rawModels.map((raw) => {
       const previous = existing.get(raw.id);
       if (previous) {
         const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
-        return normalizeModel({ ...previous, providerName, ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, state.providers.find((provider) => provider.id === providerId)?.platform);
+        return normalizeModel({ ...previous, providerName, displayName: raw.name?.split('/').pop() || previous.displayName, ...(raw.billing ? { billing: raw.billing } : {}), ...(raw.enabledByDefault !== undefined ? { enabledByDefault: raw.enabledByDefault } : {}), ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}), ...(raw.maxInputTokens !== undefined ? { maxInputTokens: raw.maxInputTokens } : {}), ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}), ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, state.providers.find((provider) => provider.id === providerId)?.platform);
       }
       const platform = state.providers.find((provider) => provider.id === providerId)?.platform;
       const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
+      const enabledByDefault = raw.enabledByDefault === true;
       return normalizeModel({
         id: randomUUID(), providerId, providerName, rawId: raw.id,
         displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,
-        kind: inferred.kind, enabled: false, published: false, capabilities: Array.from(new Set([...(raw.capabilities || []), ...inferred.capabilities])),
+        kind: inferred.kind, enabled: enabledByDefault, published: enabledByDefault, capabilities: Array.from(new Set([...(raw.capabilities || []), ...inferred.capabilities])),
+        ...(raw.billing ? { billing: raw.billing } : {}),
+        ...(raw.enabledByDefault !== undefined ? { enabledByDefault: raw.enabledByDefault } : {}),
+        ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}),
+        ...(raw.maxInputTokens !== undefined ? { maxInputTokens: raw.maxInputTokens } : {}),
+        ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}),
         ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}),
         ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}),
       } satisfies RegistryModel, platform);

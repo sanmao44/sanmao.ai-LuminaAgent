@@ -7,12 +7,14 @@ import type {
   CanvasGroup,
   CanvasInputRole,
   CanvasMediaKind,
+  CanvasMaskState,
   CanvasNode,
   CanvasNodeData,
   CanvasSnapshot,
   CanvasUpscaleParams,
 } from "./types";
 import { normalizeCreationSettings } from "../creation/settings";
+import { normalizeCanvasMaskState } from "./mask";
 
 export const CANVAS_VERSION = "sanmao-canvas-2";
 export const MAX_CANVAS_VARIANTS = 8;
@@ -67,6 +69,25 @@ function nodeType(value: unknown): CanvasNode["type"] {
 
 function mediaKind(value: unknown): CanvasMediaKind {
   return value === "video" ? "video" : "image";
+}
+
+/** Nodes that currently expose a usable image/video URL to other nodes. */
+export function isCanvasReferenceableNode(node: CanvasNode | undefined) {
+  return Boolean(
+    node &&
+      (node.type === "media" || node.type === "upscale") &&
+      node.data.kind &&
+      node.data.url,
+  );
+}
+
+/** Only completed image outputs can feed the dedicated upscale input. */
+export function isCanvasReadyImageSource(node: CanvasNode | undefined) {
+  if (!node || !isCanvasReferenceableNode(node)) return false;
+  return (
+    node.data.kind === "image" &&
+    !["queued", "running", "failed"].includes(node.data.status || "")
+  );
 }
 
 function normalizeUpscaleParams(value: unknown): CanvasUpscaleParams {
@@ -178,10 +199,28 @@ function normalizeNode(value: unknown): CanvasNode | null {
       ...data.generation,
       kind,
       params:
-        kind === "image"
+        data.generation.operation === "upscale"
+          ? normalizeUpscaleParams(data.generation.params)
+          : kind === "image"
           ? normalizeCreationSettings("image", data.generation.params)
           : normalizeCreationSettings("video", data.generation.params),
     };
+  }
+  if (type === "media" && data.kind === "image") {
+    const generationParams = data.generation?.params;
+    const paramsMask =
+      data.params && typeof data.params === "object"
+        ? (data.params as Record<string, unknown>).mask
+        : undefined;
+    const generationMask =
+      generationParams && typeof generationParams === "object"
+        ? (generationParams as Record<string, unknown>).mask
+        : undefined;
+    const mask = normalizeCanvasMaskState(
+      data.mask,
+      generationMask || paramsMask,
+    );
+    if (mask) data.mask = mask as CanvasMaskState;
   }
   return {
     id: String(raw.id),
@@ -264,7 +303,7 @@ export function canConnect(
   const targetNode = nodeById(document, target);
   if (targetNode?.type === "upscale") {
     const sourceNode = nodeById(document, source);
-    if (!sourceNode || sourceNode.type !== "media" || sourceNode.data.kind !== "image" || !sourceNode.data.url || ["queued", "running", "failed"].includes(sourceNode.data.status || ""))
+    if (!isCanvasReadyImageSource(sourceNode))
       return { ok: false, reason: "超分节点只接受一张已完成的图片" };
     if (document.edges.some((edge) => edge.target === target))
       return { ok: false, reason: "超分节点只能连接一张图片" };
@@ -285,7 +324,91 @@ export function normalizeDocument(
   const nodes = Array.isArray(raw.nodes)
     ? (raw.nodes.map(normalizeNode).filter(Boolean) as CanvasNode[])
     : [];
-  const nodeIds = new Set(nodes.map((node) => node.id));
+  const originalNodeIds = new Set(nodes.map((node) => node.id));
+  const legacyUpscaleResultIds = new Set<string>();
+  const legacyUpscaleResultParentIds = new Map<string, string>();
+  const latestLegacyUpscaleResults = new Map<string, CanvasNode>();
+  const legacyResultTimestamp = (node: CanvasNode) => {
+    const generation = node.data.generation;
+    const values = [
+      generation?.updatedAt,
+      generation?.createdAt,
+      node.data.updatedAt,
+    ];
+    return values
+      .map((value) => Number(value))
+      .find((value) => Number.isFinite(value)) || 0;
+  };
+
+  nodes.forEach((node) => {
+    if (node.type !== "media" || node.data.generation?.operation !== "upscale") return;
+    const parentNodeId = node.data.generation.parentNodeId;
+    const parent = nodes.find((candidate) => candidate.id === parentNodeId);
+    if (!parent || parent.type !== "upscale") return;
+    legacyUpscaleResultIds.add(node.id);
+    legacyUpscaleResultParentIds.set(node.id, parent.id);
+    const current = latestLegacyUpscaleResults.get(parent.id);
+    if (!current || legacyResultTimestamp(node) >= legacyResultTimestamp(current)) {
+      latestLegacyUpscaleResults.set(parent.id, node);
+    }
+  });
+
+  // Before results were written directly to the upscale node, each run added
+  // a separate media card. Fold those saved results into their owning node so
+  // existing canvases converge on the current single-node representation.
+  const migratedNodes = nodes
+    .filter((node) => !legacyUpscaleResultIds.has(node.id))
+    .map((node) => {
+      const legacyResult = latestLegacyUpscaleResults.get(node.id);
+      if (!legacyResult) return node;
+      const legacyGeneration = legacyResult.data.generation;
+      const resultParams = normalizeUpscaleParams(
+        legacyGeneration?.params || legacyResult.data.params || node.data.params,
+      );
+      const prompt = String(
+        legacyGeneration?.prompt ||
+          legacyResult.data.prompt ||
+          node.data.generation?.prompt ||
+          node.data.prompt ||
+          "Upscale this image",
+      );
+      const data: CanvasNodeData = {
+        ...node.data,
+        kind: "image",
+        role: "超分结果",
+        resultSource: "upscale-node",
+        status: legacyResult.data.status || "completed",
+        statusLabel: "超分节点生成的结果",
+        progress: Number.isFinite(Number(legacyResult.data.progress))
+          ? Number(legacyResult.data.progress)
+          : 100,
+        params: resultParams,
+        generation: {
+          ...(legacyGeneration || {}),
+          kind: "image",
+          prompt,
+          params: resultParams,
+          operation: "upscale",
+          parentNodeId: node.id,
+        },
+      };
+      [
+        "url",
+        "name",
+        "model",
+        "assetId",
+        "sourceAssetId",
+        "autoFit",
+        "nativeWidth",
+        "nativeHeight",
+        "jobId",
+        "processingStartedAt",
+      ].forEach((key) => {
+        if (legacyResult.data[key] !== undefined) data[key] = legacyResult.data[key];
+      });
+      return { ...node, data };
+    });
+  const nodeIds = new Set(migratedNodes.map((node) => node.id));
   const groups = Array.isArray(raw.groups)
     ? raw.groups
         .filter((group): group is CanvasGroup =>
@@ -295,7 +418,7 @@ export function normalizeDocument(
           id: String(group.id || uid("group")),
           name: String(group.name || "对象组"),
           nodeIds: Array.isArray(group.nodeIds)
-            ? [...new Set(group.nodeIds.map(String))].filter((id) =>
+            ? [...new Set(group.nodeIds.map(String).map((id) => legacyUpscaleResultParentIds.get(id) || id))].filter((id) =>
                 nodeIds.has(id),
               )
             : [],
@@ -313,7 +436,7 @@ export function normalizeDocument(
       if (!groupMembership.has(id)) groupMembership.set(id, group.id);
     }),
   );
-  const normalizedNodes = nodes.map((node) =>
+  const normalizedNodes = migratedNodes.map((node) =>
     groupMembership.has(node.id)
       ? { ...node, groupId: groupMembership.get(node.id) }
       : withoutGroupId(node),
@@ -323,14 +446,27 @@ export function normalizeDocument(
         .map(normalizeEdge)
         .filter(Boolean)
         .filter(
-          (edge) => nodeIds.has(edge!.source) || groupIds.has(edge!.source),
+          (edge) => originalNodeIds.has(edge!.source) || groupIds.has(edge!.source),
         )
         .filter(
-          (edge) => nodeIds.has(edge!.target) || groupIds.has(edge!.target),
+          (edge) => originalNodeIds.has(edge!.target) || groupIds.has(edge!.target),
         ) as CanvasEdge[])
     : [];
+  const migratedEdges = rawEdges
+    .filter((edge) => !legacyUpscaleResultIds.has(edge.target))
+    .map((edge) => ({
+      ...edge,
+      source: legacyUpscaleResultParentIds.get(edge.source) || edge.source,
+    }))
+    .filter((edge) => edge.source !== edge.target)
+    .filter(
+      (edge) => nodeIds.has(edge.source) || groupIds.has(edge.source),
+    )
+    .filter(
+      (edge) => nodeIds.has(edge.target) || groupIds.has(edge.target),
+    );
   const upscaleTargets = new Set<string>();
-  const edges = rawEdges.filter((edge) => {
+  const edges = migratedEdges.filter((edge) => {
     const targetNode = normalizedNodes.find((node) => node.id === edge.target);
     if (targetNode?.type !== "upscale") return true;
     const sourceNode = normalizedNodes.find((node) => node.id === edge.source);
@@ -1439,7 +1575,7 @@ export function incomingContext(document: CanvasDocument, entityId: string) {
     .map((id) => nodeById(document, id))
     .filter(
       (node): node is CanvasNode =>
-        node?.type === "media" && Boolean(node.data.url),
+        isCanvasReferenceableNode(node),
     );
   const seen = new Set<string>();
   return [...virtual, ...direct].filter(
@@ -1448,9 +1584,7 @@ export function incomingContext(document: CanvasDocument, entityId: string) {
 }
 
 export function incomingReferences(document: CanvasDocument, entityId: string) {
-  return incomingContext(document, entityId).filter(
-    (node) => node.type === "media" && Boolean(node.data.url),
-  );
+  return incomingContext(document, entityId).filter(isCanvasReferenceableNode);
 }
 
 export function reorderReferences(
@@ -1495,7 +1629,7 @@ export function smartPrompt(prompt: string, context: CanvasNode[]) {
     .map((node) => node.data.text?.trim())
     .filter(Boolean) as string[];
   const output = [prompt.trim(), ...texts].filter(Boolean).join("\n");
-  const refs = context.filter((node) => node.type === "media" && node.data.url);
+  const refs = context.filter(isCanvasReferenceableNode);
   if (
     refs.length > 1 &&
     /(融合|合并|组合|结合|一张图|共同|全部参考|merge|combine|blend|composite|all references)/i.test(

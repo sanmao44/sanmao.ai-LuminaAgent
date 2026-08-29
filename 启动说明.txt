@@ -23,6 +23,8 @@ SANMAO.AI 0.6.6 使用说明
 7. 如果类型识别错了，把它改成“对话”或“图片”。
 8. 勾选后的模型会直接出现在“智能助手”和“生图”页的下拉菜单。
 
+即梦 CLI 一键安装：Windows 双击“一键安装即梦 CLI - Windows.cmd”，macOS 双击“一键安装即梦 CLI - macOS.command”，Linux 在项目目录执行 `bash ./scripts/install-jimeng.sh`。安装完成后回到“接口服务商”中的即梦卡片，点击“重新检测”，再点击“连接即梦”。macOS 如果提示没有执行权限，先执行 `chmod +x '一键安装即梦 CLI - macOS.command'`。
+
 三、参考图
 - 生图页可以加参考图。
 - 智能助手输入框左下角也可以加参考图。

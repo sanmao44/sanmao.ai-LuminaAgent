@@ -7,7 +7,9 @@ import { addProvider, enableProviderModels, getProviderWithKey, getPublicState, 
 export const runtime = 'nodejs';
 
 const OFFICIAL_GUIDE_URL = 'https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg';
-const INSTALL_COMMAND = 'curl -fsSL https://jimeng.jianying.com/cli | bash';
+const INSTALL_COMMAND = process.platform === 'win32'
+  ? 'powershell -NoProfile -ExecutionPolicy Bypass -File ".\\scripts\\install-jimeng.ps1"'
+  : 'bash "./scripts/install-jimeng.sh"';
 
 async function ensureProvider() {
   const state = await getPublicState();

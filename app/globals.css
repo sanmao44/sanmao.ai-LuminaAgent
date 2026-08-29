@@ -3162,6 +3162,46 @@ html[data-theme="dark"] .agent-page{
 @media(max-width:760px){.history-toolbar,.logs-toolbar{align-items:stretch;flex-wrap:wrap}.record-tab-switcher{order:-2}.media-filter-chips{width:100%;order:-1}.creative-video-grid{grid-template-columns:1fr 1fr}.creative-record-group{padding:12px;border-radius:16px}}
 @media(max-width:480px){.creative-video-grid{grid-template-columns:1fr}.record-tab-switcher button{padding:0 13px}}
 
+/* Keep the works toolbar actions on one visual baseline. The source filters,
+   multi-select action, and page-size menu used different control heights,
+   which made the right side of the toolbar look vertically uneven. */
+.history-page:not(.logs-page) .history-toolbar .filter-chips button,
+.history-page:not(.logs-page) .history-toolbar .history-controls .ghost-button,
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-trigger{
+  height:34px;
+  min-height:34px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  box-sizing:border-box;
+}
+.history-page:not(.logs-page) .history-toolbar .filter-chips button{
+  line-height:1;
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls{
+  align-items:center;
+  gap:6px;
+  flex:none;
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-trigger{
+  padding:0 10px;
+  gap:8px;
+  border-radius:10px;
+  background:var(--panel-2);
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-trigger-copy{
+  font-size:10px;
+  line-height:1.2;
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu-chevron{
+  font-size:15px;
+  line-height:12px;
+  transform:translateY(-1px);
+}
+.history-page:not(.logs-page) .history-toolbar .history-controls .select-menu.open .select-menu-chevron{
+  transform:rotate(180deg) translateY(1px);
+}
+
 /* Selected Agent text actions: keep image and video targets distinct without
    turning the floating toolbar into a long, hard-to-scan row. */
 .selection-push{width:min(340px,calc(100vw - 24px));display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:8px;border-radius:16px}
@@ -3188,3 +3228,13 @@ html[data-theme="dark"] .agent-page{
 
 /* Primary Angle actions follow the same high-contrast treatment as the rest of SANMAO. */
 .angle-submit .primary-action,.angle-result-foot .angle-result-primary,.angle-result-divider>span,.angle-workflow .current i{color:#fff}
+
+/* Agnes model billing is advisory: free labels describe the current offer,
+   while paid models remain visible and manually selectable. */
+.billing-badge{font-size:7px!important;border-radius:999px;padding:3px 6px;font-weight:850}
+.billing-badge.free{background:var(--success-soft);color:var(--success)}
+.billing-badge.temporary-free{background:var(--accent-soft);color:var(--accent-text)}
+.billing-badge.paid{background:var(--warning-soft,var(--panel-3));color:var(--warning)}
+.provider-credential-badge{font-size:7px;padding:3px 6px;border-radius:999px;font-weight:850}.provider-credential-badge.verified{background:var(--success-soft);color:var(--success)}.provider-credential-badge.unverified{background:var(--warning-soft,var(--panel-3));color:var(--warning,var(--muted))}
+.agnes-connection-guide{display:grid;gap:10px;margin-top:13px;padding:14px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 48%,var(--panel)),var(--panel-2));color:var(--text-2)}.agnes-connection-guide.error{border-color:color-mix(in srgb,var(--danger) 44%,var(--line));background:linear-gradient(135deg,color-mix(in srgb,var(--danger-soft) 55%,var(--panel)),var(--panel-2))}.agnes-connection-guide.success{border-color:color-mix(in srgb,var(--success) 38%,var(--line))}.agnes-guide-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.agnes-guide-head>div{display:grid;gap:4px}.agnes-guide-kicker{font-size:7px;letter-spacing:.12em;font-weight:900;color:var(--accent-text)}.agnes-guide-head strong{font-size:12px;color:var(--text)}.agnes-guide-status{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:7px;font-weight:900;color:var(--muted);white-space:nowrap}.agnes-guide-status i{width:6px;height:6px;border-radius:50%;background:var(--accent)}.agnes-connection-guide.error .agnes-guide-status{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 30%,var(--line))}.agnes-connection-guide.error .agnes-guide-status i{background:var(--danger)}.agnes-connection-guide.success .agnes-guide-status{color:var(--success)}.agnes-connection-guide.success .agnes-guide-status i{background:var(--success)}.agnes-connection-guide p{margin:0;font-size:9px;line-height:1.65}.agnes-guide-meta{display:flex;flex-wrap:wrap;gap:7px}.agnes-guide-meta>span{min-width:0;display:grid;gap:3px;padding:7px 8px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--panel) 78%,transparent)}.agnes-guide-meta b{font-size:7px;color:var(--muted);font-weight:850}.agnes-guide-meta code{max-width:100%;overflow-wrap:anywhere;color:var(--text);font:600 8px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace}.agnes-guide-error{display:grid;gap:3px;padding:9px 10px;border-radius:10px;background:var(--danger-soft);color:var(--danger);font-size:8px;line-height:1.55}.agnes-guide-error strong{font-size:9px}.agnes-guide-link{width:max-content;max-width:100%;color:var(--accent-text);font-size:8px;font-weight:850;text-decoration:none}.agnes-guide-link:hover{text-decoration:underline}@media(max-width:620px){.agnes-guide-head{align-items:flex-start;flex-direction:column}.agnes-guide-status{align-self:flex-start}.agnes-guide-meta{display:grid}.agnes-guide-link{width:auto}}
+.agnes-guide-warning{display:grid;gap:3px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--warning,#b7791f) 35%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--warning,#b7791f) 10%,var(--panel));color:var(--text-2);font-size:8px;line-height:1.55}.agnes-guide-warning strong{color:var(--warning,#b7791f);font-size:9px}.agnes-guide-action{justify-self:start;min-height:30px;padding:0 10px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:9px;background:var(--accent-soft);color:var(--accent-text);font-size:8px;font-weight:850;cursor:pointer}.agnes-guide-action:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel))}

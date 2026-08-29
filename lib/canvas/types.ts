@@ -6,6 +6,7 @@ export type CanvasMediaKind = 'image' | 'video';
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type CanvasMaskStatus = 'pending' | 'running' | 'used' | 'failed';
 export type CanvasInputRole =
   | 'prompt'
   | 'context'
@@ -84,6 +85,18 @@ export type CanvasNodePresentation = {
   role?: "editor" | "lineage" | "result" | "reference";
 };
 
+/** Persisted UI/lifecycle metadata for the mask attached to an image node. */
+export type CanvasMaskState = {
+  url: string;
+  assetId?: string;
+  status: CanvasMaskStatus;
+  coverage?: number;
+  taskId?: string;
+  error?: string;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
 export type CanvasNodeData = {
   kind?: CanvasMediaKind;
   url?: string;
@@ -108,6 +121,8 @@ export type CanvasNodeData = {
   autoFit?: boolean;
   nativeWidth?: number;
   nativeHeight?: number;
+  /** Identifies the node operation that produced the current media URL. */
+  resultSource?: "upscale-node";
   referenceOrder?: string[];
   generation?: CanvasGenerationMeta;
   /** One line per requested batch variation on a generator node. */
@@ -121,6 +136,11 @@ export type CanvasNodeData = {
   editor?: CanvasEditorState;
   history?: CanvasHistoryEntry[];
   presentation?: CanvasNodePresentation;
+  /** Mask metadata is kept beside params so the canvas can explain its state. */
+  mask?: CanvasMaskState;
+  /** True when this result was created from a request that included a mask. */
+  maskApplied?: boolean;
+  maskSourceNodeId?: string;
   [key: string]: unknown;
 };
 

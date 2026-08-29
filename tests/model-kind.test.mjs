@@ -24,6 +24,12 @@ test('classifies common chat model families from their names', () => {
   assert.equal(modelKind.inferModelKind({ rawId: 'doubao-seedance-2-0' }), 'video');
 });
 
+test('recognizes image-edit-only model names without treating them as text-to-image', () => {
+  assert.equal(modelKind.isImageEditOnlyModel({ rawId: 'MusePublic/Qwen-Image-Edit' }), true);
+  assert.equal(modelKind.isImageEditOnlyModel({ displayName: 'Qwen Image Edit' }), true);
+  assert.equal(modelKind.isImageEditOnlyModel({ rawId: 'gpt-image-2' }), false);
+});
+
 test('uses discovered capabilities before name heuristics', () => {
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/custom-model', capabilities: ['video-generate'] }), 'video');
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/custom-model', capabilities: ['generate'] }), 'image');

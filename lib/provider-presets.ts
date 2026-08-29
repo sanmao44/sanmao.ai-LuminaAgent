@@ -1,4 +1,10 @@
-import type { ProviderConnection, ProviderPlatform, ProviderType, VideoTransport } from './types';
+import type { ProviderConnection, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
+// The domestic Agnes docs use api.agnes-ai.cn.  The international gateway is
+// intentionally not substituted here because a Key is commonly tied to the
+// region where it was created.
+const AGNES_API_BASE_URL = 'https://api.agnes-ai.cn/v1';
+const AGNES_API_KEY_URL = 'https://platform.agnes-ai.cn/settings/apiKeys';
+const AGNES_VIDEO_BASE_URL = 'https://api.agnes-ai.cn';
 
 export type ProviderPreset = {
   value: ProviderPlatform;
@@ -20,6 +26,8 @@ export type ProviderPreset = {
   videoTaskPath?: string;
   videoTaskStatusPath?: string;
   videoGenerationPath?: string;
+  textProtocol?: ProviderTextProtocol;
+  videoQueryPath?: string;
 };
 
 export type ResolvedProviderConfiguration = {
@@ -42,6 +50,8 @@ export type ResolvedProviderConfiguration = {
   videoTaskPath: string;
   videoTaskStatusPath: string;
   videoGenerationPath: string;
+  textProtocol: ProviderTextProtocol;
+  videoQueryPath: string;
 };
 
 const standardCompatibility = {
@@ -78,6 +88,7 @@ export const providerPresets: ProviderPreset[] = [
   { value: 'deepseek', label: 'DeepSeek', short: 'DeepSeek', description: '官方 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.deepseek.com/api_keys' },
   { value: 'google-gemini', label: 'Google Gemini', short: 'Gemini', description: '官方地址和协议由系统处理', type: 'google-gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsBaseUrl: false, apiKeyUrl: 'https://aistudio.google.com/apikey' },
   { value: 'apimart', label: 'APIMart', short: 'APIMart', description: '内置余额校验、预置模型和异步图片任务适配', type: 'openai-compatible', baseUrl: 'https://api.apimart.ai/v1', needsBaseUrl: false, apiKeyUrl: 'https://apimart.ai/console', recommended: true },
+  { value: 'agnes', label: 'Agnes AI', short: 'Agnes', description: '文本、多模态、图片与异步视频模型，官方地址已内置', type: 'openai-compatible', baseUrl: AGNES_API_BASE_URL, needsBaseUrl: false, apiKeyUrl: AGNES_API_KEY_URL, notice: '有免费/限时免费额度，可先体验', noticeTone: 'success', recommended: true, textProtocol: 'chat-completions', videoTransport: 'agnes-videos', videoBaseUrl: AGNES_VIDEO_BASE_URL, videoGenerationPath: '/v1/videos', videoQueryPath: '/agnesapi' },
   { value: 'jimeng-cli', label: '即梦 CLI', short: '即梦 CLI', description: '本机调用即梦图片与视频能力', type: 'openai-compatible', baseUrl: '', needsBaseUrl: false, showInPicker: false, videoTransport: 'jimeng-cli' },
   { value: 'custom', label: '其他兼容平台', short: '其他平台', description: '适用于 New API、One API 和自建中转等 OpenAI 兼容地址', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, recommended: true },
 ];
@@ -87,11 +98,49 @@ export function getProviderPreset(platform: ProviderPlatform | string | undefine
 }
 
 export function normalizeProviderBaseUrl(value: string, preset: ProviderPreset) {
+  const candidate = String(value || '').trim();
+  // Agnes has separate domestic and international gateways.  Preserve an
+  // explicitly selected Agnes gateway so a .com credential is not silently
+  // tested against .cn (or vice versa).  New Agnes connections still use the
+  // domestic preset when no address has been supplied.
+  if (preset.value === 'agnes') {
+    if (!candidate) return preset.baseUrl;
+    try {
+      const parsed = new URL(candidate);
+      if (/^(?:api|apihub)\.agnes-ai\.(?:cn|com)$/i.test(parsed.hostname)) {
+        return candidate.replace(/\/+$/, '');
+      }
+    } catch {
+      // Fall back to the preset below for malformed Agnes addresses.
+    }
+    return preset.baseUrl;
+  }
   if (!preset.needsBaseUrl) return preset.baseUrl;
-  return String(value || '')
+  return candidate
     .trim()
     .replace(/\/(models|chat\/completions|images\/(generations|edits))\/?$/i, '')
     .replace(/\/+$/, '');
+}
+
+function agnesGatewayRegion(value: string) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    if (/\.agnes-ai\.cn$/i.test(hostname)) return 'cn';
+    if (/\.agnes-ai\.com$/i.test(hostname)) return 'com';
+  } catch {
+    // Treat malformed or non-Agnes values as unknown and use the preset.
+  }
+  return '';
+}
+
+function agnesOrigin(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (/^(?:api|apihub)\.agnes-ai\.(?:cn|com)$/i.test(parsed.hostname)) return parsed.origin;
+  } catch {
+    // Use the official domestic fallback below.
+  }
+  return '';
 }
 
 export function resolveProviderConfiguration(
@@ -114,6 +163,8 @@ export function resolveProviderConfiguration(
     videoTaskPath?: string;
     videoTaskStatusPath?: string;
     videoGenerationPath?: string;
+    textProtocol?: ProviderTextProtocol;
+    videoQueryPath?: string;
   },
   existing?: Partial<ProviderConnection> | null,
 ): ResolvedProviderConfiguration {
@@ -126,10 +177,19 @@ export function resolveProviderConfiguration(
     if (typeof value === 'string') return value;
     return preserveExisting && typeof existing?.[key] === 'string' ? String(existing[key]) : fallback;
   };
+  const baseUrl = normalizeProviderBaseUrl(String(input.baseUrl || existing?.baseUrl || ''), preset);
+  const explicitVideoBaseUrl = String(input.videoBaseUrl || (preserveExisting ? existing?.videoBaseUrl : '') || '').replace(/\/+$/, '');
+  const agnesBaseRegion = preset.value === 'agnes' ? agnesGatewayRegion(baseUrl) : '';
+  const agnesVideoRegion = preset.value === 'agnes' ? agnesGatewayRegion(explicitVideoBaseUrl) : '';
+  const videoBaseUrl = preset.value === 'agnes'
+    ? (explicitVideoBaseUrl && (!agnesBaseRegion || !agnesVideoRegion || agnesBaseRegion === agnesVideoRegion)
+      ? explicitVideoBaseUrl
+      : agnesOrigin(baseUrl) || preset.videoBaseUrl || '')
+    : explicitVideoBaseUrl || preset.videoBaseUrl || '';
   return {
     platform: preset.value,
     type: preset.type,
-    baseUrl: normalizeProviderBaseUrl(String(input.baseUrl || existing?.baseUrl || ''), preset),
+    baseUrl,
     modelsPath: pick('modelsPath', standardCompatibility.modelsPath),
     chatPath: pick('chatPath', standardCompatibility.chatPath),
     imageGenerationPath: pick('imageGenerationPath', standardCompatibility.imageGenerationPath),
@@ -140,11 +200,13 @@ export function resolveProviderConfiguration(
     authHeader: pick('authHeader', standardCompatibility.authHeader),
     authPrefix: pick('authPrefix', standardCompatibility.authPrefix),
     videoTransport,
-    videoBaseUrl: String(input.videoBaseUrl || (preserveExisting ? existing?.videoBaseUrl : '') || preset.videoBaseUrl || '').replace(/\/+$/, ''),
+    videoBaseUrl,
     videoModelsPath: pick('videoModelsPath', preset.videoModelsPath || standardCompatibility.videoModelsPath),
     videoPricingPath: pick('videoPricingPath', preset.videoPricingPath || standardCompatibility.videoPricingPath),
     videoTaskPath: pick('videoTaskPath', preset.videoTaskPath || standardCompatibility.videoTaskPath),
     videoTaskStatusPath: pick('videoTaskStatusPath', preset.videoTaskStatusPath || defaultVideoTaskStatusPath),
     videoGenerationPath: pick('videoGenerationPath', preset.videoGenerationPath || standardCompatibility.videoGenerationPath),
+    textProtocol: input.textProtocol || (preserveExisting ? existing?.textProtocol : undefined) || preset.textProtocol || 'chat-completions',
+    videoQueryPath: String(input.videoQueryPath || (preserveExisting ? existing?.videoQueryPath : '') || preset.videoQueryPath || '').trim(),
   };
 }

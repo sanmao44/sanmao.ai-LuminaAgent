@@ -36,6 +36,8 @@ import {
   groupBounds,
   groupById,
   groupNodes,
+  isCanvasReadyImageSource,
+  isCanvasReferenceableNode,
   incomingContext,
   incomingReferences,
   normalizeVariantRequirements,
@@ -93,8 +95,13 @@ import { recordModelCall } from "@/lib/model-preferences";
 import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
 import {
   fitCanvasNodeEditorBelow,
+  placeCanvasContextMenu,
   placeCanvasNodeToolbar,
 } from "@/lib/canvas/editor-layout";
+import {
+  createCanvasImageZip,
+  orderCanvasImageItems,
+} from "@/lib/canvas/download";
 import { recordCanvasImages } from "@/lib/creation/history";
 import {
   requestPromptOptimization,
@@ -134,6 +141,7 @@ import type {
   CanvasGroup,
   CanvasInputRole,
   CanvasMediaKind,
+  CanvasMaskState,
   CanvasNode,
   CanvasProject,
   CanvasRuntimeState,
@@ -141,6 +149,12 @@ import type {
   CanvasVariantState,
   CanvasUpscaleParams,
 } from "@/lib/canvas/types";
+import {
+  canvasMaskStateFromParams,
+  canvasMaskStatusLabel,
+  normalizeCanvasMaskState,
+  updateCanvasMaskState,
+} from "@/lib/canvas/mask";
 import { canvasUpscaleSize, loadImageDimensions, seedVrTargetSize } from "@/lib/canvas/upscale";
 import {
   CANVAS_MAX_REFERENCES,
@@ -157,11 +171,19 @@ import {
   snapCanvasNodePositions,
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
+import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
 
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
 type Point = { x: number; y: number };
+function hasExternalFileTransfer(dataTransfer: DataTransfer) {
+  return (
+    dataTransfer.types.includes("Files") ||
+    [...dataTransfer.items].some((item) => item.kind === "file")
+  );
+}
+
 type Notice = { message: string; kind: "ok" | "error" };
 type CanvasGenerationLog = {
   id: string;
@@ -200,7 +222,41 @@ type CanvasClipboardPayload = {
   edges: CanvasEdge[];
   groups: CanvasGroup[];
 };
+type CanvasContextMenuState = {
+  x: number;
+  y: number;
+  world: Point;
+  menu: "node" | "create" | "tools";
+  nodeId?: string;
+};
 type MentionState = { start: number; end: number; query: string } | null;
+
+const CANVAS_ASSET_UNCATEGORIZED_ID = "uncategorized";
+const CANVAS_ASSET_SMART_COLLECTION_IDS = new Set([
+  "all",
+  "recent",
+  "favorite",
+  "generated",
+  "reference",
+  "image",
+  "video",
+]);
+const CANVAS_ASSET_NON_READY_STATUSES = new Set(["queued", "running", "failed"]);
+
+function isAssignableCanvasAssetCollection(collectionId: string) {
+  return (
+    collectionId === CANVAS_ASSET_UNCATEGORIZED_ID ||
+    !CANVAS_ASSET_SMART_COLLECTION_IDS.has(collectionId)
+  );
+}
+
+function canAddCanvasAsset(node: CanvasNode) {
+  return (
+    node.type === "media" &&
+    Boolean(node.data.url) &&
+    !CANVAS_ASSET_NON_READY_STATUSES.has(String(node.data.status || ""))
+  );
+}
 
 function ConnectionOptionIcon({
   value,
@@ -351,6 +407,7 @@ type Interaction =
       nodeId: string;
       nodeIds: string[];
       positions: Record<string, Point>;
+      shiftKey: boolean;
       doubleClick?: boolean;
       originGroupId?: string;
       originGroupBounds?: { x: number; y: number; w: number; h: number };
@@ -530,6 +587,8 @@ const CONNECTION_NODE_OPTIONS: Array<{
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Esc"], label: "关闭弹层、取消当前操作并清除选择" },
   { keys: ["左键"], label: "拖动空白区域平移画布" },
+  { keys: ["双击左键"], label: "打开创建节点菜单" },
+  { keys: ["右键"], label: "打开画布操作菜单" },
   { keys: ["中键"], label: "拖动平移画布" },
   { keys: ["Space", "左键"], label: "按住 Space 拖动空白区域平移画布" },
   { keys: ["Shift", "左键"], label: "追加选择节点或对象组" },
@@ -611,11 +670,7 @@ function nodeLabel(node: CanvasNode) {
 
 function canvasUpscaleSource(document: CanvasDocument, nodeId: string) {
   return incomingReferences(document, nodeId).find(
-    (item) =>
-      item.type === "media" &&
-      item.data.kind === "image" &&
-      Boolean(item.data.url) &&
-      !["queued", "running", "failed"].includes(item.data.status || ""),
+    (item) => isCanvasReadyImageSource(item),
   );
 }
 
@@ -748,11 +803,11 @@ function mentionLabel(node: CanvasNode, index: number) {
 }
 
 function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | null {
-  if (node.type !== "media" || !node.data.url || !node.data.kind) return null;
+  if (!isCanvasReferenceableNode(node)) return null;
   return {
     id: `node-ref:${node.id}`,
     nodeId: node.id,
-    kind: node.data.kind,
+    kind: node.data.kind === "video" ? "video" : "image",
     url: String(node.data.url),
     name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : "图片素材")),
     origin: "node",
@@ -976,7 +1031,12 @@ export default function SuperCanvas() {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingFilePositionRef = useRef<Point | null>(null);
   const workflowInputRef = useRef<HTMLInputElement | null>(null);
+  const openFilePicker = useCallback((position?: Point) => {
+    pendingFilePositionRef.current = position || null;
+    fileInputRef.current?.click();
+  }, []);
   const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
   const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
@@ -1002,6 +1062,9 @@ export default function SuperCanvas() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [expandedEditorId, setExpandedEditorId] = useState<string | null>(null);
   const [nodeGestureActive, setNodeGestureActive] = useState(false);
+  const [quickToolbarNodeId, setQuickToolbarNodeId] = useState<string | null>(
+    null,
+  );
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
@@ -1013,6 +1076,7 @@ export default function SuperCanvas() {
     text: { prompt: "", params: readSharedCreationSettings("text") },
   });
   const [saving, setSaving] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>("idle");
   const [generationKeys, setGenerationKeys] = useState<Set<string>>(new Set());
@@ -1021,11 +1085,7 @@ export default function SuperCanvas() {
   const cancelPendingNodeClick = useCallback(() => {
     setPendingClickNodeId(null);
   }, []);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    world: Point;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [lightbox, setLightbox] = useState<{
     nodeId: string;
     compare: boolean;
@@ -1089,9 +1149,14 @@ export default function SuperCanvas() {
   const [panActive, setPanActive] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [assetRefresh, setAssetRefresh] = useState(0);
+  const [assetLibraryCollectionId, setAssetLibraryCollectionId] =
+    useState("all");
+  const [assetCollectionPickerNodeId, setAssetCollectionPickerNodeId] =
+    useState<string | null>(null);
   const [assetDropGroupId, setAssetDropGroupId] = useState<string | null>(
     null,
   );
+  const [fileDropActive, setFileDropActive] = useState(false);
 
   useEffect(() => {
     setTheme(
@@ -1132,6 +1197,20 @@ export default function SuperCanvas() {
   );
   const selectedNodes = useMemo(
     () => document.nodes.filter((node) => selectedIds.has(node.id)),
+    [document.nodes, selectedIds],
+  );
+  const selectedImageDownloads = useMemo(
+    () =>
+      orderCanvasImageItems(
+        document.nodes
+          .filter((node) => isCanvasReadyImageSource(node))
+          .map((node) => ({
+            id: node.id,
+            name: node.data.name,
+            url: String(node.data.url),
+          })),
+        selectedIds,
+      ),
     [document.nodes, selectedIds],
   );
   const selectedSingle = selectedNodes.length === 1 ? selectedNodes[0] : null;
@@ -1177,8 +1256,8 @@ export default function SuperCanvas() {
   const selectedGroup = selectedGroupId
     ? groupById(document, selectedGroupId)
     : undefined;
-  const mediaNodes = useMemo(
-    () => document.nodes.filter((node) => node.type === "media"),
+  const referenceNodes = useMemo(
+    () => document.nodes.filter((node) => isCanvasReferenceableNode(node)),
     [document.nodes],
   );
   const canvasAssets = useMemo<AssetRecord[]>(
@@ -1212,12 +1291,12 @@ export default function SuperCanvas() {
     () =>
       selectedGroupId
         ? groupNodes(document, selectedGroupId).filter(
-            (node) => node.type === "media" && Boolean(node.data.url),
+            (node) => isCanvasReferenceableNode(node),
           )
         : referenceOwnerId
           ? incomingReferences(document, referenceOwnerId)
-          : mediaNodes.filter((node) => Boolean(node.data.url)),
-    [document, mediaNodes, referenceOwnerId, selectedGroupId],
+          : referenceNodes,
+    [document, referenceNodes, referenceOwnerId, selectedGroupId],
   );
 
   const setDoc = useCallback((next: CanvasDocument) => {
@@ -1379,7 +1458,8 @@ export default function SuperCanvas() {
     if (selectedSingle?.type === "prompt") setMode("text");
     else if (
       selectedSingle?.type === "media" ||
-      selectedSingle?.type === "generator"
+      selectedSingle?.type === "generator" ||
+      selectedSingle?.type === "upscale"
     )
       setMode(selectedSingle.data.kind === "video" ? "video" : "image");
   }, [selectedSingle?.id, selectedSingle?.type, selectedSingle?.data.kind]);
@@ -1813,15 +1893,16 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.button !== 0 && event.button !== 1) return;
       const target = event.target as HTMLElement;
+      setContextMenu(null);
       if (
         target.closest(
           ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
         )
       )
         return;
-      setContextMenu(null);
       setConnectionNodePicker(null);
       setDraggingNodeIds(new Set());
+      setQuickToolbarNodeId(null);
       cancelPendingNodeClick();
       hideConnectionCancel();
       if (
@@ -1870,6 +1951,7 @@ export default function SuperCanvas() {
       event.stopPropagation();
       cancelPendingNodeClick();
       setNodeGestureActive(true);
+      setQuickToolbarNodeId(null);
       const now = Date.now();
       const doubleClick = Boolean(
         lastNodePressRef.current &&
@@ -1919,6 +2001,7 @@ export default function SuperCanvas() {
         nodeId: node.id,
         nodeIds: dragIds,
         positions,
+        shiftKey: event.shiftKey,
         doubleClick,
         originGroupId: node.groupId,
         originGroupBounds,
@@ -1967,6 +2050,7 @@ export default function SuperCanvas() {
           })();
       setDraggingNodeIds(new Set(ids));
       setSelectedEdgeId(null);
+      setQuickToolbarNodeId(null);
       const positions = Object.fromEntries(
         ids.map((id) => {
           const item = nodeById(docRef.current, id);
@@ -2030,6 +2114,7 @@ export default function SuperCanvas() {
       event.stopPropagation();
       hideConnectionCancel();
       connectionHoverEdgeRef.current = null;
+      setQuickToolbarNodeId(null);
       setDraggingNodeIds(new Set([node.id]));
       const size = nodeSize(node);
       interactionRef.current = {
@@ -2150,6 +2235,7 @@ export default function SuperCanvas() {
             preserveInputConnections: press.preserveInputConnections,
           };
           setDraggingNodeIds(new Set(press.nodeIds));
+          setQuickToolbarNodeId(null);
           lastNodePressRef.current = null;
           interaction = interactionRef.current;
         }
@@ -2376,15 +2462,17 @@ export default function SuperCanvas() {
         if (node) {
           if (interaction.doubleClick) {
             cancelPendingNodeClick();
+            setQuickToolbarNodeId(null);
             setExpandedEditorId(null);
             if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
-            if (node.type === "media" && node.data.url)
+            if (isCanvasReferenceableNode(node))
               setLightbox({ nodeId: node.id, compare: false });
             else if (node.type === "prompt") setTextLightboxNodeId(node.id);
-          } else {
+          } else if (!interaction.shiftKey) {
             // A click is confirmed on pointer-up. Dragging has already been
             // promoted to `drag` in moveInteraction, so it cannot open the
             // editor accidentally.
+            setQuickToolbarNodeId(node.id);
             setPendingClickNodeId(node.id);
           }
         }
@@ -2560,6 +2648,12 @@ export default function SuperCanvas() {
           }
         }
       }
+      if (
+        interaction.kind === "drag" ||
+        interaction.kind === "resize" ||
+        interaction.kind === "resizeGroup"
+      )
+        setQuickToolbarNodeId(null);
       setNodeGestureActive(false);
       interactionRef.current = null;
       setDraggingNodeIds(new Set());
@@ -2813,7 +2907,7 @@ export default function SuperCanvas() {
         const draft = createUpscaleNode(seed);
         const point = position ? seed : openNodePosition(seed, draft);
         const node = { ...draft, x: point.x, y: point.y };
-        const source = selectedSingle && selectedSingle.type === "media" && selectedSingle.data.kind === "image" && selectedSingle.data.url && !["queued", "running", "failed"].includes(selectedSingle.data.status || "") ? selectedSingle : undefined;
+        const source = selectedSingle && isCanvasReadyImageSource(selectedSingle) ? selectedSingle : undefined;
         const connected = source ? addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, node] }, source.id, node.id, "right", "left", "manual", "upscale-image") : { ...docRef.current, nodes: [...docRef.current.nodes, node] };
         commit(() => connected);
         setSelectedIds(new Set([node.id]));
@@ -2872,11 +2966,7 @@ export default function SuperCanvas() {
       const sourceNode = nodeById(docRef.current, picker.sourceId);
       if (
         kind === "upscale" &&
-        (!sourceNode ||
-          sourceNode.type !== "media" ||
-          sourceNode.data.kind !== "image" ||
-          !sourceNode.data.url ||
-          ["queued", "running", "failed"].includes(sourceNode.data.status || ""))
+        !isCanvasReadyImageSource(sourceNode)
       ) {
         setConnectionNodePicker(null);
         return notify("超分节点只接受一张已完成的图片", "error");
@@ -2930,7 +3020,12 @@ export default function SuperCanvas() {
   }, [clearSelection, commit, notify, selectedIds]);
   const duplicateSelection = useCallback(() => {
     if (!selectedIds.size) return;
-    const copies = duplicateNodes(docRef.current, [...selectedIds]);
+    const copies = duplicateNodes(
+      docRef.current,
+      [...selectedIds],
+      { x: 48, y: 48 },
+      true,
+    );
     commit((value) => ({
       ...value,
       nodes: [...value.nodes, ...copies.nodes],
@@ -2941,7 +3036,7 @@ export default function SuperCanvas() {
     setSelectedGroupId(
       copies.groupIds.length === 1 ? copies.groupIds[0] : null,
     );
-    notify(`已复制 ${copies.nodes.length} 个对象`);
+    notify(`已复制 ${copies.nodes.length} 个对象，并保留输入连线`);
   }, [commit, notify, selectedIds]);
   const makeGroup = useCallback(() => {
     if (selectedIds.size < 2)
@@ -3128,21 +3223,30 @@ export default function SuperCanvas() {
         try {
           const asset = await uploadCanvasAsset(file);
           if (asset.kind === "image" && asset.optimized) optimizedImageCount += 1;
-          nodes.push(
-            createMedia(
-              asset.kind,
-              asset.url,
-              asset.name,
-              {
-                x: base.x + (index % 3) * 350,
-                y: base.y + Math.floor(index / 3) * 270,
-              },
-              {
-                role: "参考素材",
-                params: defaultParams(asset.kind, runtime),
-              },
-            ),
+          const draft = createMedia(
+            asset.kind,
+            asset.url,
+            asset.name,
+            {
+              x: base.x + (index % 3) * 350,
+              y: base.y + Math.floor(index / 3) * 270,
+            },
+            {
+              role: "参考素材",
+              params: defaultParams(asset.kind, runtime),
+            },
           );
+          const point = position
+            ? openNodePosition(
+                {
+                  x: base.x + (index % 3) * 350,
+                  y: base.y + Math.floor(index / 3) * 270,
+                },
+                draft,
+                nodes,
+              )
+            : draft;
+          nodes.push({ ...draft, x: point.x, y: point.y });
           addLog(
             `已导入${asset.kind === "video" ? "视频" : "图片"}：${file.name}`,
           );
@@ -3168,6 +3272,7 @@ export default function SuperCanvas() {
       addLog,
       commit,
       notify,
+      openNodePosition,
       runtime,
       screenToWorld,
       stageSize.height,
@@ -3190,7 +3295,7 @@ export default function SuperCanvas() {
   }, [notify, selectedIds]);
 
   const pasteCanvasPayload = useCallback(
-    (payload: CanvasClipboardPayload) => {
+    (payload: CanvasClipboardPayload, position?: Point) => {
       const source = payload.nodes;
       if (!source.length) return notify("剪贴板中没有可粘贴的节点。", "error");
       const minX = Math.min(...source.map((node) => node.x));
@@ -3200,12 +3305,12 @@ export default function SuperCanvas() {
         x: (rect?.left || 0) + (rect?.width || stageSize.width) / 2,
         y: (rect?.top || 0) + (rect?.height || stageSize.height) / 2,
       };
-      const target = screenToWorld(center.x, center.y);
+      const target = position || screenToWorld(center.x, center.y);
       const idMap = new Map(source.map((node) => [node.id, uid("node")]));
       const groupMap = new Map(
         payload.groups.map((group) => [group.id, uid("group")]),
       );
-      const nodes = source.map((node) => {
+      let nodes = source.map((node) => {
         const copy = remapNodeReferences(clone(node), idMap);
         return {
           ...copy,
@@ -3217,6 +3322,33 @@ export default function SuperCanvas() {
             : { groupId: undefined }),
         };
       });
+      if (position && nodes.length) {
+        const maxX = Math.max(...source.map((node) => node.x + nodeSize(node).w));
+        const maxY = Math.max(...source.map((node) => node.y + nodeSize(node).h));
+        const desiredOrigin = {
+          x: target.x - minX + 48,
+          y: target.y - minY + 48,
+        };
+        const probe = {
+          ...nodes[0],
+          x: desiredOrigin.x,
+          y: desiredOrigin.y,
+          w: Math.max(1, maxX - minX),
+          h: Math.max(1, maxY - minY),
+        };
+        const placedOrigin = openNodePosition(desiredOrigin, probe);
+        const offset = {
+          x: placedOrigin.x - desiredOrigin.x,
+          y: placedOrigin.y - desiredOrigin.y,
+        };
+        if (offset.x || offset.y) {
+          nodes = nodes.map((node) => ({
+            ...node,
+            x: node.x + offset.x,
+            y: node.y + offset.y,
+          }));
+        }
+      }
       const groups = payload.groups.map((group) => ({
         ...clone(group),
         id: groupMap.get(group.id)!,
@@ -3241,10 +3373,10 @@ export default function SuperCanvas() {
       setSelectedGroupId(groups.length === 1 ? groups[0].id : null);
       notify(`已粘贴 ${nodes.length} 个节点`);
     },
-    [commit, notify, screenToWorld, stageSize.height, stageSize.width],
+    [commit, notify, openNodePosition, screenToWorld, stageSize.height, stageSize.width],
   );
 
-  const pasteFromClipboard = useCallback(async () => {
+  const pasteFromClipboard = useCallback(async (position?: Point) => {
     let clipboardText = "";
     try {
       if (navigator.clipboard?.read) {
@@ -3261,7 +3393,7 @@ export default function SuperCanvas() {
                 `剪贴板图片.${imageType.split("/")[1] || "png"}`,
                 { type: imageType },
               ),
-            ]);
+            ], position);
             return;
           }
         }
@@ -3275,20 +3407,20 @@ export default function SuperCanvas() {
           clipboardText = await blob.text();
           const parsed: unknown = JSON.parse(clipboardText);
           if (isCanvasClipboardPayload(parsed))
-            return pasteCanvasPayload(parsed);
+            return pasteCanvasPayload(parsed, position);
         }
       }
       if (!clipboardText)
         clipboardText = (await navigator.clipboard?.readText()) || "";
       if (clipboardText) {
         const parsed: unknown = JSON.parse(clipboardText);
-        if (isCanvasClipboardPayload(parsed)) return pasteCanvasPayload(parsed);
+        if (isCanvasClipboardPayload(parsed)) return pasteCanvasPayload(parsed, position);
       }
       if (canvasClipboardRef.current)
-        pasteCanvasPayload(canvasClipboardRef.current);
+        pasteCanvasPayload(canvasClipboardRef.current, position);
     } catch {
       if (!clipboardText && canvasClipboardRef.current)
-        pasteCanvasPayload(canvasClipboardRef.current);
+        pasteCanvasPayload(canvasClipboardRef.current, position);
       else
         notify(
           clipboardText
@@ -4628,6 +4760,7 @@ export default function SuperCanvas() {
     ) => createMedia("image", url, name, position, {
       role: "图片续生成结果",
       model: params.model,
+      ...(params.mask ? { maskApplied: true, maskSourceNodeId: source.id } : {}),
       params: clone(params),
       status,
       ...(status === "running" ? { processingStartedAt: createdAt } : {}),
@@ -4672,6 +4805,15 @@ export default function SuperCanvas() {
     commit(() => initialDocument);
     setSelectedIds(new Set([pendingPositioned.id]));
     setSelectedGroupId(null);
+    if (params.mask) {
+      updateDoc((value) =>
+        updateCanvasMaskState(value, source.id, {
+          status: "running",
+          taskId,
+          error: undefined,
+        }),
+      );
+    }
 
     try {
       const result = await generateCanvasImage({
@@ -4731,9 +4873,17 @@ export default function SuperCanvas() {
           .filter((edge) => edge.source !== source.id)
           .map((edge) => ({ ...edge, id: uid("edge"), target: output.id })),
       ]);
-      updateDoc((value) => ({
-        ...value,
-        nodes: value.nodes
+      updateDoc((value) => {
+        const withMask = params.mask
+          ? updateCanvasMaskState(value, source.id, {
+              status: "used",
+              taskId,
+              error: undefined,
+            })
+          : value;
+        return {
+        ...withMask,
+        nodes: withMask.nodes
           .map((node) => node.id === pendingPositioned.id
             ? {
                 ...node,
@@ -4752,7 +4902,8 @@ export default function SuperCanvas() {
           )
           .concat(outputs),
         edges: [...value.edges, ...extraEdges],
-      }));
+        };
+      });
       setSelectedIds(new Set([pendingPositioned.id, ...outputs.map((output) => output.id)]));
       writeSharedCreationSettings(params);
       setReuseDraft(null);
@@ -4776,6 +4927,15 @@ export default function SuperCanvas() {
       addLog(`图片续生成完成：${result.images.length} 张`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "图片续生成失败";
+      if (params.mask) {
+        updateDoc((value) =>
+          updateCanvasMaskState(value, source.id, {
+            status: "failed",
+            taskId,
+            error: message,
+          }),
+        );
+      }
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) => node.id === pendingPositioned.id
@@ -4975,10 +5135,7 @@ export default function SuperCanvas() {
           content: String(node.data.text),
         }));
       const referenceNodes = incoming.filter(
-        (node) =>
-          node.type === "media" &&
-          node.data.kind === "image" &&
-          Boolean(node.data.url),
+        (node) => isCanvasReferenceableNode(node) && node.data.kind === "image",
       );
       const configuredAgentModel = runtime?.settings.agentModelId;
       const hasUsableConfiguredAgentModel = Boolean(
@@ -5186,9 +5343,9 @@ export default function SuperCanvas() {
     const baseLinked = ownerId
       ? [
           ...(sourceTarget?.data.url ? [sourceTarget] : []),
-          ...incoming.filter((node) => node.type === "media" && node.data.url),
+          ...incoming.filter((node) => isCanvasReferenceableNode(node)),
         ]
-      : selectedNodes.filter((node) => node.type === "media" && node.data.url);
+      : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
     const linked = [
       ...new Map(
         [
@@ -5259,6 +5416,11 @@ export default function SuperCanvas() {
         const imageParams = effectiveParams as ImageCreationSettings;
         const taskId = uid("image-task");
         const base = sourceTarget || sourceNode;
+        const maskOwner = sourceTarget?.type === "media" && sourceTarget.data.kind === "image"
+          ? sourceTarget
+          : sourceNode?.type === "media" && sourceNode.data.kind === "image"
+            ? sourceNode
+            : undefined;
         const position = base
           ? {
               x:
@@ -5298,6 +5460,15 @@ export default function SuperCanvas() {
             nodes: [...value.nodes, pending],
           }));
         }
+        if (imageParams.mask && maskOwner) {
+          updateDoc((value) =>
+            updateCanvasMaskState(value, maskOwner.id, {
+              status: "running",
+              taskId,
+              error: undefined,
+            }),
+          );
+        }
         const result = await generateCanvasImage({
           taskId,
           prompt,
@@ -5335,6 +5506,9 @@ export default function SuperCanvas() {
             {
               role: "生成结果",
               model: result.model?.name || imageParams.model,
+              ...(imageParams.mask
+                ? { maskApplied: true, maskSourceNodeId: maskOwner?.id }
+                : {}),
               generation: {
                 kind: "image",
                 prompt,
@@ -5433,6 +5607,12 @@ export default function SuperCanvas() {
                   : node,
               ),
             };
+          if (imageParams.mask && maskOwner)
+            next = updateCanvasMaskState(next, maskOwner.id, {
+              status: "used",
+              taskId,
+              error: undefined,
+            });
           return next;
         });
         setSelectedIds(new Set(selectedOutputIds));
@@ -5571,6 +5751,23 @@ export default function SuperCanvas() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "生成失败";
+      const failedMaskOwner = sourceTarget?.type === "media" && sourceTarget.data.kind === "image"
+        ? sourceTarget
+        : sourceNode?.type === "media" && sourceNode.data.kind === "image"
+          ? sourceNode
+          : undefined;
+      if (
+        kind === "image" &&
+        failedMaskOwner &&
+        (effectiveParams as ImageCreationSettings).mask
+      ) {
+        updateDoc((value) =>
+          updateCanvasMaskState(value, failedMaskOwner.id, {
+            status: "failed",
+            error: message,
+          }),
+        );
+      }
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) =>
@@ -5812,7 +6009,7 @@ export default function SuperCanvas() {
           : source.data.kind === "video" ? "video" : "reference-image";
       } else if (source.type === "prompt" || source.type === "generator") {
         inputRole = "context";
-      } else if (source.type === "media") {
+      } else if (isCanvasReferenceableNode(source)) {
         if (target.data.kind === "image" && source.data.kind !== "image") {
           notify("图片节点不能接收视频作为图片参考。", "error");
           return;
@@ -5984,7 +6181,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string) => {
+    async (maskDataUrl: string, coverage = 0) => {
       const node = maskNodeId
         ? nodeById(docRef.current, maskNodeId)
         : undefined;
@@ -5993,9 +6190,6 @@ export default function SuperCanvas() {
         return;
       }
       try {
-        const uploaded = await uploadCanvasAsset(
-          dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
-        );
         const existingDraft =
           reuseDraft?.sourceNodeId === node.id
             ? cloneReuseDraft(reuseDraft)
@@ -6015,6 +6209,9 @@ export default function SuperCanvas() {
               );
         if (!existingDraft)
           throw new Error("当前节点没有完整生成参数，无法使用蒙版。");
+        const uploaded = await uploadCanvasAsset(
+          dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
+        );
         const settings = copyParams(
           existingDraft.params,
           "image",
@@ -6024,6 +6221,38 @@ export default function SuperCanvas() {
           ...settings,
           mask: { assetId: uploaded.id, url: uploaded.url },
         } satisfies ImageCreationSettings;
+        const maskCoverage = Math.max(0, Math.min(1, coverage));
+        const mask: CanvasMaskState = {
+          assetId: uploaded.id,
+          url: uploaded.url,
+          status: "pending",
+          coverage: maskCoverage,
+          createdAt: node.data.mask?.createdAt || Date.now(),
+          updatedAt: Date.now(),
+        };
+        updateDoc((value) => ({
+          ...value,
+          nodes: value.nodes.map((item) =>
+            item.id === node.id
+              ? {
+                  ...item,
+                  data: {
+                    ...item.data,
+                    mask,
+                    params: clone(params),
+                    ...(item.data.generation
+                      ? {
+                          generation: {
+                            ...item.data.generation,
+                            params: clone(params),
+                          },
+                        }
+                      : {}),
+                  },
+                }
+              : item,
+          ),
+        }));
         if (reuseDraft?.sourceNodeId === node.id) {
           setReuseDraft({ ...existingDraft, params, dirty: true });
           setExpandedEditorId(node.id);
@@ -6035,7 +6264,7 @@ export default function SuperCanvas() {
         }
         setMaskNodeId(null);
         notify(
-          "蒙版已加入图片编辑器，点击生成即可创建右侧新图；原图保持不变",
+          `蒙版已保存（覆盖 ${Math.round(maskCoverage * 100)}%），点击生成即可创建右侧新图；原图保持不变`,
           "ok",
         );
       } catch (error) {
@@ -6045,12 +6274,65 @@ export default function SuperCanvas() {
         );
       }
     },
-    [maskNodeId, notify, openImageEditor, reuseDraft, runtime],
+    [maskNodeId, notify, openImageEditor, reuseDraft, runtime, updateDoc],
+  );
+
+  const removeCanvasMask = useCallback(
+    (node: CanvasNode) => {
+      if (node.type !== "media" || node.data.kind !== "image") return;
+      const cleanedParams = maskParamsWithoutMask(
+        editorDrafts[node.id]?.params ||
+          node.data.generation?.params ||
+          node.data.params,
+        runtime,
+      );
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((item) =>
+          item.id === node.id
+            ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  mask: undefined,
+                  params: clone(cleanedParams),
+                  ...(item.data.generation
+                    ? {
+                        generation: {
+                          ...item.data.generation,
+                          params: clone(cleanedParams),
+                        },
+                      }
+                    : {}),
+                },
+              }
+            : item,
+        ),
+      }));
+      setEditorDrafts((current) => ({
+        ...current,
+        [node.id]: {
+          ...current[node.id],
+          prompt:
+            current[node.id]?.prompt ||
+            String(node.data.generation?.prompt || node.data.prompt || ""),
+          params: clone(cleanedParams),
+        },
+      }));
+      if (reuseDraft?.sourceNodeId === node.id)
+        setReuseDraft((current) =>
+          current?.sourceNodeId === node.id
+            ? { ...current, params: clone(cleanedParams), dirty: true }
+            : current,
+        );
+      notify("蒙版已移除，下一次生成不会再携带蒙版");
+    },
+    [editorDrafts, notify, reuseDraft, runtime, updateDoc],
   );
 
   const createUpscaleFromSource = useCallback((sourceOverride?: CanvasNode) => {
     const source = sourceOverride || selectedSingle;
-    if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url || ["queued", "running", "failed"].includes(source.data.status || ""))
+    if (!source || !isCanvasReadyImageSource(source))
       return notify("请先选择一张已完成的图片", "error");
     const draft = createUpscaleNode({ x: source.x + nodeSize(source).w + 90, y: source.y });
     const next = addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, draft] }, source.id, draft.id, "right", "left", "manual", "upscale-image");
@@ -6076,16 +6358,50 @@ export default function SuperCanvas() {
     const activeKey = `upscale-node:${node.id}`;
     if (generationKeysRef.current.has(activeKey)) return;
     generationKeysRef.current.add(activeKey); setGenerationKeys(new Set(generationKeysRef.current));
-    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", processingStartedAt: Date.now() } } : item) }));
+    // Processing belongs to this node. Hide the editor after submission so
+    // the canvas stays usable; selecting the node again can reopen it while
+    // the card continues to show progress.
+    setExpandedEditorId((current) => current === node.id ? null : current);
+    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", progress: undefined, processingStartedAt: Date.now() } } : item) }));
     try {
       const result = await generateCanvasUpscale({ prompt: params.prompt || "Upscale this image", model: selectedModel, referenceUrl: String(source.data.url), scale: params.scale || 2, size, seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", resizeMethod: params.algorithm || "lanczos" });
       if (!result.images?.length) throw new Error("服务端没有返回超分结果");
-      const output = createMedia("image", result.images[0].url, `${source.data.name || "图片"} · 超分`, { x: node.x + nodeSize(node).w + 90, y: node.y }, { role: "超分结果", model: result.model?.name || params.model, generation: { kind: "image", prompt: params.prompt || "Upscale this image", params: { ...params } as any, operation: "upscale", referenceIds: [source.id], parentNodeId: node.id, createdAt: Date.now() }, referenceOrder: [source.id], nativeWidth: targetDimensions.width, nativeHeight: targetDimensions.height });
-      commit((value) => addEdge({ ...value, nodes: [...value.nodes, output] }, node.id, output.id, "right", "left", "lineage"));
-      updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "completed", statusLabel: "超分完成", processingStartedAt: undefined } } : item) }));
-      setSelectedIds(new Set([output.id])); setSelectedGroupId(null);
+      const resultCreatedAt = Date.now();
+      const resultUrl = String(result.images[0].url || "");
+      if (!resultUrl) throw new Error("服务端没有返回超分图片");
+      // Keep the upscale node as the output node. The incoming source edge is
+      // retained, while the node itself now carries the generated image and
+      // an explicit marker for UI/history consumers.
+      commit((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? {
+        ...item,
+        data: {
+          ...item.data,
+          kind: "image",
+          url: resultUrl,
+          name: `${source.data.name || "图片"} · 超分结果`,
+          role: "超分结果",
+          resultSource: "upscale-node",
+          model: result.model?.name || params.model || "自动超分模型",
+          nativeWidth: targetDimensions.width,
+          nativeHeight: targetDimensions.height,
+          status: "completed",
+          statusLabel: "超分节点生成的结果",
+          progress: 100,
+          processingStartedAt: undefined,
+          generation: {
+            kind: "image",
+            prompt: params.prompt || "Upscale this image",
+            params: { ...params } as any,
+            operation: "upscale",
+            referenceIds: [source.id],
+            parentNodeId: item.id,
+            createdAt: resultCreatedAt,
+          },
+        },
+      } : item) }));
+      setSelectedIds(new Set([node.id])); setSelectedGroupId(null);
       recordModelCall({ context: "upscale", mode: selectedModel === "auto" ? "auto" : "manual", modelId: result.model?.id || selectedModel, params: { scale: params.scale || 2, target: params.target || "auto", seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", algorithm: params.algorithm || "lanczos" } });
-      notify("超分完成，已创建结果分支"); addLog(`图片超分完成：${source.data.name || source.id}`);
+      notify("超分完成，结果已写入当前节点"); addLog(`图片超分完成：${source.data.name || source.id}`);
       void recordCanvasImages(result.images, { prompt: params.prompt || "Upscale this image", source: "canvas", modelId: result.model?.id || params.model, modelName: result.model?.name, providerName: result.model?.provider, outputSize: size, parentId: node.id })
         .then(() => setAssetRefresh((value) => value + 1))
         .catch(() => addLog("图片超分完成，但写入主界面历史失败"));
@@ -6227,12 +6543,22 @@ export default function SuperCanvas() {
   );
 
   const addNodeToCollection = useCallback(async (nodeId: string, collectionId: string) => {
+    if (!isAssignableCanvasAssetCollection(collectionId)) {
+      notify("请先选择未分类或自定义资产集合。", "error");
+      return;
+    }
     const node = nodeById(docRef.current, nodeId);
     if (!node || node.type !== "media" || !node.data.url) return;
-    const asset = canvasAssets.find((item) => item.url === node.data.url && item.kind === node.data.kind);
+    const asset = (await listUnifiedAssets(canvasAssets)).find(
+      (item) => item.url === node.data.url && item.kind === node.data.kind,
+    );
     if (!asset) return notify("节点素材尚未登记到资产库。", "error");
     try {
-      await updateUnifiedAssetMetadata(asset, { collectionIds: [...new Set([...(asset.collectionIds || []), collectionId])] });
+      const currentCollectionIds = asset.collectionIds || [];
+      const collectionIds = collectionId === CANVAS_ASSET_UNCATEGORIZED_ID
+        ? currentCollectionIds
+        : [...new Set([...currentCollectionIds, collectionId])];
+      await updateUnifiedAssetMetadata(asset, { collectionIds });
       setAssetRefresh((value) => value + 1);
       notify("节点素材已加入资产集合");
     } catch (error) { notify(error instanceof Error ? error.message : "资产集合保存失败", "error"); }
@@ -6273,10 +6599,11 @@ export default function SuperCanvas() {
       const centerY =
         (stageRect?.top || 0) + (stageRect?.height || stageSize.height) / 2;
       if (event.key === "Escape") {
-        const hadOverlay = Boolean(lightbox || textLightboxNodeId || activePanel || reusePreview);
+        const hadOverlay = Boolean(contextMenu || lightbox || textLightboxNodeId || activePanel || reusePreview || assetCollectionPickerNodeId);
         setContextMenu(null);
         setLightbox(null);
         setReusePreview(null);
+        setAssetCollectionPickerNodeId(null);
         setActivePanel(null);
         interactionRef.current = null;
         setConnection(null);
@@ -6334,6 +6661,7 @@ export default function SuperCanvas() {
     breakGroup,
     clearSelection,
     commit,
+    contextMenu,
     copySelection,
     deleteSelection,
     duplicateSelection,
@@ -6344,6 +6672,7 @@ export default function SuperCanvas() {
     redo,
     runGeneration,
     activePanel,
+    assetCollectionPickerNodeId,
     lightbox,
     reusePreview,
     selectedEdgeId,
@@ -6357,26 +6686,45 @@ export default function SuperCanvas() {
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      event.preventDefault();
       const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(
-          ".canvas-node,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
-        )
-      )
+      const element = target instanceof Element ? target : null;
+      const nodeElement = element?.closest<HTMLElement>("[data-canvas-node-id]");
+      const nodeId = nodeElement?.dataset.canvasNodeId;
+      const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+      const isolatedTarget = element?.closest(
+        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+      );
+      if (isolatedTarget) {
+        if (isolatedTarget.closest(".canvas-context-menu")) event.preventDefault();
         return;
+      }
+      event.preventDefault();
       const point = stagePoint(event.clientX, event.clientY);
+      if (node) {
+        if (!selectedIds.has(node.id)) selectNode(node);
+        setContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          menu: "node",
+          nodeId: node.id,
+          world: {
+            x: (point.x - document.camera.x) / document.camera.zoom,
+            y: (point.y - document.camera.y) / document.camera.zoom,
+          },
+        });
+        return;
+      }
       setContextMenu({
         x: event.clientX,
         y: event.clientY,
+        menu: "tools",
         world: {
           x: (point.x - document.camera.x) / document.camera.zoom,
           y: (point.y - document.camera.y) / document.camera.zoom,
         },
       });
     },
-    [document.camera, stagePoint],
+    [document.camera, selectNode, selectedIds, stagePoint],
   );
   const deck = deckSource();
   const deckKind = deck.kind;
@@ -6398,7 +6746,7 @@ export default function SuperCanvas() {
         .filter((node): node is CanvasNode => Boolean(node))
     : referenceOwnerId
     ? incomingReferences(document, referenceOwnerId)
-    : selectedNodes.filter((node) => node.type === "media" && node.data.url);
+    : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
   const composerReferences = reuseDraft ? reuseDraft.references : references;
   const composerPrompt = reuseDraft ? reuseDraft.prompt : deck.prompt;
   const composerSemanticBadges = useMemo(() => {
@@ -6469,7 +6817,7 @@ export default function SuperCanvas() {
     notify("提示词已复制到画布编辑器，原节点保持不变");
   }, [notify, openImageEditor, openReuseDraft]);
   const runOneTakeFromSelection = useCallback(async () => {
-    const source = selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url);
+    const source = selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image");
     if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
     const model = runtime?.settings.agentModelId || undefined;
     try {
@@ -6552,7 +6900,7 @@ export default function SuperCanvas() {
     [notify, openImageEditor, openReuseDraft, reuseDraft],
   );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
-    if (node.type !== "media" || !node.data.url) return null;
+    if (!canAddCanvasAsset(node)) return null;
     return {
       id: `canvas:${activeProjectId}:${node.id}`,
       kind: node.data.kind === "video" ? "video" : "image",
@@ -6571,14 +6919,40 @@ export default function SuperCanvas() {
       tags: [],
     };
   }, [activeProjectId]);
-  const addViewerAsset = useCallback(async (node: CanvasNode) => {
+  const addViewerAsset = useCallback(async (
+    node: CanvasNode,
+    collectionId: string,
+  ): Promise<boolean> => {
     const asset = viewerAsset(node);
-    if (!asset) return;
-    try { await registerCanvasAsset(asset); setAssetRefresh((value) => value + 1); notify("已加入资产库"); }
-    catch (error) { notify(error instanceof Error ? error.message : "资产登记失败", "error"); }
+    if (!asset || !isAssignableCanvasAssetCollection(collectionId)) return false;
+    try {
+      const existing = (await listUnifiedAssets(canvasAssets)).find(
+        (item) => item.kind === asset.kind && item.url === asset.url,
+      );
+      const currentCollectionIds = existing?.collectionIds || [];
+      const collectionIds = collectionId === CANVAS_ASSET_UNCATEGORIZED_ID
+        ? currentCollectionIds
+        : [...new Set([...currentCollectionIds, collectionId])];
+      if (existing)
+        await updateUnifiedAssetMetadata(existing, { collectionIds });
+      else
+        await registerCanvasAsset({ ...asset, collectionIds });
+      setAssetRefresh((value) => value + 1);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "资产登记失败", "error");
+      return false;
+    }
+  }, [canvasAssets, notify, viewerAsset]);
+  const openAssetCollectionPicker = useCallback((node: CanvasNode) => {
+    if (!viewerAsset(node)) {
+      notify("当前节点没有可加入资产库的媒体。", "error");
+      return;
+    }
+    setAssetCollectionPickerNodeId(node.id);
   }, [notify, viewerAsset]);
   const downloadCanvasNode = useCallback((node: CanvasNode) => {
-    if (node.type !== "media" || !node.data.url) {
+    if ((node.type !== "media" && node.type !== "upscale") || !node.data.url) {
       notify("当前节点还没有可下载的媒体。", "error");
       return;
     }
@@ -6588,6 +6962,41 @@ export default function SuperCanvas() {
     anchor.rel = "noreferrer";
     anchor.click();
     notify("已开始下载");
+  }, [notify]);
+  const downloadSelectedImages = useCallback(async () => {
+    if (selectedImageDownloads.length < 2 || batchDownloading) return;
+    setBatchDownloading(true);
+    try {
+      const { blob } = await createCanvasImageZip(selectedImageDownloads);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = window.document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = objectUrl;
+      anchor.download = `SANMAO-画布图片-${stamp}.zip`;
+      anchor.rel = "noreferrer";
+      anchor.style.display = "none";
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      notify(`已开始下载 ${selectedImageDownloads.length} 张图片`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "批量下载图片失败", "error");
+    } finally {
+      setBatchDownloading(false);
+    }
+  }, [batchDownloading, notify, selectedImageDownloads]);
+  const copyCanvasImage = useCallback(async (node: CanvasNode) => {
+    if (node.type !== "media" || node.data.kind !== "image" || !node.data.url) {
+      notify("当前节点没有可复制的图片。", "error");
+      return;
+    }
+    try {
+      await copyCanvasImageToClipboard(String(node.data.url));
+      notify("图片已复制到系统剪贴板");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "复制图片失败，请检查浏览器的剪贴板权限。", "error");
+    }
   }, [notify]);
   const focusGenerationLog = useCallback(
     (log: CanvasGenerationLog, openMedia = false) => {
@@ -6862,6 +7271,7 @@ export default function SuperCanvas() {
     if (!node || selectedGroupId || selectedNodes.length !== 1) return [];
     if (node.type === "media" && node.data.kind === "image") {
       const hasMedia = Boolean(node.data.url);
+      const canAddAsset = canAddCanvasAsset(node);
       return [
         {
           id: "preview",
@@ -6873,7 +7283,10 @@ export default function SuperCanvas() {
         {
           id: "mask",
           icon: "◌",
-          label: "蒙版",
+          label: node.data.mask ? "查看蒙版" : "绘制蒙版",
+          title: node.data.mask
+            ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
+            : "为当前图片绘制蒙版",
           disabled: !hasMedia,
           onClick: () => setMaskNodeId(node.id),
         },
@@ -6909,8 +7322,8 @@ export default function SuperCanvas() {
           id: "asset",
           icon: "＋",
           label: "加入资产",
-          disabled: !hasMedia,
-          onClick: () => void addViewerAsset(node),
+          disabled: !canAddAsset,
+          onClick: () => openAssetCollectionPicker(node),
         },
         {
           id: "delete",
@@ -6923,6 +7336,7 @@ export default function SuperCanvas() {
     }
     if (node.type === "media" && node.data.kind === "video") {
       const hasMedia = Boolean(node.data.url);
+      const canAddAsset = canAddCanvasAsset(node);
       return [
         {
           id: "preview",
@@ -6956,8 +7370,8 @@ export default function SuperCanvas() {
           id: "asset",
           icon: "＋",
           label: "加入资产",
-          disabled: !hasMedia,
-          onClick: () => void addViewerAsset(node),
+          disabled: !canAddAsset,
+          onClick: () => openAssetCollectionPicker(node),
         },
         {
           id: "delete",
@@ -6981,6 +7395,26 @@ export default function SuperCanvas() {
         },
       ];
     }
+    if (node.type === "upscale") {
+      const hasResult = Boolean(node.data.url);
+      return [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasResult,
+          onClick: () => setLightbox({ nodeId: node.id, compare: false }),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          title: "下载超分节点生成的图片",
+          disabled: !hasResult,
+          onClick: () => downloadCanvasNode(node),
+        },
+      ];
+    }
     const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
     return [
       {
@@ -6994,7 +7428,7 @@ export default function SuperCanvas() {
     ];
   }, [
     addCurrentNodeToReuse,
-    addViewerAsset,
+    openAssetCollectionPicker,
     continueFromMedia,
     deleteSelection,
     downloadCanvasNode,
@@ -7006,6 +7440,263 @@ export default function SuperCanvas() {
     selectedGroupId,
     selectedNodes.length,
     selectedSingle,
+    useAgentResponseAsImagePrompt,
+  ]);
+
+  const contextNode = contextMenu?.menu === "node" && contextMenu.nodeId
+    ? nodeById(document, contextMenu.nodeId)
+    : undefined;
+  const contextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
+    const node = contextNode;
+    if (!node) return [];
+    const hasMedia = node.type === "media" && Boolean(node.data.url);
+    const canAddAsset = canAddCanvasAsset(node);
+    const close = (action: () => void) => () => {
+      setContextMenu(null);
+      action();
+    };
+    const editAction: CanvasQuickAction = {
+      id: "adjust",
+      icon: "⚙",
+      label: "调整参数",
+      onClick: close(() => toggleEditor(node)),
+    };
+    const canvasActions: CanvasQuickAction[] = [
+      {
+        id: "copy-nodes",
+        icon: "⧉",
+        label: "复制节点",
+        title: "复制当前选中的画布节点",
+        onClick: close(() => void copySelection()),
+      },
+      {
+        id: "paste",
+        icon: "⌘",
+        label: "粘贴",
+        title: "粘贴节点或剪贴板图片到右键位置附近",
+        onClick: close(() => void pasteFromClipboard(contextMenu?.world)),
+      },
+      {
+        id: "duplicate",
+        icon: "＋",
+        label: "创建副本",
+        title: "在画布中直接创建当前选区的副本",
+        onClick: close(duplicateSelection),
+      },
+    ];
+    const cleanupActions: CanvasQuickAction[] = [
+      {
+        id: "delete",
+        icon: "⌫",
+        label: selectedIds.size > 1 ? `删除 ${selectedIds.size} 个对象` : "删除",
+        danger: true,
+        onClick: close(deleteSelection),
+      },
+    ];
+    if (node.type === "media" && node.data.kind === "image") {
+      const mediaActions: CanvasQuickAction[] = [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasMedia,
+          onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+        },
+        editAction,
+        {
+          id: "mask",
+          icon: "◌",
+          label: node.data.mask ? "查看蒙版" : "绘制蒙版",
+          title: node.data.mask
+            ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
+            : "为当前图片绘制蒙版",
+          disabled: !hasMedia,
+          onClick: close(() => setMaskNodeId(node.id)),
+        },
+        {
+          id: "upscale",
+          icon: "↗",
+          label: "超分",
+          disabled: !hasMedia,
+          onClick: close(() => createUpscaleFromSource(node)),
+        },
+        {
+          id: "reference",
+          icon: "⌁",
+          label: "作为参考",
+          disabled: !hasMedia,
+          onClick: close(() => addCurrentNodeToReuse(node)),
+        },
+        {
+          id: "copy-image",
+          icon: "▣",
+          label: "复制图片",
+          title: "将图片复制到系统图片剪贴板",
+          disabled: !hasMedia,
+          onClick: close(() => void copyCanvasImage(node)),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          disabled: !hasMedia,
+          onClick: close(() => downloadCanvasNode(node)),
+        },
+        {
+          id: "asset",
+          icon: "★",
+          label: "加入资产",
+          disabled: !canAddAsset,
+          onClick: close(() => openAssetCollectionPicker(node)),
+        },
+      ];
+      return [
+        { label: "快速操作", actions: mediaActions },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "media" && node.data.kind === "video") {
+      const mediaActions: CanvasQuickAction[] = [
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "预览",
+          disabled: !hasMedia,
+          onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+        },
+        editAction,
+        {
+          id: "continue",
+          icon: "▶",
+          label: "继续生成 / 变体",
+          disabled: !hasMedia,
+          onClick: close(() => continueFromMedia(node)),
+        },
+        {
+          id: "reference",
+          icon: "⌁",
+          label: "作为参考",
+          disabled: !hasMedia,
+          onClick: close(() => addCurrentNodeToReuse(node)),
+        },
+        {
+          id: "download",
+          icon: "↓",
+          label: "下载",
+          disabled: !hasMedia,
+          onClick: close(() => downloadCanvasNode(node)),
+        },
+        {
+          id: "asset",
+          icon: "★",
+          label: "加入资产",
+          disabled: !canAddAsset,
+          onClick: close(() => openAssetCollectionPicker(node)),
+        },
+      ];
+      return [
+        { label: "快速操作", actions: mediaActions },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "prompt") {
+      const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
+      const promptActions: CanvasQuickAction[] = [
+        editAction,
+        {
+          id: "preview",
+          icon: "⤢",
+          label: "放大查看",
+          disabled: !hasResponse,
+          onClick: close(() => setTextLightboxNodeId(node.id)),
+        },
+        {
+          id: "image",
+          icon: "✦",
+          label: "转图片",
+          disabled: !hasResponse,
+          onClick: close(() => useAgentResponseAsImagePrompt(node)),
+        },
+      ];
+      return [
+        { label: "快速操作", actions: promptActions },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "generator") {
+      const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
+      return [
+        {
+          label: "快速操作",
+          actions: [
+            editAction,
+            {
+              id: "retry",
+              icon: "↻",
+              label: failedCount ? `重试失败项 (${failedCount})` : "重试失败项",
+              disabled: failedCount === 0 || generationKeys.has(node.id),
+              onClick: close(() => retryFailedVariants(node.id)),
+            },
+          ],
+        },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    if (node.type === "upscale") {
+      const hasResult = Boolean(node.data.url);
+      return [
+        {
+          label: "快速操作",
+          actions: [
+            editAction,
+            {
+              id: "preview",
+              icon: "⤢",
+              label: "预览",
+              disabled: !hasResult,
+              onClick: close(() => setLightbox({ nodeId: node.id, compare: false })),
+            },
+            {
+              id: "download",
+              icon: "↓",
+              label: "下载",
+              title: "下载超分节点生成的图片",
+              disabled: !hasResult,
+              onClick: close(() => downloadCanvasNode(node)),
+            },
+          ],
+        },
+        { label: "复制与整理", actions: canvasActions },
+        { label: "删除", actions: cleanupActions },
+      ];
+    }
+    return [
+      { label: "快速操作", actions: [editAction] },
+      { label: "复制与整理", actions: canvasActions },
+      { label: "删除", actions: cleanupActions },
+    ];
+  }, [
+    addCurrentNodeToReuse,
+    openAssetCollectionPicker,
+    contextNode,
+    contextMenu?.world,
+    continueFromMedia,
+    copyCanvasImage,
+    copySelection,
+    createUpscaleFromSource,
+    deleteSelection,
+    downloadCanvasNode,
+    duplicateSelection,
+    generationKeys,
+    pasteFromClipboard,
+    retryFailedVariants,
+    selectedIds.size,
+    setMaskNodeId,
+    toggleEditor,
     useAgentResponseAsImagePrompt,
   ]);
 
@@ -7025,7 +7716,10 @@ export default function SuperCanvas() {
     <section
       className="canvas-workspace"
       aria-label="SANMAO 无限画布"
-      onClick={() => projectMenuOpen && setProjectMenuOpen(false)}
+      onClick={() => {
+        setContextMenu(null);
+        if (projectMenuOpen) setProjectMenuOpen(false);
+      }}
     >
       <header className={`canvas-topbar ${topbarCollapsed ? "collapsed" : ""}`}>
         <div className="canvas-topbar-main">
@@ -7081,7 +7775,7 @@ export default function SuperCanvas() {
           <button
             type="button"
             className="canvas-soft-button canvas-import-button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => openFilePicker()}
           >
             ＋ 导入素材
           </button>
@@ -7220,7 +7914,7 @@ export default function SuperCanvas() {
       </header>
       <div
         ref={stageRef}
-        className={`canvas-stage ${panActive ? "is-panning" : ""}`}
+        className={`canvas-stage ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""}`}
         tabIndex={-1}
         aria-keyshortcuts="Delete"
         onPointerDown={handleStagePointerDown}
@@ -7233,17 +7927,37 @@ export default function SuperCanvas() {
           // dblclick to the stage. Resolve the node from the pointer position
           // so double-clicking a media card always opens its full viewer.
           const target = event.target as HTMLElement;
-          if (target.closest("button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize")) return;
+          if (
+            target.closest(
+              "button,textarea,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+            )
+          )
+            return;
           const hit = target.closest("[data-canvas-node-id]") ||
             window.document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-canvas-node-id]");
           const nodeId = hit?.getAttribute("data-canvas-node-id");
           const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
-          if (node?.type === "media" && node.data.url) {
+          if (node && isCanvasReferenceableNode(node)) {
             cancelPendingNodeClick();
             setLightbox({ nodeId: node.id, compare: false });
           } else if (node?.type === "prompt") {
             cancelPendingNodeClick();
             setEditingNodeId(node.id);
+          } else if (node) {
+            event.preventDefault();
+            return;
+          } else {
+            event.preventDefault();
+            const point = stagePoint(event.clientX, event.clientY);
+            setContextMenu({
+              x: event.clientX,
+              y: event.clientY,
+              menu: "create",
+              world: {
+                x: (point.x - document.camera.x) / document.camera.zoom,
+                y: (point.y - document.camera.y) / document.camera.zoom,
+              },
+            });
           }
         }}
         onDragStart={(event) => {
@@ -7257,6 +7971,12 @@ export default function SuperCanvas() {
           if (!isReferenceDrag && !isCanvasNodeDrag) event.preventDefault();
         }}
         onDragOver={(event) => {
+          if (hasExternalFileTransfer(event.dataTransfer)) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            setFileDropActive(true);
+            return;
+          }
           if (event.dataTransfer.types.includes("application/x-sanmao-asset")) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
@@ -7269,10 +7989,26 @@ export default function SuperCanvas() {
           }
         }}
         onDragLeave={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setAssetDropGroupId(null);
+            setFileDropActive(false);
+          }
         }}
-        onDrop={handleAssetDrop}
+        onDrop={(event) => {
+          if (hasExternalFileTransfer(event.dataTransfer)) {
+            event.preventDefault();
+            event.stopPropagation();
+            setFileDropActive(false);
+            if (event.dataTransfer.files.length) {
+              void handleFiles(
+                event.dataTransfer.files,
+                screenToWorld(event.clientX, event.clientY),
+              );
+            }
+            return;
+          }
+          handleAssetDrop(event);
+        }}
         onContextMenu={handleContextMenu}
         onWheel={(event) => {
           if (isCanvasWheelIsolatedTarget(event.target)) {
@@ -7289,6 +8025,12 @@ export default function SuperCanvas() {
           );
         }}
       >
+        {fileDropActive && (
+          <div className="canvas-file-drop-hint" aria-hidden="true">
+            <span>↥</span>
+            <b>松开以导入图片或视频</b>
+          </div>
+        )}
         <div className="canvas-grid" />
         {snapGuides.length > 0 && (
           <div className="canvas-snap-guides" aria-hidden="true">
@@ -7458,10 +8200,11 @@ export default function SuperCanvas() {
                    onConnect={startConnection}
                    onSelect={(event) => selectNode(node, event.shiftKey)}
                    onRemoveFromGroup={() => removeNodeFromGroup(node.id)}
-                   onPreview={() =>
+                  onPreview={() =>
                     setLightbox({ nodeId: node.id, compare: false })
                   }
                   onOutputPreview={(output) => setLightbox({ nodeId: output.id, compare: false })}
+                  onMaskEdit={() => setMaskNodeId(node.id)}
                   onTextPreview={() => setTextLightboxNodeId(node.id)}
                   onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
                   onRetryVariant={(variantIndex) =>
@@ -7508,7 +8251,10 @@ export default function SuperCanvas() {
            </div>
           </div>
         </div>
-        {selectedSingle && !nodeGestureActive && quickActions.length > 0 && (
+        {selectedSingle &&
+          quickToolbarNodeId === selectedSingle.id &&
+          !nodeGestureActive &&
+          quickActions.length > 0 && (
           <CanvasNodeQuickToolbar
             node={selectedSingle}
             document={document}
@@ -7560,6 +8306,9 @@ export default function SuperCanvas() {
               onReferenceRemove={removeNodeReference}
               onReferenceDrop={addNodeReference}
               onAddReferenceFiles={addEditorReferenceFiles}
+              maskState={maskStateForNode(editorNode)}
+              onMaskEdit={() => setMaskNodeId(editorNode.id)}
+              onMaskRemove={() => removeCanvasMask(editorNode)}
               branchDraft={reuseDraft?.sourceNodeId === editorNode.id ? reuseDraft : null}
               onDraftReferenceFiles={addReuseFiles}
               onDraftReferenceRemove={removeReuseReference}
@@ -7691,8 +8440,19 @@ export default function SuperCanvas() {
                 ⌘ 成组
               </button>
             )}
-            {selectedNodes.filter((node) => node.type === "media" && node.data.kind === "image" && node.data.url).length >= 2 && (
+            {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
               <button type="button" onClick={() => void runOneTakeFromSelection()}>🎬 一镜到底</button>
+            )}
+            {selectedImageDownloads.length >= 2 && (
+              <button
+                type="button"
+                title="按选择顺序打包下载图片"
+                aria-label={`批量下载 ${selectedImageDownloads.length} 张图片`}
+                disabled={batchDownloading}
+                onClick={() => void downloadSelectedImages()}
+              >
+                {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageDownloads.length} 张`}
+              </button>
             )}
             {selectedGroupId && (
               <button type="button" onClick={breakGroup}>
@@ -7859,7 +8619,7 @@ export default function SuperCanvas() {
                       type="button"
                       className="canvas-context-add"
                       aria-label="导入参考素材"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => openFilePicker()}
                     >
                       ＋
                     </button>
@@ -7889,7 +8649,7 @@ export default function SuperCanvas() {
                       onReorder={reorderReference}
                       onRemove={removeComposerReference}
                       onClear={clearComposerReferences}
-                      onAdd={() => fileInputRef.current?.click()}
+                      onAdd={() => openFilePicker()}
                       onPaste={() => void pasteFromClipboard()}
                       variant="deck"
                     />
@@ -8060,30 +8820,25 @@ export default function SuperCanvas() {
           onNavigate={panToWorld}
           onMoveNodes={moveMinimapNodes}
         />
-        {contextMenu && (
-          <div
-            className="canvas-context-menu"
-            style={{
-              left: Math.max(
-                8,
-                Math.min(
-                  contextMenu.x,
-                  window.innerWidth <= 420
-                    ? 8
-                    : Math.max(8, window.innerWidth - 308),
-                ),
-              ),
-              top: Math.max(
-                8,
-                Math.min(contextMenu.y, Math.max(8, window.innerHeight - 640)),
-              ),
-            }}
-            onClick={(event) => event.stopPropagation()}
+        {contextNode && contextMenu?.menu === "node" && contextMenu.nodeId ? (
+          <CanvasNodeContextMenu
+            node={contextNode}
+            selectionCount={selectedIds.size}
+            groups={contextMenuGroups}
+            position={contextMenu}
+          />
+        ) : contextMenu?.menu === "create" ? (
+          <CanvasContextMenuFrame
+            className="canvas-create-context-menu"
+            position={contextMenu}
+            ariaLabel="创建节点菜单"
           >
             <div className="canvas-menu-title">
-              <span>添加节点</span>
-              <small>选择操作放置到当前画布</small>
+              <span>创建节点</span>
+              <small>选择节点放置到双击位置</small>
             </div>
+
+            <div className="canvas-context-menu-body">
 
             <button type="button" className="canvas-menu-item canvas-menu-item-tool" onClick={() => addNode("upscale", contextMenu.world)}>
               <span className="canvas-menu-icon" aria-hidden="true">↗</span>
@@ -8136,25 +8891,6 @@ export default function SuperCanvas() {
               </button>
             </div>
 
-            <button
-              type="button"
-              className="canvas-menu-media"
-              onClick={() => {
-                setContextMenu(null);
-                fileInputRef.current?.click();
-              }}
-            >
-              <span className="canvas-menu-media-icons" aria-hidden="true">
-                <i>▧</i>
-                <i>▶</i>
-              </span>
-              <span className="canvas-menu-copy">
-                <b>导入图片 / 视频</b>
-                <small>支持多选，自动识别类型</small>
-              </span>
-              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-            </button>
-
             <div className="canvas-menu-group">
               <div className="canvas-menu-group-title">
                 <span className="canvas-menu-group-mark" aria-hidden="true">02</span>
@@ -8189,14 +8925,51 @@ export default function SuperCanvas() {
               </button>
             </div>
 
-            <div className="canvas-menu-group">
-              <div className="canvas-menu-group-title">
-                <span className="canvas-menu-group-mark" aria-hidden="true">03</span>
-                <span>
-                  <b>画布工具</b>
-                  <small>快速整理当前视图</small>
+            </div>
+          </CanvasContextMenuFrame>
+        ) : contextMenu?.menu === "tools" ? (
+          <CanvasContextMenuFrame
+            className="canvas-tools-context-menu"
+            position={contextMenu}
+            ariaLabel="画布操作菜单"
+          >
+            <div className="canvas-menu-title">
+              <span>画布操作</span>
+              <small>粘贴、导入与视图工具</small>
+            </div>
+            <div className="canvas-context-menu-body">
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  const position = contextMenu.world;
+                  setContextMenu(null);
+                  void pasteFromClipboard(position);
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⌘</span>
+                <span className="canvas-menu-copy">
+                  <b>粘贴</b>
+                  <small>粘贴节点或剪贴板图片</small>
                 </span>
-              </div>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  const position = contextMenu.world;
+                  setContextMenu(null);
+                  openFilePicker(position);
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
+                <span className="canvas-menu-copy">
+                  <b>导入图片 / 视频</b>
+                  <small>支持多选，放置到右键位置</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-tool"
@@ -8222,23 +8995,24 @@ export default function SuperCanvas() {
               >
                 <span className="canvas-menu-icon" aria-hidden="true">⌗</span>
                 <span className="canvas-menu-copy">
-                  <b>适应全部</b>
+                  <b>适应视图</b>
                   <small>缩放至完整显示画布</small>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
             </div>
-          </div>
-        )}
+          </CanvasContextMenuFrame>
+        ) : null}
       </div>
       {lightbox && (() => {
         const viewerNode = nodeById(document, lightbox.nodeId);
-        if (!viewerNode || viewerNode.type !== "media" || !viewerNode.data.url || !viewerNode.data.kind) return null;
+        if (!viewerNode || !isCanvasReferenceableNode(viewerNode)) return null;
+        const viewerIsMedia = viewerNode.type === "media";
         const viewerItem: MediaViewerItem = {
           id: viewerNode.id,
-          kind: viewerNode.data.kind,
+          kind: viewerNode.data.kind === "video" ? "video" : "image",
           url: String(viewerNode.data.url),
-          name: String(viewerNode.data.name || "画布素材"),
+          name: String(viewerNode.data.name || (viewerNode.type === "upscale" ? "超分结果" : "画布素材")),
           prompt: String(viewerNode.data.generation?.prompt || viewerNode.data.prompt || ""),
           width: Number(viewerNode.data.nativeWidth) || undefined,
           height: Number(viewerNode.data.nativeHeight) || undefined,
@@ -8265,22 +9039,24 @@ export default function SuperCanvas() {
           model={runtime?.settings.agentModelId || undefined}
           agentAvailable={chatModelsAvailable}
           runtime={runtime}
-          parameters={viewerNode.data.kind === "video"
+          parameters={viewerIsMedia && viewerNode.data.kind === "video"
             ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "video", runtime) as VideoCreationSettings
-            : copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings}
+            : viewerIsMedia
+            ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings
+            : undefined}
           onClose={() => setLightbox(null)}
-          onParametersChange={(settings) => updateViewerParams(viewerNode, settings)}
-          onPromptSave={(value) => writeViewerPrompt(viewerNode, value)}
-          onWriteResult={(value) => writeViewerPrompt(viewerNode, value)}
+          onParametersChange={viewerIsMedia ? (settings) => updateViewerParams(viewerNode, settings) : undefined}
+          onPromptSave={viewerIsMedia ? (value) => writeViewerPrompt(viewerNode, value) : undefined}
+          onWriteResult={viewerIsMedia ? (value) => writeViewerPrompt(viewerNode, value) : undefined}
           onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
-          onEdit={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
-          onMask={viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
-          onUpscale={viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
-          onContinue={() => continueFromMedia(viewerNode)}
-          onReuse={() => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode)}
-          onUseAsReference={() => addCurrentNodeToReuse(viewerNode)}
-          onAddToAssets={() => void addViewerAsset(viewerNode)}
+          onEdit={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
+          onMask={viewerIsMedia && viewerNode.data.kind === "image" ? () => setMaskNodeId(viewerNode.id) : undefined}
+          onUpscale={viewerIsMedia && viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
+          onContinue={viewerIsMedia ? () => continueFromMedia(viewerNode) : undefined}
+          onReuse={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
+          onUseAsReference={viewerIsMedia ? () => addCurrentNodeToReuse(viewerNode) : undefined}
+          onAddToAssets={canAddCanvasAsset(viewerNode) ? () => openAssetCollectionPicker(viewerNode) : undefined}
           onDelete={removeViewerNode}
         />;
       })()}
@@ -8308,15 +9084,35 @@ export default function SuperCanvas() {
       {maskNode?.data.url && (
         <MaskEditor
           imageUrl={String(maskNode.data.url)}
-          initialMaskDataUrl={maskSettings?.mask?.url}
-          onApply={(value) => void applyCanvasMask(value)}
+          initialMaskDataUrl={maskNode.data.mask?.url || maskSettings?.mask?.url}
+          onApply={(value, coverage) => applyCanvasMask(value, coverage)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}
+      {assetCollectionPickerNodeId && (() => {
+        const pickerNode = nodeById(document, assetCollectionPickerNodeId);
+        if (!pickerNode || pickerNode.type !== "media" || !pickerNode.data.url)
+          return null;
+        return (
+          <CanvasAssetCollectionPicker
+            node={pickerNode}
+            preferredCollectionId={assetLibraryCollectionId}
+            onClose={() => setAssetCollectionPickerNodeId(null)}
+            onConfirm={async (collectionId) => {
+              const success = await addViewerAsset(pickerNode, collectionId);
+              if (success) setAssetLibraryCollectionId(collectionId);
+              return success;
+            }}
+            onNotify={notify}
+          />
+        );
+      })()}
       {activePanel === "assets" && (
         <CanvasAssetDrawer
           extraAssets={canvasAssets}
           refresh={assetRefresh}
+          collectionSelection={assetLibraryCollectionId}
+          onCollectionSelectionChange={setAssetLibraryCollectionId}
           canReference={Boolean(selectedGroupId || selectedSingle)}
           onAdd={addAssetToCanvas}
           onReference={addAssetAsReference}
@@ -8375,7 +9171,11 @@ export default function SuperCanvas() {
         multiple
         hidden
         onChange={(event) => {
-          if (event.target.files) void handleFiles(event.target.files);
+          if (event.target.files) {
+            const position = pendingFilePositionRef.current;
+            pendingFilePositionRef.current = null;
+            void handleFiles(event.target.files, position || undefined);
+          }
           event.currentTarget.value = "";
         }}
       />
@@ -8401,9 +9201,213 @@ const ASSET_SOURCE_LABELS: Record<AssetSource, string> = {
   "canvas-output": "画布生成",
 };
 
+const CANVAS_ASSET_LAST_COLLECTION_KEY = "sanmao.canvas.asset.lastCollection";
+
+function CanvasAssetCollectionPicker({
+  node,
+  preferredCollectionId,
+  onClose,
+  onConfirm,
+  onNotify,
+}: {
+  node: CanvasNode;
+  preferredCollectionId?: string;
+  onClose: () => void;
+  onConfirm: (collectionId: string) => Promise<boolean>;
+  onNotify: (message: string, kind?: Notice["kind"]) => void;
+}) {
+  const [collections, setCollections] = useState<AssetCollection[]>(
+    DEFAULT_ASSET_COLLECTIONS,
+  );
+  const [collectionId, setCollectionId] = useState(() => {
+    if (preferredCollectionId && isAssignableCanvasAssetCollection(preferredCollectionId))
+      return preferredCollectionId;
+    if (typeof window === "undefined") return CANVAS_ASSET_UNCATEGORIZED_ID;
+    try {
+      return (
+        window.localStorage.getItem(CANVAS_ASSET_LAST_COLLECTION_KEY) ||
+        CANVAS_ASSET_UNCATEGORIZED_ID
+      );
+    } catch {
+      return CANVAS_ASSET_UNCATEGORIZED_ID;
+    }
+  });
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void listAssetCollections()
+      .then((items) => {
+        if (!active) return;
+        setCollections(items);
+        const assignableIds = new Set([
+          CANVAS_ASSET_UNCATEGORIZED_ID,
+          ...items.filter((item) => item.builtin === false).map((item) => item.id),
+        ]);
+        setCollectionId((current) =>
+          assignableIds.has(current)
+            ? current
+            : CANVAS_ASSET_UNCATEGORIZED_ID,
+        );
+      })
+      .catch(() => {
+        if (active) onNotify("资产集合读取失败，请稍后重试。", "error");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [onNotify]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const assignableCollections = [
+    {
+      id: CANVAS_ASSET_UNCATEGORIZED_ID,
+      name: "未分类",
+    },
+    ...collections
+      .filter((item) => item.builtin === false)
+      .map((item) => ({ id: item.id, name: item.name })),
+  ];
+  const selectedCollection =
+    assignableCollections.find((item) => item.id === collectionId) ||
+    assignableCollections[0];
+
+  const createCollection = async () => {
+    const name = newCollectionName.trim();
+    if (!name) return;
+    if (collections.some((item) => item.name.trim() === name)) {
+      onNotify("已经存在同名资产集合。", "error");
+      return;
+    }
+    const now = Date.now();
+    const item: AssetCollection = {
+      id: `collection_${now.toString(36)}`,
+      name,
+      createdAt: now,
+      updatedAt: now,
+      builtin: false,
+    };
+    const next = [...collections, item];
+    try {
+      await saveAssetCollections(next);
+      setCollections(next);
+      setCollectionId(item.id);
+      setNewCollectionName("");
+      onNotify(`已创建资产集合“${name}”。`);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "资产集合创建失败。", "error");
+    }
+  };
+
+  const confirm = async () => {
+    if (saving || loading || !selectedCollection) return;
+    setSaving(true);
+    try {
+      const success = await onConfirm(selectedCollection.id);
+      if (!success) return;
+      try {
+        window.localStorage.setItem(
+          CANVAS_ASSET_LAST_COLLECTION_KEY,
+          selectedCollection.id,
+        );
+      } catch {
+        /* 记忆失败不应阻断资产登记 */
+      }
+      onNotify(`已加入资产库 · ${selectedCollection.name}`);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="canvas-modal-backdrop canvas-asset-collection-picker-backdrop"
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="canvas-asset-target-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="canvas-asset-collection-picker-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <span>＋</span>
+            <div>
+              <b id="canvas-asset-collection-picker-title">加入资产库</b>
+              <small>{String(node.data.name || "画布素材")}</small>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="关闭加入资产弹窗">×</button>
+        </header>
+        <div className="canvas-asset-collection-picker-body">
+          <label>
+            <span>选择资产库分类</span>
+            <SelectMenu
+              value={collectionId}
+              onChange={setCollectionId}
+              ariaLabel="加入目标资产库分类"
+              options={assignableCollections.map((item) => ({
+                value: item.id,
+                label: item.name,
+              }))}
+            />
+          </label>
+          <small className="canvas-asset-collection-picker-hint">
+            加入后可在全局资产中心的“{selectedCollection?.name || "未分类"}”分类中筛选；已有归类会保留。
+          </small>
+          <div className="canvas-asset-collection-picker-new">
+            <input
+              value={newCollectionName}
+              onChange={(event) => setNewCollectionName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void createCollection();
+              }}
+              placeholder="新建集合…"
+              aria-label="新建资产集合"
+            />
+            <button
+              type="button"
+              onClick={() => void createCollection()}
+              disabled={!newCollectionName.trim()}
+            >
+              新建
+            </button>
+          </div>
+        </div>
+        <footer>
+          <button type="button" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" className="primary" onClick={() => void confirm()} disabled={saving || loading}>
+            {saving ? "加入中…" : `加入“${selectedCollection?.name || "未分类"}”分类`}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function CanvasAssetDrawer({
   extraAssets,
   refresh,
+  collectionSelection,
+  onCollectionSelectionChange,
   canReference,
   onAdd,
   onReference,
@@ -8415,6 +9419,8 @@ function CanvasAssetDrawer({
 }: {
   extraAssets: AssetRecord[];
   refresh: number;
+  collectionSelection: string;
+  onCollectionSelectionChange: (collectionId: string) => void;
   canReference: boolean;
   onAdd: (asset: AssetRecord) => void;
   onReference: (asset: AssetRecord) => void;
@@ -8434,13 +9440,35 @@ function CanvasAssetDrawer({
   const [preview, setPreview] = useState<AssetRecord | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [collections, setCollections] = useState<AssetCollection[]>(DEFAULT_ASSET_COLLECTIONS);
-  const [collection, setCollection] = useState("all");
+  const [collection, setCollection] = useState(collectionSelection || "all");
   const [newCollectionName, setNewCollectionName] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [nodeDropActive, setNodeDropActive] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => { void listAssetCollections().then(setCollections); }, []);
+  useEffect(() => {
+    let active = true;
+    void listAssetCollections().then((items) => {
+      if (!active) return;
+      setCollections(items);
+      const valid = collectionSelection === "all" || items.some((item) => item.id === collectionSelection);
+      const next = valid ? collectionSelection : "all";
+      setCollection(next);
+      onCollectionSelectionChange(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [collectionSelection, onCollectionSelectionChange]);
+
+  useEffect(() => {
+    setCollection((current) => current === collectionSelection ? current : collectionSelection);
+  }, [collectionSelection]);
+
+  const changeCollection = (next: string) => {
+    setCollection(next);
+    onCollectionSelectionChange(next);
+  };
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -8492,8 +9520,8 @@ function CanvasAssetDrawer({
     );
     setNodeDropActive(false);
     if (!nodeId) return;
-    if (collection === "all") {
-      onNotify("请先选择一个具体资产集合，再放入节点。", "error");
+    if (!isAssignableCanvasAssetCollection(collection)) {
+      onNotify("请先选择未分类或自定义资产集合，再放入节点。", "error");
       return;
     }
     onAddNodeToCollection(nodeId, collection);
@@ -8540,6 +9568,7 @@ function CanvasAssetDrawer({
     setCollections(next); setNewCollectionName("");
     await saveAssetCollections(next);
     setCollection(item.id);
+    onCollectionSelectionChange(item.id);
   };
 
   const deleteCollection = async (collectionId: string) => {
@@ -8568,7 +9597,7 @@ function CanvasAssetDrawer({
             : asset,
         ),
       );
-      if (collection === collectionId) setCollection("all");
+      if (collection === collectionId) changeCollection("all");
       onNotify(`已删除资产集合“${target.name}”，其中的资产已保留。`);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "资产集合删除失败。", "error");
@@ -8728,7 +9757,7 @@ function CanvasAssetDrawer({
             <div className="canvas-asset-collection-picker">
               <SelectMenu
                 value={collection}
-                onChange={setCollection}
+                onChange={changeCollection}
                 onDelete={(id) => void deleteCollection(id)}
                 ariaLabel="资产集合"
                 options={collections.map((item) => ({
@@ -8767,8 +9796,8 @@ function CanvasAssetDrawer({
             要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。
           </div>
         )}
-        <div className={`canvas-asset-collection-dropzone ${collection === "all" ? "needs-collection" : ""}`}>
-          <span>⌘</span><b>{collection === "all" ? "先选择集合，再拖入节点" : "把画布节点拖到这里归类"}</b><small>{collection === "all" ? "下拉框中可删除自定义集合" : "拖动节点右上角 ↗，节点不会从画布移除"}</small>
+        <div className={`canvas-asset-collection-dropzone ${isAssignableCanvasAssetCollection(collection) ? "" : "needs-collection"}`}>
+          <span>⌘</span><b>{isAssignableCanvasAssetCollection(collection) ? "把画布节点拖到这里归类" : "先选择未分类或自定义集合"}</b><small>{isAssignableCanvasAssetCollection(collection) ? "拖动节点右上角 ↗，节点不会从画布移除" : "智能筛选视图不能作为归类目标"}</small>
         </div>
         <div className="canvas-asset-new-collection"><input value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="新建集合…" onKeyDown={(event) => { if (event.key === "Enter") void createCollection(); }} /><button type="button" onClick={() => void createCollection()}>＋</button></div>
         {selectedAssetIds.size > 0 && <div className="canvas-asset-bulk-bar"><b>已选 {selectedAssetIds.size} 个</b><button type="button" onClick={() => void addSelectedAssetsToCollection()}>加入当前集合</button><button type="button" onClick={() => setSelectedAssetIds(new Set())}>清除选择</button></div>}
@@ -9238,22 +10267,80 @@ function CanvasUpscaleSettingsPanel({
   }, [sourceUrl]);
   const target = sourceSize ? seedVrTargetSize(sourceSize.width, sourceSize.height, params.scale, params.target) : null;
   const models = (runtime?.models || []).filter((model) => model.enabled && model.published && (model.capabilities || []).includes("upscale"));
+  const modelOptions = [
+    {
+      value: "auto",
+      label: "自动选择",
+      description: "使用默认厂商，失败时自动回退",
+    },
+    ...models.map((model) => ({
+      value: model.id,
+      label: model.displayName,
+      description: `${model.providerName} · ${model.rawId}`,
+    })),
+  ];
+  const colorCorrectionOptions: Array<{
+    value: CanvasUpscaleParams["colorCorrection"];
+    label: string;
+  }> = [
+    { value: "wavelet", label: "wavelet · 接近原图" },
+    { value: "none", label: "关闭" },
+  ];
+  const algorithmOptions: Array<{
+    value: CanvasUpscaleParams["algorithm"];
+    label: string;
+  }> = [
+    { value: "lanczos", label: "lanczos · 锐利" },
+    { value: "bicubic", label: "bicubic · 平滑" },
+    { value: "nearest", label: "nearest · 像素" },
+  ];
   return (
     <div className="canvas-upscale-settings" aria-label="超分设置">
       <div className="canvas-upscale-setting-row">
-        <label>超分模型<select value={params.model} onChange={(event) => onChange({ ...params, model: event.target.value })}>
-          <option value="auto">自动选择</option>{models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
-        </select></label>
-        <label>倍率<div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div></label>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>模型</strong></div>
+          <SelectMenu
+            value={params.model}
+            onChange={(value) => onChange({ ...params, model: value })}
+            ariaLabel="模型"
+            className="canvas-upscale-select"
+            menuClassName="canvas-upscale-select-popover"
+            options={modelOptions}
+          />
+        </div>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>放大倍率</strong></div>
+          <div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} aria-pressed={params.scale === scale} aria-label={`${scale}×`} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div>
+        </div>
       </div>
-      <div className="canvas-upscale-size-readout"><span>原图<strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败" : "读取中…"}</strong></span><b>→</b><span>目标<strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算" : "计算中…"}</strong></span></div>
+      <div className="canvas-upscale-size-readout"><span><small>原图</small><strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败" : "读取中…"}</strong></span><b>→</b><span><small>目标</small><strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算" : "计算中…"}</strong></span></div>
       <div className="canvas-upscale-setting-row">
-        <label>随机种子<input type="number" min={0} value={params.seed} onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
-        <label>色彩校正<select value={params.colorCorrection} onChange={(event) => onChange({ ...params, colorCorrection: event.target.value === "none" ? "none" : "wavelet" })}><option value="wavelet">Wavelet</option><option value="none">关闭</option></select></label>
+        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>随机种子</strong></span><input type="number" min={0} value={params.seed} aria-label="随机种子" onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>颜色校正</strong></div>
+          <SelectMenu
+            value={params.colorCorrection}
+            onChange={(value) => onChange({ ...params, colorCorrection: value })}
+            ariaLabel="颜色校正"
+            className="canvas-upscale-select"
+            menuClassName="canvas-upscale-select-popover"
+            options={[...colorCorrectionOptions]}
+          />
+        </div>
       </div>
       <div className="canvas-upscale-setting-row">
-        <label>缩放算法<select value={params.algorithm} onChange={(event) => onChange({ ...params, algorithm: event.target.value as CanvasUpscaleParams["algorithm"] })}><option value="lanczos">Lanczos</option><option value="bicubic">Bicubic</option><option value="nearest">Nearest</option></select></label>
-        <label>说明文字<input value={params.prompt || ""} placeholder="可选" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>缩放算法</strong></div>
+          <SelectMenu
+            value={params.algorithm}
+            onChange={(value) => onChange({ ...params, algorithm: value })}
+            ariaLabel="缩放算法"
+            className="canvas-upscale-select"
+            menuClassName="canvas-upscale-select-popover"
+            options={[...algorithmOptions]}
+          />
+        </div>
+        <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>可选说明</strong></span><input value={params.prompt || ""} aria-label="可选说明" placeholder="SeedVR2 超分不会根据提示词修改画面…" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
       </div>
       {!sourceUrl && <small className="canvas-upscale-empty-hint">请连接一张已完成的图片后再提交</small>}
     </div>
@@ -9267,6 +10354,9 @@ type CanvasNodeEditorPopoverProps = {
   runtime: CanvasRuntimeState | null;
   editorPrompt: string;
   editorParams?: CanvasGenerationParams;
+  maskState?: CanvasMaskState;
+  onMaskEdit?: () => void;
+  onMaskRemove?: () => void;
   onToggleEditor: (node: CanvasNode) => void;
   onGenerate: (node: CanvasNode) => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
@@ -9299,6 +10389,11 @@ type CanvasQuickAction = {
   danger?: boolean;
   disabled?: boolean;
   onClick: () => void;
+};
+
+type CanvasContextMenuGroup = {
+  label: string;
+  actions: CanvasQuickAction[];
 };
 
 function CanvasNodeQuickToolbar({
@@ -9413,6 +10508,166 @@ function CanvasNodeQuickToolbar({
   );
 }
 
+function maskParamsWithoutMask(value: unknown, runtime: CanvasRuntimeState | null) {
+  const params = copyParams(value, "image", runtime) as ImageCreationSettings;
+  const { mask: _mask, ...withoutMask } = params;
+  return withoutMask as ImageCreationSettings;
+}
+
+function maskStateForNode(node: CanvasNode) {
+  if (node.type !== "media" || node.data.kind !== "image") return undefined;
+  const legacyMask =
+    canvasMaskStateFromParams(node.data.generation?.params) ||
+    canvasMaskStateFromParams(node.data.params);
+  return normalizeCanvasMaskState(node.data.mask, legacyMask);
+}
+
+function CanvasContextMenuFrame({
+  position,
+  className,
+  ariaLabel,
+  dataNodeId,
+  children,
+}: {
+  position: { x: number; y: number };
+  className?: string;
+  ariaLabel: string;
+  dataNodeId?: string;
+  children: ReactNode;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [placement, setPlacement] = useState({
+    left: position.x + 10,
+    top: position.y + 10,
+  });
+  const [measured, setMeasured] = useState(false);
+
+  const reposition = useCallback(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    const viewport = {
+      width: Math.max(1, window.visualViewport?.width || window.innerWidth),
+      height: Math.max(1, window.visualViewport?.height || window.innerHeight),
+    };
+    const next = placeCanvasContextMenu(
+      { left: position.x, top: position.y },
+      viewport,
+      { width: rect.width, height: rect.height },
+    );
+    setPlacement((current) =>
+      current.left === next.left && current.top === next.top ? current : next,
+    );
+    setMeasured(true);
+  }, [position.x, position.y]);
+
+  useLayoutEffect(() => {
+    setMeasured(false);
+    reposition();
+    let frame = 0;
+    const schedule = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        reposition();
+      });
+    };
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(schedule)
+      : null;
+    if (observer && menuRef.current) observer.observe(menuRef.current);
+    window.addEventListener("resize", schedule);
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener("resize", schedule);
+    visualViewport?.addEventListener("scroll", schedule);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      visualViewport?.removeEventListener("resize", schedule);
+      visualViewport?.removeEventListener("scroll", schedule);
+    };
+  }, [reposition]);
+
+  return (
+    <div
+      ref={menuRef}
+      className={`canvas-context-menu${className ? ` ${className}` : ""}`}
+      data-node-id={dataNodeId}
+      role="menu"
+      aria-label={ariaLabel}
+      style={{
+        left: placement.left,
+        top: placement.top,
+        visibility: measured ? "visible" : "hidden",
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
+function CanvasNodeContextMenu({
+  node,
+  selectionCount,
+  groups,
+  position,
+}: {
+  node: CanvasNode;
+  selectionCount: number;
+  groups: CanvasContextMenuGroup[];
+  position: { x: number; y: number };
+}) {
+  return (
+    <CanvasContextMenuFrame
+      className="canvas-node-context-menu"
+      dataNodeId={node.id}
+      ariaLabel={`${nodeLabel(node)}右键菜单`}
+      position={position}
+    >
+      <div className="canvas-menu-title">
+        <span>{nodeLabel(node)}</span>
+        <small>{selectionCount > 1 ? `已选择 ${selectionCount} 个对象` : "节点操作"}</small>
+      </div>
+      <div className="canvas-context-menu-body">
+        {groups.map((group) => (
+          <div className="canvas-menu-group" key={group.label}>
+            <div className="canvas-menu-group-title">
+              <span className="canvas-menu-group-mark" aria-hidden="true">⌘</span>
+              <span>
+                <b>{group.label}</b>
+                <small>快捷操作</small>
+              </span>
+            </div>
+            {group.actions.map((action) => (
+              <button
+                type="button"
+                role="menuitem"
+                key={action.id}
+                className={`canvas-menu-item canvas-menu-item-context ${action.danger ? "danger" : ""}`}
+                title={action.title || action.label}
+                aria-label={action.label}
+                disabled={action.disabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  action.onClick();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">{action.icon}</span>
+                <span className="canvas-menu-copy"><b>{action.label}</b></span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </CanvasContextMenuFrame>
+  );
+}
+
 function CanvasNodeEditorPopover({
   node,
   document,
@@ -9420,6 +10675,9 @@ function CanvasNodeEditorPopover({
   runtime,
   editorPrompt,
   editorParams,
+  maskState,
+  onMaskEdit,
+  onMaskRemove,
   onToggleEditor,
   onGenerate,
   onEditorPromptChange,
@@ -9453,9 +10711,7 @@ function CanvasNodeEditorPopover({
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
-  const editorReferences = incomingContext(document, node.id).filter(
-    (item) => item.type === "media" && Boolean(item.data.url),
-  );
+  const editorReferences = incomingReferences(document, node.id);
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
   const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
@@ -9637,7 +10893,13 @@ function CanvasNodeEditorPopover({
           >
             <span aria-hidden="true">{promptExpanded ? "⤡" : "⤢"}</span>
           </button>
-          <button type="button" onClick={() => onToggleEditor(node)} aria-label="关闭节点参数">×</button>
+          <button
+            type="button"
+            className={node.type === "upscale" && pending ? "canvas-node-editor-collapse" : undefined}
+            title={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
+            onClick={() => onToggleEditor(node)}
+            aria-label={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
+          >×</button>
         </div>
       </div>
       <div className="canvas-node-editor-body">
@@ -9701,6 +10963,13 @@ function CanvasNodeEditorPopover({
                 </div>
               )}
             </div>
+            {node.type === "media" && node.data.kind === "image" && node.data.url && onMaskEdit && maskState && (
+              <CanvasMaskSummary
+                mask={maskState}
+                onEdit={onMaskEdit}
+                onRemove={onMaskRemove}
+              />
+            )}
             {branchDraft ? (
               <CanvasReferenceDraftStrip
                 references={branchReferences}
@@ -9763,6 +11032,35 @@ function CanvasNodeEditorPopover({
   );
 }
 
+function CanvasMaskSummary({
+  mask,
+  onEdit,
+  onRemove,
+}: {
+  mask: CanvasMaskState;
+  onEdit: () => void;
+  onRemove?: () => void;
+}) {
+  const coverage = typeof mask.coverage === "number"
+    ? `覆盖 ${Math.round(mask.coverage * 100)}%`
+    : "覆盖范围待计算";
+  return (
+    <div className={`canvas-mask-summary ${mask.status}`} data-canvas-wheel-isolate>
+      <button type="button" className="canvas-mask-summary-preview" onClick={onEdit} title="查看红色蒙版区域并重新绘制">
+        <span className="canvas-mask-thumb"><img src={mask.url} alt="蒙版缩略图" /></span>
+        <span>
+          <b>蒙版 · {canvasMaskStatusLabel(mask.status)}</b>
+          <small>{coverage}{mask.error ? ` · ${mask.error}` : ""}</small>
+        </span>
+      </button>
+      <div className="canvas-mask-summary-actions">
+        <button type="button" onClick={onEdit}>{mask.status === "used" ? "再次使用" : "查看 / 重绘"}</button>
+        {onRemove && <button type="button" className="danger" onClick={onRemove}>移除</button>}
+      </div>
+    </div>
+  );
+}
+
 function CanvasNodeCard({
   node,
   selected,
@@ -9775,6 +11073,7 @@ function CanvasNodeCard({
   onRemoveFromGroup,
   onPreview,
   onTextPreview,
+  onMaskEdit,
   onUseAsImagePrompt,
   onRetryVariant,
   onRetryFailedVariants,
@@ -9814,6 +11113,7 @@ function CanvasNodeCard({
   onRemoveFromGroup: () => void;
   onPreview: () => void;
   onTextPreview: () => void;
+  onMaskEdit: () => void;
   onUseAsImagePrompt: () => void;
   onRetryVariant: (variantIndex: number) => void;
   onRetryFailedVariants: () => void;
@@ -9843,7 +11143,19 @@ function CanvasNodeCard({
   const colorKey = canvasNodeColorKey(node);
   const status = data.status || "idle";
   const pending = data.status === "queued" || data.status === "running";
+  const imageResolution =
+    node.type === "media" &&
+    data.kind === "image" &&
+    Boolean(data.url) &&
+    !pending &&
+    data.status !== "failed" &&
+    Number(data.nativeWidth) > 0 &&
+    Number(data.nativeHeight) > 0
+      ? `${Math.round(Number(data.nativeWidth))} × ${Math.round(Number(data.nativeHeight))}`
+      : null;
+  const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
   const failed = data.status === "failed" && !data.url;
+  const maskState = maskStateForNode(node);
   const agentResponse =
     node.type === "prompt" &&
     (data.agentResponse || String(data.role || "").includes("回复"))
@@ -9895,9 +11207,7 @@ function CanvasNodeCard({
       : 0;
   const referenceCount =
     node.type === "generator" ? incomingReferences(document, node.id).length : 0;
-  const editorReferences = incomingContext(document, node.id).filter((item) =>
-    item.type === "media" && Boolean(item.data.url),
-  );
+  const editorReferences = incomingReferences(document, node.id);
   const editorOutputs =
     node.type === "generator"
       ? document.nodes.filter(
@@ -9948,7 +11258,7 @@ function CanvasNodeCard({
       onDoubleClick={(event) => {
         event.stopPropagation();
         if (node.type === "prompt") onEdit(true);
-        else if (node.type === "media" && data.url) onPreview();
+        else if (isCanvasReferenceableNode(node)) onPreview();
         else onToggleEditor(node);
       }}
     >
@@ -10032,6 +11342,15 @@ function CanvasNodeCard({
             {data.kind === "video" && data.url && (
               <span className="canvas-video-mark">▶</span>
             )}
+            {imageResolution && (
+              <span
+                className="canvas-image-resolution"
+                title={`图片分辨率 ${imageResolution}`}
+                aria-label={`图片分辨率 ${imageResolution}`}
+              >
+                {imageResolution}
+              </span>
+            )}
             {data.url && (
               <span
                 className="canvas-node-asset-drag-handle"
@@ -10053,6 +11372,25 @@ function CanvasNodeCard({
                 ↗
               </span>
             )}
+            {data.url && data.maskApplied && (
+              <span className="canvas-node-mask-badge used" title="本次生成请求使用了蒙版">
+                ◌ 本次使用蒙版
+              </span>
+            )}
+            {data.url && maskState && !data.maskApplied && (
+              <button
+                type="button"
+                className={`canvas-node-mask-badge ${maskState.status}`}
+                title={`蒙版 · ${canvasMaskStatusLabel(maskState.status)} · 点击查看或重绘`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onMaskEdit();
+                }}
+              >
+                ◌ 蒙版 · {canvasMaskStatusLabel(maskState.status)}
+              </button>
+            )}
           </div>
           <div className="canvas-node-footer">
             <span className="canvas-type-icon">
@@ -10067,10 +11405,27 @@ function CanvasNodeCard({
         </div>
       )}
       {node.type === "upscale" && (
-        <div className="canvas-upscale-card">
-          <div className="canvas-upscale-card-head"><span>↗</span><div><b>图片超分</b><small>独立超分节点</small></div></div>
-          <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>
-          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
+        <div className={`canvas-upscale-card${hasUpscaleResult ? " has-result" : ""}`}>
+          <div className="canvas-upscale-card-head"><span>↗</span><div><b>图片超分</b><small>{hasUpscaleResult ? "超分节点生成的结果" : "独立超分节点"}</small></div></div>
+          {pending ? (
+            <div className="canvas-upscale-card-loading">
+              <CanvasProcessingIndicator
+                label={processingLabel}
+                progress={processingProgress}
+                startedAt={data.processingStartedAt || data.generation?.createdAt}
+                waiting={data.status === "queued"}
+                compact
+              />
+            </div>
+          ) : hasUpscaleResult ? (
+            <div className="canvas-upscale-card-result" title="双击查看大图；拖动此节点到其他节点可作为图片参考">
+              <img src={String(data.url)} alt={String(data.name || "超分结果")} draggable={false} />
+              <span className="canvas-upscale-result-badge"><i>↗</i>{data.status === "failed" ? "上次超分结果" : "超分节点生成的结果"}</span>
+            </div>
+          ) : (
+            <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>
+          )}
+          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : hasUpscaleResult ? "双击预览 · 拖到其他节点作为图片参考" : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
         </div>
       )}
       {node.type === "prompt" && (

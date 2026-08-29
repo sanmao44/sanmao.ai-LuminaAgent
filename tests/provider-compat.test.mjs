@@ -5,9 +5,10 @@ import ts from 'typescript';
 
 const sourceUrl = new URL('../lib/providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
+const agnes = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8');
 const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
 const detection = await readFile(detectionUrl, 'utf8');
-const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '')}`;
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { agnesModelCatalog } from './agnes';", '')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -70,6 +71,27 @@ test('uses the OpenAI video task status default for a custom compatible provider
     videoTransport: 'openai-videos',
   });
   assert.equal(config.videoTaskStatusPath, '/v1/videos/{id}');
+});
+
+test('keeps Agnes text and video gateways in the same selected region', () => {
+  const international = presets.resolveProviderConfiguration({
+    platform: 'agnes',
+    baseUrl: 'https://apihub.agnes-ai.com/v1',
+  });
+  assert.equal(international.baseUrl, 'https://apihub.agnes-ai.com/v1');
+  assert.equal(international.videoBaseUrl, 'https://apihub.agnes-ai.com');
+
+  const domestic = presets.resolveProviderConfiguration({
+    platform: 'agnes',
+    baseUrl: 'https://api.agnes-ai.cn/v1',
+    videoBaseUrl: 'https://apihub.agnes-ai.com',
+  });
+  assert.equal(domestic.baseUrl, 'https://api.agnes-ai.cn/v1');
+  assert.equal(domestic.videoBaseUrl, 'https://api.agnes-ai.cn');
+
+  const fresh = presets.resolveProviderConfiguration({ platform: 'agnes' });
+  assert.equal(fresh.baseUrl, 'https://api.agnes-ai.cn/v1');
+  assert.equal(fresh.videoBaseUrl, 'https://api.agnes-ai.cn');
 });
 
 test('recognizes provider-native search for standard OpenAI and Gemini model ids', () => {

@@ -9,6 +9,11 @@ export type VideoTask = {
   id: string;
   providerId: string;
   providerTaskId?: string;
+  videoId?: string;
+  providerModel?: string;
+  providerStatus?: string;
+  providerProgress?: number;
+  providerResponse?: unknown;
   modelId: string;
   modelName?: string;
   operation: 'generate' | 'edit' | 'extend';

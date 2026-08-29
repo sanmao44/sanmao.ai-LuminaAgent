@@ -12,19 +12,39 @@ async function loadTypeScript(path) {
   }).outputText;
   if (sourceUrl.pathname.endsWith('/lib/canvas/model.ts')) {
     const settingsUrl = new URL('../lib/creation/settings.ts', import.meta.url);
+    const maskUrl = new URL('../lib/canvas/mask.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
+    const maskSource = await readFile(maskUrl, 'utf8');
     const settingsCompiled = ts.transpileModule(settingsSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: settingsUrl.pathname,
     }).outputText.replace(
       /^\s*import\s+\{\s*getLastModelCall\s*\}\s+from\s+["']\.\.\/model-preferences["'];?\s*$/m,
       'const getLastModelCall = () => null;',
+    ).replace(
+      /^\s*import\s+\{\s*selectAutomaticModel\s*\}\s+from\s+["']\.\.\/model-selection["'];?\s*$/m,
+      `const selectAutomaticModel = (models, defaultProviderId, defaultModelId) => {
+        const providerModels = defaultProviderId ? models.filter((model) => model.providerId === defaultProviderId) : [];
+        return providerModels.find((model) => model.id === defaultModelId)
+          || providerModels[0]
+          || models.find((model) => model.id === defaultModelId)
+          || models[0];
+      };`,
     );
+    const maskCompiled = ts.transpileModule(maskSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: maskUrl.pathname,
+    }).outputText
+      .replace(/\bobjectValue\b/g, 'maskObjectValue')
+      .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber');
     const modelCompiled = compiled.replace(
       /^\s*import\s+\{\s*normalizeCreationSettings\s*\}\s+from\s+["']\.\.\/creation\/settings["'];?\s*$/m,
       '',
+    ).replace(
+      /^\s*import\s+\{\s*normalizeCanvasMaskState\s*\}\s+from\s+["']\.\/mask["'];?\s*$/m,
+      '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${maskCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
@@ -50,6 +70,44 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.deepEqual(result.groups[0].nodeIds, ['image-1', 'text-1']);
   assert.equal(result.edges.length, 1);
   assert.equal(result.camera.zoom, 3);
+});
+
+test('migrates legacy image params.mask into persistent pending mask metadata', () => {
+  const result = model.normalizeDocument({
+    nodes: [
+      {
+        id: 'legacy-mask-image',
+        type: 'media',
+        x: 0,
+        y: 0,
+        data: {
+          kind: 'image',
+          url: '/source.png',
+          params: { mask: { assetId: 'legacy-mask', url: '/legacy-mask.png' } },
+        },
+      },
+      {
+        id: 'legacy-generation-mask-image',
+        type: 'media',
+        x: 400,
+        y: 0,
+        data: {
+          kind: 'image',
+          url: '/source-2.png',
+          generation: {
+            kind: 'image',
+            prompt: '局部修改',
+            params: { mask: { assetId: 'legacy-mask-2', url: '/legacy-mask-2.png' } },
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(result.nodes.map((node) => node.data.mask), [
+    { assetId: 'legacy-mask', url: '/legacy-mask.png', status: 'pending' },
+    { assetId: 'legacy-mask-2', url: '/legacy-mask-2.png', status: 'pending' },
+  ]);
 });
 
 test('maps legacy base-image connections to ordered references without losing assets', () => {
@@ -80,6 +138,85 @@ test('allows multiple image references on the same target after legacy migration
 
   assert.equal(withSecond.edges.length, 2);
   assert.deepEqual(model.incomingReferences(withSecond, target.id).map((node) => node.id), [first.id, second.id]);
+});
+
+test('exposes completed upscale output as an image reference for downstream nodes', () => {
+  const source = model.createMedia('image', '/source.png', '原图', { x: 0, y: 0 });
+  const upscaleBase = model.createUpscaleNode({ x: 420, y: 0 });
+  const upscale = {
+    ...upscaleBase,
+    data: {
+      ...upscaleBase.data,
+      url: '/upscaled.png',
+      name: '超分结果',
+      status: 'completed',
+    },
+  };
+  const consumer = model.createGenerator('image', { x: 840, y: 0 });
+  const nextUpscale = model.createUpscaleNode({ x: 1260, y: 0 });
+  let document = model.normalizeDocument({
+    nodes: [source, upscale, consumer, nextUpscale],
+    edges: [
+      { id: 'upscale-input', source: source.id, target: upscale.id, inputRole: 'upscale-image' },
+      { id: 'upscale-output', source: upscale.id, target: consumer.id, inputRole: 'reference-image' },
+    ],
+  });
+
+  assert.deepEqual(model.incomingReferences(document, consumer.id).map((node) => node.id), [upscale.id]);
+  document = model.addEdge(document, upscale.id, nextUpscale.id, 'right', 'left', 'manual', 'upscale-image');
+  assert.equal(document.edges.some((edge) => edge.source === upscale.id && edge.target === nextUpscale.id), true);
+});
+
+test('migrates legacy standalone upscale results into the owning node', () => {
+  const source = model.createMedia('image', '/source.png', '原图', { x: 0, y: 0 });
+  const upscale = model.createUpscaleNode({ x: 480, y: 0 });
+  const legacyResult = model.createMedia('image', '/upscaled.png', '原图 · 超分', { x: 900, y: 0 }, {
+    role: '超分结果',
+    nativeWidth: 2048,
+    nativeHeight: 2048,
+    generation: {
+      kind: 'image',
+      prompt: 'Upscale this image',
+      params: {
+        kind: 'upscale',
+        model: 'upscale-model',
+        scale: 4,
+        target: '2K',
+        seed: 7,
+        colorCorrection: 'none',
+        algorithm: 'bicubic',
+      },
+      operation: 'upscale',
+      referenceIds: [source.id],
+      parentNodeId: upscale.id,
+      createdAt: 100,
+    },
+  });
+  const consumer = model.createGenerator('image', { x: 1320, y: 0 });
+  const result = model.normalizeDocument({
+    nodes: [source, upscale, legacyResult, consumer],
+    groups: [{ id: 'upscale-group', name: '超分链路', nodeIds: [source.id, legacyResult.id] }],
+    edges: [
+      { id: 'input', source: source.id, target: upscale.id, inputRole: 'upscale-image' },
+      { id: 'legacy-output', source: upscale.id, target: legacyResult.id, kind: 'lineage' },
+      { id: 'follow-up', source: legacyResult.id, target: consumer.id, kind: 'lineage' },
+    ],
+  });
+
+  const migrated = result.nodes.find((node) => node.id === upscale.id);
+  assert.ok(migrated);
+  assert.equal(result.nodes.some((node) => node.id === legacyResult.id), false);
+  assert.equal(migrated.data.url, '/upscaled.png');
+  assert.equal(migrated.data.resultSource, 'upscale-node');
+  assert.equal(migrated.data.statusLabel, '超分节点生成的结果');
+  assert.equal(migrated.data.params.scale, 4);
+  assert.equal(migrated.data.params.algorithm, 'bicubic');
+  assert.equal(migrated.data.generation.parentNodeId, upscale.id);
+  assert.deepEqual(result.groups[0].nodeIds, [source.id, upscale.id]);
+  assert.equal(migrated.groupId, 'upscale-group');
+  assert.equal(result.edges.some((edge) => edge.source === source.id && edge.target === upscale.id), true);
+  assert.equal(result.edges.some((edge) => edge.source === upscale.id && edge.target === consumer.id), true);
+  assert.equal(result.edges.some((edge) => edge.target === legacyResult.id), false);
 });
 
 test('creates media, prompt, generator, groups, edges and reference order', () => {

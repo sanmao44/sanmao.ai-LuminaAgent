@@ -47,10 +47,11 @@ test("agent mode accepts still images but never treats text or video as image re
   const result = references.resolveCanvasInputSemantics([
     node("text-1", "prompt", undefined, "描述这张图"),
     node("img-1", "media", "image"),
+    { id: "upscale-1", type: "upscale", x: 0, y: 0, data: { kind: "image", url: "data:image/upscale-1", name: "超分结果" } },
     node("video-1", "media", "video"),
   ], "agent");
 
-  assert.deepEqual(result.imageReferences.map((item) => item.id), ["img-1"]);
+  assert.deepEqual(result.imageReferences.map((item) => item.id), ["img-1", "upscale-1"]);
   assert.deepEqual(result.textContext.map((item) => item.id), ["text-1"]);
   assert.deepEqual(result.videoReferences.map((item) => item.id), ["video-1"]);
 });

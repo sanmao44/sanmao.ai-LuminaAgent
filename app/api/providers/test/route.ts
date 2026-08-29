@@ -20,6 +20,15 @@ export async function POST(request: Request) {
     const result = await testProviderConnection({ id: providerId || 'test', name: saved?.name || '连接测试', apiKey, videoApiKey: String(body.videoApiKey || '').trim() || saved?.videoApiKey, ...configuration });
     return Response.json({ ok: true, ...result });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : '连接测试失败。' }, { status: 502 });
+    const failure = error as Error & { status?: number; providerStatus?: number; providerRequestId?: string; providerUrl?: string; code?: string };
+    const upstreamStatus = Number(failure.providerStatus || failure.status || 0);
+    const status = upstreamStatus >= 400 && upstreamStatus <= 599 ? upstreamStatus : 502;
+    return Response.json({
+      error: failure instanceof Error ? failure.message : '连接测试失败。',
+      providerStatus: upstreamStatus || undefined,
+      requestId: failure.providerRequestId || undefined,
+      endpoint: failure.providerUrl || undefined,
+      code: failure.code || undefined,
+    }, { status });
   }
 }

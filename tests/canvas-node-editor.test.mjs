@@ -23,6 +23,68 @@ test("node editor exposes an accessible expand/collapse control", () => {
   assert.match(component, /data-prompt-expanded=\{promptExpanded \? "true" : "false"\}/);
 });
 
+test("upscale runs in place and keeps a visible processing state on the node", () => {
+  const start = component.indexOf("const runUpscaleNode = useCallback");
+  const end = component.indexOf("runUpscaleNodeRef.current = runUpscaleNode", start);
+  assert.ok(start >= 0 && end > start, "upscale implementation should be present");
+  const upscaleRun = component.slice(start, end);
+  assert.doesNotMatch(upscaleRun, /createMedia\(/);
+  assert.doesNotMatch(upscaleRun, /addEdge\(/);
+  assert.match(upscaleRun, /resultSource: "upscale-node"/);
+  assert.match(upscaleRun, /url: resultUrl/);
+  assert.match(upscaleRun, /statusLabel: "超分节点生成的结果"/);
+  assert.match(component, /setExpandedEditorId\(\(current\) => current === node\.id \? null : current\)/);
+  assert.match(component, /className="canvas-upscale-card-loading"/);
+  assert.match(component, /className="canvas-upscale-result-badge"/);
+  assert.match(styles, /\.canvas-upscale-card-result/);
+  assert.match(styles, /\.canvas-upscale-card-loading \.canvas-processing-indicator/);
+});
+
+test("upscale settings use the main bilingual custom select menu", () => {
+  const start = component.indexOf("function CanvasUpscaleSettingsPanel");
+  const end = component.indexOf("type CanvasNodeEditorPopoverProps", start);
+  assert.ok(start >= 0 && end > start, "upscale settings panel should be present");
+  const panel = component.slice(start, end);
+  assert.equal((panel.match(/<SelectMenu/g) || []).length, 3);
+  assert.doesNotMatch(panel, /<select\b/);
+  [
+    "模型",
+    "放大倍率",
+    "颜色校正",
+    "缩放算法",
+    "可选说明",
+  ].forEach((label) => assert.match(panel, new RegExp(label)));
+  [
+    "自动选择",
+    "wavelet · 接近原图",
+    "关闭",
+    "lanczos · 锐利",
+    "bicubic · 平滑",
+    "nearest · 像素",
+  ].forEach((label) => assert.match(panel, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))));
+  assert.doesNotMatch(panel, /Upscale model|Color correction|Scaling algorithm|High-quality smoothing|Balanced quality and speed/);
+  assert.match(panel, /className="canvas-upscale-select"/);
+  assert.match(panel, /menuClassName="canvas-upscale-select-popover"/);
+  assert.match(styles, /\.canvas-upscale-select-popover\{z-index:390/);
+  assert.match(styles, /\.canvas-upscale-field-label/);
+});
+
+test("image cards show intrinsic resolution only after a valid image has loaded", () => {
+  assert.match(component, /const imageResolution =/);
+  assert.match(component, /node\.type === "media"/);
+  assert.match(component, /data\.kind === "image"/);
+  assert.match(component, /Boolean\(data\.url\)/);
+  assert.match(component, /!pending/);
+  assert.match(component, /data\.status !== "failed"/);
+  assert.match(component, /Number\(data\.nativeWidth\) > 0/);
+  assert.match(component, /Number\(data\.nativeHeight\) > 0/);
+  assert.match(component, /className="canvas-image-resolution"/);
+  assert.match(component, /title=\{`图片分辨率 \$\{imageResolution\}`\}/);
+  assert.match(styles, /\.canvas-image-resolution\{[^}]*right:10px[^}]*bottom:10px/);
+  assert.match(styles, /font-variant-numeric:tabular-nums/);
+  assert.match(styles, /@media\(max-width:720px\)\{\.canvas-image-resolution/);
+});
+
 test("prompt editor measures content and caps scrolling in both display modes", () => {
   assert.match(component, /const promptRef = useRef<HTMLTextAreaElement \| null>\(null\)/);
   assert.match(component, /textarea\.style\.height = "auto"/);
@@ -103,6 +165,33 @@ test("image node editing persists parameters without turning uploads into genera
   const updatePrompt = component.slice(start, end);
   assert.match(updatePrompt, /node\.data\.generation\s*\?/);
   assert.doesNotMatch(updatePrompt, /generation:\s*\{\s*kind:/);
+});
+
+test("mask removal clears both current and persisted generation parameters", () => {
+  assert.match(component, /const \{ mask: _mask, \.\.\.withoutMask \} = params/);
+  assert.match(component, /mask: undefined/);
+  assert.match(component, /generation:\s*\{[\s\S]*params: clone\(cleanedParams\)/);
+  assert.match(component, /maskUrl: imageParams\.mask\?\.url/);
+});
+
+test("mask editor reports saving state and passes coverage into the attached image state", () => {
+  assert.match(component, /onApply=\{\(value, coverage\) => applyCanvasMask\(value, coverage\)\}/);
+  assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
+  assert.match(component, /status: "pending"/);
+  assert.match(component, /coverage: maskCoverage/);
+  assert.match(styles, /\.canvas-node-mask-badge/);
+  assert.match(styles, /\.canvas-mask-summary/);
+});
+
+test("mask summary only occupies editor space when a mask exists", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  const summaryStart = component.indexOf("function CanvasMaskSummary");
+  assert.ok(editorStart >= 0 && summaryStart > editorStart, "mask editor components should be present");
+  const editor = component.slice(editorStart, summaryStart);
+  assert.match(editor, /onMaskEdit && maskState && \(/);
+  assert.doesNotMatch(editor, /尚未设置，绘制后只重新生成指定区域/);
+  assert.doesNotMatch(styles, /\.canvas-mask-summary\.empty/);
+  assert.match(component, /label: node\.data\.mask \? "查看蒙版" : "绘制蒙版"/);
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {

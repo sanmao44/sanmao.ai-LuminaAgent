@@ -7,6 +7,12 @@ import JimengAccountSummary from '@/components/JimengAccountSummary';
 
 const OFFICIAL_URL = 'https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg';
 const INSTALL_COMMAND = 'curl -fsSL https://jimeng.jianying.com/cli | bash';
+const INSTALL_COMMANDS = {
+  windows: 'powershell -NoProfile -ExecutionPolicy Bypass -File ".\\scripts\\install-jimeng.ps1"',
+  macos: 'bash "./scripts/install-jimeng.sh"',
+  unix: 'bash "./scripts/install-jimeng.sh"',
+} as const;
+type InstallPlatform = keyof typeof INSTALL_COMMANDS | 'other';
 
 type Props = {
   providers: ProviderConnection[];
@@ -36,6 +42,12 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
   const [auth, setAuth] = useState<AuthState>(initialAuth);
   const [busy, setBusy] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
+  const [installPlatform, setInstallPlatform] = useState<InstallPlatform>('other');
+
+  useEffect(() => {
+    const agent = navigator.userAgent.toLowerCase();
+    setInstallPlatform(agent.includes('windows') ? 'windows' : agent.includes('mac') ? 'macos' : 'unix');
+  }, []);
 
   async function request(action: string, extra: Record<string, unknown> = {}) {
     const response = await fetch('/api/providers/jimeng', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...extra }) });
@@ -117,8 +129,17 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
     } finally { setBusy(false); }
   }
 
+  const installCommand = installPlatform === 'other' ? INSTALL_COMMAND : INSTALL_COMMANDS[installPlatform];
+  const installLauncher = installPlatform === 'windows'
+    ? '一键安装即梦 CLI - Windows.cmd'
+    : installPlatform === 'macos'
+      ? '一键安装即梦 CLI - macOS.command'
+      : installPlatform === 'unix'
+        ? 'scripts/install-jimeng.sh'
+        : '';
+
   async function copyInstallCommand() {
-    try { await navigator.clipboard.writeText(INSTALL_COMMAND); onNotify('官方安装命令已复制'); }
+    try { await navigator.clipboard.writeText(installCommand); onNotify('安装命令已复制'); }
     catch { onNotify('复制失败，请手动复制安装命令'); }
   }
 
@@ -141,6 +162,6 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
     </div>
     <JimengAccountSummary account={auth.account} checkedAt={auth.accountCheckedAt} error={auth.accountError} loading={accountBusy || auth.status === 'detecting' || auth.status === 'starting' || auth.status === 'checking'} onRefresh={provider ? () => void refreshAccount() : undefined} />
     {auth.verificationUri && <div className="jimeng-provider-auth-box"><div><span>授权窗口已准备</span><a href={auth.verificationUri} target="_blank" rel="noreferrer">如果没有自动打开，点击这里继续授权 ↗</a></div><b>{auth.userCode || '—'}</b></div>}
-    {!installed && <div className="jimeng-provider-install"><span>未找到即梦 CLI？请先安装，安装后重新检测。</span><a href={OFFICIAL_URL} target="_blank" rel="noreferrer">官方安装说明 ↗</a><button type="button" onClick={() => void copyInstallCommand()}>复制安装命令</button><code>{INSTALL_COMMAND}</code></div>}
+    {!installed && <div className="jimeng-provider-install"><span>{installLauncher ? `未找到即梦 CLI？请双击安装包中的“${installLauncher}”。` : '未找到即梦 CLI？请按官方说明安装。'}</span><a href={OFFICIAL_URL} target="_blank" rel="noreferrer">官方安装说明 ↗</a><button type="button" onClick={() => void copyInstallCommand()}>复制安装命令</button><code>{installCommand}</code></div>}
   </article>;
 }
