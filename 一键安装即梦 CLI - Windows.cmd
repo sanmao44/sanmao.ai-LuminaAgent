@@ -1,5 +1,6 @@
 @echo off
 setlocal
+chcp 65001 >nul
 cd /d "%~dp0"
 echo ========================================
 echo       SANMAO.AI 一键安装即梦 CLI

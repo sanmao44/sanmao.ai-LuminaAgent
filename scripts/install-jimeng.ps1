@@ -19,6 +19,28 @@ function Write-WarningMessage([string]$Message) {
   Write-Host "[即梦 CLI] $Message" -ForegroundColor Yellow
 }
 
+function Resolve-OfficialUrl([string]$Value, [string]$DownloadBase) {
+  $resolved = $Value.Trim()
+
+  # The official shell installer currently expresses SKILL_URL as
+  # "${DOWNLOAD_BASE}/SKILL.md". PowerShell does not expand shell-style
+  # variables, so resolve that reference explicitly before downloading.
+  if ($resolved -match '^\$\{DOWNLOAD_BASE\}(?<Suffix>/.*)?$') {
+    if ([string]::IsNullOrWhiteSpace($DownloadBase)) {
+      throw "官方安装信息中的 URL 无法解析：$Value"
+    }
+    $resolved = $DownloadBase.TrimEnd('/') + [string]$Matches['Suffix']
+  }
+
+  $uri = $null
+  $isAbsolute = [Uri]::TryCreate($resolved, [UriKind]::Absolute, [ref]$uri)
+  if (-not $isAbsolute -or @('http', 'https') -notcontains $uri.Scheme -or [string]::IsNullOrWhiteSpace($uri.Host)) {
+    throw "官方安装信息中的 URL 无效：$Value"
+  }
+
+  return $uri.AbsoluteUri
+}
+
 try {
   if (-not $env:USERPROFILE) { throw '无法确定当前 Windows 用户目录。' }
   if (-not [Environment]::Is64BitOperatingSystem) {
@@ -39,8 +61,9 @@ try {
     return $match.Groups[1].Value
   }
   $downloadBase = & $readValue 'DOWNLOAD_BASE'
-  $skillUrl = & $readValue 'SKILL_URL'
-  $versionUrl = & $readValue 'VERSION_URL'
+  $downloadBase = Resolve-OfficialUrl $downloadBase
+  $skillUrl = Resolve-OfficialUrl (& $readValue 'SKILL_URL') $downloadBase
+  $versionUrl = Resolve-OfficialUrl (& $readValue 'VERSION_URL') $downloadBase
   $skillMd5Match = [regex]::Match($officialScript, '(?m)^SKILL_MD5="([0-9a-fA-F]+)"')
 
   $binaryUrl = "$downloadBase/dreamina_cli_windows_amd64.exe"
