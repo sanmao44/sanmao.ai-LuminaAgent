@@ -5500,7 +5500,6 @@ export default function Page() {
         const pendingScroll = chatScrollAfterCommitRef.current;
         if (!chatAutoFollowRef.current && !pendingScroll) return;
         if (pendingScroll) {
-            chatScrollAfterCommitRef.current = false;
             chatAutoFollowRef.current = true;
         }
         scheduleChatScrollToEnd();
@@ -5822,7 +5821,9 @@ export default function Page() {
             frames.first = 0;
             frames.second = window.requestAnimationFrame(()=>{
                 frames.second = 0;
-                if (!chatAutoFollowRef.current || sectionRef.current !== 'agent') return;
+                if ((!chatAutoFollowRef.current && !chatScrollAfterCommitRef.current) || sectionRef.current !== 'agent') return;
+                chatAutoFollowRef.current = true;
+                chatScrollAfterCommitRef.current = false;
                 chatEndRef.current?.scrollIntoView({
                     behavior: 'auto',
                     block: 'end'
@@ -6589,7 +6590,7 @@ export default function Page() {
                 activeChatIdRef.current = sessions[0].id;
                 setActiveChatId(sessions[0].id);
                 setMessages(sessions[0].messages);
-                followChatToEnd();
+                requestChatScrollAfterCommit();
             }
         } catch (error) {
             notify(error instanceof Error ? error.message : '读取助手历史失败');
@@ -7786,7 +7787,7 @@ export default function Page() {
         resetMessageSelection();
         resetShareSelection();
         setSection('agent');
-        followChatToEnd();
+        requestChatScrollAfterCommit();
     }
     function beginChatRename(session) {
         if (chatSelectionMode) return;
