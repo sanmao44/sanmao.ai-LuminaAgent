@@ -4650,6 +4650,7 @@ export default function Page() {
     const sectionRef = useRef('agent');
     const lastNonAngleSectionRef = useRef('agent');
     function setSection(next) {
+        const previousSection = sectionRef.current;
         sectionRef.current = next;
         if (next !== 'angle') {
             lastNonAngleSectionRef.current = next;
@@ -4658,6 +4659,7 @@ export default function Page() {
             } catch  {}
         }
         setSectionState(next);
+        if (next === 'agent' && previousSection !== 'agent') requestChatScrollAfterCommit();
     }
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [supportOpen, setSupportOpen] = useState(false);
