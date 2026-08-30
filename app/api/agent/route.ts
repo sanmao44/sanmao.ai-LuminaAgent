@@ -12,6 +12,7 @@ import { isImageContinuationRequest, likelyAgentToolRequest, likelyImageGenerati
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
+import { classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
 
 export const runtime = 'nodejs';
 
@@ -310,6 +311,15 @@ export async function POST(request: Request) {
     const imageModelText = imageModels.length ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n') : '- 当前没有可用生图模型';
     const latest = latestUser(messages);
     const latestRefs = latest?.references || [];
+    const intentDecision = classifyAgentDeliverable(latest?.content || '', {
+      messages: messages.slice(0, -1),
+      hasReferences: latestRefs.length > 0,
+      hasFiles: Boolean(latest?.files?.length),
+    });
+    const hasExplicitDeliverable = ['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(body.deliverable);
+    const requestedDeliverable = hasExplicitDeliverable
+      ? body.deliverable as AgentDeliverable
+      : intentDecision.deliverable;
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
@@ -360,6 +370,7 @@ export async function POST(request: Request) {
         ? '\n\n联网能力：当前为智能按需模式。本轮不需要联网，请直接回答，不要暗示或伪造网页搜索结果。'
         : '\n\n联网能力：当前已关闭联网搜索。不要调用、暗示或伪造网页搜索结果；对于最新、实时或需要来源的问题，请明确说明联网已关闭。';
     let system = buildSystem(initialWebInstructions, '');
+    system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${intentDecision.reason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     let llmMessages: ChatMessage[] = [
       { role: 'system', content: system },
       ...messages.map((m) => ({ role: m.role, content: toChatContent(m) } as ChatMessage)),
@@ -398,12 +409,14 @@ export async function POST(request: Request) {
     const webContext = nativeSearchData ? formatNativeSearchContext(nativeSearchData) : webSearchData ? formatWebSearchContext(webSearchData) : '';
     const webFailureContext = '';
     system = buildSystem(`${webSearchInstructions}${nativeAnswerInstructions}`, webContext, webFailureContext);
+    system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${intentDecision.reason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask) llmMessages[0] = { role: 'system', content: system };
 
     // Search is selected locally before this point. Do not give ordinary
     // questions another model-side web_search planning round trip.
-    const callableTools = tools.filter((tool: any) => tool.function.name !== 'web_search');
-    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && likelyImageGenerationRequest(latest?.content || '');
+    const imageToolsAllowed = requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH';
+    const callableTools = tools.filter((tool: any) => tool.function.name !== 'web_search' && (imageToolsAllowed || !['image_generate', 'image_edit'].includes(tool.function.name)));
+    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && requestedDeliverable !== 'CLARIFY' && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH' || (!hasExplicitDeliverable && likelyImageGenerationRequest(latest?.content || '')));
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, searchedAt: nativeSearchData.searchedAt };
       if (webSearchData) return { source: 'external', provider: webSearchData.provider, query: webSearchData.query, resultCount: webSearchData.resultCount, fallbackFrom: nativeSearchError ? 'native' : undefined, searchedAt: webSearchData.searchedAt };
@@ -441,7 +454,7 @@ export async function POST(request: Request) {
         ? streamAgentResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] }, requestController.signal)
         : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
-    const directStream = wantsStream && !identityQuestion && !likelyAgentToolRequest(latest?.content || '', latestRefs.length > 0);
+    const directStream = wantsStream && !identityQuestion && requestedDeliverable !== 'IMAGE' && requestedDeliverable !== 'BOTH' && !likelyAgentToolRequest(latest?.content || '', latestRefs.length > 0);
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
     if (directStream) {
       try {

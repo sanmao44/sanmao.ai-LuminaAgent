@@ -26,6 +26,7 @@ import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-l
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
+import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
@@ -5282,6 +5283,17 @@ export default function Page() {
     const allChatSessionsSelected = selectableChatSessionIds.length > 0 && selectableChatSessionIds.every((id)=>selectedChatSessions.has(id));
     const activeAgentBusy = activeChatId ? busyChatIds.includes(activeChatId) : false;
     const agentMessageSelectionActive = agentMessageSelectionMode || shareSelectionMode;
+    const liveAgentIntent = useMemo(()=>classifyAgentDeliverable(agentInput, {
+        messages,
+        hasReferences: agentRefs.length > 0,
+        hasFiles: agentFiles.length > 0
+    }), [
+        agentInput,
+        messages,
+        agentRefs.length,
+        agentFiles.length
+    ]);
+    const activeAgentIntent = liveAgentIntent;
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const pagedGallery = useMemo(()=>filteredGallery.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), [
         filteredGallery,
@@ -8386,7 +8398,8 @@ export default function Page() {
                         images,
                         files,
                         webSearch: data.webSearch || undefined,
-                        webSearchDecision: data.webSearchDecision || undefined
+                        webSearchDecision: data.webSearchDecision || undefined,
+                        deliverable: data.deliverable || 'TEXT'
                     } : version);
                 return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
             });
@@ -8425,7 +8438,7 @@ export default function Page() {
             }
         }
     }
-    async function sendAgent(text = agentInput, task, overrideRefs) {
+    async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride) {
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const content = text.trim();
@@ -8459,7 +8472,13 @@ export default function Page() {
         ];
         const followUp = overrideRefs ? null : agentFollowUp;
         const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
-        const likelyImageRequest = !task && (isImageContinuationRequest(requestContent) || likelyImageGenerationRequest(requestContent));
+        const requestIntent = classifyAgentDeliverable(requestContent, {
+            messages: currentSessionMessages,
+            hasReferences: refs.length > 0,
+            hasFiles: files.length > 0
+        });
+        const selectedDeliverable = deliverableOverride || requestIntent.deliverable;
+        const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH' || isImageContinuationRequest(requestContent) || likelyImageGenerationRequest(requestContent));
         const user = {
             id: uid('msg'),
             role: 'user',
@@ -8563,6 +8582,8 @@ export default function Page() {
                     task,
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
+                    deliverable: selectedDeliverable,
+                    intentReason: requestIntent.reason,
                     stream: true
                 }),
                 signal: requestController.signal
@@ -8638,7 +8659,8 @@ export default function Page() {
                     images: items,
                     files,
                     webSearch: data.webSearch || undefined,
-                    webSearchDecision: data.webSearchDecision || undefined
+                    webSearchDecision: data.webSearchDecision || undefined,
+                    deliverable: data.deliverable || selectedDeliverable
                 }
             ];
             if (!isCurrentRequest()) return;
@@ -10391,6 +10413,10 @@ export default function Page() {
                                                                                  message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
                                                                              ]
                                                                          }),
+                                                                         message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
+                                                                             className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,
+                                                                             children: `交付：${agentDeliverableLabel(message.deliverable)}`
+                                                                         }),
                                                                         message.role === 'assistant' && !message.pending && messageVersionsFor(message).length > 1 && /*#__PURE__*/ _jsxs("div", {
                                                                             className: "message-version-switch",
                                                                             children: [
@@ -10733,6 +10759,43 @@ export default function Page() {
                                                         })
                                                     ]
                                                 }),
+                                                agentInput.trim() && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsxs("div", {
+                                                    className: `agent-intent-card ${activeAgentIntent.confidence}`,
+                                                    role: "status",
+                                                    "aria-live": "polite",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsxs("div", {
+                                                            className: "agent-intent-copy",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                    className: "agent-intent-title",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", { className: "agent-intent-pulse", "aria-hidden": "true" }),
+                                                                        /*#__PURE__*/ _jsx("strong", { children: activeAgentIntent.deliverable === 'CLARIFY' ? '我先帮你确认交付物' : `Agent 判断 · ${activeAgentIntent.label}` }),
+                                                                        activeAgentIntent.confidence === 'high' && /*#__PURE__*/ _jsx("small", { children: "高置信" })
+                                                                    ]
+                                                                }),
+                                                                /*#__PURE__*/ _jsx("p", { children: activeAgentIntent.summary }),
+                                                                /*#__PURE__*/ _jsx("small", { className: "agent-intent-reason", children: activeAgentIntent.reason })
+                                                            ]
+                                                        }),
+                                                        activeAgentIntent.deliverable === 'CLARIFY' && /*#__PURE__*/ _jsxs("div", {
+                                                            className: "agent-intent-choices",
+                                                            children: [
+                                                                ['IMAGE', '直接出图'],
+                                                                ['TEXT', '先写文案'],
+                                                                ['BOTH', '图和文案都要']
+                                                            ].map(([value, label])=>/*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                onClick: ()=>void sendAgent(agentInput, undefined, undefined, value),
+                                                                children: label
+                                                            }, value))
+                                                        })
+                                                    ]
+                                                }),
+                                                /*#__PURE__*/ _jsxs("div", {
+                                                    className: "agent-textarea-wrap",
+                                                    children: [
                                                 /*#__PURE__*/ _jsx("textarea", {
                                                     ref: agentInputRef,
                                                     value: agentInput,
@@ -10774,6 +10837,8 @@ export default function Page() {
                                                     title: "清空输入内容",
                                                     onClick: ()=>setAgentInput(''),
                                                     children: "清空"
+                                                }),
+                                                    ]
                                                 }),
                                                 /*#__PURE__*/ _jsxs("div", {
                                                     className: "composer-footer",
