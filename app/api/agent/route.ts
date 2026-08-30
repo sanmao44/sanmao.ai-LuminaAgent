@@ -194,6 +194,10 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; h
   };
 }
 
+function isImageToolCall(call: any) {
+  return call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit';
+}
+
 function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> }, signal?: AbortSignal) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
@@ -349,6 +353,7 @@ export async function POST(request: Request) {
       '只输出优化后的可直接复制使用的提示词正文，不要输出标题、解释、分析过程、引号或 Markdown 代码块。',
     ].join('\n');
     const identityQuestion = isModelIdentityQuestion(latest?.content || '');
+    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && requestedDeliverable !== 'CLARIFY' && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH' || (!hasExplicitDeliverable && likelyImageGenerationRequest(latest?.content || '')));
     const webMode = resolveAgentWebMode(body.webMode, body.webSearch);
     const webSearchEnabled = webMode !== 'off';
     const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isOptimizePromptTask || identityQuestion;
@@ -418,9 +423,11 @@ export async function POST(request: Request) {
 
     // Search is selected locally before this point. Do not give ordinary
     // questions another model-side web_search planning round trip.
-    const imageToolsAllowed = requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH';
+    // The model must never be able to turn a text-only request into a paid
+    // image operation, even if it ignores the tool list and returns an image
+    // tool call anyway.
+    const imageToolsAllowed = imageGenerationRequest;
     const callableTools = tools.filter((tool: any) => tool.function.name !== 'web_search' && (imageToolsAllowed || !['image_generate', 'image_edit'].includes(tool.function.name)));
-    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && requestedDeliverable !== 'CLARIFY' && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH' || (!hasExplicitDeliverable && likelyImageGenerationRequest(latest?.content || '')));
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, searchedAt: nativeSearchData.searchedAt };
       if (webSearchData) return { source: 'external', provider: webSearchData.provider, query: webSearchData.query, resultCount: webSearchData.resultCount, fallbackFrom: nativeSearchError ? 'native' : undefined, searchedAt: webSearchData.searchedAt };
@@ -499,12 +506,34 @@ export async function POST(request: Request) {
     }
 
     const message = first?.choices?.[0]?.message;
-    let toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    const rawToolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    const blockedImageToolCall = !imageToolsAllowed && rawToolCalls.some(isImageToolCall);
+    // Some upstream models still emit a tool call that was not offered. Strip
+    // image calls before any execution or follow-up request reaches the model.
+    let toolCalls = imageToolsAllowed ? rawToolCalls : rawToolCalls.filter((call: any) => !isImageToolCall(call));
     if (imageGenerationRequest && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
       toolCalls = [...toolCalls, makeFallbackImageToolCall({ prompt: String(latest?.content || '').trim(), content: message?.content, hasReferences: latestRefs.length > 0 })];
     }
     if (!toolCalls.length) {
-      const plainMessage = message?.content || '当前对话模型没有返回内容。';
+      let plainMessage = typeof message?.content === 'string' ? message.content : '';
+      // If the model returned only an invalid image call, ask it once more for
+      // the requested text answer instead of showing an empty/generic reply.
+      if (!plainMessage && blockedImageToolCall) {
+        const textOnlyMessages: ChatMessage[] = [
+          { role: 'system', content: '本轮只需要文字回答。图片工具调用已被拦截，请直接根据用户提供的参考图回答用户问题，不要生成、修改或返回图片。' },
+          ...llmMessages,
+        ];
+        if (wantsStream) {
+          return streamAgentResult(() => chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: textOnlyMessages, tool_choice: 'none' }, requestController.signal), { images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'answering', message: '图片请求已拦截，正在整理文字回答…' }] }, requestController.signal);
+        }
+        try {
+          const textOnlyResponse = await chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: textOnlyMessages, tool_choice: 'none' }, requestController.signal);
+          plainMessage = typeof textOnlyResponse?.choices?.[0]?.message?.content === 'string' ? textOnlyResponse.choices[0].message.content : '';
+        } catch (error) {
+          if (requestController.signal.aborted) throw requestController.signal.reason || error;
+        }
+      }
+      plainMessage = plainMessage || '当前对话模型没有返回内容。';
       return wantsStream ? streamAgentResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }, requestController.signal) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
     }
 
@@ -544,7 +573,8 @@ export async function POST(request: Request) {
         }
         continue;
       }
-      if (call?.function?.name !== 'image_generate' && call?.function?.name !== 'image_edit') continue;
+      if (!isImageToolCall(call)) continue;
+      if (!imageToolsAllowed) continue;
       const startedAt = Date.now();
       const prompt = String(args.prompt || latest?.content || '');
       const aspectRatio = String(args.aspectRatio || '自动');

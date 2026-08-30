@@ -22,6 +22,12 @@ test('routes prompt and copy requests to text without being fooled by visual nou
   assert.equal(intent.classifyAgentDeliverable('给我 3 个视觉方向').deliverable, 'TEXT');
 });
 
+test('keeps image description requests as text when a reference image is attached', () => {
+  for (const input of ['描述一下这个画面', '请描述一下这张图片']) {
+    assert.equal(intent.classifyAgentDeliverable(input, { hasReferences: true }).deliverable, 'TEXT', input);
+  }
+});
+
 test('supports both deliverables and asks for clarification when the format is missing', () => {
   assert.equal(intent.classifyAgentDeliverable('做一张新品宣传图，再给我三条朋友圈文案').deliverable, 'BOTH');
   assert.equal(intent.classifyAgentDeliverable('帮我做个新品宣传').deliverable, 'CLARIFY');

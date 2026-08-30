@@ -27,7 +27,10 @@ const bothLabel = '图片 + 文案';
 const clarifyLabel = '需要你选择';
 const otherLabel = '通用对话';
 
-const imageActionPattern = /(?:画|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
+// Do not treat the noun "画面" as the verb "画". This distinction matters
+// for requests such as "描述一下这个画面", especially when a reference image
+// is attached: the requested deliverable is text, not a new image.
+const imageActionPattern = /(?:画(?!面)|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
 const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
 const imageEditPattern = /(?:修改|调整|改一下|改成|换成|替换|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
 const textArtifactPattern = /(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|总结|翻译|邮件|回复|文字|方向|创意|灵感|思路|markdown|json|csv|html|css)/i;
@@ -76,7 +79,7 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
   const asksForPrompt = promptOnlyPattern.test(text) && /(?:写|生成|优化|改写|润色|反推|提取|翻译|解释|给我|输出|提供|整理|怎么|如何|只要|仅需)/i.test(text);
   const asksForText = textActionPattern.test(text) || (textArtifactPattern.test(text) && !imageActionPattern.test(text));
   const asksForImage = (imageActionPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || /(?:出图|生图)/i.test(text));
-  const asksForImageWithoutTarget = /(?:画一只|画一个|画一张|画出|出图|生图|生成一张|生成一个|做一张|做一个|做个|来一张|来个).{1,80}/i.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
+  const asksForImageWithoutTarget = /(?:画个|画一只|画一个|画一张|画一幅|画出|出图|生图|生成一张|生成一个|做一张|做一个|做个|来一张|来个).{1,80}/i.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
   const asksForSeparateCopy = separateCopyPattern.test(text) || /(?:图片|海报|封面|宣传图).{0,30}(?:另外|再|同时|并且|以及).{0,30}(?:文案|标题|配文)/i.test(text);
   const textInsideImage = embeddedTextPattern.test(text) && (asksForImage || asksForImageWithoutTarget);
 
