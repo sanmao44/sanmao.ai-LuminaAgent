@@ -88,11 +88,11 @@ export async function POST(request: Request) {
       cameraStart = readCamera(body.cameraStart, 'cameraStart');
     }
     catch (error) { return Response.json({ error: error instanceof Error ? error.message : 'Invalid camera parameters' }, { status: 400 }); }
-    const cameraPayload = camera ? buildAnglePayload(camera, undefined, cameraStart) : undefined;
     const angleNote = typeof body.angleNote === 'string' ? body.angleNote : '';
     const angleOutput = camera && Number(body.width) > 0 && Number(body.height) > 0
       ? { aspectRatio: String(body.aspectRatio || '自动'), width: Number(body.width), height: Number(body.height) }
       : undefined;
+    const cameraPayload = camera ? buildAnglePayload(camera, undefined, cameraStart, angleOutput) : undefined;
     if (camera && body.angleGuide === true && !angleOutput) return Response.json({ error: '3D 构图导引必须提供有效的输出宽高。' }, { status: 400 });
     const generationPrompt = camera
       ? compileAngleTargetPrompt(angleNote, camera, { hasGuideReference: body.angleGuide === true, output: angleOutput, cameraStart })

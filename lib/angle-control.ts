@@ -36,6 +36,44 @@ export type AngleOutputSpec = {
   referenceHeight: number;
 };
 
+export type AngleTargetSemantic = {
+  camera_motion: 'orbit_only';
+  subject_motion: 'none';
+  horizontal_view: {
+    class: 'frontal' | 'three_quarter' | 'profile' | 'rear_three_quarter' | 'rear';
+    strength: 'near' | 'slight' | 'clear' | 'strong' | 'dominant';
+    side: 'front' | 'anatomical_right' | 'anatomical_left' | 'back';
+    angle_deg: number;
+    instruction: string;
+  };
+  vertical_view: {
+    class: 'eye_level' | 'low_angle' | 'high_angle';
+    strength: 'level' | 'slight' | 'clear';
+    direction: 'level' | 'upward' | 'downward';
+    angle_deg: number;
+    instruction: string;
+  };
+  perspective: {
+    focal_length_mm: number;
+    focal_class: 'wide' | 'moderately_wide' | 'normal' | 'short_telephoto' | 'telephoto';
+    focal_instruction: string;
+    distance_multiplier: number;
+    distance_class: 'close' | 'relatively_close' | 'medium' | 'far' | 'environmental';
+    distance_instruction: string;
+  };
+  framing: {
+    aspect_ratio?: string;
+    width?: number;
+    height?: number;
+    frame_offset_x_pct: number;
+    frame_offset_y_pct: number;
+  };
+  roll: {
+    generation: 'level';
+    postprocess_degrees: number;
+  };
+};
+
 export type AnglePreset = {
   id: string;
   label: string;
@@ -198,6 +236,154 @@ export function distanceSemanticLabel(distance: number) {
   return '远距离，环境广角构图';
 }
 
+function horizontalTargetSemantic(yaw: number): AngleTargetSemantic['horizontal_view'] {
+  const angle = relativeViewYaw({ yaw });
+  const magnitude = Math.abs(angle);
+  const side = angle >= 0 ? 'anatomical_right' : 'anatomical_left';
+  const sideLabel = angle >= 0 ? 'RIGHT' : 'LEFT';
+  const sidePhrase = angle >= 0 ? 'the SUBJECT\'s anatomical RIGHT side' : 'the SUBJECT\'s anatomical LEFT side';
+  if (magnitude <= 10) {
+    return {
+      class: 'frontal',
+      strength: 'near',
+      side: 'front',
+      angle_deg: magnitude,
+      instruction: `The CAMERA is physically in front of the stationary SUBJECT, centered on the anatomical front, at approximately ${recordNumber(magnitude)} degrees.`,
+    };
+  }
+  if (magnitude <= 25) {
+    return {
+      class: 'three_quarter',
+      strength: 'slight',
+      side,
+      angle_deg: magnitude,
+      instruction: `The CAMERA is physically located toward ${sidePhrase}, approximately ${recordNumber(magnitude)} degrees around from the frontal direction. Produce a slight ${sideLabel.toLowerCase()} three-quarter view.`,
+    };
+  }
+  if (magnitude <= 45) {
+    return {
+      class: 'three_quarter',
+      strength: 'clear',
+      side,
+      angle_deg: magnitude,
+      instruction: `The CAMERA is physically located toward ${sidePhrase}, approximately ${recordNumber(magnitude)} degrees around from the frontal direction. Produce a clear, obvious ${sideLabel.toLowerCase()} three-quarter view, not a frontal or near-frontal portrait.`,
+    };
+  }
+  if (magnitude <= 70) {
+    return {
+      class: 'three_quarter',
+      strength: 'strong',
+      side,
+      angle_deg: magnitude,
+      instruction: `The CAMERA is physically located toward ${sidePhrase}, approximately ${recordNumber(magnitude)} degrees around from the frontal direction. Produce a strong ${sideLabel.toLowerCase()} three-quarter view approaching profile; the side geometry must be visibly dominant.`,
+    };
+  }
+  if (magnitude <= 105) {
+    return {
+      class: 'profile',
+      strength: 'dominant',
+      side,
+      angle_deg: magnitude,
+      instruction: `The CAMERA is physically located on ${sidePhrase}, approximately ${recordNumber(magnitude)} degrees around from the frontal direction. Produce a true ${sideLabel.toLowerCase()} profile or near-profile view with side geometry dominant.`,
+    };
+  }
+  if (magnitude <= 150) {
+    return {
+      class: 'rear_three_quarter',
+      strength: 'strong',
+      side,
+      angle_deg: magnitude,
+      instruction: `The CAMERA is physically located toward ${sidePhrase} and toward the back, approximately ${recordNumber(magnitude)} degrees around from the frontal direction. Produce a clear ${sideLabel.toLowerCase()} rear three-quarter view with back geometry dominant.`,
+    };
+  }
+  return {
+    class: 'rear',
+    strength: 'dominant',
+    side: 'back',
+    angle_deg: magnitude,
+    instruction: `The CAMERA is physically behind the stationary SUBJECT, approximately ${recordNumber(magnitude)} degrees around from the frontal direction. The anatomical back must be dominant; do not turn the SUBJECT to reveal a frontal face.`,
+  };
+}
+
+function verticalTargetSemantic(pitch: number): AngleTargetSemantic['vertical_view'] {
+  const angle = roundAngleRecordValue(pitch);
+  const magnitude = Math.abs(angle);
+  if (angle > 8) {
+    return {
+      class: 'low_angle',
+      strength: angle >= 30 ? 'clear' : 'slight',
+      direction: 'upward',
+      angle_deg: magnitude,
+      instruction: `The CAMERA is below the SUBJECT's eye level and looks UPWARD toward the subject by approximately ${recordNumber(magnitude)} degrees.`,
+    };
+  }
+  if (angle < -8) {
+    return {
+      class: 'high_angle',
+      strength: angle <= -30 ? 'clear' : 'slight',
+      direction: 'downward',
+      angle_deg: magnitude,
+      instruction: `The CAMERA is clearly ABOVE the SUBJECT's eye level and looks DOWNWARD toward the subject by approximately ${recordNumber(magnitude)} degrees.`,
+    };
+  }
+  return {
+    class: 'eye_level',
+    strength: 'level',
+    direction: 'level',
+    angle_deg: magnitude,
+    instruction: 'The CAMERA is approximately level with the SUBJECT\'s eye line, with no intentional high-angle or low-angle view.',
+  };
+}
+
+function focalClass(focal: number): AngleTargetSemantic['perspective']['focal_class'] {
+  const value = Math.max(0.1, Number(focal) || ANGLE_DEFAULTS.focal);
+  if (value <= 28) return 'wide';
+  if (value <= 40) return 'moderately_wide';
+  if (value <= 65) return 'normal';
+  if (value <= 105) return 'short_telephoto';
+  return 'telephoto';
+}
+
+function distanceClass(distance: number): AngleTargetSemantic['perspective']['distance_class'] {
+  const value = Math.max(0.05, Number(distance) || ANGLE_DEFAULTS.distance);
+  if (value <= 1) return 'close';
+  if (value <= 1.8) return 'relatively_close';
+  if (value <= 3) return 'medium';
+  if (value <= 5) return 'far';
+  return 'environmental';
+}
+
+export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 'pitch' | 'roll' | 'focal' | 'distance' | 'frameX' | 'frameY'>, output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'>): AngleTargetSemantic {
+  const target = normalizeAngleState(camera);
+  const focal = Math.max(0.1, Number(target.focal) || ANGLE_DEFAULTS.focal);
+  const distance = Math.max(0.05, Number(target.distance) || ANGLE_DEFAULTS.distance);
+  const horizontal = horizontalTargetSemantic(target.yaw);
+  const vertical = verticalTargetSemantic(target.pitch);
+  return {
+    camera_motion: 'orbit_only',
+    subject_motion: 'none',
+    horizontal_view: horizontal,
+    vertical_view: vertical,
+    perspective: {
+      focal_length_mm: Math.round(focal),
+      focal_class: focalClass(focal),
+      focal_instruction: focalViewDescription(focal),
+      distance_multiplier: Number(distance.toFixed(1)),
+      distance_class: distanceClass(distance),
+      distance_instruction: distanceViewDescription(distance),
+    },
+    framing: {
+      ...(output ? { aspect_ratio: output.aspectRatio, width: output.width, height: output.height } : {}),
+      frame_offset_x_pct: Number(target.frameX.toFixed(1)),
+      frame_offset_y_pct: Number(target.frameY.toFixed(1)),
+    },
+    roll: {
+      generation: 'level',
+      postprocess_degrees: Number(effectiveAngle(target.roll).toFixed(1)),
+    },
+  };
+}
+
 export function cameraSemanticSummary(camera: Pick<AngleCameraState, 'yaw' | 'pitch' | 'focal' | 'distance'>) {
   return {
     yaw: yawSemanticLabel(camera.yaw),
@@ -208,16 +394,7 @@ export function cameraSemanticSummary(camera: Pick<AngleCameraState, 'yaw' | 'pi
 }
 
 function relativeYawViewDescription(yaw: number) {
-  const angle = relativeViewYaw({ yaw });
-  const magnitude = Math.abs(angle);
-  const side = angle >= 0 ? "subject's right" : "subject's left";
-  if (magnitude <= 10) return 'nearly frontal, centered on the anatomical front of the face and chest';
-  if (magnitude <= 25) return `slight three-quarter view from the ${side}`;
-  if (magnitude <= 45) return `clear three-quarter view from the ${side}`;
-  if (magnitude <= 70) return `strong three-quarter, near-profile view from the ${side}`;
-  if (magnitude <= 105) return `side/profile view from the ${side}, with side geometry dominant`;
-  if (magnitude <= 150) return `rear three-quarter view from the ${side}, with back geometry dominant`;
-  return 'direct or near-direct rear view, with the anatomical back dominant';
+  return horizontalTargetSemantic(yaw).instruction;
 }
 
 function pitchViewDescription(pitch: number) {
@@ -278,22 +455,11 @@ function compactRollDescription(roll: number) {
   return `最终画面由程序后处理${angle > 0 ? '顺时针' : '逆时针'}倾斜约${recordNumber(Math.abs(angle))}°，生成阶段保持画面水平`;
 }
 
-function compactPerspectiveGuard(yaw: number) {
-  const angle = effectiveAngle(yaw);
-  const magnitude = Math.abs(angle);
-  if (magnitude < 45 || magnitude > 135) return '';
-  if (magnitude <= 80) return `此时脸部、胸腔和肩部要呈明显${angle > 0 ? '右' : '左'}侧前遮挡关系，不得保留原图正面平铺轮廓。`;
-  if (magnitude <= 112.5) return `此时脸部、胸腔和肩部要呈明显${angle > 0 ? '右' : '左'}侧面遮挡关系，不得保留原图正面平铺轮廓。`;
-  return '此时脸部、胸腔和肩部要呈现图2要求的后侧遮挡关系，不得保留原图正面平铺轮廓。';
-}
-
 /** Shared provider prompt describing one authoritative final camera state. */
 export function compileAngleTargetPrompt(note: string, camera: AngleCameraState, options?: { hasGuideReference?: boolean; output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'>; cameraStart?: AngleCameraState | null }) {
   const target = normalizeAngleState(camera);
-  const yaw = relativeViewYaw(target);
-  const cameraStart = options?.cameraStart ? normalizeAngleState(options.cameraStart) : null;
+  const semantic = buildAngleTargetSemantic(target, options?.output);
   const userNote = note.trim();
-  const delta = cameraStart ? deriveAngleDelta(cameraStart, target) : null;
   const referenceBlock = options?.hasGuideReference
     ? [
       'IMAGE ROLES',
@@ -306,10 +472,7 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
       '图1是 SOURCE IMAGE，也是人物身份、场景、光照、色彩、材质与视觉风格的唯一参考。',
       '按目标相机重新拍摄，不要复用图1的原始二维投影。',
     ].join('\n');
-  const startBlock = cameraStart
-    ? `起始机位：图1当前视角（已记录的起始机位）；目标是从该机位移动到最终机位。相对调整为 Yaw ${recordNumber(delta?.yaw || 0)}°、Pitch ${recordNumber(delta?.pitch || 0)}°、焦距 ${recordNumber(delta?.focal || 0)}mm、距离 ${recordNumber(delta?.distance || 0)}×。`
-    : '没有单独的起始机位记录；以图1当前视角作为相对参考。';
-  const roll = compactRollDescription(target.roll);
+  const roll = compactRollDescription(semantic.roll.postprocess_degrees);
   const frameLine = options?.hasGuideReference
     ? options.output
       ? `按图2匹配主体在画框中的比例、位置与裁切；目标输出比例为 ${options.output.aspectRatio}（${options.output.width}×${options.output.height}）。`
@@ -321,33 +484,47 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
     'TASK\n从同一个时刻、同一个人物和同一个场景重新拍摄一张目标机位画面。',
     referenceBlock,
     [
+      'PRIORITY',
+      '1. Match the target CAMERA viewpoint from the final semantic target and Image 2.',
+      '2. Keep the SUBJECT frozen in the same 3D world-space pose and relationships.',
+      '3. Preserve identity and appearance where they are physically visible from the target camera.',
+    ].join('\n'),
+    [
       'CAMERA MOTION',
-      '只移动 CAMERA，不要让 SUBJECT 转身、转头、扭转躯干、改变姿态或重新摆 pose 来伪造机位变化。',
-      '人物保持同一世界空间姿态，像同一瞬间从另一台相机拍摄；镜头变化优先于逐像素复制。',
-      startBlock,
+      'ONLY THE CAMERA MOVES.',
+      'The SUBJECT remains frozen in the same world-space pose; do not rotate the head, torso or body, reposition the hands, or create a new pose.',
+      'Preserve all 3D world-space relationships. Do NOT preserve the original 2D projection.',
+      'Occlusion, overlap, visible surfaces and screen position may change naturally when required by the new camera viewpoint.',
     ].join('\n'),
     [
       'TARGET VIEW',
-      `水平机位：相对人物固定解剖正面约 ${recordNumber(yaw)}°；视觉语义为 ${relativeYawViewDescription(yaw)}。${compactPerspectiveGuard(yaw)}`,
-      `上下机位：当前 Pitch ${recordNumber(target.pitch)}°，视觉语义为${pitchSemanticLabel(target.pitch)}；${target.pitch > 8 ? '相机位于主体视线下方并向上看。' : target.pitch < -8 ? '相机位于主体视线上方并向下看。' : '相机大致与主体视线齐平。'}`,
+      `HORIZONTAL VIEW · ${semantic.horizontal_view.class} · ${semantic.horizontal_view.strength}`,
+      semantic.horizontal_view.instruction,
+      `VERTICAL VIEW · ${semantic.vertical_view.class} · ${semantic.vertical_view.strength}`,
+      semantic.vertical_view.instruction,
     ].join('\n'),
     [
       'PERSPECTIVE',
-      `目标焦距约 ${recordNumber(target.focal)}mm；${focalSemanticLabel(target.focal)}。把焦距当作视觉透视目标，不要求精确模拟物理镜头。`,
-      `目标距离约 ${recordNumber(target.distance)}×；${distanceSemanticLabel(target.distance)}。`,
+      `LENS · approximately ${semantic.perspective.focal_length_mm}mm-equivalent · ${semantic.perspective.focal_instruction}.`,
+      `DISTANCE · final camera distance ${semantic.perspective.distance_multiplier}× · ${semantic.perspective.distance_instruction}.`,
+      'Treat lens and distance as visual perspective and subject-scale targets, not as a request for physically exact camera simulation.',
     ].join('\n'),
     `FRAMING\n${frameLine} 不要只裁切原图来制造角度；需要让人物、前景、中景和背景按照目标机位产生合理的透视、可见面、相对位移与遮挡关系。`,
     [
       'CHANGE ONLY',
-      options?.hasGuideReference ? '只改变目标相机视角，以及匹配图2所必需的透视、主体比例、位置和裁切。' : '只改变目标相机视角，以及为匹配目标构图所必需的透视、主体比例、位置和裁切。',
-      '禁止整图旋转、只改裁切、把原始正面背景贴回去，或保留与目标机位冲突的二维投影。',
+      options?.hasGuideReference ? '只改变最终目标 CAMERA 视角，以及匹配图2所必需的透视、主体比例、位置和裁切。' : '只改变最终目标 CAMERA 视角，以及为匹配目标构图所必需的透视、主体比例、位置和裁切。',
+      '禁止通过整图旋转、只改裁切、转动 SUBJECT 或把原始正面二维投影贴回去伪造机位变化。',
     ].join('\n'),
     [
       'PRESERVE',
-      '保持人物身份、脸部可识别特征、发型、服装、配饰、身体比例、世界空间姿态、表情、场景、重要物体关系、光照方向、色彩、材质与视觉风格。',
-      `不要添加无关物体，不要删除重要物体，不要重新设计人物${options?.hasGuideReference ? '，不要复制灰模外观' : ''}。`,
+      '保持人物身份、脸部特征、发型、服装、配饰、身体比例、世界空间姿态、表情、场景、重要物体、光照方向、色彩、材质与视觉风格。',
+      `允许换机位自然改变可见表面、遮挡、重叠和画面位置；不要为了保持正脸或原始投影而重设计人物${options?.hasGuideReference ? '，不要复制图2灰模外观' : ''}。`,
     ].join('\n'),
-    `OUTPUT\n生成一张连贯的基础水平画面；${roll || '生成阶段保持水平。'}${userNote ? `\n补充要求：${userNote}` : ''}`,
+    [
+      'OUTPUT',
+      `生成一张连贯的基础水平画面；${roll || '生成阶段保持水平，Roll 不在导引图或模型阶段执行。'}`,
+      userNote ? `OPTIONAL USER NOTE（不得覆盖上述机位和姿态约束）：${userNote}` : '',
+    ].filter(Boolean).join('\n'),
   ];
   return blocks.join('\n');
 }
@@ -380,11 +557,12 @@ function compactCameraPayload(state: AngleCameraState) {
   };
 }
 
-export function buildAnglePayload(camera: AngleCameraState, modelLabel?: string, cameraStart?: AngleCameraState | null) {
+export function buildAnglePayload(camera: AngleCameraState, modelLabel?: string, cameraStart?: AngleCameraState | null, output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'>) {
   const rawState = normalizeAngleState(camera);
   const state = { ...rawState, yaw: effectiveAngle(rawState.yaw), pitch: effectiveAngle(rawState.pitch), roll: effectiveAngle(rawState.roll) };
   const startState = cameraStart ? normalizeAngleState(cameraStart) : null;
   const delta = startState ? deriveAngleDelta(startState, rawState) : null;
+  const semanticTarget = buildAngleTargetSemantic(rawState, output);
   return {
     model: { id: state.modelId, label: modelLabel || state.modelId },
     camera: {
@@ -407,6 +585,7 @@ export function buildAnglePayload(camera: AngleCameraState, modelLabel?: string,
       composition_lock: state.compositionLock,
       frame_offset_x_pct: Number(state.frameX.toFixed(1)),
       frame_offset_y_pct: Number(state.frameY.toFixed(1)),
+      semantic_target: semanticTarget,
     },
     ...(startState ? {
       camera_start: compactCameraPayload(startState),
