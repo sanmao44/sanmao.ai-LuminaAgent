@@ -2961,16 +2961,20 @@ export default function SuperCanvas() {
           ? [...selectedIds]
           : [];
       if (!ids.length) return;
-      const next = reorderCanvasNodes(docRef.current, ids, action);
-      if (next === docRef.current) return;
-      commit(() => next);
-      setSelectedIds(new Set(ids));
       const labels: Record<CanvasNodeLayerAction, string> = {
         "bring-to-front": "置于顶层",
         "bring-to-back": "置于底层",
         raise: "上移一层",
         lower: "下移一层",
       };
+      const next = reorderCanvasNodes(docRef.current, ids, action);
+      if (next === docRef.current) {
+        const boundary = action === "bring-to-back" || action === "lower" ? "底层" : "顶层";
+        notify(`选中的 ${ids.length} 个节点已在${boundary}`);
+        return;
+      }
+      commit(() => next);
+      setSelectedIds(new Set(ids));
       const message = `已将 ${ids.length} 个节点${labels[action]}`;
       addLog(message);
       notify(message);
@@ -11637,7 +11641,7 @@ function CanvasNodeCard({
         width: size.w,
         height: size.h,
         zIndex: (typeof node.zIndex === "number" && Number.isFinite(node.zIndex) ? Math.trunc(node.zIndex) : CANVAS_Z_INDEX.node) +
-          (selected || dragging ? CANVAS_NODE_INTERACTION_OFFSET : 0),
+          (dragging ? CANVAS_NODE_INTERACTION_OFFSET : 0),
       }}
       // Node movement and typed connections use the canvas pointer model.
       // Do not enable native HTML dragging on the whole card: it steals click

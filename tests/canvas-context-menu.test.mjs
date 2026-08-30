@@ -27,6 +27,18 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /label: selectedIds\.size > 1 \? `删除/);
 });
 
+test("layer actions respect the selected node's real z-index and explain boundary no-ops", () => {
+  const reorderStart = component.indexOf("const reorderSelection = useCallback");
+  const reorderEnd = component.indexOf("const alignSelection = useCallback", reorderStart);
+  assert.ok(reorderStart >= 0 && reorderEnd > reorderStart, "layer action handler should exist");
+  const reorder = component.slice(reorderStart, reorderEnd);
+
+  assert.match(reorder, /if \(next === docRef\.current\) \{[\s\S]*const boundary = action === "bring-to-back" \|\| action === "lower" \? "底层" : "顶层";[\s\S]*notify\(`选中的 \$\{ids\.length\} 个节点已在\$\{boundary\}`\)/);
+  assert.match(component, /zIndex: \(typeof node\.zIndex === "number"[\s\S]*\+\s*\(dragging \? CANVAS_NODE_INTERACTION_OFFSET : 0\),/);
+  assert.match(styles, /\.canvas-world-content>\.canvas-node-layer>\.canvas-node\.dragging\{z-index:var\(--canvas-z-node-interaction\)\}/);
+  assert.doesNotMatch(styles, /\.canvas-world-content>\.canvas-node-layer>\.canvas-node\.selected,\.canvas-world-content>\.canvas-node-layer>\.canvas-node\.dragging/);
+});
+
 test("context paste uses the right-click world position while keyboard paste keeps its center fallback", () => {
   const start = component.indexOf("const pasteCanvasPayload = useCallback");
   const end = component.indexOf("const toggleAssetLibrary", start);

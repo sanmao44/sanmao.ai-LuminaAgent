@@ -50,7 +50,7 @@
 .canvas-world-content>.canvas-group-layer{z-index:var(--canvas-z-group)}
 .canvas-world-content>.canvas-node-layer{z-index:var(--canvas-z-node)}
 .canvas-world-content>.canvas-node-layer>.canvas-node{z-index:var(--canvas-z-node)}
-.canvas-world-content>.canvas-node-layer>.canvas-node.selected,.canvas-world-content>.canvas-node-layer>.canvas-node.dragging{z-index:var(--canvas-z-node-interaction)}
+.canvas-world-content>.canvas-node-layer>.canvas-node.dragging{z-index:var(--canvas-z-node-interaction)}
 .canvas-stage>.canvas-snap-guides,.canvas-stage>.canvas-marquee,.canvas-stage>.canvas-connection-target,.canvas-stage>.canvas-connection-cancel,.canvas-stage>.canvas-connection-picker{z-index:var(--canvas-z-stage-guide)}
 .canvas-stage>.canvas-selection-toolbar,.canvas-stage>.canvas-selection-layout-toolbar,.canvas-stage>.canvas-minimap{z-index:var(--canvas-z-selection)}
 .canvas-stage>.canvas-deck{z-index:var(--canvas-z-deck)}
