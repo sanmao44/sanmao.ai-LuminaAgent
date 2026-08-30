@@ -105,7 +105,14 @@ import {
 } from "@/lib/creation/settings";
 import { recordModelCall } from "@/lib/model-preferences";
 import { getUpscaleCatalogModel } from "@/lib/upscale-catalog";
-import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
+import {
+  inferCanvasInputRole,
+  preferredCanvasVideoInputMode,
+  resolveCanvasInputSemantics,
+  resolveCanvasVideoInputs,
+  type CanvasVideoInputMode,
+} from "@/lib/canvas/references";
+import { getVideoModelLimits } from "@/lib/video-model-limits";
 import {
   fitCanvasNodeEditorBelow,
   placeCanvasContextMenu,
@@ -643,6 +650,193 @@ function defaultParams(
   runtime: CanvasRuntimeState | null,
 ): CanvasGenerationParams {
   return readSharedCreationSettings(kind, runtime);
+}
+
+type CanvasConnectionResult = {
+  ok: boolean;
+  document: CanvasDocument;
+  inputRole?: CanvasInputRole;
+  videoMode?: CanvasVideoInputMode;
+  reason?: string;
+};
+
+function canvasInputRolesForTarget(document: CanvasDocument, targetId: string) {
+  const target = nodeById(document, targetId);
+  const roles = new Map<string, CanvasInputRole | undefined>();
+  const position = new Map<string, number>();
+  document.edges
+    .filter((edge) => edge.target === targetId)
+    .sort((left, right) => {
+      const leftOrder = Number(left.order);
+      const rightOrder = Number(right.order);
+      if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder)) return leftOrder - rightOrder;
+      if (Number.isFinite(leftOrder) !== Number.isFinite(rightOrder)) return Number.isFinite(leftOrder) ? -1 : 1;
+      return 0;
+    })
+    .forEach((edge) => {
+      const source = nodeById(document, edge.source);
+      if (!source) return;
+      const current = position.get(targetId) || 0;
+      if (isCanvasReferenceableNode(source) && source.data.kind === "image") position.set(targetId, current + 1);
+      roles.set(
+        source.id,
+        edge.inputRole || (target ? inferCanvasInputRole(source, target, target.data.params && "inputMode" in target.data.params ? target.data.params.inputMode as CanvasVideoInputMode : undefined, current) : undefined),
+      );
+    });
+  return roles;
+}
+
+function updateCanvasVideoMode(document: CanvasDocument, targetId: string, inputMode: CanvasVideoInputMode) {
+  return {
+    ...document,
+    nodes: document.nodes.map((node) => {
+      if (node.id !== targetId || (node.type !== "media" && node.type !== "generator")) return node;
+      const params = node.data.params;
+      if (!params || typeof params !== "object" || !("inputMode" in params)) return node;
+      const nextParams = { ...params, inputMode } as VideoCreationSettings;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          params: nextParams,
+          generation: node.data.generation
+            ? { ...node.data.generation, params: nextParams }
+            : node.data.generation,
+        },
+      };
+    }),
+  };
+}
+
+function connectCanvasNodesInDocument(
+  document: CanvasDocument,
+  sourceId: string,
+  targetId: string,
+  sourcePort: "left" | "right" = "right",
+  targetPort: "left" | "right" = "left",
+  runtime: CanvasRuntimeState | null,
+  requestedRole?: CanvasInputRole,
+): CanvasConnectionResult {
+  const source = nodeById(document, sourceId);
+  const target = nodeById(document, targetId);
+  if (!source || !target) return { ok: false, document, reason: "源节点或目标节点不存在。" };
+  if (source.id === target.id) return { ok: false, document, reason: "不能连接自身。" };
+
+  const targetKind = target.type === "media" || target.type === "generator" ? target.data.kind : undefined;
+  const sourceKind = isCanvasReferenceableNode(source) ? source.data.kind : undefined;
+  let inputRole = requestedRole;
+  let videoMode: CanvasVideoInputMode | undefined;
+  let next = document;
+
+  if (targetKind === "image" && sourceKind === "video") {
+    return { ok: false, document, reason: "图片节点不能接收视频作为图片参考。" };
+  }
+
+  if (targetKind === "video" && sourceKind === "image") {
+    const settings = target.data.params && typeof target.data.params === "object" && "inputMode" in target.data.params
+      ? target.data.params as VideoCreationSettings
+      : normalizeCreationSettings("video", target.data.params, runtime);
+    const resolved = resolveAvailableCreationModel(settings, runtime);
+    const model = resolved.model;
+    const supportsReference = Boolean(model?.capabilities.includes("video-reference"));
+    const supportsFirstFrame = Boolean(model?.capabilities.includes("video-first-frame"));
+    const preferred = preferredCanvasVideoInputMode({ supportsReference, supportsFirstFrame });
+    if (!preferred) {
+      return { ok: false, document, reason: "当前视频模型不支持参考图或首帧输入，请先切换到支持图像输入的模型。" };
+    }
+    const provider = runtime?.providers.find((item) => item.id === model?.providerId);
+    const limits = getVideoModelLimits(model || undefined, provider);
+    videoMode = settings.inputMode;
+    if (requestedRole === "last-frame") videoMode = "frames";
+    else if (requestedRole === "first-frame" && videoMode === "text") videoMode = "first-frame";
+    else if (
+      videoMode === "text" ||
+      (videoMode === "reference" && !supportsReference) ||
+      ((videoMode === "first-frame" || videoMode === "frames") && !supportsFirstFrame)
+    ) videoMode = preferred;
+
+    const existing = incomingReferences(document, targetId);
+    const roles = canvasInputRolesForTarget(document, targetId);
+    const modeRole = videoMode === "reference"
+      ? "reference-image"
+      : videoMode === "first-frame"
+        ? "first-frame"
+        : videoMode === "frames"
+          ? (requestedRole === "last-frame" ? "last-frame" : undefined)
+          : undefined;
+    inputRole = requestedRole === "first-frame" || requestedRole === "last-frame"
+      ? requestedRole
+      : modeRole;
+    if (!inputRole && videoMode === "frames") {
+      const current = resolveCanvasVideoInputs(existing, videoMode, roles, { maxReferenceImages: limits.maxReferenceImages });
+      inputRole = current.firstFrame ? (current.lastFrame ? undefined : "last-frame") : "first-frame";
+    }
+    if (!inputRole && videoMode === "first-frame") inputRole = "first-frame";
+    if (!inputRole && videoMode === "reference") inputRole = "reference-image";
+    const nextRoles = new Map(roles);
+    const slotRole = inputRole === "first-frame" || inputRole === "last-frame" ? inputRole : undefined;
+    const previousSlotOwner = slotRole
+      ? [...roles.entries()].find(([nodeId, role]) => nodeId !== source.id && role === slotRole)?.[0]
+      : undefined;
+    if (previousSlotOwner) nextRoles.set(previousSlotOwner, "reference-image");
+    nextRoles.set(source.id, inputRole);
+    const resolvedInputs = resolveCanvasVideoInputs(
+      [...existing, source],
+      videoMode,
+      nextRoles,
+      { maxReferenceImages: limits.maxReferenceImages },
+    );
+    if (resolvedInputs.unused.some((node) => node.id === source.id)) {
+      const reason = videoMode === "reference"
+        ? `当前模型最多接收 ${limits.maxReferenceImages} 张参考图。`
+        : videoMode === "first-frame"
+          ? "首帧槽位已经有图片；如需更多图片请切换到参考图或首尾帧模式。"
+          : "首帧和尾帧槽位已经占满，超出的图片不会参与本次生成。";
+      return { ok: false, document, reason };
+    }
+    if (videoMode !== settings.inputMode) next = updateCanvasVideoMode(next, targetId, videoMode);
+
+    if (slotRole) {
+      const existingEdge = next.edges.find(
+        (edge) =>
+          edge.source === sourceId &&
+          edge.target === targetId &&
+          edge.sourcePort === sourcePort &&
+          edge.targetPort === targetPort,
+      );
+      if (existingEdge) {
+        next = {
+          ...next,
+          edges: next.edges.map((edge) => {
+            if (edge.target !== targetId) return edge;
+            if (edge.id === existingEdge.id) {
+              return {
+                ...edge,
+                kind: "reference" as const,
+                inputRole: slotRole,
+                order: slotRole === "first-frame" ? 0 : 1,
+              };
+            }
+            return edge.inputRole === slotRole
+              ? { ...edge, inputRole: "reference-image" as CanvasInputRole }
+              : edge;
+          }),
+        };
+        return { ok: true, document: next, inputRole, videoMode };
+      }
+    }
+  } else if (!inputRole) {
+    if (target.type === "prompt") inputRole = source.type === "prompt" || source.type === "generator" ? "context" : sourceKind === "video" ? "video" : "reference-image";
+    else if (source.type === "prompt" || source.type === "generator") inputRole = "context";
+    else if (sourceKind === "video") inputRole = "video";
+    else if (sourceKind === "image") inputRole = "reference-image";
+  }
+
+  const beforeEdges = next.edges.length;
+  const existingInputs = incomingReferences(next, targetId).length;
+  next = addEdge(next, sourceId, targetId, sourcePort, targetPort, inputRole === "reference-image" || inputRole === "first-frame" || inputRole === "last-frame" ? "reference" : "manual", inputRole, existingInputs);
+  if (next.edges.length === beforeEdges) return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
+  return { ok: true, document: next, inputRole, videoMode };
 }
 
 function copyParams(
@@ -1442,6 +1636,42 @@ export default function SuperCanvas() {
       kind === "error" ? 5200 : 2800,
     );
   }, []);
+  const connectCanvasNodes = useCallback(
+    (
+      sourceId: string,
+      targetId: string,
+      sourcePort: "left" | "right" = "right",
+      targetPort: "left" | "right" = "left",
+      requestedRole?: CanvasInputRole,
+    ) => {
+      const result = connectCanvasNodesInDocument(
+        docRef.current,
+        sourceId,
+        targetId,
+        sourcePort,
+        targetPort,
+        runtime,
+        requestedRole,
+      );
+      if (!result.ok) {
+        notify(result.reason || "连线失败。", "error");
+        return false;
+      }
+      commit(() => result.document);
+      addLog(
+        result.videoMode
+          ? `已连接图片到视频节点，已切换为 ${result.videoMode} 模式`
+          : `已连接 ${sourceId} → ${targetId}`,
+      );
+      notify(
+        result.videoMode
+          ? `已连接图片，视频节点使用${result.videoMode === "reference" ? "参考图" : result.videoMode === "frames" ? "首尾帧" : "首帧"}模式`
+          : "已建立节点连接",
+      );
+      return true;
+    },
+    [addLog, commit, notify, runtime],
+  );
   const refreshGenerationLogs = useCallback(async () => {
     setGenerationLogsLoading(true);
     try {
@@ -2640,17 +2870,12 @@ export default function SuperCanvas() {
             point.y - interaction.start.y,
           ) > 12;
         if (target && target !== interaction.sourceId) {
-          commit((value) =>
-            addEdge(
-              value,
-              interaction.sourceId,
-              target,
-              interaction.sourcePort,
-              interaction.sourcePort === "right" ? "left" : "right",
-              "manual",
-            ),
+          connectCanvasNodes(
+            interaction.sourceId,
+            target,
+            interaction.sourcePort,
+            interaction.sourcePort === "right" ? "left" : "right",
           );
-          addLog(`已连接 ${interaction.sourceId} → ${target}`);
           setConnectionNodePicker(null);
         } else if (!target && moved) {
           setConnectionNodePicker({
@@ -2791,6 +3016,7 @@ export default function SuperCanvas() {
     [
       addLog,
       commit,
+      connectCanvasNodes,
       connectionTargetId,
       clearSelection,
       notify,
@@ -3141,16 +3367,19 @@ export default function SuperCanvas() {
       const point = openNodePosition(seed, draft);
       const node = { ...draft, x: point.x, y: point.y };
       const targetPort = picker.sourcePort === "right" ? "left" : "right";
-      commit((value) =>
-        addEdge(
-          { ...value, nodes: [...value.nodes, node] },
-          picker.sourceId,
-          node.id,
-          picker.sourcePort,
-          targetPort,
-          "manual",
-        ),
+      const connected = connectCanvasNodesInDocument(
+        { ...docRef.current, nodes: [...docRef.current.nodes, node] },
+        picker.sourceId,
+        node.id,
+        picker.sourcePort,
+        targetPort,
+        runtime,
       );
+      if (!connected.ok) {
+        setConnectionNodePicker(null);
+        return notify(connected.reason || "连接新节点失败。", "error");
+      }
+      commit(() => connected.document);
       setConnectionNodePicker(null);
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
@@ -4189,7 +4418,7 @@ export default function SuperCanvas() {
       const linked = [
         ...new Map(
           incoming
-            .filter((node) => node.type === "media" && node.data.url)
+            .filter((node) => isCanvasReferenceableNode(node))
             .map((node) => [node.id, node]),
         ).values(),
       ];
@@ -4466,29 +4695,29 @@ export default function SuperCanvas() {
               }).catch(() => addLog("图片变体已生成，但写入历史失败"));
             } else {
               const videoParams = effectiveParams as VideoCreationSettings;
+              const videoModelProvider = runtime?.providers.find((item) => item.id === resolvedModel.model?.providerId);
+              const videoLimits = getVideoModelLimits(resolvedModel.model || undefined, videoModelProvider);
+              const videoInputs = resolveCanvasVideoInputs(
+                linked,
+                videoParams.inputMode,
+                canvasInputRolesForTarget(docRef.current, generatorId),
+                { maxReferenceImages: videoLimits.maxReferenceImages },
+              );
               const task = await generateCanvasVideo({
                 prompt,
-                model: videoParams.model,
+                model: effectiveParams.model,
                 operation: videoParams.operation,
                 inputMode: videoParams.inputMode,
                 duration: videoParams.duration,
                 aspect: videoParams.aspect,
                 resolution: videoParams.resolution,
-                references: linked
-                  .filter((item) => item.data.kind === "image" && item.data.url)
-                  .map((item) => ({
+                references: videoInputs.referenceImages.map((item) => ({
                     url: String(item.data.url),
                     name: String(item.data.name || "参考图片"),
                   })),
-                referenceVideo: linked.find(
-                  (item) => item.data.kind === "video" && item.data.url,
-                )?.data.url
-                  ? String(
-                      linked.find(
-                        (item) => item.data.kind === "video" && item.data.url,
-                      )?.data.url,
-                    )
-                  : undefined,
+                firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
+                lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
+                referenceVideo: videoInputs.referenceVideo?.data.url ? String(videoInputs.referenceVideo.data.url) : undefined,
                 audio: videoParams.audio,
               });
               const target = createMedia(
@@ -5190,9 +5419,32 @@ export default function SuperCanvas() {
       resolvedReferenceIds.push(placed.id);
     }
     const referenceByIndex = draft.references.map((reference, index) => ({ reference, id: resolvedReferenceIds[index] }));
-    const initialEdges: CanvasEdge[] = referenceByIndex.map(({ id }) => ({
-      id: uid("edge"), source: id, target: generator.id, sourcePort: "right" as const, targetPort: "left" as const, kind: "manual" as const,
-    }));
+    const referenceInputNodes = referenceByIndex.map(({ reference, id }) => {
+      const existing = nodeById(docRef.current, id);
+      return existing || {
+        id,
+        type: "media" as const,
+        x: 0,
+        y: 0,
+        data: { kind: reference.kind, url: reference.url, name: reference.name },
+      };
+    });
+    const reuseInputMode = draft.kind === "video" ? (draft.params as VideoCreationSettings).inputMode : undefined;
+    let imageInputPosition = 0;
+    const initialEdges: CanvasEdge[] = referenceByIndex.map(({ id }, index) => {
+      const sourceNode = referenceInputNodes[index];
+      const inputRole = sourceNode && reuseInputMode
+        ? inferCanvasInputRole(sourceNode, generator, reuseInputMode, sourceNode.data.kind === "image" ? imageInputPosition : index)
+        : sourceNode
+          ? inferCanvasInputRole(sourceNode, generator, undefined, sourceNode.data.kind === "image" ? imageInputPosition : index)
+          : undefined;
+      if (sourceNode?.data.kind === "image") imageInputPosition += 1;
+      return {
+        id: uid("edge"), source: id, target: generator.id, sourcePort: "right" as const, targetPort: "left" as const, kind: "manual" as const,
+        ...(inputRole ? { inputRole } : {}),
+        order: index,
+      };
+    });
     if (source) initialEdges.push({ id: uid("edge"), source: source.id, target: generator.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
     const outputPosition = { x: generator.x + nodeSize(generator).w + 90, y: generator.y };
     const output = createMedia(draft.kind, "", draft.kind === "video" ? "视频任务" : "图片生成中", outputPosition, {
@@ -5228,24 +5480,20 @@ export default function SuperCanvas() {
         const sourceNode = draft.sourceNodeId
           ? nodeById(docRef.current, draft.sourceNodeId)
           : undefined;
-        const videoInputs = resolveCanvasInputSemantics(
-          draft.references.map((reference) => ({
-            id: reference.id,
-            type: "media" as const,
-            x: 0,
-            y: 0,
-            data: {
-              kind: reference.kind,
-              url: reference.url,
-              name: reference.name,
-            },
-          })),
-          "video",
+        const resolvedVideoModel = resolveAvailableCreationModel(params, runtime);
+        const videoProvider = runtime?.providers.find((item) => item.id === resolvedVideoModel.model?.providerId);
+        const videoLimits = getVideoModelLimits(resolvedVideoModel.model || undefined, videoProvider);
+        const videoInputs = resolveCanvasVideoInputs(
+          referenceInputNodes,
           params.inputMode,
+          new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
+          { maxReferenceImages: videoLimits.maxReferenceImages },
         );
         const task = await generateCanvasVideo({
-          prompt: draft.prompt, model: params.model, operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
-          references: videoInputs.imageReferences.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
+          prompt: draft.prompt, model: resolvedVideoModel.model?.id || "auto", operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
+          references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
+          firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
+          lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
           referenceVideo: sourceNode?.data.kind === "video" && sourceNode.data.url
             ? String(sourceNode.data.url)
             : videoInputs.referenceVideo?.data.url
@@ -5535,22 +5783,33 @@ export default function SuperCanvas() {
     );
     if (!prompt.trim()) return notify("请输入生成提示词。", "error");
     const inputSemantics = resolveCanvasInputSemantics(
-        linked,
-        kind === "video" ? "video" : "image",
-        kind === "video" ? (source.params as VideoCreationSettings).inputMode : undefined,
-      );
-    const refs = inputSemantics.imageReferences
+      linked,
+      kind === "video" ? "video" : "image",
+      kind === "video" ? (source.params as VideoCreationSettings).inputMode : undefined,
+    );
+    const resolvedModel = resolveAvailableCreationModel(source.params, runtime);
+    const effectiveParams = {
+      ...source.params,
+      model: resolvedModel.model?.id || "auto",
+    } as CreationSettings;
+    const videoParams = kind === "video" ? effectiveParams as VideoCreationSettings : undefined;
+    const videoProvider = runtime?.providers.find((item) => item.id === resolvedModel.model?.providerId);
+    const videoLimits = kind === "video" ? getVideoModelLimits(resolvedModel.model || undefined, videoProvider) : undefined;
+    const videoInputs = kind === "video" && videoParams && videoLimits
+      ? resolveCanvasVideoInputs(
+          linked,
+          videoParams.inputMode,
+          ownerId ? canvasInputRolesForTarget(docRef.current, ownerId) : undefined,
+          { maxReferenceImages: videoLimits.maxReferenceImages },
+        )
+      : undefined;
+    const refs = (kind === "video" ? videoInputs?.referenceImages || [] : inputSemantics.imageReferences)
       .map((node) => ({
           url: String(node.data.url || ""),
           name: String(node.data.name || "参考素材"),
         }))
       .filter((item) => item.url);
     const sourceNode = source.node;
-    const resolvedModel = resolveAvailableCreationModel(source.params, runtime);
-    const effectiveParams = {
-      ...source.params,
-      model: resolvedModel.model?.id || "auto",
-    } as CreationSettings;
     let targetId = sourceTarget?.id || "";
     const activeKey = generationKey(source);
     if (generationKeysRef.current.has(activeKey))
@@ -5863,22 +6122,24 @@ export default function SuperCanvas() {
             : undefined;
         const task = await generateCanvasVideo({
           prompt,
-          model: videoParams.model,
+          model: effectiveParams.model,
           operation: videoParams.operation,
           inputMode: videoParams.inputMode,
           duration: videoParams.duration,
           aspect: videoParams.aspect,
           resolution: videoParams.resolution,
-          references: inputSemantics.imageReferences
+          references: (videoInputs?.referenceImages || [])
             .filter((item) => item.data.url)
             .map((item) => ({
               url: String(item.data.url),
               name: String(item.data.name || "参考图片"),
             })),
+          firstFrame: videoInputs?.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
+          lastFrame: videoInputs?.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
           referenceVideo:
             referenceVideo ||
-            (inputSemantics.referenceVideo?.data.url
-              ? String(inputSemantics.referenceVideo.data.url)
+            (videoInputs?.referenceVideo?.data.url
+              ? String(videoInputs.referenceVideo.data.url)
               : undefined),
           audio: videoParams.audio,
         });
@@ -6159,54 +6420,9 @@ export default function SuperCanvas() {
 
   const addNodeReference = useCallback(
     (targetId: string, sourceId: string, requestedRole?: CanvasInputRole) => {
-      const source = nodeById(docRef.current, sourceId);
-      const target = nodeById(docRef.current, targetId);
-      if (!source || !target || source.id === target.id) return;
-      if (target.type === "upscale") {
-        const next = addEdge(docRef.current, sourceId, targetId, "right", "left", "manual", "upscale-image");
-        if (next === docRef.current) {
-          notify("超分节点只允许连接一张已完成的图片", "error");
-          return;
-        }
-        commit(() => next);
-        notify("已连接超分原图");
-        return;
-      }
-      let inputRole: CanvasInputRole | undefined = requestedRole;
-      if (target.type === "prompt") {
-        inputRole = source.type === "prompt" || source.type === "generator"
-          ? "context"
-          : source.data.kind === "video" ? "video" : "reference-image";
-      } else if (source.type === "prompt" || source.type === "generator") {
-        inputRole = "context";
-      } else if (isCanvasReferenceableNode(source)) {
-        if (target.data.kind === "image" && source.data.kind !== "image") {
-          notify("图片节点不能接收视频作为图片参考。", "error");
-          return;
-        }
-        inputRole = requestedRole || (target.data.kind === "video" && source.data.kind === "video" ? "video" : "reference-image");
-      }
-      const current = incomingReferences(docRef.current, targetId);
-      if (inputRole === "reference-image" && current.some((item) => item.id === sourceId)) return;
-      if (inputRole === "reference-image" && current.length >= 16) {
-        notify("参考图最多 16 张。", "error");
-        return;
-      }
-      commit((value) =>
-        addEdge(
-          value,
-          sourceId,
-          targetId,
-          "right",
-          "left",
-          inputRole === "reference-image" ? "reference" : "manual",
-          inputRole,
-          current.length,
-        ),
-      );
-      notify("已加入参考图并保留顺序");
+      connectCanvasNodes(sourceId, targetId, "right", "left", requestedRole);
     },
-    [commit, notify],
+    [connectCanvasNodes],
   );
 
   const removeNodeReference = useCallback(
@@ -6250,29 +6466,34 @@ export default function SuperCanvas() {
         }
       }
       if (!nodes.length) return;
+      const rejected: string[] = [];
+      const accepted = new Set<string>();
       commit((value) => {
         let next = { ...value, nodes: [...value.nodes, ...nodes] };
-        nodes.forEach((node, index) => {
-          next = addEdge(
-            next,
-            node.id,
-            targetId,
-            "right",
-            "left",
-            "reference",
-            "reference-image",
-            existing + index,
-          );
+        nodes.forEach((node) => {
+          const result = connectCanvasNodesInDocument(next, node.id, targetId, "right", "left", runtime);
+          if (result.ok) {
+            next = result.document;
+            accepted.add(node.id);
+          } else rejected.push(result.reason || `${node.data.name || "素材"}无法接入`);
         });
-        return next;
+        return {
+          ...next,
+          nodes: next.nodes.filter((node) => !nodes.some((candidate) => candidate.id === node.id) || accepted.has(node.id)),
+        };
       });
+      if (rejected.length && !accepted.size) {
+        notify(rejected[0], "error");
+        return;
+      }
       notify(
         optimizedImageCount
-          ? `已自动优化 ${optimizedImageCount} 张图片后上传，已添加 ${nodes.length} 张参考素材`
-          : `已添加 ${nodes.length} 张参考素材`,
+          ? `已自动优化 ${optimizedImageCount} 张图片后上传，已添加 ${accepted.size} 张参考素材`
+          : `已添加 ${accepted.size} 张参考素材${rejected.length ? `，${rejected.length} 张未接入` : ""}`,
       );
+      if (rejected.length) addLog(`有 ${rejected.length} 张上传素材未接入目标节点`);
     },
-    [commit, notify, runtime],
+    [addLog, commit, notify, runtime],
   );
 
   const runEditorGeneration = useCallback(
@@ -10544,6 +10765,7 @@ function progressValue(value: unknown) {
 function CanvasNodeReferenceStrip({
   target,
   document,
+  runtime,
   references,
   contexts,
   onReorder,
@@ -10554,41 +10776,104 @@ function CanvasNodeReferenceStrip({
 }: {
   target: CanvasNode;
   document: CanvasDocument;
+  runtime: CanvasRuntimeState | null;
   references: CanvasNode[];
   contexts: CanvasNode[];
   onReorder: (ownerId: string, draggedId: string, targetId: string) => void;
   onRemove: (ownerId: string, sourceId: string) => void;
-  onDrop: (ownerId: string, sourceId: string, role: "reference-image") => void;
+  onDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
   onAddFiles: (ownerId: string, files: File[]) => void;
   onPreview: (node: CanvasNode) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
-  const allowImageReference = target.type === "prompt" || target.data.kind === "image" || target.data.kind === "video";
+  const isVideoTarget = (target.type === "media" || target.type === "generator") && target.data.kind === "video";
+  const videoParams = isVideoTarget && target.data.params && typeof target.data.params === "object" && "inputMode" in target.data.params
+    ? target.data.params as VideoCreationSettings
+    : undefined;
+  const videoModel = videoParams ? resolveAvailableCreationModel(videoParams, runtime).model : null;
+  const videoProvider = runtime?.providers.find((item) => item.id === videoModel?.providerId);
+  const videoLimits = videoParams ? getVideoModelLimits(videoModel || undefined, videoProvider) : undefined;
+  const videoInputs = videoParams
+    ? resolveCanvasVideoInputs(
+        references,
+        videoParams.inputMode,
+        canvasInputRolesForTarget(document, target.id),
+        { maxReferenceImages: videoLimits?.maxReferenceImages },
+      )
+    : undefined;
+  const modeLabel = videoParams?.inputMode === "reference"
+    ? "参考图生视频"
+    : videoParams?.inputMode === "first-frame"
+      ? "首帧图生视频"
+      : videoParams?.inputMode === "frames"
+        ? "首尾帧图生视频"
+        : "文生视频";
 
-  const handleDrop = (event: ReactDragEvent<HTMLDivElement>, targetId?: string) => {
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>, targetId?: string, role?: CanvasInputRole) => {
     event.preventDefault();
     event.stopPropagation();
     const fromIndex = Number(event.dataTransfer.getData("application/x-sanmao-reference-index"));
     if (Number.isInteger(fromIndex) && fromIndex >= 0 && fromIndex < references.length && targetId) {
-      onReorder(target.id, references[fromIndex].id, targetId);
+      if (role && role !== "reference-image") onDrop(target.id, references[fromIndex].id, role);
+      else onReorder(target.id, references[fromIndex].id, targetId);
       setDraggedId(null);
       return;
     }
     const sourceId = event.dataTransfer.getData("application/x-sanmao-canvas-node");
-    if (sourceId) onDrop(target.id, sourceId, "reference-image");
+    if (sourceId) onDrop(target.id, sourceId, role || "reference-image");
     setDraggedId(null);
   };
+
+  const renderItem = (reference: CanvasNode, index: number, extraClass = "", role?: CanvasInputRole) => (
+    <div
+      key={`${reference.id}-${role || "reference"}`}
+      className={`canvas-editor-reference-item${draggedId === reference.id ? " dragging" : ""}${extraClass ? ` ${extraClass}` : ""}`}
+      draggable
+      onDragStart={(event) => {
+        setDraggedId(reference.id);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("application/x-sanmao-canvas-node", reference.id);
+        event.dataTransfer.setData("application/x-sanmao-reference-index", String(references.findIndex((item) => item.id === reference.id)));
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => handleDrop(event, reference.id)}
+      onDragEnd={() => setDraggedId(null)}
+    >
+      <button type="button" className="canvas-editor-reference-preview" onClick={() => onPreview(reference)} title={reference.data.name || `引用 ${index + 1}`}>
+        <span>{index + 1}</span>
+        {reference.data.kind === "video" ? <video src={reference.data.url} muted playsInline /> : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
+      </button>
+      <b className="canvas-editor-reference-name">{reference.data.name || (reference.data.kind === "video" ? "视频素材" : "图片素材")}</b>
+      <button type="button" className="canvas-editor-reference-remove" aria-label={`移除引用 ${index + 1}`} onClick={() => onRemove(target.id, reference.id)}>×</button>
+    </div>
+  );
+
+  const renderSlot = (label: string, slotRole: "first-frame" | "last-frame", reference: CanvasNode | undefined) => (
+    <div
+      className={`canvas-editor-frame-slot${reference ? " filled" : " empty"}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => handleDrop(event, reference?.id || "__slot__", slotRole)}
+    >
+      <span className="canvas-editor-slot-label"><b>{label}</b><small>{reference ? "已连接" : "拖入图片"}</small></span>
+      {reference ? renderItem(reference, references.findIndex((item) => item.id === reference.id), "slot-item", slotRole) : <span className="canvas-editor-frame-slot-empty">＋ {label}</span>}
+    </div>
+  );
+
+  const unusedImages = videoInputs?.unused.filter((item) => item.data.kind === "image") || [];
+  const connectedVideo = videoInputs?.referenceVideo;
+  const imageWarning = isVideoTarget && videoParams?.inputMode === "text" && references.some((item) => item.data.kind === "image");
 
   return (
     <div className="canvas-editor-references" onDragOver={(event) => event.preventDefault()}>
       <div className="canvas-editor-section-head">
-        <span><b>输入与引用</b><small>拖动缩略图可调整顺序</small></span>
+        <span><b>输入与引用</b><small>{isVideoTarget ? modeLabel : "拖动缩略图可调整顺序"}</small></span>
         <div>
-          <b>{references.length}/16</b>
+          <b>{videoLimits ? `${videoInputs?.referenceImages.length || 0}/${videoLimits.maxReferenceImages}` : `${references.length}/16`}</b>
           <button type="button" onClick={() => inputRef.current?.click()}>＋ 添加</button>
         </div>
       </div>
+      {imageWarning && <div className="canvas-editor-video-warning">已连接图片不会参与本次生成；当前为文生视频模式。</div>}
       {contexts.length > 0 && (
         <div className="canvas-editor-context-slot">
           <span className="canvas-editor-slot-label">文本上下文 <small>来自 @ 引用</small></span>
@@ -10603,35 +10888,28 @@ function CanvasNodeReferenceStrip({
           </div>
         </div>
       )}
-      <div className="canvas-editor-reference-slot" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop(event)}>
-        <span className="canvas-editor-slot-label">{target.type === "prompt" ? "上下文与参考" : "参考图"} <small>按编号提交</small></span>
-        <div className="canvas-editor-reference-items">
-          {references.map((reference, index) => (
-            <div
-              key={reference.id}
-              className={`canvas-editor-reference-item${draggedId === reference.id ? " dragging" : ""}`}
-              draggable
-              onDragStart={(event) => {
-                setDraggedId(reference.id);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("application/x-sanmao-canvas-node", reference.id);
-                event.dataTransfer.setData("application/x-sanmao-reference-index", String(index));
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => handleDrop(event, reference.id)}
-              onDragEnd={() => setDraggedId(null)}
-            >
-              <button type="button" className="canvas-editor-reference-preview" onClick={() => onPreview(reference)} title={reference.data.name || `引用 ${index + 1}`}>
-                <span>{index + 1}</span>
-                {reference.type === "prompt" ? <b>✦</b> : reference.data.kind === "video" ? <video src={reference.data.url} muted playsInline /> : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
-              </button>
-              <button type="button" className="canvas-editor-reference-remove" aria-label={`移除引用 ${index + 1}`} onClick={() => onRemove(target.id, reference.id)}>×</button>
-            </div>
-          ))}
-          {!references.length && <small className="canvas-editor-reference-empty">拖入节点，或点击添加本地素材</small>}
+      {isVideoTarget && videoParams?.inputMode !== "reference" && videoParams?.inputMode !== "text" ? (
+        <div className="canvas-editor-frame-slots">
+          {renderSlot("首帧", "first-frame", videoInputs?.firstFrame)}
+          {videoParams?.inputMode === "frames" && renderSlot("尾帧", "last-frame", videoInputs?.lastFrame)}
         </div>
-      </div>
-      <input ref={inputRef} hidden type="file" multiple accept={allowImageReference ? "image/png,image/jpeg,image/webp,video/mp4,video/webm" : "*/*"} onChange={(event) => { if (event.target.files) onAddFiles(target.id, [...event.target.files]); event.currentTarget.value = ""; }} />
+      ) : (
+        <div className="canvas-editor-reference-slot" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop(event)}>
+          <span className="canvas-editor-slot-label">{target.type === "prompt" ? "上下文与参考" : "参考图"} <small>按编号提交</small></span>
+          <div className="canvas-editor-reference-items">
+            {(isVideoTarget ? videoInputs?.referenceImages || [] : references).map((reference, index) => renderItem(reference, index))}
+            {!references.length && <small className="canvas-editor-reference-empty">拖入节点，或点击添加本地素材</small>}
+          </div>
+        </div>
+      )}
+      {isVideoTarget && connectedVideo && <div className="canvas-editor-video-input">视频输入：{connectedVideo.data.name || "已连接参考视频"}</div>}
+      {isVideoTarget && unusedImages.length > 0 && (
+        <div className="canvas-editor-unused-inputs">
+          <span className="canvas-editor-slot-label">本次未使用 <small>切换生成方式或移除连线后可重新使用</small></span>
+          <div className="canvas-editor-reference-items">{unusedImages.map((reference, index) => renderItem(reference, references.findIndex((item) => item.id === reference.id), "unused-item"))}</div>
+        </div>
+      )}
+      <input ref={inputRef} hidden type="file" multiple accept={target.data.kind === "image" ? "image/png,image/jpeg,image/webp" : "image/png,image/jpeg,image/webp,video/mp4,video/webm"} onChange={(event) => { if (event.target.files) onAddFiles(target.id, [...event.target.files]); event.currentTarget.value = ""; }} />
     </div>
   );
 }
@@ -11434,6 +11712,7 @@ function CanvasNodeEditorPopover({
               <CanvasNodeReferenceStrip
                 target={node}
                 document={document}
+                runtime={runtime}
                 references={editorReferences}
                 contexts={editorContexts}
                 onReorder={onReferenceReorder}
@@ -12221,6 +12500,7 @@ function CanvasNodeCard({
           <CanvasNodeReferenceStrip
             target={node}
             document={document}
+            runtime={runtime}
             references={editorReferences}
             contexts={editorContexts}
             onReorder={onReferenceReorder}

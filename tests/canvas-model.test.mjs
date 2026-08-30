@@ -262,6 +262,65 @@ test('allows multiple image references on the same target after legacy migration
   assert.deepEqual(model.incomingReferences(withSecond, target.id).map((node) => node.id), [first.id, second.id]);
 });
 
+test('backfills ordinary image-to-video edges with frame roles and rejects video-to-image input', () => {
+  const first = model.createMedia('image', '/first-frame.png', '首帧', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/last-frame.png', '尾帧', { x: 0, y: 300 });
+  const video = model.createGenerator('video', { x: 720, y: 0 }, { inputMode: 'frames' });
+  const image = model.createGenerator('image', { x: 1080, y: 0 });
+  const sourceVideo = model.createMedia('video', '/source.mp4', '视频', { x: 0, y: 600 });
+  const document = model.normalizeDocument({
+    nodes: [first, second, video, image, sourceVideo],
+    edges: [
+      { id: 'first-edge', source: first.id, target: video.id },
+      { id: 'last-edge', source: second.id, target: video.id },
+    ],
+  });
+
+  assert.equal(document.edges.find((edge) => edge.id === 'first-edge')?.inputRole, 'first-frame');
+  assert.equal(document.edges.find((edge) => edge.id === 'last-edge')?.inputRole, 'last-frame');
+  assert.deepEqual(model.incomingReferences(document, video.id).map((node) => node.id), [first.id, second.id]);
+  assert.equal(model.canConnect(document, sourceVideo.id, image.id).ok, false);
+  assert.match(model.canConnect(document, sourceVideo.id, image.id).reason, /不能接收视频/);
+});
+
+test('does not let a video input consume a frame slot and restores roles by edge order', () => {
+  const first = model.createMedia('image', '/first-frame.png', '首帧', { x: 0, y: 0 });
+  const last = model.createMedia('image', '/last-frame.png', '尾帧', { x: 0, y: 300 });
+  const sourceVideo = model.createMedia('video', '/source.mp4', '参考视频', { x: 0, y: 600 });
+  const target = model.createGenerator('video', { x: 720, y: 0 }, { inputMode: 'frames' });
+  const result = model.normalizeDocument({
+    nodes: [first, last, sourceVideo, target],
+    edges: [
+      { id: 'last-edge', source: last.id, target: target.id, order: 2 },
+      { id: 'video-edge', source: sourceVideo.id, target: target.id },
+      { id: 'first-edge', source: first.id, target: target.id, order: 1 },
+    ],
+  });
+
+  assert.equal(result.edges.find((edge) => edge.id === 'first-edge')?.inputRole, 'first-frame');
+  assert.equal(result.edges.find((edge) => edge.id === 'last-edge')?.inputRole, 'last-frame');
+  assert.equal(result.edges.find((edge) => edge.id === 'video-edge')?.inputRole, 'video');
+
+  const empty = model.normalizeDocument({ nodes: [first, last, sourceVideo, target], edges: [] });
+  const withVideo = model.addEdge(empty, sourceVideo.id, target.id);
+  const withFirst = model.addEdge(withVideo, first.id, target.id);
+  assert.equal(withFirst.edges.find((edge) => edge.source === first.id)?.inputRole, 'first-frame');
+});
+
+test('incoming context follows persisted edge order after refresh', () => {
+  const first = model.createMedia('image', '/one.png', '一', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/two.png', '二', { x: 0, y: 300 });
+  const target = model.createGenerator('image', { x: 720, y: 0 });
+  const document = model.normalizeDocument({
+    nodes: [first, second, target],
+    edges: [
+      { id: 'second', source: second.id, target: target.id, order: 1 },
+      { id: 'first', source: first.id, target: target.id, order: 0 },
+    ],
+  });
+  assert.deepEqual(model.incomingContext(document, target.id).map((node) => node.id), [first.id, second.id]);
+});
+
 test('exposes completed upscale output as an image reference for downstream nodes', () => {
   const source = model.createMedia('image', '/source.png', '原图', { x: 0, y: 0 });
   const upscaleBase = model.createUpscaleNode({ x: 420, y: 0 });

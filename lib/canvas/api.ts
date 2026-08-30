@@ -411,6 +411,9 @@ export async function generateCanvasVideo(input: {
   aspect?: string;
   resolution?: string;
   references?: Array<{ url: string; name?: string }>;
+  /** Explicit frame slots supplied by the canvas resolver. */
+  firstFrame?: string;
+  lastFrame?: string;
   referenceVideo?: string;
   audio?: boolean;
 }) {
@@ -419,9 +422,23 @@ export async function generateCanvasVideo(input: {
   );
   const firstFrame =
     input.inputMode === "first-frame" || input.inputMode === "frames"
-      ? referenceData[0]
+      ? input.firstFrame
+        ? await asDataUrl(input.firstFrame)
+        : referenceData[0]
       : undefined;
-  const lastFrame = input.inputMode === "frames" ? referenceData[1] : undefined;
+  const lastFrame =
+    input.inputMode === "frames"
+      ? input.lastFrame
+        ? await asDataUrl(input.lastFrame)
+        : referenceData[1]
+      : undefined;
+  const videoMode = input.inputMode === "reference"
+    ? "reference"
+    : input.inputMode === "first-frame" || input.inputMode === "frames"
+      ? "keyframe"
+      : input.inputMode === "text"
+        ? "text"
+        : undefined;
   const result = await request<{
     task: {
       id: string;
@@ -444,6 +461,7 @@ export async function generateCanvasVideo(input: {
       input: {
         prompt: input.prompt,
         ...(input.operation ? { operation: input.operation } : {}),
+        ...(videoMode ? { videoMode } : {}),
         seconds: Number(input.duration || 5),
         aspectRatio: input.aspect || "16:9",
         resolution: input.resolution || "720P",

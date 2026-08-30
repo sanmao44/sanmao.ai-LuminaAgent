@@ -283,6 +283,23 @@ function normalizeInputRole(value: unknown): CanvasInputRole | undefined {
     : undefined;
 }
 
+function inferInputRoleFromNodes(
+  source: CanvasNode,
+  target: CanvasNode,
+  inputMode?: "text" | "first-frame" | "frames" | "reference",
+  position = 0,
+): CanvasInputRole | undefined {
+  if (source.type === "prompt" || source.type === "generator") return "context";
+  const sourceKind = source.type === "media" || source.type === "upscale" ? source.data.kind : undefined;
+  const targetKind = target.type === "media" || target.type === "generator" ? target.data.kind : undefined;
+  if (!sourceKind || !targetKind) return undefined;
+  if (targetKind === "image") return sourceKind === "video" ? "video" : "reference-image";
+  if (sourceKind === "video") return "video";
+  if (inputMode === "frames") return position === 0 ? "first-frame" : position === 1 ? "last-frame" : "reference-image";
+  if (inputMode === "first-frame") return position === 0 ? "first-frame" : "reference-image";
+  return "reference-image";
+}
+
 function hasPath(document: CanvasDocument, source: string, target: string) {
   const visited = new Set<string>();
   const pending = [target];
@@ -308,9 +325,19 @@ export function canConnect(
   if (!nodeById(document, source) && !groupById(document, source)) return { ok: false, reason: "源节点不存在" };
   if (!nodeById(document, target) && !groupById(document, target)) return { ok: false, reason: "目标节点不存在" };
   if (hasPath(document, source, target)) return { ok: false, reason: "这条连接会形成循环" };
+  const sourceNode = nodeById(document, source);
   const targetNode = nodeById(document, target);
+  const targetKind = targetNode && (targetNode.type === "media" || targetNode.type === "generator")
+    ? targetNode.data.kind
+    : undefined;
+  if (
+    targetKind === "image" &&
+    sourceNode &&
+    isCanvasReferenceableNode(sourceNode) &&
+    sourceNode.data.kind === "video"
+  )
+    return { ok: false, reason: "图片节点不能接收视频作为图片参考。" };
   if (targetNode?.type === "upscale") {
-    const sourceNode = nodeById(document, source);
     if (!isCanvasReadyImageSource(sourceNode))
       return { ok: false, reason: "超分节点只接受一张已完成的图片" };
     if (document.edges.some((edge) => edge.target === target))
@@ -476,14 +503,70 @@ export function normalizeDocument(
       (edge) => nodeIds.has(edge.target) || groupIds.has(edge.target),
     );
   const upscaleTargets = new Set<string>();
-  const edges = migratedEdges.filter((edge) => {
+  const usableEdges = migratedEdges.filter((edge) => {
     const targetNode = normalizedNodes.find((node) => node.id === edge.target);
     if (targetNode?.type !== "upscale") return true;
     const sourceNode = normalizedNodes.find((node) => node.id === edge.source);
     if (!sourceNode || sourceNode.type !== "media" || sourceNode.data.kind !== "image" || !sourceNode.data.url || upscaleTargets.has(targetNode.id)) return false;
     upscaleTargets.add(targetNode.id);
     return true;
-  }).map((edge) => normalizedNodes.find((node) => node.id === edge.target)?.type === "upscale" ? { ...edge, inputRole: "upscale-image" as CanvasInputRole } : edge);
+  });
+  const targetOrder = new Map<string, number>();
+  usableEdges.forEach((edge) => {
+    if (!targetOrder.has(edge.target)) targetOrder.set(edge.target, targetOrder.size);
+  });
+  const orderedUsableEdges = usableEdges
+    .map((edge, index) => ({ edge, index }))
+    .sort((left, right) => {
+      const leftTargetOrder = targetOrder.get(left.edge.target) || 0;
+      const rightTargetOrder = targetOrder.get(right.edge.target) || 0;
+      if (leftTargetOrder !== rightTargetOrder) return leftTargetOrder - rightTargetOrder;
+      const leftOrder = Number(left.edge.order);
+      const rightOrder = Number(right.edge.order);
+      const leftHasOrder = Number.isFinite(leftOrder);
+      const rightHasOrder = Number.isFinite(rightOrder);
+      if (leftHasOrder && rightHasOrder && leftOrder !== rightOrder) return leftOrder - rightOrder;
+      if (leftHasOrder !== rightHasOrder) return leftHasOrder ? -1 : 1;
+      return left.index - right.index;
+    });
+  const edgeInputPositions = new Map<string, number>();
+  const normalizedEdgeMap = new Map<CanvasEdge, CanvasEdge>();
+  orderedUsableEdges.forEach(({ edge }) => {
+    const targetNode = normalizedNodes.find((node) => node.id === edge.target);
+    if (targetNode?.type === "upscale") {
+      normalizedEdgeMap.set(edge, { ...edge, inputRole: "upscale-image" as CanvasInputRole });
+      return;
+    }
+    const sourceNode = normalizedNodes.find((node) => node.id === edge.source);
+    if (!sourceNode || !targetNode) {
+      normalizedEdgeMap.set(edge, edge);
+      return;
+    }
+    const inputPosition = edgeInputPositions.get(edge.target) || 0;
+    const sourceIsImageInput = isCanvasReferenceableNode(sourceNode) && sourceNode.data.kind === "image";
+    if (sourceIsImageInput) edgeInputPositions.set(edge.target, inputPosition + 1);
+    if (edge.inputRole) {
+      normalizedEdgeMap.set(
+        edge,
+        Number.isFinite(Number(edge.order)) || !sourceIsImageInput
+          ? edge
+          : { ...edge, order: inputPosition },
+      );
+      return;
+    }
+    const params = targetNode.data.params;
+    const inputMode = params && typeof params === "object" && "inputMode" in params
+      ? params.inputMode
+      : undefined;
+    const inputRole = inferInputRoleFromNodes(
+      sourceNode,
+      targetNode,
+      inputMode === "first-frame" || inputMode === "frames" || inputMode === "reference" || inputMode === "text" ? inputMode : undefined,
+      inputPosition,
+    );
+    normalizedEdgeMap.set(edge, inputRole ? { ...edge, inputRole } : edge);
+  });
+  const edges = usableEdges.map((edge) => normalizedEdgeMap.get(edge) || edge);
   return {
     version: CANVAS_VERSION,
     nodes: normalizedNodes,
@@ -1339,9 +1422,36 @@ export function addEdge(
     )
   )
     return document;
-  const effectiveInputRole = nodeById(document, target)?.type === "upscale"
+  const sourceNode = nodeById(document, source);
+  const targetNode = nodeById(document, target);
+  const inputPosition = document.edges.filter((edge) => {
+    if (edge.target !== target) return false;
+    const edgeSource = nodeById(document, edge.source);
+    return Boolean(
+      edgeSource &&
+        isCanvasReferenceableNode(edgeSource) &&
+        edgeSource.data.kind === "image",
+    );
+  }).length;
+  const targetParams = targetNode?.data.params;
+  const targetInputMode = targetParams && typeof targetParams === "object" && "inputMode" in targetParams
+    ? targetParams.inputMode
+    : undefined;
+  const effectiveInputRole = targetNode?.type === "upscale"
     ? "upscale-image" as CanvasInputRole
-    : inputRole;
+    : inputRole || (sourceNode && targetNode
+      ? inferInputRoleFromNodes(
+          sourceNode,
+          targetNode,
+          targetInputMode === "first-frame" || targetInputMode === "frames" || targetInputMode === "reference" || targetInputMode === "text" ? targetInputMode : undefined,
+          inputPosition,
+        )
+      : undefined);
+  const effectiveOrder = Number.isFinite(Number(order))
+    ? Number(order)
+    : effectiveInputRole && ["reference-image", "first-frame", "last-frame", "video"].includes(effectiveInputRole)
+      ? inputPosition
+      : undefined;
   return {
     ...document,
     edges: [
@@ -1354,7 +1464,7 @@ export function addEdge(
         targetPort,
         kind,
         ...(effectiveInputRole ? { inputRole: effectiveInputRole } : {}),
-        ...(Number.isFinite(Number(order)) ? { order: Number(order) } : {}),
+        ...(Number.isFinite(Number(effectiveOrder)) ? { order: Number(effectiveOrder) } : {}),
       },
     ],
   };
@@ -1557,11 +1667,22 @@ export function incomingContext(document: CanvasDocument, entityId: string) {
   const entity = nodeById(document, entityId) || groupById(document, entityId);
   if (!entity) return [];
   const direct = document.edges
+    .map((edge, index) => ({ edge, index }))
     .filter(
-      (edge) =>
+      ({ edge }) =>
         edge.target === entityId &&
         !["generated", "variant", "lineage"].includes(edge.kind || ""),
     )
+    .sort((left, right) => {
+      const leftOrder = Number(left.edge.order);
+      const rightOrder = Number(right.edge.order);
+      const leftHasOrder = Number.isFinite(leftOrder);
+      const rightHasOrder = Number.isFinite(rightOrder);
+      if (leftHasOrder && rightHasOrder && leftOrder !== rightOrder) return leftOrder - rightOrder;
+      if (leftHasOrder !== rightHasOrder) return leftHasOrder ? -1 : 1;
+      return left.index - right.index;
+    })
+    .map(({ edge }) => edge)
     .flatMap((edge) => {
       const sourceGroup = groupById(document, edge.source);
       if (sourceGroup)
@@ -1609,12 +1730,37 @@ export function reorderReferences(
   valid.forEach((id) => {
     if (!next.includes(id)) next.push(id);
   });
+  const ownerNode = nodeById(document, ownerId);
+  const ownerKind = ownerNode?.type === "media" || ownerNode?.type === "generator"
+    ? ownerNode.data.kind
+    : undefined;
+  const ownerParams = ownerNode?.data.params;
+  const ownerInputMode = ownerParams && typeof ownerParams === "object" && "inputMode" in ownerParams
+    ? ownerParams.inputMode
+    : undefined;
+  const imageIds = next.filter((id) => nodeById(document, id)?.data.kind === "image");
+  const reorderedRole = new Map<string, CanvasInputRole>();
+  if (ownerKind === "video") {
+    if (ownerInputMode === "first-frame") {
+      imageIds.forEach((id, index) => reorderedRole.set(id, index === 0 ? "first-frame" : "reference-image"));
+    } else if (ownerInputMode === "frames") {
+      imageIds.forEach((id, index) => reorderedRole.set(id, index === 0 ? "first-frame" : index === 1 ? "last-frame" : "reference-image"));
+    } else if (ownerInputMode === "reference") {
+      imageIds.forEach((id) => reorderedRole.set(id, "reference-image"));
+    }
+  }
   return {
     ...document,
     edges: document.edges.map((edge) => {
       if (edge.target !== ownerId) return edge;
       const index = next.indexOf(edge.source);
-      return index >= 0 ? { ...edge, order: index } : edge;
+      return index >= 0
+        ? {
+            ...edge,
+            order: index,
+            ...(reorderedRole.has(edge.source) ? { inputRole: reorderedRole.get(edge.source) } : {}),
+          }
+        : edge;
     }),
     nodes: document.nodes.map((node) =>
       node.id === ownerId

@@ -226,6 +226,55 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal('audio' in payload.input, false);
 });
 
+test('canvas video generation sends explicit reference mode inputs', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-reference', status: 'pending' } });
+  }, () => api.generateCanvasVideo({
+    prompt: '保持人物和服装',
+    model: 'video-model',
+    inputMode: 'reference',
+    references: [{ url: 'data:image/png;base64,one' }, { url: 'data:image/png;base64,two' }],
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.input.videoMode, 'reference');
+  assert.deepEqual(payload.input.referenceImages, ['data:image/png;base64,one', 'data:image/png;base64,two']);
+  assert.equal('firstFrame' in payload.input, false);
+  assert.equal('lastFrame' in payload.input, false);
+});
+
+test('canvas video generation sends explicit first-frame and first/last-frame inputs', async () => {
+  const requests = [];
+  await withFetch(async (input, options) => {
+    requests.push(JSON.parse(options.body));
+    return jsonResponse({ task: { id: `video-${requests.length}`, status: 'pending' } });
+  }, async () => {
+    await api.generateCanvasVideo({
+      prompt: '从首帧开始',
+      model: 'video-model',
+      inputMode: 'first-frame',
+      references: [{ url: 'data:image/png;base64,first' }],
+    });
+    await api.generateCanvasVideo({
+      prompt: '从白天过渡到夜晚',
+      model: 'video-model',
+      inputMode: 'frames',
+      references: [{ url: 'data:image/png;base64,first' }, { url: 'data:image/png;base64,last' }],
+    });
+  });
+
+  assert.equal(requests[0].input.videoMode, 'keyframe');
+  assert.equal(requests[0].input.firstFrame, 'data:image/png;base64,first');
+  assert.equal('lastFrame' in requests[0].input, false);
+  assert.deepEqual(requests[0].input.referenceImages, []);
+  assert.equal(requests[1].input.videoMode, 'keyframe');
+  assert.equal(requests[1].input.firstFrame, 'data:image/png;base64,first');
+  assert.equal(requests[1].input.lastFrame, 'data:image/png;base64,last');
+  assert.deepEqual(requests[1].input.referenceImages, []);
+});
+
 test('canvas agent generation marks the request as canvas-originated', async () => {
   let request;
   await withFetch(async (input, options) => {

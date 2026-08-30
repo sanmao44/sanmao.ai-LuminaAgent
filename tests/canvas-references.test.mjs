@@ -55,3 +55,43 @@ test("agent mode accepts still images but never treats text or video as image re
   assert.deepEqual(result.textContext.map((item) => item.id), ["text-1"]);
   assert.deepEqual(result.videoReferences.map((item) => item.id), ["video-1"]);
 });
+
+test("resolves reference, first-frame, and first/last-frame slots without deleting connected inputs", () => {
+  const images = [node("img-1", "media", "image"), node("img-2", "media", "image"), node("img-3", "media", "image")];
+  const reference = references.resolveCanvasVideoInputs(images, "reference", undefined, { maxReferenceImages: 2 });
+  assert.deepEqual(reference.referenceImages.map((item) => item.id), ["img-1", "img-2"]);
+  assert.deepEqual(reference.unusedInputs.map((item) => item.id), ["img-3"]);
+
+  const first = references.resolveCanvasVideoInputs(images, "first-frame");
+  assert.equal(first.firstFrame?.id, "img-1");
+  assert.deepEqual(first.unused.map((item) => item.id), ["img-2", "img-3"]);
+
+  const frames = references.resolveCanvasVideoInputs(images, "frames");
+  assert.equal(frames.firstFrame?.id, "img-1");
+  assert.equal(frames.lastFrame?.id, "img-2");
+  assert.deepEqual(frames.unused.map((item) => item.id), ["img-3"]);
+});
+
+test("preserves explicit frame roles while legacy reference roles fill the next available slot", () => {
+  const images = [node("img-a", "media", "image"), node("img-b", "media", "image"), node("img-c", "media", "image")];
+  const roles = new Map([
+    ["img-a", "reference-image"],
+    ["img-b", "last-frame"],
+  ]);
+  const result = references.resolveCanvasVideoInputs(images, "frames", roles);
+  assert.equal(result.firstFrame?.id, "img-a");
+  assert.equal(result.lastFrame?.id, "img-b");
+  assert.deepEqual(result.unused.map((item) => item.id), ["img-c"]);
+});
+
+test("selects reference mode before first-frame mode and infers typed edge roles", () => {
+  assert.equal(references.preferredCanvasVideoInputMode(["video-generate", "video-reference"]), "reference");
+  assert.equal(references.preferredCanvasVideoInputMode(["video-generate", "video-first-frame"]), "first-frame");
+  assert.equal(references.preferredCanvasVideoInputMode(["video-generate"]), undefined);
+
+  const source = node("image", "media", "image");
+  const target = { id: "video", type: "media", x: 0, y: 0, data: { kind: "video", url: "video:url", params: { kind: "video", inputMode: "frames" } } };
+  assert.equal(references.inferCanvasInputRole(source, target, "frames", 0), "first-frame");
+  assert.equal(references.inferCanvasInputRole(source, target, "frames", 1), "last-frame");
+  assert.equal(references.inferCanvasInputRole(source, target, "reference", 0), "reference-image");
+});
