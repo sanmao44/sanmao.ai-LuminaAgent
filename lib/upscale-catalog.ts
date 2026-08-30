@@ -7,11 +7,13 @@ export const UPSCALE_PROVIDER_NAMES: Record<UpscaleProviderId, string> = {
 
 export const UPSCALE_PROVIDER_LINKS = {
   'tencent-ci': {
+    keys: 'https://console.cloud.tencent.com/cam/capi',
     open: 'https://console.cloud.tencent.com/ci',
     docs: ['https://cloud.tencent.com/document/api/436/117793'],
     pricing: 'https://cloud.tencent.com/document/product/460/58117',
   },
   'aliyun-viapi': {
+    keys: 'https://ram.console.aliyun.com/profile/access-keys',
     open: 'https://vision.aliyun.com/experience/detail?type=super-resolution',
     docs: [
       'https://help.aliyun.com/zh/viapi/developer-reference/api-px24vm',

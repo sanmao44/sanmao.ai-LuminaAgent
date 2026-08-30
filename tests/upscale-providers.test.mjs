@@ -21,6 +21,7 @@ const imageModule = await compileModule(new URL('../lib/upscale-image.ts', impor
   ["import { resolveStoredImageReference } from './image-storage';\n", 'const resolveStoredImageReference = async () => { throw new Error(\'missing storage fixture\'); };\n'],
 ]);
 const catalogSource = await readFile(new URL('../lib/upscale-catalog.ts', import.meta.url), 'utf8');
+const guideSource = await readFile(new URL('../components/UpscaleConnectionGuide.tsx', import.meta.url), 'utf8');
 const storeSource = await readFile(new URL('../lib/store.ts', import.meta.url), 'utf8');
 const taskStoreSource = await readFile(new URL('../lib/upscale-task-store.ts', import.meta.url), 'utf8');
 
@@ -143,6 +144,15 @@ test('catalog keeps fixed cloud models outside the generic model discovery flow'
   assert.match(catalogSource, /MakeSuperResolutionImage/);
   assert.match(catalogSource, /GenerateSuperResolutionImage/);
   assert.equal(catalogSource.includes('fetch('), false);
+});
+
+test('cloud connection guide points beginners to key pages and warns against user creation', () => {
+  assert.match(catalogSource, /console\.cloud\.tencent\.com\/cam\/capi/);
+  assert.match(catalogSource, /ram\.console\.aliyun\.com\/profile\/access-keys/);
+  assert.match(guideSource, /按这 3 步操作/);
+  assert.match(guideSource, /不要进入“用户列表”/);
+  assert.match(guideSource, /不要创建 RAM 用户/);
+  assert.match(guideSource, /更多官方信息（可跳过）/);
 });
 
 test('cloud credentials are represented publicly only by masked state and tasks are minimal', () => {

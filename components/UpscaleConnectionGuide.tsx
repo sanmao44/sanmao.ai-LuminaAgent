@@ -81,13 +81,23 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
     const tencent = provider === 'tencent-ci';
     const links = UPSCALE_PROVIDER_LINKS[provider];
     const buckets = tencent && bucketOptions.length ? bucketOptions : [];
+    const credentialNames = tencent ? ['SecretId', 'SecretKey'] : ['AccessKey ID', 'AccessKey Secret'];
     return <article className="upscale-connection-card" key={provider}>
-      <div className="upscale-connection-card-head"><div className="upscale-connection-logo">{tencent ? '腾' : '阿'}</div><div><strong>{UPSCALE_PROVIDER_NAMES[provider]}</strong><p>{tencent ? '连接后使用腾讯云高清超分。' : '连接后使用标准超分和 AI 生成式超分。'}</p></div><span className={`upscale-connection-status ${connection?.connected ? 'healthy' : 'idle'}`}>{connection?.connected ? '已连接' : '未连接'}</span></div>
-      {connection?.connected && <div className="upscale-connection-saved"><span>凭证：{connection.maskedCredential}</span>{tencent && <span>存储桶：{connection.bucket || '已配置'} · {connection.region || '自动识别'}</span>}<button type="button" className="ghost-button" onClick={() => void remove(provider)} disabled={busy === provider}>删除连接</button></div>}
-      <div className="upscale-connection-links"><a href={links.open} target="_blank" rel="noopener noreferrer">去官方开通 ↗</a>{links.docs.map((href, index) => renderLink(href, index === 0 ? '查看标准文档' : '查看生成式文档'))}<a href={links.pricing} target="_blank" rel="noopener noreferrer">查看官方价格 ↗</a></div>
+      <div className="upscale-connection-card-head"><div className="upscale-connection-logo">{tencent ? '腾' : '阿'}</div><div><strong>{UPSCALE_PROVIDER_NAMES[provider]}</strong><p>{tencent ? '只需复制两项密钥即可连接。' : '只需复制两项密钥即可连接。'}</p></div><span className={`upscale-connection-status ${connection?.connected ? 'healthy' : 'idle'}`}>{connection?.connected ? '已连接' : '未连接'}</span></div>
+      {connection?.connected && <div className="upscale-connection-saved"><span>已保存：{connection.maskedCredential}</span>{tencent && <span>存储桶：{connection.bucket || '已配置'} · {connection.region || '自动识别'}</span>}<button type="button" className="ghost-button" onClick={() => void remove(provider)} disabled={busy === provider}>删除连接</button></div>}
+      {!connection?.connected && <div className="upscale-connection-steps">
+        <strong>按这 3 步操作</strong>
+        <ol>
+          <li><b>1</b><span>打开官方密钥页面</span><a href={links.keys} target="_blank" rel="noopener noreferrer">打开密钥页面 ↗</a></li>
+          <li><b>2</b><span>{tencent ? '点击“新建密钥”，复制 SecretId 和 SecretKey' : '创建 AccessKey，复制 AccessKey ID 和 AccessKey Secret'}</span></li>
+          <li><b>3</b><span>回到这里，粘贴到下面两行，点击检测</span></li>
+        </ol>
+        <small>{tencent ? '不要进入“用户列表”，不要创建子用户。' : '不要创建 RAM 用户，只需要 AccessKey。'}</small>
+      </div>}
+      <details className="upscale-connection-more"><summary>更多官方信息（可跳过）</summary><div className="upscale-connection-links"><a href={links.open} target="_blank" rel="noopener noreferrer">去官方开通 ↗</a>{links.docs.map((href, index) => renderLink(href, index === 0 ? '查看标准文档' : '查看生成式文档'))}<a href={links.pricing} target="_blank" rel="noopener noreferrer">查看官方价格 ↗</a></div></details>
       <div className="upscale-connection-fields">
-        <label><span>{tencent ? 'SecretId' : 'AccessKey ID'}</span><input value={form.first} onChange={(event) => update(provider, { first: event.target.value })} autoComplete="off" placeholder={connection?.connected ? '留空继续使用已保存凭证' : '粘贴官方凭证'} /></label>
-        <label><span>{tencent ? 'SecretKey' : 'AccessKey Secret'}</span><input type="password" value={form.second} onChange={(event) => update(provider, { second: event.target.value })} autoComplete="new-password" placeholder={connection?.connected ? '留空继续使用已保存凭证' : '粘贴官方密钥'} /></label>
+        <label><span>第 1 行：{credentialNames[0]}</span><input value={form.first} onChange={(event) => update(provider, { first: event.target.value })} autoComplete="off" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[0]}`} /></label>
+        <label><span>第 2 行：{credentialNames[1]}</span><input type="password" value={form.second} onChange={(event) => update(provider, { second: event.target.value })} autoComplete="new-password" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[1]}`} /></label>
         {tencent && buckets.length > 0 && <label><span>选择存储桶</span><select value={form.bucket} onChange={(event) => update(provider, { bucket: event.target.value })}><option value="">请选择</option>{buckets.map((bucket) => <option value={bucket.name} key={`${bucket.name}-${bucket.region}`}>{bucket.name} · {bucket.region || '自动识别'}</option>)}</select></label>}
       </div>
       <div className="upscale-connection-actions"><button type="button" className="primary-small" disabled={busy === provider || tencent && buckets.length > 0 && !form.bucket} onClick={() => void submit(provider)}>{busy === provider ? '检测中…' : connection?.connected ? '重新检测并保存' : '检测并连接'}</button>{message[provider] && <span className={message[provider].includes('成功') || message[provider].includes('已删除') ? 'success' : 'error'}>{message[provider]}</span>}</div>
@@ -96,5 +106,5 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
     </article>;
   }
 
-  return <section className="upscale-connection-guide surface"><div className="upscale-connection-guide-head"><div><span className="provider-platform">高清放大</span><h2>国内云高清服务</h2><p>密钥仅保存在本机服务端并加密存储，网页不会保存或回显完整密钥。</p></div></div><div className="upscale-connection-grid">{renderCard('tencent-ci')}{renderCard('aliyun-viapi')}</div></section>;
+  return <section className="upscale-connection-guide surface"><div className="upscale-connection-guide-head"><div><span className="provider-platform">高清放大</span><h2>国内云高清服务</h2><p>只需要从官方页面复制两项密钥，粘贴到对应卡片即可。密钥仅保存在本机服务端并加密存储。</p></div></div><div className="upscale-connection-grid">{renderCard('tencent-ci')}{renderCard('aliyun-viapi')}</div></section>;
 }
