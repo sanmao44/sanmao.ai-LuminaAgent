@@ -359,6 +359,18 @@ function isApimartProvider(provider: RuntimeProvider) {
   return provider.platform === 'apimart' || /(^|\.)api\.apimart\.ai$/i.test(new URL(runtimeBaseUrl(provider)).hostname);
 }
 
+/**
+ * Some image-model families expose high-fidelity input handling as a fixed
+ * default rather than accepting the legacy input_fidelity request field.
+ * Keep this decision at the provider boundary so angle generation and the
+ * ordinary edit flow share the same compatibility behavior.
+ */
+export function shouldSendInputFidelity(provider: Pick<RuntimeProvider, 'name' | 'platform' | 'baseUrl'>, rawModelId: string) {
+  const identity = `${rawModelId} ${provider.name || ''}`.toLowerCase();
+  if (/gpt[\s_-]*image[\s_-]*2(?:[^a-z0-9]|$)/i.test(identity)) return false;
+  return true;
+}
+
 function unwrapProviderData(provider: RuntimeProvider, data: any) {
   return isApimartProvider(provider) && data && typeof data === 'object' && 'data' in data ? data.data : data;
 }
@@ -892,15 +904,9 @@ async function refToBlob(ref: string, index: number) {
   throw new Error(`第 ${index + 1} 张参考图格式无效`);
 }
 
-export async function editImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  // Agnes can consume the local storage URL through the signed-media bridge;
-  // other providers keep the historical data-URL normalization path.
-  const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference)).slice(0, 16);
-  if (!references.length) throw new Error('修改图片至少需要一张参考图');
-  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
-  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
-  const count = Math.max(1, Math.min(8, Number(input.count || 1)));
-  const size = mapRatioToSize(input.aspectRatio || '自动', input.width, input.height);
+export type ImageEditInput = { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' };
+
+export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, references: string[], count: number, size: string) {
   const jsonBody: Record<string, unknown> = {
     model: rawModelId,
     prompt: input.prompt,
@@ -911,10 +917,24 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   else jsonBody.images = references.map((image_url) => ({ image_url }));
   if (input.quality && input.quality !== '自动') jsonBody.quality = input.quality;
   if (input.resolution && input.aspectRatio === '自动') jsonBody.resolution = input.resolution;
-  if (input.fidelity) jsonBody.input_fidelity = input.fidelity;
+  if (input.fidelity && shouldSendInputFidelity(provider, rawModelId)) jsonBody.input_fidelity = input.fidelity;
   if (input.mask) jsonBody.mask = input.mask;
   if (input.outputFormat) jsonBody.output_format = input.outputFormat;
   if (input.background) jsonBody.background = input.background;
+  return jsonBody;
+}
+
+export async function editImage(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  // Agnes can consume the local storage URL through the signed-media bridge;
+  // other providers keep the historical data-URL normalization path.
+  const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference)).slice(0, 16);
+  if (!references.length) throw new Error('修改图片至少需要一张参考图');
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
+  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
+  const count = Math.max(1, Math.min(8, Number(input.count || 1)));
+  const size = mapRatioToSize(input.aspectRatio || '自动', input.width, input.height);
+  const sendInputFidelity = input.fidelity && shouldSendInputFidelity(provider, rawModelId);
+  const jsonBody = buildImageEditRequestBody(provider, rawModelId, input, references, count, size);
 
   // 新版 Images API 支持 JSON image_url/data URL；优先使用，兼容远程 URL 和多图。
   try {
@@ -933,7 +953,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       form.append('n', String(count));
       if (size !== 'auto') form.append('size', size);
       if (input.quality && input.quality !== '自动') form.append('quality', input.quality);
-      if (input.fidelity) form.append('input_fidelity', input.fidelity);
+      if (sendInputFidelity) form.append('input_fidelity', input.fidelity!);
       if (input.outputFormat) form.append('output_format', input.outputFormat);
       if (input.background) form.append('background', input.background);
       for (let i = 0; i < references.length; i++) {

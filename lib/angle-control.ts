@@ -150,21 +150,79 @@ function recordNumber(value: number) {
   return String(roundAngleRecordValue(value));
 }
 
+/**
+ * Convert the numeric camera controls into visual language that image models
+ * tend to follow more reliably than a bare camera specification.  Positive
+ * yaw remains the subject's right, matching the existing UI and persisted
+ * records.  Positive pitch remains the legacy low-angle direction; the
+ * compiler translates that convention into plain-language elevation below.
+ */
+export function yawSemanticLabel(yaw: number) {
+  const angle = relativeViewYaw({ yaw });
+  const magnitude = Math.abs(angle);
+  const side = angle >= 0 ? '右' : '左';
+  if (magnitude <= 10) return '正面视角（近乎正面）';
+  if (magnitude <= 25) return `人物${side}前方轻微三分之四视角`;
+  if (magnitude <= 45) return `人物${side}前方明显三分之四视角`;
+  if (magnitude <= 70) return `人物${side}前方强三分之四、接近侧面视角`;
+  if (magnitude <= 105) return `人物${side}侧面视角`;
+  if (magnitude <= 150) return `人物${side}后方三分之四视角`;
+  return '人物背面视角';
+}
+
+/** Positive pitch is intentionally kept as the existing low-angle direction. */
+export function pitchSemanticLabel(pitch: number) {
+  const angle = roundAngleRecordValue(pitch);
+  if (angle >= 45) return '明显低机位仰拍';
+  if (angle > 8) return '轻微低机位仰拍';
+  if (angle > -8) return '平视机位';
+  if (angle > -45) return '轻微高机位俯拍';
+  return '明显高机位俯拍';
+}
+
+export function focalSemanticLabel(focal: number) {
+  const value = Math.max(0.1, Number(focal) || ANGLE_DEFAULTS.focal);
+  if (value <= 28) return '广角透视，近处和远处的大小差异更明显';
+  if (value <= 40) return '中广角环境透视';
+  if (value <= 65) return '自然标准透视，畸变较少';
+  if (value <= 105) return '轻微长焦透视压缩';
+  return '长焦透视压缩，空间更扁平';
+}
+
+export function distanceSemanticLabel(distance: number) {
+  const value = Math.max(0.05, Number(distance) || ANGLE_DEFAULTS.distance);
+  if (value <= 1) return '近距离，主体占画面比例很高';
+  if (value <= 1.8) return '较近距离，主体偏满画面';
+  if (value <= 3) return '中等距离，主体比例自然';
+  if (value <= 5) return '较远距离，环境占比更明显';
+  return '远距离，环境广角构图';
+}
+
+export function cameraSemanticSummary(camera: Pick<AngleCameraState, 'yaw' | 'pitch' | 'focal' | 'distance'>) {
+  return {
+    yaw: yawSemanticLabel(camera.yaw),
+    pitch: pitchSemanticLabel(camera.pitch),
+    focal: focalSemanticLabel(camera.focal),
+    distance: distanceSemanticLabel(camera.distance),
+  };
+}
+
 function relativeYawViewDescription(yaw: number) {
-  const angle = roundAngleRecordValue(effectiveAngle(yaw));
+  const angle = relativeViewYaw({ yaw });
   const magnitude = Math.abs(angle);
   const side = angle >= 0 ? "subject's right" : "subject's left";
-  if (magnitude <= 5) return 'direct frontal view, centered on the anatomical front of the face and chest';
-  if (magnitude < 25) return `near-frontal view from the ${side}, with the face and chest still predominantly frontal`;
-  if (magnitude < 70) return `front three-quarter view from the ${side}, showing the front plus the ${side} geometry`;
-  if (magnitude <= 110) return `true side/profile view from the ${side}, with side geometry dominant`;
-  if (magnitude < 160) return `rear three-quarter view from the ${side}, with back geometry dominant`;
+  if (magnitude <= 10) return 'nearly frontal, centered on the anatomical front of the face and chest';
+  if (magnitude <= 25) return `slight three-quarter view from the ${side}`;
+  if (magnitude <= 45) return `clear three-quarter view from the ${side}`;
+  if (magnitude <= 70) return `strong three-quarter, near-profile view from the ${side}`;
+  if (magnitude <= 105) return `side/profile view from the ${side}, with side geometry dominant`;
+  if (magnitude <= 150) return `rear three-quarter view from the ${side}, with back geometry dominant`;
   return 'direct or near-direct rear view, with the anatomical back dominant';
 }
 
 function pitchViewDescription(pitch: number) {
-  if (pitch > 2) return 'a low-angle camera below the subject looking upward, showing underside-facing geometry rather than the top of the head';
-  if (pitch < -2) return 'a high-angle camera above the subject looking downward, showing top-facing geometry';
+  if (pitch > 8) return 'a low-angle camera below the subject looking upward, showing underside-facing geometry rather than the top of the head';
+  if (pitch < -8) return 'a high-angle camera above the subject looking downward, showing top-facing geometry';
   return 'an eye-level camera approximately level with the subject';
 }
 
@@ -175,15 +233,19 @@ function rollViewDescription(roll: number) {
 }
 
 function focalViewDescription(focal: number) {
-  if (focal <= 35) return 'wide-angle perspective with visibly stronger near/far size exaggeration';
-  if (focal >= 85) return 'telephoto perspective with a narrow field of view and flatter depth compression';
-  return 'normal perspective with a moderate field of view';
+  if (focal <= 28) return 'wide-angle perspective with visibly stronger near/far size exaggeration';
+  if (focal <= 40) return 'moderately wide environmental perspective';
+  if (focal <= 65) return 'natural normal-lens perspective with minimal distortion';
+  if (focal <= 105) return 'short-telephoto perspective with mild compression';
+  return 'telephoto perspective with a narrow field of view and flatter depth compression';
 }
 
 function distanceViewDescription(distance: number) {
-  if (distance <= 1.4) return 'close camera distance with stronger perspective';
-  if (distance >= 3.5) return 'far camera distance with flatter perspective';
-  return 'medium camera distance with natural perspective';
+  if (distance <= 1) return 'close camera distance with a very large subject occupancy';
+  if (distance <= 1.8) return 'relatively close camera distance with a full, prominent subject';
+  if (distance <= 3) return 'medium camera distance with natural subject scale';
+  if (distance <= 5) return 'far camera distance with more environment in frame';
+  return 'very far camera distance for an environmental wide shot';
 }
 
 function subjectReprojectionDescription(yaw: number, pitch: number) {
@@ -210,30 +272,6 @@ function frontVisibilityDescription(yaw: number) {
   return 'preserve a true anatomical side view without crossing accidentally into front or rear view';
 }
 
-function compactYawDescription(yaw: number) {
-  const angle = relativeViewYaw({ yaw });
-  const magnitude = Math.abs(angle);
-  if (magnitude <= 2) return '人物正前方';
-  const side = angle > 0 ? '右' : '左';
-  if (magnitude < 67.5) return `人物${side}前方约${recordNumber(magnitude)}°`;
-  if (magnitude <= 112.5) return `人物${side}侧约${recordNumber(magnitude)}°`;
-  if (magnitude < 157.5) return `人物${side}后方约${recordNumber(magnitude)}°`;
-  return `人物后方约${recordNumber(magnitude)}°`;
-}
-
-function compactPitchDescription(pitch: number) {
-  const angle = roundAngleRecordValue(pitch);
-  if (Math.abs(angle) <= 2) return '平视机位';
-  return angle > 0 ? `低机位仰拍约${recordNumber(Math.abs(angle))}°` : `高机位俯拍约${recordNumber(Math.abs(angle))}°`;
-}
-
-function compactOpticsDescription(target: AngleCameraState) {
-  const clauses: string[] = [];
-  if (Math.abs(target.focal - ANGLE_DEFAULTS.focal) > 0.0001) clauses.push(`约${recordNumber(target.focal)}mm镜头`);
-  if (Math.abs(target.distance - ANGLE_DEFAULTS.distance) > 0.0001) clauses.push(`约${recordNumber(target.distance)}×距离`);
-  return clauses.length ? `，用${clauses.join('、')}` : '';
-}
-
 function compactRollDescription(roll: number) {
   const angle = effectiveAngle(roll);
   if (Math.abs(angle) <= 0.0001) return '';
@@ -255,17 +293,63 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
   const yaw = relativeViewYaw(target);
   const cameraStart = options?.cameraStart ? normalizeAngleState(options.cameraStart) : null;
   const userNote = note.trim();
-  const referenceLine = options?.hasGuideReference
-    ? cameraStart
-      ? '以图1作为人物、场景和光照的唯一视觉参考；图1当前视角对应已记录的起始机位。图2是水平的灰模机位/构图导引，只约束最终相机位置、可见面和裁切，不复制灰模外观或倾斜画面。'
-      : '以图1作为人物、场景和光照的唯一视觉参考；图2是水平的灰模机位/构图导引，只约束最终相机位置、可见面和裁切，不复制灰模外观或倾斜画面。'
-    : '以图1作为人物和场景的唯一参考；按当前相机机位重新拍摄，不保留原始二维投影。';
-  const cameraLine = `${cameraStart ? '把相机从已记录的起始机位移动到' : '把相机移到'}${compactYawDescription(yaw)}、${compactPitchDescription(target.pitch)}的位置${compactOpticsDescription(target)}重新拍摄同一个人物和同一个场景。`;
-  const changeLine = options?.hasGuideReference
-    ? `这是一张从新机位真实重新拍摄的画面：人物和整个场景都必须按目标机位重建。按图2执行人物在画框内的位置、比例与裁切；按目标 yaw、pitch、焦段和距离改变脸部、身体、前景、中景、背景的透视、可见面、相对位移与遮挡关系。禁止复用图1的二维投影、整图旋转、只改裁切或把原始正面背景贴回去。镜头变化优先于逐像素身份稳定；大角度绕拍时允许少量细节漂移，以保证明显的侧面/背面与环境视差。${compactPerspectiveGuard(yaw)}`
-    : '这是一张从新机位真实重新拍摄的画面：人物和整个场景都必须随相机改变透视、可见面和遮挡关系；禁止复用原始二维投影、整图旋转或只改裁切。镜头变化优先于逐像素身份稳定。';
+  const delta = cameraStart ? deriveAngleDelta(cameraStart, target) : null;
+  const referenceBlock = options?.hasGuideReference
+    ? [
+      'IMAGE ROLES',
+      '图1是 SOURCE IMAGE：只从图1读取人物身份、脸部特征、发型、服装、姿态、场景、光照、色彩、材质与视觉风格。',
+      '图2是 TARGET CAMERA GUIDE：只读取目标相机位置、水平视角、上下视角、透视、主体比例、画面位置与裁切。',
+      '不要复制图2的灰模、网格、材质、灯光、背景或渲染风格；不要把图2当作人物外观参考。',
+    ].join('\n')
+    : [
+      'IMAGE ROLES',
+      '图1是 SOURCE IMAGE，也是人物身份、场景、光照、色彩、材质与视觉风格的唯一参考。',
+      '按目标相机重新拍摄，不要复用图1的原始二维投影。',
+    ].join('\n');
+  const startBlock = cameraStart
+    ? `起始机位：图1当前视角（已记录的起始机位）；目标是从该机位移动到最终机位。相对调整为 Yaw ${recordNumber(delta?.yaw || 0)}°、Pitch ${recordNumber(delta?.pitch || 0)}°、焦距 ${recordNumber(delta?.focal || 0)}mm、距离 ${recordNumber(delta?.distance || 0)}×。`
+    : '没有单独的起始机位记录；以图1当前视角作为相对参考。';
   const roll = compactRollDescription(target.roll);
-  return [referenceLine, cameraLine, changeLine, roll, userNote ? `补充要求：${userNote}` : ''].filter(Boolean).join('\n');
+  const frameLine = options?.hasGuideReference
+    ? options.output
+      ? `按图2匹配主体在画框中的比例、位置与裁切；目标输出比例为 ${options.output.aspectRatio}（${options.output.width}×${options.output.height}）。`
+      : '按图2匹配主体在画框中的比例、位置与裁切。'
+    : options?.output
+      ? `保持主体在画面中的比例、位置与裁切合理；目标输出比例为 ${options.output.aspectRatio}（${options.output.width}×${options.output.height}）。`
+      : '保持主体在画面中的比例、位置与裁切合理，并随目标相机调整。';
+  const blocks = [
+    'TASK\n从同一个时刻、同一个人物和同一个场景重新拍摄一张目标机位画面。',
+    referenceBlock,
+    [
+      'CAMERA MOTION',
+      '只移动 CAMERA，不要让 SUBJECT 转身、转头、扭转躯干、改变姿态或重新摆 pose 来伪造机位变化。',
+      '人物保持同一世界空间姿态，像同一瞬间从另一台相机拍摄；镜头变化优先于逐像素复制。',
+      startBlock,
+    ].join('\n'),
+    [
+      'TARGET VIEW',
+      `水平机位：相对人物固定解剖正面约 ${recordNumber(yaw)}°；视觉语义为 ${relativeYawViewDescription(yaw)}。${compactPerspectiveGuard(yaw)}`,
+      `上下机位：当前 Pitch ${recordNumber(target.pitch)}°，视觉语义为${pitchSemanticLabel(target.pitch)}；${target.pitch > 8 ? '相机位于主体视线下方并向上看。' : target.pitch < -8 ? '相机位于主体视线上方并向下看。' : '相机大致与主体视线齐平。'}`,
+    ].join('\n'),
+    [
+      'PERSPECTIVE',
+      `目标焦距约 ${recordNumber(target.focal)}mm；${focalSemanticLabel(target.focal)}。把焦距当作视觉透视目标，不要求精确模拟物理镜头。`,
+      `目标距离约 ${recordNumber(target.distance)}×；${distanceSemanticLabel(target.distance)}。`,
+    ].join('\n'),
+    `FRAMING\n${frameLine} 不要只裁切原图来制造角度；需要让人物、前景、中景和背景按照目标机位产生合理的透视、可见面、相对位移与遮挡关系。`,
+    [
+      'CHANGE ONLY',
+      options?.hasGuideReference ? '只改变目标相机视角，以及匹配图2所必需的透视、主体比例、位置和裁切。' : '只改变目标相机视角，以及为匹配目标构图所必需的透视、主体比例、位置和裁切。',
+      '禁止整图旋转、只改裁切、把原始正面背景贴回去，或保留与目标机位冲突的二维投影。',
+    ].join('\n'),
+    [
+      'PRESERVE',
+      '保持人物身份、脸部可识别特征、发型、服装、配饰、身体比例、世界空间姿态、表情、场景、重要物体关系、光照方向、色彩、材质与视觉风格。',
+      `不要添加无关物体，不要删除重要物体，不要重新设计人物${options?.hasGuideReference ? '，不要复制灰模外观' : ''}。`,
+    ].join('\n'),
+    `OUTPUT\n生成一张连贯的基础水平画面；${roll || '生成阶段保持水平。'}${userNote ? `\n补充要求：${userNote}` : ''}`,
+  ];
+  return blocks.join('\n');
 }
 
 export function angleName(yaw: number) {

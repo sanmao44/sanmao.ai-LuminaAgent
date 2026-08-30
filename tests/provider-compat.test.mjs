@@ -162,3 +162,20 @@ test('does not retry image requests after ambiguous upstream failures', () => {
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 500 }), false);
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
 });
+
+test('omits legacy input_fidelity for GPT Image 2 while preserving it for other edit models', () => {
+  const provider = {
+    type: 'openai-compatible',
+    name: 'OpenAI compatible',
+    platform: 'openai',
+    baseUrl: 'https://images.example.test/v1',
+  };
+  const input = { prompt: 'camera edit', references: ['data:image/png;base64,source'], fidelity: 'low', aspectRatio: '1:1', count: 1 };
+  const gptImageBody = providers.buildImageEditRequestBody(provider, 'gpt-image-2', input, input.references, 1, '1024x1024');
+  const gptImageLiteBody = providers.buildImageEditRequestBody(provider, 'gpt-image-2-lite', input, input.references, 1, '1024x1024');
+  const otherBody = providers.buildImageEditRequestBody(provider, 'vendor-image-edit', input, input.references, 1, '1024x1024');
+  assert.equal('input_fidelity' in gptImageBody, false);
+  assert.equal('input_fidelity' in gptImageLiteBody, false);
+  assert.equal(otherBody.input_fidelity, 'low');
+  assert.deepEqual(gptImageBody.images, [{ image_url: input.references[0] }]);
+});

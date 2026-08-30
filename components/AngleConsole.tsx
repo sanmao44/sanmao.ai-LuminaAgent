@@ -11,7 +11,7 @@ import ModelPicker from '@/components/ModelPicker';
 import { getLastModelCall, recordModelCall } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
-import { ANGLE_DEFAULTS, ANGLE_PRESETS, angleName, buildAnglePayload, clampAngleValue, compileAngleTargetPrompt, deriveAngleDelta, normalizeAngleState, shouldWarnLiteForAngle, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec } from '@/lib/angle-control';
+import { ANGLE_DEFAULTS, ANGLE_PRESETS, angleName, buildAnglePayload, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, deriveAngleDelta, normalizeAngleState, shouldWarnLiteForAngle, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec } from '@/lib/angle-control';
 
 type AngleConsoleProps = {
   theme: 'light' | 'dark';
@@ -48,6 +48,7 @@ type GuideFramingStatus = {
   title: string;
   detail: string;
   visibleRatio?: number;
+  subjectHeightRatio?: number;
   crop?: { left: number; right: number; top: number; bottom: number };
 };
 type OutputFrameRect = { left: number; top: number; width: number; height: number };
@@ -346,12 +347,15 @@ function assessGuideFraming(runtime: ThreePreviewRuntime): GuideFramingStatus {
     top: height > 0 ? Math.max(0, (maxY - 1) / height * 100) : 0,
     bottom: height > 0 ? Math.max(0, (-1 - minY) / height * 100) : 0,
   };
+  const subjectHeightRatio = Math.max(0, Math.min(200, (height / 2) * 100));
   const roundedVisible = Math.round(visibleRatio);
+  const roundedHeight = Math.round(subjectHeightRatio);
   return {
     level: 'ready',
     title: roundedVisible >= 99 ? '人物全部位于输出框内' : `人物包围框可见约 ${roundedVisible}%`,
-    detail: roundedVisible >= 99 ? '可以继续拉近取近景；超出框外的区域会实时压暗但不会阻止生成。' : '这是主动裁切预览，不会拦截生成；框内画面将作为第二张构图参考图。',
+    detail: `${roundedVisible >= 99 ? '可以继续拉近取近景' : '这是主动裁切预览'}；主体约占输出高度 ${roundedHeight}%，框内画面将作为第二张构图参考图。`,
     visibleRatio,
+    subjectHeightRatio,
     crop,
   };
 }
@@ -882,9 +886,12 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
   const liteLargeAngleWarning = Boolean(resolvedModel && shouldWarnLiteForAngle(`${resolvedModel.rawId} ${resolvedModel.displayName}`, camera.yaw));
   const compiledPrompt = useMemo(() => compileAngleTargetPrompt(note, camera, { hasGuideReference: true, output: angleOutput, cameraStart }), [angleOutput, camera, cameraStart, note]);
   const cameraDelta = useMemo(() => cameraStart ? deriveAngleDelta(cameraStart, camera) : null, [camera, cameraStart]);
+  const cameraSemantics = useMemo(() => cameraSemanticSummary(camera), [camera]);
   const latestResult = results[0] || null;
   const visibleResults = favoritesOnly ? results.filter((item) => item.favorite) : results;
   const framingVisibleRatio = Math.round(framingStatus.visibleRatio ?? 100);
+  const subjectHeightRatio = framingStatus.subjectHeightRatio;
+  const subjectHeightSummary = typeof subjectHeightRatio === 'number' ? `主体高度 ${Math.round(subjectHeightRatio)}%` : '主体比例待计算';
   const cropSummary = framingStatus.crop
     ? ([['左', framingStatus.crop.left], ['右', framingStatus.crop.right], ['上', framingStatus.crop.top], ['下', framingStatus.crop.bottom]] as const)
       .filter(([, value]) => Math.round(value) > 0)
@@ -1131,7 +1138,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
           {reference && <button type="button" className="angle-reference-remove" onClick={removeReference}>移除参考图</button>}
         </div>
         <div className="angle-preview-pane angle-model-pane"><div className="angle-pane-label"><b>3D 构图预览</b> · 图 2 导出时保持水平；Roll 只在最终结果后处理</div><ThreeCameraPreview camera={camera} output={angleOutput} theme={theme} humanMode={humanMode} customHumanFile={customHumanFile} captureApiRef={guideCaptureApiRef} miniHostRef={cameraMapHostRef} onCameraChange={update3dCamera} onFramingStatus={setFramingStatus} onNotify={onNotify}/><details className="angle-guide-display"><summary>导引显示</summary><div><button type="button" className={humanMode === 'gray' ? 'active' : ''} onClick={() => setHumanMode('gray')}>中性灰模（默认）</button><button type="button" className={humanMode === 'natural' ? 'active' : ''} onClick={() => setHumanMode('natural')}>自然人物</button><button type="button" className={humanMode === 'outline' ? 'active' : ''} onClick={() => setHumanMode('outline')}>清晰轮廓</button><button type="button" className={humanMode === 'default' ? 'active' : ''} onClick={() => setHumanMode('default')}>士兵</button><button type="button" className={humanMode === 'custom' ? 'active' : ''} onClick={() => humanInputRef.current?.click()}>导入 GLB</button></div><input ref={humanInputRef} hidden type="file" accept=".glb,model/gltf-binary" onChange={(event) => { const file = event.target.files?.[0] || null; if (file) { setCustomHumanFile(file); setHumanMode('custom'); } event.currentTarget.value = ''; }}/></details></div>
-        <aside className="angle-view-rail" aria-label="机位状态"><div className="angle-rail-heading"><b>机位概览</b><span>CAMERA MAP</span></div><div className="angle-camera-map angle-camera-map-rail" aria-label="机位俯视图"><span>机位俯视 · CAMERA MAP</span><div className="angle-map-stage" ref={cameraMapHostRef}/><small>{Math.round(camera.focal)}mm · {camera.distance.toFixed(1)}×</small></div><div className={`angle-rail-status ${framingStatus.level}`}><div className="angle-rail-status-head"><span>构图状态</span><b>{guideFramingLabel(framingStatus.level)}</b></div><strong>{framingStatus.title}</strong><small>{framingStatus.detail}</small><div className="angle-rail-readout"><b>机位 {angleName(camera.yaw)}</b><span>{roundViewportValue(camera.yaw)}° / {roundViewportValue(camera.pitch)}° · Roll {roundViewportValue(camera.roll)}°</span><span>输出 {angleOutput.width}×{angleOutput.height} · {angleOutput.aspectRatio}</span></div></div></aside>
+        <aside className="angle-view-rail" aria-label="机位状态"><div className="angle-rail-heading"><b>机位概览</b><span>CAMERA MAP</span></div><div className="angle-camera-map angle-camera-map-rail" aria-label="机位俯视图"><span>机位俯视 · CAMERA MAP</span><div className="angle-map-stage" ref={cameraMapHostRef}/><small>{Math.round(camera.focal)}mm · {camera.distance.toFixed(1)}×</small></div><div className={`angle-rail-status ${framingStatus.level}`}><div className="angle-rail-status-head"><span>构图状态</span><b>{guideFramingLabel(framingStatus.level)}</b></div><strong>{framingStatus.title}</strong><small>{framingStatus.detail}</small><div className="angle-rail-readout"><b>机位 {angleName(camera.yaw)}</b><span>{roundViewportValue(camera.yaw)}° / {roundViewportValue(camera.pitch)}° · Roll {roundViewportValue(camera.roll)}°</span><span>{cameraSemantics.yaw}</span><span>{cameraSemantics.pitch} · {cameraSemantics.focal}</span><span>{subjectHeightSummary} · 输出 {angleOutput.width}×{angleOutput.height}</span></div></div></aside>
       </div>
       <div className="angle-preset-strip"><div className="angle-preset-strip-head"><b>快捷视角</b><span>从常用角度开始，再进行精确微调</span></div><div className="angle-preset-options">{ANGLE_PRESETS.map((preset) => <button type="button" key={preset.id} className={Math.abs(camera.yaw - preset.yaw) < 1 && Math.abs(camera.pitch - preset.pitch) < 1 ? 'active' : ''} onClick={() => applyPreset(preset.yaw, preset.pitch)}><b>{preset.label}</b><span>{preset.yaw}° / {preset.pitch}°</span></button>)}</div></div>
     </div>
@@ -1141,7 +1148,8 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
       <div className="angle-panel-scroll">
         {panelTab === 'controls' ? <>
           <div className="angle-model-compact"><span>生图模型</span><ModelPicker models={models} value={camera.modelId} capability="generate" defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} defaultModelId={defaultModelId} onChange={(value) => updateCamera({ modelId: value } as CameraPatch)}/></div>
-          <div className={`angle-output-summary ${framingStatus.level}`} title={framingStatus.detail}><strong>{angleOutput.width}×{angleOutput.height}</strong><span>人物可见 {framingVisibleRatio}%</span>{cropSummary && <small>裁切 {cropSummary}</small>}</div>
+          <div className={`angle-output-summary ${framingStatus.level}`} title={framingStatus.detail}><strong>{angleOutput.width}×{angleOutput.height}</strong><span>{subjectHeightSummary}</span><small>人物可见 {framingVisibleRatio}%{cropSummary ? ` · 裁切 ${cropSummary}` : ''}</small></div>
+          <div className="angle-semantic-summary" aria-live="polite" aria-label="目标视觉语义"><span>目标视觉语义</span><div><b>Yaw</b><strong>{cameraSemantics.yaw}</strong></div><div><b>Pitch</b><strong>{cameraSemantics.pitch}</strong></div><div><b>Lens</b><strong>{Math.round(camera.focal)}mm · {cameraSemantics.focal}</strong></div><div><b>Distance</b><strong>{camera.distance.toFixed(1)}× · {cameraSemantics.distance}</strong></div></div>
           <ol className="angle-workflow" aria-label="角度控制操作流程">
             <li className={hasReadyReference ? 'done' : submitState.step === 1 ? 'current' : ''}><i>1</i><span><b>添加图 1</b><small>{hasReadyReference ? '参考图已就绪' : '身份、场景与风格参考'}</small></span></li>
             <li className={cameraStart ? 'done' : submitState.step === 2 ? 'current' : ''}><i>2</i><span><b>记录起始机位</b><small>{cameraStart ? '已保存对齐基准' : '先把灰模对齐图 1'}</small></span></li>
