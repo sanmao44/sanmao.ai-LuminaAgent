@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   if (!file) return new Response('Invalid file path', { status: 400 });
   try {
     const data = await readFile(file);
-    const type = file.endsWith('.jpg') ? 'image/jpeg' : file.endsWith('.webp') ? 'image/webp' : 'image/png';
+    const type = file.endsWith('.jpg') ? 'image/jpeg' : file.endsWith('.webp') ? 'image/webp' : file.endsWith('.bmp') ? 'image/bmp' : 'image/png';
     return new Response(data, { headers: { 'Content-Type': type, 'Cache-Control': 'public, max-age=31536000, immutable' } });
   } catch { return new Response('Not found', { status: 404 }); }
 }

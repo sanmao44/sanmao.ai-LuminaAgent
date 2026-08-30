@@ -22,12 +22,12 @@ export function getStorageRoots(configuredPath?: string) {
 }
 
 function imageExtension(contentType: string) {
-  return contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png';
+  return contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : contentType.includes('bmp') ? 'bmp' : 'png';
 }
 
 function safeImageExtension(contentType: string) {
   const extension = imageExtension(contentType);
-  return extension === 'jpg' || extension === 'webp' || extension === 'png' ? extension : 'png';
+  return extension === 'jpg' || extension === 'webp' || extension === 'bmp' || extension === 'png' ? extension : 'png';
 }
 
 /** Saves a provider result without exposing the provider's temporary URL to the browser. */
@@ -44,7 +44,7 @@ export async function persistImageBuffer(buffer: Buffer, contentType = 'image/pn
 
 async function readImageBuffer(url: string) {
   if (url.startsWith('data:image/')) {
-    const match = url.match(/^data:image\/(png|jpeg|webp);base64,(.+)$/s);
+    const match = url.match(/^data:image\/(png|jpeg|webp|bmp);base64,(.+)$/s);
     if (!match) return null;
     const buffer = Buffer.from(match[2], 'base64');
     if (buffer.byteLength > MAX_STORED_IMAGE_BYTES) throw new Error('图片超过 100MB，无法保存');
@@ -96,6 +96,6 @@ export async function resolveStoredImageReference(reference: string, configuredP
   const file = resolveStoredFileWithFallback(configuredPath || '', name);
   if (!file) throw new Error('无法读取原图文件，请重新选择图片后再试。');
   const data = await readFile(file);
-  const mime = file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : file.toLowerCase().endsWith('.webp') ? 'image/webp' : 'image/png';
+    const mime = file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : file.toLowerCase().endsWith('.webp') ? 'image/webp' : file.toLowerCase().endsWith('.bmp') ? 'image/bmp' : 'image/png';
   return `data:${mime};base64,${data.toString('base64')}`;
 }

@@ -40,6 +40,8 @@ export async function POST(request: Request) {
         sourceImageId: String(body.sourceImageId || '').trim() || undefined,
         requestedModel,
         scale: body.scale,
+        outputFormat: body.outputFormat,
+        outputQuality: body.outputQuality,
         idempotencyKey: String(body.idempotencyKey || body.taskId || '').trim() || undefined,
       });
       const task = cloud.task;

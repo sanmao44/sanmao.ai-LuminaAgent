@@ -40,12 +40,12 @@ test("upscale runs in place and keeps a visible processing state on the node", (
   assert.match(styles, /\.canvas-upscale-card-loading \.canvas-processing-indicator/);
 });
 
-test("upscale settings use the main bilingual custom select menu", () => {
+test("upscale settings use provider-specific controls with the main bilingual custom select menu", () => {
   const start = component.indexOf("function CanvasUpscaleSettingsPanel");
   const end = component.indexOf("type CanvasNodeEditorPopoverProps", start);
   assert.ok(start >= 0 && end > start, "upscale settings panel should be present");
   const panel = component.slice(start, end);
-  assert.equal((panel.match(/<SelectMenu/g) || []).length, 3);
+  assert.equal((panel.match(/<SelectMenu/g) || []).length, 4);
   assert.doesNotMatch(panel, /<select\b/);
   [
     "模型",
@@ -53,6 +53,8 @@ test("upscale settings use the main bilingual custom select menu", () => {
     "颜色校正",
     "缩放算法",
     "可选说明",
+    "输出格式",
+    "JPG 质量",
   ].forEach((label) => assert.match(panel, new RegExp(label)));
   [
     "自动选择",
@@ -63,6 +65,9 @@ test("upscale settings use the main bilingual custom select menu", () => {
     "nearest · 像素",
   ].forEach((label) => assert.match(panel, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))));
   assert.doesNotMatch(panel, /Upscale model|Color correction|Scaling algorithm|High-quality smoothing|Balanced quality and speed/);
+  assert.match(panel, /supportedScales/);
+  assert.match(panel, /selectedCloudModel\?\.provider === "tencent-ci"/);
+  assert.match(panel, /!isCloudModel/);
   assert.match(panel, /className="canvas-upscale-select"/);
   assert.match(panel, /menuClassName="canvas-upscale-select-popover"/);
   assert.match(styles, /\.canvas-upscale-select-popover\{z-index:var\(--canvas-z-modal-popover\)/);

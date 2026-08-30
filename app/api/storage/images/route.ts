@@ -6,7 +6,7 @@ import type { GeneratedImage } from '@/lib/types';
 export const runtime = 'nodejs';
 
 function isAllowedImageReference(value: string) {
-  if (value.startsWith('data:image/')) return /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/=\s]+$/i.test(value) && value.length <= 140 * 1024 * 1024;
+  if (value.startsWith('data:image/')) return /^data:image\/(png|jpeg|webp|bmp);base64,[a-z0-9+/=\s]+$/i.test(value) && value.length <= 140 * 1024 * 1024;
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;

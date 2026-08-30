@@ -465,6 +465,8 @@ export async function generateCanvasVideo(input: {
 }
 
 export async function generateCanvasUpscale(input: {
+  taskId?: string;
+  sourceImageId?: string;
   prompt?: string;
   model?: string;
   referenceUrl: string;
@@ -473,27 +475,48 @@ export async function generateCanvasUpscale(input: {
   seed?: number;
   colorCorrection?: string;
   resizeMethod?: string;
+  cloud?: boolean;
+  outputFormat?: "png" | "jpg" | "bmp";
+  outputQuality?: number;
 }) {
   const reference = await asDataUrl(input.referenceUrl);
   return request<{
     images: Array<{ url: string; revisedPrompt?: string }>;
     model?: { id?: string; name?: string; provider?: string };
+    taskId?: string;
+    status?: "queued" | "processing" | "succeeded" | "failed";
+    sourceImageId?: string;
   }>("/api/upscale", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       source: "canvas",
+      ...(input.taskId ? { taskId: input.taskId } : {}),
       prompt: input.prompt || "Upscale this image",
       model: input.model || "auto",
       reference,
       referenceImages: [{ name: "超分原图", url: input.referenceUrl }],
+      ...(input.sourceImageId ? { sourceImageId: input.sourceImageId } : {}),
       scale: Math.max(1, Math.min(4, Number(input.scale || 2))),
-      size: input.size || "1024x1024",
-      seed: Math.max(0, Number(input.seed || 0)),
-      colorCorrection: input.colorCorrection || "wavelet",
-      resizeMethod: input.resizeMethod || "lanczos",
+      ...(input.cloud ? {
+        ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
+        ...(input.outputFormat === "jpg" ? { outputQuality: Math.max(30, Math.min(100, Math.round(Number(input.outputQuality) || 95))) } : {}),
+      } : {
+        size: input.size || "1024x1024",
+        seed: Math.max(0, Number(input.seed || 0)),
+        colorCorrection: input.colorCorrection || "wavelet",
+        resizeMethod: input.resizeMethod || "lanczos",
+      }),
     }),
   });
+}
+
+export async function getCanvasUpscaleTask(taskId: string) {
+  return request<{
+    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed"; error?: string; errorCode?: string; sourceImageId?: string };
+    images: Array<{ url: string; revisedPrompt?: string }>;
+    model?: { id?: string; name?: string; provider?: string };
+  }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: "no-store" });
 }
 
 export async function generateCanvasAgent(input: {

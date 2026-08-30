@@ -1,7 +1,7 @@
 'use client';
 
 import { saveGalleryItems, type GalleryItem, type GallerySource } from '../client-history';
-import type { ReferenceImageRecord } from '../types';
+import type { ReferenceImageRecord, UpscaleOutputFormat } from '../types';
 
 export async function recordCanvasImages(
   images: Array<{ url: string; revisedPrompt?: string }>,
@@ -12,11 +12,18 @@ export async function recordCanvasImages(
     providerName?: string;
     aspectRatio?: string;
     outputSize?: string;
-    outputFormat?: 'png' | 'jpeg' | 'webp';
+    outputFormat?: 'png' | 'jpeg' | 'webp' | 'bmp';
     generationMs?: number;
     references?: ReferenceImageRecord[];
     parentId?: string;
     source?: GallerySource;
+    sourceImageId?: string;
+    upscaleProvider?: string;
+    upscaleModel?: string;
+    upscaleScale?: 1 | 2 | 3 | 4;
+    upscaleTaskId?: string;
+    upscaleOutputFormat?: UpscaleOutputFormat;
+    upscaleOutputQuality?: number;
   },
 ) {
   const createdAt = Date.now();
@@ -36,6 +43,13 @@ export async function recordCanvasImages(
     createdAt: createdAt + index,
     favorite: false,
     parentId: meta.parentId,
+    sourceImageId: meta.sourceImageId,
+    upscaleProvider: meta.upscaleProvider,
+    upscaleModel: meta.upscaleModel,
+    upscaleScale: meta.upscaleScale,
+    upscaleTaskId: meta.upscaleTaskId,
+    upscaleOutputFormat: meta.upscaleOutputFormat,
+    upscaleOutputQuality: meta.upscaleOutputQuality,
     references: meta.references,
   }));
   await saveGalleryItems(items);

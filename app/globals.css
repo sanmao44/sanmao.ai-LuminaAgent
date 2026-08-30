@@ -3158,60 +3158,100 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 /* Long model libraries stay easy to traverse without taking up page space. */
 .model-page-scroll-nav{
   position:fixed;
-  right:18px;
-  bottom:82px;
+  right:20px;
+  bottom:86px;
   z-index:45;
   display:flex;
   flex-direction:column;
-  gap:5px;
-  padding:4px;
-  border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));
-  border-radius:13px;
-  background:color-mix(in srgb,var(--panel) 88%,transparent);
-  box-shadow:0 10px 28px color-mix(in srgb,var(--text) 14%,transparent);
-  backdrop-filter:blur(12px);
+  gap:2px;
+  padding:6px;
+  border:1px solid color-mix(in srgb,var(--line-strong) 76%,var(--accent) 24%);
+  border-radius:16px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--panel-2) 94%,var(--accent-soft)),color-mix(in srgb,var(--panel) 94%,transparent));
+  box-shadow:0 14px 30px color-mix(in srgb,var(--text) 16%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 8%,transparent);
+  backdrop-filter:blur(16px);
+}
+.model-page-scroll-nav::before{
+  content:'快速定位';
+  display:block;
+  padding:1px 6px 4px;
+  color:var(--muted);
+  font-size:7px;
+  font-weight:850;
+  letter-spacing:.08em;
+  line-height:1.2;
+  text-align:center;
 }
 .model-page-scroll-nav button{
-  width:52px;
-  min-height:36px;
+  width:78px;
+  min-height:37px;
+  padding:4px 7px;
   display:flex;
   align-items:center;
-  justify-content:center;
-  gap:4px;
+  justify-content:flex-start;
+  gap:7px;
   border:1px solid transparent;
-  border-radius:9px;
+  border-radius:11px;
   background:transparent;
   color:var(--text-2);
-  font-size:8px;
+  font-size:9px;
   font-weight:850;
+  transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;
 }
 .model-page-scroll-nav button:hover,
 .model-page-scroll-nav button:focus-visible{
-  border-color:var(--accent);
-  background:var(--accent-soft);
+  border-color:color-mix(in srgb,var(--accent) 62%,var(--line-strong));
+  background:color-mix(in srgb,var(--accent-soft) 88%,var(--panel));
   color:var(--accent-text);
   outline:none;
+  box-shadow:0 4px 12px color-mix(in srgb,var(--accent) 15%,transparent);
+  transform:translateX(-1px);
 }
 .model-page-scroll-nav button b{
-  font-size:15px;
+  width:24px;
+  height:24px;
+  flex:none;
+  display:grid;
+  place-items:center;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--panel-3);
+  color:var(--accent-text);
+  font-size:14px;
   line-height:1;
-  font-weight:500;
+  font-weight:650;
+  transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease;
 }
 .model-page-scroll-nav button span{
+  flex:1;
   white-space:nowrap;
+  text-align:left;
+  letter-spacing:.04em;
+}
+.model-page-scroll-nav button:hover b,
+.model-page-scroll-nav button:focus-visible b{
+  border-color:var(--accent);
+  background:var(--accent);
+  color:#fff;
+  box-shadow:0 3px 8px color-mix(in srgb,var(--accent) 28%,transparent);
 }
 @media(max-width:780px){
   .model-page-scroll-nav{
     right:10px;
     bottom:76px;
+    padding:5px;
   }
+  .model-page-scroll-nav::before{font-size:6px}
   .model-page-scroll-nav button{
-    width:44px;
-    min-height:32px;
-    font-size:7px;
+    width:70px;
+    min-height:34px;
+    gap:6px;
+    font-size:8px;
   }
   .model-page-scroll-nav button b{
-    font-size:14px;
+    width:22px;
+    height:22px;
+    font-size:13px;
   }
 }
 /* Unified multi-media creation records */
@@ -3355,3 +3395,4 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .mask-editor-backdrop{z-index:var(--canvas-z-modal,500)}
  .upscale-model-note{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 10px;padding:10px 11px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:10px;background:var(--accent-soft-2);color:var(--text-2)}.upscale-model-note>div{display:grid;gap:4px;min-width:0}.upscale-model-note strong{font-size:9px;color:var(--text)}.upscale-model-note small{font-size:8px;line-height:1.45}.upscale-model-note .warning{grid-column:1/-1;color:var(--warning)}.upscale-model-note .ghost-button{min-height:28px;padding:0 8px}
 .upscale-connection-bucket{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 9px;padding:10px 11px;border:1px solid color-mix(in srgb,var(--warning) 34%,var(--line));border-radius:10px;background:var(--warning-soft,var(--panel-2))}.upscale-connection-bucket.needs-setup{border-color:color-mix(in srgb,var(--danger) 42%,var(--line));background:var(--danger-soft)}.upscale-connection-bucket strong{font-size:9px;color:var(--text)}.upscale-connection-bucket span{grid-column:1/-1;font-size:8px;line-height:1.45;color:var(--text-2)}.upscale-connection-bucket a{grid-column:2;grid-row:1;color:var(--accent-text);font-size:8px;font-weight:900;text-decoration:none;white-space:nowrap}
+.upscale-connection-cost{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:6px 8px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}.upscale-connection-cost strong{font-size:8px;color:var(--text)}.upscale-connection-cost span{font-size:8px;line-height:1.45;color:var(--text-2)}.upscale-connection-cost a{font-size:8px;color:var(--accent-text);font-weight:900;text-decoration:none;white-space:nowrap}

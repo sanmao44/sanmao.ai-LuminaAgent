@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { UpscaleModelId, UpscaleProviderId } from './types';
+import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 
 export type UpscaleTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed';
 
@@ -11,6 +11,8 @@ export type UpscaleTask = {
   provider: UpscaleProviderId;
   model: UpscaleModelId;
   scale: 1 | 2 | 3 | 4;
+  outputFormat?: UpscaleOutputFormat;
+  outputQuality?: number;
   sourceImageId: string;
   status: UpscaleTaskStatus;
   localImageUrl?: string;

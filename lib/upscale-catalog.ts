@@ -1,4 +1,4 @@
-import type { UpscaleModel, UpscaleModelId, UpscaleProviderId } from './types';
+import type { UpscaleModel, UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 
 export const UPSCALE_PROVIDER_NAMES: Record<UpscaleProviderId, string> = {
   'tencent-ci': '腾讯云数据万象',
@@ -11,20 +11,23 @@ export const UPSCALE_PROVIDER_LINKS = {
     storage: 'https://console.cloud.tencent.com/cos/bucket',
     open: 'https://console.cloud.tencent.com/ci',
     docs: ['https://cloud.tencent.com/document/api/436/117793'],
-    pricing: 'https://cloud.tencent.com/document/product/460/58117',
+    pricing: 'https://buy.cloud.tencent.com/price/ci/calculator',
   },
   'aliyun-viapi': {
     keys: 'https://ram.console.aliyun.com/profile/access-keys',
-    open: 'https://vision.aliyun.com/experience/detail?type=super-resolution',
+    open: 'https://common-buy.aliyun.com/?commodityCode=viapi_imageenhan_public_cn#/open',
     docs: [
       'https://help.aliyun.com/zh/viapi/developer-reference/api-px24vm',
       'https://help.aliyun.com/en/viapi/developer-reference/api-generated-image-super-score',
     ],
-    pricing: 'https://www.aliyun.com/price/product#/viapi',
+    pricing: 'https://common-buy.aliyun.com/?commodityCode=viapi_imageenhan_public_cn#/open',
   },
 } as const;
 
 type CatalogEntry = Omit<UpscaleModel, 'providerId' | 'connected' | 'enabled' | 'published'>;
+
+export const ALIYUN_UPSCALE_OUTPUT_FORMATS: UpscaleOutputFormat[] = ['png', 'jpg', 'bmp'];
+export const ALIYUN_UPSCALE_QUALITY = { min: 30, max: 100, default: 95 } as const;
 
 const entries: CatalogEntry[] = [
   {
@@ -51,6 +54,8 @@ const entries: CatalogEntry[] = [
     detail: '重点提升清晰度、纹理和分辨率，同时尽量保持原图内容，适合照片、商品图和设计素材。',
     recommendation: '照片 / 商品 / 设计素材 / 去噪增强',
     scales: [1, 2, 3, 4],
+    outputFormats: ALIYUN_UPSCALE_OUTPUT_FORMATS,
+    outputQuality: ALIYUN_UPSCALE_QUALITY,
     kind: 'image',
     capabilities: ['edit', 'reference', 'upscale'],
     links: UPSCALE_PROVIDER_LINKS['aliyun-viapi'],
@@ -65,6 +70,8 @@ const entries: CatalogEntry[] = [
     detail: '生成式增强会重新补充头发、皮肤、材质和建筑等细节，视觉提升更明显，但可能产生原图中不存在的新细节。',
     recommendation: 'AI 生图 / 人像 / 摄影 / 低清图片',
     scales: [1, 2, 3, 4],
+    outputFormats: ALIYUN_UPSCALE_OUTPUT_FORMATS,
+    outputQuality: ALIYUN_UPSCALE_QUALITY,
     generative: true,
     kind: 'image',
     capabilities: ['edit', 'reference', 'upscale'],

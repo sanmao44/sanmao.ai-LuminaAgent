@@ -26,6 +26,7 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
   const [forms, setForms] = useState(initialForms);
   const [bucketOptions, setBucketOptions] = useState<Bucket[]>([]);
   const [bucketSetupNeeded, setBucketSetupNeeded] = useState(false);
+  const [aliyunServiceSetupNeeded, setAliyunServiceSetupNeeded] = useState(false);
   const [busy, setBusy] = useState<UpscaleProviderId | null>(null);
   const [message, setMessage] = useState<Record<string, string>>({});
 
@@ -33,6 +34,7 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
     setForms((current) => ({ ...current, [provider]: { ...current[provider], ...patch } }));
     setMessage((current) => ({ ...current, [provider]: '' }));
     if (provider === 'tencent-ci') setBucketSetupNeeded(false);
+    if (provider === 'aliyun-viapi') setAliyunServiceSetupNeeded(false);
   }
 
   async function submit(provider: UpscaleProviderId) {
@@ -43,13 +45,16 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
         ? { provider, secretId: form.first, secretKey: form.second, bucket: form.bucket }
         : { provider, accessKeyId: form.first, accessKeySecret: form.second };
       const response = await fetch('/api/upscale/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await response.json().catch(() => ({})) as { state?: PublicState; error?: string; requiresBucketSelection?: boolean; requiresBucketSetup?: boolean; buckets?: Bucket[] };
+      const data = await response.json().catch(() => ({})) as { state?: PublicState; error?: string; code?: string; requiresBucketSelection?: boolean; requiresBucketSetup?: boolean; buckets?: Bucket[] };
       if (data.requiresBucketSetup) {
         setBucketSetupNeeded(true);
         setMessage((current) => ({ ...current, [provider]: '还差 1 步：请先创建 COS 存储桶。' }));
         return;
       }
-      if (!response.ok) throw new Error(data.error || '连接检测失败');
+      if (!response.ok) {
+        if (provider === 'aliyun-viapi' && (data.code === 'PERMISSION_DENIED' || data.code === 'NOT_PURCHASED')) setAliyunServiceSetupNeeded(true);
+        throw new Error(data.error || '连接检测失败');
+      }
       if (data.requiresBucketSelection) {
         setBucketOptions(Array.isArray(data.buckets) ? data.buckets : []);
         setMessage((current) => ({ ...current, [provider]: '检测到多个存储桶，请选择一个继续。' }));
@@ -59,6 +64,7 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
       setForms((current) => ({ ...current, [provider]: { first: '', second: '', bucket: '' } }));
       setBucketOptions([]);
       setBucketSetupNeeded(false);
+      setAliyunServiceSetupNeeded(false);
       setMessage((current) => ({ ...current, [provider]: '连接成功，已可以在高清放大面板中使用。' }));
       onNotify(`${UPSCALE_PROVIDER_NAMES[provider]}已连接`);
     } catch (error) {
@@ -76,6 +82,8 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
       if (!response.ok) throw new Error(data.error || '删除连接失败');
       if (data.state) onStateChanged(data.state);
       setMessage((current) => ({ ...current, [provider]: '连接已删除。' }));
+      if (provider === 'tencent-ci') setBucketSetupNeeded(false);
+      if (provider === 'aliyun-viapi') setAliyunServiceSetupNeeded(false);
     } catch (error) { setMessage((current) => ({ ...current, [provider]: error instanceof Error ? error.message : '删除连接失败' })); }
     finally { setBusy(null); }
   }
@@ -110,8 +118,10 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
         </ol>
         <small>{tencent ? '截图中的“切换使用子账号密钥”不用点；本工具只需要这两个密钥。' : '不用进入“用户”或创建 RAM 用户，本工具只需要这两个 AccessKey 值。'}</small>
       </div>}
-      {tencent && storageLink && <div className={`upscale-connection-bucket ${bucketSetupNeeded ? 'needs-setup' : ''}`}><strong>腾讯云还需要一个 COS 存储桶</strong><span>没有存储桶时，先开通 COS 并创建一个“私有”存储桶，再回到这里点击检测。</span><a href={storageLink} target="_blank" rel="noopener noreferrer">去创建存储桶 ↗</a></div>}
-      <details className="upscale-connection-more"><summary>更多官方信息（可跳过）</summary><div className="upscale-connection-links"><a href={links.open} target="_blank" rel="noopener noreferrer">去开通高清服务 ↗</a>{links.docs.map((href, index) => renderLink(href, index === 0 ? '查看标准文档' : '查看生成式文档'))}<a href={links.pricing} target="_blank" rel="noopener noreferrer">查看官方价格 ↗</a></div></details>
+      {tencent && storageLink && (!connection?.connected || bucketSetupNeeded) && <div className={`upscale-connection-bucket ${bucketSetupNeeded ? 'needs-setup' : ''}`}><strong>腾讯云还需要一个 COS 存储桶</strong><span>没有存储桶时，先开通 COS 并创建一个“私有”存储桶，再回到这里点击检测。</span><a href={storageLink} target="_blank" rel="noopener noreferrer">去创建存储桶 ↗</a></div>}
+      {!tencent && aliyunServiceSetupNeeded && <div className="upscale-connection-bucket needs-setup"><strong>阿里云还差 1 步：开通“图像生产”</strong><span>AccessKey 有效，但当前账号还不能调用图像超分。打开官方页面，开通图像生产后回到这里重新检测。</span><a href={links.open} target="_blank" rel="noopener noreferrer">去开通图像生产 ↗</a></div>}
+      <div className="upscale-connection-cost"><strong>费用说明</strong><span>{tencent ? 'COS 和数据万象通常按量计费；新用户可能有免费额度，超出后才收费。' : '阿里云通常提供免费体验或额度，正式 API 是否收费以官方价格页为准。'}</span><a href={links.pricing} target="_blank" rel="noopener noreferrer">查看官方价格 ↗</a></div>
+      <details className="upscale-connection-more"><summary>更多官方信息（可跳过）</summary><div className="upscale-connection-links"><a href={links.open} target="_blank" rel="noopener noreferrer">去开通高清服务 ↗</a>{links.docs.map((href, index) => renderLink(href, index === 0 ? '查看标准文档' : '查看生成式文档'))}</div></details>
       <div className="upscale-connection-fields">
         <label><span>第 1 行：{credentialNames[0]}</span><input value={form.first} onChange={(event) => update(provider, { first: event.target.value })} autoComplete="off" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[0]}`} /></label>
         <label><span>第 2 行：{credentialNames[1]}</span><input type="password" value={form.second} onChange={(event) => update(provider, { second: event.target.value })} autoComplete="new-password" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[1]}`} /></label>

@@ -99,6 +99,8 @@ function normalizeUpscaleParams(value: unknown): CanvasUpscaleParams {
     : 2;
   const target = raw.target ?? raw.targetSize ?? raw.upscaleTarget;
   const algorithm = raw.algorithm ?? raw.upscaleAlgorithm;
+  const outputFormat = raw.outputFormat ?? raw.upscaleOutputFormat;
+  const outputQuality = Number(raw.outputQuality ?? raw.upscaleOutputQuality);
   return {
     kind: "upscale",
     model: typeof (raw.model ?? raw.modelId ?? raw.upscaleModelId) === "string" ? String(raw.model ?? raw.modelId ?? raw.upscaleModelId) : "auto",
@@ -107,6 +109,8 @@ function normalizeUpscaleParams(value: unknown): CanvasUpscaleParams {
     seed: Number.isFinite(Number(raw.seed ?? raw.upscaleSeed)) ? Math.max(0, Math.round(Number(raw.seed ?? raw.upscaleSeed))) : 42,
     colorCorrection: raw.colorCorrection === "none" || raw.upscaleColorCorrection === "none" ? "none" : "wavelet",
     algorithm: algorithm === "bicubic" ? "bicubic" : algorithm === "nearest" ? "nearest" : "lanczos",
+    ...(outputFormat === "jpg" || outputFormat === "bmp" ? { outputFormat } : { outputFormat: "png" }),
+    ...(Number.isFinite(outputQuality) ? { outputQuality: Math.max(30, Math.min(100, Math.round(outputQuality))) } : { outputQuality: 95 }),
     ...(typeof raw.prompt === "string" ? { prompt: raw.prompt } : {}),
   };
 }

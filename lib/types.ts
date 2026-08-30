@@ -3,6 +3,7 @@ export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
 export type UpscaleProviderId = 'tencent-ci' | 'aliyun-viapi';
 export type UpscaleModelId = 'tencent-super-resolution' | 'aliyun-standard-super-resolution' | 'aliyun-generative-super-resolution';
+export type UpscaleOutputFormat = 'png' | 'jpg' | 'bmp';
 export type UpscaleConnectionStatus = 'healthy' | 'idle' | 'error' | 'needs-bucket' | 'needs-authorization';
 export type ModelKind = 'chat' | 'image' | 'video' | 'unknown';
 export type MediaKind = 'image' | 'video' | 'audio';
@@ -132,6 +133,8 @@ export type UpscaleModel = {
   detail: string;
   recommendation: string;
   scales: Array<1 | 2 | 3 | 4>;
+  outputFormats?: UpscaleOutputFormat[];
+  outputQuality?: { min: number; max: number; default: number };
   enabled: boolean;
   published: boolean;
   connected: boolean;

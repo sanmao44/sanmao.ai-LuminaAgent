@@ -1,5 +1,5 @@
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from '../creation/settings';
-import type { PublicState } from '../types';
+import type { PublicState, UpscaleOutputFormat } from '../types';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale';
 export type CanvasMediaKind = 'image' | 'video';
@@ -41,6 +41,8 @@ export type CanvasUpscaleParams = {
   seed: number;
   colorCorrection: "wavelet" | "none";
   algorithm: "lanczos" | "bicubic" | "nearest";
+  outputFormat?: UpscaleOutputFormat;
+  outputQuality?: number;
   prompt?: string;
 };
 

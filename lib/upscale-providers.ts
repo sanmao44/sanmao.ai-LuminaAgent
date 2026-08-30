@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { UpscaleConnectionCredentials } from './store';
-import type { UpscaleModelId, UpscaleProviderId } from './types';
+import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 
 export type UpscaleProviderErrorCode =
   | 'INVALID_CREDENTIAL'
@@ -33,6 +33,8 @@ export type UpscaleInput = {
   imageUrl: string;
   scale: 1 | 2 | 3 | 4;
   modelId: UpscaleModelId;
+  outputFormat?: UpscaleOutputFormat;
+  outputQuality?: number;
   signal?: AbortSignal;
 };
 
@@ -127,12 +129,12 @@ function xmlError(xml: string) {
   return { code: xmlValue(xml, 'Code'), message: xmlValue(xml, 'Message'), requestId: xmlValue(xml, 'RequestId') };
 }
 
-function mapProviderError(providerCode: string, status: number | undefined, requestId?: string, fallback = '云端高清处理失败') {
+function mapProviderError(providerCode: string, status: number | undefined, requestId?: string, fallback = '云端高清处理失败', provider?: UpscaleProviderId) {
   const code = String(providerCode || '').toLowerCase();
   if (/invalidaccesskey|invalidcredential|unauthorized/.test(code) || status === 401) return new UpscaleProviderError('访问密钥无效，请检查后重新连接。', 'INVALID_CREDENTIAL', { providerCode, status, requestId });
   if (/signaturedoesnotmatch|authfailure|signatureinvalid/.test(code)) return new UpscaleProviderError('密钥验证失败，请确认 Secret 是否正确。', 'SIGNATURE_INVALID', { providerCode, status, requestId });
   if (/notpurchase|notpurchased|service.?not.?enabled|unsubscribed/.test(code)) return new UpscaleProviderError('该 AI 服务尚未开通，请先前往官方控制台开通。', 'NOT_PURCHASED', { providerCode, status, requestId });
-  if (/permission|forbidden|no.?permission|access.?denied/.test(code) || status === 403) return new UpscaleProviderError('当前账号没有调用此功能的权限，请检查云平台授权。', 'PERMISSION_DENIED', { providerCode, status, requestId });
+  if (/permission|forbidden|no.?permission|access.?denied/.test(code) || status === 403) return new UpscaleProviderError(provider === 'aliyun-viapi' ? '阿里云图像生产服务尚未开通，或当前 AccessKey 没有该能力权限。请先开通图像生产；如使用子账号，再配置 AliyunVIAPIFullAccess。' : '当前账号没有调用此功能的权限，请检查云平台授权。', 'PERMISSION_DENIED', { providerCode, status, requestId });
   if (/balance|quota|insufficient|arrears/.test(code)) return new UpscaleProviderError('云平台余额或额度不足，请充值后再试。', 'INSUFFICIENT_BALANCE', { providerCode, status, requestId });
   if (/size|too.?large|oversize|filesize|image.?limit/.test(code) || status === 413) return new UpscaleProviderError('这张图片超过该模型支持的尺寸，请选择较小图片或其他模型。', 'IMAGE_TOO_LARGE', { providerCode, status, requestId });
   if (/image|url|format|parameter|invalidarg/.test(code) && status && status < 500) return new UpscaleProviderError('图片格式或参数不符合云端高清处理要求，请更换图片后重试。', 'INVALID_IMAGE', { providerCode, status, requestId });
@@ -163,6 +165,16 @@ async function downloadImage(url: string, provider: UpscaleProviderId, signal?: 
   return { buffer, mime };
 }
 
+function aliyunOutputParams(input: UpscaleInput, defaultFormat: UpscaleOutputFormat) {
+  const outputFormat: UpscaleOutputFormat = input.outputFormat === 'png' || input.outputFormat === 'jpg' || input.outputFormat === 'bmp' ? input.outputFormat : defaultFormat;
+  const params: Record<string, string> = { OutputFormat: outputFormat };
+  if (outputFormat === 'jpg') {
+    const quality = Number(input.outputQuality);
+    params.OutputQuality = String(Number.isFinite(quality) ? Math.max(30, Math.min(100, Math.round(quality))) : 95);
+  }
+  return params;
+}
+
 async function listTencentBuckets(credentials: UpscaleConnectionCredentials, signal?: AbortSignal) {
   const url = 'https://service.cos.myqcloud.com/';
   const secretId = credentials.secretId || '';
@@ -175,7 +187,7 @@ async function listTencentBuckets(credentials: UpscaleConnectionCredentials, sig
   const text = await response.text();
   if (!response.ok) {
     const error = xmlError(text);
-    throw mapProviderError(error.code, response.status, error.requestId || requestIdFromHeaders(response.headers), '腾讯云凭证验证失败，请检查 SecretId 和 SecretKey。');
+    throw mapProviderError(error.code, response.status, error.requestId || requestIdFromHeaders(response.headers), '腾讯云凭证验证失败，请检查 SecretId 和 SecretKey。', 'tencent-ci');
   }
   const buckets: Array<{ name: string; region: string }> = [];
   const matches = text.match(/<Bucket>[\s\S]*?<\/Bucket>/gi) || [];
@@ -217,7 +229,7 @@ function createTencentProvider(credentials: UpscaleConnectionCredentials): Upsca
       const response = await fetch(url, { headers: { Host: new URL(url).host, Authorization: authorization }, signal: input.signal || AbortSignal.timeout(180_000) });
       if (!response.ok) {
         const error = xmlError(await response.text());
-        throw mapProviderError(error.code, response.status, error.requestId || requestIdFromHeaders(response.headers), '腾讯云高清处理失败，请检查数据万象是否已开通。');
+        throw mapProviderError(error.code, response.status, error.requestId || requestIdFromHeaders(response.headers), '腾讯云高清处理失败，请检查数据万象是否已开通。', 'tencent-ci');
       }
       const mime = assertImageResponse(response, 'tencent-ci');
       const bytes = Buffer.from(await response.arrayBuffer());
@@ -273,8 +285,7 @@ export function buildAliyunRpcSignature(options: { method?: string; action: stri
 
 function aliError(payload: JsonObject, status: number, requestId?: string) {
   const code = stringValue(payload.Code || payload.code || nestedValue(payload, ['Code', 'code']));
-  const message = stringValue(payload.Message || payload.message || nestedValue(payload, ['Message', 'message']));
-  return mapProviderError(code, status, requestId || stringValue(payload.RequestId || payload.requestId), message || '阿里云图像生产请求失败。');
+  return mapProviderError(code, status, requestId || stringValue(payload.RequestId || payload.requestId), '阿里云图像生产请求失败，请检查服务状态或稍后重试。', 'aliyun-viapi');
 }
 
 async function aliyunRpc(credentials: UpscaleConnectionCredentials, action: string, params: Record<string, string>, signal?: AbortSignal): Promise<{ payload: JsonObject; requestId?: string }> {
@@ -322,7 +333,7 @@ function createAliyunProvider(credentials: UpscaleConnectionCredentials): Upscal
     },
     async upscale(input) {
       if (input.modelId === 'aliyun-generative-super-resolution') {
-        const response = await aliyunRpc(credentials, 'GenerateSuperResolutionImage', { ImageUrl: input.imageUrl, Scale: String(input.scale) }, input.signal);
+        const response = await aliyunRpc(credentials, 'GenerateSuperResolutionImage', { ImageUrl: input.imageUrl, Scale: String(input.scale), ...aliyunOutputParams(input, 'jpg') }, input.signal);
         const immediate = resultUrl(response.payload);
         if (immediate) {
           const downloaded = await downloadImage(immediate, 'aliyun-viapi', input.signal);
@@ -332,7 +343,7 @@ function createAliyunProvider(credentials: UpscaleConnectionCredentials): Upscal
         if (!task) throw new UpscaleProviderError('阿里云没有返回生成式超分任务编号。', 'UPSTREAM_ERROR', { requestId: response.requestId });
         return { status: 'queued', provider: 'aliyun-viapi', model: input.modelId, providerTaskId: task, requestId: response.requestId };
       }
-      const response = await aliyunRpc(credentials, 'MakeSuperResolutionImage', { Url: input.imageUrl, UpscaleFactor: String(input.scale) }, input.signal);
+      const response = await aliyunRpc(credentials, 'MakeSuperResolutionImage', { Url: input.imageUrl, UpscaleFactor: String(input.scale), ...aliyunOutputParams(input, 'png') }, input.signal);
       const url = resultUrl(response.payload);
       if (!url) throw new UpscaleProviderError('阿里云没有返回标准超分结果地址。', 'UPSTREAM_ERROR', { requestId: response.requestId });
       const downloaded = await downloadImage(url, 'aliyun-viapi', input.signal);

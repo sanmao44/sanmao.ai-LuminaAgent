@@ -1,6 +1,7 @@
 import type { ClientReferenceImage, ReferenceImageRecord, WebSearchDecisionMeta, WebSearchMeta } from './types';
 import type { AngleCameraState } from './angle-control';
 import { emitWorkspaceChange } from './workspace-events';
+import type { UpscaleOutputFormat } from './types';
 
 export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas' | 'upscale';
 
@@ -14,7 +15,7 @@ export type GalleryItem = {
   providerName?: string;
   aspectRatio?: string;
   outputSize?: string;
-  outputFormat?: 'png' | 'jpeg' | 'webp';
+  outputFormat?: 'png' | 'jpeg' | 'webp' | 'bmp';
   generationMs?: number;
   source: GallerySource;
   createdAt: number;
@@ -25,6 +26,8 @@ export type GalleryItem = {
   upscaleModel?: string;
   upscaleScale?: 1 | 2 | 3 | 4;
   upscaleTaskId?: string;
+  upscaleOutputFormat?: UpscaleOutputFormat;
+  upscaleOutputQuality?: number;
   references?: ReferenceImageRecord[];
   compareReferenceUrl?: string;
   compareReferenceName?: string;

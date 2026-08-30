@@ -313,6 +313,65 @@ test('canvas upscale marks the request as canvas-originated', async () => {
   assert.equal(JSON.parse(request.options.body).source, 'canvas');
 });
 
+test('canvas Tencent upscale sends only the Tencent-supported parameters', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/tencent.png' }], status: 'succeeded' });
+  }, () => api.generateCanvasUpscale({
+    taskId: 'canvas-run-1',
+    sourceImageId: 'source-image-1',
+    model: 'tencent-super-resolution',
+    referenceUrl: 'data:image/png;base64,AA==',
+    scale: 4,
+    cloud: true,
+    seed: 123,
+    colorCorrection: 'none',
+    resizeMethod: 'nearest',
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.deepEqual(payload, {
+    source: 'canvas',
+    taskId: 'canvas-run-1',
+    prompt: 'Upscale this image',
+    model: 'tencent-super-resolution',
+    reference: 'data:image/png;base64,AA==',
+    referenceImages: [{ name: '超分原图', url: 'data:image/png;base64,AA==' }],
+    sourceImageId: 'source-image-1',
+    scale: 4,
+  });
+});
+
+test('canvas Alibaba upscale sends its output format and JPG quality', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/aliyun.jpg' }], status: 'succeeded' });
+  }, () => api.generateCanvasUpscale({
+    model: 'aliyun-standard-super-resolution',
+    referenceUrl: 'data:image/png;base64,AA==',
+    scale: 3,
+    cloud: true,
+    outputFormat: 'jpg',
+    outputQuality: 72,
+    size: '2048x2048',
+    seed: 123,
+    colorCorrection: 'none',
+    resizeMethod: 'nearest',
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.model, 'aliyun-standard-super-resolution');
+  assert.equal(payload.scale, 3);
+  assert.equal(payload.outputFormat, 'jpg');
+  assert.equal(payload.outputQuality, 72);
+  assert.equal('size' in payload, false);
+  assert.equal('seed' in payload, false);
+  assert.equal('colorCorrection' in payload, false);
+  assert.equal('resizeMethod' in payload, false);
+});
+
 test('canvas video polling uses the SANMAO task endpoint', async () => {
   let request;
   const result = await withFetch(async (input, options) => {

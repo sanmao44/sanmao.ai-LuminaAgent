@@ -113,6 +113,22 @@ const upscaleScales = [
     3,
     4
 ];
+const cloudUpscaleFormatOptions = [
+    { value: 'png', label: 'PNG · 无损' },
+    { value: 'jpg', label: 'JPG · 体积更小' },
+    { value: 'bmp', label: 'BMP · 兼容性好' }
+];
+function isCloudUpscaleModel(model) {
+    return model?.provider === 'tencent-ci' || model?.provider === 'aliyun-viapi';
+}
+function upscalePreviewDimensions(source, scale, model, targetSize = 'auto') {
+    if (!source) return null;
+    if (isCloudUpscaleModel(model)) return {
+        width: Math.max(1, Math.round(source.width * scale)),
+        height: Math.max(1, Math.round(source.height * scale))
+    };
+    return seedVrTargetSize(source.width, source.height, scale, targetSize);
+}
 const sizeTiers = [
     {
         value: '1k',
@@ -1727,9 +1743,10 @@ function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
         ]
     });
 }
-function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onMaskEdit, onOpenProviders, onSubmit }) {
+function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUpscaleModel, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onMaskEdit, onOpenProviders, onSubmit }) {
     const ratio = editorRatio(editor);
-    const selectedUpscaleOption = editor.mode === 'upscale' ? upscaleModelOptions.find((model)=>model.id === editor.modelId) || upscaleModelOptions.find((model)=>model.id === 'tencent-super-resolution') : null;
+    const selectedUpscaleOption = editor.mode === 'upscale' ? editor.modelId === 'auto' ? defaultUpscaleModel : upscaleModelOptions.find((model)=>model.id === editor.modelId) || defaultUpscaleModel : null;
+    const selectedUpscaleIsCloud = isCloudUpscaleModel(selectedUpscaleOption);
     const dimensions = editor.sizeMode === 'custom' ? {
         width: editor.customWidth,
         height: editor.customHeight
@@ -1890,9 +1907,21 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                     defaultProviderId: defaultProviderId,
                                                     defaultProviderName: defaultProviderName,
                                                     defaultModelId: defaultImageModelId,
-                                                    onChange: (value)=>update({
-                                                            modelId: value
-                                                        })
+                                                    onChange: (value)=>{
+                                                        if (editor.mode !== 'upscale') {
+                                                            update({
+                                                                modelId: value
+                                                            });
+                                                            return;
+                                                        }
+                                                        const nextModel = upscaleModelOptions.find((model)=>model.id === value);
+                                                        const nextScales = nextModel?.scales || upscaleScales;
+                                                        update({
+                                                            modelId: value,
+                                                            scale: nextScales.includes(editor.scale) ? editor.scale : nextScales.includes(2) ? 2 : nextScales[0],
+                                                            upscaleOutputFormat: nextModel?.outputFormats?.includes(editor.upscaleOutputFormat) ? editor.upscaleOutputFormat : nextModel?.outputFormats?.[0] || editor.upscaleOutputFormat
+                                                        });
+                                                    }
                                                 })
                                             ]
                                         }),
@@ -2111,7 +2140,7 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                         /*#__PURE__*/ _jsxs("div", {
                                             className: "editor-settings-grid",
                                             children: [
-                                                /*#__PURE__*/ _jsxs("label", {
+                                                !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("label", {
                                                     className: "field-block",
                                                     children: [
                                                         /*#__PURE__*/ _jsx("span", {
@@ -2129,7 +2158,7 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                         })
                                                     ]
                                                 }),
-                                                /*#__PURE__*/ _jsxs("div", {
+                                                !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("div", {
                                                     className: "field-block",
                                                     children: [
                                                         /*#__PURE__*/ _jsx("span", {
@@ -2154,6 +2183,39 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                             onChange: (value)=>update({
                                                                     algorithm: value
                                                                 })
+                                                        })
+                                                    ]
+                                                }),
+                                                selectedUpscaleOption?.outputFormats && /*#__PURE__*/ _jsxs("div", {
+                                                    className: "field-block",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("span", {
+                                                            children: "输出格式"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx(Dropdown, {
+                                                            value: editor.upscaleOutputFormat,
+                                                            options: cloudUpscaleFormatOptions.filter((option)=>selectedUpscaleOption.outputFormats.includes(option.value)),
+                                                            onChange: (value)=>update({
+                                                                upscaleOutputFormat: value
+                                                            })
+                                                        })
+                                                    ]
+                                                }),
+                                                selectedUpscaleOption?.outputQuality && editor.upscaleOutputFormat === 'jpg' && /*#__PURE__*/ _jsxs("label", {
+                                                    className: "field-block",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("span", {
+                                                            children: "JPG 质量"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx("input", {
+                                                            type: "number",
+                                                            min: selectedUpscaleOption.outputQuality.min,
+                                                            max: selectedUpscaleOption.outputQuality.max,
+                                                            step: "1",
+                                                            value: editor.upscaleOutputQuality,
+                                                            onChange: (event)=>update({
+                                                                upscaleOutputQuality: Math.max(selectedUpscaleOption.outputQuality.min, Math.min(selectedUpscaleOption.outputQuality.max, Number(event.target.value) || selectedUpscaleOption.outputQuality.default))
+                                                            })
                                                         })
                                                     ]
                                                 })
@@ -4933,6 +4995,8 @@ export default function Page() {
     const [generateUpscaleSeed, setGenerateUpscaleSeed] = useState(42);
     const [generateUpscaleColorCorrection, setGenerateUpscaleColorCorrection] = useState('wavelet');
     const [generateUpscaleAlgorithm, setGenerateUpscaleAlgorithm] = useState('lanczos');
+    const [generateUpscaleOutputFormat, setGenerateUpscaleOutputFormat] = useState('png');
+    const [generateUpscaleOutputQuality, setGenerateUpscaleOutputQuality] = useState(95);
     const [generateUpscaleSourceSize, setGenerateUpscaleSourceSize] = useState(null);
     const [generateMask, setGenerateMask] = useState(null);
     const [maskEditorOpen, setMaskEditorOpen] = useState(false);
@@ -5049,6 +5113,13 @@ export default function Page() {
     const defaultProvider = state.providers.find((provider)=>provider.id === state.settings.defaultProviderId && isProviderModelLibraryEnabled(provider));
     const selectedGenerateModel = generateModelId !== 'auto' ? activeProviderModels.find((m)=>m.id === generateModelId) : defaultImageModel;
     const selectedUpscaleModel = generateUpscaleModelId !== 'auto' ? availableUpscaleModels.find((m)=>m.id === generateUpscaleModelId) : defaultUpscaleModel;
+    function handleUpscaleModelChange(value) {
+        setGenerateUpscaleModelId(value);
+        const nextModel = value === 'auto' ? defaultUpscaleModel : availableUpscaleModels.find((model)=>model.id === value);
+        const nextScales = nextModel?.scales || upscaleScales;
+        if (!nextScales.includes(generateUpscaleScale)) setGenerateUpscaleScale(nextScales.includes(2) ? 2 : nextScales[0]);
+        if (nextModel?.outputFormats && !nextModel.outputFormats.includes(generateUpscaleOutputFormat)) setGenerateUpscaleOutputFormat(nextModel.outputFormats[0]);
+    }
     const generateUpscaleMode = generateWorkflow === 'upscale';
     const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
     const activeAgentChatModel = activeAgentModelId === 'auto' ? agentModel : availableChatModels.find((model)=>model.id === activeAgentModelId);
@@ -5233,10 +5304,11 @@ export default function Page() {
         customRatioWidth,
         customRatioHeight
     ]);
-    const generateUpscaleTargetPreview = useMemo(()=>generateUpscaleSourceSize ? seedVrTargetSize(generateUpscaleSourceSize.width, generateUpscaleSourceSize.height, generateUpscaleScale, generateUpscaleTarget) : null, [
+    const generateUpscaleTargetPreview = useMemo(()=>upscalePreviewDimensions(generateUpscaleSourceSize, generateUpscaleScale, selectedUpscaleModel, generateUpscaleTarget), [
         generateUpscaleSourceSize,
         generateUpscaleScale,
-        generateUpscaleTarget
+        generateUpscaleTarget,
+        selectedUpscaleModel
     ]);
     const viewerDisplaySize = useMemo(()=>{
         if (!viewerImageSize.width || !viewerImageSize.height || !viewerStageSize.width || !viewerStageSize.height) return {
@@ -5261,11 +5333,14 @@ export default function Page() {
         width: 0,
         height: 0
     };
-    const upscaleTargetPreview = useMemo(()=>editor?.mode === 'upscale' && upscaleSourceSize ? seedVrTargetSize(upscaleSourceSize.width, upscaleSourceSize.height, editor.scale, editor.targetSize) : null, [
+    const upscaleTargetPreview = useMemo(()=>editor?.mode === 'upscale' && upscaleSourceSize ? upscalePreviewDimensions(upscaleSourceSize, editor.scale, availableUpscaleModels.find((model)=>model.id === editor.modelId) || defaultUpscaleModel, editor.targetSize) : null, [
         editor?.mode,
         editor?.scale,
         editor?.targetSize,
-        upscaleSourceSize
+        editor?.modelId,
+        upscaleSourceSize,
+        availableUpscaleModels,
+        defaultUpscaleModel
     ]);
     const activeGenerateTasks = useMemo(()=>generateTasks.filter((task)=>task.status === 'pending'), [
         generateTasks
@@ -5334,6 +5409,8 @@ export default function Page() {
                 if (typeof savedGeneration.upscaleSeed === 'number') setGenerateUpscaleSeed(Math.round(savedGeneration.upscaleSeed));
                 if (savedGeneration.upscaleColorCorrection === 'wavelet' || savedGeneration.upscaleColorCorrection === 'none') setGenerateUpscaleColorCorrection(savedGeneration.upscaleColorCorrection);
                 if (savedGeneration.upscaleAlgorithm === 'lanczos' || savedGeneration.upscaleAlgorithm === 'bicubic' || savedGeneration.upscaleAlgorithm === 'nearest') setGenerateUpscaleAlgorithm(savedGeneration.upscaleAlgorithm);
+                if (savedGeneration.upscaleOutputFormat === 'png' || savedGeneration.upscaleOutputFormat === 'jpg' || savedGeneration.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(savedGeneration.upscaleOutputFormat);
+                if (typeof savedGeneration.upscaleOutputQuality === 'number' && savedGeneration.upscaleOutputQuality >= 30 && savedGeneration.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(savedGeneration.upscaleOutputQuality));
             }
             const savedTasks = JSON.parse(localStorage.getItem('sanmao-generate-tasks') || 'null');
             if (Array.isArray(savedTasks)) {
@@ -5397,7 +5474,9 @@ export default function Page() {
             upscaleTarget: generateUpscaleTarget,
             upscaleSeed: generateUpscaleSeed,
             upscaleColorCorrection: generateUpscaleColorCorrection,
-            upscaleAlgorithm: generateUpscaleAlgorithm
+            upscaleAlgorithm: generateUpscaleAlgorithm,
+            upscaleOutputFormat: generateUpscaleOutputFormat,
+            upscaleOutputQuality: generateUpscaleOutputQuality
         };
         try {
             localStorage.setItem('sanmao-generate-settings', JSON.stringify(settings));
@@ -5421,7 +5500,9 @@ export default function Page() {
         generateUpscaleTarget,
         generateUpscaleSeed,
         generateUpscaleColorCorrection,
-        generateUpscaleAlgorithm
+        generateUpscaleAlgorithm,
+        generateUpscaleOutputFormat,
+        generateUpscaleOutputQuality
     ]);
     useEffect(()=>{
         if (modelPreferencesRestoredRef.current || !state.models.length) return;
@@ -5460,6 +5541,8 @@ export default function Page() {
             if (typeof params.upscaleSeed === 'number') setGenerateUpscaleSeed(Math.round(params.upscaleSeed));
             if (params.upscaleColorCorrection === 'wavelet' || params.upscaleColorCorrection === 'none') setGenerateUpscaleColorCorrection(params.upscaleColorCorrection);
             if (params.upscaleAlgorithm === 'lanczos' || params.upscaleAlgorithm === 'bicubic' || params.upscaleAlgorithm === 'nearest') setGenerateUpscaleAlgorithm(params.upscaleAlgorithm);
+            if (params.upscaleOutputFormat === 'png' || params.upscaleOutputFormat === 'jpg' || params.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(params.upscaleOutputFormat);
+            if (typeof params.upscaleOutputQuality === 'number' && params.upscaleOutputQuality >= 30 && params.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(params.upscaleOutputQuality));
             restored.push('生图');
         }
         const upscaleCall = getLastModelCall('upscale');
@@ -7311,6 +7394,8 @@ export default function Page() {
         setGenerateUpscaleSeed(Number.isFinite(request.upscaleSeed) ? request.upscaleSeed : 42);
         setGenerateUpscaleColorCorrection(request.upscaleColorCorrection || 'wavelet');
         setGenerateUpscaleAlgorithm(request.upscaleAlgorithm || 'lanczos');
+        if (request.upscaleOutputFormat === 'png' || request.upscaleOutputFormat === 'jpg' || request.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(request.upscaleOutputFormat);
+        if (typeof request.upscaleOutputQuality === 'number' && request.upscaleOutputQuality >= 30 && request.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(request.upscaleOutputQuality));
         setGenerateRefs(request.references || []);
         setGenerateMask(request.mask || null);
         setSection('generate');
@@ -7393,6 +7478,8 @@ export default function Page() {
         const taskUpscaleSeed = savedRequest?.upscaleSeed ?? generateUpscaleSeed;
         const taskUpscaleColorCorrection = savedRequest?.upscaleColorCorrection || generateUpscaleColorCorrection;
         const taskUpscaleAlgorithm = savedRequest?.upscaleAlgorithm || generateUpscaleAlgorithm;
+        const taskUpscaleOutputFormat = savedRequest?.upscaleOutputFormat || generateUpscaleOutputFormat;
+        const taskUpscaleOutputQuality = savedRequest?.upscaleOutputQuality || generateUpscaleOutputQuality;
         const taskRequest = savedRequest ? {
             ...savedRequest,
             modelId: taskModelId,
@@ -7412,6 +7499,8 @@ export default function Page() {
             upscaleSeed: taskUpscaleSeed,
             upscaleColorCorrection: taskUpscaleColorCorrection,
             upscaleAlgorithm: taskUpscaleAlgorithm,
+            upscaleOutputFormat: taskUpscaleOutputFormat,
+            upscaleOutputQuality: taskUpscaleOutputQuality,
             references: taskRefs,
             sourceImageId: submittedUpscaleMode ? taskRefs[0]?.id : undefined,
             mask: isAngleGeneration ? null : savedRequest.mask ? {
@@ -7440,6 +7529,8 @@ export default function Page() {
             upscaleSeed: taskUpscaleSeed,
             upscaleColorCorrection: taskUpscaleColorCorrection,
             upscaleAlgorithm: taskUpscaleAlgorithm,
+            upscaleOutputFormat: taskUpscaleOutputFormat,
+            upscaleOutputQuality: taskUpscaleOutputQuality,
             references: taskRefs,
             sourceImageId: submittedUpscaleMode ? taskRefs[0]?.id : undefined,
             mask: isAngleGeneration ? null : generateMask ? {
@@ -7506,7 +7597,9 @@ export default function Page() {
             if (taskMode === 'upscale') {
                 if (!taskRefs.length) throw new Error('SeedVR2-7B 是图片超分模型，请先添加一张参考图，再点击生成。');
                 const sourceSize = await loadImageDimensions(taskRefs[0].dataUrl);
-                const targetSize = seedVrTargetSize(sourceSize.width, sourceSize.height, taskUpscaleScale, taskUpscaleTarget);
+                 const targetSize = upscalePreviewDimensions(sourceSize, taskUpscaleScale, taskModel, taskUpscaleTarget);
+                 const cloudUpscale = isCloudUpscaleModel(taskModel);
+                 const taskCloudOutputFormat = cloudUpscale && taskModel?.outputFormats?.includes(taskUpscaleOutputFormat) ? taskUpscaleOutputFormat : undefined;
                 const upscaleRes = await fetch('/api/upscale', {
                     method: 'POST',
                     headers: {
@@ -7518,12 +7611,17 @@ export default function Page() {
                         model: taskModelId === 'auto' ? taskModel?.id : taskModelId,
                         reference: taskRefs[0].dataUrl,
                         sourceImageId: taskRefs[0].id,
-                        referenceImages: referenceRecords,
-                        scale: taskUpscaleScale,
-                        size: `${targetSize.width}x${targetSize.height}`,
-                        seed: taskUpscaleSeed,
-                        colorCorrection: taskUpscaleColorCorrection,
-                        resizeMethod: taskUpscaleAlgorithm
+                         referenceImages: referenceRecords,
+                         scale: taskUpscaleScale,
+                         ...(cloudUpscale ? {
+                            ...(taskCloudOutputFormat ? { outputFormat: taskCloudOutputFormat } : {}),
+                            ...(taskCloudOutputFormat === 'jpg' ? { outputQuality: taskUpscaleOutputQuality } : {})
+                        } : {
+                            size: `${targetSize.width}x${targetSize.height}`,
+                            seed: taskUpscaleSeed,
+                            colorCorrection: taskUpscaleColorCorrection,
+                            resizeMethod: taskUpscaleAlgorithm
+                        })
                     })
                 });
                 let upscaleData = await upscaleRes.json();
@@ -7539,7 +7637,7 @@ export default function Page() {
                     providerName: upscaleData.model?.provider,
                     aspectRatio: '自动',
                     outputSize: `${taskUpscaleScale}× 超分`,
-                    outputFormat: 'png',
+                    outputFormat: taskCloudOutputFormat ? taskCloudOutputFormat === 'jpg' ? 'jpeg' : taskCloudOutputFormat : 'png',
                     generationMs: durationMs,
                     source: 'upscale',
                     parentId: upscaleData.sourceImageId || taskRefs[0].id,
@@ -7547,6 +7645,8 @@ export default function Page() {
                     upscaleProvider: upscaleData.model?.provider,
                     upscaleModel: upscaleData.model?.id,
                     upscaleScale: taskUpscaleScale,
+                    upscaleOutputFormat: taskCloudOutputFormat,
+                    upscaleOutputQuality: taskCloudOutputFormat === 'jpg' ? taskUpscaleOutputQuality : undefined,
                     upscaleTaskId: upscaleData.taskId,
                     references: referenceRecords
                 });
@@ -8838,6 +8938,8 @@ export default function Page() {
             seed: 42,
             colorCorrection: 'wavelet',
             algorithm: 'lanczos',
+            upscaleOutputFormat: 'png',
+            upscaleOutputQuality: 95,
             mask: null
         };
     }
@@ -8906,7 +9008,9 @@ export default function Page() {
             targetSize: saved.upscaleTarget === 'auto' || saved.upscaleTarget === '1K' || saved.upscaleTarget === '2K' || saved.upscaleTarget === '4K' ? saved.upscaleTarget : 'auto',
             seed: typeof saved.upscaleSeed === 'number' ? Math.max(0, Math.round(saved.upscaleSeed)) : 42,
             colorCorrection: saved.upscaleColorCorrection === 'none' ? 'none' : 'wavelet',
-            algorithm: saved.upscaleAlgorithm === 'bicubic' || saved.upscaleAlgorithm === 'nearest' ? saved.upscaleAlgorithm : 'lanczos'
+            algorithm: saved.upscaleAlgorithm === 'bicubic' || saved.upscaleAlgorithm === 'nearest' ? saved.upscaleAlgorithm : 'lanczos',
+            upscaleOutputFormat: saved.upscaleOutputFormat === 'jpg' || saved.upscaleOutputFormat === 'bmp' ? saved.upscaleOutputFormat : 'png',
+            upscaleOutputQuality: typeof saved.upscaleOutputQuality === 'number' && saved.upscaleOutputQuality >= 30 && saved.upscaleOutputQuality <= 100 ? Math.round(saved.upscaleOutputQuality) : 95
         });
         if (lastCall) notify('已恢复上次图片超分设置');
     }
@@ -8990,7 +9094,7 @@ export default function Page() {
                     info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · 后台处理中`,
                     items: [],
                     itemIds: [],
-                    request: currentEditor.mode === 'upscale' ? { sourceImageId: currentEditor.item.id, upscaleScale: currentEditor.scale, modelId: currentEditor.modelId, references: [{ id: currentEditor.item.id, name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }] } : undefined
+                    request: currentEditor.mode === 'upscale' ? { sourceImageId: currentEditor.item.id, upscaleScale: currentEditor.scale, upscaleOutputFormat: currentEditor.upscaleOutputFormat, upscaleOutputQuality: currentEditor.upscaleOutputQuality, modelId: currentEditor.modelId, references: [{ id: currentEditor.item.id, name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }] } : undefined
                 },
                 ...old
             ]);
@@ -9022,8 +9126,11 @@ export default function Page() {
         };
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
-            const targetSize = sourceSize ? seedVrTargetSize(sourceSize.width, sourceSize.height, currentEditor.scale, currentEditor.targetSize) : null;
-            const upscaleSize = targetSize ? `${targetSize.width}x${targetSize.height}` : '';
+            const editorUpscaleModel = currentEditor.mode === 'upscale' ? availableUpscaleModels.find((model)=>model.id === currentEditor.modelId) || defaultUpscaleModel : null;
+            const targetSize = sourceSize ? upscalePreviewDimensions(sourceSize, currentEditor.scale, editorUpscaleModel, currentEditor.targetSize) : null;
+             const upscaleSize = targetSize ? `${targetSize.width}x${targetSize.height}` : '';
+             const cloudUpscale = currentEditor.mode === 'upscale' && isCloudUpscaleModel(editorUpscaleModel);
+             const editorCloudOutputFormat = cloudUpscale && editorUpscaleModel?.outputFormats?.includes(currentEditor.upscaleOutputFormat) ? currentEditor.upscaleOutputFormat : undefined;
             const editRatio = editorRatio(currentEditor);
             const editDimensions = currentEditor.sizeMode === 'custom' ? {
                 width: currentEditor.customWidth,
@@ -9035,12 +9142,17 @@ export default function Page() {
                 sourceImageId: currentEditor.item.id,
                 model: currentEditor.modelId,
                 reference: currentEditor.item.url,
-                referenceImages: [editorReference],
-                scale: currentEditor.scale,
-                size: upscaleSize,
-                seed: currentEditor.seed,
-                colorCorrection: currentEditor.colorCorrection,
-                resizeMethod: currentEditor.algorithm,
+                 referenceImages: [editorReference],
+                 scale: currentEditor.scale,
+                 ...(cloudUpscale ? {
+                    ...(editorCloudOutputFormat ? { outputFormat: editorCloudOutputFormat } : {}),
+                    ...(editorCloudOutputFormat === 'jpg' ? { outputQuality: currentEditor.upscaleOutputQuality } : {})
+                } : {
+                    size: upscaleSize,
+                    seed: currentEditor.seed,
+                    colorCorrection: currentEditor.colorCorrection,
+                    resizeMethod: currentEditor.algorithm
+                }),
                 prompt: currentEditor.prompt
             } : {
                 taskId,
@@ -9070,8 +9182,12 @@ export default function Page() {
             if (!res.ok) throw new Error(data.error || '处理失败');
             if (currentEditor.mode === 'upscale' && data.taskId) patchGenerateTask(taskId, { upscaleTaskId: data.taskId, info: `${data.model?.name || '高清放大'} · 后台处理中` });
             if (currentEditor.mode === 'upscale' && data.taskId && (data.status === 'queued' || data.status === 'processing')) data = await waitForUpscaleTask(data.taskId, data);
-            const manualModel = currentEditor.modelId !== 'auto' ? state.models.find((model)=>model.id === currentEditor.modelId) : undefined;
-            const actualModel = data.model?.id ? state.models.find((model)=>model.id === data.model.id) : undefined;
+            const knownUpscaleModels = [
+                ...state.models,
+                ...(state.upscaleModels || [])
+            ];
+            const manualModel = currentEditor.modelId !== 'auto' ? knownUpscaleModels.find((model)=>model.id === currentEditor.modelId) : undefined;
+            const actualModel = data.model?.id ? knownUpscaleModels.find((model)=>model.id === data.model.id) : undefined;
             recordModelCall({
                 context: currentEditor.mode === 'upscale' ? 'upscale' : 'edit',
                 mode: manualModel ? 'manual' : 'auto',
@@ -9079,10 +9195,15 @@ export default function Page() {
                 modelId: (manualModel || actualModel)?.id,
                 params: currentEditor.mode === 'upscale' ? {
                     upscaleScale: currentEditor.scale,
-                    upscaleTarget: currentEditor.targetSize,
-                    upscaleSeed: currentEditor.seed,
-                    upscaleColorCorrection: currentEditor.colorCorrection,
-                    upscaleAlgorithm: currentEditor.algorithm
+                    ...(cloudUpscale ? {
+                        upscaleOutputFormat: editorCloudOutputFormat,
+                        upscaleOutputQuality: editorCloudOutputFormat === 'jpg' ? currentEditor.upscaleOutputQuality : undefined
+                    } : {
+                        upscaleTarget: currentEditor.targetSize,
+                        upscaleSeed: currentEditor.seed,
+                        upscaleColorCorrection: currentEditor.colorCorrection,
+                        upscaleAlgorithm: currentEditor.algorithm
+                    })
                 } : {
                     ratio: currentEditor.ratio,
                     count: currentEditor.count,
@@ -9102,6 +9223,7 @@ export default function Page() {
                 providerName: data.model?.provider,
                 aspectRatio: currentEditor.ratio,
                 outputSize: currentEditor.mode === 'upscale' ? `${currentEditor.scale}× 超分` : undefined,
+                outputFormat: currentEditor.mode === 'upscale' && editorCloudOutputFormat ? editorCloudOutputFormat === 'jpg' ? 'jpeg' : editorCloudOutputFormat : currentEditor.mode === 'upscale' ? 'png' : undefined,
                 source: currentEditor.mode === 'upscale' ? 'upscale' : 'edit',
                 parentId: currentEditor.item.id,
                 sourceImageId: currentEditor.mode === 'upscale' ? currentEditor.item.id : undefined,
@@ -11054,7 +11176,7 @@ export default function Page() {
                                                                         capability: "upscale",
                                                                         defaultProviderId: state.settings.defaultProviderId,
                                                                         defaultProviderName: defaultProvider?.name,
-                                                                        onChange: setGenerateUpscaleModelId
+                                                                        onChange: handleUpscaleModelChange
                                                                     })
                                                                 ]
                                                             }),
@@ -11062,7 +11184,7 @@ export default function Page() {
                                                                 className: "field-block",
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx("span", {
-                                                                        children: "尺寸方式"
+                                                                        children: "放大倍率"
                                                                     }),
                                                                     /*#__PURE__*/ _jsx(Dropdown, {
                                                                         value: String(generateUpscaleScale),
@@ -11102,7 +11224,7 @@ export default function Page() {
                                                                             /*#__PURE__*/ _jsxs("strong", {
                                                                                 children: [
                                                                                     /*#__PURE__*/ _jsx("i", {
-                                                                                        children: "目标"
+                                                                        children: "输出"
                                                                                     }),
                                                                                     /*#__PURE__*/ _jsx("b", {
                                                                                         children: generateUpscaleTargetPreview ? `${generateUpscaleTargetPreview.width}×${generateUpscaleTargetPreview.height}` : '计算中…'
@@ -11113,7 +11235,7 @@ export default function Page() {
                                                                     })
                                                                 ]
                                                             }),
-                                                            /*#__PURE__*/ _jsxs("label", {
+                                                            !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("label", {
                                                                 className: "field-block",
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx("span", {
@@ -11128,7 +11250,7 @@ export default function Page() {
                                                                     })
                                                                 ]
                                                             }),
-                                                            /*#__PURE__*/ _jsxs("div", {
+                                                            !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("div", {
                                                                 className: "field-block",
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx("span", {
@@ -11150,7 +11272,7 @@ export default function Page() {
                                                                     })
                                                                 ]
                                                             }),
-                                                            /*#__PURE__*/ _jsxs("div", {
+                                                            !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("div", {
                                                                 className: "field-block",
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx("span", {
@@ -11173,6 +11295,35 @@ export default function Page() {
                                                                             }
                                                                         ],
                                                                         onChange: (value)=>setGenerateUpscaleAlgorithm(value)
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            selectedUpscaleOption?.outputFormats && /*#__PURE__*/ _jsxs("div", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "输出格式"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                                        value: generateUpscaleOutputFormat,
+                                                                        options: cloudUpscaleFormatOptions.filter((option)=>selectedUpscaleOption.outputFormats.includes(option.value)),
+                                                                        onChange: (value)=>setGenerateUpscaleOutputFormat(value)
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            selectedUpscaleOption?.outputQuality && generateUpscaleOutputFormat === 'jpg' && /*#__PURE__*/ _jsxs("label", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "JPG 质量"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("input", {
+                                                                        type: "number",
+                                                                        min: selectedUpscaleOption.outputQuality.min,
+                                                                        max: selectedUpscaleOption.outputQuality.max,
+                                                                        step: "1",
+                                                                        value: generateUpscaleOutputQuality,
+                                                                        onChange: (e)=>setGenerateUpscaleOutputQuality(Math.max(selectedUpscaleOption.outputQuality.min, Math.min(selectedUpscaleOption.outputQuality.max, Number(e.target.value) || selectedUpscaleOption.outputQuality.default)))
                                                                     })
                                                                 ]
                                                             })
@@ -14817,6 +14968,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 editor: editor,
                 editModelOptions: availableEditModels,
                 upscaleModelOptions: availableUpscaleModels,
+                defaultUpscaleModel: defaultUpscaleModel,
                 defaultProviderId: state.settings.defaultProviderId,
                 defaultProviderName: defaultProvider?.name,
                 defaultImageModelId: state.settings.defaultImageModelId,

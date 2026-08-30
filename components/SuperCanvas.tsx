@@ -69,6 +69,7 @@ import {
   generateCanvasAgent,
   generateCanvasImage,
   generateCanvasUpscale,
+  getCanvasUpscaleTask,
   generateCanvasVideo,
   inferCanvasAgentTask,
   loadCanvasRuntime,
@@ -101,6 +102,7 @@ import {
   type VideoCreationSettings,
 } from "@/lib/creation/settings";
 import { recordModelCall } from "@/lib/model-preferences";
+import { getUpscaleCatalogModel } from "@/lib/upscale-catalog";
 import { resolveCanvasInputSemantics } from "@/lib/canvas/references";
 import {
   fitCanvasNodeEditorBelow,
@@ -688,6 +690,16 @@ function canvasConnectableId(target: EventTarget | null) {
   return (target as HTMLElement | null)
     ?.closest<HTMLElement>("[data-canvas-connectable-id]")
     ?.dataset.canvasConnectableId;
+}
+
+async function waitForCanvasUpscaleTask(taskId: string) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, attempt === 0 ? 800 : 2000));
+    const latest = await getCanvasUpscaleTask(taskId);
+    if (latest.task?.status === "succeeded") return latest;
+    if (latest.task?.status === "failed") throw new Error(latest.task.error || "高清处理失败");
+  }
+  throw new Error("高清处理时间较长，请稍后重试。");
 }
 
 const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
@@ -1504,6 +1516,17 @@ export default function SuperCanvas() {
       pollAttemptsRef.current.clear();
     };
   }, [notify]);
+
+  useEffect(() => {
+    if (!ready || !runtime) return;
+    const pending = docRef.current.nodes.filter((node) =>
+      node.type === "upscale" &&
+      node.data.status === "running" &&
+      node.data.upscaleRequestId &&
+      node.data.jobId,
+    );
+    pending.forEach((node) => void runUpscaleNodeRef.current?.(node));
+  }, [ready, runtime]);
 
   useEffect(
     () =>
@@ -6455,9 +6478,27 @@ export default function SuperCanvas() {
     const params = (node.data.params && typeof node.data.params === "object" ? node.data.params : {}) as CanvasUpscaleParams;
     const dimensions = await loadImageDimensions(String(source.data.url)).catch(() => null);
     if (!dimensions) return notify("无法读取原图尺寸", "error");
-    const size = canvasUpscaleSize(dimensions.width, dimensions.height, params.scale || 2, params.target || "auto");
-    const targetDimensions = seedVrTargetSize(dimensions.width, dimensions.height, params.scale || 2, params.target || "auto");
-    const selectedModel = runtime?.models?.some((model) => model.id === params.model && model.enabled && model.published && (model.capabilities || []).includes("upscale")) ? params.model : "auto";
+    const requestedCloudModel = params.model !== "auto"
+      ? runtime?.upscaleModels?.find((model) => model.id === params.model)
+        || getUpscaleCatalogModel(params.model)
+      : undefined;
+    const selectedLegacyModel = runtime?.models?.find((model) => model.id === params.model && model.enabled && model.published && (model.capabilities || []).includes("upscale"));
+    const activeCloudModel = requestedCloudModel || (params.model === "auto"
+      ? runtime?.upscaleModels?.find((model) => model.connected && model.id === "tencent-super-resolution")
+        || runtime?.upscaleModels?.find((model) => model.connected && model.id === "aliyun-standard-super-resolution")
+      : undefined);
+    const isCloudModel = Boolean(activeCloudModel);
+    const selectedModel = params.model !== "auto" && (requestedCloudModel || selectedLegacyModel) ? params.model : "auto";
+    const scale = activeCloudModel?.scales.includes(params.scale) ? params.scale : params.scale || 2;
+    const outputFormat = activeCloudModel?.outputFormats?.includes(params.outputFormat || "png") ? params.outputFormat : undefined;
+    const outputQuality = outputFormat === "jpg" ? params.outputQuality : undefined;
+    const targetDimensions = isCloudModel
+      ? { width: Math.max(1, Math.round(dimensions.width * scale)), height: Math.max(1, Math.round(dimensions.height * scale)) }
+      : seedVrTargetSize(dimensions.width, dimensions.height, scale, params.target || "auto");
+    const size = isCloudModel ? undefined : `${targetDimensions.width}x${targetDimensions.height}`;
+    const requestTaskId = node.data.status === "running" && node.data.upscaleRequestId
+      ? String(node.data.upscaleRequestId)
+      : uid("upscale-task");
     const activeKey = `upscale-node:${node.id}`;
     if (generationKeysRef.current.has(activeKey)) return;
     generationKeysRef.current.add(activeKey); setGenerationKeys(new Set(generationKeysRef.current));
@@ -6465,9 +6506,39 @@ export default function SuperCanvas() {
     // the canvas stays usable; selecting the node again can reopen it while
     // the card continues to show progress.
     setExpandedEditorId((current) => current === node.id ? null : current);
-    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", progress: undefined, processingStartedAt: Date.now() } } : item) }));
+    updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", progress: undefined, processingStartedAt: Date.now(), upscaleRequestId: requestTaskId } } : item) }));
     try {
-      const result = await generateCanvasUpscale({ prompt: params.prompt || "Upscale this image", model: selectedModel, referenceUrl: String(source.data.url), scale: params.scale || 2, size, seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", resizeMethod: params.algorithm || "lanczos" });
+      let result = await generateCanvasUpscale({
+        taskId: requestTaskId,
+        sourceImageId: String(source.data.sourceAssetId || source.id),
+        prompt: params.prompt || "Upscale this image",
+        model: selectedModel,
+        referenceUrl: String(source.data.url),
+        scale,
+        ...(isCloudModel ? {
+          cloud: true,
+          ...(outputFormat ? { outputFormat } : {}),
+          ...(outputQuality ? { outputQuality } : {}),
+        } : {
+          size,
+          seed: params.seed || 42,
+          colorCorrection: params.colorCorrection || "wavelet",
+          resizeMethod: params.algorithm || "lanczos",
+        }),
+      });
+      const submittedTaskId = result.taskId;
+      if (submittedTaskId && (result.status === "queued" || result.status === "processing")) {
+        updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? {
+          ...item,
+          data: {
+            ...item.data,
+            jobId: submittedTaskId,
+            upscaleRequestId: requestTaskId,
+            generation: item.data.generation ? { ...item.data.generation, taskId: requestTaskId, updatedAt: Date.now() } : item.data.generation,
+          },
+        } : item) }));
+        result = await waitForCanvasUpscaleTask(submittedTaskId);
+      }
       if (!result.images?.length) throw new Error("服务端没有返回超分结果");
       const resultCreatedAt = Date.now();
       const resultUrl = String(result.images[0].url || "");
@@ -6485,12 +6556,14 @@ export default function SuperCanvas() {
           role: "超分结果",
           resultSource: "upscale-node",
           model: result.model?.name || params.model || "自动超分模型",
-          nativeWidth: targetDimensions.width,
-          nativeHeight: targetDimensions.height,
+           nativeWidth: targetDimensions.width,
+           nativeHeight: targetDimensions.height,
           status: "completed",
           statusLabel: "超分节点生成的结果",
           progress: 100,
           processingStartedAt: undefined,
+          jobId: submittedTaskId,
+          upscaleRequestId: requestTaskId,
           generation: {
             kind: "image",
             prompt: params.prompt || "Upscale this image",
@@ -6498,14 +6571,48 @@ export default function SuperCanvas() {
             operation: "upscale",
             referenceIds: [source.id],
             parentNodeId: item.id,
+            taskId: requestTaskId,
             createdAt: resultCreatedAt,
           },
         },
       } : item) }));
       setSelectedIds(new Set([node.id])); setSelectedGroupId(null);
-      recordModelCall({ context: "upscale", mode: selectedModel === "auto" ? "auto" : "manual", modelId: result.model?.id || selectedModel, params: { scale: params.scale || 2, target: params.target || "auto", seed: params.seed || 42, colorCorrection: params.colorCorrection || "wavelet", algorithm: params.algorithm || "lanczos" } });
+      recordModelCall({
+        context: "upscale",
+        mode: selectedModel === "auto" ? "auto" : "manual",
+        modelId: result.model?.id || selectedModel,
+        params: {
+          scale,
+          ...(isCloudModel ? {
+            ...(outputFormat ? { outputFormat } : {}),
+            ...(outputQuality ? { outputQuality } : {}),
+          } : {
+            target: params.target || "auto",
+            seed: params.seed || 42,
+            colorCorrection: params.colorCorrection || "wavelet",
+            algorithm: params.algorithm || "lanczos",
+          }),
+        },
+      });
       notify("超分完成，结果已写入当前节点"); addLog(`图片超分完成：${source.data.name || source.id}`);
-      void recordCanvasImages(result.images, { prompt: params.prompt || "Upscale this image", source: "canvas", modelId: result.model?.id || params.model, modelName: result.model?.name, providerName: result.model?.provider, outputSize: size, parentId: node.id })
+      const sourceImageId = String(source.data.sourceAssetId || source.id);
+      void recordCanvasImages(result.images, {
+        prompt: params.prompt || "Upscale this image",
+        source: "upscale",
+        modelId: result.model?.id || params.model,
+        modelName: result.model?.name,
+        providerName: result.model?.provider,
+        outputSize: `${scale}× 超分`,
+        outputFormat: outputFormat === "jpg" ? "jpeg" : outputFormat,
+        parentId: sourceImageId,
+        sourceImageId,
+        upscaleProvider: result.model?.provider,
+        upscaleModel: result.model?.id || params.model,
+        upscaleScale: scale,
+        upscaleOutputFormat: outputFormat,
+        upscaleOutputQuality: outputQuality,
+        upscaleTaskId: submittedTaskId,
+      })
         .then(() => setAssetRefresh((value) => value + 1))
         .catch(() => addLog("图片超分完成，但写入主界面历史失败"));
     } catch (error) {
@@ -10494,8 +10601,24 @@ function CanvasUpscaleSettingsPanel({
       .catch(() => { if (!cancelled) setSourceSizeError(true); });
     return () => { cancelled = true; };
   }, [sourceUrl]);
-  const target = sourceSize ? seedVrTargetSize(sourceSize.width, sourceSize.height, params.scale, params.target) : null;
-  const models = (runtime?.models || []).filter((model) => model.enabled && model.published && (model.capabilities || []).includes("upscale"));
+  const legacyModels = (runtime?.models || []).filter((model) => model.enabled && model.published && (model.capabilities || []).includes("upscale"));
+  const cloudModels = runtime?.upscaleModels || [];
+  const models = [
+    ...legacyModels,
+    ...cloudModels.filter((model) => !legacyModels.some((legacy) => legacy.id === model.id)),
+  ];
+  const selectedModelRecord = params.model !== "auto"
+    ? models.find((model) => model.id === params.model)
+    : cloudModels.find((model) => model.connected && model.id === "tencent-super-resolution")
+      || cloudModels.find((model) => model.connected && model.id === "aliyun-standard-super-resolution")
+      || legacyModels[0];
+  const selectedCloudModel = selectedModelRecord && "provider" in selectedModelRecord ? selectedModelRecord : null;
+  const isCloudModel = selectedCloudModel?.provider === "tencent-ci" || selectedCloudModel?.provider === "aliyun-viapi";
+  const supportedScales = selectedCloudModel?.scales || [1, 2, 3, 4] as const;
+  const selectedOutputQuality = selectedCloudModel?.outputQuality;
+  const target = sourceSize ? isCloudModel
+    ? { width: Math.max(1, Math.round(sourceSize.width * params.scale)), height: Math.max(1, Math.round(sourceSize.height * params.scale)) }
+    : seedVrTargetSize(sourceSize.width, sourceSize.height, params.scale, params.target) : null;
   const modelOptions = [
     {
       value: "auto",
@@ -10531,7 +10654,17 @@ function CanvasUpscaleSettingsPanel({
           <SelectMenu
             value={params.model}
             portalZIndex={portalZIndex}
-            onChange={(value) => onChange({ ...params, model: value })}
+            onChange={(value) => {
+              const next = models.find((model) => model.id === value);
+              const nextCloud = next && "provider" in next ? next : null;
+              const nextScales = nextCloud?.scales || [1, 2, 3, 4] as const;
+              onChange({
+                ...params,
+                model: value,
+                scale: nextScales.includes(params.scale) ? params.scale : nextScales.includes(2) ? 2 : nextScales[0],
+                ...(nextCloud?.outputFormats?.includes(params.outputFormat || "png") ? {} : { outputFormat: nextCloud?.outputFormats?.[0] || "png" }),
+              });
+            }}
             ariaLabel="模型"
             className="canvas-upscale-select"
             menuClassName="canvas-upscale-select-popover"
@@ -10540,11 +10673,11 @@ function CanvasUpscaleSettingsPanel({
         </div>
         <div className="canvas-upscale-field">
           <div className="canvas-upscale-field-label"><strong>放大倍率</strong></div>
-          <div className="canvas-upscale-scale-options">{[1, 2, 3, 4].map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} aria-pressed={params.scale === scale} aria-label={`${scale}×`} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div>
+          <div className="canvas-upscale-scale-options">{supportedScales.map((scale) => <button key={scale} type="button" className={params.scale === scale ? "active" : ""} aria-pressed={params.scale === scale} aria-label={`${scale}×`} onClick={() => onChange({ ...params, scale: scale as CanvasUpscaleParams["scale"] })}>{scale}×</button>)}</div>
         </div>
       </div>
-      <div className="canvas-upscale-size-readout"><span><small>原图</small><strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败" : "读取中…"}</strong></span><b>→</b><span><small>目标</small><strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算" : "计算中…"}</strong></span></div>
-      <div className="canvas-upscale-setting-row">
+      <div className="canvas-upscale-size-readout"><span><small>原图</small><strong>{sourceSize ? `${sourceSize.width}×${sourceSize.height}` : sourceSizeError ? "读取失败" : "读取中…"}</strong></span><b>→</b><span><small>{isCloudModel ? "输出" : "目标"}</small><strong>{target ? `${target.width}×${target.height}` : sourceSizeError ? "无法计算" : "计算中…"}</strong></span></div>
+      {!isCloudModel && <div className="canvas-upscale-setting-row">
         <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>随机种子</strong></span><input type="number" min={0} value={params.seed} aria-label="随机种子" onChange={(event) => onChange({ ...params, seed: Math.max(0, Math.round(Number(event.target.value) || 0)) })} /></label>
         <div className="canvas-upscale-field">
           <div className="canvas-upscale-field-label"><strong>颜色校正</strong></div>
@@ -10558,8 +10691,8 @@ function CanvasUpscaleSettingsPanel({
             options={[...colorCorrectionOptions]}
           />
         </div>
-      </div>
-      <div className="canvas-upscale-setting-row">
+      </div>}
+      {!isCloudModel && <div className="canvas-upscale-setting-row">
         <div className="canvas-upscale-field">
           <div className="canvas-upscale-field-label"><strong>缩放算法</strong></div>
           <SelectMenu
@@ -10573,7 +10706,23 @@ function CanvasUpscaleSettingsPanel({
           />
         </div>
         <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>可选说明</strong></span><input value={params.prompt || ""} aria-label="可选说明" placeholder="SeedVR2 超分不会根据提示词修改画面…" onChange={(event) => onChange({ ...params, prompt: event.target.value })} /></label>
-      </div>
+      </div>}
+      {isCloudModel && selectedCloudModel?.outputFormats && <div className="canvas-upscale-setting-row">
+        <div className="canvas-upscale-field">
+          <div className="canvas-upscale-field-label"><strong>输出格式</strong></div>
+          <SelectMenu
+            value={params.outputFormat || selectedCloudModel.outputFormats[0]}
+            portalZIndex={portalZIndex}
+            onChange={(value) => onChange({ ...params, outputFormat: value as CanvasUpscaleParams["outputFormat"] })}
+            ariaLabel="输出格式"
+            className="canvas-upscale-select"
+            menuClassName="canvas-upscale-select-popover"
+            options={selectedCloudModel.outputFormats.map((value) => ({ value, label: value.toUpperCase() }))}
+          />
+        </div>
+        {selectedOutputQuality && (params.outputFormat || selectedCloudModel.outputFormats[0]) === "jpg" && <label className="canvas-upscale-field"><span className="canvas-upscale-field-label"><strong>JPG 质量</strong></span><input type="number" min={selectedOutputQuality.min} max={selectedOutputQuality.max} value={params.outputQuality || selectedOutputQuality.default} aria-label="JPG 质量" onChange={(event) => onChange({ ...params, outputQuality: Math.max(selectedOutputQuality.min, Math.min(selectedOutputQuality.max, Math.round(Number(event.target.value) || selectedOutputQuality.default))) })} /></label>}
+      </div>}
+      {isCloudModel && <small className="canvas-upscale-model-note">{selectedCloudModel?.provider === "tencent-ci" ? "腾讯云官方参数：仅支持 1×、2×、4×，不提供种子、颜色校正或缩放算法。" : selectedCloudModel?.generative ? "阿里云生成式超分：会重新生成部分细节，可能改变原图内容；任务将在后台处理。" : "阿里云标准超分：可选择输出格式，JPG 可调整质量。"}</small>}
       {!sourceUrl && <small className="canvas-upscale-empty-hint">请连接一张已完成的图片后再提交</small>}
     </div>
   );

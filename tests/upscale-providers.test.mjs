@@ -52,11 +52,13 @@ test('Tencent AISuperResolution sends detect-url, official action and magnify', 
     return new Response(pngBytes, { status: 200, headers: { 'content-type': 'image/png', 'x-cos-request-id': 'cos-1' } });
   };
   const client = provider.createUpscaleProvider('tencent-ci', { provider: 'tencent-ci', secretId: 'AKID', secretKey: 'SECRET', bucket: 'demo-1250000000', region: 'ap-shanghai' });
-  const result = await client.upscale({ modelId: 'tencent-super-resolution', imageUrl: 'https://cdn.example/input.png', scale: 4 });
+  const result = await client.upscale({ modelId: 'tencent-super-resolution', imageUrl: 'https://cdn.example/input.png', scale: 4, outputFormat: 'jpg', outputQuality: 72 });
   const requestUrl = new URL(calls[0].url);
   assert.equal(requestUrl.searchParams.get('ci-process'), 'AISuperResolution');
   assert.equal(requestUrl.searchParams.get('detect-url'), 'https://cdn.example/input.png');
   assert.equal(requestUrl.searchParams.get('magnify'), '4');
+  assert.equal(requestUrl.searchParams.has('OutputFormat'), false);
+  assert.equal(requestUrl.searchParams.has('OutputQuality'), false);
   assert.equal(calls[0].init.headers.Authorization.includes('SECRET'), false);
   assert.equal(result.status, 'succeeded');
   assert.equal(result.mime, 'image/png');
@@ -70,11 +72,13 @@ test('Alibaba standard VIAPI signs RPC, sends Url and downloads ImageURL', async
     return new Response(pngBytes, { status: 200, headers: { 'content-type': 'image/png' } });
   };
   const client = provider.createUpscaleProvider('aliyun-viapi', { provider: 'aliyun-viapi', accessKeyId: 'LTAIexample', accessKeySecret: 'SECRET' });
-  const result = await client.upscale({ modelId: 'aliyun-standard-super-resolution', imageUrl: 'https://cdn.example/in.png', scale: 2 });
+  const result = await client.upscale({ modelId: 'aliyun-standard-super-resolution', imageUrl: 'https://cdn.example/in.png', scale: 2, outputFormat: 'jpg', outputQuality: 72 });
   const requestUrl = new URL(calls[0]);
   assert.equal(requestUrl.searchParams.get('Action'), 'MakeSuperResolutionImage');
   assert.equal(requestUrl.searchParams.get('Url'), 'https://cdn.example/in.png');
   assert.equal(requestUrl.searchParams.get('UpscaleFactor'), '2');
+  assert.equal(requestUrl.searchParams.get('OutputFormat'), 'jpg');
+  assert.equal(requestUrl.searchParams.get('OutputQuality'), '72');
   assert.ok(requestUrl.searchParams.get('Signature'));
   assert.equal(requestUrl.searchParams.get('Signature').includes('SECRET'), false);
   assert.equal(calls[1], 'https://result.example/out.png');
@@ -150,12 +154,14 @@ test('catalog keeps fixed cloud models outside the generic model discovery flow'
 test('cloud connection guide points beginners to key pages and warns against user creation', () => {
   assert.match(catalogSource, /console\.cloud\.tencent\.com\/cam\/capi/);
   assert.match(catalogSource, /console\.cloud\.tencent\.com\/cos\/bucket/);
+  assert.match(catalogSource, /buy\.cloud\.tencent\.com\/price\/ci\/calculator/);
   assert.match(catalogSource, /ram\.console\.aliyun\.com\/profile\/access-keys/);
   assert.match(guideSource, /照着下面做就行/);
   assert.match(guideSource, /勾选“我已知晓风险”/);
   assert.match(guideSource, /切换使用子账号密钥”不用点/);
   assert.match(guideSource, /不用进入“用户”或创建 RAM 用户/);
   assert.match(guideSource, /腾讯云还需要一个 COS 存储桶/);
+  assert.match(guideSource, /费用说明/);
   assert.match(connectionRouteSource, /requiresBucketSetup/);
   assert.match(guideSource, /更多官方信息（可跳过）/);
 });

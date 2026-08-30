@@ -81,6 +81,32 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.equal(result.camera.zoom, 3);
 });
 
+test('canvas upscale nodes preserve provider-specific settings', () => {
+  const cloud = model.createUpscaleNode({ x: 0, y: 0 }, {
+    model: 'aliyun-standard-super-resolution',
+    scale: 3,
+    outputFormat: 'jpg',
+    outputQuality: 72,
+  });
+  assert.equal(cloud.data.params.model, 'aliyun-standard-super-resolution');
+  assert.equal(cloud.data.params.scale, 3);
+  assert.equal(cloud.data.params.outputFormat, 'jpg');
+  assert.equal(cloud.data.params.outputQuality, 72);
+
+  const legacy = model.createUpscaleNode({ x: 0, y: 0 }, {
+    model: 'seedvr2-7b',
+    scale: 4,
+    target: '4K',
+    seed: 123,
+    colorCorrection: 'none',
+    algorithm: 'nearest',
+  });
+  assert.equal(legacy.data.params.target, '4K');
+  assert.equal(legacy.data.params.seed, 123);
+  assert.equal(legacy.data.params.colorCorrection, 'none');
+  assert.equal(legacy.data.params.algorithm, 'nearest');
+});
+
 function layerNode(id, zIndex) {
   return {
     id,
