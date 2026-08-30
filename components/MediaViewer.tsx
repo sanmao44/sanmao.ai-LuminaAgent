@@ -484,19 +484,22 @@ export default function MediaViewer({
               <button type="button" onClick={() => updateZoom(zoom + 0.1)} title="放大">＋</button>
             </div>
             {onNavigate && <span className="media-viewer-nav-hint">← / → 切换</span>}
-            <button type="button" onClick={() => setCompare((value) => !value)} disabled={!canCompare}>
-              {compare ? "单图预览" : "前后对比"}
+            <button type="button" className={`media-viewer-header-button media-viewer-toggle-button ${compare ? "active" : ""}`} onClick={() => setCompare((value) => !value)} disabled={!canCompare}>
+              <span className="media-viewer-button-icon" aria-hidden="true">{compare ? "◉" : "◌"}</span>
+              <span>{compare ? "单图预览" : "前后对比"}</span>
             </button>
             {canCompare && compare && (
               <div className="media-viewer-compare-mode" role="group" aria-label="对比模式">
-                <button type="button" className={compareMode === "slider" ? "active" : ""} onClick={() => setCompareMode("slider")}>滑块</button>
-                <button type="button" className={compareMode === "side-by-side" ? "active" : ""} onClick={() => setCompareMode("side-by-side")}>并排</button>
+                <button type="button" className={compareMode === "slider" ? "active" : ""} onClick={() => setCompareMode("slider")}><span aria-hidden="true">↔</span>滑块</button>
+                <button type="button" className={compareMode === "side-by-side" ? "active" : ""} onClick={() => setCompareMode("side-by-side")}><span aria-hidden="true">▥</span>并排</button>
               </div>
             )}
-            {parameters && <button type="button" className={showParameters ? "active" : ""} onClick={() => setShowParameters((value) => !value)}>⚙ 参数调整</button>}
-            <button type="button" onClick={() => download("original")}>↓ 原图</button>
-            <button type="button" onClick={() => download("share")} disabled={item.kind !== "image"}>⇩ 分享版</button>
-            <button type="button" onClick={onClose} aria-label="关闭预览">×</button>
+            {parameters && <button type="button" className={`media-viewer-header-button media-viewer-settings-button ${showParameters ? "active" : ""}`} onClick={() => setShowParameters((value) => !value)}><span className="media-viewer-button-icon" aria-hidden="true">⚙</span><span>参数调整</span></button>}
+            <div className="media-viewer-download-group" role="group" aria-label="下载">
+              <button type="button" className="media-viewer-download-button original" onClick={() => download("original")}><span className="media-viewer-button-icon" aria-hidden="true">↓</span><span>原图</span></button>
+              <button type="button" className="media-viewer-download-button share" onClick={() => download("share")} disabled={item.kind !== "image"}><span className="media-viewer-button-icon" aria-hidden="true">⇩</span><span>分享版</span></button>
+            </div>
+            <button type="button" className="media-viewer-close-button" onClick={onClose} aria-label="关闭预览"><span aria-hidden="true">×</span></button>
           </div>
         </header>
 
