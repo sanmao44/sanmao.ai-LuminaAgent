@@ -25,6 +25,23 @@ function imageExtension(contentType: string) {
   return contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png';
 }
 
+function safeImageExtension(contentType: string) {
+  const extension = imageExtension(contentType);
+  return extension === 'jpg' || extension === 'webp' || extension === 'png' ? extension : 'png';
+}
+
+/** Saves a provider result without exposing the provider's temporary URL to the browser. */
+export async function persistImageBuffer(buffer: Buffer, contentType = 'image/png', configuredPath?: string) {
+  if (!Buffer.isBuffer(buffer) || buffer.byteLength <= 0) throw new Error('服务商没有返回有效的图片数据');
+  if (buffer.byteLength > MAX_STORED_IMAGE_BYTES) throw new Error('高清图片超过 100MB，无法保存');
+  const root = path.resolve(configuredPath?.trim() || configuredRoot());
+  await mkdir(root, { recursive: true });
+  const ext = safeImageExtension(contentType);
+  const name = `${Date.now()}-${randomUUID()}.${ext}`;
+  await writeFile(path.join(root, name), buffer, { flag: 'wx' });
+  return { url: `/api/storage/file?name=${encodeURIComponent(name)}`, path: root, name, bytes: buffer.byteLength, contentType: ext === 'jpg' ? 'image/jpeg' : `image/${ext}` };
+}
+
 async function readImageBuffer(url: string) {
   if (url.startsWith('data:image/')) {
     const match = url.match(/^data:image\/(png|jpeg|webp);base64,(.+)$/s);

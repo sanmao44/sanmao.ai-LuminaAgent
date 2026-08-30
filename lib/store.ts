@@ -1,11 +1,12 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling } from './types';
+import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling, UpscaleConnection, UpscaleConnectionStatus, UpscaleProviderId } from './types';
 import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
 import { inferModelKind, isImageEditOnlyModel, resolveModelKind } from './model-kind';
+import { buildPublicUpscaleModels } from './upscale-catalog';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -18,13 +19,28 @@ type StoreData = {
   models: RegistryModel[];
   settings: AppSettings;
   webSearch?: { provider: WebSearchApiProvider; encryptedApiKey: string };
+  upscaleConnections: StoredUpscaleConnection[];
+};
+
+type StoredUpscaleConnection = {
+  provider: UpscaleProviderId;
+  encryptedSecretId?: string;
+  encryptedSecretKey?: string;
+  encryptedAccessKeyId?: string;
+  encryptedAccessKeySecret?: string;
+  bucket?: string;
+  region?: string;
+  status: UpscaleConnectionStatus;
+  errorCode?: string;
+  credentialVerifiedAt?: string;
+  updatedAt: string;
 };
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const statePath = path.join(dataDir, 'state.json');
 const keyPath = path.join(dataDir, 'master.key');
-const CURRENT_SCHEMA_VERSION = 2;
-const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultVideoModelId: null, defaultProviderId: null, imageStoragePath: '', videoStoragePath: '' } };
+const CURRENT_SCHEMA_VERSION = 3;
+const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultVideoModelId: null, defaultProviderId: null, imageStoragePath: '', videoStoragePath: '' }, upscaleConnections: [] };
 
 let stateMutationChain: Promise<unknown> = Promise.resolve();
 let stateCorruptionError = '';
@@ -88,15 +104,20 @@ async function readState(): Promise<StoreData> {
     if (!parsed || typeof parsed !== 'object' || (!Array.isArray(parsed.providers) && parsed.providers !== undefined) || (!Array.isArray(parsed.models) && parsed.models !== undefined) || (parsed.settings !== undefined && (!parsed.settings || typeof parsed.settings !== 'object'))) {
       throw new Error('state.json 数据结构无效');
     }
-    return {
+    const nextState: StoreData = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       providers: Array.isArray(parsed.providers) ? parsed.providers : [],
       models: Array.isArray(parsed.models) ? parsed.models : [],
       settings: { ...emptyState.settings, ...(parsed.settings || {}) },
+      upscaleConnections: Array.isArray(parsed.upscaleConnections) ? parsed.upscaleConnections.filter((item): item is StoredUpscaleConnection => Boolean(item && typeof item === 'object' && (item as StoredUpscaleConnection).provider && ['tencent-ci', 'aliyun-viapi'].includes((item as StoredUpscaleConnection).provider))) : [],
       webSearch: parsed.webSearch && typeof parsed.webSearch === 'object' && parsed.webSearch.encryptedApiKey && parsed.webSearch.provider === 'baidu-qianfan'
         ? { provider: 'baidu-qianfan', encryptedApiKey: parsed.webSearch.encryptedApiKey }
         : undefined,
     };
+    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(parsed.upscaleConnections)) {
+      await writeStateDirect(nextState);
+    }
+    return nextState;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
       if (stateCorruptionError) throw new Error(stateCorruptionError);
@@ -230,9 +251,27 @@ export async function getPublicState(): Promise<PublicState> {
   try { webSearchKey = state.webSearch?.encryptedApiKey ? await decryptSecret(state.webSearch.encryptedApiKey) : ''; } catch {}
   const anySearchConfigured = Boolean(process.env.ANYSEARCH_API_KEY?.trim());
   const qianfanEnvConfigured = Boolean(process.env.QIANFAN_API_KEY?.trim());
+  const upscaleConnections: UpscaleConnection[] = await Promise.all(state.upscaleConnections.map(async (connection) => {
+    const encryptedCredential = connection.provider === 'tencent-ci' ? connection.encryptedSecretId : connection.encryptedAccessKeyId;
+    let credential = '';
+    try { credential = encryptedCredential ? await decryptSecret(encryptedCredential) : ''; } catch {}
+    return {
+      provider: connection.provider,
+      connected: connection.status === 'healthy' && Boolean(credential),
+      maskedCredential: credential ? maskKey(credential) : '••••••••',
+      status: connection.status,
+      verifiedAt: connection.credentialVerifiedAt,
+      bucket: connection.bucket,
+      region: connection.region,
+      errorCode: connection.errorCode,
+    };
+  }));
+  const connectedProviders = new Set(upscaleConnections.filter((connection) => connection.connected).map((connection) => connection.provider));
   return {
     providers,
     models: state.models,
+    upscaleConnections,
+    upscaleModels: buildPublicUpscaleModels(connectedProviders),
     settings: {
       ...state.settings,
       webSearchProvider: 'anysearch',
@@ -262,6 +301,78 @@ export async function setWebSearchApiConfig(provider: WebSearchApiProvider, apiK
 
 export async function clearWebSearchApiConfig() {
   await mutateState((state) => { delete state.webSearch; });
+}
+
+export type UpscaleConnectionCredentials = {
+  provider: UpscaleProviderId;
+  secretId?: string;
+  secretKey?: string;
+  accessKeyId?: string;
+  accessKeySecret?: string;
+  bucket?: string;
+  region?: string;
+};
+
+export async function getUpscaleConnection(provider: UpscaleProviderId) {
+  const state = await readState();
+  return state.upscaleConnections.find((connection) => connection.provider === provider) || null;
+}
+
+export async function getUpscaleConnectionWithCredentials(provider: UpscaleProviderId): Promise<(UpscaleConnectionCredentials & { status: UpscaleConnectionStatus; errorCode?: string; credentialVerifiedAt?: string }) | null> {
+  const connection = await getUpscaleConnection(provider);
+  if (!connection) return null;
+  return {
+    provider,
+    secretId: connection.encryptedSecretId ? await decryptSecret(connection.encryptedSecretId) : undefined,
+    secretKey: connection.encryptedSecretKey ? await decryptSecret(connection.encryptedSecretKey) : undefined,
+    accessKeyId: connection.encryptedAccessKeyId ? await decryptSecret(connection.encryptedAccessKeyId) : undefined,
+    accessKeySecret: connection.encryptedAccessKeySecret ? await decryptSecret(connection.encryptedAccessKeySecret) : undefined,
+    bucket: connection.bucket,
+    region: connection.region,
+    status: connection.status,
+    errorCode: connection.errorCode,
+    credentialVerifiedAt: connection.credentialVerifiedAt,
+  };
+}
+
+export async function saveUpscaleConnection(input: UpscaleConnectionCredentials, status: UpscaleConnectionStatus = 'healthy') {
+  return mutateState(async (state) => {
+    const current = state.upscaleConnections.find((connection) => connection.provider === input.provider);
+    const now = new Date().toISOString();
+    const next: StoredUpscaleConnection = {
+      ...(current || {}),
+      provider: input.provider,
+      ...(input.secretId?.trim() ? { encryptedSecretId: await encryptSecret(input.secretId.trim()) } : {}),
+      ...(input.secretKey?.trim() ? { encryptedSecretKey: await encryptSecret(input.secretKey.trim()) } : {}),
+      ...(input.accessKeyId?.trim() ? { encryptedAccessKeyId: await encryptSecret(input.accessKeyId.trim()) } : {}),
+      ...(input.accessKeySecret?.trim() ? { encryptedAccessKeySecret: await encryptSecret(input.accessKeySecret.trim()) } : {}),
+      ...(input.bucket !== undefined ? { bucket: input.bucket.trim() || undefined } : {}),
+      ...(input.region !== undefined ? { region: input.region.trim() || undefined } : {}),
+      status,
+      errorCode: undefined,
+      credentialVerifiedAt: status === 'healthy' ? now : current?.credentialVerifiedAt,
+      updatedAt: now,
+    };
+    const index = state.upscaleConnections.findIndex((connection) => connection.provider === input.provider);
+    if (index >= 0) state.upscaleConnections[index] = next;
+    else state.upscaleConnections.push(next);
+    return next;
+  });
+}
+
+export async function setUpscaleConnectionStatus(provider: UpscaleProviderId, status: UpscaleConnectionStatus, errorCode?: string) {
+  await mutateState((state) => {
+    const connection = state.upscaleConnections.find((item) => item.provider === provider);
+    if (!connection) return;
+    connection.status = status;
+    connection.errorCode = errorCode;
+    if (status === 'healthy') connection.credentialVerifiedAt = new Date().toISOString();
+    connection.updatedAt = new Date().toISOString();
+  });
+}
+
+export async function removeUpscaleConnection(provider: UpscaleProviderId) {
+  await mutateState((state) => { state.upscaleConnections = state.upscaleConnections.filter((connection) => connection.provider !== provider); });
 }
 
 type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; videoApiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; textProtocol?: ProviderTextProtocol; videoTransport?: ProviderConnection['videoTransport']; videoBaseUrl?: string; videoTaskPath?: string; videoTaskStatusPath?: string; videoGenerationPath?: string; videoQueryPath?: string; videoModelsPath?: string; videoPricingPath?: string; jimengCliPath?: string; jimengCliPollSeconds?: number; authHeader?: string; authPrefix?: string };

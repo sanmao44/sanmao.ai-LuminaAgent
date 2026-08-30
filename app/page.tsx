@@ -16,6 +16,7 @@ import VideoStudio from '@/components/VideoStudio';
 import SelectMenu from '@/components/SelectMenu';
 import JimengProviderCard from '@/components/JimengProviderCard';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
+import UpscaleConnectionGuide from '@/components/UpscaleConnectionGuide';
 import VideoRecordCard from '@/components/VideoRecordCard';
 import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
@@ -62,6 +63,8 @@ function compareContainSize(image, viewport) {
 const emptyState = {
     providers: [],
     models: [],
+    upscaleConnections: [],
+    upscaleModels: [],
     settings: {
         agentModelId: null,
         defaultImageModelId: null,
@@ -173,7 +176,7 @@ function platformLabel(platform) {
     return providerPresets.find((item)=>item.value === platform)?.short || '自定义';
 }
 function sourceLabel(source) {
-    return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : '直接生成';
+    return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : source === 'upscale' ? '高清放大' : '直接生成';
 }
 function generationLogSourceLabel(log) {
     if (log.source === 'canvas') return '画布生成';
@@ -1724,8 +1727,9 @@ function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
         ]
     });
 }
-function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onMaskEdit, onSubmit }) {
+function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onMaskEdit, onOpenProviders, onSubmit }) {
     const ratio = editorRatio(editor);
+    const selectedUpscaleOption = editor.mode === 'upscale' ? upscaleModelOptions.find((model)=>model.id === editor.modelId) || upscaleModelOptions.find((model)=>model.id === 'tencent-super-resolution') : null;
     const dimensions = editor.sizeMode === 'custom' ? {
         width: editor.customWidth,
         height: editor.customHeight
@@ -1914,7 +1918,7 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                 }),
                                                 /*#__PURE__*/ _jsx(Dropdown, {
                                                     value: String(editor.scale),
-                                                    options: upscaleScales.map((scale)=>({
+                                                    options: (selectedUpscaleOption?.scales || upscaleScales).map((scale)=>({
                                                             value: String(scale),
                                                             label: `${scale}×`
                                                         })),
@@ -1924,6 +1928,31 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultPro
                                                         })
                                                 })
                                             ]
+                                        })
+                                    ]
+                                }),
+                                editor.mode === 'upscale' && selectedUpscaleOption && /*#__PURE__*/ _jsxs("div", {
+                                    className: "upscale-model-note",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            children: [
+                                                /*#__PURE__*/ _jsx("strong", {
+                                                    children: selectedUpscaleOption.description || '提升分辨率和清晰度'
+                                                }),
+                                                /*#__PURE__*/ _jsx("small", {
+                                                    children: selectedUpscaleOption.detail || selectedUpscaleOption.providerName
+                                                })
+                                            ]
+                                        }),
+                                        !selectedUpscaleOption.connected && /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: "ghost-button",
+                                            onClick: onOpenProviders,
+                                            children: "立即接入"
+                                        }),
+                                        selectedUpscaleOption.generative && /*#__PURE__*/ _jsx("small", {
+                                            className: "warning",
+                                            children: "生成式增强可能改变部分细节，不建议用于 Logo、文字、证件或精确商品细节。"
                                         })
                                     ]
                                 }),
@@ -2662,7 +2691,7 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                         name: "upscale",
                                                         size: 15
                                                     }),
-                                                    "超分"
+                                                    "高清放大"
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("button", {
@@ -4913,6 +4942,7 @@ export default function Page() {
     const [generateSettingsReady, setGenerateSettingsReady] = useState(false);
     const modelPreferencesRestoredRef = useRef(false);
     const [generateTasks, setGenerateTasks] = useState([]);
+    const upscaleRecoveryRef = useRef(new Set());
     const [generateTasksReady, setGenerateTasksReady] = useState(false);
     const [generateClock, setGenerateClock] = useState(Date.now());
     const [resultItems, setResultItems] = useState([]);
@@ -5006,15 +5036,19 @@ export default function Page() {
     const availableEditModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('edit')), [
         availableImageModels
     ]);
-    const availableUpscaleModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('upscale')), [
-        availableImageModels
+    const availableUpscaleModels = useMemo(()=>[
+        ...availableImageModels.filter((m)=>m.capabilities.includes('upscale')),
+        ...(state.upscaleModels || [])
+    ], [
+        availableImageModels,
+        state.upscaleModels
     ]);
     const agentModel = availableChatModels.find((m)=>m.id === state.settings.agentModelId) || availableChatModels[0];
     const defaultImageModel = selectAutomaticModel(availableGenerationModels, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-    const defaultUpscaleModel = selectAutomaticModel(availableUpscaleModels, state.settings.defaultProviderId);
+    const defaultUpscaleModel = (state.upscaleModels || []).find((model)=>model.connected && model.id === 'tencent-super-resolution') || (state.upscaleModels || []).find((model)=>model.connected && model.id === 'aliyun-standard-super-resolution') || selectAutomaticModel(availableUpscaleModels.filter((model)=>!model.provider || !['tencent-ci', 'aliyun-viapi'].includes(model.provider) || model.connected), state.settings.defaultProviderId);
     const defaultProvider = state.providers.find((provider)=>provider.id === state.settings.defaultProviderId && isProviderModelLibraryEnabled(provider));
     const selectedGenerateModel = generateModelId !== 'auto' ? activeProviderModels.find((m)=>m.id === generateModelId) : defaultImageModel;
-    const selectedUpscaleModel = generateUpscaleModelId !== 'auto' ? activeProviderModels.find((m)=>m.id === generateUpscaleModelId) : defaultUpscaleModel;
+    const selectedUpscaleModel = generateUpscaleModelId !== 'auto' ? availableUpscaleModels.find((m)=>m.id === generateUpscaleModelId) : defaultUpscaleModel;
     const generateUpscaleMode = generateWorkflow === 'upscale';
     const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
     const activeAgentChatModel = activeAgentModelId === 'auto' ? agentModel : availableChatModels.find((model)=>model.id === activeAgentModelId);
@@ -5494,6 +5528,34 @@ export default function Page() {
         generateTasksReady,
         gallery
     ]);
+    useEffect(()=>{
+        if (!generateTasksReady) return;
+        const pending = generateTasks.filter((task)=>task.mode === 'upscale' && task.upscaleTaskId && task.status !== 'success' && task.status !== 'error' && !upscaleRecoveryRef.current.has(task.upscaleTaskId));
+        for (const task of pending) {
+            upscaleRecoveryRef.current.add(task.upscaleTaskId);
+            void waitForUpscaleTask(task.upscaleTaskId, { taskId: task.upscaleTaskId }).then(async (data)=>{
+                if (!data.images?.length || gallery.some((item)=>item.upscaleTaskId === task.upscaleTaskId)) return;
+                const sourceImageId = task.request?.sourceImageId || task.request?.references?.[0]?.id;
+                const items = await recordImages(data.images, {
+                    prompt: task.prompt || 'Upscale this image',
+                    modelId: data.model?.id,
+                    modelName: data.model?.name,
+                    providerName: data.model?.provider,
+                    outputSize: `${task.request?.upscaleScale || 2}× 超分`,
+                    source: 'upscale',
+                    parentId: sourceImageId,
+                    sourceImageId,
+                    upscaleProvider: data.model?.provider,
+                    upscaleModel: data.model?.id,
+                    upscaleScale: task.request?.upscaleScale || 2,
+                    upscaleTaskId: task.upscaleTaskId
+                });
+                setResultItems((old)=>[...items, ...old]);
+                patchGenerateTask(task.id, { status: 'success', completedAt: Date.now(), items, itemIds: items.map((item)=>item.id), info: `${data.model?.name || '高清放大'} · 已恢复完成` });
+                notify('已恢复完成的高清放大任务。');
+            }).catch((error)=>patchGenerateTask(task.id, { status: 'error', completedAt: Date.now(), error: error instanceof Error ? error.message : '高清任务恢复失败' })).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
+        }
+    }, [generateTasksReady, generateTasks, gallery]);
     useEffect(()=>{
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();
@@ -7172,6 +7234,11 @@ export default function Page() {
                 createdAt: now + index,
                 favorite: false,
                 parentId: meta.parentId,
+                sourceImageId: meta.sourceImageId,
+                upscaleProvider: meta.upscaleProvider,
+                upscaleModel: meta.upscaleModel,
+                upscaleScale: meta.upscaleScale,
+                upscaleTaskId: meta.upscaleTaskId,
                 references: meta.references?.length ? meta.references : meta.compareReference ? [meta.compareReference] : undefined,
                 compareReferenceUrl: meta.references?.[0]?.url || meta.compareReference?.url,
                 compareReferenceName: meta.references?.[0]?.name || meta.compareReference?.name,
@@ -7289,7 +7356,7 @@ export default function Page() {
         ];
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
         const submittedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
-        const submittedModel = submittedModelId !== 'auto' ? activeProviderModels.find((model)=>model.id === submittedModelId) : submittedUpscaleMode ? selectedUpscaleModel : defaultImageModel;
+        const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : activeProviderModels.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : defaultImageModel;
         const submittedSizeMode = savedRequest?.sizeMode || sizeMode;
         const submittedCustomWidth = savedRequest?.customWidth || customWidth;
         const submittedCustomHeight = savedRequest?.customHeight || customHeight;
@@ -7346,6 +7413,7 @@ export default function Page() {
             upscaleColorCorrection: taskUpscaleColorCorrection,
             upscaleAlgorithm: taskUpscaleAlgorithm,
             references: taskRefs,
+            sourceImageId: submittedUpscaleMode ? taskRefs[0]?.id : undefined,
             mask: isAngleGeneration ? null : savedRequest.mask ? {
                 ...savedRequest.mask
             } : null,
@@ -7373,6 +7441,7 @@ export default function Page() {
             upscaleColorCorrection: taskUpscaleColorCorrection,
             upscaleAlgorithm: taskUpscaleAlgorithm,
             references: taskRefs,
+            sourceImageId: submittedUpscaleMode ? taskRefs[0]?.id : undefined,
             mask: isAngleGeneration ? null : generateMask ? {
                 ...generateMask
             } : null,
@@ -7448,6 +7517,7 @@ export default function Page() {
                         prompt: taskPrompt,
                         model: taskModelId === 'auto' ? taskModel?.id : taskModelId,
                         reference: taskRefs[0].dataUrl,
+                        sourceImageId: taskRefs[0].id,
                         referenceImages: referenceRecords,
                         scale: taskUpscaleScale,
                         size: `${targetSize.width}x${targetSize.height}`,
@@ -7456,8 +7526,10 @@ export default function Page() {
                         resizeMethod: taskUpscaleAlgorithm
                     })
                 });
-                const upscaleData = await upscaleRes.json();
+                let upscaleData = await upscaleRes.json();
                 if (!upscaleRes.ok) throw new Error(upscaleData.error || '图片超分失败');
+                if (upscaleData.taskId) patchGenerateTask(taskId, { upscaleTaskId: upscaleData.taskId, info: `${upscaleData.model?.name || '高清放大'} · 后台处理中` });
+                if (upscaleData.taskId && (upscaleData.status === 'queued' || upscaleData.status === 'processing')) upscaleData = await waitForUpscaleTask(upscaleData.taskId, upscaleData);
                 recordImagePreference(upscaleData.model?.id);
                 const durationMs = Math.round(performance.now() - requestStartedAt);
                 const items = await recordImages(upscaleData.images || [], {
@@ -7469,7 +7541,13 @@ export default function Page() {
                     outputSize: `${taskUpscaleScale}× 超分`,
                     outputFormat: 'png',
                     generationMs: durationMs,
-                    source: 'edit',
+                    source: 'upscale',
+                    parentId: upscaleData.sourceImageId || taskRefs[0].id,
+                    sourceImageId: upscaleData.sourceImageId || taskRefs[0].id,
+                    upscaleProvider: upscaleData.model?.provider,
+                    upscaleModel: upscaleData.model?.id,
+                    upscaleScale: taskUpscaleScale,
+                    upscaleTaskId: upscaleData.taskId,
                     references: referenceRecords
                 });
                 const info = `${upscaleData.model?.name || '超分模型'} · ${taskUpscaleScale}× · 图片超分 · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
@@ -8911,7 +8989,8 @@ export default function Page() {
                     startedAt: Date.now(),
                     info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · 后台处理中`,
                     items: [],
-                    itemIds: []
+                    itemIds: [],
+                    request: currentEditor.mode === 'upscale' ? { sourceImageId: currentEditor.item.id, upscaleScale: currentEditor.scale, modelId: currentEditor.modelId, references: [{ id: currentEditor.item.id, name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }] } : undefined
                 },
                 ...old
             ]);
@@ -8920,6 +8999,19 @@ export default function Page() {
         setEditor(null);
         notify('已提交后台任务，可以关闭修改窗口或继续修改下一张；完成后会自动进入创作记录。');
         void processEditorTask(currentEditor, taskId);
+    }
+    async function waitForUpscaleTask(taskId, initialData = {}) {
+        let lastData = initialData;
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+            await new Promise((resolve)=>window.setTimeout(resolve, attempt === 0 ? 800 : 2000));
+            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+            const data = await response.json().catch(()=>({}));
+            if (!response.ok) throw new Error(data.error || '读取高清任务状态失败');
+            lastData = { ...lastData, ...data, taskId, status: data.task?.status || data.status, images: data.images || lastData.images };
+            if (lastData.status === 'succeeded') return lastData;
+            if (lastData.status === 'failed') throw new Error(data.task?.error || '高清处理失败');
+        }
+        throw new Error('高清处理时间较长，请稍后重试。');
     }
     async function processEditorTask(currentEditor, taskId) {
         const requestStartedAt = performance.now();
@@ -8940,6 +9032,7 @@ export default function Page() {
             const endpoint = currentEditor.mode === 'upscale' ? '/api/upscale' : '/api/edit';
             const body = currentEditor.mode === 'upscale' ? {
                 taskId,
+                sourceImageId: currentEditor.item.id,
                 model: currentEditor.modelId,
                 reference: currentEditor.item.url,
                 referenceImages: [editorReference],
@@ -8973,8 +9066,10 @@ export default function Page() {
                 },
                 body: JSON.stringify(body)
             });
-            const data = await res.json();
+            let data = await res.json();
             if (!res.ok) throw new Error(data.error || '处理失败');
+            if (currentEditor.mode === 'upscale' && data.taskId) patchGenerateTask(taskId, { upscaleTaskId: data.taskId, info: `${data.model?.name || '高清放大'} · 后台处理中` });
+            if (currentEditor.mode === 'upscale' && data.taskId && (data.status === 'queued' || data.status === 'processing')) data = await waitForUpscaleTask(data.taskId, data);
             const manualModel = currentEditor.modelId !== 'auto' ? state.models.find((model)=>model.id === currentEditor.modelId) : undefined;
             const actualModel = data.model?.id ? state.models.find((model)=>model.id === data.model.id) : undefined;
             recordModelCall({
@@ -9007,8 +9102,13 @@ export default function Page() {
                 providerName: data.model?.provider,
                 aspectRatio: currentEditor.ratio,
                 outputSize: currentEditor.mode === 'upscale' ? `${currentEditor.scale}× 超分` : undefined,
-                source: 'edit',
+                source: currentEditor.mode === 'upscale' ? 'upscale' : 'edit',
                 parentId: currentEditor.item.id,
+                sourceImageId: currentEditor.mode === 'upscale' ? currentEditor.item.id : undefined,
+                upscaleProvider: currentEditor.mode === 'upscale' ? data.model?.provider : undefined,
+                upscaleModel: currentEditor.mode === 'upscale' ? data.model?.id : undefined,
+                upscaleScale: currentEditor.mode === 'upscale' ? currentEditor.scale : undefined,
+                upscaleTaskId: currentEditor.mode === 'upscale' ? data.taskId : undefined,
                 generationMs: durationMs,
                 references: [editorReference]
             });
@@ -10966,7 +11066,7 @@ export default function Page() {
                                                                     }),
                                                                     /*#__PURE__*/ _jsx(Dropdown, {
                                                                         value: String(generateUpscaleScale),
-                                                                        options: upscaleScales.map((scale)=>({
+                                                                        options: (selectedUpscaleModel?.scales || upscaleScales).map((scale)=>({
                                                                                 value: String(scale),
                                                                                 label: `${scale}×`
                                                                             })),
@@ -11858,6 +11958,10 @@ export default function Page() {
                                                     [
                                                         'canvas',
                                                         '画布生成'
+                                                    ],
+                                                    [
+                                                        'upscale',
+                                                        '高清放大'
                                                     ]
                                                 ].map(([value, label])=>/*#__PURE__*/ _jsx("button", {
                                                         className: historyFilter === value ? 'active' : '',
@@ -12054,7 +12158,7 @@ export default function Page() {
                                                 children: gallery.length || videoTasks.length ? '没有符合条件的作品' : '还没有创作记录'
                                             }),
                                             /*#__PURE__*/ _jsx("p", {
-                                                children: gallery.length ? '换个关键词或筛选条件试试。' : '每次生图、助手生成、画布生成和图片修改都会自动保存在这个浏览器里。'
+                                                    children: gallery.length ? '换个关键词或筛选条件试试。' : '每次生图、助手生成、画布生成、图片修改和高清放大都会自动保存在这个浏览器里。'
                                             }),
                                             !gallery.length && /*#__PURE__*/ _jsxs("div", {
                                                 className: "history-empty-actions",
@@ -13331,6 +13435,11 @@ export default function Page() {
                                     }),
                                     /*#__PURE__*/ _jsx(JimengProviderCard, {
                                         providers: state.providers,
+                                        onStateChanged: setState,
+                                        onNotify: notify
+                                    }),
+                                    /*#__PURE__*/ _jsx(UpscaleConnectionGuide, {
+                                        connections: state.upscaleConnections || [],
                                         onStateChanged: setState,
                                         onNotify: notify
                                     }),
@@ -14632,7 +14741,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                     name: "upscale",
                                                     size: 15
                                                 }),
-                                                "图片超分"
+                                                "高清放大"
                                             ]
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
@@ -14719,6 +14828,11 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                     setEditor(null);
                 },
                 onMaskEdit: ()=>setEditorMaskOpen(true),
+                onOpenProviders: ()=>{
+                    setEditorMaskOpen(false);
+                    setEditor(null);
+                    setSection('providers');
+                },
                 onSubmit: runEditor
             }),
             editorMaskOpen && editor?.mode === 'edit' && /*#__PURE__*/ _jsx(MaskEditor, {

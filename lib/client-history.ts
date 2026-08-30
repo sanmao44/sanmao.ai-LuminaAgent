@@ -2,7 +2,7 @@ import type { ClientReferenceImage, ReferenceImageRecord, WebSearchDecisionMeta,
 import type { AngleCameraState } from './angle-control';
 import { emitWorkspaceChange } from './workspace-events';
 
-export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas';
+export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas' | 'upscale';
 
 export type GalleryItem = {
   id: string;
@@ -20,6 +20,11 @@ export type GalleryItem = {
   createdAt: number;
   favorite: boolean;
   parentId?: string;
+  sourceImageId?: string;
+  upscaleProvider?: string;
+  upscaleModel?: string;
+  upscaleScale?: 1 | 2 | 3 | 4;
+  upscaleTaskId?: string;
   references?: ReferenceImageRecord[];
   compareReferenceUrl?: string;
   compareReferenceName?: string;

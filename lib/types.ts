@@ -1,6 +1,9 @@
 export type ProviderType = 'openai-compatible' | 'google-gemini';
 export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes';
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
+export type UpscaleProviderId = 'tencent-ci' | 'aliyun-viapi';
+export type UpscaleModelId = 'tencent-super-resolution' | 'aliyun-standard-super-resolution' | 'aliyun-generative-super-resolution';
+export type UpscaleConnectionStatus = 'healthy' | 'idle' | 'error' | 'needs-bucket' | 'needs-authorization';
 export type ModelKind = 'chat' | 'image' | 'video' | 'unknown';
 export type MediaKind = 'image' | 'video' | 'audio';
 export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos';
@@ -107,6 +110,37 @@ export type RegistryModel = {
   nativeSearchDetection?: NativeSearchDetection;
 };
 
+export type UpscaleConnection = {
+  provider: UpscaleProviderId;
+  connected: boolean;
+  maskedCredential: string;
+  status: UpscaleConnectionStatus;
+  verifiedAt?: string;
+  bucket?: string;
+  region?: string;
+  errorCode?: string;
+};
+
+export type UpscaleModel = {
+  id: UpscaleModelId;
+  provider: UpscaleProviderId;
+  providerId: string;
+  providerName: string;
+  displayName: string;
+  rawId: string;
+  description: string;
+  detail: string;
+  recommendation: string;
+  scales: Array<1 | 2 | 3 | 4>;
+  enabled: boolean;
+  published: boolean;
+  connected: boolean;
+  generative?: boolean;
+  links: { open: string; docs: ReadonlyArray<string>; pricing: string };
+  capabilities: ModelCapability[];
+  kind: 'image';
+};
+
 export type AppSettings = {
   agentModelId: string | null;
   defaultImageModelId: string | null;
@@ -125,6 +159,8 @@ export type PublicState = {
   providers: ProviderConnection[];
   models: RegistryModel[];
   settings: AppSettings;
+  upscaleConnections: UpscaleConnection[];
+  upscaleModels: UpscaleModel[];
 };
 
 export type GeneratedImage = {

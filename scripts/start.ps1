@@ -75,6 +75,13 @@ function Test-SanmaoMediaRelayRequired {
   if (-not (Test-Path -LiteralPath $statePath)) { return $false }
   try {
     $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $hasUpscaleConnection = @($state.upscaleConnections | Where-Object {
+        $_.status -eq 'healthy' -and (
+          (-not [string]::IsNullOrWhiteSpace([string]$_.encryptedSecretId) -and -not [string]::IsNullOrWhiteSpace([string]$_.encryptedSecretKey)) -or
+          (-not [string]::IsNullOrWhiteSpace([string]$_.encryptedAccessKeyId) -and -not [string]::IsNullOrWhiteSpace([string]$_.encryptedAccessKeySecret))
+        )
+      }).Count -gt 0
+    if ($hasUpscaleConnection) { return $true }
     foreach ($provider in @($state.providers)) {
       $transport = ([string]$provider.videoTransport).ToLowerInvariant()
       $hasCredential = -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedVideoApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.apiKey)

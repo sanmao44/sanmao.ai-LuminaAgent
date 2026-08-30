@@ -6,6 +6,8 @@ import { getPublicState, getRuntimeImageModelForCapability } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
+import { startCloudUpscale } from '@/lib/upscale-service';
+import { isUpscaleModelId } from '@/lib/upscale-catalog';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -30,6 +32,26 @@ export async function POST(request: Request) {
     if (!reference) { errorStatus = 400; throw new Error('请先选择一张需要超分的图片。'); }
     const publicState = await getPublicState();
     const resolvedReference = await resolveStoredImageReference(reference, publicState.settings.imageStoragePath);
+    const requestedModel = String(body.model || 'auto').trim();
+    const hasConnectedCloud = publicState.upscaleConnections.some((connection) => connection.connected);
+    if (isUpscaleModelId(requestedModel) || (requestedModel === 'auto' && hasConnectedCloud)) {
+      const cloud = await startCloudUpscale({
+        reference,
+        sourceImageId: String(body.sourceImageId || '').trim() || undefined,
+        requestedModel,
+        scale: body.scale,
+        idempotencyKey: String(body.idempotencyKey || body.taskId || '').trim() || undefined,
+      });
+      const task = cloud.task;
+      return Response.json({
+        ok: true,
+        taskId: task.id,
+        status: task.status,
+        images: task.localImageUrl ? [{ url: task.localImageUrl }] : [],
+        sourceImageId: task.sourceImageId,
+        model: { id: cloud.model.id, name: cloud.model.displayName, provider: cloud.model.providerName },
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const runtime = await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'upscale');
     if (!runtime) { errorStatus = 400; throw new Error('没有可用的超分模型。请重新读取模型，并启用 SeedVR2-7B 或其他带“超分”标签的模型。'); }
     const size = String(body.size || '').trim().toLowerCase();
