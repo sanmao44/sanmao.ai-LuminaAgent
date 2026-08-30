@@ -1,6 +1,7 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { publicUpscaleTask, refreshUpscaleTask } from '@/lib/upscale-service';
 import { findUpscaleTask, removeUpscaleTask } from '@/lib/upscale-task-store';
+import { getUpscaleCatalogModel } from '@/lib/upscale-catalog';
 
 export const runtime = 'nodejs';
 
@@ -9,7 +10,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const id = (await context.params).id;
   const task = await refreshUpscaleTask(id);
   if (!task) return Response.json({ error: '高清任务不存在。' }, { status: 404 });
-  return Response.json({ task: publicUpscaleTask(task), images: task.localImageUrl ? [{ url: task.localImageUrl }] : [] }, { headers: { 'Cache-Control': 'no-store' } });
+  const model = getUpscaleCatalogModel(task.model);
+  return Response.json({
+    task: publicUpscaleTask(task),
+    model: model ? { id: model.id, name: model.displayName, provider: model.providerName } : undefined,
+    images: task.localImageUrl ? [{ url: task.localImageUrl }] : [],
+  }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {

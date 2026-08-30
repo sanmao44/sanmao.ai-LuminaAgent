@@ -129,7 +129,7 @@ function xmlError(xml: string) {
 
 function mapProviderError(providerCode: string, status: number | undefined, requestId?: string, fallback = '云端高清处理失败') {
   const code = String(providerCode || '').toLowerCase();
-  if (/invalidaccesskey|accessdenied|invalidcredential|unauthorized/.test(code) || status === 401) return new UpscaleProviderError('访问密钥无效，请检查后重新连接。', 'INVALID_CREDENTIAL', { providerCode, status, requestId });
+  if (/invalidaccesskey|invalidcredential|unauthorized/.test(code) || status === 401) return new UpscaleProviderError('访问密钥无效，请检查后重新连接。', 'INVALID_CREDENTIAL', { providerCode, status, requestId });
   if (/signaturedoesnotmatch|authfailure|signatureinvalid/.test(code)) return new UpscaleProviderError('密钥验证失败，请确认 Secret 是否正确。', 'SIGNATURE_INVALID', { providerCode, status, requestId });
   if (/notpurchase|notpurchased|service.?not.?enabled|unsubscribed/.test(code)) return new UpscaleProviderError('该 AI 服务尚未开通，请先前往官方控制台开通。', 'NOT_PURCHASED', { providerCode, status, requestId });
   if (/permission|forbidden|no.?permission|access.?denied/.test(code) || status === 403) return new UpscaleProviderError('当前账号没有调用此功能的权限，请检查云平台授权。', 'PERMISSION_DENIED', { providerCode, status, requestId });

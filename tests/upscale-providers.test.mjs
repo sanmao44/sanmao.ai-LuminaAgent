@@ -114,6 +114,16 @@ test('cloud failures are mapped to actionable Chinese messages', async () => {
   });
 });
 
+test('permission failures are not misreported as invalid credentials', async () => {
+  globalThis.fetch = async () => new Response('<Error><Code>AccessDenied</Code><Message>permission</Message></Error>', { status: 403, headers: { 'content-type': 'application/xml' } });
+  const client = provider.createUpscaleProvider('tencent-ci', { provider: 'tencent-ci', secretId: 'AKID', secretKey: 'SECRET', bucket: 'demo', region: 'ap-shanghai' });
+  await assert.rejects(() => client.upscale({ modelId: 'tencent-super-resolution', imageUrl: 'https://cdn.example/in.png', scale: 2 }), (error) => {
+    assert.equal(error.code, 'PERMISSION_DENIED');
+    assert.match(error.message, /没有调用此功能的权限/);
+    return true;
+  });
+});
+
 test('VIAPI preprocessing keeps the documented dimensions, byte limit and transparency preference', async () => {
   const sharp = (await import('sharp')).default;
   const large = await sharp({ create: { width: 2400, height: 1400, channels: 3, background: { r: 120, g: 130, b: 140 } } }).png().toBuffer();
