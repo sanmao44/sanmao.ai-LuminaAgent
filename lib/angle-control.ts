@@ -37,6 +37,12 @@ export type AngleOutputSpec = {
 };
 
 export type AngleTargetSemantic = {
+  difficulty: {
+    level: AngleTargetDifficulty;
+    yaw_abs_deg: number;
+    pitch_abs_deg: number;
+    reason: 'small_reprojection' | 'moderate_reprojection' | 'large_reprojection';
+  };
   camera_motion: 'orbit_only';
   subject_motion: 'none';
   horizontal_view: {
@@ -73,6 +79,8 @@ export type AngleTargetSemantic = {
     postprocess_degrees: number;
   };
 };
+
+export type AngleTargetDifficulty = 'low' | 'medium' | 'high';
 
 export type AnglePreset = {
   id: string;
@@ -163,6 +171,31 @@ export function focalLengthToFov(focal: number) {
 /** Yaw is now directly relative to the subject's fixed anatomical front. */
 export function relativeViewYaw(camera: Pick<AngleCameraState, 'yaw'>) {
   return roundAngleRecordValue(effectiveAngle(camera.yaw));
+}
+
+/**
+ * Estimates how much unseen 3D structure the image model must infer. This is
+ * a user-facing difficulty hint, not a claim that the rendered angle is
+ * physically measurable from the source image.
+ */
+export function angleTargetDifficulty(camera: Pick<AngleCameraState, 'yaw' | 'pitch'>): AngleTargetDifficulty {
+  const yaw = Math.abs(effectiveAngle(camera.yaw));
+  const pitch = Math.abs(roundAngleRecordValue(camera.pitch));
+  if (yaw >= 60 || pitch >= 30 || yaw + pitch >= 75) return 'high';
+  if (yaw >= 30 || pitch >= 15 || yaw + pitch >= 40) return 'medium';
+  return 'low';
+}
+
+function targetDifficultySemantic(camera: Pick<AngleCameraState, 'yaw' | 'pitch'>): AngleTargetSemantic['difficulty'] {
+  const yaw = Math.abs(effectiveAngle(camera.yaw));
+  const pitch = Math.abs(roundAngleRecordValue(camera.pitch));
+  const level = angleTargetDifficulty(camera);
+  return {
+    level,
+    yaw_abs_deg: roundAngleRecordValue(yaw),
+    pitch_abs_deg: roundAngleRecordValue(pitch),
+    reason: level === 'high' ? 'large_reprojection' : level === 'medium' ? 'moderate_reprojection' : 'small_reprojection',
+  };
 }
 
 /**
@@ -360,6 +393,7 @@ export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 
   const horizontal = horizontalTargetSemantic(target.yaw);
   const vertical = verticalTargetSemantic(target.pitch);
   return {
+    difficulty: targetDifficultySemantic(target),
     camera_motion: 'orbit_only',
     subject_motion: 'none',
     horizontal_view: horizontal,
@@ -464,8 +498,8 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
     ? [
       'IMAGE ROLES',
       '图1是 SOURCE IMAGE：只从图1读取人物身份、脸部特征、发型、服装、姿态、场景、光照、色彩、材质与视觉风格。',
-      '图2是 TARGET CAMERA GUIDE：只读取目标相机位置、水平视角、上下视角、透视、主体比例、画面位置与裁切。',
-      '不要复制图2的灰模、网格、材质、灯光、背景或渲染风格；不要把图2当作人物外观参考。',
+      '图2是 TARGET CAMERA GUIDE：把图2当作相机与构图标注，只读取目标相机位置、水平视角、上下视角、透视、主体比例、画面位置与裁切。',
+      '图2中的中性轮廓、灰模或网格不是第二个人物；不要复制其外观、材质、灯光、背景或渲染风格。',
     ].join('\n')
     : [
       'IMAGE ROLES',
@@ -474,11 +508,11 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
     ].join('\n');
   const roll = compactRollDescription(semantic.roll.postprocess_degrees);
   const frameLine = options?.hasGuideReference
-    ? options.output
-      ? `按图2匹配主体在画框中的比例、位置与裁切；目标输出比例为 ${options.output.aspectRatio}（${options.output.width}×${options.output.height}）。`
+    ? semantic.framing.aspect_ratio && semantic.framing.width && semantic.framing.height
+      ? `按图2匹配主体在画框中的比例、位置与裁切；目标输出比例为 ${semantic.framing.aspect_ratio}（${semantic.framing.width}×${semantic.framing.height}）。`
       : '按图2匹配主体在画框中的比例、位置与裁切。'
-    : options?.output
-      ? `保持主体在画面中的比例、位置与裁切合理；目标输出比例为 ${options.output.aspectRatio}（${options.output.width}×${options.output.height}）。`
+    : semantic.framing.aspect_ratio && semantic.framing.width && semantic.framing.height
+      ? `保持主体在画面中的比例、位置与裁切合理；目标输出比例为 ${semantic.framing.aspect_ratio}（${semantic.framing.width}×${semantic.framing.height}）。`
       : '保持主体在画面中的比例、位置与裁切合理，并随目标相机调整。';
   const blocks = [
     'TASK\n从同一个时刻、同一个人物和同一个场景重新拍摄一张目标机位画面。',
@@ -491,6 +525,8 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
     ].join('\n'),
     [
       'CAMERA MOTION',
+      `camera_motion: ${semantic.camera_motion}`,
+      `subject_motion: ${semantic.subject_motion}`,
       'ONLY THE CAMERA MOVES.',
       'The SUBJECT remains frozen in the same world-space pose; do not rotate the head, torso or body, reposition the hands, or create a new pose.',
       'Preserve all 3D world-space relationships. Do NOT preserve the original 2D projection.',
@@ -513,7 +549,7 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
     [
       'CHANGE ONLY',
       options?.hasGuideReference ? '只改变最终目标 CAMERA 视角，以及匹配图2所必需的透视、主体比例、位置和裁切。' : '只改变最终目标 CAMERA 视角，以及为匹配目标构图所必需的透视、主体比例、位置和裁切。',
-      '禁止通过整图旋转、只改裁切、转动 SUBJECT 或把原始正面二维投影贴回去伪造机位变化。',
+      '禁止通过整图旋转、只改裁切、转动 SUBJECT、改变 Pose，或把原始二维投影贴回去伪造机位变化。',
     ].join('\n'),
     [
       'PRESERVE',

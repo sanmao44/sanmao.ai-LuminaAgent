@@ -3403,5 +3403,9 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .angle-semantic-summary>span{grid-column:1/-1;color:var(--angle-accent-2);font-size:7px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
 .angle-semantic-summary>div{display:grid;gap:2px;min-width:0;padding:5px 6px;border:1px solid color-mix(in srgb,var(--angle-line) 80%,transparent);border-radius:7px;background:color-mix(in srgb,var(--angle-panel) 46%,transparent)}
 .angle-semantic-summary b{color:var(--angle-muted);font-size:6.5px;letter-spacing:.08em}.angle-semantic-summary strong{min-width:0;overflow:hidden;color:var(--angle-text);font-size:7.5px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
+.angle-semantic-summary>.angle-difficulty-note{grid-column:1/-1;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:5px;padding:6px 7px;border-color:color-mix(in srgb,#f0bd61 42%,var(--angle-line));background:color-mix(in srgb,#f0bd61 8%,var(--angle-panel))}
+.angle-difficulty-note b{color:#f2c66f;font-size:7px;white-space:nowrap}.angle-difficulty-note span{min-width:0;color:var(--angle-text-2);font-size:7px;line-height:1.4}
+.angle-difficulty-note.low{border-color:color-mix(in srgb,#4bd39a 34%,var(--angle-line));background:color-mix(in srgb,#4bd39a 6%,var(--angle-panel))}.angle-difficulty-note.low b{color:#66dda9}.angle-difficulty-note.high{border-color:color-mix(in srgb,#ef7385 46%,var(--angle-line));background:color-mix(in srgb,#ef7385 7%,var(--angle-panel))}.angle-difficulty-note.high b{color:#ff9aa7}
+.angle-submit-warning{white-space:normal!important;line-height:1.45!important}
 .angle-rail-readout span{line-height:1.35}
 @media(max-width:620px){.angle-semantic-summary{gap:4px;margin-bottom:9px;padding:7px}.angle-semantic-summary>div{padding:4px 5px}.angle-semantic-summary strong{font-size:7px}}

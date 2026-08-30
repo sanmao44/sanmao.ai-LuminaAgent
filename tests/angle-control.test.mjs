@@ -40,6 +40,8 @@ test('compiles numeric camera state into explicit visual semantics and edit cons
   assert.match(prompt, /图1是 SOURCE IMAGE/);
   assert.match(prompt, /图2是 TARGET CAMERA GUIDE/);
   assert.match(prompt, /CAMERA MOTION/);
+  assert.match(prompt, /camera_motion: orbit_only/);
+  assert.match(prompt, /subject_motion: none/);
   assert.match(prompt, /ONLY THE CAMERA MOVES/);
   assert.match(prompt, /same world-space pose/);
   assert.match(prompt, /TARGET VIEW/);
@@ -107,6 +109,21 @@ test('classifies direct, three-quarter, side and rear views on both sides', () =
   assert.match(angle.compileAngleTargetPrompt('', camera({ yaw: 180 })), /physically behind the stationary SUBJECT/);
 });
 
+test('uses anatomical side language and stable horizontal boundaries', () => {
+  const right = angle.compileAngleTargetPrompt('', camera({ yaw: 42 }));
+  const left = angle.compileAngleTargetPrompt('', camera({ yaw: -42 }));
+  assert.match(right, /anatomical RIGHT/);
+  assert.doesNotMatch(right, /-42/);
+  assert.match(left, /anatomical LEFT/);
+  assert.doesNotMatch(left, /-42 degrees/);
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 70 })).horizontal_view.class, 'three_quarter');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 71 })).horizontal_view.class, 'profile');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 105 })).horizontal_view.class, 'profile');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 106 })).horizontal_view.class, 'rear_three_quarter');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 150 })).horizontal_view.class, 'rear_three_quarter');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 151 })).horizontal_view.class, 'rear');
+});
+
 test('keeps the 180-degree wrap deterministic', () => {
   assert.equal(angle.effectiveAngle(180), 180);
   assert.equal(angle.effectiveAngle(-180), 180);
@@ -143,6 +160,17 @@ test('keeps the reported 43-degree high-angle scenario free of delta conflicts',
   assert.match(prompt, /approximately 50mm-equivalent/);
   assert.match(prompt, /final camera distance 1\.2×/);
   assert.doesNotMatch(prompt, /0\.2×|当前 Pitch|-37\.8|相对调整为|起始机位/);
+});
+
+test('classifies re-projection difficulty without changing legacy pitch semantics', () => {
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 0, pitch: 0 })), 'low');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 30, pitch: 0 })), 'medium');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 0, pitch: -30 })), 'high');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 42, pitch: -40 })), 'high');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: -60, pitch: 0 })), 'high');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 42, pitch: -40 })).difficulty.level, 'high');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: -18 })).vertical_view.direction, 'downward');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: 18 })).vertical_view.direction, 'upward');
 });
 
 test('migrates legacy subject rotation into the final yaw once', () => {
@@ -212,6 +240,8 @@ test('camera payload contains only the final camera state', () => {
   assert.equal(payload.camera.yaw_deg, 51.6);
   assert.equal(payload.camera.pitch_deg, 22.1);
   assert.equal(payload.camera.focal_length_mm, 62);
+  assert.equal(payload.camera.semantic_target.camera_motion, 'orbit_only');
+  assert.equal(payload.camera.semantic_target.subject_motion, 'none');
   assert.equal(payload.instruction, 'final_camera_reconstruction');
   assert.equal('subject_yaw_deg' in payload.camera, false);
   assert.equal('change' in payload, false);

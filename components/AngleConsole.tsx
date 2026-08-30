@@ -11,7 +11,7 @@ import ModelPicker from '@/components/ModelPicker';
 import { getLastModelCall, recordModelCall } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
-import { ANGLE_DEFAULTS, ANGLE_PRESETS, angleName, buildAnglePayload, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, deriveAngleDelta, normalizeAngleState, shouldWarnLiteForAngle, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec } from '@/lib/angle-control';
+import { ANGLE_DEFAULTS, ANGLE_PRESETS, angleName, buildAnglePayload, buildAngleTargetSemantic, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, deriveAngleDelta, normalizeAngleState, shouldWarnLiteForAngle, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec } from '@/lib/angle-control';
 
 type AngleConsoleProps = {
   theme: 'light' | 'dark';
@@ -201,6 +201,7 @@ function cssColor(value: string | undefined, fallback: string) {
 
 function createMannequin(scene: THREE.Scene, mode: 'natural' | 'outline' | 'gray' = 'natural') {
   const group = new THREE.Group();
+  const isNeutral = mode === 'gray';
   const palettes: Record<'natural' | 'outline' | 'gray', number[]> = {
     natural: [0x8d6bff, 0xb9c8e8, 0xe3b38d, 0x222b3d],
     outline: [0x6f9de2, 0xb9d0f0, 0x8fb0d8, 0x1d2a3d],
@@ -241,19 +242,27 @@ function createMannequin(scene: THREE.Scene, mode: 'natural' | 'outline' | 'gray
   add(new THREE.CylinderGeometry(0.1, 0.12, 0.22, 20), materials[2], [0, 1.76, 0]);
   add(new THREE.SphereGeometry(1, 32, 24), materials[2], [0, 2.03, 0.01], [0.26, 0.31, 0.25]);
   add(new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, 1.52), materials[3], [0, 2.1, -0.01], [0.27, 0.26, 0.25]);
-  // Direction-first anatomy: +Z is the mannequin's front. These volumes are
-  // deliberately neutral and clothing-free so the image model can read face,
-  // chest and pelvis orientation without inheriting armor or costume details.
-  add(new THREE.BoxGeometry(0.28, 0.22, 0.035), materials[1], [0, 2.02, 0.235]);
-  const nose = add(new THREE.ConeGeometry(0.045, 0.13, 4), materials[2], [0, 2.05, 0.305]);
-  nose.rotation.x = Math.PI / 2;
-  add(new THREE.SphereGeometry(1, 20, 14), materials[1], [0, 1.86, 0.15], [0.14, 0.065, 0.09]);
-  add(new THREE.SphereGeometry(0.025, 12, 8), materials[3], [-0.075, 2.06, 0.23]);
-  add(new THREE.SphereGeometry(0.025, 12, 8), materials[3], [0.075, 2.06, 0.23]);
-  add(new THREE.SphereGeometry(1, 28, 20), materials[2], [0, 1.43, 0.205], [0.29, 0.34, 0.075]);
-  add(new THREE.CapsuleGeometry(0.035, 0.3, 6, 12), materials[1], [0, 1.43, 0.275]);
-  add(new THREE.SphereGeometry(1, 24, 16), materials[1], [0, 0.93, 0.19], [0.255, 0.13, 0.065]);
-  add(new THREE.SphereGeometry(1, 24, 16), materials[3], [0, 1.35, -0.235], [0.28, 0.31, 0.055]);
+  if (isNeutral) {
+    // The default guide is intentionally a composition proxy, not a second
+    // person. A small +Z chest marker communicates the mannequin's anatomical
+    // front without adding eyes, a face, clothing or pose cues.
+    const frontMarker = add(new THREE.ConeGeometry(0.055, 0.16, 4), materials[1], [0, 1.48, 0.29]);
+    frontMarker.rotation.x = Math.PI / 2;
+    frontMarker.name = 'anatomical-front-marker';
+  } else {
+    // Direction-first anatomy: +Z is the mannequin's front. Detailed modes
+    // remain available for operators who need a clearer human reference.
+    add(new THREE.BoxGeometry(0.28, 0.22, 0.035), materials[1], [0, 2.02, 0.235]);
+    const nose = add(new THREE.ConeGeometry(0.045, 0.13, 4), materials[2], [0, 2.05, 0.305]);
+    nose.rotation.x = Math.PI / 2;
+    add(new THREE.SphereGeometry(1, 20, 14), materials[1], [0, 1.86, 0.15], [0.14, 0.065, 0.09]);
+    add(new THREE.SphereGeometry(0.025, 12, 8), materials[3], [-0.075, 2.06, 0.23]);
+    add(new THREE.SphereGeometry(0.025, 12, 8), materials[3], [0.075, 2.06, 0.23]);
+    add(new THREE.SphereGeometry(1, 28, 20), materials[2], [0, 1.43, 0.205], [0.29, 0.34, 0.075]);
+    add(new THREE.CapsuleGeometry(0.035, 0.3, 6, 12), materials[1], [0, 1.43, 0.275]);
+    add(new THREE.SphereGeometry(1, 24, 16), materials[1], [0, 0.93, 0.19], [0.255, 0.13, 0.065]);
+    add(new THREE.SphereGeometry(1, 24, 16), materials[3], [0, 1.35, -0.235], [0.28, 0.31, 0.055]);
+  }
 
   const leftShoulder: [number, number, number] = [-0.34, 1.55, 0];
   const rightShoulder: [number, number, number] = [0.34, 1.55, 0];
@@ -877,16 +886,23 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
   const preferenceRestoredRef = useRef(false);
   const previousReferenceIdRef = useRef<string | null | undefined>(reference?.id);
 
-  const modelOptions = useMemo(() => models.filter((model) => model.enabled && model.published && model.capabilities.includes('generate')), [models]);
+  const modelOptions = useMemo(() => models.filter((model) => model.enabled && model.published && model.capabilities.includes('edit')), [models]);
   const resolvedModel = camera.modelId === 'auto'
     ? selectAutomaticModel(modelOptions, defaultProviderId, defaultModelId)
     : modelOptions.find((model) => model.id === camera.modelId);
-  const modelLabel = resolvedModel?.displayName || '自动选择生图模型';
+  const modelLabel = resolvedModel?.displayName || '自动选择改图模型';
   const payload = useMemo(() => buildAnglePayload(camera, modelLabel, cameraStart, angleOutput), [angleOutput, camera, cameraStart, modelLabel]);
   const liteLargeAngleWarning = Boolean(resolvedModel && shouldWarnLiteForAngle(`${resolvedModel.rawId} ${resolvedModel.displayName}`, camera.yaw));
   const compiledPrompt = useMemo(() => compileAngleTargetPrompt(note, camera, { hasGuideReference: true, output: angleOutput, cameraStart }), [angleOutput, camera, cameraStart, note]);
   const cameraDelta = useMemo(() => cameraStart ? deriveAngleDelta(cameraStart, camera) : null, [camera, cameraStart]);
   const cameraSemantics = useMemo(() => cameraSemanticSummary(camera), [camera]);
+  const targetSemantic = useMemo(() => buildAngleTargetSemantic(camera, angleOutput), [angleOutput, camera]);
+  const targetDifficulty = targetSemantic.difficulty.level;
+  const targetDifficultyCopy = targetDifficulty === 'high'
+    ? { label: '大角度机位', detail: '需要补全原图未展示的侧面或顶部结构；严格冻结姿态请导入匹配姿态的 GLB。' }
+    : targetDifficulty === 'medium'
+      ? { label: '中角度机位', detail: '模型可能保留部分原始二维投影；如姿态要求严格，建议导入匹配姿态的 GLB。' }
+      : { label: '小角度机位', detail: '适合单次视角重构，优先保持人物身份、姿态和场景连续。' };
   const latestResult = results[0] || null;
   const visibleResults = favoritesOnly ? results.filter((item) => item.favorite) : results;
   const framingVisibleRatio = Math.round(framingStatus.visibleRatio ?? 100);
@@ -904,9 +920,9 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     : reference.pending
       ? { title: '正在准备参考图', detail: '图片处理完成后即可继续对齐和生成。', step: 1 }
       : !cameraStart
-        ? { title: '还差：记录起始机位', detail: '先把右侧灰模对齐图 1，再点击“记录起始机位”。', step: 2 }
-        : !modelOptions.length
-          ? { title: '还差：选择可用模型', detail: '请先在模型库启用至少一个图片模型。', step: 3 }
+        ? { title: '还差：记录起始机位', detail: '先把右侧中性轮廓对齐图 1，再点击“记录起始机位”。', step: 2 }
+          : !modelOptions.length
+            ? { title: '还差：选择可用改图模型', detail: '请先在模型库启用至少一个带“改图”能力的图片模型。', step: 3 }
           : framingStatus.level === 'unknown' || framingStatus.level === 'unavailable'
             ? { title: '正在准备 3D 构图导引', detail: '构图导引准备完成后即可生成。', step: 3 }
             : { title: '已准备好生成', detail: '将提交图 1 原图与当前安全框内的 3D 构图导引。', step: 3 };
@@ -1008,7 +1024,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
 
   function recordStartingCamera() {
     setCameraStart(normalizeAngleState(camera));
-    onNotify('已记录起始机位；灰模画面保持不动，后续调整将从 0 开始累计。');
+    onNotify('已记录起始机位；中性轮廓画面保持不动，后续调整将从 0 开始累计。');
   }
 
   function resetAllControls() {
@@ -1043,8 +1059,8 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
 
   async function submit() {
     if (!reference) return onNotify('请先添加一张参考图');
-    if (!cameraStart) return onNotify('请先把灰模对齐图1的原始视角，再点击“记录起始机位”。');
-    if (!modelOptions.length) return onNotify('还没有可用的生图模型，请先到模型库启用模型');
+    if (!cameraStart) return onNotify('请先把中性轮廓对齐图1的原始视角，再点击“记录起始机位”。');
+    if (!modelOptions.length) return onNotify('还没有可用的改图模型，请先到模型库启用带“改图”能力的图片模型');
     if (framingStatus.level === 'unknown' || framingStatus.level === 'unavailable') return onNotify('3D 导引尚未准备完成，暂时无法生成第二张构图参考图。');
     const guideReference = await guideCaptureApiRef.current?.capture(angleOutput);
     if (!guideReference) return onNotify('构图导引截图失败，请重新载入 3D 模型后再试。');
@@ -1137,7 +1153,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
           {reference && <div className="angle-reference-hud"><span><b>图 1</b> 人物 / 场景 / 风格参考</span><small title={reference.name}>{reference.name}</small></div>}
           {reference && <button type="button" className="angle-reference-remove" onClick={removeReference}>移除参考图</button>}
         </div>
-        <div className="angle-preview-pane angle-model-pane"><div className="angle-pane-label"><b>3D 构图预览</b> · 图 2 导出时保持水平；Roll 只在最终结果后处理</div><ThreeCameraPreview camera={camera} output={angleOutput} theme={theme} humanMode={humanMode} customHumanFile={customHumanFile} captureApiRef={guideCaptureApiRef} miniHostRef={cameraMapHostRef} onCameraChange={update3dCamera} onFramingStatus={setFramingStatus} onNotify={onNotify}/><details className="angle-guide-display"><summary>导引显示</summary><div><button type="button" className={humanMode === 'gray' ? 'active' : ''} onClick={() => setHumanMode('gray')}>中性灰模（默认）</button><button type="button" className={humanMode === 'natural' ? 'active' : ''} onClick={() => setHumanMode('natural')}>自然人物</button><button type="button" className={humanMode === 'outline' ? 'active' : ''} onClick={() => setHumanMode('outline')}>清晰轮廓</button><button type="button" className={humanMode === 'default' ? 'active' : ''} onClick={() => setHumanMode('default')}>士兵</button><button type="button" className={humanMode === 'custom' ? 'active' : ''} onClick={() => humanInputRef.current?.click()}>导入 GLB</button></div><input ref={humanInputRef} hidden type="file" accept=".glb,model/gltf-binary" onChange={(event) => { const file = event.target.files?.[0] || null; if (file) { setCustomHumanFile(file); setHumanMode('custom'); } event.currentTarget.value = ''; }}/></details></div>
+        <div className="angle-preview-pane angle-model-pane"><div className="angle-pane-label"><b>3D 构图预览</b> · 图 2 导出时保持水平；Roll 只在最终结果后处理</div><ThreeCameraPreview camera={camera} output={angleOutput} theme={theme} humanMode={humanMode} customHumanFile={customHumanFile} captureApiRef={guideCaptureApiRef} miniHostRef={cameraMapHostRef} onCameraChange={update3dCamera} onFramingStatus={setFramingStatus} onNotify={onNotify}/><details className="angle-guide-display"><summary>导引显示</summary><div><button type="button" className={humanMode === 'gray' ? 'active' : ''} onClick={() => setHumanMode('gray')}>中性轮廓（默认）</button><button type="button" className={humanMode === 'natural' ? 'active' : ''} onClick={() => setHumanMode('natural')}>自然人物</button><button type="button" className={humanMode === 'outline' ? 'active' : ''} onClick={() => setHumanMode('outline')}>清晰轮廓</button><button type="button" className={humanMode === 'default' ? 'active' : ''} onClick={() => setHumanMode('default')}>士兵</button><button type="button" className={humanMode === 'custom' ? 'active' : ''} onClick={() => humanInputRef.current?.click()}>导入 GLB</button></div><input ref={humanInputRef} hidden type="file" accept=".glb,model/gltf-binary" onChange={(event) => { const file = event.target.files?.[0] || null; if (file) { setCustomHumanFile(file); setHumanMode('custom'); } event.currentTarget.value = ''; }}/></details></div>
         <aside className="angle-view-rail" aria-label="机位状态"><div className="angle-rail-heading"><b>机位概览</b><span>CAMERA MAP</span></div><div className="angle-camera-map angle-camera-map-rail" aria-label="机位俯视图"><span>机位俯视 · CAMERA MAP</span><div className="angle-map-stage" ref={cameraMapHostRef}/><small>{Math.round(camera.focal)}mm · {camera.distance.toFixed(1)}×</small></div><div className={`angle-rail-status ${framingStatus.level}`}><div className="angle-rail-status-head"><span>构图状态</span><b>{guideFramingLabel(framingStatus.level)}</b></div><strong>{framingStatus.title}</strong><small>{framingStatus.detail}</small><div className="angle-rail-readout"><b>机位 {angleName(camera.yaw)}</b><span>{roundViewportValue(camera.yaw)}° / {roundViewportValue(camera.pitch)}° · Roll {roundViewportValue(camera.roll)}°</span><span>{cameraSemantics.yaw}</span><span>{cameraSemantics.pitch} · {cameraSemantics.focal}</span><span>{subjectHeightSummary} · 输出 {angleOutput.width}×{angleOutput.height}</span></div></div></aside>
       </div>
       <div className="angle-preset-strip"><div className="angle-preset-strip-head"><b>快捷视角</b><span>从常用角度开始，再进行精确微调</span></div><div className="angle-preset-options">{ANGLE_PRESETS.map((preset) => <button type="button" key={preset.id} className={Math.abs(camera.yaw - preset.yaw) < 1 && Math.abs(camera.pitch - preset.pitch) < 1 ? 'active' : ''} onClick={() => applyPreset(preset.yaw, preset.pitch)}><b>{preset.label}</b><span>{preset.yaw}° / {preset.pitch}°</span></button>)}</div></div>
@@ -1147,16 +1163,16 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
       <div className="angle-panel-head"><div><span>控制</span><h2>机位参数</h2></div><div className="angle-panel-actions"><button type="button" className="angle-reset-all" title="恢复全部默认参数、默认场景和正面视图" onClick={resetAllControls}>全部重置</button><div className="angle-panel-tabs"><button type="button" className={panelTab === 'controls' ? 'active' : ''} onClick={() => setPanelTab('controls')}>参数</button><button type="button" className={panelTab === 'backend' ? 'active' : ''} onClick={() => setPanelTab('backend')}>后台记录</button></div></div></div>
       <div className="angle-panel-scroll">
         {panelTab === 'controls' ? <>
-          <div className="angle-model-compact"><span>生图模型</span><ModelPicker models={models} value={camera.modelId} capability="generate" defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} defaultModelId={defaultModelId} onChange={(value) => updateCamera({ modelId: value } as CameraPatch)}/></div>
+          <div className="angle-model-compact"><span>改图模型</span><ModelPicker models={models} value={camera.modelId} capability="edit" defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} defaultModelId={defaultModelId} onChange={(value) => updateCamera({ modelId: value } as CameraPatch)}/></div>
           <div className={`angle-output-summary ${framingStatus.level}`} title={framingStatus.detail}><strong>{angleOutput.width}×{angleOutput.height}</strong><span>{subjectHeightSummary}</span><small>人物可见 {framingVisibleRatio}%{cropSummary ? ` · 裁切 ${cropSummary}` : ''}</small></div>
-          <div className="angle-semantic-summary" aria-live="polite" aria-label="目标视觉语义"><span>目标视觉语义</span><div><b>Yaw</b><strong>{cameraSemantics.yaw}</strong></div><div><b>Pitch</b><strong>{cameraSemantics.pitch}</strong></div><div><b>Lens</b><strong>{Math.round(camera.focal)}mm · {cameraSemantics.focal}</strong></div><div><b>Distance</b><strong>{camera.distance.toFixed(1)}× · {cameraSemantics.distance}</strong></div></div>
+          <div className="angle-semantic-summary" aria-live="polite" aria-label="目标视觉语义"><span>目标视觉语义</span><div><b>Yaw</b><strong>{cameraSemantics.yaw}</strong></div><div><b>Pitch</b><strong>{cameraSemantics.pitch}</strong></div><div><b>Lens</b><strong>{Math.round(camera.focal)}mm · {cameraSemantics.focal}</strong></div><div><b>Distance</b><strong>{camera.distance.toFixed(1)}× · {cameraSemantics.distance}</strong></div><div className={`angle-difficulty-note ${targetDifficulty}`}><b>{targetDifficultyCopy.label}</b><span>{targetDifficultyCopy.detail}</span></div></div>
           <ol className="angle-workflow" aria-label="角度控制操作流程">
             <li className={hasReadyReference ? 'done' : submitState.step === 1 ? 'current' : ''}><i>1</i><span><b>添加图 1</b><small>{hasReadyReference ? '参考图已就绪' : '身份、场景与风格参考'}</small></span></li>
-            <li className={cameraStart ? 'done' : submitState.step === 2 ? 'current' : ''}><i>2</i><span><b>记录起始机位</b><small>{cameraStart ? '已保存对齐基准' : '先把灰模对齐图 1'}</small></span></li>
+            <li className={cameraStart ? 'done' : submitState.step === 2 ? 'current' : ''}><i>2</i><span><b>记录起始机位</b><small>{cameraStart ? '已保存对齐基准' : '先把中性轮廓对齐图 1'}</small></span></li>
             <li className={cameraStart && submitState.step === 3 ? 'current' : ''}><i>3</i><span><b>调整目标并生成</b><small>以当前安全框为最终构图</small></span></li>
           </ol>
           <div className={`angle-start-card ${cameraStart ? 'recorded' : ''}`}>
-            <div><strong>{cameraStart ? '起始机位已记录' : '先对齐图1，再记录起始机位'}</strong><small>{cameraStart ? '灰模画面已锁定为起始基准；继续调参只记录相对变化。' : '把灰模调到与图1尽量一致，点击记录后再调整到目标机位。'}</small></div>
+            <div><strong>{cameraStart ? '起始机位已记录' : '先对齐图1，再记录起始机位'}</strong><small>{cameraStart ? '中性轮廓画面已锁定为起始基准；继续调参只记录相对变化。' : '把中性轮廓调到与图1尽量一致，点击记录后再调整到目标机位。'}</small></div>
             <button type="button" className={cameraStart ? 'ghost-button' : 'primary-small'} onClick={recordStartingCamera}>{cameraStart ? '重新记录' : '记录起始机位'}</button>
             {cameraStart && cameraDelta && <div className="angle-start-delta"><span title="仅用于起始机位对齐和日志审计，不发送给图片模型">相对调整（仅审计）</span><b>Yaw {signedCameraDelta(cameraDelta.yaw, '°')}</b><b>Pitch {signedCameraDelta(cameraDelta.pitch, '°')}</b><b>Roll {signedCameraDelta(cameraDelta.roll, '°')}</b><b>Lens {signedCameraDelta(cameraDelta.focal, 'mm')}</b><b>Distance {signedCameraDelta(cameraDelta.distance, '×')}</b><b>构图 X/Y {signedCameraDelta(cameraDelta.frameX, '%')} / {signedCameraDelta(cameraDelta.frameY, '%')}</b></div>}
           </div>
@@ -1172,7 +1188,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
           </details>
          </> : <div className="angle-backend-view"><section className="angle-section"><h3>CAMERA PAYLOAD · FINAL + AUDIT</h3><div className="angle-code-box"><pre>{JSON.stringify(payload, null, 2)}</pre></div></section><section className="angle-section"><h3>MODEL PROMPT · FINAL TARGET ONLY</h3><div className="angle-code-box"><textarea readOnly value={compiledPrompt}/></div></section></div>}
       </div>
-      <div className="angle-submit"><div className={`angle-submit-state ${submitState.step === 3 && !busy ? 'ready' : ''}`}><i>{busy ? '…' : submitState.step}</i><span><b>{busy ? '正在生成双参考图' : submitState.title}</b><small>{busy ? '先重建水平场景，再执行一次最终 Roll 裁切；结果完成后会出现在右上角。' : submitState.detail}</small></span></div><button type="button" className="primary-action" disabled={busy || reference?.pending || Boolean(reference && (!cameraStart || !modelOptions.length || framingStatus.level === 'unknown' || framingStatus.level === 'unavailable'))} onClick={() => { if (!reference) referenceInputRef.current?.click(); else void submit(); }}>{reference?.pending ? '正在准备参考图…' : busy ? '正在生成双参考图…' : !reference ? '添加参考图' : !cameraStart ? '记录起始机位后生成' : '按当前机位生成'}</button>{liteLargeAngleWarning && <small className="angle-submit-warning">当前为 gpt-image-2-lite，Yaw {Math.abs(camera.yaw).toFixed(1)}° 需要明显场景绕拍。该模型可能仍保留原视角；建议改用更强的图片编辑模型以获得侧面、背面和环境视差。不会自动替换你的选择。</small>}</div>
+      <div className="angle-submit"><div className={`angle-submit-state ${submitState.step === 3 && !busy ? 'ready' : ''}`}><i>{busy ? '…' : submitState.step}</i><span><b>{busy ? '正在生成双参考图' : submitState.title}</b><small>{busy ? '先重建水平场景，再执行一次最终 Roll 裁切；结果完成后会出现在右上角。' : submitState.detail}</small></span></div><button type="button" className="primary-action" disabled={busy || reference?.pending || Boolean(reference && (!cameraStart || !modelOptions.length || framingStatus.level === 'unknown' || framingStatus.level === 'unavailable'))} onClick={() => { if (!reference) referenceInputRef.current?.click(); else void submit(); }}>{reference?.pending ? '正在准备参考图…' : busy ? '正在生成双参考图…' : !reference ? '添加参考图' : !cameraStart ? '记录起始机位后生成' : '按当前机位生成'}</button>{targetDifficulty === 'high' && <small className="angle-submit-warning">当前为大角度机位：需要补全原图未展示的侧面或顶部结构，单次生成可能保留原始二维投影；严格冻结姿态请导入匹配姿态的 GLB。</small>}{liteLargeAngleWarning && <small className="angle-submit-warning">当前为 gpt-image-2-lite，Yaw {Math.abs(camera.yaw).toFixed(1)}° 需要明显场景绕拍。该模型可能仍保留原视角；建议改用更强的图片编辑模型以获得侧面、背面和环境视差。不会自动替换你的选择。</small>}</div>
     </aside>
 
     {resultModalOpen && viewedResult && reference && <div className="angle-result-modal" role="dialog" aria-modal="true" aria-label="生成结果" onClick={() => setResultModalOpen(false)}><div className="angle-result-shell" onClick={(event) => event.stopPropagation()}><div className="angle-result-head"><div><b>生成结果 · RESULT</b><small>{`${angleName(camera.yaw)} · ${Math.round(camera.yaw)}° · Pitch ${Math.round(camera.pitch)}° · Roll ${Math.round(camera.roll)}° · ${Math.round(camera.focal)}mm · ${camera.distance.toFixed(1)}×`}</small></div><button type="button" className="angle-result-close" onClick={() => setResultModalOpen(false)} aria-label="关闭">×</button></div><div className="angle-result-modal-stage">{resultMode === 'single' && <div className="angle-result-single"><img src={viewedResult.url} alt="生成结果"/><span>生成大图</span></div>}{resultMode === 'swipe' && <div className="angle-result-swipe" ref={compareStageRef}><img src={reference.dataUrl} alt="原图"/><div className="angle-result-swipe-top" style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}><img src={viewedResult.url} alt="生成结果"/></div><span className="angle-result-label before">原图</span><span className="angle-result-label after">生成结果</span><div className="angle-result-divider" style={{ left: `${comparePosition}%` }} onPointerDown={handleComparePointerDown} onPointerMove={handleComparePointerMove} onPointerUp={handleComparePointerUp} onPointerCancel={handleComparePointerUp} role="slider" aria-label="原图与生成结果分割位置" aria-valuemin={0} aria-valuemax={100} aria-valuenow={comparePosition} tabIndex={0} onKeyDown={(event) => { if (event.key === 'ArrowLeft') setComparePosition((value) => Math.max(0, value - 1)); if (event.key === 'ArrowRight') setComparePosition((value) => Math.min(100, value + 1)); }}><span>↔</span></div><input className="angle-compare-range" aria-label="对比位置" type="range" min="0" max="100" value={comparePosition} onChange={(event) => setComparePosition(Number(event.target.value))}/></div>}{resultMode === 'split' && <div className="angle-result-split"><div><img src={reference.dataUrl} alt="原图"/><span>原图</span></div><div><img src={viewedResult.url} alt="生成结果"/><span>生成结果</span></div></div>}</div><div className="angle-result-history"><div><b>生成历史 · 最近 6 张 + 收藏</b><div className="angle-result-history-actions"><button type="button" className={favoritesOnly ? 'active' : ''} onClick={() => setFavoritesOnly((value) => !value)}>★ 只看收藏</button><button type="button" onClick={() => setViewedResult(latestResult)}>查看最新结果</button></div></div><div className="angle-result-history-strip">{visibleResults.slice(0, 6).map((item) => <button type="button" className={item.id === viewedResult.id ? 'active' : ''} key={item.id} onClick={() => setViewedResult(item)}><img src={item.url} alt=""/><small>{item.modelName || '图片模型'}</small></button>)}</div></div><div className="angle-result-foot"><button type="button" className={resultMode === 'single' ? 'active' : ''} onClick={() => setResultMode('single')}>生成大图</button><button type="button" className={resultMode === 'swipe' ? 'active' : ''} onClick={() => setResultMode('swipe')}>↔ 滑动对比</button><button type="button" className={resultMode === 'split' ? 'active' : ''} onClick={() => setResultMode('split')}>▥ 左右对比</button><button type="button" onClick={() => { setResultModalOpen(false); submit(); }}>重新生成</button><button type="button" onClick={() => void onDownloadResult(viewedResult)}>下载结果</button><button type="button" onClick={() => void onDownloadShare(viewedResult)}>下载分享版</button><button type="button" onClick={restoreViewedCamera}>恢复此机位</button><button type="button" onClick={() => setResultModalOpen(false)}>继续调整</button><button type="button" className="angle-result-primary" onClick={() => { setResultModalOpen(false); void onUseResult(viewedResult); }}>采用此结果继续调整</button></div></div></div>}
