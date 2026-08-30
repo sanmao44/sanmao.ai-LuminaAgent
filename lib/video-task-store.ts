@@ -75,6 +75,37 @@ export async function createVideoTask(input: Omit<VideoTask, 'id' | 'createdAt' 
 
 export async function findVideoTask(id: string) { return (await readTasks()).find((task) => task.id === id) || null; }
 export async function listVideoTasks(limit = 100) { return (await readTasks()).slice(0, Math.min(500, Math.max(1, limit))); }
+export async function listVideoTasksPage(options: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  source?: string;
+  media?: string;
+} = {}) {
+  const pageSize = Math.min(100, Math.max(1, Math.round(Number(options.pageSize) || 12)));
+  const page = Math.max(1, Math.round(Number(options.page) || 1));
+  const search = String(options.search || '').trim().toLowerCase();
+  const source = String(options.source || 'all');
+  const media = String(options.media || 'video');
+  const tasks = await readTasks();
+  const filtered = tasks.filter((task) => {
+    if (media !== 'all' && media !== 'video') return false;
+    if (source !== 'all' && source !== task.source && !(source === 'workspace' && !task.source)) return false;
+    if (!search) return true;
+    return `${task.input?.prompt || ''} ${task.modelName || ''}`.toLowerCase().includes(search);
+  });
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const start = (currentPage - 1) * pageSize;
+  return {
+    tasks: filtered.slice(start, start + pageSize),
+    total,
+    page: currentPage,
+    pageSize,
+    totalPages,
+  };
+}
 export async function findVideoTaskByIdempotencyKey(key: string) { return (await readTasks()).find((task) => task.idempotencyKey === key) || null; }
 
 export async function updateVideoTask(id: string, patch: Partial<VideoTask>) {

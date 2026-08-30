@@ -107,6 +107,7 @@ const pageSizeOptions = [
         label: `每页 ${value} 张`
     }));
 const generationLogPageSize = 16;
+const videoPageSize = 12;
 const qualityOptions = IMAGE_QUALITY_OPTIONS.map((item)=>({ value: item.value, label: item.label, meta: item.description }));
 const upscaleScales = [
     1,
@@ -5086,6 +5087,8 @@ export default function Page() {
     const [recordTab, setRecordTab] = useState('works');
     const [pageSize, setPageSize] = useState(24);
     const [page, setPage] = useState(1);
+    const [videoPage, setVideoPage] = useState(1);
+    const [videoTotal, setVideoTotal] = useState(0);
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedHistory, setSelectedHistory] = useState(new Set());
     const [viewerId, setViewerId] = useState(null);
@@ -5235,7 +5238,7 @@ export default function Page() {
         historyMediaFilter,
         historyFilter
     ]);
-    const hasCreativeRecords = filteredGallery.length > 0 || visibleVideoTasks.length > 0;
+    const hasCreativeRecords = filteredGallery.length > 0 || videoTotal > 0;
     const logSummary = useMemo(()=>{
         const completed = generationLogs.filter((log)=>log.status !== 'pending');
         const success = generationLogs.filter((log)=>log.status === 'success').length;
@@ -5331,6 +5334,8 @@ export default function Page() {
     ]);
     const activeAgentIntent = liveAgentIntent;
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
+    const videoTotalPages = Math.max(1, Math.ceil(videoTotal / videoPageSize));
+    const visibleVideoPage = Math.min(videoPage, videoTotalPages);
     const pagedGallery = useMemo(()=>filteredGallery.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), [
         filteredGallery,
         page,
@@ -5727,11 +5732,22 @@ export default function Page() {
     }, [section]);
     useEffect(()=>{
         setPage(1);
+        setVideoPage(1);
     }, [
         historySearch,
         historyFilter,
         historyMediaFilter,
         pageSize
+    ]);
+    useEffect(()=>{
+        if (section !== 'history' || recordTab !== 'works') return;
+        void refreshVideoTasks(1);
+    }, [
+        section,
+        recordTab,
+        historySearch,
+        historyFilter,
+        historyMediaFilter
     ]);
     useEffect(()=>{
         setLogPage(1);
@@ -6304,12 +6320,19 @@ export default function Page() {
             syncLogErrorNotice(logs);
         } catch  {}
     }
-    async function refreshVideoTasks() {
+    async function refreshVideoTasks(requestedPage = videoPage) {
         try {
-            const res = await fetch('/api/video/tasks?limit=100', { cache: 'no-store' });
+            const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
+            const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
+            const params = new URLSearchParams({ page: String(Math.max(1, Math.round(Number(requestedPage) || 1))), pageSize: String(videoPageSize), source, media });
+            if (historySearch.trim()) params.set('search', historySearch.trim());
+            const res = await fetch(`/api/video/tasks?${params.toString()}`, { cache: 'no-store' });
             if (!res.ok) return;
             const data = await res.json().catch(()=>({}));
             setVideoTasks(Array.isArray(data.tasks) ? data.tasks : []);
+            setVideoTotal(Math.max(0, Number(data.total) || 0));
+            const nextPage = Math.max(1, Number(data.page) || 1);
+            if (nextPage !== videoPage) setVideoPage(nextPage);
         } catch  {}
     }
     async function deleteVideoTask(task) {
@@ -6318,6 +6341,8 @@ export default function Page() {
             const data = await res.json().catch(()=>({}));
             if (!res.ok) throw new Error(data.error || '删除视频任务失败');
             setVideoTasks((old)=>old.filter((item)=>item.id !== task.id));
+            setVideoTotal((total)=>Math.max(0, total - 1));
+            void refreshVideoTasks(videoPage);
             notify(task.status === 'failed' ? '失败视频任务已删除' : '视频作品已删除');
         } catch (error) {
             notify(error instanceof Error ? error.message : '删除视频任务失败');
@@ -12305,14 +12330,26 @@ export default function Page() {
                                             })
                                         ]
                                     }),
-                                    visibleVideoTasks.length > 0 && /*#__PURE__*/ _jsxs("section", {
+                                    videoTotal > 0 && /*#__PURE__*/ _jsxs("section", {
                                         className: "creative-record-group",
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", { className: "creative-record-group-heading", children: [
-                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: "已完成的视频会自动保存在这里" })] }),
-                                                /*#__PURE__*/ _jsx("span", { children: `${visibleVideoTasks.length} 段` })
+                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: "已完成的视频会自动保存在这里 · 每页 12 段" })] }),
+                                                /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onDelete: ()=>askDeleteVideoTask(task) }, task.id)) })
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onDelete: ()=>askDeleteVideoTask(task) }, task.id)) }),
+                                            /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
+                                                /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
+                                                /*#__PURE__*/ _jsxs("div", { children: [
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", disabled: visibleVideoPage <= 1, "aria-label": "上一页视频作品", onClick: ()=>{ const next = Math.max(1, visibleVideoPage - 1); setVideoPage(next); void refreshVideoTasks(next); }, children: /*#__PURE__*/ _jsx(Icon, { name: "left", size: 16 }) }),
+                                                    Array.from({ length: Math.min(5, videoTotalPages) }, (_, i)=>{
+                                                        const start = Math.max(1, Math.min(visibleVideoPage - 2, videoTotalPages - 4));
+                                                        const p = start + i;
+                                                        return p <= videoTotalPages ? /*#__PURE__*/ _jsx("button", { type: "button", className: visibleVideoPage === p ? 'active' : '', "aria-label": `第 ${p} 页视频作品`, onClick: ()=>{ setVideoPage(p); void refreshVideoTasks(p); }, children: p }, p) : null;
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", disabled: visibleVideoPage >= videoTotalPages, "aria-label": "下一页视频作品", onClick: ()=>{ const next = Math.min(videoTotalPages, visibleVideoPage + 1); setVideoPage(next); void refreshVideoTasks(next); }, children: /*#__PURE__*/ _jsx(Icon, { name: "right", size: 16 }) })
+                                                ] })
+                                            ] })
                                         ]
                                     }),
                                     filteredGallery.length ? /*#__PURE__*/ _jsxs(_Fragment, {
