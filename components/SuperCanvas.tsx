@@ -3751,17 +3751,20 @@ export default function SuperCanvas() {
     [selectedSingle, updateDoc],
   );
 
-  const useAgentResponseAsImagePrompt = useCallback(
-    (node: CanvasNode) => {
+  const createImageBranchFromText = useCallback(
+    (node: CanvasNode, value: string) => {
       if (node.type !== "prompt") return;
-      const response = String(
-        node.data.agentResponse || node.data.text || "",
-      ).trim();
+      const response = value.trim();
       if (!response) return;
-      const imageNode = createEmptyMedia("image", {
-        x: node.x + nodeSize(node).w + 90,
-        y: node.y,
-      }, normalizeCreationSettings("image", null, runtime));
+      const imageParams = normalizeCreationSettings("image", null, runtime);
+      const imageNode = createEmptyMedia(
+        "image",
+        {
+          x: node.x + nodeSize(node).w + 90,
+          y: node.y,
+        },
+        imageParams,
+      );
       const nextImageNode: CanvasNode = {
         ...imageNode,
         data: {
@@ -3788,7 +3791,7 @@ export default function SuperCanvas() {
         ...current,
         [nextImageNode.id]: {
           prompt: response,
-          params: normalizeCreationSettings("image", null, runtime),
+          params: imageParams,
           dirty: true,
         },
       }));
@@ -3796,9 +3799,21 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setMode("image");
       setExpandedEditorId(nextImageNode.id);
-      notify("已创建图片分支，Agent 回复已填入画布编辑器");
+      setTextLightboxNodeId(null);
+      notify("已创建图片分支，文本已填入画布编辑器");
     },
     [commit, notify, runtime],
+  );
+
+  const useAgentResponseAsImagePrompt = useCallback(
+    (node: CanvasNode) => {
+      if (node.type !== "prompt") return;
+      createImageBranchFromText(
+        node,
+        String(node.data.agentResponse || node.data.text || ""),
+      );
+    },
+    [createImageBranchFromText],
   );
 
   const updateParams = useCallback(
@@ -7105,9 +7120,56 @@ export default function SuperCanvas() {
     setSelectedIds(new Set([textNode.id]));
     notify("已创建新的文本节点");
   }, [commit, notify]);
+  const createViewerAgentNode = useCallback((node: CanvasNode, value: string) => {
+    if (node.type !== "prompt") return;
+    const prompt = value.trim();
+    if (!prompt) return notify("请先选中一段文本。", "error");
+    const params = normalizeCreationSettings("text", null, runtime);
+    const seed = { x: node.x + nodeSize(node).w + 90, y: node.y };
+    const base = createPrompt(seed, prompt);
+    const draft = { ...base, ...openNodePosition(seed, base) };
+    const agentNode: CanvasNode = {
+      ...draft,
+      data: {
+        ...draft.data,
+        text: prompt,
+        agentPrompt: prompt,
+        role: "Agent 输入",
+        params,
+        status: "idle",
+        statusLabel: undefined,
+      },
+    };
+    commit((current) =>
+      addEdge(
+        { ...current, nodes: [...current.nodes, agentNode] },
+        node.id,
+        agentNode.id,
+        "right",
+        "left",
+        "manual",
+        "context",
+      ),
+    );
+    setEditorDrafts((current) => ({
+      ...current,
+      [agentNode.id]: { prompt, params },
+    }));
+    setSelectedIds(new Set([agentNode.id]));
+    setSelectedGroupId(null);
+    setQuickToolbarNodeId(null);
+    setTextLightboxNodeId(null);
+    setMode("text");
+    setExpandedEditorId(agentNode.id);
+    notify("已创建 Agent 新节点，请确认提示词后生成");
+  }, [commit, notify, openNodePosition, runtime]);
   const updateTextNode = useCallback(
     (node: CanvasNode, value: string) => {
       if (node.type !== "prompt") return;
+      if (!value.trim()) {
+        notify("回复内容不能为空。", "error");
+        return;
+      }
       updateDoc((current) => ({
         ...current,
         nodes: current.nodes.map((item) =>
@@ -7117,11 +7179,20 @@ export default function SuperCanvas() {
                 data: {
                   ...item.data,
                   text: value,
-                  agentPrompt: value,
-                  agentResponse: undefined,
-                  role: "Agent 输入",
-                  status: "idle",
-                  statusLabel: undefined,
+                  ...(item.data.agentResponse || String(item.data.role || "").includes("回复")
+                    ? {
+                        agentResponse: value,
+                        role: item.data.role || "Agent 回复",
+                        status: "completed" as const,
+                        statusLabel: "Agent 已回复",
+                      }
+                    : {
+                        agentPrompt: value,
+                        agentResponse: undefined,
+                        role: "Agent 输入",
+                        status: "idle" as const,
+                        statusLabel: undefined,
+                      }),
                 },
               }
             : item,
@@ -9386,11 +9457,9 @@ export default function SuperCanvas() {
           node={nodeById(document, textLightboxNodeId)}
           onClose={() => setTextLightboxNodeId(null)}
           onNotify={notify}
-          model={runtime?.settings.agentModelId || undefined}
-          agentAvailable={chatModelsAvailable}
           onUpdate={updateTextNode}
-          onCreateTextNode={createViewerTextNode}
-          onWritePrompt={writeTextToPrompt}
+          onCreateAgentNode={createViewerAgentNode}
+          onUseAsImagePrompt={createImageBranchFromText}
         />
       )}
       {maskNode?.data.url && (
@@ -12671,20 +12740,16 @@ function CanvasTextLightbox({
   node,
   onClose,
   onNotify,
-  model,
-  agentAvailable,
   onUpdate,
-  onCreateTextNode,
-  onWritePrompt,
+  onCreateAgentNode,
+  onUseAsImagePrompt,
 }: {
   node?: CanvasNode;
   onClose: () => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
-  model?: string;
-  agentAvailable: boolean;
   onUpdate: (node: CanvasNode, value: string) => void;
-  onCreateTextNode: (node: CanvasNode, value: string) => void;
-  onWritePrompt: (value: string) => void;
+  onCreateAgentNode: (node: CanvasNode, value: string) => void;
+  onUseAsImagePrompt: (node: CanvasNode, value: string) => void;
 }) {
   const text =
     node?.type === "prompt"
@@ -12692,10 +12757,88 @@ function CanvasTextLightbox({
       : "";
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
-  const [result, setResult] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [selection, setSelection] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    placement: "above" | "below";
+  } | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const editRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => setDraft(text), [text]);
+
+  const clearSelection = useCallback(() => {
+    setSelection(null);
+    if (typeof window !== "undefined") window.getSelection()?.removeAllRanges();
+  }, []);
+
+  const updateSelection = useCallback(() => {
+    const body = bodyRef.current;
+    if (editing || !body) {
+      setSelection(null);
+      return;
+    }
+    const current = window.getSelection();
+    if (
+      !current ||
+      current.isCollapsed ||
+      !current.rangeCount ||
+      !current.anchorNode ||
+      !current.focusNode ||
+      !body.contains(current.anchorNode) ||
+      !body.contains(current.focusNode)
+    ) {
+      setSelection(null);
+      return;
+    }
+    const selectedText = current.toString().trim();
+    const rect = current.getRangeAt(0).getBoundingClientRect();
+    if (!selectedText || (!rect.width && !rect.height)) {
+      setSelection(null);
+      return;
+    }
+    const toolbarWidth = Math.min(420, Math.max(260, window.innerWidth - 24));
+    const halfWidth = toolbarWidth / 2;
+    const center = rect.left + rect.width / 2;
+    const x = Math.min(
+      window.innerWidth - halfWidth - 12,
+      Math.max(halfWidth + 12, center),
+    );
+    const showBelow =
+      rect.top < 62 && window.innerHeight - rect.bottom > rect.top;
+    setSelection({
+      text: selectedText,
+      x,
+      y: showBelow ? rect.bottom + 10 : rect.top - 10,
+      placement: showBelow ? "below" : "above",
+    });
+  }, [editing]);
+
+  const cancelEdit = useCallback(() => {
+    setDraft(text);
+    setEditing(false);
+    clearSelection();
+  }, [clearSelection, text]);
+
+  const saveEdit = useCallback(() => {
+    if (!node) return;
+    const value = draft;
+    if (!value.trim()) {
+      onNotify("回复内容不能为空。", "error");
+      return;
+    }
+    onUpdate(node, value);
+    setDraft(value);
+    setEditing(false);
+    clearSelection();
+  }, [clearSelection, draft, node, onNotify, onUpdate]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const frame = window.requestAnimationFrame(() => editRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [editing]);
 
   useEffect(() => {
     if (!node) return;
@@ -12706,6 +12849,29 @@ function CanvasTextLightbox({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [node, onClose]);
 
+  useEffect(() => {
+    if (!bodyRef.current || editing) return;
+    const handleViewportChange = () => clearSelection();
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [clearSelection, editing]);
+
+  useEffect(() => {
+    if (!selection || editing) return;
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".canvas-text-selection-toolbar")) return;
+      if (!bodyRef.current?.contains(target)) clearSelection();
+    };
+    document.addEventListener("pointerdown", handleOutsidePointer);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointer);
+  }, [clearSelection, editing, selection]);
+
   if (!node || node.type !== "prompt" || !text) return null;
   const copyText = async () => {
     try {
@@ -12715,66 +12881,111 @@ function CanvasTextLightbox({
       onNotify("复制失败，请检查浏览器剪贴板权限", "error");
     }
   };
-  const optimizeText = async () => {
-    if (!agentAvailable) {
-      onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
-      return;
-    }
-    setBusy(true);
+  const copySelection = async () => {
+    const value = selection?.text;
+    if (!value) return;
+    clearSelection();
     try {
-      const optimized = await requestPromptOptimization(text, [], model);
-      setResult(optimized);
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "AI 优化失败", "error");
-    } finally {
-      setBusy(false);
+      await navigator.clipboard.writeText(value);
+      onNotify("已复制选中的文本");
+    } catch {
+      onNotify("复制失败，请检查浏览器剪贴板权限", "error");
     }
+  };
+  const runSelectionAction = (action: (value: string) => void) => {
+    const value = selection?.text;
+    if (!value) return;
+    clearSelection();
+    action(value);
   };
   return (
     <div
       className="canvas-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="Agent 回复"
+      aria-label={editing ? "编辑 Agent 回复" : "Agent 回复"}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="canvas-text-lightbox">
+      <div className={`canvas-text-lightbox${editing ? " is-editing" : ""}`}>
         <header>
           <div>
-            <b>Agent 回复</b>
+            <b>{editing ? "编辑 Agent 回复" : "Agent 回复"}</b>
             <small>
-              {node.data.model ? `对话模型 · ${String(node.data.model)}` : "对话模型"}
-              {node.data.agentPrompt ? " · 已保留原始任务" : ""}
+              {editing
+                ? "保存后保留为 Agent 回复"
+                : node.data.model
+                  ? `对话模型 · ${String(node.data.model)}`
+                  : "对话模型"}
+              {!editing && node.data.agentPrompt ? " · 已保留原始任务" : ""}
             </small>
           </div>
           <div className="canvas-text-lightbox-actions">
-            <button type="button" onClick={() => setEditing((value) => !value)}>{editing ? "取消编辑" : "编辑"}</button>
-            <button type="button" onClick={() => void copyText()}>
-              复制全文
-            </button>
+            {!editing && <button className="canvas-text-edit-trigger" type="button" onClick={() => { setDraft(text); clearSelection(); setEditing(true); }}>编辑</button>}
+            {!editing && <button type="button" onClick={() => void copyText()}>复制全文</button>}
             <button type="button" onClick={onClose} aria-label="关闭 Agent 回复">
               ×
             </button>
           </div>
         </header>
-        {node.data.agentPrompt && (
-          <div className="canvas-text-lightbox-prompt">
-            <span>任务</span>
-            <p>{String(node.data.agentPrompt)}</p>
+        {editing ? (
+          <div className="canvas-text-edit-stage">
+            <div className="canvas-text-edit-heading">
+              <span>编辑内容</span>
+              <button type="button" onClick={() => setDraft(text)} disabled={draft === text}>恢复原文</button>
+            </div>
+            <textarea ref={editRef} value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="编辑 Agent 文本" />
           </div>
+        ) : (
+          <>
+            {node.data.agentPrompt && (
+              <div className="canvas-text-lightbox-prompt">
+                <span>任务</span>
+                <p>{String(node.data.agentPrompt)}</p>
+              </div>
+            )}
+            <div
+              ref={bodyRef}
+              className="canvas-text-lightbox-body"
+              onMouseUp={updateSelection}
+              onKeyUp={updateSelection}
+              onTouchEnd={updateSelection}
+            >
+              {text}
+            </div>
+            {selection && (
+              <div
+                className={`canvas-text-selection-toolbar ${selection.placement}`}
+                style={{ left: selection.x, top: selection.y }}
+                role="toolbar"
+                aria-label="选中文本操作"
+                onMouseDown={(event) => event.preventDefault()}
+                onTouchStart={(event) => event.preventDefault()}
+              >
+                <span>{selection.text.length.toLocaleString()} 字</span>
+                <button type="button" onClick={() => void copySelection()}>复制选段</button>
+                <button type="button" className="primary" onClick={() => runSelectionAction((value) => onCreateAgentNode(node, value))}>创建 Agent 节点</button>
+                <button type="button" onClick={() => runSelectionAction((value) => onUseAsImagePrompt(node, value))}>转图片</button>
+              </div>
+            )}
+          </>
         )}
-        {editing ? <div className="canvas-text-edit-wrap"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="编辑 Agent 文本" /><div><button type="button" onClick={() => { onUpdate(node, draft); setEditing(false); }}>保存修改</button><button type="button" onClick={() => setDraft(text)}>恢复原文</button></div></div> : <div className="canvas-text-lightbox-body">{text}</div>}
-        <div className="canvas-text-lightbox-tools">
-          <button type="button" disabled={busy} onClick={() => void optimizeText()}>✦ AI 优化</button>
-          <button type="button" onClick={() => onWritePrompt(text)}>写入当前提示词</button>
-          <button type="button" onClick={() => onCreateTextNode(node, text)}>创建文本节点</button>
-        </div>
-        {result && <section className="canvas-text-result-panel"><header><b>AI 结果（未覆盖原文）</b><button type="button" onClick={() => setResult(null)}>×</button></header><p>{result}</p><footer><button type="button" onClick={() => onUpdate(node, result)}>写入此节点</button><button type="button" onClick={() => onWritePrompt(result)}>写入当前提示词</button><button type="button" onClick={() => onCreateTextNode(node, result)}>创建新节点</button><button type="button" onClick={() => navigator.clipboard?.writeText(result)}>复制</button></footer></section>}
-        <footer>
-          <span>{text.length.toLocaleString()} 字</span>
-          <span>按 Esc 关闭</span>
+        <footer className={editing ? "is-editing" : ""}>
+          {editing ? (
+            <>
+              <span>{draft.length.toLocaleString()} 字 · 修改后仍保留为 Agent 回复</span>
+              <div>
+                <button type="button" onClick={cancelEdit}>取消编辑</button>
+                <button type="button" className="primary" onClick={saveEdit}>保存修改</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <span>{text.length.toLocaleString()} 字</span>
+              <span>选中文字可生成新节点 · 按 Esc 关闭</span>
+            </>
+          )}
         </footer>
       </div>
     </div>
