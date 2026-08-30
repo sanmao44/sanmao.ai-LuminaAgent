@@ -8,9 +8,15 @@
 
 $ErrorActionPreference = 'Stop'
 # Load the Windows security cmdlets explicitly before reading the DPAPI-backed
-# LAN password. This keeps hidden launcher processes independent of inherited
-# PowerShell module paths.
-Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+# LAN password. Prefer the inbox Windows PowerShell module by absolute path:
+# Codex can add a PowerShell 7 compatibility module to PSModulePath, and that
+# module conflicts with the Windows PowerShell type data during auto-loading.
+$securityModulePath = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+if (Test-Path -LiteralPath $securityModulePath) {
+  Import-Module -Name $securityModulePath -ErrorAction Stop
+} else {
+  Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+}
 $script:NonInteractive = $NonInteractive.IsPresent
 try { $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器' } catch {}
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
@@ -40,6 +46,20 @@ $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 . (Join-Path $PSScriptRoot 'free-relay-common.ps1')
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
 
+function Get-SanmaoSha256([string]$Path) {
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+      return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '')
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $sha256.Dispose()
+  }
+}
+
 # Releases before 0.7.5 overwrote apply-update.ps1 with their running updater
 # after copying a new archive. Restore the versioned bootstrap from the new
 # archive as soon as the restarted launcher runs, so the following update uses
@@ -48,8 +68,8 @@ try {
   $updaterBootstrap = Join-Path $PSScriptRoot 'apply-update-bootstrap.ps1'
   $updaterEntry = Join-Path $PSScriptRoot 'apply-update.ps1'
   if (Test-Path -LiteralPath $updaterBootstrap) {
-    $bootstrapHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $updaterBootstrap).Hash
-    $entryHash = if (Test-Path -LiteralPath $updaterEntry) { (Get-FileHash -Algorithm SHA256 -LiteralPath $updaterEntry).Hash } else { '' }
+    $bootstrapHash = Get-SanmaoSha256 $updaterBootstrap
+    $entryHash = if (Test-Path -LiteralPath $updaterEntry) { Get-SanmaoSha256 $updaterEntry } else { '' }
     if ($bootstrapHash -ne $entryHash) {
       Copy-Item -LiteralPath $updaterBootstrap -Destination $updaterEntry -Force
       Write-SanmaoLauncherLog '已恢复当前版本的更新器入口。' 'INFO'
@@ -239,6 +259,40 @@ function Test-SanmaoBuildStale {
   }
   $newest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
   return $null -ne $newest -and $newest.LastWriteTimeUtc -gt $buildTime
+}
+
+function Test-SanmaoBuildArtifacts {
+  $requiredPaths = @(
+    (Join-Path $root '.next\BUILD_ID'),
+    (Join-Path $root '.next\prerender-manifest.json'),
+    (Join-Path $root '.next\routes-manifest.json')
+  )
+  foreach ($path in $requiredPaths) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+  }
+
+  # next start can report Ready and then exit if a manifest is still being
+  # written. Read both JSON files so the launcher never starts against a
+  # partially materialized production build.
+  foreach ($path in $requiredPaths[1..2]) {
+    try {
+      $content = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+      if ([string]::IsNullOrWhiteSpace($content)) { return $false }
+      $null = $content | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+      return $false
+    }
+  }
+  return $true
+}
+
+function Wait-SanmaoBuildArtifacts([int]$TimeoutMs = 15000) {
+  $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+  do {
+    if (Test-SanmaoBuildArtifacts) { return $true }
+    Start-Sleep -Milliseconds 100
+  } while ((Get-Date) -lt $deadline)
+  return $false
 }
 
 # The running service itself is the source of truth. There is deliberately no
@@ -498,7 +552,7 @@ if (Test-Path '.\package-lock.json') {
     $packageLockChanged = $true
   } else {
     try {
-      $expectedLockHash = (Get-FileHash -Algorithm SHA256 -LiteralPath '.\package-lock.json').Hash
+      $expectedLockHash = Get-SanmaoSha256 '.\package-lock.json'
       $installedLockHash = (Get-Content -LiteralPath $packageLockHashPath -Raw -ErrorAction Stop).Trim()
       $packageLockChanged = $expectedLockHash -ne $installedLockHash
     } catch {
@@ -520,7 +574,7 @@ if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $type
     Fail '依赖安装失败，请检查网络后再次运行启动器。'
   }
   if (Test-Path '.\package-lock.json') {
-    (Get-FileHash -Algorithm SHA256 -LiteralPath '.\package-lock.json').Hash | Set-Content -LiteralPath $packageLockHashPath -Encoding ASCII
+    (Get-SanmaoSha256 '.\package-lock.json') | Set-Content -LiteralPath $packageLockHashPath -Encoding ASCII
   }
 } else {
   Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
@@ -536,7 +590,7 @@ Write-Step '检查构建产物是否最新'
 $nextCmd = Join-Path $root 'node_modules\.bin\next.cmd'
 $buildIdPath = Join-Path $root '.next\BUILD_ID'
 
-$needBuild = ($env:SANMAO_FORCE_BUILD -eq '1') -or (-not (Test-Path -LiteralPath $buildIdPath))
+$needBuild = ($env:SANMAO_FORCE_BUILD -eq '1') -or (-not (Test-SanmaoBuildArtifacts))
 if (-not $needBuild) {
   $buildTime = (Get-Item -LiteralPath $buildIdPath).LastWriteTimeUtc
   $files = @()
@@ -561,8 +615,14 @@ if ($needBuild) {
   if ($LASTEXITCODE -ne 0) {
     Fail '网页构建失败。请把本窗口中“构建失败”上方的报错截图发给我。'
   }
+  if (-not (Wait-SanmaoBuildArtifacts)) {
+    Fail '网页构建完成但构建产物不完整，请再次运行启动器。'
+  }
   Write-Host '构建完成。' -ForegroundColor Green
 } else {
+  if (-not (Wait-SanmaoBuildArtifacts)) {
+    Fail '检测到网页构建产物不完整，请再次运行启动器。'
+  }
   Write-Host '构建产物已是最新，跳过构建，直接启动。' -ForegroundColor Green
 }
 
