@@ -11,7 +11,7 @@ import ModelPicker from '@/components/ModelPicker';
 import { getLastModelCall, recordModelCall } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
-import { ANGLE_DEFAULTS, ANGLE_PRESETS, angleName, buildAnglePayload, buildAngleTargetSemantic, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, deriveAngleDelta, normalizeAngleState, shouldWarnLiteForAngle, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec } from '@/lib/angle-control';
+import { ANGLE_DEFAULTS, ANGLE_PRESETS, angleName, buildAnglePayload, buildAngleTargetSemantic, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, deriveAngleDelta, flipHorizontalYaw, normalizeAngleState, screenFacingDirection, shouldWarnLiteForAngle, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec } from '@/lib/angle-control';
 
 type AngleConsoleProps = {
   theme: 'light' | 'dark';
@@ -1022,6 +1022,13 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     updateCamera({ yaw, pitch });
   }
 
+  function flipHorizontalTarget() {
+    const nextYaw = flipHorizontalYaw(camera.yaw);
+    if (nextYaw === camera.yaw) return onNotify(Math.abs(camera.yaw) < 1 ? '正面机位没有左右方向可切换。' : '背面机位没有可见的正面方向可切换。');
+    updateCamera({ yaw: nextYaw });
+    onNotify(`已切换画面左右方向：Yaw ${roundViewportValue(camera.yaw)}° → ${roundViewportValue(nextYaw)}°，导引与最终语义已同步。`);
+  }
+
   function recordStartingCamera() {
     setCameraStart(normalizeAngleState(camera));
     onNotify('已记录起始机位；中性轮廓画面保持不动，后续调整将从 0 开始累计。');
@@ -1165,7 +1172,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
         {panelTab === 'controls' ? <>
           <div className="angle-model-compact"><span>改图模型</span><ModelPicker models={models} value={camera.modelId} capability="edit" defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} defaultModelId={defaultModelId} onChange={(value) => updateCamera({ modelId: value } as CameraPatch)}/></div>
           <div className={`angle-output-summary ${framingStatus.level}`} title={framingStatus.detail}><strong>{angleOutput.width}×{angleOutput.height}</strong><span>{subjectHeightSummary}</span><small>人物可见 {framingVisibleRatio}%{cropSummary ? ` · 裁切 ${cropSummary}` : ''}</small></div>
-          <div className="angle-semantic-summary" aria-live="polite" aria-label="目标视觉语义"><span>目标视觉语义</span><div><b>Yaw</b><strong>{cameraSemantics.yaw}</strong></div><div><b>Pitch</b><strong>{cameraSemantics.pitch}</strong></div><div><b>Lens</b><strong>{Math.round(camera.focal)}mm · {cameraSemantics.focal}</strong></div><div><b>Distance</b><strong>{camera.distance.toFixed(1)}× · {cameraSemantics.distance}</strong></div><div className={`angle-difficulty-note ${targetDifficulty}`}><b>{targetDifficultyCopy.label}</b><span>{targetDifficultyCopy.detail}</span></div></div>
+          <div className="angle-semantic-summary" aria-live="polite" aria-label="目标视觉语义"><span>目标视觉语义</span><div><b>Yaw</b><strong>{cameraSemantics.yaw}</strong></div><div><b>Pitch</b><strong>{cameraSemantics.pitch}</strong></div><div><b>Lens</b><strong>{Math.round(camera.focal)}mm · {cameraSemantics.focal}</strong></div><div><b>Distance</b><strong>{camera.distance.toFixed(1)}× · {cameraSemantics.distance}</strong></div><div className="angle-direction-calibration"><div><b>画面方向校准</b><strong>{screenFacingDirection(camera.yaw)}</strong></div><button type="button" onClick={flipHorizontalTarget}>左右换向</button><small>图1与图2正面方向相反时切换；会同步反转 Yaw、3D 导引与模型语义。</small></div><div className={`angle-difficulty-note ${targetDifficulty}`}><b>{targetDifficultyCopy.label}</b><span>{targetDifficultyCopy.detail}</span></div></div>
           <ol className="angle-workflow" aria-label="角度控制操作流程">
             <li className={hasReadyReference ? 'done' : submitState.step === 1 ? 'current' : ''}><i>1</i><span><b>添加图 1</b><small>{hasReadyReference ? '参考图已就绪' : '身份、场景与风格参考'}</small></span></li>
             <li className={cameraStart ? 'done' : submitState.step === 2 ? 'current' : ''}><i>2</i><span><b>记录起始机位</b><small>{cameraStart ? '已保存对齐基准' : '先把中性轮廓对齐图 1'}</small></span></li>

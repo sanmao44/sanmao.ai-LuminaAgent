@@ -124,6 +124,16 @@ test('uses anatomical side language and stable horizontal boundaries', () => {
   assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 151 })).horizontal_view.class, 'rear');
 });
 
+test('keeps screen-facing calibration explicit and reversible', () => {
+  assert.equal(angle.screenFacingDirection(60), '人物正面朝画面左侧');
+  assert.equal(angle.screenFacingDirection(-60), '人物正面朝画面右侧');
+  assert.equal(angle.screenFacingDirection(0), '画面近乎正面');
+  assert.equal(angle.flipHorizontalYaw(60), -60);
+  assert.equal(angle.flipHorizontalYaw(-42), 42);
+  assert.equal(angle.flipHorizontalYaw(0), 0);
+  assert.equal(angle.flipHorizontalYaw(180), 180);
+});
+
 test('keeps the 180-degree wrap deterministic', () => {
   assert.equal(angle.effectiveAngle(180), 180);
   assert.equal(angle.effectiveAngle(-180), 180);

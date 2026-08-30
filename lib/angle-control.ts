@@ -173,6 +173,19 @@ export function relativeViewYaw(camera: Pick<AngleCameraState, 'yaw'>) {
   return roundAngleRecordValue(effectiveAngle(camera.yaw));
 }
 
+/** Returns the direction in which the subject's anatomical front projects on screen. */
+export function screenFacingDirection(yaw: number) {
+  const angle = effectiveAngle(yaw);
+  if (Math.abs(angle) <= 10) return '画面近乎正面';
+  return angle > 0 ? '人物正面朝画面左侧' : '人物正面朝画面右侧';
+}
+
+/** One-click visual calibration for the common left/right reference mismatch. */
+export function flipHorizontalYaw(yaw: number) {
+  const angle = effectiveAngle(yaw);
+  return roundAngleRecordValue(angle === 180 ? 180 : -angle);
+}
+
 /**
  * Estimates how much unseen 3D structure the image model must infer. This is
  * a user-facing difficulty hint, not a claim that the rendered angle is

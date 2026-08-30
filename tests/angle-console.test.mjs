@@ -25,3 +25,11 @@ test('angle console surfaces reprojection risk without blocking generation', () 
   assert.match(source, /严格冻结姿态请导入匹配姿态的 GLB/);
   assert.match(source, /仅用于起始机位对齐和日志审计，不发送给图片模型/);
 });
+
+test('angle console provides a synchronized left-right direction calibration', () => {
+  assert.match(source, /画面方向校准/);
+  assert.match(source, /左右换向/);
+  assert.match(source, /flipHorizontalYaw\(camera\.yaw\)/);
+  assert.match(source, /正面机位没有左右方向可切换/);
+  assert.match(source, /导引与最终语义已同步/);
+});
