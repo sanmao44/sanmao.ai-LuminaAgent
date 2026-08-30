@@ -133,6 +133,7 @@ function mapProviderError(providerCode: string, status: number | undefined, requ
   const code = String(providerCode || '').toLowerCase();
   if (/invalidaccesskey|invalidcredential|unauthorized/.test(code) || status === 401) return new UpscaleProviderError('访问密钥无效，请检查后重新连接。', 'INVALID_CREDENTIAL', { providerCode, status, requestId });
   if (/signaturedoesnotmatch|authfailure|signatureinvalid/.test(code)) return new UpscaleProviderError('密钥验证失败，请确认 Secret 是否正确。', 'SIGNATURE_INVALID', { providerCode, status, requestId });
+  if (/unsupported.?http.?method|method.?not.?allowed/.test(code) || status === 405) return new UpscaleProviderError('阿里云接口请求方式不兼容，请更新 SANMAO.AI 后重试。', 'UPSTREAM_ERROR', { providerCode, status, requestId });
   if (/notpurchase|notpurchased|service.?not.?enabled|unsubscribed/.test(code)) return new UpscaleProviderError('该 AI 服务尚未开通，请先前往官方控制台开通。', 'NOT_PURCHASED', { providerCode, status, requestId });
   if (/permission|forbidden|no.?permission|access.?denied/.test(code) || status === 403) return new UpscaleProviderError(provider === 'aliyun-viapi' ? '阿里云图像生产服务尚未开通，或当前 AccessKey 没有该能力权限。请先开通图像生产；如使用子账号，再配置 AliyunVIAPIFullAccess。' : '当前账号没有调用此功能的权限，请检查云平台授权。', 'PERMISSION_DENIED', { providerCode, status, requestId });
   if (/balance|quota|insufficient|arrears/.test(code)) return new UpscaleProviderError('云平台余额或额度不足，请充值后再试。', 'INSUFFICIENT_BALANCE', { providerCode, status, requestId });
@@ -276,7 +277,7 @@ export function buildAliyunRpcSignature(options: { method?: string; action: stri
     ...(options.params || {}),
   };
   const canonicalQuery = Object.keys(common).sort().map((key) => `${rfc3986(key)}=${rfc3986(common[key])}`).join('&');
-  const method = (options.method || 'GET').toUpperCase();
+  const method = (options.method || 'POST').toUpperCase();
   const stringToSign = `${method}&${rfc3986('/')}&${rfc3986(canonicalQuery)}`;
   const signature = createHmac('sha1', `${options.accessKeySecret}&`).update(stringToSign).digest('base64');
   const query = `${canonicalQuery}&Signature=${rfc3986(signature)}`;
@@ -291,8 +292,9 @@ function aliError(payload: JsonObject, status: number, requestId?: string) {
 async function aliyunRpc(credentials: UpscaleConnectionCredentials, action: string, params: Record<string, string>, signal?: AbortSignal): Promise<{ payload: JsonObject; requestId?: string }> {
   if (!credentials.accessKeyId || !credentials.accessKeySecret) throw new UpscaleProviderError('请填写阿里云 AccessKey ID 和 AccessKey Secret。', 'INVALID_CREDENTIAL');
   const endpoint = 'https://imageenhan.cn-shanghai.aliyuncs.com/';
-  const signed = buildAliyunRpcSignature({ action, accessKeyId: credentials.accessKeyId, accessKeySecret: credentials.accessKeySecret, params });
-  const response = await fetch(`${endpoint}?${signed.query}`, { method: 'GET', signal: signal || AbortSignal.timeout(60_000), headers: { Accept: 'application/json' } });
+  const method = 'POST';
+  const signed = buildAliyunRpcSignature({ method, action, accessKeyId: credentials.accessKeyId, accessKeySecret: credentials.accessKeySecret, params });
+  const response = await fetch(`${endpoint}?${signed.query}`, { method, signal: signal || AbortSignal.timeout(60_000), headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' } });
   const requestId = requestIdFromHeaders(response.headers);
   const text = await response.text();
   let payload: JsonObject = {};

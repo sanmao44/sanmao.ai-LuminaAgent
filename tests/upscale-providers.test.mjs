@@ -66,14 +66,16 @@ test('Tencent AISuperResolution sends detect-url, official action and magnify', 
 
 test('Alibaba standard VIAPI signs RPC, sends Url and downloads ImageURL', async () => {
   const calls = [];
-  globalThis.fetch = async (url) => {
-    calls.push(String(url));
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
     if (calls.length === 1) return new Response(JSON.stringify({ RequestId: 'ali-1', Data: { ImageURL: 'https://result.example/out.png' } }), { status: 200, headers: { 'content-type': 'application/json' } });
     return new Response(pngBytes, { status: 200, headers: { 'content-type': 'image/png' } });
   };
   const client = provider.createUpscaleProvider('aliyun-viapi', { provider: 'aliyun-viapi', accessKeyId: 'LTAIexample', accessKeySecret: 'SECRET' });
   const result = await client.upscale({ modelId: 'aliyun-standard-super-resolution', imageUrl: 'https://cdn.example/in.png', scale: 2, outputFormat: 'jpg', outputQuality: 72 });
-  const requestUrl = new URL(calls[0]);
+  const requestUrl = new URL(calls[0].url);
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers['Content-Type'], 'application/x-www-form-urlencoded');
   assert.equal(requestUrl.searchParams.get('Action'), 'MakeSuperResolutionImage');
   assert.equal(requestUrl.searchParams.get('Url'), 'https://cdn.example/in.png');
   assert.equal(requestUrl.searchParams.get('UpscaleFactor'), '2');
@@ -81,8 +83,30 @@ test('Alibaba standard VIAPI signs RPC, sends Url and downloads ImageURL', async
   assert.equal(requestUrl.searchParams.get('OutputQuality'), '72');
   assert.ok(requestUrl.searchParams.get('Signature'));
   assert.equal(requestUrl.searchParams.get('Signature').includes('SECRET'), false);
-  assert.equal(calls[1], 'https://result.example/out.png');
+  assert.equal(calls[1].url, 'https://result.example/out.png');
   assert.equal(result.status, 'succeeded');
+});
+
+test('Alibaba connection probe treats an invalid job as authenticated and uses POST', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ Code: 'InvalidJobId', Message: 'job not found' }), { status: 400, headers: { 'content-type': 'application/json' } });
+  };
+  const client = provider.createUpscaleProvider('aliyun-viapi', { provider: 'aliyun-viapi', accessKeyId: 'LTAIexample', accessKeySecret: 'SECRET' });
+  const result = await client.testConnection();
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].init.method, 'POST');
+});
+
+test('Alibaba unsupported HTTP method is not reported as missing service permission', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ Code: 'UnsupportedHTTPMethod' }), { status: 403, headers: { 'content-type': 'application/json' } });
+  const client = provider.createUpscaleProvider('aliyun-viapi', { provider: 'aliyun-viapi', accessKeyId: 'LTAIexample', accessKeySecret: 'SECRET' });
+  await assert.rejects(() => client.upscale({ modelId: 'aliyun-standard-super-resolution', imageUrl: 'https://cdn.example/in.png', scale: 2 }), (error) => {
+    assert.equal(error.code, 'UPSTREAM_ERROR');
+    assert.match(error.message, /请求方式不兼容/);
+    return true;
+  });
 });
 
 test('Alibaba generative VIAPI maps queued, processing and succeeded results', async () => {
