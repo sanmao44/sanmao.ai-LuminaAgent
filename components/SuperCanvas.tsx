@@ -88,6 +88,8 @@ import {
   canvasNodeColorKey,
   canvasSourceColorKey,
 } from "@/lib/canvas/appearance";
+import { formatCanvasVideoDuration } from "@/lib/canvas/media";
+import { downloadCanvasShareImage } from "@/lib/canvas/share";
 import {
   normalizeCreationSettings,
   imageModelOptions,
@@ -741,18 +743,6 @@ function nodeStatus(node: CanvasNode) {
   if (!node.data.url && node.data.status === "draft")
     return node.data.statusLabel || "选中后在下方生成";
   return node.data.role || "参考素材";
-}
-
-function canvasVideoDurationLabel(durationMs: unknown) {
-  const milliseconds = Number(durationMs);
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "";
-  const totalSeconds = milliseconds / 1000;
-  if (totalSeconds >= 60) {
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = Math.floor(totalSeconds % 60);
-    return `${minutes}:${String(seconds).padStart(2, "0")}`;
-  }
-  return `${totalSeconds.toFixed(1)}s`;
 }
 
 function generationLogKind(log: CanvasGenerationLog) {
@@ -3595,21 +3585,41 @@ export default function SuperCanvas() {
   }, [activePanel, openCanvasPanel]);
 
   const setMediaNaturalSize = useCallback(
-    (nodeId: string, width: number, height: number) => {
-      if (!width || !height) return;
+    (
+      nodeId: string,
+      width: number,
+      height: number,
+      durationSeconds?: number,
+    ) => {
+      const durationMs =
+        typeof durationSeconds === "number" &&
+        Number.isFinite(durationSeconds) &&
+        durationSeconds > 0
+          ? Math.round(durationSeconds * 1000)
+          : undefined;
+      if ((!width || !height) && !durationMs) return;
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) => {
           if (node.id !== nodeId || node.type !== "media") return node;
+          const nextData = {
+            ...node.data,
+            ...(width && height
+              ? { nativeWidth: width, nativeHeight: height }
+              : {}),
+            ...(durationMs ? { durationMs } : {}),
+          };
+          if (!width || !height)
+            return { ...node, data: nextData };
           if (node.data.autoFit === false)
             return {
               ...node,
-              data: { ...node.data, nativeWidth: width, nativeHeight: height },
+              data: nextData,
             };
           return {
             ...node,
             ...mediaCardSizeForRatio(width / height, node.data.kind || "image"),
-            data: { ...node.data, nativeWidth: width, nativeHeight: height },
+            data: nextData,
           };
         }),
       }));
@@ -7318,6 +7328,34 @@ export default function SuperCanvas() {
     anchor.click();
     notify("已开始下载");
   }, [notify]);
+  const downloadCanvasShare = useCallback(async (node: CanvasNode) => {
+    if ((node.type !== "media" && node.type !== "upscale") || node.data.kind !== "image" || !node.data.url) {
+      notify("分享版目前只支持已完成的图片节点。", "error");
+      return;
+    }
+    const references = incomingReferences(docRef.current, node.id)
+      .map((reference) => ({
+        id: reference.id,
+        name: String(reference.data.name || "参考素材"),
+        url: String(reference.data.url || ""),
+        kind: reference.data.kind === "video" ? ("video" as const) : ("image" as const),
+      }))
+      .filter((reference) => Boolean(reference.url));
+    try {
+      await downloadCanvasShareImage({
+        id: node.id,
+        url: String(node.data.url),
+        name: String(node.data.name || "画布素材"),
+        prompt: String(node.data.generation?.prompt || node.data.prompt || ""),
+        modelName: String(node.data.model || node.data.generation?.params?.model || "图片模型"),
+        createdAt: node.data.generation?.createdAt || node.data.generation?.updatedAt,
+        references,
+      });
+      notify("已下载主界面同款分享版");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "分享版下载失败", "error");
+    }
+  }, [notify]);
   const downloadSelectedImages = useCallback(async () => {
     if (selectedImageDownloads.length < 2 || batchDownloading) return;
     setBatchDownloading(true);
@@ -9452,6 +9490,13 @@ export default function SuperCanvas() {
           onReuse={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
           onUseAsReference={viewerIsMedia ? () => addCurrentNodeToReuse(viewerNode) : undefined}
           onAddToAssets={canAddCanvasAsset(viewerNode) ? () => openAssetCollectionPicker(viewerNode) : undefined}
+          onDownload={(variant) => {
+            if (variant === "share") {
+              void downloadCanvasShare(viewerNode);
+              return;
+            }
+            downloadCanvasNode(viewerNode);
+          }}
           onDelete={removeViewerNode}
         />;
       })()}
@@ -11590,7 +11635,12 @@ function CanvasNodeCard({
   onUseAsImagePrompt: () => void;
   onRetryVariant: (variantIndex: number) => void;
   onRetryFailedVariants: () => void;
-  onNaturalSize: (nodeId: string, width: number, height: number) => void;
+  onNaturalSize: (
+    nodeId: string,
+    width: number,
+    height: number,
+    durationSeconds?: number,
+  ) => void;
   onPromptChange: (value: string) => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
   onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
@@ -11628,6 +11678,20 @@ function CanvasNodeCard({
       : null;
   const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
   const failed = data.status === "failed" && !data.url;
+  const videoDuration =
+    node.type === "media" && data.kind === "video" && data.url
+      ? formatCanvasVideoDuration(data.durationMs)
+      : "";
+  const videoResolution =
+    node.type === "media" &&
+    data.kind === "video" &&
+    Boolean(data.url) &&
+    !pending &&
+    data.status !== "failed" &&
+    Number(data.nativeWidth) > 0 &&
+    Number(data.nativeHeight) > 0
+      ? `${Math.round(Number(data.nativeWidth))} × ${Math.round(Number(data.nativeHeight))}`
+      : null;
   const maskState = maskStateForNode(node);
   const agentResponse =
     node.type === "prompt" &&
@@ -11663,6 +11727,18 @@ function CanvasNodeCard({
           : node.type === "generator"
             ? "批量处理中"
             : `${data.kind === "video" ? "视频" : "图片"}生成中`);
+  const mediaFooterStatus =
+    node.type === "media" && data.kind === "video"
+      ? pending
+        ? processingLabel
+        : data.status === "failed"
+          ? "视频生成失败"
+          : data.url
+            ? data.generation
+              ? "视频生成结果"
+              : "视频素材"
+            : "空视频节点"
+      : nodeStatus(node);
   const completedVariants = variantStates.filter(
     (state) => state.status === "completed",
   ).length;
@@ -11764,7 +11840,7 @@ function CanvasNodeCard({
         onPointerDown={(event) => onConnect(event, node.id, "left")}
       />
       {node.type === "media" && (
-        <div className="canvas-media-card">
+        <div className={`canvas-media-card${data.kind === "video" ? " video" : ""}`}>
           <div className="canvas-media-stage">
             {pending ? (
               <div className="canvas-media-state pending">
@@ -11797,11 +11873,13 @@ function CanvasNodeCard({
                 playsInline
                 preload="metadata"
                 draggable={false}
+                aria-label={`视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
                 onLoadedMetadata={(event) =>
                   onNaturalSize(
                     node.id,
                     event.currentTarget.videoWidth,
                     event.currentTarget.videoHeight,
+                    event.currentTarget.duration,
                   )
                 }
               />
@@ -11820,7 +11898,13 @@ function CanvasNodeCard({
               />
             )}
             {data.kind === "video" && data.url && (
-              <span className="canvas-video-mark">▶</span>
+              <span
+                className="canvas-video-mark"
+                title={`视频${videoDuration ? ` · ${videoDuration}` : ""}`}
+                aria-label={`视频${videoDuration ? `，时长 ${videoDuration}` : ""}`}
+              >
+                ▶ 视频{videoDuration ? ` · ${videoDuration}` : ""}
+              </span>
             )}
             {imageResolution && (
               <span
@@ -11829,6 +11913,15 @@ function CanvasNodeCard({
                 aria-label={`图片分辨率 ${imageResolution}`}
               >
                 {imageResolution}
+              </span>
+            )}
+            {videoResolution && (
+              <span
+                className="canvas-image-resolution canvas-video-resolution"
+                title={`视频分辨率 ${videoResolution}`}
+                aria-label={`视频分辨率 ${videoResolution}`}
+              >
+                {videoResolution}
               </span>
             )}
             {data.url && (
@@ -11877,10 +11970,12 @@ function CanvasNodeCard({
               {data.kind === "video" ? "▶" : "▣"}
             </span>
             <span className="canvas-node-title">
-              <b>{data.name || "素材"}</b>
-              <small>{data.model || nodeStatus(node)}</small>
+              <b>{data.name || (data.kind === "video" ? "视频素材" : "素材")}</b>
+              <small>{data.model || (data.kind === "video" ? "视频" : nodeStatus(node))}</small>
             </span>
-            <em>{nodeStatus(node)}</em>
+            <em className={data.kind === "video" ? "video-status" : undefined}>
+              {mediaFooterStatus}
+            </em>
           </div>
         </div>
       )}

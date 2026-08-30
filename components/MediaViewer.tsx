@@ -495,7 +495,7 @@ export default function MediaViewer({
             )}
             {parameters && <button type="button" className={showParameters ? "active" : ""} onClick={() => setShowParameters((value) => !value)}>⚙ 参数调整</button>}
             <button type="button" onClick={() => download("original")}>↓ 原图</button>
-            <button type="button" onClick={() => download("share")}>⇩ 分享</button>
+            <button type="button" onClick={() => download("share")} disabled={item.kind !== "image"}>⇩ 分享版</button>
             <button type="button" onClick={onClose} aria-label="关闭预览">×</button>
           </div>
         </header>

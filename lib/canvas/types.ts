@@ -123,6 +123,8 @@ export type CanvasNodeData = {
   autoFit?: boolean;
   nativeWidth?: number;
   nativeHeight?: number;
+  /** Duration of a loaded video in milliseconds, when available. */
+  durationMs?: number;
   /** Identifies the node operation that produced the current media URL. */
   resultSource?: "upscale-node";
   referenceOrder?: string[];

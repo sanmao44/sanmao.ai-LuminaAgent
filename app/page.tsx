@@ -1762,7 +1762,11 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
         children: /*#__PURE__*/ _jsxs("form", {
             className: "editor-modal",
             onClick: (event)=>event.stopPropagation(),
-            onSubmit: onSubmit,
+            onSubmit: (event)=>{
+                event.preventDefault();
+                event.stopPropagation();
+                onSubmit(event);
+            },
             children: [
                 /*#__PURE__*/ _jsxs("header", {
                     className: "editor-modal-head",
@@ -2333,9 +2337,12 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                             onLocalUpscale && /*#__PURE__*/ _jsxs("button", {
                                 type: "button",
                                 className: `local-upscale-reference ${localUpscaleActive ? 'active' : ''}`,
-                                disabled: !localUpscaleActive && (refs.length !== 1 || refs.some((ref)=>ref.pending)),
-                                title: localUpscaleActive ? '返回普通生图模式' : refs.length !== 1 ? '本地超分需要恰好 1 张图片' : refs.some((ref)=>ref.pending) ? '参考图准备完成后才能超分' : '使用本地上传图片进行超分',
-                                onClick: onLocalUpscale,
+                                title: localUpscaleActive ? '返回普通生图模式' : refs.length !== 1 ? '请先添加 1 张参考图' : refs.some((ref)=>ref.pending) ? '参考图正在准备，请稍候片刻' : '使用本地上传图片进行超分',
+                                onClick: (event)=>{
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    onLocalUpscale(event);
+                                },
                                 children: [
                                     /*#__PURE__*/ _jsx(Icon, {
                                         name: "upscale",
@@ -2732,7 +2739,10 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                         className: "more-menu",
                                         children: [
                                             /*#__PURE__*/ _jsxs("button", {
-                                                onClick: ()=>{
+                                                type: "button",
+                                                onClick: (event)=>{
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
                                                     void onReversePrompt();
                                                     setMenu(false);
                                                 },
@@ -2745,7 +2755,10 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("button", {
-                                                onClick: ()=>{
+                                                type: "button",
+                                                onClick: (event)=>{
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
                                                     onUpscale();
                                                     setMenu(false);
                                                 },
@@ -2758,7 +2771,10 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("button", {
-                                                onClick: ()=>{
+                                                type: "button",
+                                                onClick: (event)=>{
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
                                                     window.dispatchEvent(new CustomEvent('sanmao-angle', {
                                                         detail: item
                                                     }));
@@ -2773,7 +2789,10 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("button", {
-                                                onClick: ()=>{
+                                                type: "button",
+                                                onClick: (event)=>{
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
                                                     window.dispatchEvent(new CustomEvent('sanmao-outpaint', {
                                                         detail: item
                                                     }));
@@ -2788,7 +2807,10 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                 ]
                                             }),
                                             comparisonSource && onCompare && /*#__PURE__*/ _jsxs("button", {
-                                                onClick: ()=>{
+                                                type: "button",
+                                                onClick: (event)=>{
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
                                                     onCompare();
                                                     setMenu(false);
                                                 },
@@ -2801,7 +2823,10 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("button", {
-                                                onClick: ()=>{
+                                                type: "button",
+                                                onClick: (event)=>{
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
                                                     onReuse();
                                                     setMenu(false);
                                                 },
@@ -2814,8 +2839,11 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                 ]
                                             }),
                                              /*#__PURE__*/ _jsxs("button", {
-                                                 onClick: ()=>{
-                                                     void onDownloadShare?.();
+                                                 type: "button",
+                                                 onClick: (event)=>{
+                                                      event.preventDefault();
+                                                      event.stopPropagation();
+                                                      void onDownloadShare?.();
                                                      setMenu(false);
                                                  },
                                                  disabled: !references.length,
@@ -2827,9 +2855,12 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                      "下载分享版"
                                                  ]
                                              }),
-                                             /*#__PURE__*/ _jsxs("button", {
-                                                 onClick: ()=>{
-                                                     onFavorite();
+                                              /*#__PURE__*/ _jsxs("button", {
+                                                  type: "button",
+                                                  onClick: (event)=>{
+                                                      event.preventDefault();
+                                                      event.stopPropagation();
+                                                      onFavorite();
                                                     setMenu(false);
                                                 },
                                                 children: [
@@ -2840,10 +2871,13 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                                                     item.favorite ? '取消收藏' : '收藏'
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("button", {
-                                                className: "danger",
-                                                onClick: ()=>{
-                                                    onDelete();
+                                             /*#__PURE__*/ _jsxs("button", {
+                                                 type: "button",
+                                                 className: "danger",
+                                                 onClick: (event)=>{
+                                                     event.preventDefault();
+                                                     event.stopPropagation();
+                                                     onDelete();
                                                     setMenu(false);
                                                 },
                                                 children: [
@@ -5114,6 +5148,8 @@ export default function Page() {
     const defaultProvider = state.providers.find((provider)=>provider.id === state.settings.defaultProviderId && isProviderModelLibraryEnabled(provider));
     const selectedGenerateModel = generateModelId !== 'auto' ? activeProviderModels.find((m)=>m.id === generateModelId) : defaultImageModel;
     const selectedUpscaleModel = generateUpscaleModelId !== 'auto' ? availableUpscaleModels.find((m)=>m.id === generateUpscaleModelId) : defaultUpscaleModel;
+    const selectedUpscaleOption = selectedUpscaleModel;
+    const selectedUpscaleIsCloud = isCloudUpscaleModel(selectedUpscaleModel);
     function handleUpscaleModelChange(value) {
         setGenerateUpscaleModelId(value);
         const nextModel = value === 'auto' ? defaultUpscaleModel : availableUpscaleModels.find((model)=>model.id === value);
@@ -9000,6 +9036,7 @@ export default function Page() {
     }
     function openUpscale(item) {
         setEditorMaskOpen(false);
+        setViewerId(null);
         if (!availableUpscaleModels.length) return notify('还没有可用的超分模型。请到模型库重新读取并启用 SeedVR2-7B。');
         markHistoryImageViewed(item);
         const lastCall = getLastModelCall('upscale');
@@ -14915,6 +14952,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                     className: "viewer-actions",
                                     children: [
                                         viewerParentItem && /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "compare-primary",
                                             onClick: ()=>openCompare(viewerItem),
                                             children: [
@@ -14926,6 +14964,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "angle-viewer-action",
                                             onClick: ()=>{
                                                 void openAngleConsole(viewerItem);
@@ -14940,7 +14979,12 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
-                                            onClick: ()=>openEdit(viewerItem),
+                                            type: "button",
+                                            onClick: (event)=>{
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                openEdit(viewerItem);
+                                            },
                                             children: [
                                                 /*#__PURE__*/ _jsx(Icon, {
                                                     name: "edit",
@@ -14950,8 +14994,13 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "upscale-primary",
-                                            onClick: ()=>openUpscale(viewerItem),
+                                            onClick: (event)=>{
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                openUpscale(viewerItem);
+                                            },
                                             children: [
                                                 /*#__PURE__*/ _jsx(Icon, {
                                                     name: "upscale",
@@ -14961,6 +15010,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "reference-primary",
                                             onClick: ()=>useAsReference(viewerItem),
                                             children: [
@@ -14972,7 +15022,12 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
-                                            onClick: ()=>reuseItem(viewerItem),
+                                            type: "button",
+                                            onClick: (event)=>{
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                reuseItem(viewerItem);
+                                            },
                                             children: [
                                                 /*#__PURE__*/ _jsx(Icon, {
                                                     name: "reuse",
@@ -14982,6 +15037,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "download-primary",
                                             onClick: ()=>void downloadUrl(viewerItem.url, `SANMAO-${viewerItem.id}.png`),
                                             children: [
@@ -14993,6 +15049,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }),
                                         viewerReferences.length ? /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "download-share-primary",
                                             onClick: ()=>void downloadShareImage(viewerItem).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                             children: [
@@ -15004,6 +15061,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             ]
                                         }) : null,
                                         /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "danger",
                                             onClick: ()=>askDeleteItems([
                                                     viewerItem.id
