@@ -25,13 +25,16 @@ test("all canvas asset actions open the collection picker before writing", () =>
   assert.match(component, /assetCollectionPickerNodeId\);/);
 });
 
-test("collection picker exposes only uncategorized and custom collections", () => {
+test("collection picker mirrors drawer categories and disables smart views", () => {
   const picker = component.slice(
     component.indexOf("function CanvasAssetCollectionPicker"),
     component.indexOf("function CanvasAssetDrawer"),
   );
   assert.match(picker, /CANVAS_ASSET_UNCATEGORIZED_ID/);
-  assert.match(picker, /\.filter\(\(item\) => item\.builtin === false\)/);
+  assert.match(picker, /const collectionOptions = collections\.map\(\(item\) =>/);
+  assert.match(picker, /assignable: isAssignableCanvasAssetCollection\(item\.id\)/);
+  assert.match(picker, /disabled: !item\.assignable/);
+  assert.match(picker, /智能筛选视图不可直接归类/);
   assert.match(picker, /saveAssetCollections\(next\)/);
   assert.match(picker, /CANVAS_ASSET_LAST_COLLECTION_KEY/);
   assert.match(picker, /全局资产中心的“\{selectedCollection\?\.name/);
