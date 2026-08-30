@@ -743,6 +743,18 @@ function nodeStatus(node: CanvasNode) {
   return node.data.role || "参考素材";
 }
 
+function canvasVideoDurationLabel(durationMs: unknown) {
+  const milliseconds = Number(durationMs);
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "";
+  const totalSeconds = milliseconds / 1000;
+  if (totalSeconds >= 60) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${totalSeconds.toFixed(1)}s`;
+}
+
 function generationLogKind(log: CanvasGenerationLog) {
   if (log.mediaKind) return log.mediaKind;
   if (log.mode === "video") return "video" as const;
@@ -12904,7 +12916,7 @@ function CanvasTextLightbox({
       role="dialog"
       aria-modal="true"
       aria-label={editing ? "编辑 Agent 回复" : "Agent 回复"}
-      onClick={(event) => {
+      onPointerDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >

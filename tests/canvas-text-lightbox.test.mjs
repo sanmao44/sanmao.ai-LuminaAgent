@@ -53,6 +53,8 @@ test("Agent response selection toolbar only operates on selected body text", () 
   assert.match(lightbox, /转图片/);
   assert.match(lightbox, /onCreateAgentNode\(node, value\)/);
   assert.match(lightbox, /onUseAsImagePrompt\(node, value\)/);
+  assert.match(lightbox, /onPointerDown=\{\(event\) =>/);
+  assert.doesNotMatch(lightbox, /onClick=\{\(event\) => \{\s*if \(event\.target === event\.currentTarget\) onClose\(\)/);
 });
 
 test("selected text creates a connected Agent input node without starting generation", () => {
