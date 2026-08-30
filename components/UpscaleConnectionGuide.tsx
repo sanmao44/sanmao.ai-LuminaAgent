@@ -25,12 +25,14 @@ function connectionFor(connections: UpscaleConnection[], provider: UpscaleProvid
 export default function UpscaleConnectionGuide({ connections, onStateChanged, onNotify }: Props) {
   const [forms, setForms] = useState(initialForms);
   const [bucketOptions, setBucketOptions] = useState<Bucket[]>([]);
+  const [bucketSetupNeeded, setBucketSetupNeeded] = useState(false);
   const [busy, setBusy] = useState<UpscaleProviderId | null>(null);
   const [message, setMessage] = useState<Record<string, string>>({});
 
   function update(provider: UpscaleProviderId, patch: Partial<FormState>) {
     setForms((current) => ({ ...current, [provider]: { ...current[provider], ...patch } }));
     setMessage((current) => ({ ...current, [provider]: '' }));
+    if (provider === 'tencent-ci') setBucketSetupNeeded(false);
   }
 
   async function submit(provider: UpscaleProviderId) {
@@ -41,7 +43,12 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
         ? { provider, secretId: form.first, secretKey: form.second, bucket: form.bucket }
         : { provider, accessKeyId: form.first, accessKeySecret: form.second };
       const response = await fetch('/api/upscale/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await response.json().catch(() => ({})) as { state?: PublicState; error?: string; requiresBucketSelection?: boolean; buckets?: Bucket[] };
+      const data = await response.json().catch(() => ({})) as { state?: PublicState; error?: string; requiresBucketSelection?: boolean; requiresBucketSetup?: boolean; buckets?: Bucket[] };
+      if (data.requiresBucketSetup) {
+        setBucketSetupNeeded(true);
+        setMessage((current) => ({ ...current, [provider]: '还差 1 步：请先创建 COS 存储桶。' }));
+        return;
+      }
       if (!response.ok) throw new Error(data.error || '连接检测失败');
       if (data.requiresBucketSelection) {
         setBucketOptions(Array.isArray(data.buckets) ? data.buckets : []);
@@ -51,9 +58,11 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
       if (data.state) onStateChanged(data.state);
       setForms((current) => ({ ...current, [provider]: { first: '', second: '', bucket: '' } }));
       setBucketOptions([]);
+      setBucketSetupNeeded(false);
       setMessage((current) => ({ ...current, [provider]: '连接成功，已可以在高清放大面板中使用。' }));
       onNotify(`${UPSCALE_PROVIDER_NAMES[provider]}已连接`);
     } catch (error) {
+      if (provider === 'tencent-ci' && error instanceof Error && error.message.includes('没有可用存储桶')) setBucketSetupNeeded(true);
       setMessage((current) => ({ ...current, [provider]: error instanceof Error ? error.message : '连接检测失败' }));
     } finally { setBusy(null); }
   }
@@ -80,21 +89,29 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
     const form = forms[provider];
     const tencent = provider === 'tencent-ci';
     const links = UPSCALE_PROVIDER_LINKS[provider];
+    const storageLink = tencent ? UPSCALE_PROVIDER_LINKS['tencent-ci'].storage : null;
     const buckets = tencent && bucketOptions.length ? bucketOptions : [];
     const credentialNames = tencent ? ['SecretId', 'SecretKey'] : ['AccessKey ID', 'AccessKey Secret'];
     return <article className="upscale-connection-card" key={provider}>
       <div className="upscale-connection-card-head"><div className="upscale-connection-logo">{tencent ? '腾' : '阿'}</div><div><strong>{UPSCALE_PROVIDER_NAMES[provider]}</strong><p>{tencent ? '只需复制两项密钥即可连接。' : '只需复制两项密钥即可连接。'}</p></div><span className={`upscale-connection-status ${connection?.connected ? 'healthy' : 'idle'}`}>{connection?.connected ? '已连接' : '未连接'}</span></div>
       {connection?.connected && <div className="upscale-connection-saved"><span>已保存：{connection.maskedCredential}</span>{tencent && <span>存储桶：{connection.bucket || '已配置'} · {connection.region || '自动识别'}</span>}<button type="button" className="ghost-button" onClick={() => void remove(provider)} disabled={busy === provider}>删除连接</button></div>}
       {!connection?.connected && <div className="upscale-connection-steps">
-        <strong>按这 3 步操作</strong>
+        <strong>照着下面做就行</strong>
         <ol>
           <li><b>1</b><span>打开官方密钥页面</span><a href={links.keys} target="_blank" rel="noopener noreferrer">打开密钥页面 ↗</a></li>
-          <li><b>2</b><span>{tencent ? '点击“新建密钥”，复制 SecretId 和 SecretKey' : '创建 AccessKey，复制 AccessKey ID 和 AccessKey Secret'}</span></li>
-          <li><b>3</b><span>回到这里，粘贴到下面两行，点击检测</span></li>
+          {tencent ? <>
+            <li><b>2</b><span>如果出现安全提示，勾选“我已知晓风险”，点击“继续使用”</span></li>
+            <li><b>3</b><span>点击“新建密钥”，复制 SecretId 和 SecretKey</span></li>
+          </> : <>
+            <li><b>2</b><span>点击“创建 AccessKey”；如果出现安全提示，按页面提示确认</span></li>
+            <li><b>3</b><span>立即复制 AccessKey ID 和 AccessKey Secret（密钥通常只显示一次）</span></li>
+          </>}
+          <li><b>4</b><span>回到这里，粘贴到下面两行，点击“检测并连接”</span></li>
         </ol>
-        <small>{tencent ? '不要进入“用户列表”，不要创建子用户。' : '不要创建 RAM 用户，只需要 AccessKey。'}</small>
+        <small>{tencent ? '截图中的“切换使用子账号密钥”不用点；本工具只需要这两个密钥。' : '不用进入“用户”或创建 RAM 用户，本工具只需要这两个 AccessKey 值。'}</small>
       </div>}
-      <details className="upscale-connection-more"><summary>更多官方信息（可跳过）</summary><div className="upscale-connection-links"><a href={links.open} target="_blank" rel="noopener noreferrer">去官方开通 ↗</a>{links.docs.map((href, index) => renderLink(href, index === 0 ? '查看标准文档' : '查看生成式文档'))}<a href={links.pricing} target="_blank" rel="noopener noreferrer">查看官方价格 ↗</a></div></details>
+      {tencent && storageLink && <div className={`upscale-connection-bucket ${bucketSetupNeeded ? 'needs-setup' : ''}`}><strong>腾讯云还需要一个 COS 存储桶</strong><span>没有存储桶时，先开通 COS 并创建一个“私有”存储桶，再回到这里点击检测。</span><a href={storageLink} target="_blank" rel="noopener noreferrer">去创建存储桶 ↗</a></div>}
+      <details className="upscale-connection-more"><summary>更多官方信息（可跳过）</summary><div className="upscale-connection-links"><a href={links.open} target="_blank" rel="noopener noreferrer">去开通高清服务 ↗</a>{links.docs.map((href, index) => renderLink(href, index === 0 ? '查看标准文档' : '查看生成式文档'))}<a href={links.pricing} target="_blank" rel="noopener noreferrer">查看官方价格 ↗</a></div></details>
       <div className="upscale-connection-fields">
         <label><span>第 1 行：{credentialNames[0]}</span><input value={form.first} onChange={(event) => update(provider, { first: event.target.value })} autoComplete="off" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[0]}`} /></label>
         <label><span>第 2 行：{credentialNames[1]}</span><input type="password" value={form.second} onChange={(event) => update(provider, { second: event.target.value })} autoComplete="new-password" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[1]}`} /></label>

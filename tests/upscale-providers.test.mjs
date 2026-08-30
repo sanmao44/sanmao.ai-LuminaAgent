@@ -22,6 +22,7 @@ const imageModule = await compileModule(new URL('../lib/upscale-image.ts', impor
 ]);
 const catalogSource = await readFile(new URL('../lib/upscale-catalog.ts', import.meta.url), 'utf8');
 const guideSource = await readFile(new URL('../components/UpscaleConnectionGuide.tsx', import.meta.url), 'utf8');
+const connectionRouteSource = await readFile(new URL('../app/api/upscale/connections/route.ts', import.meta.url), 'utf8');
 const storeSource = await readFile(new URL('../lib/store.ts', import.meta.url), 'utf8');
 const taskStoreSource = await readFile(new URL('../lib/upscale-task-store.ts', import.meta.url), 'utf8');
 
@@ -148,10 +149,14 @@ test('catalog keeps fixed cloud models outside the generic model discovery flow'
 
 test('cloud connection guide points beginners to key pages and warns against user creation', () => {
   assert.match(catalogSource, /console\.cloud\.tencent\.com\/cam\/capi/);
+  assert.match(catalogSource, /console\.cloud\.tencent\.com\/cos\/bucket/);
   assert.match(catalogSource, /ram\.console\.aliyun\.com\/profile\/access-keys/);
-  assert.match(guideSource, /按这 3 步操作/);
-  assert.match(guideSource, /不要进入“用户列表”/);
-  assert.match(guideSource, /不要创建 RAM 用户/);
+  assert.match(guideSource, /照着下面做就行/);
+  assert.match(guideSource, /勾选“我已知晓风险”/);
+  assert.match(guideSource, /切换使用子账号密钥”不用点/);
+  assert.match(guideSource, /不用进入“用户”或创建 RAM 用户/);
+  assert.match(guideSource, /腾讯云还需要一个 COS 存储桶/);
+  assert.match(connectionRouteSource, /requiresBucketSetup/);
   assert.match(guideSource, /更多官方信息（可跳过）/);
 });
 

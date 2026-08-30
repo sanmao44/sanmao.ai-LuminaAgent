@@ -41,6 +41,8 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, connection: { provider: savedConnection.provider }, state: await getPublicState() }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const providerError = isUpscaleProviderError(error) ? error : null;
-    return Response.json({ error: error instanceof Error ? error.message : '高清服务连接失败。', code: providerError?.code }, { status: providerError?.status && providerError.status >= 400 ? providerError.status : 502, headers: { 'Cache-Control': 'no-store' } });
+    const errorMessage = error instanceof Error ? error.message : '高清服务连接失败。';
+    const requiresBucketSetup = errorMessage.includes('没有可用存储桶');
+    return Response.json({ error: errorMessage, code: providerError?.code, ...(requiresBucketSetup ? { requiresBucketSetup: true } : {}) }, { status: providerError?.status && providerError.status >= 400 ? providerError.status : 502, headers: { 'Cache-Control': 'no-store' } });
   }
 }

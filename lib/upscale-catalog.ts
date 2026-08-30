@@ -8,6 +8,7 @@ export const UPSCALE_PROVIDER_NAMES: Record<UpscaleProviderId, string> = {
 export const UPSCALE_PROVIDER_LINKS = {
   'tencent-ci': {
     keys: 'https://console.cloud.tencent.com/cam/capi',
+    storage: 'https://console.cloud.tencent.com/cos/bucket',
     open: 'https://console.cloud.tencent.com/ci',
     docs: ['https://cloud.tencent.com/document/api/436/117793'],
     pricing: 'https://cloud.tencent.com/document/product/460/58117',
