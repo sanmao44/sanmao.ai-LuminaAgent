@@ -107,7 +107,7 @@ const pageSizeOptions = [
         label: `每页 ${value} 张`
     }));
 const generationLogPageSize = 16;
-const videoPageSize = 12;
+const videoPageSize = 14;
 const qualityOptions = IMAGE_QUALITY_OPTIONS.map((item)=>({ value: item.value, label: item.label, meta: item.description }));
 const upscaleScales = [
     1,
@@ -12334,7 +12334,7 @@ export default function Page() {
                                         className: "creative-record-group",
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", { className: "creative-record-group-heading", children: [
-                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: "已完成的视频会自动保存在这里 · 每页 12 段" })] }),
+                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: "已完成的视频会自动保存在这里 · 每页 14 段" })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
                                             /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onDelete: ()=>askDeleteVideoTask(task) }, task.id)) }),
