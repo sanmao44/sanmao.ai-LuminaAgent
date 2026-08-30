@@ -139,6 +139,9 @@ import {
 import { bootstrapWorkspace, startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
+import CanvasProcessingIndicator, {
+  type CanvasProcessingKind,
+} from "@/components/canvas/CanvasProcessingIndicator";
 import MediaViewer, {
   type MediaViewerItem,
   type MediaViewerReference,
@@ -10538,79 +10541,6 @@ function progressValue(value: unknown) {
   return Math.max(0, Math.min(100, Math.round(numeric)));
 }
 
-function formatProcessingTime(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0)
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function CanvasProcessingIndicator({
-  label,
-  progress,
-  startedAt,
-  waiting = false,
-  compact = false,
-}: {
-  label: string;
-  progress?: number;
-  startedAt?: number;
-  waiting?: boolean;
-  compact?: boolean;
-}) {
-  const [now, setNow] = useState(() => Date.now());
-  const fallbackStartedAtRef = useRef(Date.now());
-  const validStartedAt = Number.isFinite(startedAt) ? Number(startedAt) : undefined;
-
-  useEffect(() => {
-    fallbackStartedAtRef.current = validStartedAt ?? Date.now();
-  }, [validStartedAt]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const elapsed = formatProcessingTime(
-    now - (validStartedAt ?? fallbackStartedAtRef.current),
-  );
-  return (
-    <div
-      className={`canvas-processing-indicator${compact ? " compact" : ""}`}
-      role="status"
-      aria-live="polite"
-    >
-      <span className="canvas-processing-spinner" aria-hidden="true">
-        <i />
-      </span>
-      <span className="canvas-processing-copy">
-        <b>{label}</b>
-        <span className="canvas-processing-details">
-          <small className="canvas-processing-elapsed">
-            {waiting ? "已等待" : "已运行"} {elapsed}
-          </small>
-          {typeof progress === "number" && (
-            <small className="canvas-processing-percent">{progress}%</small>
-          )}
-        </span>
-      </span>
-      <span className="canvas-processing-dots" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </span>
-      {typeof progress === "number" && (
-        <span className="canvas-processing-progress" aria-hidden="true">
-          <i style={{ width: `${progress}%` }} />
-        </span>
-      )}
-    </div>
-  );
-}
-
 function CanvasNodeReferenceStrip({
   target,
   document,
@@ -11002,6 +10932,7 @@ function CanvasNodeQuickToolbar({
             type="button"
             key={action.id}
             className={action.danger ? "danger" : ""}
+            data-action-id={action.id}
             title={action.title || action.label}
             aria-label={action.label}
             disabled={action.disabled}
@@ -11726,6 +11657,16 @@ function CanvasNodeCard({
           : node.type === "generator"
             ? "批量处理中"
             : `${data.kind === "video" ? "视频" : "图片"}生成中`);
+  const processingKind: CanvasProcessingKind =
+    node.type === "prompt"
+      ? "agent"
+      : node.type === "generator"
+        ? "generator"
+        : node.type === "upscale"
+          ? "upscale"
+          : data.kind === "video"
+            ? "video"
+            : "image";
   const mediaFooterStatus =
     node.type === "media" && data.kind === "video"
       ? pending
@@ -11846,6 +11787,7 @@ function CanvasNodeCard({
                 <CanvasProcessingIndicator
                   label={processingLabel}
                   progress={processingProgress}
+                  kind={processingKind}
                   startedAt={
                     data.processingStartedAt || data.generation?.createdAt
                   }
@@ -11986,6 +11928,7 @@ function CanvasNodeCard({
               <CanvasProcessingIndicator
                 label={processingLabel}
                 progress={processingProgress}
+                kind={processingKind}
                 startedAt={data.processingStartedAt || data.generation?.createdAt}
                 waiting={data.status === "queued"}
                 compact
@@ -12021,6 +11964,7 @@ function CanvasNodeCard({
             <CanvasProcessingIndicator
               label={processingLabel}
               progress={processingProgress}
+              kind={processingKind}
               startedAt={
                 data.processingStartedAt || data.generation?.createdAt
               }
@@ -12102,6 +12046,7 @@ function CanvasNodeCard({
             <CanvasProcessingIndicator
               label={processingLabel}
               progress={generatorProgress}
+              kind={processingKind}
               startedAt={
                 data.processingStartedAt || data.generation?.createdAt
               }
