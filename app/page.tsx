@@ -10796,8 +10796,8 @@ export default function Page() {
                                                         })
                                                     ]
                                                 }),
-                                                agentInput.trim() && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsxs("div", {
-                                                    className: `agent-intent-card ${activeAgentIntent.confidence}`,
+                                                activeAgentIntent.deliverable === 'CLARIFY' && agentInput.trim() && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsxs("div", {
+                                                    className: "agent-intent-card clarify-only",
                                                     role: "status",
                                                     "aria-live": "polite",
                                                     children: [
@@ -10808,15 +10808,13 @@ export default function Page() {
                                                                     className: "agent-intent-title",
                                                                     children: [
                                                                         /*#__PURE__*/ _jsx("span", { className: "agent-intent-pulse", "aria-hidden": "true" }),
-                                                                        /*#__PURE__*/ _jsx("strong", { children: activeAgentIntent.deliverable === 'CLARIFY' ? '我先帮你确认交付物' : `Agent 判断 · ${activeAgentIntent.label}` }),
-                                                                        activeAgentIntent.confidence === 'high' && /*#__PURE__*/ _jsx("small", { children: "高置信" })
+                                                                        /*#__PURE__*/ _jsx("strong", { children: "请确认交付形式" })
                                                                     ]
                                                                 }),
                                                                 /*#__PURE__*/ _jsx("p", { children: activeAgentIntent.summary }),
-                                                                /*#__PURE__*/ _jsx("small", { className: "agent-intent-reason", children: activeAgentIntent.reason })
                                                             ]
                                                         }),
-                                                        activeAgentIntent.deliverable === 'CLARIFY' && /*#__PURE__*/ _jsxs("div", {
+                                                        /*#__PURE__*/ _jsxs("div", {
                                                             className: "agent-intent-choices",
                                                             children: [
                                                                 ['IMAGE', '直接出图'],
