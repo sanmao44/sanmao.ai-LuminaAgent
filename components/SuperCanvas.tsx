@@ -11667,8 +11667,7 @@ function CanvasNodeCard({
   const status = data.status || "idle";
   const pending = data.status === "queued" || data.status === "running";
   const imageResolution =
-    node.type === "media" &&
-    data.kind === "image" &&
+    ((node.type === "media" && data.kind === "image") || node.type === "upscale") &&
     Boolean(data.url) &&
     !pending &&
     data.status !== "failed" &&
@@ -11996,6 +11995,15 @@ function CanvasNodeCard({
             <div className="canvas-upscale-card-result" title="双击查看大图；拖动此节点到其他节点可作为图片参考">
               <img src={String(data.url)} alt={String(data.name || "超分结果")} draggable={false} />
               <span className="canvas-upscale-result-badge"><i>↗</i>{data.status === "failed" ? "上次超分结果" : "超分节点生成的结果"}</span>
+              {imageResolution && (
+                <span
+                  className="canvas-image-resolution canvas-upscale-resolution"
+                  title={`图片分辨率 ${imageResolution}`}
+                  aria-label={`图片分辨率 ${imageResolution}`}
+                >
+                  {imageResolution}
+                </span>
+              )}
             </div>
           ) : (
             <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>

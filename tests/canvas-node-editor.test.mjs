@@ -78,6 +78,7 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
   assert.match(component, /const imageResolution =/);
   assert.match(component, /node\.type === "media"/);
   assert.match(component, /data\.kind === "image"/);
+  assert.match(component, /node\.type === "upscale"/);
   assert.match(component, /Boolean\(data\.url\)/);
   assert.match(component, /!pending/);
   assert.match(component, /data\.status !== "failed"/);
@@ -85,6 +86,8 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
   assert.match(component, /Number\(data\.nativeHeight\) > 0/);
   assert.match(component, /className="canvas-image-resolution"/);
   assert.match(component, /title=\{`图片分辨率 \$\{imageResolution\}`\}/);
+  assert.match(component, /className="canvas-image-resolution canvas-upscale-resolution"/);
+  assert.match(component, /canvas-upscale-resolution[\s\S]*title=\{`图片分辨率 \$\{imageResolution\}`\}/);
   assert.match(styles, /\.canvas-image-resolution\{[^}]*right:10px[^}]*bottom:10px/);
   assert.match(styles, /font-variant-numeric:tabular-nums/);
   assert.match(styles, /@media\(max-width:720px\)\{\.canvas-image-resolution/);
