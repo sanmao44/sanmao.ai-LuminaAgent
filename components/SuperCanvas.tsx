@@ -5257,29 +5257,12 @@ export default function SuperCanvas() {
       const referenceNodes = incoming.filter(
         (node) => isCanvasReferenceableNode(node) && node.data.kind === "image",
       );
-      const configuredAgentModel = runtime?.settings.agentModelId;
-      const hasUsableConfiguredAgentModel = Boolean(
-        configuredAgentModel &&
-          runtime?.models.some(
-            (model) =>
-              model.id === configuredAgentModel &&
-              model.kind === "chat" &&
-              model.enabled &&
-              model.published,
-          ),
-      );
       const effectiveSettings: AgentCreationSettings = {
         ...settings,
-        // Image-backed Agent work must follow the same configured model as the
-        // main Agent surface. Older canvas nodes may still contain an
-        // explicit text-only model snapshot, which would otherwise reject
-        // image_url even though the main surface succeeds.
+        // An explicit model chosen on the node is authoritative, including
+        // image-backed requests. Only "auto" should use the global default.
         model:
-          referenceNodes.length > 0 && hasUsableConfiguredAgentModel
-            ? configuredAgentModel!
-            : settings.model === "auto"
-              ? "auto"
-              : resolved.model?.id || "auto",
+          settings.model === "auto" ? "auto" : resolved.model?.id || "auto",
       };
       let inputNode = source.node;
       if (!inputNode) {

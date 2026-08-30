@@ -115,6 +115,17 @@ test("editor keeps references, variant requirements, parameters, mentions and ge
   assert.match(component, /setPromptExpanded\(false\)/);
 });
 
+test("Agent generation keeps the node model when image references are present", () => {
+  const start = component.indexOf("const effectiveSettings: AgentCreationSettings = {");
+  const end = component.indexOf("let inputNode = source.node", start);
+  assert.ok(start >= 0 && end > start, "Agent request settings should be present");
+  const settingsBlock = component.slice(start, end);
+  assert.doesNotMatch(settingsBlock, /referenceNodes\.length/);
+  assert.match(settingsBlock, /settings\.model === "auto"/);
+  assert.match(settingsBlock, /resolved\.model\?\.id/);
+  assert.match(component, /model: effectiveSettings\.model/);
+});
+
 test("image continuation uses the ordinary image API and keeps lineage on image nodes", () => {
   const start = component.indexOf("const runImageContinuation = useCallback");
   const end = component.indexOf("const runReuseGeneration = useCallback", start);
