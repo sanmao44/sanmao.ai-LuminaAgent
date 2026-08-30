@@ -367,7 +367,9 @@ export async function generateCanvasImage(input: {
   references?: Array<{ url: string; name?: string }>;
 }) {
   const references = await Promise.all(
-    (input.references || []).slice(0, 16).map((item) => asDataUrl(item.url)),
+    (input.references || [])
+      .slice(0, 16)
+      .map(async (item) => compressReferenceDataUrl(await asDataUrl(item.url))),
   );
   const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   return request<{
@@ -418,18 +420,20 @@ export async function generateCanvasVideo(input: {
   audio?: boolean;
 }) {
   const referenceData = await Promise.all(
-    (input.references || []).slice(0, 16).map((item) => asDataUrl(item.url)),
+    (input.references || [])
+      .slice(0, 16)
+      .map(async (item) => compressReferenceDataUrl(await asDataUrl(item.url))),
   );
   const firstFrame =
     input.inputMode === "first-frame" || input.inputMode === "frames"
       ? input.firstFrame
-        ? await asDataUrl(input.firstFrame)
+        ? await compressReferenceDataUrl(await asDataUrl(input.firstFrame))
         : referenceData[0]
       : undefined;
   const lastFrame =
     input.inputMode === "frames"
       ? input.lastFrame
-        ? await asDataUrl(input.lastFrame)
+        ? await compressReferenceDataUrl(await asDataUrl(input.lastFrame))
         : referenceData[1]
       : undefined;
   const videoMode = input.inputMode === "reference"
@@ -537,39 +541,125 @@ export async function getCanvasUpscaleTask(taskId: string) {
   }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: "no-store" });
 }
 
-export async function generateCanvasAgent(input: {
+export type CanvasAgentResponse = {
+  ok?: boolean;
+  message: string;
+  model?: string;
+  images?: Array<{ url: string; revisedPrompt?: string }>;
+  files?: Array<{ name: string; mimeType: string; content: string; encoding: "utf8" | "base64"; size: number }>;
+  generations?: Array<Record<string, unknown>>;
+  webSearch?: Record<string, unknown> | null;
+  webSearchDecision?: Record<string, unknown>;
+};
+
+export type CanvasAgentStreamEvent = {
+  type?: "status" | "delta" | "final" | "error";
+  stage?: string;
+  message?: string;
+  text?: string;
+  [key: string]: unknown;
+};
+
+export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
+
+async function readCanvasAgentStream(
+  response: Response,
+  onEvent?: (event: CanvasAgentStreamEvent) => void,
+) {
+  if (!response.body) return (await response.json()) as CanvasAgentResponse;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let final: CanvasAgentResponse | null = null;
+  let streamError = "";
+
+  const consume = (raw: string) => {
+    buffer += raw;
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() || "";
+    for (const eventText of events) {
+      const data = eventText
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data || data === "[DONE]") continue;
+      try {
+        const event = JSON.parse(data) as CanvasAgentStreamEvent;
+        onEvent?.(event);
+        if (event.type === "final") final = event as CanvasAgentResponse;
+        if (event.type === "error") streamError = String(event.message || "Agent 流式响应失败");
+      } catch {
+        // Ignore incomplete or provider-specific SSE frames.
+      }
+    }
+  };
+
+  while (true) {
+    const part = await reader.read();
+    if (part.done) break;
+    consume(decoder.decode(part.value, { stream: true }));
+  }
+  consume(decoder.decode());
+  if (buffer.trim()) consume("\n\n");
+  if (streamError) throw new Error(streamError);
+  if (!final) throw new Error("Agent 流式响应不完整，请重试。");
+  return final;
+}
+
+export async function generateCanvasAgent(
+  input: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   model?: string;
   webMode?: "off" | "auto" | "always";
   references?: Array<{ url: string; name?: string }>;
   task?: CanvasAgentTask;
-}) {
-  const preparedReferences = await prepareCanvasAgentReferences(input.references);
-  const references = preparedReferences.map((item) => item.url);
-  const messages = input.messages.slice(-15).map((message, index, all) => ({
-    ...message,
-    references: index === all.length - 1 ? references : [],
-    files: [],
-  }));
-  return request<{
-    ok?: boolean;
-    message: string;
-    model?: string;
-    images?: Array<{ url: string; revisedPrompt?: string }>;
-    error?: string;
-  }>("/api/agent", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      source: "canvas",
-      messages,
-      model: input.model || "auto",
-      ...(input.task ? { task: input.task } : {}),
-      webMode: input.webMode || "off",
-      webSearch: input.webMode !== "off",
-      stream: false,
-    }),
-  });
+  },
+  onEvent?: (event: CanvasAgentStreamEvent) => void,
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CANVAS_AGENT_MAX_WAIT_MS);
+  try {
+    const preparedReferences = await prepareCanvasAgentReferences(input.references);
+    const references = preparedReferences.map((item) => item.url);
+    const messages = input.messages.slice(-15).map((message, index, all) => ({
+      ...message,
+      references: index === all.length - 1 ? references : [],
+      files: [],
+    }));
+    const response = await fetch("/api/agent", {
+      cache: "no-store",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        source: "canvas",
+        messages,
+        model: input.model || "auto",
+        ...(input.task ? { task: input.task } : {}),
+        webMode: input.webMode || "off",
+        webSearch: input.webMode !== "off",
+        stream: true,
+      }),
+    });
+    if (!response.ok) {
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {}
+      const message =
+        body && typeof body === "object" && "error" in body
+          ? String((body as { error?: unknown }).error || "Agent 请求失败")
+          : `请求失败：${response.status}`;
+      throw new Error(message);
+    }
+    return await readCanvasAgentStream(response, onEvent);
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("Agent 请求超时，请重试。");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function getCanvasVideoTask(id: string) {

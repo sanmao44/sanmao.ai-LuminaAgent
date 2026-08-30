@@ -226,53 +226,82 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal('audio' in payload.input, false);
 });
 
-test('canvas video generation sends explicit reference mode inputs', async () => {
-  let request;
-  await withFetch(async (input, options) => {
-    request = { input, options };
-    return jsonResponse({ task: { id: 'video-reference', status: 'pending' } });
-  }, () => api.generateCanvasVideo({
-    prompt: '保持人物和服装',
-    model: 'video-model',
-    inputMode: 'reference',
-    references: [{ url: 'data:image/png;base64,one' }, { url: 'data:image/png;base64,two' }],
-  }));
+test('canvas image generation compresses reference images before submitting', async () => {
+  const mocks = withImageCanvas({ width: 3200, height: 1800 });
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      return jsonResponse({ images: [{ url: '/generated.png' }] });
+    }, () => api.generateCanvasImage({
+      prompt: '统一风格',
+      references: [{ url: 'data:image/png;base64,ORIGINAL' }],
+    }));
 
-  const payload = JSON.parse(request.options.body);
-  assert.equal(payload.input.videoMode, 'reference');
-  assert.deepEqual(payload.input.referenceImages, ['data:image/png;base64,one', 'data:image/png;base64,two']);
-  assert.equal('firstFrame' in payload.input, false);
-  assert.equal('lastFrame' in payload.input, false);
+    assert.deepEqual(JSON.parse(request.options.body).references, ['data:image/jpeg;base64,AA==']);
+    assert.deepEqual(mocks.encodedTypes, ['image/jpeg']);
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas video generation sends explicit reference mode inputs', async () => {
+  const mocks = withImageCanvas();
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      return jsonResponse({ task: { id: 'video-reference', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: '保持人物和服装',
+      model: 'video-model',
+      inputMode: 'reference',
+      references: [{ url: 'data:image/png;base64,one' }, { url: 'data:image/png;base64,two' }],
+    }));
+
+    const payload = JSON.parse(request.options.body);
+    assert.equal(payload.input.videoMode, 'reference');
+    assert.deepEqual(payload.input.referenceImages, ['data:image/jpeg;base64,AA==', 'data:image/jpeg;base64,AA==']);
+    assert.equal('firstFrame' in payload.input, false);
+    assert.equal('lastFrame' in payload.input, false);
+  } finally {
+    mocks.restore();
+  }
 });
 
 test('canvas video generation sends explicit first-frame and first/last-frame inputs', async () => {
-  const requests = [];
-  await withFetch(async (input, options) => {
-    requests.push(JSON.parse(options.body));
-    return jsonResponse({ task: { id: `video-${requests.length}`, status: 'pending' } });
-  }, async () => {
-    await api.generateCanvasVideo({
-      prompt: '从首帧开始',
-      model: 'video-model',
-      inputMode: 'first-frame',
-      references: [{ url: 'data:image/png;base64,first' }],
+  const mocks = withImageCanvas();
+  try {
+    const requests = [];
+    await withFetch(async (input, options) => {
+      requests.push(JSON.parse(options.body));
+      return jsonResponse({ task: { id: `video-${requests.length}`, status: 'pending' } });
+    }, async () => {
+      await api.generateCanvasVideo({
+        prompt: '从首帧开始',
+        model: 'video-model',
+        inputMode: 'first-frame',
+        references: [{ url: 'data:image/png;base64,first' }],
+      });
+      await api.generateCanvasVideo({
+        prompt: '从白天过渡到夜晚',
+        model: 'video-model',
+        inputMode: 'frames',
+        references: [{ url: 'data:image/png;base64,first' }, { url: 'data:image/png;base64,last' }],
+      });
     });
-    await api.generateCanvasVideo({
-      prompt: '从白天过渡到夜晚',
-      model: 'video-model',
-      inputMode: 'frames',
-      references: [{ url: 'data:image/png;base64,first' }, { url: 'data:image/png;base64,last' }],
-    });
-  });
 
-  assert.equal(requests[0].input.videoMode, 'keyframe');
-  assert.equal(requests[0].input.firstFrame, 'data:image/png;base64,first');
-  assert.equal('lastFrame' in requests[0].input, false);
-  assert.deepEqual(requests[0].input.referenceImages, []);
-  assert.equal(requests[1].input.videoMode, 'keyframe');
-  assert.equal(requests[1].input.firstFrame, 'data:image/png;base64,first');
-  assert.equal(requests[1].input.lastFrame, 'data:image/png;base64,last');
-  assert.deepEqual(requests[1].input.referenceImages, []);
+    assert.equal(requests[0].input.videoMode, 'keyframe');
+    assert.equal(requests[0].input.firstFrame, 'data:image/jpeg;base64,AA==');
+    assert.equal('lastFrame' in requests[0].input, false);
+    assert.deepEqual(requests[0].input.referenceImages, []);
+    assert.equal(requests[1].input.videoMode, 'keyframe');
+    assert.equal(requests[1].input.firstFrame, 'data:image/jpeg;base64,AA==');
+    assert.equal(requests[1].input.lastFrame, 'data:image/jpeg;base64,AA==');
+    assert.deepEqual(requests[1].input.referenceImages, []);
+  } finally {
+    mocks.restore();
+  }
 });
 
 test('canvas agent generation marks the request as canvas-originated', async () => {
@@ -293,8 +322,36 @@ test('canvas agent generation marks the request as canvas-originated', async () 
     model: 'provider-a-chat-model',
     webMode: 'off',
     webSearch: false,
-    stream: false,
+    stream: true,
   });
+});
+
+test('canvas agent consumes status, delta, and final SSE events', async () => {
+  const events = [
+    'data: {"type":"status","stage":"answering","message":"正在生成回复…"}\n\n',
+    'data: {"type":"delta","text":"第一段"}\n\n',
+    'data: {"type":"delta","text":"第二段"}\n\n',
+    'data: {"type":"final","message":"第一段第二段","model":"Agnes 2.5 Flash"}\n\n',
+  ];
+  const received = [];
+  const encoded = events.map((value) => new TextEncoder().encode(value));
+  const result = await withFetch(async () => ({
+    ok: true,
+    status: 200,
+    body: {
+      getReader() {
+        let index = 0;
+        return { read: async () => index < encoded.length ? { done: false, value: encoded[index++] } : { done: true, value: undefined } };
+      },
+    },
+  }), () => api.generateCanvasAgent({
+    messages: [{ role: 'user', content: '描述这张图' }],
+    model: 'provider-a-chat-model',
+  }, (event) => received.push(event)));
+
+  assert.equal(result.message, '第一段第二段');
+  assert.equal(result.model, 'Agnes 2.5 Flash');
+  assert.deepEqual(received.map((event) => event.type), ['status', 'delta', 'delta', 'final']);
 });
 
 test('canvas agent forwards explicit reverse-prompt tasks', async () => {

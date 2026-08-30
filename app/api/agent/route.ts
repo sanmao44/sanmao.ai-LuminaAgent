@@ -194,7 +194,7 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; h
   };
 }
 
-function streamAgentResult(upstream: Response | null, metadata: { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> }, signal?: AbortSignal) {
+function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> }, signal?: AbortSignal) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const send = (controller: ReadableStreamDefaultController<Uint8Array>, event: Record<string, unknown>) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
@@ -208,23 +208,27 @@ function streamAgentResult(upstream: Response | null, metadata: { images: Array<
       };
       signal?.addEventListener('abort', cancel, { once: true });
       try {
-        if (signal?.aborted) return;
+        if (signal?.aborted) {
+          controller.close();
+          return;
+        }
         for (const status of metadata.statuses || [{ type: 'status', stage: 'answering', message: '正在准备回答…' }]) {
           if (signal?.aborted) return;
           send(controller, status);
         }
-        if (!upstream?.body) {
+        const upstreamResponse = typeof upstream === 'function' ? await upstream() : upstream;
+        if (!upstreamResponse?.body) {
           text = metadata.fallback || '';
           if (text) send(controller, { type: 'delta', text });
         } else {
-          reader = upstream.body.getReader();
+          reader = upstreamResponse.body.getReader();
           let buffer = '';
           const consume = (raw: string) => {
             buffer += raw;
-            const events = buffer.split(/\n\n/);
+            const events = buffer.split(/\r?\n\r?\n/);
             buffer = events.pop() || '';
             for (const event of events) {
-              const dataLine = event.split(/\n/).find((line) => line.startsWith('data:'));
+              const dataLine = event.split(/\r?\n/).find((line) => line.startsWith('data:'));
               if (!dataLine) continue;
               const value = dataLine.slice(5).trim();
               if (!value || value === '[DONE]') continue;
@@ -454,12 +458,11 @@ export async function POST(request: Request) {
         ? streamAgentResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] }, requestController.signal)
         : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
-    const directStream = wantsStream && !identityQuestion && requestedDeliverable !== 'IMAGE' && requestedDeliverable !== 'BOTH' && !likelyAgentToolRequest(latest?.content || '', latestRefs.length > 0);
+    const directStream = wantsStream && !identityQuestion && requestedDeliverable !== 'IMAGE' && requestedDeliverable !== 'BOTH' && (isReversePromptTask || isOneTakeVideoPromptTask || isOptimizePromptTask || !likelyAgentToolRequest(latest?.content || '', latestRefs.length > 0));
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
     if (directStream) {
       try {
-        const upstream = await chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal);
-        return streamAgentResult(upstream, { images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: streamStatuses }, requestController.signal);
+        return streamAgentResult(() => chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal), { images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: streamStatuses }, requestController.signal);
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;

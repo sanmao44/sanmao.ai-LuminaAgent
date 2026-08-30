@@ -11,6 +11,7 @@ import type {
   CanvasNode,
   CanvasNodeData,
   CanvasSnapshot,
+  CanvasVariantState,
   CanvasUpscaleParams,
 } from "./types";
 import { normalizeCreationSettings } from "../creation/settings";
@@ -574,6 +575,99 @@ export function normalizeDocument(
     groups,
     camera: normalizeCamera(raw.camera, defaultCamera(width, height)),
   };
+}
+
+/**
+ * A browser refresh cancels in-flight image/Agent requests, while remote
+ * video and upscale tasks can continue on the server. Keep the latter
+ * resumable and turn the former into an explicit retryable state instead of
+ * leaving a canvas node stuck on "running" forever.
+ */
+export function recoverInterruptedCanvasDocument(
+  document: CanvasDocument,
+  now = Date.now(),
+) {
+  const resumableVideoTaskIds = new Set(
+    document.nodes
+      .filter((node) => node.type === "media" && node.data.kind === "video")
+      .map((node) => String(node.data.jobId || node.data.generation?.taskId || ""))
+      .filter(Boolean),
+  );
+  const interruptedLabel = "上次任务已中断，可重试";
+  let recoveredCount = 0;
+
+  const interrupted = (node: CanvasNode, statusLabel = interruptedLabel) => {
+    recoveredCount += 1;
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        status: "failed" as const,
+        statusLabel,
+        processingStartedAt: undefined,
+      },
+    };
+  };
+
+  const nodes = document.nodes.map((node) => {
+    const status = node.data.status;
+    const pending = status === "queued" || status === "running";
+    if (!pending) return node;
+
+    if (node.type === "prompt") return interrupted(node, "上次 Agent 请求已中断，可重试");
+
+    if (node.type === "media") {
+      const taskId = String(node.data.jobId || node.data.generation?.taskId || "");
+      if (node.data.kind === "video" && taskId) return node;
+      return interrupted(node, `${node.data.kind === "video" ? "上次视频任务" : "上次图片任务"}已中断，可重试`);
+    }
+
+    if (node.type === "upscale") {
+      if (node.data.jobId && node.data.upscaleRequestId) return node;
+      return interrupted(node, "上次超分任务已中断，可重试");
+    }
+
+    const rawStates = Array.isArray(node.data.variantStates)
+      ? node.data.variantStates
+      : [];
+    if (!rawStates.length) return interrupted(node, "上次变体任务已中断，可重试");
+    let changed = false;
+    const variantStates = rawStates.map((state: CanvasVariantState) => {
+      if (state.status !== "pending" && state.status !== "running") return state;
+      const hasResumableVideoTask = (state.taskIds || []).some((taskId) =>
+        resumableVideoTaskIds.has(String(taskId)),
+      );
+      if (hasResumableVideoTask) return state;
+      changed = true;
+      recoveredCount += 1;
+      return {
+        ...state,
+        status: "failed" as const,
+        error: interruptedLabel,
+        updatedAt: now,
+      };
+    });
+    if (!changed) return node;
+    const nextStatus: CanvasNodeData["status"] = variantStates.some((state) => state.status === "running")
+      ? "running"
+      : variantStates.some((state) => state.status === "failed")
+        ? "failed"
+        : variantStates.length && variantStates.every((state) => state.status === "completed")
+          ? "completed"
+          : "queued";
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        variantStates,
+        status: nextStatus,
+        statusLabel: nextStatus === "failed" ? "上次变体任务已中断，可重试" : node.data.statusLabel,
+        processingStartedAt: nextStatus === "running" ? node.data.processingStartedAt : undefined,
+      },
+    };
+  });
+
+  return { document: { ...document, nodes }, recoveredCount };
 }
 
 export function snapshot(document: CanvasDocument): CanvasSnapshot {

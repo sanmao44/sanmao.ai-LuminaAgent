@@ -81,6 +81,24 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.equal(result.camera.zoom, 3);
 });
 
+test('recovers interrupted local canvas work while preserving remote video tasks', () => {
+  const document = model.normalizeDocument({
+    nodes: [
+      { id: 'agent-1', type: 'prompt', x: 0, y: 0, data: { text: '描述画面', status: 'running', processingStartedAt: 99 } },
+      { id: 'image-1', type: 'media', x: 200, y: 0, data: { kind: 'image', status: 'running', processingStartedAt: 99 } },
+      { id: 'video-1', type: 'media', x: 400, y: 0, data: { kind: 'video', status: 'running', jobId: 'remote-video-1', generation: { kind: 'video', taskId: 'remote-video-1', prompt: '镜头推进', params: {} } } },
+    ],
+    edges: [],
+  });
+
+  const result = model.recoverInterruptedCanvasDocument(document, 123);
+  assert.equal(result.recoveredCount, 2);
+  assert.equal(result.document.nodes.find((node) => node.id === 'agent-1').data.status, 'failed');
+  assert.equal(result.document.nodes.find((node) => node.id === 'agent-1').data.statusLabel, '上次 Agent 请求已中断，可重试');
+  assert.equal(result.document.nodes.find((node) => node.id === 'image-1').data.status, 'failed');
+  assert.equal(result.document.nodes.find((node) => node.id === 'video-1').data.status, 'running');
+});
+
 test('canvas upscale nodes preserve provider-specific settings', () => {
   const cloud = model.createUpscaleNode({ x: 0, y: 0 }, {
     model: 'aliyun-standard-super-resolution',

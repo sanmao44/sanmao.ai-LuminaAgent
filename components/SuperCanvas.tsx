@@ -45,6 +45,7 @@ import {
   nodeById,
   nodeSize,
   normalizeDocument,
+  recoverInterruptedCanvasDocument,
   removeEdge,
   removeNodes,
   moveNodesToGroup,
@@ -200,6 +201,7 @@ type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
 type Point = { x: number; y: number };
+const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
 function hasExternalFileTransfer(dataTransfer: DataTransfer) {
   return (
     dataTransfer.types.includes("Files") ||
@@ -1270,6 +1272,7 @@ export default function SuperCanvas() {
   const saveTimerRef = useRef<number | null>(null);
   const pollTimersRef = useRef<Set<number>>(new Set());
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
+  const pollStartedAtRef = useRef<Map<string, number>>(new Map());
   const runGenerationRef = useRef<(() => Promise<void>) | null>(null);
   const runUpscaleNodeRef = useRef<((node: CanvasNode) => Promise<void>) | null>(null);
   const mountedRef = useRef(true);
@@ -1708,12 +1711,15 @@ export default function SuperCanvas() {
       if (cancelled) return;
       const storage = ensureCanvasStorage();
       const initial = loadCanvasDocument(storage.activeId);
-      docRef.current = initial;
-      setDocument(initial);
+      const recovered = recoverInterruptedCanvasDocument(initial);
+      docRef.current = recovered.document;
+      setDocument(recovered.document);
       setProjects(storage.projects);
       setActiveProjectId(storage.activeId);
       setReady(true);
       if (storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
+      if (recovered.recoveredCount)
+        notify(`已恢复 ${recovered.recoveredCount} 个中断任务，可重新生成`);
       stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
       void loadCanvasRuntime()
         .then((value) => {
@@ -1749,6 +1755,7 @@ export default function SuperCanvas() {
       pollTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       pollTimersRef.current.clear();
       pollAttemptsRef.current.clear();
+      pollStartedAtRef.current.clear();
     };
   }, [notify]);
 
@@ -4157,9 +4164,12 @@ export default function SuperCanvas() {
   const pollVideo = useCallback(
     async (nodeId: string, taskId: string) => {
       if (!mountedRef.current || !nodeById(docRef.current, nodeId)) return;
+      const startedAt =
+        pollStartedAtRef.current.get(taskId) || Date.now();
+      pollStartedAtRef.current.set(taskId, startedAt);
       const attempts = (pollAttemptsRef.current.get(taskId) || 0) + 1;
       pollAttemptsRef.current.set(taskId, attempts);
-      if (attempts > 40) {
+      if (Date.now() - startedAt >= CANVAS_VIDEO_MAX_WAIT_MS) {
         updateDoc((value) => ({
           ...value,
           nodes: value.nodes.map((node) => {
@@ -4205,6 +4215,7 @@ export default function SuperCanvas() {
         }));
         addLog(`视频任务查询超时：${taskId}`);
         pollAttemptsRef.current.delete(taskId);
+        pollStartedAtRef.current.delete(taskId);
         return;
       }
       try {
@@ -4298,6 +4309,7 @@ export default function SuperCanvas() {
           pollTimersRef.current.add(timer);
         } else {
           pollAttemptsRef.current.delete(taskId);
+          pollStartedAtRef.current.delete(taskId);
           addLog(
             task.status === "done"
               ? "视频生成完成"
@@ -4750,6 +4762,7 @@ export default function SuperCanvas() {
                 },
               );
               pollAttemptsRef.current.set(task.id, 1);
+              const videoPollDeadline = Date.now() + CANVAS_VIDEO_MAX_WAIT_MS;
               updateDoc((value) => {
                 let next = {
                   ...value,
@@ -4775,7 +4788,7 @@ export default function SuperCanvas() {
               if (task.status !== "done") {
                 let finished = task;
                 let lastError: unknown;
-                for (let attempt = 0; attempt < 40; attempt += 1) {
+                for (let attempt = 0; Date.now() < videoPollDeadline; attempt += 1) {
                   try {
                     const latest = await getCanvasVideoTask(task.id);
                     finished = latest.task;
@@ -5629,6 +5642,7 @@ export default function SuperCanvas() {
       }
       const inputId = inputNode.id;
       try {
+        let streamedText = "";
         const response = await generateCanvasAgent({
           messages: [...contextMessages, { role: "user", content: prompt }],
           model: effectiveSettings.model,
@@ -5638,6 +5652,44 @@ export default function SuperCanvas() {
             url: String(node.data.url),
             name: String(node.data.name || "参考图片"),
           })),
+        }, (event) => {
+          if (event.type === "status" && event.message) {
+            updateDoc((value) => ({
+              ...value,
+              nodes: value.nodes.map((node) =>
+                node.id === inputId
+                  ? {
+                      ...node,
+                      data: {
+                        ...node.data,
+                        status: "running" as const,
+                        statusLabel: String(event.message),
+                      },
+                    }
+                  : node,
+              ),
+            }));
+          }
+          if (event.type === "delta" && event.text) {
+            streamedText += String(event.text);
+            updateDoc((value) => ({
+              ...value,
+              nodes: value.nodes.map((node) =>
+                node.id === inputId
+                  ? {
+                      ...node,
+                      data: {
+                        ...node.data,
+                        text: streamedText,
+                        agentResponse: streamedText,
+                        status: "running" as const,
+                        statusLabel: "Agent 正在生成回复…",
+                      },
+                    }
+                  : node,
+              ),
+            }));
+          }
         });
         const parent = nodeById(docRef.current, inputId) || inputNode;
         const responseText = response.message || "Agent 没有返回文本。";
