@@ -18,11 +18,27 @@ const compiled = ts.transpileModule(bundledSource, {
 }).outputText;
 const providers = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
+const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const presetCompiled = ts.transpileModule(presetSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: new URL('../lib/provider-presets.ts', import.meta.url).pathname,
 }).outputText;
 const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCompiled).toString('base64')}`);
+
+test('provider picker uses real local logos for visible providers', async () => {
+  const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
+  assert.equal(visiblePresets.length, 11);
+  assert.ok(visiblePresets.every((preset) => typeof preset.logo === 'string' && preset.logo.startsWith('/brand/providers/')) || visiblePresets.every((preset) => typeof preset.logo === 'string'));
+  assert.match(pageSource, /className: preset\.logo \? 'platform-logo' : ''/);
+  assert.match(pageSource, /children: preset\.logo \? .*src: preset\.logo/s);
+  for (const preset of visiblePresets) {
+    const logoFile = new URL(`../public${preset.logo}`, import.meta.url);
+    const logo = await readFile(logoFile);
+    assert.ok(logo.byteLength > 0, `${preset.value} logo should not be empty`);
+  }
+  const custom = presets.providerPresets.find((preset) => preset.value === 'custom');
+  assert.equal(custom.logo, undefined);
+});
 
 test('normalizes common model list response shapes', () => {
   assert.deepEqual(providers.normalizeDiscoveredModels({ data: [{ id: 'a' }, { id: 'b', name: '模型 B' }] }), [

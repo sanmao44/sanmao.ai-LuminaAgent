@@ -11,6 +11,7 @@ export type ProviderPreset = {
   label: string;
   short: string;
   description: string;
+  logo?: string;
   type: ProviderType;
   baseUrl: string;
   needsBaseUrl: boolean;
@@ -76,19 +77,19 @@ function defaultResponsesPath(platform: ProviderPlatform) {
 }
 
 export const providerPresets: ProviderPreset[] = [
-  { value: '65535', label: '65535', short: '65535', description: 'OpenAI 兼容平台，支持原生异步视频任务', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, apiKeyUrl: 'https://my.65535.space/register?aff=44291427', recommended: true, videoTransport: 'native-task', videoBaseUrl: 'https://task-api-1-cn.65535.space' },
+  { value: '65535', label: '65535', short: '65535', description: 'OpenAI 兼容平台，支持原生异步视频任务', logo: '/brand/providers/65535.ico', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, apiKeyUrl: 'https://my.65535.space/register?aff=44291427', recommended: true, videoTransport: 'native-task', videoBaseUrl: 'https://task-api-1-cn.65535.space' },
   { value: 'new-api', label: 'New API / 中转站', short: 'New API', description: '已有连接的兼容标识；新建请使用“其他兼容平台”', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, showInPicker: false },
   { value: 'one-api', label: 'One API', short: 'One API', description: '已有连接的兼容标识；新建请使用“其他兼容平台”', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, showInPicker: false },
-  { value: 'openai', label: 'OpenAI', short: 'OpenAI', description: '官方 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.openai.com/api-keys' },
-  { value: 'openrouter', label: 'OpenRouter', short: 'OpenRouter', description: '官方兼容地址已内置', type: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1', needsBaseUrl: false, apiKeyUrl: 'https://openrouter.ai/settings/keys' },
-  { value: 'siliconflow', label: '硅基流动 SiliconFlow', short: '硅基流动', description: '国内兼容平台，地址已内置', type: 'openai-compatible', baseUrl: 'https://api.siliconflow.cn/v1', needsBaseUrl: false, apiKeyUrl: 'https://cloud.siliconflow.cn/account/ak' },
-  { value: 'modelscope', label: 'ModelScope 魔搭', short: 'ModelScope', description: 'ModelScope 推理 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api-inference.modelscope.cn/v1', needsBaseUrl: false, apiKeyUrl: 'https://modelscope.cn/my/myaccesstoken', notice: '有免费额度，可先体验', noticeTone: 'success' },
-  { value: 'dashscope', label: '阿里云百炼 DashScope', short: '百炼', description: 'OpenAI 兼容模式地址已内置', type: 'openai-compatible', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', needsBaseUrl: false, apiKeyUrl: 'https://bailian.console.aliyun.com/?tab=model#/api-key' },
-  { value: 'volcengine', label: '火山方舟 Volcengine', short: '火山方舟', description: '方舟兼容地址已内置', type: 'openai-compatible', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', needsBaseUrl: false, apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey' },
-  { value: 'deepseek', label: 'DeepSeek', short: 'DeepSeek', description: '官方 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.deepseek.com/api_keys' },
-  { value: 'google-gemini', label: 'Google Gemini', short: 'Gemini', description: '官方地址和协议由系统处理', type: 'google-gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsBaseUrl: false, apiKeyUrl: 'https://aistudio.google.com/apikey' },
-  { value: 'apimart', label: 'APIMart', short: 'APIMart', description: '内置余额校验、预置模型和异步图片任务适配', type: 'openai-compatible', baseUrl: 'https://api.apimart.ai/v1', needsBaseUrl: false, apiKeyUrl: 'https://apimart.ai/console', recommended: true },
-  { value: 'agnes', label: 'Agnes AI', short: 'Agnes', description: '文本、多模态、图片与异步视频模型，官方地址已内置', type: 'openai-compatible', baseUrl: AGNES_API_BASE_URL, needsBaseUrl: false, apiKeyUrl: AGNES_API_KEY_URL, notice: '有免费/限时免费额度，可先体验', noticeTone: 'success', recommended: true, textProtocol: 'chat-completions', videoTransport: 'agnes-videos', videoBaseUrl: AGNES_VIDEO_BASE_URL, videoGenerationPath: '/v1/videos', videoQueryPath: '/agnesapi' },
+  { value: 'openai', label: 'OpenAI', short: 'OpenAI', description: '官方 API 地址已内置', logo: '/brand/providers/openai.svg', type: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.openai.com/api-keys' },
+  { value: 'openrouter', label: 'OpenRouter', short: 'OpenRouter', description: '官方兼容地址已内置', logo: '/brand/providers/openrouter.svg', type: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1', needsBaseUrl: false, apiKeyUrl: 'https://openrouter.ai/settings/keys' },
+  { value: 'siliconflow', label: '硅基流动 SiliconFlow', short: '硅基流动', description: '国内兼容平台，地址已内置', logo: '/brand/providers/siliconflow.ico', type: 'openai-compatible', baseUrl: 'https://api.siliconflow.cn/v1', needsBaseUrl: false, apiKeyUrl: 'https://cloud.siliconflow.cn/account/ak' },
+  { value: 'modelscope', label: 'ModelScope 魔搭', short: 'ModelScope', description: 'ModelScope 推理 API 地址已内置', logo: '/brand/providers/modelscope.svg', type: 'openai-compatible', baseUrl: 'https://api-inference.modelscope.cn/v1', needsBaseUrl: false, apiKeyUrl: 'https://modelscope.cn/my/myaccesstoken', notice: '有免费额度，可先体验', noticeTone: 'success' },
+  { value: 'dashscope', label: '阿里云百炼 DashScope', short: '百炼', description: 'OpenAI 兼容模式地址已内置', logo: '/brand/aliyun-cloud.ico', type: 'openai-compatible', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', needsBaseUrl: false, apiKeyUrl: 'https://bailian.console.aliyun.com/?tab=model#/api-key' },
+  { value: 'volcengine', label: '火山方舟 Volcengine', short: '火山方舟', description: '方舟兼容地址已内置', logo: '/brand/providers/volcengine.png', type: 'openai-compatible', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', needsBaseUrl: false, apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey' },
+  { value: 'deepseek', label: 'DeepSeek', short: 'DeepSeek', description: '官方 API 地址已内置', logo: '/brand/providers/deepseek.svg', type: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.deepseek.com/api_keys' },
+  { value: 'google-gemini', label: 'Google Gemini', short: 'Gemini', description: '官方地址和协议由系统处理', logo: '/brand/providers/google-gemini.svg', type: 'google-gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsBaseUrl: false, apiKeyUrl: 'https://aistudio.google.com/apikey' },
+  { value: 'apimart', label: 'APIMart', short: 'APIMart', description: '内置余额校验、预置模型和异步图片任务适配', logo: '/brand/providers/apimart.ico', type: 'openai-compatible', baseUrl: 'https://api.apimart.ai/v1', needsBaseUrl: false, apiKeyUrl: 'https://apimart.ai/console', recommended: true },
+  { value: 'agnes', label: 'Agnes AI', short: 'Agnes', description: '文本、多模态、图片与异步视频模型，官方地址已内置', logo: '/brand/providers/agnes.ico', type: 'openai-compatible', baseUrl: AGNES_API_BASE_URL, needsBaseUrl: false, apiKeyUrl: AGNES_API_KEY_URL, notice: '有免费/限时免费额度，可先体验', noticeTone: 'success', recommended: true, textProtocol: 'chat-completions', videoTransport: 'agnes-videos', videoBaseUrl: AGNES_VIDEO_BASE_URL, videoGenerationPath: '/v1/videos', videoQueryPath: '/agnesapi' },
   { value: 'jimeng-cli', label: '即梦 CLI', short: '即梦 CLI', description: '本机调用即梦图片与视频能力', type: 'openai-compatible', baseUrl: '', needsBaseUrl: false, showInPicker: false, videoTransport: 'jimeng-cli' },
   { value: 'custom', label: '其他兼容平台', short: '其他平台', description: '适用于 New API、One API 和自建中转等 OpenAI 兼容地址', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, recommended: true },
 ];
