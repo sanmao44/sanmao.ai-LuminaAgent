@@ -374,6 +374,7 @@ test('canvas agent generation marks the request as canvas-originated', async () 
     model: 'provider-a-chat-model',
     webMode: 'off',
     webSearch: false,
+    references: [],
     stream: true,
   });
 });
@@ -470,8 +471,8 @@ test('canvas agent references use the compact image format before sending', asyn
     const payload = JSON.parse(request.options.body);
     assert.equal(request.input, '/api/agent');
     assert.deepEqual(payload.messages[0].references, [
-      'data:image/jpeg;base64,AA==',
-      'data:image/jpeg;base64,AA==',
+      { id: 'canvas-ref-1', kind: 'image', name: '第一张', url: 'data:image/jpeg;base64,AA==' },
+      { id: 'canvas-ref-2', kind: 'image', name: '第二张', url: 'data:image/jpeg;base64,AA==' },
     ]);
     assert.deepEqual(mocks.encodedTypes, ['image/jpeg', 'image/jpeg']);
   } finally {
