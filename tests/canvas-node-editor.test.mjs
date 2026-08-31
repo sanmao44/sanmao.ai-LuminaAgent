@@ -180,7 +180,9 @@ test("canvas edges reveal one small red removal control without a modifier", () 
   assert.doesNotMatch(component, /悬停连线显示取消按钮/);
   assert.match(styles, /\.canvas-connection-cancel\{[^}]*width:14px[^}]*height:14px/);
   assert.match(styles, /\.canvas-connection-remove\{width:12px[^}]*height:12px/);
-  assert.match(styles, /\.canvas-connection-cancel\{[^}]*color:color-mix\(in srgb,var\(--danger\)/);
+  assert.match(styles, /\.canvas-connection-cancel\{[^}]*border:1px solid color-mix\(in srgb,var\(--danger\) 28%/);
+  assert.match(styles, /\.canvas-connection-cancel\{[^}]*background:color-mix\(in srgb,var\(--danger-soft\) 78%,var\(--panel-2\)\)/);
+  assert.match(styles, /\.canvas-connection-cancel\{[^}]*color:var\(--danger\)/);
   assert.match(styles, /\.canvas-connection-cancel:hover,.canvas-connection-cancel:focus-visible\{[^}]*background:color-mix\(in srgb,var\(--danger-soft\)/);
 });
 
