@@ -936,9 +936,14 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     const image = new Image();
     image.onload = () => { if (!cancelled) setAngleOutput(angleOutputFromDimensions(image.naturalWidth, image.naturalHeight)); };
     image.onerror = () => { if (!cancelled) onNotify('无法读取参考图比例，暂时使用 1:1 输出框。'); };
-    image.src = reference.dataUrl;
+    const referenceUrl = reference.dataUrl || reference.url;
+    if (!referenceUrl) {
+      setAngleOutput(angleOutputFromDimensions(1, 1));
+      return () => { cancelled = true; };
+    }
+    image.src = referenceUrl;
     return () => { cancelled = true; };
-  }, [reference?.id, reference?.dataUrl]);
+  }, [onNotify, reference?.id, reference?.dataUrl, reference?.url]);
 
   useEffect(() => {
     viewedResultIdsRef.current = readViewedAngleResultIds();
