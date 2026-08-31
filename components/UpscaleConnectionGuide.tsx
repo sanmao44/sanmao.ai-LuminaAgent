@@ -101,7 +101,7 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
     const buckets = tencent && bucketOptions.length ? bucketOptions : [];
     const credentialNames = tencent ? ['SecretId', 'SecretKey'] : ['AccessKey ID', 'AccessKey Secret'];
     return <article className="upscale-connection-card" key={provider}>
-      <div className="upscale-connection-card-head"><div className="upscale-connection-logo">{tencent ? '腾' : '阿'}</div><div><strong>{UPSCALE_PROVIDER_NAMES[provider]}</strong><p>{tencent ? '只需复制两项密钥即可连接。' : '只需复制两项密钥即可连接。'}</p></div><span className={`upscale-connection-status ${connection?.connected ? 'healthy' : 'idle'}`}>{connection?.connected ? '已连接' : '未连接'}</span></div>
+      <div className="upscale-connection-card-head"><div className={`upscale-connection-logo ${tencent ? 'tencent' : 'aliyun'}`}><img src={tencent ? '/brand/tencent-cloud.svg' : '/brand/aliyun-cloud.ico'} alt={tencent ? '腾讯云 Logo' : '阿里云 Logo'} /></div><div><strong>{UPSCALE_PROVIDER_NAMES[provider]}</strong><p>{tencent ? '只需复制两项密钥即可连接。' : '只需复制两项密钥即可连接。'}</p></div><span className={`upscale-connection-status ${connection?.connected ? 'healthy' : 'idle'}`}>{connection?.connected ? '已连接' : '未连接'}</span></div>
       {connection?.connected && <div className="upscale-connection-saved"><span>已保存：{connection.maskedCredential}</span>{tencent && <span>存储桶：{connection.bucket || '已配置'} · {connection.region || '自动识别'}</span>}<button type="button" className="ghost-button" onClick={() => void remove(provider)} disabled={busy === provider}>删除连接</button></div>}
       {!connection?.connected && <div className="upscale-connection-steps">
         <strong>照着下面做就行</strong>

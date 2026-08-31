@@ -22,6 +22,8 @@ const imageModule = await compileModule(new URL('../lib/upscale-image.ts', impor
 ]);
 const catalogSource = await readFile(new URL('../lib/upscale-catalog.ts', import.meta.url), 'utf8');
 const guideSource = await readFile(new URL('../components/UpscaleConnectionGuide.tsx', import.meta.url), 'utf8');
+const tencentLogo = await readFile(new URL('../public/brand/tencent-cloud.svg', import.meta.url), 'utf8');
+const aliyunLogo = await readFile(new URL('../public/brand/aliyun-cloud.ico', import.meta.url));
 const connectionRouteSource = await readFile(new URL('../app/api/upscale/connections/route.ts', import.meta.url), 'utf8');
 const storeSource = await readFile(new URL('../lib/store.ts', import.meta.url), 'utf8');
 const taskStoreSource = await readFile(new URL('../lib/upscale-task-store.ts', import.meta.url), 'utf8');
@@ -30,6 +32,15 @@ const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 const pngBytes = Buffer.from('89504e470d0a1a0a', 'hex');
+
+test('upscale connection cards use the supplied Tencent and Alibaba logos', () => {
+  assert.match(guideSource, /upscale-connection-logo \$\{tencent \? 'tencent' : 'aliyun'\}/);
+  assert.match(guideSource, /\/brand\/tencent-cloud\.svg/);
+  assert.match(guideSource, /\/brand\/aliyun-cloud\.ico/);
+  assert.doesNotMatch(guideSource, /upscale-connection-logo">\{tencent \? '腾' : '阿'\}/);
+  assert.match(tencentLogo, /<svg[^>]*viewBox=/);
+  assert.ok(aliyunLogo.byteLength > 0);
+});
 
 test('Tencent COS authorization is deterministic and does not contain SecretKey', () => {
   const url = 'https://demo-1250000000.cos.ap-shanghai.myqcloud.com/?ci-process=AISuperResolution&detect-url=https%3A%2F%2Fcdn.example%2Finput.png&magnify=4';
