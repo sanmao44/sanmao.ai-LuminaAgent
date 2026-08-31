@@ -444,6 +444,7 @@ export async function generateCanvasVideo(input: {
   aspect?: string;
   resolution?: string;
   references?: Array<{ url: string; name?: string }>;
+  referenceVideos?: Array<{ url: string; name?: string }>;
   /** Explicit frame slots supplied by the canvas resolver. */
   firstFrame?: string;
   lastFrame?: string;
@@ -519,6 +520,12 @@ export async function generateCanvasVideo(input: {
               : referenceData,
         ...(referenceVideo
           ? { referenceVideo }
+          : {}),
+        ...(input.referenceVideos?.length
+          ? {
+              referenceVideos: input.referenceVideos.slice(0, 10).map((item) => item.url),
+              referenceVideo: referenceVideo || input.referenceVideos[0]?.url,
+            }
           : {}),
       },
     }),

@@ -7,6 +7,7 @@ import SelectMenu from '@/components/SelectMenu';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
+import { insertReferenceMention as insertCreativeMention, referenceMentionRange as creativeReferenceMentionRange, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 
 type VideoTask = {
   id: string;
@@ -36,7 +37,7 @@ type Props = {
   onNotify: (message: string) => void;
 };
 
-type UploadSlot = { name: string; url: string; kind: 'image' | 'video' | 'audio' };
+type UploadSlot = { id?: string; name: string; url: string; kind: 'image' | 'video' | 'audio' };
 type VideoOperation = 'generate' | 'edit' | 'extend';
 type VideoInputMode = 'text' | 'first-frame' | 'frames' | 'reference';
 type MediaTransportStatus = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean; reachable?: boolean; publicUrl?: string };
@@ -175,7 +176,7 @@ function taskParameterSummary(task: VideoTask) {
 }
 
 function uploadSlot(url: string, name: string, kind: UploadSlot['kind']): UploadSlot {
-  return { url, name, kind };
+  return { id: `video-ref-${Math.random().toString(36).slice(2, 10)}`, url, name, kind };
 }
 
 type VideoRestorePlan = {
@@ -481,6 +482,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   // in that case; only an explicit capability response should narrow them.
   const supportsFirst = can('video-first-frame') || can('video-generate') || uses65535Policy;
   const supportsReference = can('video-reference') || can('video-generate') || uses65535Policy;
+  const referenceCandidates = useMemo<CreativeReference[]>(() => [
+    ...referenceImages.map((item, index) => ({ id: item.id || `video-image-${index + 1}`, kind: 'image' as const, name: item.name, url: item.url })),
+    ...(referenceVideo ? [{ id: referenceVideo.id || 'video-reference-video', kind: 'video' as const, name: referenceVideo.name, url: referenceVideo.url }] : []),
+  ], [referenceImages, referenceVideo]);
   // 65535's documented native task schema currently has no audio input field.
   // Only expose audio there when the model metadata explicitly advertises it;
   // other compatible providers keep the existing flexible control.
@@ -659,34 +664,28 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   }
 
   function referenceMentionRange(value: string, cursor: number) {
-    const safeCursor = Number.isFinite(cursor) ? Math.max(0, Math.min(cursor, value.length)) : value.length;
-    const match = /@[^\s@]*$/.exec(value.slice(0, safeCursor));
-    return match ? { start: safeCursor - match[0].length, end: safeCursor } : null;
+    return creativeReferenceMentionRange(value, cursor);
   }
 
   function referenceMentionIsOpen(value: string, cursor: number) {
-    return supportsReferenceMentions && inputMode === 'reference' && referenceImages.length > 0 && Boolean(referenceMentionRange(value, cursor));
+    return supportsReferenceMentions && (inputMode === 'reference' || operation !== 'generate') && referenceCandidates.length > 0 && Boolean(referenceMentionRange(value, cursor));
   }
 
   function insertReferenceMention(index: number) {
     const cursor = promptRef.current?.selectionStart ?? prompt.length;
-    const range = referenceMentionRange(prompt, cursor);
-    const start = range?.start ?? cursor;
-    const mention = `@${index + 1} `;
-    const next = `${prompt.slice(0, start)}${mention}${prompt.slice(cursor)}`;
-    setPrompt(next);
+    const inserted = insertCreativeMention(prompt, cursor, index);
+    setPrompt(inserted.value);
     setReferenceMentionOpen(false);
     requestAnimationFrame(() => {
       promptRef.current?.focus();
-      const nextCursor = start + mention.length;
-      promptRef.current?.setSelectionRange(nextCursor, nextCursor);
+      promptRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
     });
   }
 
   function clearReferences() {
     setReferenceImages([]);
     setReferenceMentionOpen(false);
-    setPrompt((value) => value.replace(/@(?:[1-9]|1[0-6])\s*/g, '').replace(/[ \t]{2,}/g, ' '));
+    setPrompt((value) => value.replace(/@[0-9]+\s*/g, '').replace(/[ \t]{2,}/g, ' '));
   }
 
   function hasDraft() {
@@ -746,9 +745,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (usesAgnesV20 && (!Number.isInteger(agnesWidth) || !Number.isInteger(agnesHeight) || agnesWidth < 64 || agnesHeight < 64 || agnesWidth > 3840 || agnesHeight > 3840 || agnesWidth % 64 !== 0 || agnesHeight % 64 !== 0)) return onNotify('Agnes V2.0 宽度和高度必须是 64 的倍数，范围为 64–3840');
     if (usesAgnesV20 && (!Number.isInteger(agnesFrameRate) || agnesFrameRate < 1 || agnesFrameRate > 60)) return onNotify('Agnes V2.0 帧率必须在 1–60 之间');
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
-    const mentionedReferenceNumbers = Array.from(prompt.matchAll(/@(\d+)\b/g), (match) => Number(match[1]));
-    if (mentionedReferenceNumbers.length && inputMode !== 'reference') return onNotify('提示词中有 @引用，请先切换到参考图输入方式');
-    if (mentionedReferenceNumbers.some((number) => number < 1 || number > referenceImages.length)) return onNotify('提示词中的 @编号没有对应参考图，请重新选择或清除引用');
+    const referenceSelection = selectCreativeReferences(prompt, referenceCandidates);
+    if (referenceSelection.invalidNumbers.length) return onNotify(`提示词中的引用编号无效：${referenceSelection.invalidNumbers.map((number) => `@${number}`).join('、')}`);
+    if (referenceSelection.hasMentions && inputMode !== 'reference' && operation === 'generate') return onNotify('提示词中有 @引用，请先切换到参考图输入方式');
+    const selectedReferenceImages = referenceSelection.references.filter((reference) => reference.kind === 'image');
+    const selectedReferenceVideos = referenceSelection.references.filter((reference) => reference.kind === 'video');
     setBusy(true);
     try {
       const inheritsVideoSettings = operation !== 'generate' && (modelLimits.inheritVideoSettingsFor?.includes(operation) || false);
@@ -760,10 +761,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         ...(!usesAgnesV20 && !omitsAspectRatioResolution ? { aspectRatio: ratio, resolution } : {}),
         firstFrame: inputMode === 'first-frame' || inputMode === 'frames' ? firstFrame?.url : undefined,
         lastFrame: inputMode === 'frames' ? lastFrame?.url : undefined,
-        referenceImages: inputMode === 'reference' ? referenceImages.map((item) => item.url) : [],
+        referenceImages: inputMode === 'reference' ? selectedReferenceImages.map((item) => item.url!).filter(Boolean) : [],
+        referenceVideos: inputMode === 'reference' ? selectedReferenceVideos.map((item) => item.url!).filter(Boolean) : [],
         referenceVideo: usesAgnes
-          ? (!usesAgnesV20 && !usesAgnesFlash && inputMode === 'reference' ? referenceVideo?.url : undefined)
-          : operation !== 'generate' ? referenceVideo?.url : undefined,
+          ? (!usesAgnesV20 && !usesAgnesFlash && inputMode === 'reference' ? selectedReferenceVideos[0]?.url : undefined)
+          : (inputMode === 'reference' || operation !== 'generate') ? selectedReferenceVideos[0]?.url || (referenceSelection.hasMentions ? undefined : referenceVideo?.url) : undefined,
         audios: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios.map((item) => item.url) : []) : audios.map((item) => item.url),
         audio: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios[0]?.url : undefined) : audios[0]?.url,
         ...(usesAgnes && !usesAgnesV20 ? { videoMode: inputMode === 'text' ? 'text' as const : inputMode === 'reference' ? 'reference' as const : 'keyframe' as const } : {}),
@@ -788,7 +790,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       if (compressedCount) onNotify(`已自动压缩 ${compressedCount} 张视频参考图，保留原图比例后提交`);
       if (hasLocalRelayImage) onNotify('正在安全准备本地图片，完成后会自动清理临时副本…');
       if (nativeTask) {
-        const localMedia = [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || []), compressedInput.referenceVideo, ...(compressedInput.audios || [])].filter((value): value is string => Boolean(value));
+        const localMedia = [compressedInput.firstFrame, compressedInput.lastFrame, ...(compressedInput.referenceImages || []), ...(compressedInput.referenceVideos || []), compressedInput.referenceVideo, ...(compressedInput.audios || [])].filter((value): value is string => Boolean(value));
         const inlineBytes = localMedia.reduce((total, value) => total + dataUriBytes(value), 0);
         if (inlineBytes > MAX_65535_INLINE_BYTES) throw new Error(`${uses65535Policy ? '65535 原生接口' : '当前原生异步接口'}的本地素材请求不能超过 64 MiB（当前约 ${formatBytes(inlineBytes)}）。请换用更小的视频/图片；已阻止提交，不会扣费。`);
       }
@@ -836,7 +838,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
          <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
            <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className={`video-live-pill ${usesAgnes && !selectedProvider?.credentialVerifiedAt ? 'needs-verification' : ''}`}>{usesAgnes ? selectedProvider?.credentialVerifiedAt ? '● Agnes Key 已验证' : '● Agnes Key 待验证' : '● 已连接'}</span></div>
-      <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onClick={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyUp={(event) => { if (event.key !== 'Escape') setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart)); }} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用参考图'} maxLength={6000} />{supportsReferenceMentions && referenceImages.length > 0 && <VideoReferenceMentionMenu refs={referenceImages} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
+      <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onClick={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyUp={(event) => { if (event.key !== 'Escape') setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart)); }} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片或视频'} maxLength={6000} />{supportsReferenceMentions && referenceCandidates.length > 0 && <VideoReferenceMentionMenu refs={referenceCandidates} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
          <div className={`video-fields-two ${showOperationField ? '' : 'video-fields-single'}`}>
           <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
           {showOperationField && <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>}
@@ -930,13 +932,13 @@ function AudioUploadTray({ items, maxItems, onAdd, onRemove, inputRef }: { items
   </div>;
 }
 
-function VideoReferenceMentionMenu({ refs, open, onSelect }: { refs: UploadSlot[]; open: boolean; onSelect: (index: number) => void }) {
+function VideoReferenceMentionMenu({ refs, open, onSelect }: { refs: CreativeReference[]; open: boolean; onSelect: (index: number) => void }) {
   if (!open || !refs.length) return null;
   return <div className="reference-mention-menu video-reference-mention-menu" role="listbox">
-    <div className="reference-mention-title">选择参考图 · 输入 @编号</div>
+    <div className="reference-mention-title">选择引用 · 输入 @编号</div>
     {refs.map((ref, index) => <button type="button" key={`${ref.name}-${index}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(index)}>
-      <span className="reference-mention-thumb"><img src={ref.url} alt="" /><b>@{index + 1}</b></span>
-      <span><strong>参考图 {index + 1}</strong><small>{ref.name}</small></span>
+      <span className="reference-mention-thumb">{ref.kind === 'video' ? <span className="reference-type-icon video">▶<small>视频</small></span> : <img src={ref.url} alt="" />}<b>@{index + 1}</b></span>
+      <span><strong>{ref.kind === 'video' ? '参考视频' : '参考图'} {index + 1}</strong><small>{ref.name}</small></span>
     </button>)}
   </div>;
 }

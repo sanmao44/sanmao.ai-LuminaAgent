@@ -836,7 +836,7 @@ function connectCanvasNodesInDocument(
       ? requestedRole
       : modeRole;
     if (!inputRole && videoMode === "frames") {
-      const current = resolveCanvasVideoInputs(existing, videoMode, roles, { maxReferenceImages: limits.maxReferenceImages });
+      const current = resolveCanvasVideoInputs(existing, videoMode, roles, { maxReferenceImages: limits.maxReferenceImages, maxReferenceVideos: limits.maxReferenceVideos });
       inputRole = current.firstFrame ? (current.lastFrame ? undefined : "last-frame") : "first-frame";
     }
     if (!inputRole && videoMode === "first-frame") inputRole = "first-frame";
@@ -852,7 +852,7 @@ function connectCanvasNodesInDocument(
       [...existing, ...sourceInputs],
       videoMode,
       nextRoles,
-      { maxReferenceImages: limits.maxReferenceImages },
+      { maxReferenceImages: limits.maxReferenceImages, maxReferenceVideos: limits.maxReferenceVideos },
     );
     if (resolvedInputs.unused.some((node) => sourceInputs.some((sourceNode) => sourceNode.id === node.id))) {
       const reason = videoMode === "reference"
@@ -4769,7 +4769,7 @@ export default function SuperCanvas() {
                 linked,
                 videoParams.inputMode,
                 canvasInputRolesForTarget(docRef.current, generatorId),
-                { maxReferenceImages: videoLimits.maxReferenceImages },
+                { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos },
               );
               const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
               if (videoInputError) throw new Error(videoInputError);
@@ -4785,6 +4785,10 @@ export default function SuperCanvas() {
                     url: String(item.data.url),
                     name: String(item.data.name || "参考图片"),
                   })),
+                referenceVideos: videoInputs.referenceVideos.map((item) => ({
+                  url: String(item.data.url),
+                  name: String(item.data.name || "参考视频"),
+                })),
                 firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
                 lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
                 referenceVideo: videoInputs.referenceVideo?.data.url ? String(videoInputs.referenceVideo.data.url) : undefined,
@@ -5558,13 +5562,14 @@ export default function SuperCanvas() {
           referenceInputNodes,
           params.inputMode,
           new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
-          { maxReferenceImages: videoLimits.maxReferenceImages },
+          { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos },
         );
         const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits, params.operation);
         if (videoInputError) throw new Error(videoInputError);
         const task = await generateCanvasVideo({
           prompt: draft.prompt, model: resolvedVideoModel.model?.id || "auto", operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
           references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
+          referenceVideos: videoInputs.referenceVideos.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考视频") })),
           firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
           lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
           referenceVideo: sourceNode?.data.kind === "video" && sourceNode.data.url
@@ -5956,7 +5961,7 @@ export default function SuperCanvas() {
           linked,
           videoParams.inputMode,
           ownerId ? canvasInputRolesForTarget(docRef.current, ownerId) : undefined,
-          { maxReferenceImages: videoLimits.maxReferenceImages },
+          { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos },
         )
       : undefined;
     if (kind === "video" && videoParams && videoLimits && videoInputs) {
@@ -6294,9 +6299,12 @@ export default function SuperCanvas() {
               url: String(item.data.url),
               name: String(item.data.name || "参考图片"),
             })),
+          referenceVideos: (videoInputs?.referenceVideos || [])
+            .filter((item) => item.data.url)
+            .map((item) => ({ url: String(item.data.url), name: String(item.data.name || "参考视频") })),
           firstFrame: videoInputs?.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
           lastFrame: videoInputs?.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
-           referenceVideo:
+          referenceVideo:
              referenceVideo ||
              (videoParams.inputMode === "reference" && videoInputs?.referenceVideo?.data.url
                ? String(videoInputs.referenceVideo.data.url)
@@ -9096,6 +9104,7 @@ export default function SuperCanvas() {
               onDraftReferencePreview={previewReuseReference}
               onDraftReferencePaste={pasteReuseReference}
               editorContexts={incomingContext(document, editorNode.id).filter((item) => item.type === "prompt" || item.type === "generator")}
+              onTextPreview={(context) => openCanvasTextViewer(context.id)}
               mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
               onOutputPreview={(output) => {
                 cancelPendingNodeClick();
@@ -9427,6 +9436,7 @@ export default function SuperCanvas() {
                       document={document}
                       ownerId={referenceOwnerId}
                       nodes={references}
+                      onPreview={(node) => openCanvasMediaViewer(node.id)}
                       onReorder={reorderReference}
                       onRemove={removeComposerReference}
                       onClear={clearComposerReferences}
@@ -10795,6 +10805,7 @@ function CanvasReferenceList({
   onClear,
   onAdd,
   onPaste,
+  onPreview,
   variant = "card",
 }: {
   document: CanvasDocument;
@@ -10805,6 +10816,7 @@ function CanvasReferenceList({
   onClear?: () => void;
   onAdd?: () => void;
   onPaste?: () => void;
+  onPreview?: (node: CanvasNode) => void;
   variant?: "card" | "deck";
 }) {
   const references = ownerId
@@ -10838,7 +10850,7 @@ function CanvasReferenceList({
               type="button"
               className="canvas-reference-preview-button"
               aria-label={`预览参考图 ${index + 1}`}
-              onClick={(event) => event.stopPropagation()}
+              onClick={(event) => { event.stopPropagation(); onPreview?.(item); }}
             >
               <span className="canvas-reference-index">{index + 1}</span>
               {item.data.kind === "video" ? (
@@ -10899,6 +10911,7 @@ function CanvasNodeReferenceStrip({
   onDrop,
   onAddFiles,
   onPreview,
+  onTextPreview,
 }: {
   target: CanvasNode;
   document: CanvasDocument;
@@ -10910,6 +10923,7 @@ function CanvasNodeReferenceStrip({
   onDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
   onAddFiles: (ownerId: string, files: File[]) => void;
   onPreview: (node: CanvasNode) => void;
+  onTextPreview: (node: CanvasNode) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -10925,7 +10939,7 @@ function CanvasNodeReferenceStrip({
         references,
         videoParams.inputMode,
         canvasInputRolesForTarget(document, target.id),
-        { maxReferenceImages: videoLimits?.maxReferenceImages },
+          { maxReferenceImages: videoLimits?.maxReferenceImages, maxReferenceVideos: videoLimits?.maxReferenceVideos },
       )
     : undefined;
   const modeLabel = videoParams?.inputMode === "reference"
@@ -11017,11 +11031,11 @@ function CanvasNodeReferenceStrip({
           <span className="canvas-editor-slot-label">文本上下文 <small>来自 @ 引用</small></span>
           <div className="canvas-editor-context-items">
             {contexts.map((context, index) => (
-              <div className="canvas-editor-context-item" key={context.id}>
+              <button type="button" className="canvas-editor-context-item" key={context.id} onClick={() => onTextPreview(context)} title="点击查看完整文本引用">
                 <span>{index + 1}</span>
-                <b>{context.type === "prompt" ? "Agent" : context.data.kind === "video" ? "视频生成器" : "图片生成器"}</b>
+                <b>{context.type === "prompt" ? "▤ Agent 文本" : context.data.kind === "video" ? "▶ 视频生成器" : "▣ 图片生成器"}</b>
                 <small>{String(context.data.text || context.data.prompt || "上下文")}</small>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -11040,7 +11054,7 @@ function CanvasNodeReferenceStrip({
           </div>
         </div>
       )}
-      {isVideoTarget && connectedVideo && <div className="canvas-editor-video-input">视频输入：{connectedVideo.data.name || "已连接参考视频"}</div>}
+      {isVideoTarget && connectedVideos.length > 0 && <div className="canvas-editor-video-input">视频输入：{connectedVideos.map((video, index) => `${index + 1}. ${video.data.name || "已连接参考视频"}`).join(" · ")}</div>}
       {isVideoTarget && unusedImages.length > 0 && (
         <div className="canvas-editor-unused-inputs">
           <span className="canvas-editor-slot-label">本次未使用 <small>切换生成方式或移除连线后可重新使用</small></span>
@@ -11231,6 +11245,7 @@ type CanvasNodeEditorPopoverProps = {
   onDraftReferencePreview?: (reference: CanvasReferenceDraft) => void;
   onDraftReferencePaste?: () => void;
   editorContexts: CanvasNode[];
+  onTextPreview: (node: CanvasNode) => void;
   mentionCandidates: CanvasNode[];
   onOutputPreview: (node: CanvasNode) => void;
   upscaleParams?: CanvasUpscaleParams;
@@ -11557,6 +11572,7 @@ function CanvasNodeEditorPopover({
   onDraftReferencePreview,
   onDraftReferencePaste,
   editorContexts,
+  onTextPreview,
   mentionCandidates,
   onOutputPreview,
   upscaleParams,
@@ -11858,6 +11874,7 @@ function CanvasNodeEditorPopover({
                 onDrop={onReferenceDrop}
                 onAddFiles={onAddReferenceFiles}
                 onPreview={onOutputPreview}
+                onTextPreview={onTextPreview}
               />
             )}
           </div>
@@ -12646,6 +12663,7 @@ function CanvasNodeCard({
             onDrop={onReferenceDrop}
             onAddFiles={onAddReferenceFiles}
             onPreview={onOutputPreview}
+            onTextPreview={onTextPreview}
           />
           {node.type === "generator" && (
             <div className="canvas-node-variant-editor">
