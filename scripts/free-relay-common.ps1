@@ -1,4 +1,4 @@
-function Get-SanmaoFreeRelayStateRoot {
+﻿function Get-SanmaoFreeRelayStateRoot {
   param([Parameter(Mandatory = $true)][string]$Root)
   return (Join-Path $Root '.data\free-relay')
 }

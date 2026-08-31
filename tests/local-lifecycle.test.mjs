@@ -53,6 +53,7 @@ test("health and official launchers expose the intended lifecycle modes", () => 
 });
 
 test("every existing launcher prepares the optional public media relay", () => {
+  assert.equal(freeRelayPs.charCodeAt(0), 0xfeff, "Windows PowerShell relay helper must keep a UTF-8 BOM");
   assert.match(windowsLauncher, /FreeRelay/);
   assert.match(lanLauncher, /FreeRelay/);
   assert.match(macLauncher, /free-relay-common\.sh/);
