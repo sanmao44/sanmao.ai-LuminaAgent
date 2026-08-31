@@ -100,20 +100,21 @@ export function buildTencentCosAuthorization(options: {
   secretKey: string;
   nowSeconds?: number;
   expiresSeconds?: number;
+  headers?: Array<[string, string]>;
 }) {
   const parsed = new URL(options.url);
   const start = Math.floor(options.nowSeconds ?? Date.now() / 1000);
   const end = start + Math.max(60, Math.min(900, options.expiresSeconds ?? 600));
   const signTime = `${start};${end}`;
-  const queryEntries = [...parsed.searchParams.entries()].map(([key, value]) => [key.toLowerCase(), value] as const).sort(([left], [right]) => left.localeCompare(right));
-  const headerEntries: Array<[string, string]> = [['host', parsed.host.toLowerCase()]];
+  const queryEntries = [...parsed.searchParams.entries()].map(([key, value]) => [key.toLowerCase(), value] as [string, string]).sort(([left], [right]) => left.localeCompare(right));
+  const headerEntries: Array<[string, string]> = [['host', parsed.host.toLowerCase()], ...(options.headers || [])].map(([key, value]) => [key.toLowerCase(), value] as [string, string]).sort(([left], [right]) => left.localeCompare(right));
   const canonicalQuery = queryEntries.map(([key, value]) => `${cosEncode(key)}=${cosEncode(value)}`).join('&');
   const canonicalHeaders = headerEntries.map(([key, value]) => `${cosEncode(key)}=${cosEncode(value)}`).join('&');
   const httpString = `${options.method.toLowerCase()}\n${encodeCosPath(parsed.pathname)}\n${canonicalQuery}\n${canonicalHeaders}\n`;
   const signKey = hmacSha1(options.secretKey, signTime);
   const stringToSign = `sha1\n${signTime}\n${sha1(httpString)}\n`;
   const signature = hmacSha1(signKey, stringToSign);
-  return `q-sign-algorithm=sha1&q-ak=${cosEncode(options.secretId)}&q-sign-time=${signTime}&q-key-time=${signTime}&q-header-list=host&q-url-param-list=${queryEntries.map(([key]) => cosEncode(key)).join(';')}&q-signature=${signature}`;
+  return `q-sign-algorithm=sha1&q-ak=${cosEncode(options.secretId)}&q-sign-time=${signTime}&q-key-time=${signTime}&q-header-list=${headerEntries.map(([key]) => cosEncode(key)).join(';')}&q-url-param-list=${queryEntries.map(([key]) => cosEncode(key)).join(';')}&q-signature=${signature}`;
 }
 
 function xmlUnescape(value: string) {
@@ -135,10 +136,13 @@ function mapProviderError(providerCode: string, status: number | undefined, requ
   if (/signaturedoesnotmatch|authfailure|signatureinvalid/.test(code)) return new UpscaleProviderError('密钥验证失败，请确认 Secret 是否正确。', 'SIGNATURE_INVALID', { providerCode, status, requestId });
   if (/unsupported.?http.?method|method.?not.?allowed/.test(code) || status === 405) return new UpscaleProviderError('阿里云接口请求方式不兼容，请更新 SANMAO.AI 后重试。', 'UPSTREAM_ERROR', { providerCode, status, requestId });
   if (/notpurchase|notpurchased|service.?not.?enabled|unsubscribed/.test(code)) return new UpscaleProviderError('该 AI 服务尚未开通，请先前往官方控制台开通。', 'NOT_PURCHASED', { providerCode, status, requestId });
-  if (/permission|forbidden|no.?permission|access.?denied/.test(code) || status === 403) return new UpscaleProviderError(provider === 'aliyun-viapi' ? '阿里云图像生产服务尚未开通，或当前 AccessKey 没有该能力权限。请先开通图像生产；如使用子账号，再配置 AliyunVIAPIFullAccess。' : '当前账号没有调用此功能的权限，请检查云平台授权。', 'PERMISSION_DENIED', { providerCode, status, requestId });
+  if (/permission|forbidden|no.?permission|access.?denied/.test(code) || status === 403) return new UpscaleProviderError(provider === 'aliyun-viapi' ? '阿里云图像生产服务尚未开通，或当前 AccessKey 没有该能力权限。请先开通图像生产；如使用子账号，再配置 AliyunVIAPIFullAccess。' : provider === 'tencent-ci' ? '腾讯云暂无处理权限。请确认该存储桶已开启“数据万象（CI）”、已开通对应图像处理服务，且该桶属于当前账号。' : '当前账号没有调用此功能的权限，请检查云平台授权。', 'PERMISSION_DENIED', { providerCode, status, requestId });
   if (/balance|quota|insufficient|arrears/.test(code)) return new UpscaleProviderError('云平台余额或额度不足，请充值后再试。', 'INSUFFICIENT_BALANCE', { providerCode, status, requestId });
   if (/size|too.?large|oversize|filesize|image.?limit/.test(code) || status === 413) return new UpscaleProviderError('这张图片超过该模型支持的尺寸，请选择较小图片或其他模型。', 'IMAGE_TOO_LARGE', { providerCode, status, requestId });
-  if (/image|url|format|parameter|invalidarg/.test(code) && status && status < 500) return new UpscaleProviderError('图片格式或参数不符合云端高清处理要求，请更换图片后重试。', 'INVALID_IMAGE', { providerCode, status, requestId });
+  if (/image|url|format|parameter|invalidarg/.test(code) && status && status < 500) {
+    const isAliyunUrl = provider === 'aliyun-viapi' && /invalidimage\.?url|invalid.?url|图片链接/.test(code);
+    return new UpscaleProviderError(isAliyunUrl ? '阿里云超分要求图片先上传到其上海临时存储地址，系统已自动处理；若仍然失败，请重试或更换图片。' : '图片格式或参数不符合云端高清处理要求，请更换图片后重试。', 'INVALID_IMAGE', { providerCode, status, requestId });
+  }
   return new UpscaleProviderError(fallback, 'UPSTREAM_ERROR', { providerCode, status, requestId });
 }
 
@@ -194,18 +198,62 @@ async function listTencentBuckets(credentials: UpscaleConnectionCredentials, sig
   const matches = text.match(/<Bucket>[\s\S]*?<\/Bucket>/gi) || [];
   for (const item of matches) {
     const name = xmlValue(item, 'Name');
-    const region = xmlValue(item, 'Region');
+    const region = xmlValue(item, 'Location') || xmlValue(item, 'Region');
     if (name) buckets.push({ name, region });
   }
   return buckets;
 }
 
-function tencentEndpoint(bucket: string, region: string, imageUrl: string, scale: number) {
+function tencentCosExtension(mime: string) {
+  const value = String(mime || '').split(';', 1)[0].trim().toLowerCase();
+  if (value === 'image/jpeg' || value === 'image/jpg') return '.jpg';
+  if (value === 'image/png') return '.png';
+  if (value === 'image/webp') return '.webp';
+  return '.jpg';
+}
+
+async function resolveTencentBucket(credentials: UpscaleConnectionCredentials, signal?: AbortSignal): Promise<{ bucket: string; region: string }> {
+  let bucket = credentials.bucket;
+  let region = credentials.region;
+  if (bucket && region) return { bucket, region };
+  const buckets = await listTencentBuckets(credentials, signal);
+  let selected = bucket ? buckets.find((item) => item.name === bucket) : undefined;
+  if (!selected && buckets.length === 1) selected = buckets[0];
+  if (!bucket && !selected) throw new UpscaleProviderError('请先在腾讯云连接向导中选择存储桶。', 'PERMISSION_DENIED');
+  if (bucket && !selected) throw new UpscaleProviderError('当前腾讯云账号找不到已保存的存储桶，请重新选择。', 'PERMISSION_DENIED');
+  const nextBucket = bucket || selected!.name;
+  const nextRegion = region || selected!.region;
+  if (!nextRegion) throw new UpscaleProviderError('未能识别腾讯云存储桶所在区域，请重新检测连接并选择存储桶。', 'PERMISSION_DENIED');
+  return { bucket: nextBucket, region: nextRegion };
+}
+
+function tencentCiObjectUrl(bucket: string, region: string, sourceUrl: string, scale: number) {
+  const source = new URL(sourceUrl);
   const host = `${bucket}.cos.${region}.myqcloud.com`;
   const url = new URL(`https://${host}/`);
+  url.pathname = source.pathname;
   url.searchParams.set('ci-process', 'AISuperResolution');
-  url.searchParams.set('detect-url', imageUrl);
   url.searchParams.set('magnify', String(scale));
+  return url.toString();
+}
+
+/** Uploads prepared image bytes to the user's own COS bucket and returns the object URL. */
+export async function uploadTencentImageToCos(credentials: UpscaleConnectionCredentials, bytes: Buffer, mime: string, signal?: AbortSignal) {
+  const secretId = credentials.secretId || '';
+  const secretKey = credentials.secretKey || '';
+  if (!secretId || !secretKey) throw new UpscaleProviderError('请填写腾讯云 SecretId 和 SecretKey。', 'INVALID_CREDENTIAL');
+  const { bucket, region } = await resolveTencentBucket(credentials, signal);
+  const contentType = String(mime || 'image/jpeg');
+  const objectKey = `super-resolution-input/${secretId}/${randomUUID()}/upload-${Date.now()}${tencentCosExtension(contentType)}`;
+  const host = `${bucket}.cos.${region}.myqcloud.com`;
+  const url = `https://${host}/${objectKey}`;
+  const authorization = buildTencentCosAuthorization({ method: 'PUT', url, secretId, secretKey, headers: [['content-type', contentType]] });
+  const response = await fetch(url, { method: 'PUT', signal: signal || AbortSignal.timeout(60_000), headers: { Host: host, Authorization: authorization, 'Content-Type': contentType }, body: new Uint8Array(bytes) });
+  if (!response.ok) {
+    const text = await response.text();
+    const error = xmlError(text);
+    throw new UpscaleProviderError('腾讯云临时图片上传失败，请稍后重试。', 'UPSTREAM_ERROR', { providerCode: error.code, status: response.status, requestId: error.requestId || requestIdFromHeaders(response.headers) });
+  }
   return url.toString();
 }
 
@@ -224,8 +272,8 @@ function createTencentProvider(credentials: UpscaleConnectionCredentials): Upsca
       return { ok: true, provider: 'tencent-ci', buckets };
     },
     async upscale(input) {
-      if (!credentials.bucket || !credentials.region) throw new UpscaleProviderError('请先在腾讯云连接向导中选择存储桶。', 'PERMISSION_DENIED');
-      const url = tencentEndpoint(credentials.bucket, credentials.region, input.imageUrl, input.scale);
+      const { bucket, region } = await resolveTencentBucket(credentials, input.signal);
+      const url = tencentCiObjectUrl(bucket, region, input.imageUrl, input.scale);
       const authorization = buildTencentCosAuthorization({ method: 'GET', url, secretId: credentials.secretId || '', secretKey: credentials.secretKey || '' });
       const response = await fetch(url, { headers: { Host: new URL(url).host, Authorization: authorization }, signal: input.signal || AbortSignal.timeout(180_000) });
       if (!response.ok) {
@@ -264,7 +312,7 @@ function nestedValue(root: unknown, keys: string[]): string {
   return '';
 }
 
-export function buildAliyunRpcSignature(options: { method?: string; action: string; accessKeyId: string; accessKeySecret: string; params?: Record<string, string>; timestamp?: string; nonce?: string }) {
+export function buildAliyunRpcSignature(options: { method?: string; action: string; accessKeyId: string; accessKeySecret: string; params?: Record<string, string>; timestamp?: string; nonce?: string; version?: string }) {
   const common: Record<string, string> = {
     AccessKeyId: options.accessKeyId,
     Action: options.action,
@@ -273,7 +321,7 @@ export function buildAliyunRpcSignature(options: { method?: string; action: stri
     SignatureNonce: options.nonce || randomUUID(),
     SignatureVersion: '1.0',
     Timestamp: options.timestamp || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-    Version: '2019-09-30',
+    Version: options.version || '2019-09-30',
     ...(options.params || {}),
   };
   const canonicalQuery = Object.keys(common).sort().map((key) => `${rfc3986(key)}=${rfc3986(common[key])}`).join('&');
@@ -289,11 +337,11 @@ function aliError(payload: JsonObject, status: number, requestId?: string) {
   return mapProviderError(code, status, requestId || stringValue(payload.RequestId || payload.requestId), '阿里云图像生产请求失败，请检查服务状态或稍后重试。', 'aliyun-viapi');
 }
 
-async function aliyunRpc(credentials: UpscaleConnectionCredentials, action: string, params: Record<string, string>, signal?: AbortSignal): Promise<{ payload: JsonObject; requestId?: string }> {
+async function aliyunRpc(credentials: UpscaleConnectionCredentials, action: string, params: Record<string, string>, signal?: AbortSignal, rpcOptions?: { endpoint?: string; version?: string }): Promise<{ payload: JsonObject; requestId?: string }> {
   if (!credentials.accessKeyId || !credentials.accessKeySecret) throw new UpscaleProviderError('请填写阿里云 AccessKey ID 和 AccessKey Secret。', 'INVALID_CREDENTIAL');
-  const endpoint = 'https://imageenhan.cn-shanghai.aliyuncs.com/';
+  const endpoint = rpcOptions?.endpoint || 'https://imageenhan.cn-shanghai.aliyuncs.com/';
   const method = 'POST';
-  const signed = buildAliyunRpcSignature({ method, action, accessKeyId: credentials.accessKeyId, accessKeySecret: credentials.accessKeySecret, params });
+  const signed = buildAliyunRpcSignature({ method, action, accessKeyId: credentials.accessKeyId, accessKeySecret: credentials.accessKeySecret, params, version: rpcOptions?.version });
   const response = await fetch(`${endpoint}?${signed.query}`, { method, signal: signal || AbortSignal.timeout(60_000), headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' } });
   const requestId = requestIdFromHeaders(response.headers);
   const text = await response.text();
@@ -304,8 +352,18 @@ async function aliyunRpc(credentials: UpscaleConnectionCredentials, action: stri
 }
 
 function resultUrl(payload: JsonObject) {
-  const result = nestedValue(payload, ['ResultUrl', 'ResultURL', 'resultUrl', 'result_url', 'ImageUrl', 'ImageURL', 'imageUrl', 'image_url', 'Url', 'url']);
-  return /^https?:\/\//i.test(result) ? result : '';
+  const candidate = nestedValue(payload, ['ResultUrl', 'ResultURL', 'resultUrl', 'result_url', 'ImageUrl', 'ImageURL', 'imageUrl', 'image_url', 'Url', 'url', 'Result', 'result']);
+  if (/^https?:\/\//i.test(candidate)) return candidate;
+  if (candidate) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        const nested = nestedValue(parsed, ['resultUrl', 'result_url', 'url', 'imageUrl', 'ImageUrl', 'ResultUrl', 'URL']);
+        if (/^https?:\/\//i.test(nested)) return nested;
+      }
+    } catch {}
+  }
+  return '';
 }
 
 function jobId(payload: JsonObject) {
@@ -320,18 +378,64 @@ function aliTaskState(payload: JsonObject): 'queued' | 'processing' | 'succeeded
   return 'queued';
 }
 
+const ALIYUN_OSS_BUCKET = 'viapi-customer-temp';
+const ALIYUN_OSS_HOST = 'viapi-customer-temp.oss-cn-shanghai.aliyuncs.com';
+const ALIYUN_OSS_ENDPOINT = `https://${ALIYUN_OSS_HOST}/`;
+
+function aliyunOssExtension(mime: string) {
+  const value = String(mime || '').split(';', 1)[0].trim().toLowerCase();
+  if (value === 'image/jpeg' || value === 'image/jpg') return '.jpg';
+  if (value === 'image/png') return '.png';
+  if (value === 'image/bmp') return '.bmp';
+  if (value === 'image/webp') return '.webp';
+  return '.jpg';
+}
+
+function buildAliyunOssSignature(options: { method: string; url: string; bucket: string; accessKeyId: string; accessKeySecret: string; securityToken?: string; contentType?: string; contentMd5?: string; date?: string }) {
+  const parsed = new URL(options.url);
+  const resource = `/${options.bucket}${parsed.pathname}`;
+  const headers: Array<{ name: string; value: string }> = [];
+  if (options.securityToken) headers.push({ name: 'x-oss-security-token', value: options.securityToken });
+  headers.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  const canonicalizedHeaders = headers.length ? headers.map((header) => `${header.name.toLowerCase()}:${header.value}`).join('\n') + '\n' : '';
+  const stringToSign = `${options.method.toUpperCase()}\n${options.contentMd5 || ''}\n${options.contentType || ''}\n${options.date || ''}\n${canonicalizedHeaders}${resource}`;
+  return createHmac('sha1', options.accessKeySecret).update(stringToSign).digest('base64');
+}
+
+async function getAliyunOssStsToken(credentials: UpscaleConnectionCredentials, signal?: AbortSignal) {
+  const response = await aliyunRpc(credentials, 'GetOssStsToken', {}, signal, { endpoint: 'https://viapiutils.cn-shanghai.aliyuncs.com/', version: '2020-04-01' });
+  const data = asObject(response.payload.Data ?? response.payload.data);
+  const accessKeyId = stringValue(data.AccessKeyId ?? data.accessKeyId);
+  const accessKeySecret = stringValue(data.AccessKeySecret ?? data.accessKeySecret);
+  const securityToken = stringValue(data.SecurityToken ?? data.securityToken ?? data.StsToken ?? data.stsToken);
+  if (!accessKeyId || !accessKeySecret || !securityToken) throw new UpscaleProviderError('阿里云返回的临时凭证不完整，请稍后重试。', 'UPSTREAM_ERROR', { requestId: response.requestId });
+  return { accessKeyId, accessKeySecret, securityToken };
+}
+
+/** Uploads prepared image bytes to the shared VIAPI OSS bucket and returns the public OSS URL. */
+export async function uploadAliyunImageToOss(credentials: UpscaleConnectionCredentials, bytes: Buffer, mime: string, signal?: AbortSignal) {
+  const sts = await getAliyunOssStsToken(credentials, signal);
+  const contentType = String(mime || 'image/jpeg');
+  const objectKey = `${credentials.accessKeyId}/${randomUUID()}/upload-${Date.now()}${aliyunOssExtension(contentType)}`;
+  const url = new URL(`${ALIYUN_OSS_ENDPOINT}${objectKey}`);
+  const contentMd5 = createHash('md5').update(bytes).digest('base64');
+  const date = new Date().toUTCString();
+  const signature = buildAliyunOssSignature({ method: 'PUT', url: url.toString(), bucket: ALIYUN_OSS_BUCKET, accessKeyId: sts.accessKeyId, accessKeySecret: sts.accessKeySecret, securityToken: sts.securityToken, contentType, contentMd5, date });
+  const response = await fetch(url, { method: 'PUT', signal: signal || AbortSignal.timeout(60_000), headers: { Authorization: `OSS ${sts.accessKeyId}:${signature}`, 'x-oss-security-token': sts.securityToken, 'Content-Type': contentType, 'Content-MD5': contentMd5, Date: date }, body: new Uint8Array(bytes) });
+  if (!response.ok) {
+    const text = await response.text();
+    const error = xmlError(text);
+    throw new UpscaleProviderError('阿里云临时图片上传失败，请稍后重试。', 'UPSTREAM_ERROR', { providerCode: error.code, status: response.status, requestId: error.requestId || requestIdFromHeaders(response.headers) });
+  }
+  return url.toString();
+}
+
 function createAliyunProvider(credentials: UpscaleConnectionCredentials): UpscaleProvider {
   const provider: UpscaleProvider = {
     id: 'aliyun-viapi',
     async testConnection() {
-      try {
-        await aliyunRpc(credentials, 'GetAsyncJobResult', { JobId: 'sanmao-connection-test' });
-        return { ok: true, provider: 'aliyun-viapi' };
-      } catch (error) {
-        const providerError = error as UpscaleProviderError;
-        if (providerError instanceof UpscaleProviderError && /job|task|invalidparameter|notfound/i.test(`${providerError.providerCode || ''} ${providerError.message}`)) return { ok: true, provider: 'aliyun-viapi' };
-        throw error;
-      }
+      await getAliyunOssStsToken(credentials);
+      return { ok: true, provider: 'aliyun-viapi' };
     },
     async upscale(input) {
       if (input.modelId === 'aliyun-generative-super-resolution') {

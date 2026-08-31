@@ -45,23 +45,53 @@ test('Tencent COS authorization is deterministic and does not contain SecretKey'
   assert.equal(actual.includes('secret-example'), false);
 });
 
-test('Tencent AISuperResolution sends detect-url, official action and magnify', async () => {
+test('Tencent AISuperResolution processes an uploaded COS object and never needs detect-url', async () => {
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
     return new Response(pngBytes, { status: 200, headers: { 'content-type': 'image/png', 'x-cos-request-id': 'cos-1' } });
   };
   const client = provider.createUpscaleProvider('tencent-ci', { provider: 'tencent-ci', secretId: 'AKID', secretKey: 'SECRET', bucket: 'demo-1250000000', region: 'ap-shanghai' });
-  const result = await client.upscale({ modelId: 'tencent-super-resolution', imageUrl: 'https://cdn.example/input.png', scale: 4, outputFormat: 'jpg', outputQuality: 72 });
+  const sourceUrl = 'https://demo-1250000000.cos.ap-shanghai.myqcloud.com/super-resolution-input/AKID/uuid/upload-1.jpg';
+  const result = await client.upscale({ modelId: 'tencent-super-resolution', imageUrl: sourceUrl, scale: 4, outputFormat: 'jpg', outputQuality: 72 });
+  assert.equal(calls.length, 1);
   const requestUrl = new URL(calls[0].url);
+  assert.equal(requestUrl.origin + requestUrl.pathname, sourceUrl);
   assert.equal(requestUrl.searchParams.get('ci-process'), 'AISuperResolution');
-  assert.equal(requestUrl.searchParams.get('detect-url'), 'https://cdn.example/input.png');
+  assert.equal(requestUrl.searchParams.has('detect-url'), false);
   assert.equal(requestUrl.searchParams.get('magnify'), '4');
   assert.equal(requestUrl.searchParams.has('OutputFormat'), false);
   assert.equal(requestUrl.searchParams.has('OutputQuality'), false);
   assert.equal(calls[0].init.headers.Authorization.includes('SECRET'), false);
   assert.equal(result.status, 'succeeded');
   assert.equal(result.mime, 'image/png');
+});
+
+test('Tencent COS authorization signs extra headers such as content-type', () => {
+  const url = 'https://demo-1250000000.cos.ap-shanghai.myqcloud.com/super-resolution-input/AKID/uuid/upload-1.jpg';
+  const actual = provider.buildTencentCosAuthorization({ method: 'PUT', url, secretId: 'AKIDEXAMPLE', secretKey: 'secret-example', nowSeconds: 1700000000, headers: [['content-type', 'image/jpeg']] });
+  assert.match(actual, /q-header-list=content-type;host/);
+  assert.match(actual, /q-signature=/);
+  assert.equal(actual.includes('secret-example'), false);
+});
+
+test('Tencent upload goes to the user COS bucket with content-type signed and a private object key', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response('', { status: 200, headers: { 'x-cos-request-id': 'cos-put' } });
+  };
+  const credentials = { provider: 'tencent-ci', secretId: 'AKID', secretKey: 'SECRET', bucket: 'demo-1250000000', region: 'ap-shanghai' };
+  const uploaded = await provider.uploadTencentImageToCos(credentials, pngBytes, 'image/png');
+  assert.equal(calls.length, 1);
+  const put = new URL(calls[0].url);
+  assert.equal(put.origin, 'https://demo-1250000000.cos.ap-shanghai.myqcloud.com');
+  assert.match(put.pathname, /^\/super-resolution-input\/AKID\/[^/]+\/upload-\d+\.png$/);
+  assert.equal(calls[0].init.method, 'PUT');
+  assert.equal(calls[0].init.headers['Content-Type'], 'image/png');
+  assert.equal(calls[0].init.headers.Authorization.includes('SECRET'), false);
+  assert.match(calls[0].init.headers.Authorization, /q-header-list=content-type;host/);
+  assert.equal(uploaded, calls[0].url);
 });
 
 test('Alibaba standard VIAPI signs RPC, sends Url and downloads ImageURL', async () => {
@@ -87,16 +117,20 @@ test('Alibaba standard VIAPI signs RPC, sends Url and downloads ImageURL', async
   assert.equal(result.status, 'succeeded');
 });
 
-test('Alibaba connection probe treats an invalid job as authenticated and uses POST', async () => {
+test('Alibaba connection probe validates credentials via GetOssStsToken using POST', async () => {
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
-    return new Response(JSON.stringify({ Code: 'InvalidJobId', Message: 'job not found' }), { status: 400, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ RequestId: 'sts-1', Data: { AccessKeyId: 'STS.example', AccessKeySecret: 'STS_SECRET', SecurityToken: 'STS_TOKEN' } }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const client = provider.createUpscaleProvider('aliyun-viapi', { provider: 'aliyun-viapi', accessKeyId: 'LTAIexample', accessKeySecret: 'SECRET' });
   const result = await client.testConnection();
   assert.equal(result.ok, true);
   assert.equal(calls[0].init.method, 'POST');
+  const url = new URL(calls[0].url);
+  assert.equal(url.hostname, 'viapiutils.cn-shanghai.aliyuncs.com');
+  assert.equal(url.searchParams.get('Action'), 'GetOssStsToken');
+  assert.equal(url.searchParams.get('Version'), '2020-04-01');
 });
 
 test('Alibaba unsupported HTTP method is not reported as missing service permission', async () => {
@@ -149,7 +183,7 @@ test('permission failures are not misreported as invalid credentials', async () 
   const client = provider.createUpscaleProvider('tencent-ci', { provider: 'tencent-ci', secretId: 'AKID', secretKey: 'SECRET', bucket: 'demo', region: 'ap-shanghai' });
   await assert.rejects(() => client.upscale({ modelId: 'tencent-super-resolution', imageUrl: 'https://cdn.example/in.png', scale: 2 }), (error) => {
     assert.equal(error.code, 'PERMISSION_DENIED');
-    assert.match(error.message, /没有调用此功能的权限/);
+    assert.match(error.message, /暂无处理权限|没有调用此功能的权限/);
     return true;
   });
 });

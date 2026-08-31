@@ -3,8 +3,8 @@ import { preparePublicMediaUrl } from './signed-media';
 import { persistImageBuffer } from './image-storage';
 import { getPublicState, getUpscaleConnectionWithCredentials, setUpscaleConnectionStatus, type UpscaleConnectionCredentials } from './store';
 import { getUpscaleCatalogModel, isUpscaleModelId, preferredUpscaleModelId } from './upscale-catalog';
-import { prepareAliyunUpscaleImage } from './upscale-image';
-import { createUpscaleProvider, isUpscaleProviderError, type UpscaleProviderError } from './upscale-providers';
+import { prepareAliyunUpscaleImage, prepareTencentUpscaleImage } from './upscale-image';
+import { createUpscaleProvider, isUpscaleProviderError, uploadAliyunImageToOss, uploadTencentImageToCos, type UpscaleProviderError } from './upscale-providers';
 import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, type UpscaleTask } from './upscale-task-store';
 import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 
@@ -47,9 +47,19 @@ function normalizeOutputQuality(value: unknown) {
   return Number.isFinite(number) ? Math.max(30, Math.min(100, Math.round(number))) : undefined;
 }
 
-async function publicImageUrl(reference: string, provider: UpscaleProviderId, storagePath?: string) {
+async function publicImageUrl(reference: string, provider: UpscaleProviderId, storagePath?: string, credentials?: UpscaleConnectionCredentials) {
   if (provider === 'aliyun-viapi') {
     const prepared = await prepareAliyunUpscaleImage(reference, storagePath);
+    if (credentials?.accessKeyId && credentials?.accessKeySecret) {
+      return uploadAliyunImageToOss(credentials, prepared.bytes, prepared.mime);
+    }
+    return preparePublicMediaUrl(prepared.dataUrl, 'image');
+  }
+  if (provider === 'tencent-ci') {
+    const prepared = await prepareTencentUpscaleImage(reference, storagePath);
+    if (credentials?.secretId && credentials?.secretKey) {
+      return uploadTencentImageToCos(credentials, prepared.bytes, prepared.mime);
+    }
     return preparePublicMediaUrl(prepared.dataUrl, 'image');
   }
   return preparePublicMediaUrl(reference, 'image');
@@ -88,8 +98,8 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
   const key = input.idempotencyKey || idempotencyKey(sourceImageId, reference, modelId, scale, outputFormat, outputQuality);
   const existing = (await createUpscaleTask({ provider: model.provider, model: modelId, scale, outputFormat, outputQuality, sourceImageId, status: 'processing', idempotencyKey: key })).task;
   if (existing.status === 'succeeded' || existing.status === 'queued' || existing.status === 'processing' && existing.providerTaskId) return { task: existing, model };
-  const imageUrl = await publicImageUrl(reference, model.provider, state.settings.imageStoragePath);
   try {
+    const imageUrl = await publicImageUrl(reference, model.provider, state.settings.imageStoragePath, connection);
     const result = await provider.upscale({ imageUrl, scale, modelId, outputFormat, outputQuality });
     if (result.status === 'succeeded') {
       const task = await saveResult(existing, result);

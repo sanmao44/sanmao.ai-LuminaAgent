@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const providerError = isUpscaleProviderError(error) ? error : null;
     const errorMessage = error instanceof Error ? error.message : '高清服务连接失败。';
-    const requiresBucketSetup = errorMessage.includes('没有可用存储桶');
+    const requiresBucketSetup = errorMessage.includes('存储桶') || errorMessage.includes('COS');
     return Response.json({ error: errorMessage, code: providerError?.code, ...(requiresBucketSetup ? { requiresBucketSetup: true } : {}) }, { status: providerError?.status && providerError.status >= 400 ? providerError.status : 502, headers: { 'Cache-Control': 'no-store' } });
   }
 }

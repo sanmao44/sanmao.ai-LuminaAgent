@@ -47,8 +47,7 @@ async function encode(bytes: Buffer, hasAlpha: boolean, maxWidth: number, maxHei
   return { bytes: await pipeline.jpeg({ quality, mozjpeg: true }).toBuffer(), mime: 'image/jpeg' };
 }
 
-/** Applies VIAPI's safe input limits and returns a self-contained image data URL. */
-export async function prepareAliyunUpscaleImage(reference: string, storagePath?: string) {
+async function prepareCloudUpscaleImage(reference: string, storagePath: string | undefined, providerLabel: string) {
   const original = await readImageBytes(reference, storagePath);
   const metadata = await sharp(original.bytes, { failOn: 'none' }).metadata();
   const width = Math.max(1, metadata.width || 1);
@@ -67,7 +66,7 @@ export async function prepareAliyunUpscaleImage(reference: string, storagePath?:
   if (encoded.bytes.byteLength > ALIYUN_UPSCALE_MAX_BYTES && hasAlpha) {
     encoded = await encode(original.bytes, false, maxWidth, maxHeight, 72);
   }
-  if (encoded.bytes.byteLength > ALIYUN_UPSCALE_MAX_BYTES) throw new Error('这张图片超过阿里云超分支持的 5MB 限制，请选择较小图片');
+  if (encoded.bytes.byteLength > ALIYUN_UPSCALE_MAX_BYTES) throw new Error(`这张图片超过${providerLabel}超分支持的 5MB 限制，请选择较小图片`);
   const outputMeta = await sharp(encoded.bytes, { failOn: 'none' }).metadata();
   return {
     dataUrl: dataUrl(encoded.bytes, encoded.mime),
@@ -79,6 +78,16 @@ export async function prepareAliyunUpscaleImage(reference: string, storagePath?:
     originalHeight: height,
     changed: encoded.bytes.byteLength !== original.bytes.byteLength || width > ALIYUN_UPSCALE_MAX_WIDTH || height > ALIYUN_UPSCALE_MAX_HEIGHT,
   };
+}
+
+/** Applies VIAPI's safe input limits and returns a self-contained image data URL. */
+export async function prepareAliyunUpscaleImage(reference: string, storagePath?: string) {
+  return prepareCloudUpscaleImage(reference, storagePath, '阿里云');
+}
+
+/** Applies Tencent Cloud's safe input limits and returns a self-contained image data URL. */
+export async function prepareTencentUpscaleImage(reference: string, storagePath?: string) {
+  return prepareCloudUpscaleImage(reference, storagePath, '腾讯云');
 }
 
 export async function readLocalImageBuffer(reference: string, storagePath?: string) {
