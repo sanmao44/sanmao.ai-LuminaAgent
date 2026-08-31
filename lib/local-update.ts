@@ -10,7 +10,9 @@ const STALE_LOCK_MS = 10 * 60 * 1000;
 const MAX_PACKAGE_SOURCES = 6;
 const OFFICIAL_DOWNLOAD_TIMEOUT_MS = 120_000;
 const MIRROR_DOWNLOAD_TIMEOUT_MS = 60_000;
-const DEFAULT_GITHUB_PROXIES = ['https://ghfast.top/', 'https://ghproxy.net/'];
+// Reachable GitHub acceleration mirrors. ghfast.top and gh-proxy.com are the
+// currently healthy ones; operators can override via SANMAO_UPDATE_GITHUB_PROXIES.
+const DEFAULT_GITHUB_PROXIES = ['https://ghfast.top/', 'https://gh-proxy.com/'];
 
 export type UpdateProgressStage = 'queued' | 'downloading' | 'verifying' | 'starting' | 'completed' | 'failed';
 
@@ -368,6 +370,19 @@ function isValidPackageSource(value: string) {
   }
 }
 
+// Recover the underlying GitHub URL from a proxy-wrapped source such as
+// https://ghfast.top/https://github.com/... so alternate proxies can be tried.
+function unwrapGithubUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    if (['github.com', 'codeload.github.com'].includes(parsed.hostname.toLowerCase())) return url;
+    const match = url.match(/^(?:https?:)?\/\/[^/]+\/(https:\/\/github\.com\/.*|https:\/\/codeload\.github\.com\/.*)$/i);
+    return match ? match[1] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function githubProxyVariants(url: string) {
   try {
     const parsed = new URL(url);
@@ -382,10 +397,18 @@ export function packageSourceCandidates(status: UpdateStatus) {
   const mirrors = Array.isArray(status.mirrorUrls) ? status.mirrorUrls : [];
   const fallback = status.packageUrl ? githubArchiveFallback(status.packageUrl) : undefined;
   const officialSources = [status.packageUrl, fallback].filter(Boolean) as string[];
+
+  // Collect every GitHub-addressable URL (including proxy-wrapped mirrors) so a
+  // dead mirror can fall back to the other built-in GitHub proxies.
+  const githubUrls = [...officialSources, ...mirrors, ...configuredPackageMirrors()]
+    .map((value) => unwrapGithubUrl(value))
+    .filter((value): value is string => Boolean(value));
+  const proxyVariants = [...new Set(githubUrls)].flatMap(githubProxyVariants);
+
   const candidates = [
     ...mirrors,
     ...configuredPackageMirrors(),
-    ...officialSources.flatMap(githubProxyVariants),
+    ...proxyVariants,
     ...officialSources,
   ].filter(Boolean) as string[];
   return [...new Set(candidates)].filter(isValidPackageSource).slice(0, MAX_PACKAGE_SOURCES);

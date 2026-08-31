@@ -78,12 +78,15 @@ afterEach(() => {
   else process.env.SANMAO_UPDATE_GITHUB_PROXIES = originalGithubProxies;
 });
 
-test('manifest candidates use GitHub first and jsDelivr second by default', () => {
+test('manifest candidates use GitHub first then no-VPN friendly mirrors by default', () => {
   delete process.env.SANMAO_UPDATE_MANIFEST_URL;
   delete process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;
   assert.deepEqual(update.manifestUrlCandidates(), [
     'https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
-    'https://cdn.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json',
+    'https://fastly.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json',
+    'https://gcore.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json',
+    'https://ghfast.top/https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
+    'https://gh-proxy.com/https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
   ]);
 });
 

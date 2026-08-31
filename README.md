@@ -398,12 +398,12 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
 
 应用启动后会定期检查更新。侧栏会显示当前版本，发现新版本后弹出更新提示；检查失败不会影响本地使用。
 
-无梯子环境会自动做多源回退：更新清单先请求 GitHub，失败后尝试 jsDelivr；安装包优先尝试清单 `mirrorUrls`、`SANMAO_UPDATE_MIRRORS` 以及内置的 `ghfast.top`/`ghproxy.net` 公共加速，GitHub 官方 Release 保留为备用。安装包下载后仍会强制校验 SHA-256，校验失败不会执行更新。也可以自定义镜像：
+无梯子环境会自动做多源回退：更新清单会并发请求 GitHub、jsDelivr(Fastly/Gcore) 以及国内可达的 raw 加速镜像，取最先成功的结果；安装包优先尝试清单 `mirrorUrls`、`SANMAO_UPDATE_MIRRORS` 以及内置的 `ghfast.top`/`gh-proxy.com` 公共加速，GitHub 官方 Release 保留为备用。安装包下载后仍会强制校验 SHA-256，校验失败不会执行更新。也可以自定义镜像：
 
 ```env
 SANMAO_UPDATE_MANIFEST_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/raw/main/update.json
 SANMAO_UPDATE_MIRRORS=https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.4/SANMAO.AI-0.7.4.zip
-SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://ghproxy.net/
+SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://gh-proxy.com/
 ```
 
 如果 `update.json` 同时提供可信的 GitHub 源码压缩包地址和 SHA-256：

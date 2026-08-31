@@ -6,7 +6,7 @@
   "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip",
   "mirrorUrls": [
     "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip"
   ],
   "sha256": "cf1e188b15a3ecab48626a4153d99457c27003e1960d988c1cdfa789c7001e6b",
@@ -24,6 +24,7 @@
     "新增并优化超分节点、云高清连接引导、任务恢复、图片尺寸显示和多图片下载，保留原图并支持失败重试。",
     "视频工作台增加任务分页、能力驱动的编辑/续写选项、输入媒体压缩和更稳定的任务轮询与状态反馈。",
     "角度控制补充左右方向校准、镜头语义和重投影提示，减少人物朝向与画面方向理解偏差。",
-    "修复 Windows 启动器编码、重复启动和自动更新相关兼容问题，继续兼容 Windows、macOS、Linux 启动入口。"
+    "修复 Windows 启动器编码、重复启动和自动更新相关兼容问题，继续兼容 Windows、macOS、Linux 启动入口。",
+    "本次更新内置国内可达的镜像源（ghfast.top / gh-proxy.com），无需 VPN 也可自动检查并下载更新。"
   ]
 }

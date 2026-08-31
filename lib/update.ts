@@ -33,8 +33,16 @@ export type UpdateStatus = {
 
 export const currentVersion = String(packageInfo.version || '0.0.0');
 const defaultManifestUrl = 'https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json';
-const defaultJsdelivrManifestUrl = 'https://cdn.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json';
-const manifestFetchTimeoutMs = 6_000;
+// cdn.jsdelivr.net serves stale content for the @main branch, so no-VPN users
+// rely on the jsDelivr Fastly/Gcore edges and the raw.githubusercontent.com
+// acceleration mirrors which stay fresh and are reachable from China.
+const defaultManifestMirrors = [
+  'https://fastly.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json',
+  'https://gcore.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json',
+  'https://ghfast.top/https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
+  'https://gh-proxy.com/https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
+];
+const manifestFetchTimeoutMs = 5_000;
 const cacheTtlMs = 6 * 60 * 60 * 1000;
 let cached: { expiresAt: number; status: UpdateStatus } | null = null;
 
@@ -76,7 +84,7 @@ export function manifestUrlCandidates() {
   const customManifestUrl = process.env.SANMAO_UPDATE_MANIFEST_URL?.trim();
   const candidates = customManifestUrl
     ? [customManifestUrl]
-    : [defaultManifestUrl, defaultJsdelivrManifestUrl];
+    : [defaultManifestUrl, ...defaultManifestMirrors];
   candidates.push(...configuredManifestMirrors());
   return [...new Set(candidates)].filter(validHttpUrl);
 }
@@ -150,6 +158,21 @@ function readLocalManifest(): Partial<UpdateManifest> | null {
   }
 }
 
+async function fetchManifestFromSource(url: string, checkedAt: string): Promise<UpdateStatus> {
+  const parsedUrl = new URL(url);
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('不支持的更新清单协议');
+
+  const response = await fetch(parsedUrl, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json', 'User-Agent': 'SANMAO.AI update checker' },
+    signal: AbortSignal.timeout(manifestFetchTimeoutMs),
+  });
+  if (!response.ok) throw new Error(`更新清单返回 HTTP ${response.status}`);
+
+  const raw = await response.json() as Partial<UpdateManifest>;
+  return statusFromManifest(raw, checkedAt);
+}
+
 export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
   const urls = manifestUrlCandidates();
   if (!urls.length) return baseStatus();
@@ -157,27 +180,11 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
 
   const checkedAt = new Date().toISOString();
   try {
-    let lastError: unknown;
-    for (const url of urls) {
-      try {
-        const parsedUrl = new URL(url);
-        if (!['http:', 'https:'].includes(parsedUrl.protocol)) continue;
-        const response = await fetch(parsedUrl, {
-          cache: 'no-store',
-          headers: { Accept: 'application/json', 'User-Agent': 'SANMAO.AI update checker' },
-          signal: AbortSignal.timeout(manifestFetchTimeoutMs),
-        });
-        if (!response.ok) throw new Error(`更新清单返回 HTTP ${response.status}`);
-
-        const raw = await response.json() as Partial<UpdateManifest>;
-        const status = statusFromManifest(raw, checkedAt);
-        cached = { expiresAt: Date.now() + cacheTtlMs, status };
-        return status;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error('更新检查失败');
+    // Query all sensible sources at once and accept the first healthy one, so a
+    // no-VPN client keeps working even when a blocked/cached mirror answers first.
+    const status = await Promise.any(urls.map((url) => fetchManifestFromSource(url, checkedAt)));
+    cached = { expiresAt: Date.now() + cacheTtlMs, status };
+    return status;
   } catch (error) {
     const localManifest = readLocalManifest();
     if (localManifest) {
