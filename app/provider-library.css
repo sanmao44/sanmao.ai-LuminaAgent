@@ -1,3 +1,8 @@
+.platform-picker button>b.platform-logo{padding:5px;background:color-mix(in srgb,var(--panel-3) 82%,#fff 18%)}
+.platform-picker button>b.platform-logo img{display:block;width:100%;height:100%;object-fit:contain}
+.platform-picker button>b.platform-logo img[src$="/openai.svg"]{filter:invert(1)}
+.platform-picker button>b.platform-logo img[src$="/agnes.ico"]{padding:2px;border-radius:4px;background:#161616}
+
 .provider-library-toggle {
   display: inline-flex;
   align-items: center;

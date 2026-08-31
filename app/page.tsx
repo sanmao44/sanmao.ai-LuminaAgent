@@ -13723,7 +13723,11 @@ export default function Page() {
                                                                         onClick: ()=>applyProviderPreset(preset.value),
                                                                         children: [
                                                                             /*#__PURE__*/ _jsx("b", {
-                                                                                children: preset.short.slice(0, 2)
+                                                                                className: preset.logo ? 'platform-logo' : '',
+                                                                                children: preset.logo ? /*#__PURE__*/ _jsx("img", {
+                                                                                    src: preset.logo,
+                                                                                    alt: ""
+                                                                                }) : preset.short.slice(0, 2)
                                                                             }),
                                                                             /*#__PURE__*/ _jsxs("span", {
                                                                                 children: [
