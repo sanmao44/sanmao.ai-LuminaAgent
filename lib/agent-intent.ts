@@ -82,12 +82,19 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
   const asksForImageWithoutTarget = /(?:画个|画一只|画一个|画一张|画一幅|画出|出图|生图|生成一张|生成一个|做一张|做一个|做个|来一张|来个).{1,80}/i.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
   const asksForSeparateCopy = separateCopyPattern.test(text) || /(?:图片|海报|封面|宣传图).{0,30}(?:另外|再|同时|并且|以及).{0,30}(?:文案|标题|配文)/i.test(text);
   const textInsideImage = embeddedTextPattern.test(text) && (asksForImage || asksForImageWithoutTarget);
+  const asksToEditReference = hasReferences
+    && imageEditPattern.test(text)
+    && !questionOrAnalysisPattern.test(text)
+    && !/(?:描述|分析|解释|总结|提取|识别|比较|建议)/i.test(text);
 
   if (asksForPrompt && !asksForSeparateCopy && !/(?:然后|之后|再|同时|并且).{0,24}(?:出图|生图|生成图片|画图)/i.test(text)) {
     return result('TEXT', '你要的是可复制的提示词，图片只是提示词描述的对象。', 'high', ['提示词交付']);
   }
   if (vagueCreativePattern.test(text)) {
     return result('CLARIFY', '“宣传/新品/活动”没有说明要图片、文案，还是两者都要。', 'low', ['缺少交付形式']);
+  }
+  if (asksToEditReference) {
+    return result('IMAGE', '检测到参考图和明确的修改动作，会按图片编辑任务处理。', 'high', ['参考图', '编辑动作']);
   }
   if (asksForImage && asksForText && asksForSeparateCopy) {
     return result('BOTH', '同时检测到图片动作和“另外提供文案”的独立交付要求。', 'high', ['图片动作', '独立文案']);

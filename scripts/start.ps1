@@ -1,4 +1,4 @@
-﻿param(
+param(
   [int]$Port = 0,
   [switch]$NonInteractive = $false,
   [switch]$Lan = $false,
@@ -437,7 +437,7 @@ if ($existing) {
     )) -or
     (-not $script:MediaRelayRequired -and $existing.MediaRelayMode -eq 'relay')
   if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent -or $freeRelayMismatch) {
-    $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新网页关闭自动停止设置' } else { '检测到源码比当前构建更新' }
+    $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新本地服务生命周期设置' } else { '检测到源码比当前构建更新' }
     Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {
@@ -655,6 +655,7 @@ if ($port -gt $portEnd) {
 if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
   Write-Host '正在准备免费媒体中转通道…' -ForegroundColor Yellow
   Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
+  $env:SANMAO_RELAY_MODE = '1'
   if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
     Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
   }
@@ -691,11 +692,11 @@ $script:serverProcess = Start-Process `
   -RedirectStandardError $serverStderrPath `
   -PassThru
 
-if ($freeRelayInfo) {
+if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
   try {
     $watchScript = Join-Path $PSScriptRoot 'free-relay-watch.ps1'
     Start-Process -FilePath 'powershell.exe' `
-      -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id) `
+      -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id, '-OriginPort', [string]$port) `
       -WorkingDirectory $root `
       -WindowStyle Hidden | Out-Null
   } catch {

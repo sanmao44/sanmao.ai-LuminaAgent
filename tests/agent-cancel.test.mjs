@@ -69,7 +69,7 @@ test('server cancellation reaches model, search, image, stream, and subprocess t
 });
 
 test('cancelled searches do not enter provider fallback or cache a partial response', () => {
-  assert.ok(nativeSearch.includes('catch (error) {\n    throwIfAborted(signal);'));
+  assert.match(nativeSearch, /catch \(error\) \{\r?\n\s+throwIfAborted\(signal\);/);
   assert.ok(webSearch.includes('const attempts = await Promise.all(queryVariants.map((variant) => searchWithFallback(variant, news, apiConfigs, signal)))'));
   assert.ok(webSearch.includes('const enriched = await Promise.all(results.slice(0, 3).map((result) => enrichResult(result, signal)))'));
   assert.ok(route.includes('if (requestController.signal.aborted) throw requestController.signal.reason || error'));

@@ -8,7 +8,7 @@ import { searchWeb, type SearchResponse } from '@/lib/web-search';
 import { ONE_TAKE_VIDEO_PROMPT_INSTRUCTIONS } from '@/lib/one-take-video-prompt';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { isImageContinuationRequest, likelyAgentToolRequest, likelyImageGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
+import { isImageContinuationRequest, likelyFileGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
@@ -198,7 +198,9 @@ function isImageToolCall(call: any) {
   return call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit';
 }
 
-function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> }, signal?: AbortSignal) {
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> };
+
+function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: AgentStreamMetadata, signal?: AbortSignal) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const send = (controller: ReadableStreamDefaultController<Uint8Array>, event: Record<string, unknown>) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
@@ -263,7 +265,7 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response>)
           }
         }
         if (signal?.aborted) return;
-        send(controller, { type: 'final', message: text || metadata.fallback || '当前对话模型没有返回内容。', images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null });
+        send(controller, { type: 'final', message: text || metadata.fallback || '当前对话模型没有返回内容。', images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null });
         controller.close();
       } catch (error) {
         if (signal?.aborted) return;
@@ -328,6 +330,13 @@ export async function POST(request: Request) {
     const requestedDeliverable = hasExplicitDeliverable
       ? body.deliverable as AgentDeliverable
       : intentDecision.deliverable;
+    const requestedIntentReason = hasExplicitDeliverable && typeof body.intentReason === 'string' && body.intentReason.trim()
+      ? body.intentReason.trim().slice(0, 320)
+      : intentDecision.reason;
+    const streamResult = (
+      upstream: Response | null | (() => Promise<Response>),
+      metadata: Omit<AgentStreamMetadata, 'deliverable'>,
+    ) => streamAgentResult(upstream, { ...metadata, deliverable: requestedDeliverable }, requestController.signal);
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
@@ -353,7 +362,8 @@ export async function POST(request: Request) {
       '只输出优化后的可直接复制使用的提示词正文，不要输出标题、解释、分析过程、引号或 Markdown 代码块。',
     ].join('\n');
     const identityQuestion = isModelIdentityQuestion(latest?.content || '');
-    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && requestedDeliverable !== 'CLARIFY' && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH' || (!hasExplicitDeliverable && likelyImageGenerationRequest(latest?.content || '')));
+    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
+    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && likelyFileGenerationRequest(latest?.content || '');
     const webMode = resolveAgentWebMode(body.webMode, body.webSearch);
     const webSearchEnabled = webMode !== 'off';
     const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isOptimizePromptTask || identityQuestion;
@@ -379,7 +389,7 @@ export async function POST(request: Request) {
         ? '\n\n联网能力：当前为智能按需模式。本轮不需要联网，请直接回答，不要暗示或伪造网页搜索结果。'
         : '\n\n联网能力：当前已关闭联网搜索。不要调用、暗示或伪造网页搜索结果；对于最新、实时或需要来源的问题，请明确说明联网已关闭。';
     let system = buildSystem(initialWebInstructions, '');
-    system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${intentDecision.reason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
+    system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     let llmMessages: ChatMessage[] = [
       { role: 'system', content: system },
       ...messages.map((m) => ({ role: m.role, content: toChatContent(m) } as ChatMessage)),
@@ -418,7 +428,7 @@ export async function POST(request: Request) {
     const webContext = nativeSearchData ? formatNativeSearchContext(nativeSearchData) : webSearchData ? formatWebSearchContext(webSearchData) : '';
     const webFailureContext = '';
     system = buildSystem(`${webSearchInstructions}${nativeAnswerInstructions}`, webContext, webFailureContext);
-    system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${intentDecision.reason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
+    system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask) llmMessages[0] = { role: 'system', content: system };
 
     // Search is selected locally before this point. Do not give ordinary
@@ -427,7 +437,13 @@ export async function POST(request: Request) {
     // image operation, even if it ignores the tool list and returns an image
     // tool call anyway.
     const imageToolsAllowed = imageGenerationRequest;
-    const callableTools = tools.filter((tool: any) => tool.function.name !== 'web_search' && (imageToolsAllowed || !['image_generate', 'image_edit'].includes(tool.function.name)));
+    const callableTools = tools.filter((tool: any) => {
+      const name = tool.function.name;
+      if (name === 'web_search') return false;
+      if (name === 'file_generate') return fileGenerationRequest;
+      if (isImageToolCall({ function: { name } })) return imageToolsAllowed;
+      return false;
+    });
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, searchedAt: nativeSearchData.searchedAt };
       if (webSearchData) return { source: 'external', provider: webSearchData.provider, query: webSearchData.query, resultCount: webSearchData.resultCount, fallbackFrom: nativeSearchError ? 'native' : undefined, searchedAt: webSearchData.searchedAt };
@@ -447,7 +463,7 @@ export async function POST(request: Request) {
       if (webSearchData) return `已使用外部搜索 API${nativeSearchError ? '（原生搜索失败后回退）' : ''}，获得 ${webSearchData.resultCount} 条来源，正在整理回答…`;
       return '联网搜索失败，正在如实回答…';
     };
-    const nativeNeedsContinuation = imageGenerationRequest || likelyAgentToolRequest(latest?.content || '', latestRefs.length > 0);
+    const nativeNeedsContinuation = imageGenerationRequest || fileGenerationRequest;
     if (nativeSearchData && !nativeNeedsContinuation) {
       const nativeMeta = searchMetadata();
       let nativeMessage = '';
@@ -462,14 +478,14 @@ export async function POST(request: Request) {
       }
       if (!nativeMessage) nativeMessage = nativeFallbackAnswer(nativeSearchData);
       return wantsStream
-        ? streamAgentResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] }, requestController.signal)
-        : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
+        ? streamResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] })
+        : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
-    const directStream = wantsStream && !identityQuestion && requestedDeliverable !== 'IMAGE' && requestedDeliverable !== 'BOTH' && (isReversePromptTask || isOneTakeVideoPromptTask || isOptimizePromptTask || !likelyAgentToolRequest(latest?.content || '', latestRefs.length > 0));
+    const directStream = wantsStream && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest;
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
     if (directStream) {
       try {
-        return streamAgentResult(() => chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal), { images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: streamStatuses }, requestController.signal);
+        return streamResult(() => chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal), { images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: streamStatuses });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
@@ -492,8 +508,8 @@ export async function POST(request: Request) {
           ? modelIdentityReply({ actualModel, requestedModel: agentRuntime.model.rawId, providerName: agentRuntime.provider.name, platform: providerPlatform })
           : fallback?.choices?.[0]?.message?.content || '当前对话模型没有返回内容。';
         return wantsStream
-          ? streamAgentResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }, requestController.signal)
-          : Response.json({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+          ? streamResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() })
+          : Response.json({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
       }
     }
 
@@ -501,8 +517,8 @@ export async function POST(request: Request) {
     if (identityQuestion) {
       const identityMessage = modelIdentityReply({ actualModel, requestedModel: agentRuntime.model.rawId, providerName: agentRuntime.provider.name, platform: providerPlatform });
       return wantsStream
-        ? streamAgentResult(null, { fallback: identityMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: null, webSearchDecision: searchDecisionMetadata() }, requestController.signal)
-        : Response.json({ ok: true, message: identityMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, toolSupport: false, webSearch: null, webSearchDecision: searchDecisionMetadata() });
+        ? streamResult(null, { fallback: identityMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: null, webSearchDecision: searchDecisionMetadata() })
+        : Response.json({ ok: true, message: identityMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: false, webSearch: null, webSearchDecision: searchDecisionMetadata() });
     }
 
     const message = first?.choices?.[0]?.message;
@@ -524,7 +540,7 @@ export async function POST(request: Request) {
           ...llmMessages,
         ];
         if (wantsStream) {
-          return streamAgentResult(() => chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: textOnlyMessages, tool_choice: 'none' }, requestController.signal), { images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'answering', message: '图片请求已拦截，正在整理文字回答…' }] }, requestController.signal);
+          return streamResult(() => chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: textOnlyMessages, tool_choice: 'none' }, requestController.signal), { images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'answering', message: '图片请求已拦截，正在整理文字回答…' }] });
         }
         try {
           const textOnlyResponse = await chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: textOnlyMessages, tool_choice: 'none' }, requestController.signal);
@@ -534,7 +550,7 @@ export async function POST(request: Request) {
         }
       }
       plainMessage = plainMessage || '当前对话模型没有返回内容。';
-      return wantsStream ? streamAgentResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }, requestController.signal) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+      return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
     }
 
     const generated: Array<{ url: string; revisedPrompt?: string }> = [];
@@ -634,12 +650,12 @@ export async function POST(request: Request) {
     if (generated.length && preparedCaption) finalText = await preparedCaption;
     if (wantsStream) {
       try {
-        if (generated.length && preparedCaption) return streamAgentResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] }, requestController.signal);
+        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
-        return streamAgentResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] }, requestController.signal);
+        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
-        return streamAgentResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] }, requestController.signal);
+        return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
     try {
@@ -648,7 +664,7 @@ export async function POST(request: Request) {
     } catch (error) {
       if (requestController.signal.aborted) throw requestController.signal.reason || error;
     }
-    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
   } catch (error) {
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'AGENT_CANCELLED');
     return Response.json({ error: cancelled ? '本轮 Agent 已停止。' : error instanceof Error ? error.message : '智能助手请求失败。', cancelled }, { status: cancelled ? 499 : 502 });

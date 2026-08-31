@@ -6,10 +6,11 @@ const HEARTBEAT_INTERVAL_MS = 2_000;
 const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
 
 /**
- * Keeps a local launcher-owned server alive while at least one browser page
- * is using it. The server explicitly opts into this protocol through the
- * SANMAO_LIFECYCLE environment variable; LAN and development servers remain
- * unaffected when the capability endpoint reports disabled.
+ * Reports local browser usage for maintenance tasks such as automatic
+ * snapshots. The local launcher-owned server intentionally stays available
+ * even when a browser tab is backgrounded or temporarily disconnected; LAN
+ * and development servers remain unaffected when the capability endpoint
+ * reports disabled.
  */
 export default function LocalLifecycle() {
   useEffect(() => {

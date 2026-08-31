@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
@@ -97,11 +97,22 @@ function publicBaseUrl() {
   return String(process.env.SANMAO_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 }
 
+function runningRelayUrl() {
+  if (process.env.SANMAO_RELAY_MODE !== '1') return '';
+  try {
+    const file = path.join(dataDir(), 'free-relay', 'public-url.txt');
+    const value = readFileSync(file, 'utf8').trim().replace(/\/+$/, '');
+    return isUsablePublicBaseUrl(value) ? value : '';
+  } catch { return ''; }
+}
+
 function mediaRelayUrl() {
+  if (process.env.SANMAO_RELAY_MODE === '1') return runningRelayUrl();
   return String(process.env.SANMAO_MEDIA_RELAY_URL || process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL || '').trim().replace(/\/+$/, '');
 }
 
 function relayPublicBaseUrl() {
+  if (process.env.SANMAO_RELAY_MODE === '1') return runningRelayUrl();
   return String(process.env.SANMAO_RELAY_PUBLIC_BASE_URL || process.env.SANMAO_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 }
 
@@ -260,34 +271,41 @@ export const storeSignedAgnesMedia = storeSignedMedia;
 async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio') {
   const relay = mediaRelayUrl();
   if (!relay) return null;
-  const endpoint = assertUsablePublicBaseUrl(relay, AGNES_MEDIA_RELAY_UNAVAILABLE);
-  const form = new FormData();
-  const blobBytes = new Uint8Array(data.byteLength);
-  blobBytes.set(data);
-  form.append('file', new Blob([blobBytes.buffer], { type: mime }), `agnes-input.${extensionForMime(mime)}`);
-  form.append('kind', kind);
   const uploadToken = String(process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN || '').trim();
-  try {
-    const response = await fetch(`${endpoint}/api/relay/media`, {
-      method: 'POST',
-      ...(uploadToken ? { headers: { 'x-sanmao-relay-token': uploadToken } } : {}),
-      body: form,
-    });
-    const payload = await response.json().catch(() => ({})) as { url?: unknown; expiresAt?: unknown; error?: unknown };
-    if (!response.ok || typeof payload.url !== 'string') {
-      const message = typeof payload.error === 'string' ? payload.error : response.status === 429 ? '上传过于频繁，请稍后重试' : '图片不符合中转服务要求';
-      if (response.status >= 400 && response.status < 500) throw new PublicMediaError(`图片暂时无法提交：${message}。`, MEDIA_RELAY_REJECTED);
-      throw new Error(message);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const endpoint = assertUsablePublicBaseUrl(attempt === 0 ? relay : mediaRelayUrl(), AGNES_MEDIA_RELAY_UNAVAILABLE);
+    const form = new FormData();
+    const blobBytes = new Uint8Array(data.byteLength);
+    blobBytes.set(data);
+    form.append('file', new Blob([blobBytes.buffer], { type: mime }), `agnes-input.${extensionForMime(mime)}`);
+    form.append('kind', kind);
+    try {
+      const response = await fetch(`${endpoint}/api/relay/media`, {
+        method: 'POST',
+        ...(uploadToken ? { headers: { 'x-sanmao-relay-token': uploadToken } } : {}),
+        body: form,
+      });
+      const payload = await response.json().catch(() => ({})) as { url?: unknown; expiresAt?: unknown; error?: unknown };
+      if (!response.ok || typeof payload.url !== 'string') {
+        const message = typeof payload.error === 'string' ? payload.error : response.status === 429 ? '上传过于频繁，请稍后重试' : '图片不符合中转服务要求';
+        if (response.status >= 400 && response.status < 500) throw new PublicMediaError(`图片暂时无法提交：${message}。`, MEDIA_RELAY_REJECTED);
+        throw new Error(message);
+      }
+      const url = payload.url.trim();
+      let parsed: URL;
+      try { parsed = new URL(url); } catch { throw new Error('中转服务返回的图片地址无效'); }
+      if (!isUsablePublicBaseUrl(url) || parsed.origin !== new URL(endpoint).origin) throw new Error('中转服务返回的图片地址不安全');
+      return { url, expiresAt: typeof payload.expiresAt === 'string' ? payload.expiresAt : undefined };
+    } catch (error) {
+      if (error instanceof PublicMediaError) throw error;
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
+      throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
     }
-    const url = payload.url.trim();
-    let parsed: URL;
-    try { parsed = new URL(url); } catch { throw new Error('中转服务返回的图片地址无效'); }
-    if (!isUsablePublicBaseUrl(url) || parsed.origin !== new URL(endpoint).origin) throw new Error('中转服务返回的图片地址不安全');
-    return { url, expiresAt: typeof payload.expiresAt === 'string' ? payload.expiresAt : undefined };
-  } catch (error) {
-    if (error instanceof PublicMediaError) throw error;
-    throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
   }
+  throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
 }
 
 export function getPublicMediaTransportStatus() {

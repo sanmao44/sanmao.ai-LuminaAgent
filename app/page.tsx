@@ -25,8 +25,9 @@ import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
-import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage, likelyImageGenerationRequest } from '@/lib/agent-web';
+import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
+import { requestAgent } from '@/lib/agent-client';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
@@ -1094,55 +1095,8 @@ function formatFileSize(size) {
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
-async function readAgentStream(response, onEvent, signal) {
-    if (!response.body) throw new Error('助手没有返回可读取的流');
-    const reader = response.body.getReader();
-    const cancelReader = ()=>{
-        void reader.cancel().catch(()=>undefined);
-    };
-    if (signal?.aborted) cancelReader();
-    else signal?.addEventListener('abort', cancelReader, { once: true });
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let final = {};
-    const consume = (raw)=>{
-        buffer += raw;
-        const chunks = buffer.split(/\n\n/);
-        buffer = chunks.pop() || '';
-        for (const chunk of chunks){
-            const dataLine = chunk.split(/\n/).find((line)=>line.startsWith('data:'));
-            if (!dataLine) continue;
-            const rawData = dataLine.slice(5).trim();
-            if (!rawData || rawData === '[DONE]') continue;
-            try {
-                const event = JSON.parse(rawData);
-                if (event.type === 'final') final = event;
-                onEvent(event);
-            } catch  {}
-        }
-    };
-    try {
-        while(true){
-            const part = await reader.read();
-            if (part.done) break;
-            consume(decoder.decode(part.value, {
-                stream: true
-            }));
-        }
-        consume(decoder.decode());
-    } finally {
-        signal?.removeEventListener('abort', cancelReader);
-    }
-    if (signal?.aborted) throw signal.reason || new Error('AGENT_CANCELLED');
-    return final;
-}
 async function requestPromptOptimization(source, model, references = []) {
-    const response = await fetch('/api/agent', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+    const data = await requestAgent({
             messages: [
                 {
                     role: 'user',
@@ -1152,23 +1106,8 @@ async function requestPromptOptimization(source, model, references = []) {
                 }
             ],
             model,
-            task: 'optimize_prompt',
-            stream: true
-        })
-    });
-    let data;
-    if (response.headers.get('content-type')?.includes('text/event-stream')) {
-        let streamedText = '';
-        const final = await readAgentStream(response, (event)=>{
-            if (event.type === 'delta') streamedText += String(event.text || '');
-            if (event.type === 'error') throw new Error(event.message || 'AI 优化失败');
+            task: 'optimize_prompt'
         });
-        data = {
-            ...final,
-            message: final.message || streamedText
-        };
-    } else data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'AI 优化失败');
     const optimized = String(data.message || '').trim();
     if (!optimized) throw new Error('助手没有返回优化后的文案');
     return optimized;
@@ -8385,25 +8324,18 @@ export default function Page() {
                 references: [],
                 files: []
             });
-            const res = await fetch('/api/agent', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
+            let streamedText = '';
+            const data = await requestAgent({
                     messages: payloadMessages,
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
-                    stream: true
-                }),
-                signal: requestController.signal
-            });
-            let data;
-            if (res.headers.get('content-type')?.includes('text/event-stream')) {
-                let streamedText = '';
-                const final = await readAgentStream(res, (event)=>{
+                    deliverable: message.deliverable,
+                    intentReason: '按原问题和原交付形式重新生成完整答复'
+                }, {
+                signal: requestController.signal,
+                onEvent: (event)=>{
                     if (event.type === 'delta') {
                         streamedText += String(event.text || '');
                         agentRequest.partialText = streamedText;
@@ -8419,13 +8351,8 @@ export default function Page() {
                         }
                     }
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
-                }, requestController.signal);
-                data = {
-                    ...final,
-                    message: final.message || streamedText
-                };
-            } else data = await res.json();
-            if (!res.ok) throw new Error(data.error || '助手请求失败');
+                }
+            });
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
             let images = [];
@@ -8539,7 +8466,7 @@ export default function Page() {
             hasFiles: files.length > 0
         });
         const selectedDeliverable = deliverableOverride || requestIntent.deliverable;
-        const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH' || isImageContinuationRequest(requestContent) || likelyImageGenerationRequest(requestContent));
+        const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');
         const user = {
             id: uid('msg'),
             role: 'user',
@@ -8631,12 +8558,8 @@ export default function Page() {
                         })) : []
                 }));
             updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
-            const res = await fetch('/api/agent', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
+            let streamedText = '';
+            const data = await requestAgent({
                     messages: payloadMessages,
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
@@ -8644,15 +8567,10 @@ export default function Page() {
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     deliverable: selectedDeliverable,
-                    intentReason: requestIntent.reason,
-                    stream: true
-                }),
-                signal: requestController.signal
-            });
-            let data;
-            if (res.headers.get('content-type')?.includes('text/event-stream')) {
-                let streamedText = '';
-                const final = await readAgentStream(res, (event)=>{
+                    intentReason: requestIntent.reason
+                }, {
+                signal: requestController.signal,
+                onEvent: (event)=>{
                     if (event.type === 'status') updatePendingActivity({
                         stage: event.stage || 'answering',
                         message: event.message || '正在处理…',
@@ -8665,13 +8583,8 @@ export default function Page() {
                         updatePendingContent(streamedText);
                     }
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
-                }, requestController.signal);
-                data = {
-                    ...final,
-                    message: final.message || streamedText
-                };
-            } else data = await res.json();
-            if (!res.ok) throw new Error(data.error || '助手请求失败');
+                }
+            });
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
             const submittedChatModel = activeAgentModelId !== 'auto' ? availableChatModels.find((model)=>model.id === activeAgentModelId) : undefined;

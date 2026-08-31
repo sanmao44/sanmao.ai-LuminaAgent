@@ -270,11 +270,19 @@ export function likelyImageGenerationRequest(input: string) {
   return drawRequest.test(text) || actionWithVisualTarget.test(text) || visualTransformation.test(text) || illustrationRequest || visualNeedRequest || hasVisualAction || objectGeneration;
 }
 
+/** Identify an explicit downloadable-file request independently of image routing. */
+export function likelyFileGenerationRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  return /(?:导出|下载|保存|生成|创建|制作|整理).{0,16}(?:文件|附件|csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|代码文件|脚本文件|报告文件|文档文件)/i.test(text)
+    || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
+}
+
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();
   if (isPromptOnlyRequest(text)) return false;
   if (likelyImageGenerationRequest(text)) return true;
   if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
-  return /(?:导出|下载|保存|生成).{0,12}(?:文件|csv|json|markdown|文档|代码)/i.test(text);
+  return likelyFileGenerationRequest(text);
 }

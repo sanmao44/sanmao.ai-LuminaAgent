@@ -448,6 +448,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       return;
     }
     void refreshMediaStatus();
+    const timer = window.setInterval(() => void refreshMediaStatus(), 15_000);
+    return () => window.clearInterval(timer);
   }, [usesMediaRelay, selectedProvider?.id]);
 
   const baseModelLimits = useMemo(() => getVideoModelLimits(selectedModel, selectedProvider), [selectedModel?.rawId, selectedModel?.displayName, selectedProvider?.platform, selectedProvider?.videoTransport, selectedProvider?.baseUrl, selectedProvider?.videoBaseUrl]);

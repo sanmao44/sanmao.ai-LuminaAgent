@@ -14,6 +14,7 @@ const intent = await import(`data:text/javascript;base64,${Buffer.from(compiled)
 test('routes explicit visual requests to an image deliverable', () => {
   assert.equal(intent.classifyAgentDeliverable('给我做一张带夏日特惠文字的新品海报').deliverable, 'IMAGE');
   assert.equal(intent.classifyAgentDeliverable('我只说目标，创意、模型和出图都交给你').deliverable, 'IMAGE');
+  assert.equal(intent.classifyAgentDeliverable('生成一张水墨画').deliverable, 'IMAGE');
 });
 
 test('routes prompt and copy requests to text without being fooled by visual nouns', () => {
@@ -23,9 +24,18 @@ test('routes prompt and copy requests to text without being fooled by visual nou
 });
 
 test('keeps image description requests as text when a reference image is attached', () => {
-  for (const input of ['描述一下这个画面', '请描述一下这张图片']) {
+  for (const input of ['描述下这个画面', '描述一下这个画面', '请描述一下这张图片', '请描述图片']) {
     assert.equal(intent.classifyAgentDeliverable(input, { hasReferences: true }).deliverable, 'TEXT', input);
   }
+  assert.equal(intent.classifyAgentDeliverable('分析这张参考图', { hasReferences: true }).deliverable, 'OTHER');
+  assert.equal(intent.classifyAgentDeliverable('反推提示词', { hasReferences: true }).deliverable, 'TEXT');
+});
+
+test('routes an explicit edit of an attached reference to image editing', () => {
+  for (const input of ['把背景换成黑色', '优化构图', '去掉画面中的文字']) {
+    assert.equal(intent.classifyAgentDeliverable(input, { hasReferences: true }).deliverable, 'IMAGE', input);
+  }
+  assert.notEqual(intent.classifyAgentDeliverable('分析一下如何把背景换成黑色', { hasReferences: true }).deliverable, 'IMAGE');
 });
 
 test('supports both deliverables and asks for clarification when the format is missing', () => {

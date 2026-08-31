@@ -6,17 +6,27 @@ import ts from 'typescript';
 async function loadTypeScript(path) {
   const sourceUrl = new URL(path, import.meta.url);
   const source = await readFile(sourceUrl, 'utf8');
-  const compiled = ts.transpileModule(source, {
+  let compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: sourceUrl.pathname,
   }).outputText;
+  if (compiled.includes('from "../agent-client"')) {
+    const dependencyUrl = new URL('../lib/agent-client.ts', import.meta.url);
+    const dependencySource = await readFile(dependencyUrl, 'utf8');
+    const dependencyCompiled = ts.transpileModule(dependencySource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: dependencyUrl.pathname,
+    }).outputText;
+    const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
+    compiled = compiled.replace('from "../agent-client"', `from "${dependencyDataUrl}"`);
+  }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 
 const api = await loadTypeScript('../lib/canvas/api.ts');
 
 function jsonResponse(body, status = 200) {
-  return { ok: status >= 200 && status < 300, status, async json() { return body; } };
+  return { ok: status >= 200 && status < 300, status, headers: new Headers({ 'content-type': 'application/json' }), async json() { return body; } };
 }
 
 async function withFetch(handler, callback) {
@@ -338,6 +348,7 @@ test('canvas agent consumes status, delta, and final SSE events', async () => {
   const result = await withFetch(async () => ({
     ok: true,
     status: 200,
+    headers: new Headers({ 'content-type': 'text/event-stream' }),
     body: {
       getReader() {
         let index = 0;
@@ -352,6 +363,24 @@ test('canvas agent consumes status, delta, and final SSE events', async () => {
   assert.equal(result.message, '第一段第二段');
   assert.equal(result.model, 'Agnes 2.5 Flash');
   assert.deepEqual(received.map((event) => event.type), ['status', 'delta', 'delta', 'final']);
+});
+
+test('canvas agent forwards the same explicit deliverable contract as the main Agent', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ ok: true, message: '这是一幅水墨画。', deliverable: 'TEXT', images: [] });
+  }, () => api.generateCanvasAgent({
+    messages: [{ role: 'user', content: '描述下这个画面' }],
+    model: 'provider-a-chat-model',
+    deliverable: 'TEXT',
+    intentReason: '检测到文字描述任务',
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.stream, true);
+  assert.equal(payload.deliverable, 'TEXT');
+  assert.equal(payload.intentReason, '检测到文字描述任务');
 });
 
 test('canvas agent forwards explicit reverse-prompt tasks', async () => {
@@ -403,6 +432,24 @@ test('canvas agent references use the compact image format before sending', asyn
       'data:image/jpeg;base64,AA==',
     ]);
     assert.deepEqual(mocks.encodedTypes, ['image/jpeg', 'image/jpeg']);
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas agent reuses a bounded prepared-reference cache and invalidates by URL', async () => {
+  const mocks = withImageCanvas({ width: 2600, height: 1800 });
+  try {
+    const firstUrl = 'data:image/png;base64,CACHE-UNIQUE-A';
+    const secondUrl = 'data:image/png;base64,CACHE-UNIQUE-B';
+    await Promise.all([
+      api.prepareCanvasAgentReferences([{ url: firstUrl }]),
+      api.prepareCanvasAgentReferences([{ url: firstUrl }]),
+    ]);
+    assert.equal(mocks.encodedTypes.length, 1);
+    await api.prepareCanvasAgentReferences([{ url: secondUrl }]);
+    assert.equal(mocks.encodedTypes.length, 2);
+    assert.equal(api.CANVAS_AGENT_REFERENCE_CACHE_LIMIT, 16);
   } finally {
     mocks.restore();
   }

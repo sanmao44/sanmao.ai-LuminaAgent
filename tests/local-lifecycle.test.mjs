@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher, lanLauncher, freeRelayPs, freeRelaySh, readme] = await Promise.all([
+const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher, lanLauncher, freeRelayPs, freeRelayWatchPs, freeRelaySh, readme, videoStudio] = await Promise.all([
   readFile(new URL("../components/LocalLifecycle.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -13,8 +13,10 @@ const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher,
   readFile(new URL("../start-linux.sh", import.meta.url), "utf8"),
   readFile(new URL("../scripts/lan-launcher.ps1", import.meta.url), "utf8"),
   readFile(new URL("../scripts/free-relay-common.ps1", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/free-relay-watch.ps1", import.meta.url), "utf8"),
   readFile(new URL("../scripts/free-relay-common.sh", import.meta.url), "utf8"),
   readFile(new URL("../README.md", import.meta.url), "utf8"),
+  readFile(new URL("../components/VideoStudio.tsx", import.meta.url), "utf8"),
 ]);
 
 test("local lifecycle is mounted once for both the app and canvas routes", () => {
@@ -34,13 +36,12 @@ test("lifecycle client keeps refresh safe and retries transient connection failu
   assert.doesNotMatch(component, /addEventListener\("pagehide"/);
 });
 
-test("server lifecycle keeps multiple sessions and applies startup grace", () => {
+test("server lifecycle expires stale records without terminating the local service", () => {
   assert.match(lifecycle, /const sessions = new Map<string, number>\(\)/);
-  assert.match(lifecycle, /if \(sessions\.size === 0\) scheduleShutdown\(\)/);
-  assert.match(lifecycle, /const delay = elapsed < STARTUP_GRACE_MS/);
-  assert.match(lifecycle, /\}, delay\);/);
-  assert.match(lifecycle, /const HEARTBEAT_TIMEOUT_MS = 10_000/);
-  assert.match(lifecycle, /const SHUTDOWN_GRACE_MS = 3_000/);
+  assert.match(lifecycle, /const HEARTBEAT_TIMEOUT_MS = 60_000/);
+  assert.match(lifecycle, /function stopCleanupTimer\(\)/);
+  assert.doesNotMatch(lifecycle, /process\.exit\(0\)/);
+  assert.doesNotMatch(lifecycle, /scheduleShutdown/);
 });
 
 test("health and official launchers expose the intended lifecycle modes", () => {
@@ -58,7 +59,13 @@ test("every existing launcher prepares the optional public media relay", () => {
   assert.match(linuxLauncher, /free-relay-common\.sh/);
   assert.match(freeRelayPs, /cloudflared/);
   assert.match(freeRelayPs, /trycloudflare/);
+  assert.match(freeRelayWatchPs, /Test-SanmaoFreeRelayReachable/);
+  assert.match(freeRelayWatchPs, /Start-SanmaoFreeRelayTunnel/);
   assert.match(freeRelaySh, /trycloudflare/);
+  assert.match(freeRelaySh, /free_relay_probe/);
+  assert.match(freeRelaySh, /free_relay_watch/);
+
+  assert.match(videoStudio, /window\.setInterval\(\(\) => void refreshMediaStatus\(\), 15_000\)/);
 });
 
 test("launchers enable free relay only for configured providers that need public media", () => {
@@ -69,6 +76,8 @@ test("launchers enable free relay only for configured providers that need public
   assert.match(windowsLauncher, /openai-videos/);
   assert.match(windowsLauncher, /video-generate/);
   assert.match(windowsLauncher, /Stop-SanmaoFreeRelayTunnel -Root \$root/);
+  assert.match(windowsLauncher, /free-relay-watch\.ps1/);
+  assert.match(windowsLauncher, /-OriginPort/);
 
   assert.match(macLauncher, /media_relay_required\(\)/);
   assert.match(macLauncher, /SANMAO_DATA_DIR/);

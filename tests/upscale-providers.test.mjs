@@ -17,8 +17,8 @@ async function compileModule(url, replacements = []) {
 
 const provider = await compileModule(new URL('../lib/upscale-providers.ts', import.meta.url));
 const imageModule = await compileModule(new URL('../lib/upscale-image.ts', import.meta.url), [
-  ["import { readFile } from 'node:fs/promises';\n", ''],
-  ["import { resolveStoredImageReference } from './image-storage';\n", 'const resolveStoredImageReference = async () => { throw new Error(\'missing storage fixture\'); };\n'],
+  [/import \{ readFile \} from ['"]node:fs\/promises['"];\r?\n/, ''],
+  [/import \{ resolveStoredImageReference \} from ['"]\.\/image-storage['"];\r?\n/, 'const resolveStoredImageReference = async () => { throw new Error(\'missing storage fixture\'); };\n'],
 ]);
 const catalogSource = await readFile(new URL('../lib/upscale-catalog.ts', import.meta.url), 'utf8');
 const guideSource = await readFile(new URL('../components/UpscaleConnectionGuide.tsx', import.meta.url), 'utf8');

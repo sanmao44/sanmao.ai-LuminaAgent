@@ -42,6 +42,76 @@ free_relay_is_running() {
   free_relay_pid_is_cloudflared "$PID_TO_CHECK"
 }
 
+free_relay_public_url() {
+  ROOT_TO_USE=$1
+  STATE_ROOT=$(free_relay_state_root "$ROOT_TO_USE")
+  PUBLIC_URL=$(cat "$STATE_ROOT/public-url.txt" 2>/dev/null || true)
+  case "$PUBLIC_URL" in
+    https://*.trycloudflare.com) printf '%s' "$PUBLIC_URL"; return 0 ;;
+  esac
+  return 1
+}
+
+free_relay_probe() {
+  ROOT_TO_USE=$1
+  PUBLIC_URL=$(free_relay_public_url "$ROOT_TO_USE" 2>/dev/null || true)
+  [ -n "$PUBLIC_URL" ] || return 1
+  PROBE_BODY="${TMPDIR:-/tmp}/sanmao-relay-probe-$$.json"
+  rm -f "$PROBE_BODY"
+  STATUS=$(curl --noproxy '*' -sS -o "$PROBE_BODY" -w '%{http_code}' --connect-timeout 2 --max-time 6 "$PUBLIC_URL/api/health" 2>/dev/null || true)
+  if [ "$STATUS" = 200 ] && grep -Eq '"service"[[:space:]]*:[[:space:]]*"sanmao-ai-studio"' "$PROBE_BODY" 2>/dev/null && grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' "$PROBE_BODY" 2>/dev/null; then
+    rm -f "$PROBE_BODY"
+    return 0
+  fi
+  rm -f "$PROBE_BODY"
+  return 1
+}
+
+free_relay_log() {
+  ROOT_TO_USE=$1
+  LEVEL=$2
+  MESSAGE=$3
+  LOG_PATH="$ROOT_TO_USE/.data/logs/launcher.log"
+  mkdir -p "$(dirname "$LOG_PATH")" 2>/dev/null || true
+  printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$LEVEL" "$MESSAGE" >> "$LOG_PATH" 2>/dev/null || true
+}
+
+free_relay_watch() {
+  ROOT_TO_USE=$1
+  SERVER_PID_TO_WATCH=$2
+  ORIGIN_PORT_TO_WATCH=$3
+  UNHEALTHY_CHECKS=0
+  STARTUP_DEADLINE=$(($(date +%s) + 45))
+  while kill -0 "$SERVER_PID_TO_WATCH" 2>/dev/null; do
+    if ! free_relay_is_running "$ROOT_TO_USE"; then
+      free_relay_log "$ROOT_TO_USE" WARN '检测到免费媒体中转进程已退出，正在自动重建通道。'
+      if NEW_RELAY_URL=$(free_relay_start "$ROOT_TO_USE" "$ORIGIN_PORT_TO_WATCH"); then
+        UNHEALTHY_CHECKS=0
+        free_relay_log "$ROOT_TO_USE" INFO "免费媒体中转通道已自动恢复：$NEW_RELAY_URL"
+      else
+        UNHEALTHY_CHECKS=0
+        free_relay_log "$ROOT_TO_USE" WARN '免费媒体中转通道自动恢复失败，将继续重试。'
+      fi
+    elif [ "$(date +%s)" -ge "$STARTUP_DEADLINE" ] && ! free_relay_probe "$ROOT_TO_USE"; then
+      UNHEALTHY_CHECKS=$((UNHEALTHY_CHECKS + 1))
+      if [ "$UNHEALTHY_CHECKS" -ge 3 ]; then
+        free_relay_log "$ROOT_TO_USE" WARN '检测到免费媒体中转公网地址不可达，正在自动更换通道。'
+        if NEW_RELAY_URL=$(free_relay_start "$ROOT_TO_USE" "$ORIGIN_PORT_TO_WATCH"); then
+          UNHEALTHY_CHECKS=0
+          free_relay_log "$ROOT_TO_USE" INFO "免费媒体中转通道已自动恢复：$NEW_RELAY_URL"
+        else
+          UNHEALTHY_CHECKS=0
+          free_relay_log "$ROOT_TO_USE" WARN '免费媒体中转通道自动恢复失败，将继续重试。'
+        fi
+      fi
+    else
+      UNHEALTHY_CHECKS=0
+    fi
+    sleep 10
+  done
+  free_relay_stop "$ROOT_TO_USE"
+}
+
 free_relay_download() {
   ROOT_TO_USE=$1
   STATE_ROOT=$(free_relay_state_root "$ROOT_TO_USE")

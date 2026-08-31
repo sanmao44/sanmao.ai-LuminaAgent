@@ -124,7 +124,7 @@ acquire_lock() {
 
 EXISTING_PORT=`find_existing_server`
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && ! server_lifecycle_enabled "$EXISTING_PORT"; then
-  sanmao_log "检测到旧服务未启用网页关闭自动停止，正在重启端口 $EXISTING_PORT" WARN
+  sanmao_log "检测到旧服务使用了旧生命周期设置，正在重启端口 $EXISTING_PORT" WARN
   sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
 fi
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && server_lifecycle_enabled "$EXISTING_PORT"; then
@@ -253,6 +253,7 @@ fi
 
 if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
+  export SANMAO_RELAY_MODE=1
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
@@ -282,6 +283,12 @@ NEXT_CLI="$ROOT_DIR/node_modules/next/dist/bin/next"
 export SANMAO_LIFECYCLE=1
 node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" &
 SERVER_PID=$!
+
+RELAY_WATCH_PID=''
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+  free_relay_watch "$ROOT_DIR" "$SERVER_PID" "$PORT" &
+  RELAY_WATCH_PID=$!
+fi
 sanmao_log "已启动服务进程 PID $SERVER_PID，等待端口 $PORT 就绪。" INFO
 
 READY=0
@@ -308,4 +315,5 @@ printf '%s\n' '本地服务会保持运行，下一次启动会直接打开已�
 sanmao_log "服务已就绪：$URL" INFO
 open $URL
 wait $SERVER_PID
+if [ -n "${RELAY_WATCH_PID:-}" ]; then kill "$RELAY_WATCH_PID" 2>/dev/null || true; wait "$RELAY_WATCH_PID" 2>/dev/null || true; fi
 free_relay_stop "$ROOT_DIR"

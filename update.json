@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.15",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.15",
+  "latestVersion": "0.7.16",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.16",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.15/SANMAO.AI-0.7.15.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.16/SANMAO.AI-0.7.16.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.15/SANMAO.AI-0.7.15.zip",
-    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.15/SANMAO.AI-0.7.15.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.15/SANMAO.AI-0.7.15.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.16/SANMAO.AI-0.7.16.zip",
+    "https://ghproxy.net/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.16/SANMAO.AI-0.7.16.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.16/SANMAO.AI-0.7.16.zip"
   ],
-  "sha256": "3dbdbdb5c745495ea6a49e159e775cf445337c53ea3ca543c0677ebf60795144",
-  "publishedAt": "2026-08-31T02:50:16+08:00",
+  "sha256": "1329cbc0b3601486257e0d6a302b96cae9baeeb4f812bf45d96f57ab57a99954",
+  "publishedAt": "2026-08-31T15:00:00+08:00",
   "notes": [
+    "修复网页长时间不操作后临时媒体中转通道断开，导致图片或视频功能无法继续使用的问题。",
+    "中转进程退出或公网地址失效时会由后台自动检测、重建并切换通道，网页和主服务无需重启。",
+    "上传失败会自动读取最新通道地址并重试；优化 Windows、macOS、Linux 启动入口，避免空闲或后台状态导致本地服务退出。",
     "Agent 节点支持流式状态反馈、停止后继续、对话列表默认定位到底部，并修复旧请求覆盖新回复的问题。",
     "修复描述画面等文字请求误触发图片生成的问题；服务端会拦截上游模型异常返回的图片工具调用。",
     "超级画布全面优化节点编辑、层级、连线、拖拽、双击、引用素材、响应 lightbox、生成状态、恢复和移动端布局。",

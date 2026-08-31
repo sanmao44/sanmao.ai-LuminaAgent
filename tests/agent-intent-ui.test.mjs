@@ -11,7 +11,12 @@ test('hides ordinary Agent deliverable notices from the composer', () => {
 });
 
 test('keeps the compact clarification choices available', () => {
-  assert.ok(page.includes('children: [\n                                                                [\'IMAGE\', \'直接出图\']'));
+  assert.match(page, /children:\s*\[\s*\['IMAGE',\s*'直接出图'\]/);
   assert.ok(page.includes("onClick: ()=>void sendAgent(agentInput, undefined, undefined, value)"));
   assert.ok(page.includes('children: "请确认交付形式"'));
+});
+
+test('uses the shared deliverable as the only main Agent image-loading route', () => {
+  assert.ok(page.includes("const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');"));
+  assert.equal(page.includes('likelyImageGenerationRequest(requestContent)'), false);
 });

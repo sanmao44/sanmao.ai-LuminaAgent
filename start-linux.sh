@@ -24,6 +24,7 @@ if [ -f "$DATA_ROOT/state.json" ] && node -e 'const fs=require("fs");let s;try{s
 fi
 if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
+  export SANMAO_RELAY_MODE=1
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
@@ -43,6 +44,17 @@ else
   free_relay_stop "$ROOT_DIR"
 fi
 export SANMAO_LIFECYCLE=1
-cleanup() { free_relay_stop "$ROOT_DIR"; }
+RELAY_WATCH_PID=''
+SERVER_PID=''
+cleanup() {
+  if [ -n "${RELAY_WATCH_PID:-}" ]; then kill "$RELAY_WATCH_PID" 2>/dev/null || true; wait "$RELAY_WATCH_PID" 2>/dev/null || true; fi
+  free_relay_stop "$ROOT_DIR"
+}
 trap cleanup EXIT
-node node_modules/next/dist/bin/next start -H 127.0.0.1 -p "$PORT"
+node node_modules/next/dist/bin/next start -H 127.0.0.1 -p "$PORT" &
+SERVER_PID=$!
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+  free_relay_watch "$ROOT_DIR" "$SERVER_PID" "$PORT" &
+  RELAY_WATCH_PID=$!
+fi
+wait "$SERVER_PID"

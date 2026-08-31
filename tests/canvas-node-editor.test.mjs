@@ -134,6 +134,16 @@ test("Agent generation keeps the node model when image references are present", 
   assert.match(component, /model: effectiveSettings\.model/);
 });
 
+test("Agent nodes share deliverable routing, throttle streaming paint, and reject unexpected images", () => {
+  assert.match(component, /classifyAgentDeliverable\(prompt/);
+  assert.match(component, /deliverable: intentDecision\.deliverable/);
+  assert.match(component, /intentReason: intentDecision\.reason/);
+  assert.match(component, /window\.requestAnimationFrame\(flushStreamedText\)/);
+  assert.match(component, /const localAllowsImages = intentDecision\.deliverable === "IMAGE" \|\| intentDecision\.deliverable === "BOTH"/);
+  assert.match(component, /const serverAllowsImages = responseDeliverable === "IMAGE" \|\| responseDeliverable === "BOTH"/);
+  assert.match(component, /非预期图片，已按文字交付规则忽略/);
+});
+
 test("image continuation uses the ordinary image API and keeps lineage on image nodes", () => {
   const start = component.indexOf("const runImageContinuation = useCallback");
   const end = component.indexOf("const runReuseGeneration = useCallback", start);

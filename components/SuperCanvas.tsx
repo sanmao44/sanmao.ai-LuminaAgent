@@ -105,6 +105,7 @@ import {
   type VideoCreationSettings,
 } from "@/lib/creation/settings";
 import { recordModelCall } from "@/lib/model-preferences";
+import { classifyAgentDeliverable } from "@/lib/agent-intent";
 import { getUpscaleCatalogModel } from "@/lib/upscale-catalog";
 import {
   inferCanvasInputRole,
@@ -5585,6 +5586,15 @@ export default function SuperCanvas() {
       const referenceNodes = incoming.filter(
         (node) => isCanvasReferenceableNode(node) && node.data.kind === "image",
       );
+      const agentMessages = [
+        ...contextMessages,
+        { role: "user" as const, content: prompt },
+      ];
+      const intentDecision = classifyAgentDeliverable(prompt, {
+        messages: contextMessages,
+        hasReferences: referenceNodes.length > 0,
+        hasFiles: false,
+      });
       const effectiveSettings: AgentCreationSettings = {
         ...settings,
         // An explicit model chosen on the node is authoritative, including
@@ -5641,13 +5651,43 @@ export default function SuperCanvas() {
         }));
       }
       const inputId = inputNode.id;
+      let streamedText = "";
+      let renderedStreamedText = "";
+      let streamFrame: number | null = null;
+      const flushStreamedText = () => {
+        streamFrame = null;
+        if (!streamedText || streamedText === renderedStreamedText) return;
+        renderedStreamedText = streamedText;
+        updateDoc((value) => ({
+          ...value,
+          nodes: value.nodes.map((node) =>
+            node.id === inputId
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    text: streamedText,
+                    agentResponse: streamedText,
+                    status: "running" as const,
+                    statusLabel: "Agent 正在生成回复…",
+                  },
+                }
+              : node,
+          ),
+        }));
+      };
+      const scheduleStreamFlush = () => {
+        if (streamFrame !== null) return;
+        streamFrame = window.requestAnimationFrame(flushStreamedText);
+      };
       try {
-        let streamedText = "";
         const response = await generateCanvasAgent({
-          messages: [...contextMessages, { role: "user", content: prompt }],
+          messages: agentMessages,
           model: effectiveSettings.model,
           webMode: effectiveSettings.webMode,
           task: inferCanvasAgentTask(prompt, referenceNodes.length > 0),
+          deliverable: intentDecision.deliverable,
+          intentReason: intentDecision.reason,
           references: referenceNodes.map((node) => ({
             url: String(node.data.url),
             name: String(node.data.name || "参考图片"),
@@ -5672,25 +5712,11 @@ export default function SuperCanvas() {
           }
           if (event.type === "delta" && event.text) {
             streamedText += String(event.text);
-            updateDoc((value) => ({
-              ...value,
-              nodes: value.nodes.map((node) =>
-                node.id === inputId
-                  ? {
-                      ...node,
-                      data: {
-                        ...node.data,
-                        text: streamedText,
-                        agentResponse: streamedText,
-                        status: "running" as const,
-                        statusLabel: "Agent 正在生成回复…",
-                      },
-                    }
-                  : node,
-              ),
-            }));
+            scheduleStreamFlush();
           }
         });
+        if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
+        flushStreamedText();
         const parent = nodeById(docRef.current, inputId) || inputNode;
         const responseText = response.message || "Agent 没有返回文本。";
         const effectiveModelRecord = runtime?.models.find(
@@ -5702,7 +5728,15 @@ export default function SuperCanvas() {
           resolved.model?.displayName ||
           effectiveSettings.model;
         const imageSettings = readSharedCreationSettings("image", runtime);
-        const imageNodes = (response.images || []).map((image, index) =>
+        const responseDeliverable = response.deliverable || intentDecision.deliverable;
+        const localAllowsImages = intentDecision.deliverable === "IMAGE" || intentDecision.deliverable === "BOTH";
+        const serverAllowsImages = responseDeliverable === "IMAGE" || responseDeliverable === "BOTH";
+        const acceptedImages = localAllowsImages && serverAllowsImages
+          ? response.images || []
+          : [];
+        if (response.images?.length && !acceptedImages.length)
+          addLog(`Agent 返回了 ${response.images.length} 张非预期图片，已按文字交付规则忽略`);
+        const imageNodes = acceptedImages.map((image, index) =>
           createMedia(
             "image",
             image.url,
@@ -5765,8 +5799,8 @@ export default function SuperCanvas() {
         setSelectedIds(new Set([inputId]));
         setSelectedGroupId(null);
         if (!source.node) writeSharedCreationSettings(effectiveSettings);
-        if (response.images?.length)
-          void recordCanvasImages(response.images, {
+        if (acceptedImages.length)
+          void recordCanvasImages(acceptedImages, {
             prompt,
             source: "canvas",
             modelId: imageSettings.model,
@@ -5778,8 +5812,8 @@ export default function SuperCanvas() {
           });
         addLog(`Agent 回复完成：${responseModel}`);
         notify(
-          response.images?.length
-            ? `Agent 已回复并生成 ${response.images.length} 张图片`
+          acceptedImages.length
+            ? `Agent 已回复并生成 ${acceptedImages.length} 张图片`
             : "Agent 已回复",
         );
       } catch (error) {
@@ -5802,6 +5836,7 @@ export default function SuperCanvas() {
         }));
         notify(message, "error");
       } finally {
+        if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
         generationKeysRef.current.delete(activeKey);
         setGenerationKeys(new Set(generationKeysRef.current));
       }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, afterEach } from 'node:test';
@@ -304,6 +304,38 @@ test('uses the Agnes media relay for local images without sending API credential
     if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
     if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
     if (previous.uploadToken === undefined) delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN; else process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN = previous.uploadToken;
+  }
+});
+
+test('uses the latest automatically recovered relay URL without restarting the server', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-refresh-'));
+  const previous = {
+    dataDir: process.env.SANMAO_DATA_DIR,
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_DATA_DIR = root;
+  process.env.SANMAO_RELAY_MODE = '1';
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://stale.trycloudflare.com';
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  await mkdir(path.join(root, 'free-relay'), { recursive: true });
+  await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://recovered.trycloudflare.com\n');
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ ok: true, url: 'https://recovered.trycloudflare.com/api/relay/media/signed-token' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const url = await signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    assert.equal(url, 'https://recovered.trycloudflare.com/api/relay/media/signed-token');
+    assert.deepEqual(calls, ['https://recovered.trycloudflare.com/api/relay/media']);
+  } finally {
+    if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    await rm(root, { recursive: true, force: true });
   }
 });
 

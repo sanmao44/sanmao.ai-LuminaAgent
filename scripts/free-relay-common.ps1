@@ -1,4 +1,4 @@
-﻿function Get-SanmaoFreeRelayStateRoot {
+function Get-SanmaoFreeRelayStateRoot {
   param([Parameter(Mandatory = $true)][string]$Root)
   return (Join-Path $Root '.data\free-relay')
 }
@@ -20,6 +20,17 @@ function Stop-SanmaoFreeRelayTunnel {
   Remove-Item -LiteralPath (Join-Path $stateRoot 'cloudflared.pid'), (Join-Path $stateRoot 'public-url.txt') -Force -ErrorAction SilentlyContinue
 }
 
+function Get-SanmaoFreeRelayPublicUrl {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $urlPath = Join-Path (Get-SanmaoFreeRelayStateRoot -Root $Root) 'public-url.txt'
+  try {
+    $value = (Get-Content -LiteralPath $urlPath -Raw -ErrorAction Stop).Trim().TrimEnd('/')
+    if ($value -match '^https://[a-z0-9-]+\.trycloudflare\.com$') { return $value }
+  } catch {}
+  return ''
+}
+
 function Test-SanmaoFreeRelayTunnel {
   param([Parameter(Mandatory = $true)][string]$Root)
 
@@ -30,7 +41,32 @@ function Test-SanmaoFreeRelayTunnel {
   try { $pidValue = [int](Get-Content -LiteralPath $pidPath -Raw -ErrorAction Stop).Trim() } catch { return $false }
   if ($pidValue -le 0 -or -not (Test-Path -LiteralPath $urlPath)) { return $false }
   $process = Get-Process -Id $pidValue -ErrorAction SilentlyContinue
-  return [bool]($process -and $process.ProcessName -match '^cloudflared')
+  return [bool]($process -and $process.ProcessName -match '^cloudflared' -and (Get-SanmaoFreeRelayPublicUrl -Root $Root))
+}
+
+function Test-SanmaoFreeRelayReachable {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $publicUrl = Get-SanmaoFreeRelayPublicUrl -Root $Root
+  if (-not $publicUrl) { return $false }
+  $response = $null
+  $reader = $null
+  try {
+    $request = [System.Net.HttpWebRequest]::Create("$publicUrl/api/health")
+    $request.Proxy = $null
+    $request.Timeout = 5000
+    $request.ReadWriteTimeout = 5000
+    $response = $request.GetResponse()
+    if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) { return $false }
+    $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
+    $content = $reader.ReadToEnd()
+    return $content -match '"service"\s*:\s*"sanmao-ai-studio"' -and $content -match '"ok"\s*:\s*true'
+  } catch {
+    return $false
+  } finally {
+    if ($reader) { $reader.Dispose() }
+    if ($response) { $response.Close() }
+  }
 }
 
 function Get-SanmaoCloudflaredExecutable {
