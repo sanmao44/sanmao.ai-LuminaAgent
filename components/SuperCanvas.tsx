@@ -112,6 +112,7 @@ import {
   preferredCanvasVideoInputMode,
   resolveCanvasInputSemantics,
   resolveCanvasVideoInputs,
+  shouldGenerateVideoInPlace,
   type CanvasVideoInputMode,
 } from "@/lib/canvas/references";
 import { getVideoModelLimits } from "@/lib/video-model-limits";
@@ -1147,6 +1148,19 @@ function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | 
   };
 }
 
+function canvasVideoTargetHasImageReference(
+  document: CanvasDocument,
+  target: CanvasNode | null | undefined,
+) {
+  return Boolean(
+    target &&
+      shouldGenerateVideoInPlace(
+        target,
+        incomingReferences(document, target.id),
+      ),
+  );
+}
+
 function mentionedMedia(prompt: string, candidates: CanvasNode[]) {
   const ids = [...prompt.matchAll(/@([0-9]+)/g)]
     .map((match) => Number(match[1]) - 1)
@@ -1769,6 +1783,12 @@ export default function SuperCanvas() {
         return false;
       }
       commit(() => result.document);
+      const connectedTarget = nodeById(result.document, targetId);
+      if (canvasVideoTargetHasImageReference(result.document, connectedTarget)) {
+        // A connected image turns a completed video card into an in-place
+        // target, even if its editor was previously opened as a reuse draft.
+        setReuseDraft((current) => current?.sourceNodeId === targetId ? null : current);
+      }
       addLog(
         result.videoMode
           ? `已连接图片到视频节点，已切换为 ${result.videoMode} 模式`
@@ -4176,6 +4196,37 @@ export default function SuperCanvas() {
           writeSharedCreationSettings(settings);
           return;
         }
+        if (
+          target.data.kind === "video" &&
+          settings.kind === "video" &&
+          canvasVideoTargetHasImageReference(docRef.current, target)
+        ) {
+          updateDoc((valueDoc) => ({
+            ...valueDoc,
+            nodes: valueDoc.nodes.map((node) =>
+              node.id === target.id
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      params: clone(settings),
+                      ...(node.data.generation
+                        ? {
+                            generation: {
+                              ...node.data.generation,
+                              params: clone(settings),
+                            },
+                          }
+                        : {}),
+                    },
+                  }
+                : node,
+            ),
+          }));
+          setMode("video");
+          writeSharedCreationSettings(settings);
+          return;
+        }
         const references = incomingReferences(docRef.current, target.id)
           .map(canvasReferenceDraftFromNode)
           .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
@@ -5603,7 +5654,11 @@ export default function SuperCanvas() {
     }
     const source = deckSource();
     const selectedMediaTarget = selectedSingle?.type === "media" ? selectedSingle : null;
-    if (selectedMediaTarget?.data.url) {
+    const selectedMediaReferences = selectedMediaTarget
+      ? incomingReferences(docRef.current, selectedMediaTarget.id)
+      : [];
+    const inPlaceVideoTarget = shouldGenerateVideoInPlace(selectedMediaTarget || undefined, selectedMediaReferences);
+    if (selectedMediaTarget?.data.url && !inPlaceVideoTarget) {
       const references = incomingReferences(docRef.current, selectedMediaTarget.id)
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
@@ -5912,9 +5967,15 @@ export default function SuperCanvas() {
     const kind = source.kind as CanvasMediaKind;
     const ownerId = source.node?.id || sourceTarget?.id;
     const incoming = ownerId ? incomingContext(docRef.current, ownerId) : [];
+    const currentVideoIsSource = sourceTarget?.data.kind === "video" &&
+      (source.params as VideoCreationSettings).operation !== "generate";
+    const currentTargetInput = sourceTarget?.data.url &&
+      (sourceTarget.data.kind !== "video" || currentVideoIsSource)
+      ? [sourceTarget]
+      : [];
     const baseLinked = ownerId
       ? [
-          ...(sourceTarget?.data.url ? [sourceTarget] : []),
+          ...currentTargetInput,
           ...incoming.filter((node) => isCanvasReferenceableNode(node)),
         ]
       : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
@@ -5928,7 +5989,7 @@ export default function SuperCanvas() {
     const linked = [
       ...new Map(
         [
-          ...(hasExplicitMentions ? (sourceTarget?.data.url ? [sourceTarget] : []) : baseLinked),
+          ...(hasExplicitMentions ? currentTargetInput : baseLinked),
           ...mentionedMedia(source.prompt, mentionCandidates),
         ].map((node) => [node.id, node]),
       ).values(),
@@ -6461,10 +6522,18 @@ export default function SuperCanvas() {
         if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
         return;
       }
-      if (node.type === "media" && node.data.url && node.data.kind === "video") {
+      const connectedReferences = incomingReferences(docRef.current, node.id);
+      if (
+        node.type === "media" &&
+        node.data.url &&
+        node.data.kind === "video" &&
+        !shouldGenerateVideoInPlace(node, connectedReferences)
+      ) {
         openReuseDraft(node);
         return;
       }
+      if (canvasVideoTargetHasImageReference(docRef.current, node))
+        setReuseDraft((current) => current?.sourceNodeId === node.id ? null : current);
       if (node.type === "media" && node.data.kind === "image") {
         openImageEditor(node);
         return;
@@ -6489,6 +6558,7 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
+      setLightbox(null);
     },
     [editorParamsFor, editorPromptFor, expandedEditorId, openImageEditor, openReuseDraft, reuseDraft],
   );
@@ -6506,7 +6576,8 @@ export default function SuperCanvas() {
         ...current,
         [node.id]: { ...current[node.id], prompt: value },
       }));
-      if (reuseDraft?.sourceNodeId === node.id) {
+      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
+      if (reuseDraft?.sourceNodeId === node.id && !inPlaceVideo) {
         setReuseDraft((current) =>
           current?.sourceNodeId === node.id
             ? { ...current, prompt: value, dirty: true }
@@ -6514,6 +6585,8 @@ export default function SuperCanvas() {
         );
         return;
       }
+      if (inPlaceVideo)
+        setReuseDraft((current) => current?.sourceNodeId === node.id ? null : current);
       updateDoc((valueDoc) => ({
         ...valueDoc,
         nodes: valueDoc.nodes.map((item) => {
@@ -6555,7 +6628,8 @@ export default function SuperCanvas() {
         ...current,
         [node.id]: { ...current[node.id], prompt: editorPromptFor(node), params: clone(settings) },
       }));
-      if (reuseDraft?.sourceNodeId === node.id) {
+      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
+      if (reuseDraft?.sourceNodeId === node.id && !inPlaceVideo) {
         setReuseDraft((current) =>
           current?.sourceNodeId === node.id
             ? { ...current, params: clone(settings), dirty: true }
@@ -6563,6 +6637,8 @@ export default function SuperCanvas() {
         );
         return;
       }
+      if (inPlaceVideo)
+        setReuseDraft((current) => current?.sourceNodeId === node.id ? null : current);
       updateDoc((valueDoc) => ({
         ...valueDoc,
         nodes: valueDoc.nodes.map((item) =>
@@ -6670,13 +6746,16 @@ export default function SuperCanvas() {
         void runUpscaleNodeRef.current?.(node);
         return;
       }
-      if (reuseDraft?.sourceNodeId === node.id) {
+      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
+      if (reuseDraft?.sourceNodeId === node.id && !inPlaceVideo) {
         const draft = cloneReuseDraft(reuseDraft);
         setExpandedEditorId(null);
         setReuseDraft(null);
         void runReuseGeneration(draft);
         return;
       }
+      if (inPlaceVideo)
+        setReuseDraft((current) => current?.sourceNodeId === node.id ? null : current);
       const draft = editorDrafts[node.id];
       if (draft) {
         commit((valueDoc) => ({
@@ -7503,8 +7582,16 @@ export default function SuperCanvas() {
   );
   const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
     if (node.type !== "media") return;
+    const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
     if (node.data.kind === "image") {
       openImageEditor(node, { prompt: value });
+    } else if (inPlaceVideo) {
+      updateEditorPrompt(node, value);
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setMode("video");
+      setExpandedEditorId(node.id);
+      setLightbox(null);
     } else {
       openReuseDraft(node, {
         prompt: value,
@@ -7512,8 +7599,8 @@ export default function SuperCanvas() {
         includeSourceReference: true,
       });
     }
-    notify("提示词已复制到画布编辑器，原节点保持不变");
-  }, [notify, openImageEditor, openReuseDraft]);
+    notify(inPlaceVideo ? "提示词已写入当前视频节点，请点击生成" : "提示词已复制到画布编辑器，原节点保持不变");
+  }, [notify, openImageEditor, openReuseDraft, updateEditorPrompt]);
   const runOneTakeFromSelection = useCallback(async () => {
     const source = selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image");
     if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
@@ -7649,9 +7736,17 @@ export default function SuperCanvas() {
         return;
       }
       if (node.data.kind === "image") openImageEditor(node, { params: settings });
+      else if (canvasVideoTargetHasImageReference(docRef.current, node)) {
+        updateEditorParams(node, settings);
+        setSelectedIds(new Set([node.id]));
+        setSelectedGroupId(null);
+        setMode("video");
+        setExpandedEditorId(node.id);
+        setLightbox(null);
+      }
       else openReuseDraft(node, { params: settings });
     },
-    [notify, openImageEditor, openReuseDraft, reuseDraft],
+    [notify, openImageEditor, openReuseDraft, reuseDraft, updateEditorParams],
   );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
     if (!canAddCanvasAsset(node)) return null;
@@ -7850,7 +7945,10 @@ export default function SuperCanvas() {
         return;
       }
       if (selectedSingle?.type === "media") {
-        if (selectedSingle.data.kind === "image") updatePrompt(value);
+        if (
+          selectedSingle.data.kind === "image" ||
+          canvasVideoTargetHasImageReference(docRef.current, selectedSingle)
+        ) updatePrompt(value);
         else openReuseDraft(selectedSingle, { prompt: value });
         setMentionState(mentionStateForValue(value, cursor));
         return;
@@ -7869,7 +7967,10 @@ export default function SuperCanvas() {
       const next = `${value.slice(0, mentionState.start)}@${index + 1} ${value.slice(mentionState.end)}`;
       if (reuseDraft) setReuseDraft((current) => current ? { ...current, prompt: next, dirty: true } : current);
       else if (selectedSingle?.type === "media") {
-        if (selectedSingle.data.kind === "image") updatePrompt(next);
+        if (
+          selectedSingle.data.kind === "image" ||
+          canvasVideoTargetHasImageReference(docRef.current, selectedSingle)
+        ) updatePrompt(next);
         else openReuseDraft(selectedSingle, { prompt: next });
       }
       else updatePrompt(next);
@@ -9816,6 +9917,7 @@ export default function SuperCanvas() {
           url: String(reference.data.url || ""),
           name: String(reference.data.name || "参考素材"),
         })).filter((reference) => Boolean(reference.url));
+        const viewerVideoInPlace = canvasVideoTargetHasImageReference(document, viewerNode);
         const removeViewerNode = () => {
           if (!window.confirm("删除这个节点？可以使用撤销恢复。")) return;
           commit((value) => removeNodes(value, [viewerNode.id]));
@@ -9843,7 +9945,11 @@ export default function SuperCanvas() {
           onWriteResult={viewerIsMedia ? (value) => writeViewerPrompt(viewerNode, value) : undefined}
           onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
-          onEdit={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
+          onEdit={viewerIsMedia ? () => viewerNode.data.kind === "image"
+            ? openImageEditor(viewerNode)
+            : viewerVideoInPlace
+              ? toggleEditor(viewerNode)
+              : openReuseDraft(viewerNode) : undefined}
           onMask={viewerIsMedia && viewerNode.data.kind === "image" ? () => openCanvasMaskEditor(viewerNode.id) : undefined}
           onUpscale={viewerIsMedia && viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
           onContinue={viewerIsMedia ? () => continueFromMedia(viewerNode) : undefined}
@@ -11590,6 +11696,7 @@ function CanvasNodeEditorPopover({
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
   const editorReferences = incomingReferences(document, node.id);
+  const inPlaceVideo = canvasVideoTargetHasImageReference(document, node);
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
   const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
@@ -11908,8 +12015,8 @@ function CanvasNodeEditorPopover({
         </div>
       </div>
       <div className="canvas-node-editor-actions">
-        <span>{node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
-        <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : undefined} disabled={pending || upscaleMissingInput} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "upscale" ? "提交超分" : node.type === "prompt" ? "发送" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
+        <span>{node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
+        <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={pending || upscaleMissingInput} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "upscale" ? "提交超分" : node.type === "prompt" ? "发送" : inPlaceVideo ? "生成到当前节点" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
       </div>
     </div>
   );

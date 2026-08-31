@@ -108,3 +108,13 @@ test("selects reference mode before first-frame mode and infers typed edge roles
   assert.equal(references.inferCanvasInputRole(source, target, "frames", 1), "last-frame");
   assert.equal(references.inferCanvasInputRole(source, target, "reference", 0), "reference-image");
 });
+
+test("uses a connected still image as an in-place video generation target", () => {
+  const image = node("image", "media", "image");
+  const video = node("video", "media", "video");
+  assert.equal(references.shouldGenerateVideoInPlace(video, [image]), true);
+  assert.equal(references.shouldGenerateVideoInPlace(video, []), false);
+  assert.equal(references.shouldGenerateVideoInPlace(video, [node("video-ref", "media", "video")]), false);
+  assert.equal(references.shouldGenerateVideoInPlace({ ...image, data: { ...image.data, url: "" } }, [image]), false);
+  assert.equal(references.shouldGenerateVideoInPlace({ ...video, type: "generator" }, [image]), false);
+});

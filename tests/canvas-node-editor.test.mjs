@@ -23,6 +23,15 @@ test("node editor exposes an accessible expand/collapse control", () => {
   assert.match(component, /data-prompt-expanded=\{promptExpanded \? "true" : "false"\}/);
 });
 
+test("image-connected video cards generate back into the current node", () => {
+  assert.match(component, /shouldGenerateVideoInPlace/);
+  assert.match(component, /selectedMediaTarget\?\.data\.url && !inPlaceVideoTarget/);
+  assert.match(component, /currentVideoIsSource/);
+  assert.match(component, /canvasVideoTargetHasImageReference\(docRef\.current, target\)/);
+  assert.match(component, /引用图片 · 结果写回当前视频节点/);
+  assert.match(component, /生成到当前节点/);
+});
+
 test("upscale runs in place and keeps a visible processing state on the node", () => {
   const start = component.indexOf("const runUpscaleNode = useCallback");
   const end = component.indexOf("runUpscaleNodeRef.current = runUpscaleNode", start);

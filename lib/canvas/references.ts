@@ -57,6 +57,16 @@ function isMediaNode(node: CanvasNode) {
   );
 }
 
+/** A connected still image makes a video media card an in-place generation target. */
+export function shouldGenerateVideoInPlace(
+  target: CanvasNode | undefined,
+  references: readonly CanvasNode[],
+) {
+  return target?.type === "media" &&
+    target.data.kind === "video" &&
+    references.some((node) => isMediaNode(node) && node.data.kind === "image");
+}
+
 function videoKind(node: CanvasNode) {
   return node.type === "media" || node.type === "upscale"
     ? node.data.kind
