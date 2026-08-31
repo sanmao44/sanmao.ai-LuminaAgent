@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentDeliverable } from "./agent-intent";
+import type { CreativeReference } from "./creative-references";
 
 export const AGENT_CONTEXT_MESSAGE_LIMIT = 12;
 
@@ -15,7 +16,8 @@ export type AgentClientFile = {
 export type AgentClientMessage = {
   role: "user" | "assistant";
   content: string;
-  references?: string[];
+  /** New structured references; string[] remains accepted for old sessions. */
+  references?: CreativeReference[] | string[];
   files?: AgentClientFile[];
 };
 
@@ -23,6 +25,7 @@ export type AgentRequestPayload = {
   source?: "agent" | "canvas";
   messages: AgentClientMessage[];
   referenceImages?: Array<Record<string, unknown>>;
+  references?: CreativeReference[];
   model?: string;
   task?: string;
   webMode?: "off" | "auto" | "always";

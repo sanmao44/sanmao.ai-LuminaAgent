@@ -13,10 +13,11 @@ import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, ty
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
+import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 
 export const runtime = 'nodejs';
 
-type ClientMessage = { role: 'user' | 'assistant'; content: string; references?: string[]; files?: Array<{ name: string; mimeType?: string; content: string; encoding?: 'utf8' | 'base64'; size?: number }> };
+type ClientMessage = { role: 'user' | 'assistant'; content: string; references?: CreativeReference[] | string[]; files?: Array<{ name: string; mimeType?: string; content: string; encoding?: 'utf8' | 'base64'; size?: number }> };
 type GeneratedFile = { name: string; mimeType: string; content: string; encoding: 'utf8' | 'base64'; size: number };
 
 const FILE_MIME_TYPES: Record<string, string> = {
@@ -278,15 +279,27 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response>)
   });
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' } });
 }
-function toChatContent(message: ClientMessage): string | ChatContentPart[] {
-  const refs = Array.isArray(message.references) ? message.references.slice(0, 16) : [];
+function toChatContent(message: ClientMessage, allowVideo = false): string | ChatContentPart[] {
+  const refs = normalizeCreativeReferences(message.references, 16);
   const files = message.role === 'user' && Array.isArray(message.files) ? message.files.slice(0, 8).filter((file) => file && typeof file.name === 'string' && typeof file.content === 'string') : [];
   const fileText = files.map((file) => `\n\n[用户上传文件：${file.name}]\n${file.content.slice(0, 700_000)}`).join('');
   const text = `${message.content}${fileText}`;
   if (!refs.length || message.role !== 'user') return text;
+  const textReferences = refs.filter((reference) => reference.kind === 'text' && reference.text?.trim());
+  const textWithReferences = `${text}${textReferences.map((reference) => `\n\n[引用文本：${reference.name}]\n${reference.text}`).join('')}`;
+  const media = refs.filter((reference) => reference.kind !== 'text' && reference.url);
+  const mediaParts: ChatContentPart[] = [];
+  for (const reference of media) {
+    if (!reference.url) continue;
+    if (reference.kind === 'video') {
+      if (allowVideo) mediaParts.push({ type: 'video_url', video_url: { url: reference.url } });
+    } else {
+      mediaParts.push({ type: 'image_url', image_url: { url: reference.url } });
+    }
+  }
   return [
-    { type: 'text', text },
-    ...refs.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+    { type: 'text', text: textWithReferences },
+    ...mediaParts,
   ];
 }
 
@@ -308,7 +321,7 @@ export async function POST(request: Request) {
     const messages: ClientMessage[] = incoming
       .filter((m: any) => (m?.role === 'user' || m?.role === 'assistant') && typeof m?.content === 'string')
       .slice(-16)
-      .map((m: any) => ({ role: m.role, content: m.content, references: Array.isArray(m.references) ? m.references.filter((x: unknown) => typeof x === 'string').slice(0, 16) : [], files: Array.isArray(m.files) ? m.files.filter((file: any) => file && typeof file.name === 'string' && typeof file.content === 'string').slice(0, 8).map((file: any) => ({ name: file.name.slice(0, 160), mimeType: typeof file.mimeType === 'string' ? file.mimeType.slice(0, 120) : undefined, content: file.content.slice(0, 700_000), encoding: file.encoding === 'base64' ? 'base64' as const : 'utf8' as const, size: Number(file.size) || undefined })) : [] }));
+      .map((m: any) => ({ role: m.role, content: m.content, references: normalizeCreativeReferences(m.references, 16), files: Array.isArray(m.files) ? m.files.filter((file: any) => file && typeof file.name === 'string' && typeof file.content === 'string').slice(0, 8).map((file: any) => ({ name: file.name.slice(0, 160), mimeType: typeof file.mimeType === 'string' ? file.mimeType.slice(0, 120) : undefined, content: file.content.slice(0, 700_000), encoding: file.encoding === 'base64' ? 'base64' as const : 'utf8' as const, size: Number(file.size) || undefined })) : [] }));
     if (!messages.length) return Response.json({ error: '消息不能为空。' }, { status: 400 });
 
     const agentRuntime = await getRuntimeModel(String(body.model || 'auto'), 'chat');
@@ -320,7 +333,11 @@ export async function POST(request: Request) {
       .filter((m) => m.kind === 'image' && m.enabled && m.published && m.capabilities.includes('generate'));
     const imageModelText = imageModels.length ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n') : '- 当前没有可用生图模型';
     const latest = latestUser(messages);
-    const latestRefs = latest?.references || [];
+    const latestRefs = normalizeCreativeReferences(latest?.references, 16);
+    const supportsVideoInput = agentRuntime.model.capabilities.includes('video-input');
+    if (latestRefs.some((reference) => reference.kind === 'video') && !supportsVideoInput) {
+      return Response.json({ error: '当前对话模型没有明确声明 video-input 能力，已阻止发送视频引用；请切换支持视频输入的模型。' }, { status: 400 });
+    }
     const intentDecision = classifyAgentDeliverable(latest?.content || '', {
       messages: messages.slice(0, -1),
       hasReferences: latestRefs.length > 0,
@@ -337,7 +354,7 @@ export async function POST(request: Request) {
       upstream: Response | null | (() => Promise<Response>),
       metadata: Omit<AgentStreamMetadata, 'deliverable'>,
     ) => streamAgentResult(upstream, { ...metadata, deliverable: requestedDeliverable }, requestController.signal);
-    const referenceRecords = referenceRecordsForLog(body.referenceImages);
+    const referenceRecords = referenceRecordsForLog(body.referenceImages || latestRefs.filter((reference) => reference.kind === 'image'));
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
       '你的任务是根据用户上传的图片，分析画面内容，并反推出最接近原图生成逻辑的高质量提示词，主要用于 GPT Image 2。',
@@ -392,7 +409,7 @@ export async function POST(request: Request) {
     system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     let llmMessages: ChatMessage[] = [
       { role: 'system', content: system },
-      ...messages.map((m) => ({ role: m.role, content: toChatContent(m) } as ChatMessage)),
+      ...messages.map((m) => ({ role: m.role, content: toChatContent(m, supportsVideoInput) } as ChatMessage)),
     ];
     if (isReversePromptTask) llmMessages[0] = { role: 'system', content: reversePromptInstructions };
     if (isOneTakeVideoPromptTask) llmMessages[0] = { role: 'system', content: ONE_TAKE_VIDEO_PROMPT_INSTRUCTIONS };
@@ -596,6 +613,10 @@ export async function POST(request: Request) {
       const aspectRatio = String(args.aspectRatio || '自动');
       const count = Math.max(1, Math.min(8, Number(args.count || 1)));
       const mode = call.function.name === 'image_edit' ? 'edit' : 'generate';
+      if (latestRefs.some((reference) => reference.kind === 'video')) {
+        toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '图片模型不能接收视频引用；请改用视频生成输入或移除视频引用。' }) });
+        continue;
+      }
       if (!preparedCaption) {
           preparedCaption = chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
           messages: [
@@ -617,9 +638,10 @@ export async function POST(request: Request) {
         continue;
       }
       try {
-        if (mode === 'edit' && !latestRefs.length) throw new Error('请先提供参考图');
+        const imageReferences = latestRefs.filter((reference) => reference.kind === 'image' && reference.url).map((reference) => reference.url!);
+        if (mode === 'edit' && !imageReferences.length) throw new Error('请先提供图片参考');
         const images = mode === 'edit'
-          ? await editImage(imageRuntime.provider, imageRuntime.model.rawId, { prompt, aspectRatio, count, references: latestRefs, fidelity: 'high' }, requestController.signal)
+          ? await editImage(imageRuntime.provider, imageRuntime.model.rawId, { prompt, aspectRatio, count, references: imageReferences, fidelity: 'high' }, requestController.signal)
           : await generateImage(imageRuntime.provider, imageRuntime.model.rawId, { prompt, aspectRatio, count }, requestController.signal);
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
         const providerFinishedAt = Date.now();

@@ -197,6 +197,7 @@ import {
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
 import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
+import { referenceMentionNumbers, appendTextReferenceContext } from "@/lib/creative-references";
 
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
@@ -1154,16 +1155,23 @@ function mentionedMedia(prompt: string, candidates: CanvasNode[]) {
         Number.isInteger(index) && index >= 0 && index < candidates.length,
     )
     .map((index) => candidates[index].id);
-  return candidates.filter((node) => ids.includes(node.id));
+  return candidates.filter((node) => ids.includes(node.id) && isCanvasReferenceableNode(node));
 }
 
 function resolveMentionTokens(prompt: string, candidates: CanvasNode[]) {
   return prompt.replace(/@([0-9]+)/g, (token, rawIndex: string) => {
     const index = Number(rawIndex) - 1;
-    return index >= 0 && index < candidates.length
-      ? `参考图${index + 1}`
+    const candidate = index >= 0 && index < candidates.length ? candidates[index] : undefined;
+    return candidate
+      ? candidate.type === "prompt" ? `引用文本${index + 1}` : candidate.data.kind === "video" ? `参考视频${index + 1}` : `参考图${index + 1}`
       : token;
   });
+}
+
+function isCanvasMentionableNode(node: CanvasNode | undefined) {
+  return Boolean(node && (isCanvasReferenceableNode(node)
+    || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim()))
+    || (node.type === "generator" && Boolean(String(node.data.prompt || "").trim()))));
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -1673,13 +1681,11 @@ export default function SuperCanvas() {
   const mentionCandidates = useMemo(
     () =>
       selectedGroupId
-        ? groupNodes(document, selectedGroupId).filter(
-            (node) => isCanvasReferenceableNode(node),
-          )
+        ? groupNodes(document, selectedGroupId).filter(isCanvasMentionableNode)
         : referenceOwnerId
-          ? incomingReferences(document, referenceOwnerId)
-          : referenceNodes,
-    [document, referenceNodes, referenceOwnerId, selectedGroupId],
+          ? incomingContext(document, referenceOwnerId).filter(isCanvasMentionableNode)
+          : document.nodes.filter(isCanvasMentionableNode),
+    [document, referenceOwnerId, selectedGroupId],
   );
 
   const setDoc = useCallback((next: CanvasDocument) => {
@@ -5636,8 +5642,12 @@ export default function SuperCanvas() {
             : ("user" as const),
           content: String(node.data.text),
         }));
+      // Keep the three source kinds distinct all the way to the Agent API.
+      // In particular, a video node must never be silently converted to an
+      // image reference, while prompt nodes retain their actual text.
       const referenceNodes = incoming.filter(
-        (node) => isCanvasReferenceableNode(node) && node.data.kind === "image",
+        (node) => (isCanvasReferenceableNode(node) && (node.data.kind === "image" || node.data.kind === "video"))
+          || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim())),
       );
       const agentMessages = [
         ...contextMessages,
@@ -5645,7 +5655,7 @@ export default function SuperCanvas() {
       ];
       const intentDecision = classifyAgentDeliverable(prompt, {
         messages: contextMessages,
-        hasReferences: referenceNodes.length > 0,
+        hasReferences: referenceNodes.some((node) => node.data.kind === "image" || node.data.kind === "video"),
         hasFiles: false,
       });
       const effectiveSettings: AgentCreationSettings = {
@@ -5738,13 +5748,12 @@ export default function SuperCanvas() {
           messages: agentMessages,
           model: effectiveSettings.model,
           webMode: effectiveSettings.webMode,
-          task: inferCanvasAgentTask(prompt, referenceNodes.length > 0),
+          task: inferCanvasAgentTask(prompt, referenceNodes.some((node) => node.data.kind === "image")),
           deliverable: intentDecision.deliverable,
           intentReason: intentDecision.reason,
-          references: referenceNodes.map((node) => ({
-            url: String(node.data.url),
-            name: String(node.data.name || "参考图片"),
-          })),
+          references: referenceNodes.map((node) => node.type === "prompt"
+            ? { id: `node-ref:${node.id}`, nodeId: node.id, kind: "text" as const, name: String(node.data.name || node.data.role || "文本上下文"), text: String(node.data.text || node.data.agentResponse || "") }
+            : { id: `node-ref:${node.id}`, nodeId: node.id, kind: node.data.kind as "image" | "video", name: String(node.data.name || (node.data.kind === "video" ? "参考视频" : "参考图")), url: String(node.data.url || "") }),
         }, (event) => {
           if (event.type === "status" && event.message) {
             updateDoc((value) => ({
@@ -5904,18 +5913,25 @@ export default function SuperCanvas() {
           ...incoming.filter((node) => isCanvasReferenceableNode(node)),
         ]
       : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
+    const explicitMentionNumbers = referenceMentionNumbers(source.prompt);
+    const invalidMentionNumbers = explicitMentionNumbers.filter((number) => number < 1 || number > mentionCandidates.length);
+    if (invalidMentionNumbers.length) return notify(`引用编号无效：${Array.from(new Set(invalidMentionNumbers)).map((number) => `@${number}`).join("、")}`, "error");
+    const hasExplicitMentions = explicitMentionNumbers.length > 0;
+    const mentionedNodes = [...source.prompt.matchAll(/@([0-9]+)/g)]
+      .map((match) => mentionCandidates[Number(match[1]) - 1])
+      .filter((node): node is CanvasNode => Boolean(node));
     const linked = [
       ...new Map(
         [
-          ...baseLinked,
+          ...(hasExplicitMentions ? (sourceTarget?.data.url ? [sourceTarget] : []) : baseLinked),
           ...mentionedMedia(source.prompt, mentionCandidates),
         ].map((node) => [node.id, node]),
       ).values(),
     ];
     const context = [
-      ...incoming.filter((node) => node.type === "prompt"),
+      ...(hasExplicitMentions ? mentionedNodes.filter((node) => node.type === "prompt") : incoming.filter((node) => node.type === "prompt")),
       ...linked,
-      ...selectedNodes.filter((node) => node.type === "prompt"),
+      ...(hasExplicitMentions ? [] : selectedNodes.filter((node) => node.type === "prompt")),
     ];
     const prompt = smartPrompt(
       resolveMentionTokens(source.prompt, mentionCandidates),

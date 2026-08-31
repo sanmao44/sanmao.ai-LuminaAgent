@@ -70,8 +70,15 @@ function isLocalAgnesMediaUrl(value: string) {
 async function prepareAgnesChatMessages<T extends { content: unknown }>(messages: T[]) {
   return Promise.all(messages.map(async (message) => {
     if (!Array.isArray(message.content)) return message;
-    const content = await Promise.all(message.content.map(async (part: any) => part?.type === 'image_url' && typeof part?.image_url?.url === 'string'
-      ? { ...part, image_url: { ...part.image_url, url: await prepareAgnesMediaUrl(part.image_url.url, 'image') } } : part));
+    const content = await Promise.all(message.content.map(async (part: any) => {
+      if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
+        return { ...part, image_url: { ...part.image_url, url: await prepareAgnesMediaUrl(part.image_url.url, 'image') } };
+      }
+      if (part?.type === 'video_url' && typeof part?.video_url?.url === 'string') {
+        return { ...part, video_url: { ...part.video_url, url: await prepareAgnesMediaUrl(part.video_url.url, 'video') } };
+      }
+      return part;
+    }));
     return { ...message, content };
   }));
 }
@@ -94,6 +101,13 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
     if (/first[_ -]?frame|image2video|first_frame/.test(text)) capabilities.push('video-first-frame');
     if (/reference|multiframe|images/.test(text)) capabilities.push('video-reference');
     if (/audio|sound/.test(text)) capabilities.push('video-audio');
+  }
+  // A chat model must advertise video understanding separately.  Merely
+  // mentioning video generation in provider metadata is not enough: sending
+  // a video_url to a text/vision-only model is both misleading and rejected
+  // by a number of OpenAI-compatible gateways.
+  if (/video[-_ ]?(?:input|understanding|vision)|(?:input|understanding|vision)[^\n]{0,24}video|video[^\n]{0,24}(?:input|understanding|vision)/.test(text)) {
+    capabilities.push('video-input');
   }
   const native = inferNativeSearch(id, provider?.platform, raw);
   if (native.detected) capabilities.push('chat', 'web-search');
@@ -1037,7 +1051,8 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
 
 export type ChatContentPart =
   | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } };
+  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'video_url'; video_url: { url: string } };
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool';

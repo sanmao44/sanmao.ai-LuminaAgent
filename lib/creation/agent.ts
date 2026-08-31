@@ -49,7 +49,12 @@ async function runAgentTask(task: string, prompt: string, references: AgentRefer
       messages: [{
         role: "user",
         content: prompt,
-        references: preparedReferences.map((reference) => reference.url),
+        references: preparedReferences.map((reference, index) => ({
+          id: `${task}-${index + 1}`,
+          kind: "image" as const,
+          name: reference.name || `参考图 ${index + 1}`,
+          url: reference.url,
+        })),
         files: [],
       }],
       model: model || "auto",

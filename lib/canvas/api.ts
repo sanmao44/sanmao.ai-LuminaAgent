@@ -1,5 +1,6 @@
 import type { CanvasRuntimeState } from "./types";
 import type { AgentDeliverable } from "../agent-intent";
+import type { CreativeReference } from "../creative-references";
 import {
   requestAgent,
   type AgentResponse,
@@ -590,7 +591,7 @@ export async function generateCanvasAgent(
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     model?: string;
     webMode?: "off" | "auto" | "always";
-    references?: Array<{ url: string; name?: string }>;
+    references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">>;
     task?: CanvasAgentTask;
     deliverable?: AgentDeliverable;
     intentReason?: string;
@@ -608,11 +609,16 @@ export async function generateCanvasAgent(
     controller.abort(new Error("Agent 请求超时，请重试。"));
   }, CANVAS_AGENT_MAX_WAIT_MS);
   try {
-    const preparedReferences = await prepareCanvasAgentReferences(input.references);
-    const references = preparedReferences.map((item) => item.url);
+    const preparedReferences = await Promise.all((input.references || []).slice(0, 16).map(async (reference, index) => {
+      if (reference.kind === "text") {
+        return { id: reference.id || `canvas-ref-${index + 1}`, kind: "text" as const, name: reference.name || `文本 ${index + 1}`, text: reference.text || "", ...(reference.mimeType ? { mimeType: reference.mimeType } : {}), ...(reference.nodeId ? { nodeId: reference.nodeId } : {}) };
+      }
+      const url = reference.url ? await cachedCanvasAgentReference(reference.url) : "";
+      return { id: reference.id || `canvas-ref-${index + 1}`, kind: reference.kind || "image", name: reference.name || `参考图 ${index + 1}`, url, ...(reference.mimeType ? { mimeType: reference.mimeType } : {}), ...(reference.nodeId ? { nodeId: reference.nodeId } : {}) };
+    }));
     const messages = input.messages.map((message, index, all) => ({
       ...message,
-      references: index === all.length - 1 ? references : [],
+      references: index === all.length - 1 ? preparedReferences : [],
       files: [],
     }));
     return await requestAgent(
@@ -623,6 +629,7 @@ export async function generateCanvasAgent(
         ...(input.task ? { task: input.task } : {}),
         webMode: input.webMode || "off",
         webSearch: input.webMode !== "off",
+        references: preparedReferences,
         ...(input.deliverable ? { deliverable: input.deliverable } : {}),
         ...(input.intentReason ? { intentReason: input.intentReason } : {}),
       },

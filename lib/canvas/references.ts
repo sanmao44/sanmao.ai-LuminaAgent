@@ -7,6 +7,7 @@ export type CanvasVideoInputCapabilities = {
   supportsReference?: boolean;
   supportsFirstFrame?: boolean;
   maxReferenceImages?: number;
+  maxReferenceVideos?: number;
 };
 
 export type CanvasInputSemantics = {
@@ -23,6 +24,8 @@ export type CanvasInputSemantics = {
   lastFrame?: CanvasNode;
   /** A video input is a dedicated video reference, not a still-image reference. */
   referenceVideo?: CanvasNode;
+  /** All video inputs, retained for multi-video providers. */
+  referenceVideos: CanvasNode[];
 };
 
 export type CanvasVideoInputs = {
@@ -38,6 +41,8 @@ export type CanvasVideoInputs = {
   lastFrame?: CanvasNode;
   /** The first connected video input, kept separate from still images. */
   referenceVideo?: CanvasNode;
+  /** All connected video inputs that will be submitted, in canvas order. */
+  referenceVideos: CanvasNode[];
   /** Inputs that remain connected but will not be submitted this time. */
   unused: CanvasNode[];
   /** Alias used by canvas UI and callers that need to explain ignored inputs. */
@@ -158,8 +163,10 @@ export function resolveCanvasVideoInputs(
   });
   if (inputMode === "text") unused.splice(0, unused.length, ...orderedImages);
   const referenceVideo = inputMode === "text" ? undefined : videos[0];
+  const videoLimit = Math.max(0, Math.floor(options.maxReferenceVideos ?? 10));
+  const referenceVideos = inputMode === "text" ? [] : videos.slice(0, videoLimit);
   if (inputMode === "text") unused.push(...videos);
-  else if (videos.length > 1) unused.push(...videos.slice(1));
+  else if (videos.length > referenceVideos.length) unused.push(...videos.slice(referenceVideos.length));
 
   return {
     media,
@@ -168,6 +175,7 @@ export function resolveCanvasVideoInputs(
     firstFrame,
     lastFrame,
     referenceVideo,
+    referenceVideos,
     unused,
     unusedInputs: unused,
   };
@@ -193,7 +201,7 @@ export function resolveCanvasInputSemantics(
   );
 
   if (mode === "image" || mode === "agent") {
-    return { media, imageReferences, videoReferences, textContext };
+    return { media, imageReferences, videoReferences, referenceVideos: videoReferences, textContext };
   }
 
   const firstFrame =
@@ -209,5 +217,6 @@ export function resolveCanvasInputSemantics(
     firstFrame,
     lastFrame,
     referenceVideo: videoReferences[0],
+    referenceVideos: videoReferences,
   };
 }

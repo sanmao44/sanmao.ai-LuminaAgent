@@ -89,7 +89,11 @@ export type ModelCapability =
   | 'video-extend'
   | 'video-first-frame'
   | 'video-reference'
+  /** The chat model explicitly accepts video input content blocks. */
+  | 'video-input'
   | 'video-audio';
+
+export type { CreativeReference, CreativeReferenceKind } from './creative-references';
 
 export type RegistryModel = {
   id: string;
@@ -216,6 +220,9 @@ export type ReferenceImageRecord = {
   name: string;
   url: string;
 };
+
+/** Persisted/wire-safe reference record shared by Agent and creative inputs. */
+export type CreativeReferenceRecord = import('./creative-references').CreativeReference;
 
 export type ClientReferenceImage = {
   id: string;

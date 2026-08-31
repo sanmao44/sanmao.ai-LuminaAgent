@@ -33,6 +33,7 @@ import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
+import { appendTextReferenceContext, insertReferenceMention as insertCreativeMention, normalizeCreativeReference, referenceMentionRange as creativeReferenceMentionRange, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -445,20 +446,23 @@ function editorRatio(editor) {
     return dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '1:1';
 }
 async function fileToReference(file, options) {
-    if (!file.type.startsWith('image/')) throw new Error('只能上传图片文件');
-    const prepared = await optimizeCanvasUploadFile(file);
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) throw new Error('只能上传图片或视频文件');
+    const prepared = file.type.startsWith('image/') ? await optimizeCanvasUploadFile(file) : { file, changed: false, originalSize: file.size, uploadedSize: file.size };
     const sourceFile = prepared.file;
     const rawDataUrl = await new Promise((resolve, reject)=>{
         const reader = new FileReader();
         reader.onload = ()=>resolve(String(reader.result || ''));
-        reader.onerror = ()=>reject(new Error('读取图片失败'));
+        reader.onerror = ()=>reject(new Error(file.type.startsWith('video/') ? '读取视频失败' : '读取图片失败'));
         reader.readAsDataURL(sourceFile);
     });
-    const dataUrl = options?.compressForChat ? await compressReferenceDataUrl(rawDataUrl) : rawDataUrl;
+    const dataUrl = options?.compressForChat && file.type.startsWith('image/') ? await compressReferenceDataUrl(rawDataUrl) : rawDataUrl;
     return {
         id: uid('ref'),
-        name: file.name || '参考图',
+        kind: file.type.startsWith('video/') ? 'video' : 'image',
+        name: file.name || (file.type.startsWith('video/') ? '参考视频' : '参考图'),
+        url: dataUrl,
         dataUrl,
+        mimeType: file.type || undefined,
         optimized: prepared.changed,
         originalSize: prepared.originalSize,
         uploadedSize: prepared.uploadedSize
@@ -506,6 +510,30 @@ async function fileToChatFile(file) {
         encoding: 'utf8',
         size: file.size
     };
+}
+function chatFileToReference(file) {
+    return {
+        id: file.id || uid('ref'),
+        kind: 'text',
+        name: file.name || '文本附件',
+        text: file.content,
+        mimeType: file.mimeType || 'text/plain;charset=utf-8'
+    };
+}
+async function prepareCreativeReferencesForAgent(references) {
+    return Promise.all((references || []).slice(0, 16).map(async (rawReference, index) => {
+        const reference = normalizeCreativeReference(rawReference, index) || rawReference;
+        const url = reference.dataUrl || reference.url;
+        const preparedUrl = (reference.kind || 'image') === 'image' && url ? await compressReferenceDataUrl(url) : url;
+        return {
+            id: reference.id,
+            kind: reference.kind || 'image',
+            name: reference.name || '引用素材',
+            ...(preparedUrl ? { url: preparedUrl } : {}),
+            ...(reference.text ? { text: reference.text } : {}),
+            ...(reference.mimeType ? { mimeType: reference.mimeType } : {})
+        };
+    }));
 }
 function clipboardImageFiles(data) {
     return Array.from(data.items || []).filter((item)=>item.kind === 'file' && item.type.startsWith('image/')).map((item)=>item.getAsFile()).filter((file)=>Boolean(file));
@@ -1644,7 +1672,7 @@ function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
         children: [
             /*#__PURE__*/ _jsx("div", {
                 className: "reference-mention-title",
-                children: "选择参考图 \xb7 输入 @编号"
+                children: "选择引用 · 输入 @编号"
             }),
             refs.map((ref, index)=>/*#__PURE__*/ _jsxs("button", {
                     type: "button",
@@ -1654,10 +1682,7 @@ function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
                         /*#__PURE__*/ _jsxs("span", {
                             className: "reference-mention-thumb",
                             children: [
-                                /*#__PURE__*/ _jsx("img", {
-                                    src: ref.dataUrl,
-                                    alt: ""
-                                }),
+                                ref.kind === 'video' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon video", children: ["▶", /*#__PURE__*/ _jsx("small", { children: "视频" })] }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon text", children: ["▤", /*#__PURE__*/ _jsx("small", { children: "文本" })] }) : /*#__PURE__*/ _jsx("img", { src: ref.dataUrl || ref.url, alt: "" }),
                                 /*#__PURE__*/ _jsxs("b", {
                                     children: [
                                         "@",
@@ -1670,12 +1695,12 @@ function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
                             children: [
                                 /*#__PURE__*/ _jsxs("strong", {
                                     children: [
-                                        "参考图 ",
+                                        ref.kind === 'video' ? "参考视频 " : ref.kind === 'text' ? "引用文本 " : "参考图 ",
                                         index + 1
                                     ]
                                 }),
                                 /*#__PURE__*/ _jsx("small", {
-                                    children: ref.name
+                                    children: ref.kind === 'text' ? referencePreviewText(ref) : ref.name
                                 })
                             ]
                         })
@@ -2346,11 +2371,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                                 },
                                 onDragEnd: ()=>setDragIndex(null),
                                 children: [
-                                    /*#__PURE__*/ _jsx("img", {
-                                        draggable: false,
-                                        src: ref.dataUrl,
-                                        alt: ref.name
-                                    }),
+                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: ref.dataUrl || ref.url, muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 42) })] }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: ref.dataUrl || ref.url, alt: ref.name }),
                                     ref.pending && /*#__PURE__*/ _jsxs("span", {
                                         className: "reference-pending-overlay",
                                         children: [
@@ -2423,7 +2444,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                                 /*#__PURE__*/ _jsxs("div", {
                                     children: [
                                         /*#__PURE__*/ _jsx("span", {
-                                            children: "参考图预览"
+                                        children: preview.kind === 'video' ? '参考视频预览' : preview.kind === 'text' ? '引用文本预览' : '参考图预览'
                                         }),
                                         /*#__PURE__*/ _jsx("h3", {
                                             children: preview.name
@@ -2442,16 +2463,13 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                         }),
                         /*#__PURE__*/ _jsx("div", {
                             className: "reference-preview-stage",
-                            children: /*#__PURE__*/ _jsx("img", {
-                                src: preview.dataUrl,
-                                alt: preview.name
-                            })
+                            children: preview.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: preview.dataUrl || preview.url, controls: true, playsInline: true }) : preview.kind === 'text' ? /*#__PURE__*/ _jsx("pre", { children: preview.text }) : /*#__PURE__*/ _jsx("img", { src: preview.dataUrl || preview.url, alt: preview.name })
                         }),
                         /*#__PURE__*/ _jsxs("div", {
                             className: "reference-preview-footer",
                             children: [
                                 /*#__PURE__*/ _jsx("small", {
-                                    children: "完整比例显示，不裁剪"
+                                    children: preview.kind === 'text' ? '完整文本内容' : '完整比例显示，不裁剪'
                                 }),
                                 /*#__PURE__*/ _jsx("button", {
                                     type: "button",
@@ -6870,9 +6888,9 @@ export default function Page() {
     }
     async function addAgentAttachments(files) {
         const incoming = Array.from(files);
-        const images = incoming.filter((file)=>file.type.startsWith('image/'));
-        const documents = incoming.filter((file)=>!file.type.startsWith('image/'));
-        if (images.length) await addReferences(images, 'agent');
+        const media = incoming.filter((file)=>file.type.startsWith('image/') || file.type.startsWith('video/'));
+        const documents = incoming.filter((file)=>!file.type.startsWith('image/') && !file.type.startsWith('video/'));
+        if (media.length) await addReferences(media, 'agent');
         if (!documents.length) return;
         try {
             const room = Math.max(0, 8 - agentFiles.length);
@@ -6886,6 +6904,10 @@ export default function Page() {
                     ...old,
                     ...parsed
                 ].slice(0, 8));
+            setAgentRefs((old)=>[
+                    ...old,
+                    ...parsed.map(chatFileToReference)
+                ].slice(0, 16));
             if (documents.length > room) notify('最多同时分析 8 个文本文件');
         } catch (error) {
             notify(error instanceof Error ? error.message : '读取文本文件失败');
@@ -7236,7 +7258,7 @@ export default function Page() {
         const source = (references || []).map((reference, index)=>({
             reference,
             index,
-            dataUrl: typeof reference?.dataUrl === 'string' ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : ''
+            dataUrl: typeof reference?.dataUrl === 'string' ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : typeof reference === 'string' ? reference : ''
         })).filter((entry)=>entry.dataUrl && (entry.dataUrl.startsWith('data:image/') || /^https?:\/\//i.test(entry.dataUrl) || entry.dataUrl.startsWith('/api/storage/file?'))).slice(0, 16);
         if (!source.length) return [];
         try {
@@ -7256,7 +7278,7 @@ export default function Page() {
                 url: typeof data.images[index]?.url === 'string' ? data.images[index].url : reference.dataUrl
             }));
         } catch  {}
-        return source.map((reference, index)=>({
+        return source.map((entry)=>({
             id: entry.reference?.id,
             name: entry.reference?.name || `参考图 ${entry.index + 1}`,
             url: entry.dataUrl
@@ -7443,14 +7465,18 @@ export default function Page() {
         const savedRequest = overrides?.request;
         const isAngleGeneration = Boolean(savedRequest?.angle || overrides?.angle);
         const submittedAngleOutput = savedRequest?.angleOutput || overrides?.angleOutput;
-        const submittedPrompt = overrides?.prompt.trim() || generatePrompt.trim();
-        const submittedRefs = savedRequest ? [
+        const rawSubmittedPrompt = overrides?.prompt.trim() || generatePrompt.trim();
+        const submittedPrompt = rawSubmittedPrompt;
+        const availableSubmittedRefs = savedRequest ? [
             ...savedRequest.references
         ] : overrides ? [
             ...overrides.references
         ] : [
             ...generateRefs
         ];
+        const referenceSelection = selectCreativeReferences(rawSubmittedPrompt, availableSubmittedRefs);
+        if (referenceSelection.invalidNumbers.length) return notify(`引用编号无效：${referenceSelection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
+        const submittedRefs = referenceSelection.references;
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
         const submittedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : activeProviderModels.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : defaultImageModel;
@@ -8302,7 +8328,7 @@ export default function Page() {
             const referenceSource = [
                 ...contextMessages
             ].reverse().find((item)=>item.role === 'user' && item.references?.length);
-            const referencesForRequest = await Promise.all((referenceSource?.references || []).slice(0, 16).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            const referencesForRequest = await prepareCreativeReferencesForAgent(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
@@ -8435,11 +8461,10 @@ export default function Page() {
         const sessionId = activeChatId || uid('chat');
         if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，可点击左侧“新对话”并行进行');
         const currentSessionMessages = pendingChatMessagesRef.current.get(sessionId) || messages;
-        let refs = overrideRefs ? [
-            ...overrideRefs
-        ] : [
-            ...agentRefs
-        ];
+        const availableReferences = overrideRefs ? [...overrideRefs] : [...agentRefs];
+        const selection = overrideRefs ? { references: availableReferences, invalidNumbers: [], hasMentions: false } : selectCreativeReferences(content, availableReferences);
+        if (selection.invalidNumbers.length) return notify(`引用编号无效：${selection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
+        let refs = selection.references;
         let autoContinuation = false;
         if (!overrideRefs && !refs.length && isImageContinuationRequest(content)) {
             const previousImage = latestAssistantImage(currentSessionMessages);
@@ -8454,10 +8479,8 @@ export default function Page() {
                 }
             }
         }
-        if (refs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再发送');
-        const files = overrideRefs ? [] : [
-            ...agentFiles
-        ];
+        if (refs.some((reference)=>reference.pending)) return notify('引用素材正在准备，请稍候片刻再发送');
+        const files = overrideRefs ? [] : agentFiles.filter((file)=>refs.some((reference)=>reference.id === file.id));
         const followUp = overrideRefs ? null : agentFollowUp;
         const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
         const requestIntent = classifyAgentDeliverable(requestContent, {
@@ -8541,7 +8564,7 @@ export default function Page() {
             const referenceSource = [
                 ...nextMessages
             ].reverse().find((message)=>message.role === 'user' && message.references?.length);
-            const referencesForRequest = await Promise.all((referenceSource?.references || []).slice(0, 16).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            const referencesForRequest = await prepareCreativeReferencesForAgent(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
@@ -10435,10 +10458,7 @@ export default function Page() {
                                                                             "aria-label": `放大查看参考图 ${index + 1}`,
                                                                             onClick: ()=>setMessageReferencePreview(ref),
                                                                             children: [
-                                                                                /*#__PURE__*/ _jsx("img", {
-                                                                                    src: ref.dataUrl,
-                                                                                    alt: ref.name
-                                                                                }),
+                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: ref.dataUrl || ref.url, muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "message-ref-text", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 28) })] }) : /*#__PURE__*/ _jsx("img", { src: ref.dataUrl || ref.url, alt: ref.name }),
                                                                                 /*#__PURE__*/ _jsx("span", {
                                                                                     children: index + 1
                                                                                 })

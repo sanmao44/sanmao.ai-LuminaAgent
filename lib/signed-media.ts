@@ -452,8 +452,13 @@ export async function prepareAgnesChatMessages<T extends { content: unknown }>(m
   return Promise.all(messages.map(async (message) => {
     if (!Array.isArray(message.content)) return message;
     const content = await Promise.all(message.content.map(async (part: any) => {
-      if (part?.type !== 'image_url' || typeof part?.image_url?.url !== 'string') return part;
-      return { ...part, image_url: { ...part.image_url, url: await prepareAgnesMediaUrl(part.image_url.url, 'image') } };
+      if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
+        return { ...part, image_url: { ...part.image_url, url: await prepareAgnesMediaUrl(part.image_url.url, 'image') } };
+      }
+      if (part?.type === 'video_url' && typeof part?.video_url?.url === 'string') {
+        return { ...part, video_url: { ...part.video_url, url: await prepareAgnesMediaUrl(part.video_url.url, 'video') } };
+      }
+      return part;
     }));
     return { ...message, content };
   }));
