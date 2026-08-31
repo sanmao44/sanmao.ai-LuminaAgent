@@ -172,6 +172,16 @@ test("selected related canvas edges become dashed and animate their flow", () =>
   assert.match(styles, /canvas-edge-related-flow,html:not\(\[data-motion="on"\]\) \.canvas-edge\.related\{animation:none!important\}/);
 });
 
+test("canvas edges keep a visible, non-danger removal control on every connection", () => {
+  assert.match(component, /visibleCanvasEdges\.map\(\(edge\) => \{/);
+  assert.match(component, /className="canvas-connection-cancel canvas-connection-remove"/);
+  assert.match(component, /onPointerDown=\{\(event\) => removeConnection\(edge\.id, event\)\}/);
+  assert.doesNotMatch(component, /悬停连线显示取消按钮/);
+  assert.match(styles, /\.canvas-connection-cancel\{[^}]*width:14px[^}]*height:14px/);
+  assert.match(styles, /\.canvas-connection-remove\{width:12px[^}]*height:12px/);
+  assert.doesNotMatch(styles, /\.canvas-connection-cancel\{[^}]*var\(--danger\)/);
+});
+
 test("nested node scrolling does not trigger canvas zoom", () => {
   assert.match(component, /function isCanvasWheelIsolatedTarget\(target: EventTarget \| null\)/);
   assert.match(component, /target\.closest\(selector\)/);

@@ -203,6 +203,29 @@ type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
 type Point = { x: number; y: number };
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
+
+function canvasEdgeMidpoint(document: CanvasDocument, edge: CanvasEdge): Point {
+  const start = entityPortPoint(document, edge.source, edge.sourcePort || "right");
+  const end = entityPortPoint(document, edge.target, edge.targetPort || "left");
+  const sourceDirection = (edge.sourcePort || "right") === "right" ? 1 : -1;
+  const targetDirection = (edge.targetPort || "left") === "left" ? -1 : 1;
+  const dx = Math.max(72, Math.abs(end.x - start.x) * 0.42);
+  const t = 0.5;
+  const inverse = 1 - t;
+  return {
+    x:
+      inverse ** 3 * start.x +
+      3 * inverse ** 2 * t * (start.x + dx * sourceDirection) +
+      3 * inverse * t ** 2 * (end.x + dx * targetDirection) +
+      t ** 3 * end.x,
+    y:
+      inverse ** 3 * start.y +
+      3 * inverse ** 2 * t * start.y +
+      3 * inverse * t ** 2 * end.y +
+      t ** 3 * end.y,
+  };
+}
+
 function hasExternalFileTransfer(dataTransfer: DataTransfer) {
   return (
     dataTransfer.types.includes("Files") ||
@@ -620,7 +643,6 @@ const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Space", "左键"], label: "按住 Space 拖动空白区域平移画布" },
   { keys: ["Shift", "左键"], label: "追加选择节点或对象组" },
   { keys: ["Ctrl"], label: "按住并拖拽框选节点" },
-  { keys: ["Ctrl"], label: "悬停连线显示取消按钮" },
   { keys: ["Ctrl", "G"], label: "合并选中的图片为组" },
   { keys: ["Ctrl", "Shift", "G"], label: "释放选中的分组" },
   { keys: ["Ctrl", "Z"], label: "撤销上一步操作" },
@@ -1257,9 +1279,6 @@ function CanvasEdgeVisual({
   style,
   selected,
   onSelect,
-  onCtrlClick,
-  onHover,
-  onLeave,
 }: {
   document: CanvasDocument;
   edge: CanvasEdge;
@@ -1267,24 +1286,13 @@ function CanvasEdgeVisual({
   style: ConnectionStyle;
   selected: boolean;
   onSelect: () => void;
-  onCtrlClick: () => void;
-  onHover: (event: ReactPointerEvent<SVGPathElement>) => void;
-  onLeave: () => void;
 }) {
   const path = edgePath(document, edge, style);
   const colorKey = canvasSourceColorKey(document, edge.source);
   const handlePointerDown = (event: ReactPointerEvent<SVGPathElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (event.button === 0 && (event.ctrlKey || event.metaKey)) onCtrlClick();
-    else if (event.button === 0) onSelect();
-  };
-  const handlePointerEnter = (event: ReactPointerEvent<SVGPathElement>) => {
-    event.stopPropagation();
-    onHover(event);
-  };
-  const handlePointerLeave = () => {
-    onLeave();
+    if (event.button === 0) onSelect();
   };
   return (
     <g className={`canvas-edge-visual node-color-${colorKey}`}>
@@ -1292,16 +1300,12 @@ function CanvasEdgeVisual({
         className="canvas-edge-hit"
         d={path}
         aria-hidden="true"
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
       <path
         className={`canvas-edge ${related ? "related" : ""} ${selected ? "selected" : ""}`}
         d={path}
         markerEnd={`url(#canvas-arrow-${colorKey})`}
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
       {related && (
@@ -1407,13 +1411,6 @@ export default function SuperCanvas() {
   const [connectionTargetId, setConnectionTargetId] = useState<string | null>(
     null,
   );
-  const [connectionCancelEdgeId, setConnectionCancelEdgeId] = useState<
-    string | null
-  >(null);
-  const connectionHoverEdgeRef = useRef<string | null>(null);
-  const connectionCancelButtonHoverRef = useRef(false);
-  const connectionCancelHideTimerRef = useRef<number | null>(null);
-  const modifierHeldRef = useRef(false);
   const [logs, setLogs] = useState<CanvasActivityLog[]>([]);
   const [generationLogs, setGenerationLogs] = useState<CanvasGenerationLog[]>([]);
   const [generationLogsLoading, setGenerationLogsLoading] = useState(false);
@@ -2091,91 +2088,9 @@ export default function SuperCanvas() {
     setSelectedIds(new Set());
     setSelectedGroupId(null);
     setSelectedEdgeId(null);
-    setConnectionCancelEdgeId(null);
     setEditingNodeId(null);
     setExpandedEditorId(null);
   }, []);
-  const clearConnectionCancelHideTimer = useCallback(() => {
-    if (connectionCancelHideTimerRef.current === null) return;
-    window.clearTimeout(connectionCancelHideTimerRef.current);
-    connectionCancelHideTimerRef.current = null;
-  }, []);
-  const showConnectionCancel = useCallback(
-    (edgeId: string) => {
-      if (connection) return;
-      clearConnectionCancelHideTimer();
-      setConnectionCancelEdgeId(edgeId);
-    },
-    [clearConnectionCancelHideTimer, connection],
-  );
-  const hideConnectionCancel = useCallback(() => {
-    clearConnectionCancelHideTimer();
-    setConnectionCancelEdgeId(null);
-    connectionHoverEdgeRef.current = null;
-    connectionCancelButtonHoverRef.current = false;
-  }, [clearConnectionCancelHideTimer]);
-  const scheduleConnectionCancelHide = useCallback(
-    (edgeId: string) => {
-      clearConnectionCancelHideTimer();
-      connectionCancelHideTimerRef.current = window.setTimeout(() => {
-        connectionCancelHideTimerRef.current = null;
-        if (
-          !connectionCancelButtonHoverRef.current &&
-          !connectionHoverEdgeRef.current
-        )
-          setConnectionCancelEdgeId((current) =>
-            current === edgeId ? null : current,
-          );
-      }, 180);
-    },
-    [clearConnectionCancelHideTimer],
-  );
-  const handleConnectionHover = useCallback(
-    (edgeId: string, event: ReactPointerEvent<SVGPathElement>) => {
-      connectionHoverEdgeRef.current = edgeId;
-      clearConnectionCancelHideTimer();
-      if (modifierHeldRef.current || event.ctrlKey || event.metaKey)
-        showConnectionCancel(edgeId);
-    },
-    [clearConnectionCancelHideTimer, showConnectionCancel],
-  );
-  const handleConnectionLeave = useCallback(
-    (edgeId: string) => {
-      if (connectionHoverEdgeRef.current === edgeId)
-        connectionHoverEdgeRef.current = null;
-      if (modifierHeldRef.current && !connectionCancelButtonHoverRef.current)
-        scheduleConnectionCancelHide(edgeId);
-      else if (!modifierHeldRef.current) hideConnectionCancel();
-    },
-    [hideConnectionCancel, scheduleConnectionCancelHide],
-  );
-
-  useEffect(() => {
-    const handleModifierDown = (event: KeyboardEvent) => {
-      if (event.key !== "Control" && event.key !== "Meta") return;
-      modifierHeldRef.current = true;
-      if (connectionHoverEdgeRef.current)
-        showConnectionCancel(connectionHoverEdgeRef.current);
-    };
-    const handleModifierUp = (event: KeyboardEvent) => {
-      if (event.key !== "Control" && event.key !== "Meta") return;
-      const stillHeld = event.ctrlKey || event.metaKey;
-      modifierHeldRef.current = stillHeld;
-      if (!stillHeld) hideConnectionCancel();
-    };
-    const handleWindowBlur = () => {
-      modifierHeldRef.current = false;
-      hideConnectionCancel();
-    };
-    window.addEventListener("keydown", handleModifierDown);
-    window.addEventListener("keyup", handleModifierUp);
-    window.addEventListener("blur", handleWindowBlur);
-    return () => {
-      window.removeEventListener("keydown", handleModifierDown);
-      window.removeEventListener("keyup", handleModifierUp);
-      window.removeEventListener("blur", handleWindowBlur);
-    };
-  }, [hideConnectionCancel, showConnectionCancel]);
   useEffect(() => {
     const handleSpaceDown = (event: KeyboardEvent) => {
       if (event.code !== "Space" || isEditableTarget(event.target)) return;
@@ -2326,7 +2241,6 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set());
       setQuickToolbarNodeId(null);
       cancelPendingNodeClick();
-      hideConnectionCancel();
       if (
         event.button === 0 &&
         (event.ctrlKey || event.metaKey) &&
@@ -2351,7 +2265,6 @@ export default function SuperCanvas() {
       capture,
       document.camera,
       cancelPendingNodeClick,
-      hideConnectionCancel,
       startMarquee,
     ],
   );
@@ -2366,8 +2279,6 @@ export default function SuperCanvas() {
       )
         return;
       focusCanvasStage();
-      hideConnectionCancel();
-      connectionHoverEdgeRef.current = null;
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       event.preventDefault();
       event.stopPropagation();
@@ -2436,7 +2347,6 @@ export default function SuperCanvas() {
       capture,
       cancelPendingNodeClick,
       focusCanvasStage,
-      hideConnectionCancel,
       selectNode,
       setNodeGestureActive,
       selectedGroupId,
@@ -2451,8 +2361,6 @@ export default function SuperCanvas() {
       focusCanvasStage();
       event.preventDefault();
       event.stopPropagation();
-      hideConnectionCancel();
-      connectionHoverEdgeRef.current = null;
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       const allSelected = group.nodeIds.every((id) => selectedIds.has(id));
       const ids = event.shiftKey
@@ -2493,7 +2401,7 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture, focusCanvasStage, hideConnectionCancel, selectedIds, startMarquee],
+    [capture, focusCanvasStage, selectedIds, startMarquee],
   );
 
   const startGroupResize = useCallback(
@@ -2534,8 +2442,6 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent, node: CanvasNode) => {
       event.preventDefault();
       event.stopPropagation();
-      hideConnectionCancel();
-      connectionHoverEdgeRef.current = null;
       setQuickToolbarNodeId(null);
       setDraggingNodeIds(new Set([node.id]));
       const size = nodeSize(node);
@@ -2551,14 +2457,12 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture, hideConnectionCancel],
+    [capture],
   );
   const startConnection = useCallback(
     (event: ReactPointerEvent, nodeId: string, port: "left" | "right") => {
       event.preventDefault();
       event.stopPropagation();
-      hideConnectionCancel();
-      connectionHoverEdgeRef.current = null;
       const point = stagePoint(event.clientX, event.clientY);
       setConnectionNodePicker(null);
       setConnection({
@@ -2579,7 +2483,7 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture, hideConnectionCancel, stagePoint],
+    [capture, stagePoint],
   );
 
   const cancelConnection = useCallback(
@@ -2590,8 +2494,6 @@ export default function SuperCanvas() {
       setConnection(null);
       setConnectionNodePicker(null);
       setConnectionTargetId(null);
-      hideConnectionCancel();
-      connectionHoverEdgeRef.current = null;
       setMarquee(null);
       try {
         if (event) stageRef.current?.releasePointerCapture(event.pointerId);
@@ -2599,19 +2501,15 @@ export default function SuperCanvas() {
         /* pointer capture already released */
       }
     },
-    [hideConnectionCancel],
+    [],
   );
 
   const removeConnection = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
+    (edgeId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      if (!connectionCancelEdgeId) return cancelConnection(event);
-      const edgeId = connectionCancelEdgeId;
       commit((value) => removeEdge(value, edgeId));
-      setSelectedEdgeId(null);
-      hideConnectionCancel();
-      connectionHoverEdgeRef.current = null;
+      setSelectedEdgeId((current) => (current === edgeId ? null : current));
       addLog("已取消连线");
       try {
         stageRef.current?.releasePointerCapture(event.pointerId);
@@ -2621,10 +2519,7 @@ export default function SuperCanvas() {
     },
     [
       addLog,
-      cancelConnection,
       commit,
-      connectionCancelEdgeId,
-      hideConnectionCancel,
     ],
   );
 
@@ -3115,14 +3010,13 @@ export default function SuperCanvas() {
       setConnection(null);
       setConnectionNodePicker(null);
       setConnectionTargetId(null);
-      hideConnectionCancel();
       try {
         stageRef.current?.releasePointerCapture(event.pointerId);
       } catch {
         /* pointer capture already released */
       }
     },
-    [hideConnectionCancel],
+    [],
   );
 
   useEffect(() => {
@@ -3136,11 +3030,10 @@ export default function SuperCanvas() {
       setConnection(null);
       setConnectionNodePicker(null);
       setConnectionTargetId(null);
-      hideConnectionCancel();
     };
     window.addEventListener("blur", handleWindowBlur);
     return () => window.removeEventListener("blur", handleWindowBlur);
-  }, [hideConnectionCancel]);
+  }, []);
 
   const zoomAt = useCallback(
     (clientX: number, clientY: number, factor: number) => {
@@ -7232,10 +7125,9 @@ export default function SuperCanvas() {
           setMentionState(null);
           return;
         }
-        if (connectionNodePicker || connectionTargetId || connectionCancelEdgeId) {
+        if (connectionNodePicker || connectionTargetId) {
           setConnectionNodePicker(null);
           setConnectionTargetId(null);
-          hideConnectionCancel();
           return;
         }
         if (expandedEditorId) {
@@ -7350,7 +7242,6 @@ export default function SuperCanvas() {
     expandedEditorId,
     duplicateSelection,
     fitView,
-    hideConnectionCancel,
     makeGroup,
     mentionState,
     pasteFromClipboard,
@@ -7359,7 +7250,6 @@ export default function SuperCanvas() {
     activePanel,
     agentResult,
     assetCollectionPickerNodeId,
-    connectionCancelEdgeId,
     connectionNodePicker,
     connectionTargetId,
     lightbox,
@@ -7947,53 +7837,19 @@ export default function SuperCanvas() {
   const connectionTargetScreen = connectionTargetBounds
     ? worldToScreen(connectionTargetBounds.x, connectionTargetBounds.y)
     : null;
-  const connectionCancelEdge = connectionCancelEdgeId
-    ? document.edges.find((edge) => edge.id === connectionCancelEdgeId)
-    : undefined;
-  const connectionCancelEdgeMidpoint = connectionCancelEdge
-    ? (() => {
-        const start = entityPortPoint(
-          document,
-          connectionCancelEdge.source,
-          connectionCancelEdge.sourcePort || "right",
-        );
-        const end = entityPortPoint(
-          document,
-          connectionCancelEdge.target,
-          connectionCancelEdge.targetPort || "left",
-        );
-        const sourceDirection =
-          (connectionCancelEdge.sourcePort || "right") === "right" ? 1 : -1;
-        const targetDirection =
-          (connectionCancelEdge.targetPort || "left") === "left" ? -1 : 1;
-        const dx = Math.max(72, Math.abs(end.x - start.x) * 0.42);
-        const t = 0.5;
-        const inverse = 1 - t;
-        return {
-          x:
-            inverse ** 3 * start.x +
-            3 * inverse ** 2 * t * (start.x + dx * sourceDirection) +
-            3 * inverse * t ** 2 * (end.x + dx * targetDirection) +
-            t ** 3 * end.x,
-          y:
-            inverse ** 3 * start.y +
-            3 * inverse ** 2 * t * start.y +
-            3 * inverse * t ** 2 * end.y +
-            t ** 3 * end.y,
-        };
-      })()
-    : null;
+  const visibleCanvasEdges = document.edges.filter((edge) => {
+    const sourceVisible =
+      visibleCanvasNodeIds.has(edge.source) || Boolean(groupById(document, edge.source));
+    const targetVisible =
+      visibleCanvasNodeIds.has(edge.target) || Boolean(groupById(document, edge.target));
+    return sourceVisible && targetVisible;
+  });
   const connectionCancelScreen = connection
     ? {
         x: (connection.start.x + connection.end.x) / 2,
         y: (connection.start.y + connection.end.y) / 2,
       }
-    : connectionCancelEdgeMidpoint
-      ? worldToScreen(
-          connectionCancelEdgeMidpoint.x,
-          connectionCancelEdgeMidpoint.y,
-        )
-      : null;
+    : null;
   const connectionNodePickerScreen = connectionNodePicker
     ? {
         x: clamp(
@@ -8908,11 +8764,7 @@ export default function SuperCanvas() {
                   </marker>
                 ))}
               </defs>
-              {document.edges.filter((edge) => {
-                const sourceVisible = visibleCanvasNodeIds.has(edge.source) || Boolean(groupById(document, edge.source));
-                const targetVisible = visibleCanvasNodeIds.has(edge.target) || Boolean(groupById(document, edge.target));
-                return sourceVisible && targetVisible;
-              }).map((edge) => (
+              {visibleCanvasEdges.map((edge) => (
                 <CanvasEdgeVisual
                   key={edge.id}
                   document={document}
@@ -8921,19 +8773,10 @@ export default function SuperCanvas() {
                   style={connectionStyle}
                   selected={selectedEdgeId === edge.id}
                   onSelect={() => {
-                    hideConnectionCancel();
                     setSelectedEdgeId(edge.id);
                     setSelectedIds(new Set());
                     setSelectedGroupId(null);
                   }}
-                  onCtrlClick={() => {
-                    if (!connection) showConnectionCancel(edge.id);
-                    setSelectedEdgeId(edge.id);
-                    setSelectedIds(new Set());
-                    setSelectedGroupId(null);
-                  }}
-                  onHover={(event) => handleConnectionHover(edge.id, event)}
-                  onLeave={() => handleConnectionLeave(edge.id)}
                 />
               ))}
               {draftConnection && (
@@ -9153,6 +8996,23 @@ export default function SuperCanvas() {
               }}
             />
           )}
+        {visibleCanvasEdges.map((edge) => {
+          const midpoint = canvasEdgeMidpoint(document, edge);
+          const screen = worldToScreen(midpoint.x, midpoint.y);
+          return (
+            <button
+              type="button"
+              key={`connection-remove-${edge.id}`}
+              className="canvas-connection-cancel canvas-connection-remove"
+              aria-label="删除此连线"
+              title="删除此连线"
+              style={{ left: screen.x, top: screen.y }}
+              onPointerDown={(event) => removeConnection(edge.id, event)}
+            >
+              ×
+            </button>
+          );
+        })}
         {connectionCancelScreen && (
           <button
             type="button"
@@ -9163,19 +9023,7 @@ export default function SuperCanvas() {
               left: connectionCancelScreen.x,
               top: connectionCancelScreen.y,
             }}
-            onPointerEnter={() => {
-              connectionCancelButtonHoverRef.current = true;
-              clearConnectionCancelHideTimer();
-            }}
-            onPointerLeave={() => {
-              connectionCancelButtonHoverRef.current = false;
-              if (modifierHeldRef.current && connectionCancelEdgeId)
-                scheduleConnectionCancelHide(connectionCancelEdgeId);
-              else if (!modifierHeldRef.current) hideConnectionCancel();
-            }}
-            onPointerDown={
-              connectionCancelEdge ? removeConnection : cancelConnection
-            }
+            onPointerDown={cancelConnection}
           >
             ×
           </button>
