@@ -3271,7 +3271,9 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .creative-record-group-heading>div{display:grid;gap:3px;min-width:0}
 .creative-record-group-heading strong{color:var(--text);font-size:14px}
 .creative-record-group-heading small,.creative-record-group-heading>span{color:var(--muted);font-size:10px}
-.creative-video-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+ /* Collapse unused tracks so a partially filled page still distributes the
+    available width across the cards, including wide 4K viewports. */
+ .creative-video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
 .creative-video-card{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--panel-2);box-shadow:var(--shadow-soft,0 8px 24px rgba(20,24,40,.08))}
 .creative-video-preview{position:relative;aspect-ratio:16/9;overflow:hidden;background:var(--bg-2);border-radius:15px 15px 0 0}
 .creative-video-preview video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
