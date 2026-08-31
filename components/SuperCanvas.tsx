@@ -721,34 +721,66 @@ function connectCanvasNodesInDocument(
   requestedRole?: CanvasInputRole,
 ): CanvasConnectionResult {
   const source = nodeById(document, sourceId);
+  const sourceGroup = groupById(document, sourceId) || (source?.groupId ? groupById(document, source.groupId) : undefined);
   const target = nodeById(document, targetId);
-  if (!source || !target) return { ok: false, document, reason: "源节点或目标节点不存在。" };
-  if (source.id === target.id) return { ok: false, document, reason: "不能连接自身。" };
+  if ((!source && !sourceGroup) || !target) return { ok: false, document, reason: "源节点或目标节点不存在。" };
+  if (source?.id === target.id || sourceGroup?.nodeIds.includes(target.id)) return { ok: false, document, reason: "不能连接自身。" };
 
   const targetKind = target.type === "media" || target.type === "generator" ? target.data.kind : undefined;
-  const sourceKind = isCanvasReferenceableNode(source) ? source.data.kind : undefined;
+  const sourceKind = source && isCanvasReferenceableNode(source) ? source.data.kind : undefined;
+  // A node inside a group carries the whole group as its effective input. Keep
+  // that same semantics when the group itself is dragged to a target, so every
+  // image/video in the group is visible to the resolver in canvas order.
+  const sourceInputs = sourceGroup
+    ? groupNodes(document, sourceGroup.id).filter(isCanvasReferenceableNode)
+    : source && isCanvasReferenceableNode(source)
+      ? [source]
+      : [];
+  const sourceHasImage = sourceInputs.some((node) => node.data.kind === "image");
+  const sourceHasVideo = sourceInputs.some((node) => node.data.kind === "video");
   let inputRole = requestedRole;
   let videoMode: CanvasVideoInputMode | undefined;
   let next = document;
 
-  if (targetKind === "image" && sourceKind === "video") {
+  if (targetKind === "image" && (sourceKind === "video" || sourceHasVideo)) {
     return { ok: false, document, reason: "图片节点不能接收视频作为图片参考。" };
   }
 
-  if (targetKind === "video" && sourceKind === "image") {
+  if (targetKind === "video" && (sourceKind === "image" || sourceHasImage || sourceHasVideo)) {
     const settings = target.data.params && typeof target.data.params === "object" && "inputMode" in target.data.params
       ? target.data.params as VideoCreationSettings
       : normalizeCreationSettings("video", target.data.params, runtime);
     const resolved = resolveAvailableCreationModel(settings, runtime);
     const model = resolved.model;
-    const supportsReference = Boolean(model?.capabilities.includes("video-reference"));
-    const supportsFirstFrame = Boolean(model?.capabilities.includes("video-first-frame"));
-    const preferred = preferredCanvasVideoInputMode({ supportsReference, supportsFirstFrame });
-    if (!preferred) {
-      return { ok: false, document, reason: "当前视频模型不支持参考图或首帧输入，请先切换到支持图像输入的模型。" };
-    }
+    // Some providers only publish the coarse `video-generate` capability.
+    // The main video panel treats that as supporting image-to-video inputs;
+    // keep the canvas connection path consistent so dragging an image onto a
+    // fresh video node does not fail before the node can be configured.
+    const supportsReference = !model || Boolean(
+      model.capabilities.includes("video-reference") ||
+      model.capabilities.includes("video-generate"),
+    );
+    const supportsFirstFrame = !model || Boolean(
+      model.capabilities.includes("video-first-frame") ||
+      model.capabilities.includes("video-generate"),
+    );
     const provider = runtime?.providers.find((item) => item.id === model?.providerId);
     const limits = getVideoModelLimits(model || undefined, provider);
+    if (sourceHasVideo && limits.maxReferenceVideos <= 0) {
+      return {
+        ok: false,
+        document,
+        reason: "当前视频模型不支持参考视频，请切换到支持参考视频的模型，或移除视频输入。",
+      };
+    }
+    const preferred = preferredCanvasVideoInputMode({ supportsReference, supportsFirstFrame });
+    // A video-only connection has no image capability to infer a mode from.
+    // Models that expose a positive reference-video limit can still consume it
+    // in reference mode, so make that transition explicit instead of leaving
+    // the edge in text mode where the video would be silently ignored.
+    if (!preferred && !(sourceHasVideo && limits.maxReferenceVideos > 0)) {
+      return { ok: false, document, reason: "当前视频模型不支持参考图或首帧输入，请先切换到支持图像输入的模型。" };
+    }
     videoMode = settings.inputMode;
     if (requestedRole === "last-frame") videoMode = "frames";
     else if (requestedRole === "first-frame" && videoMode === "text") videoMode = "first-frame";
@@ -756,9 +788,19 @@ function connectCanvasNodesInDocument(
       videoMode === "text" ||
       (videoMode === "reference" && !supportsReference) ||
       ((videoMode === "first-frame" || videoMode === "frames") && !supportsFirstFrame)
-    ) videoMode = preferred;
+    ) videoMode = preferred || "reference";
 
     const existing = incomingReferences(document, targetId);
+    const existingVideoCount = existing.filter((node) => node.data.kind === "video").length;
+    const duplicateSourceIds = new Set(existing.map((node) => node.id));
+    const newVideoCount = sourceInputs.filter((node) => node.data.kind === "video" && !duplicateSourceIds.has(node.id)).length;
+    if (existingVideoCount + newVideoCount > limits.maxReferenceVideos) {
+      return {
+        ok: false,
+        document,
+        reason: `当前模型最多接收 ${limits.maxReferenceVideos} 个参考视频，请减少视频输入或切换模型。`,
+      };
+    }
     const roles = canvasInputRolesForTarget(document, targetId);
     const modeRole = videoMode === "reference"
       ? "reference-image"
@@ -779,17 +821,17 @@ function connectCanvasNodesInDocument(
     const nextRoles = new Map(roles);
     const slotRole = inputRole === "first-frame" || inputRole === "last-frame" ? inputRole : undefined;
     const previousSlotOwner = slotRole
-      ? [...roles.entries()].find(([nodeId, role]) => nodeId !== source.id && role === slotRole)?.[0]
+      ? [...roles.entries()].find(([nodeId, role]) => nodeId !== source?.id && role === slotRole)?.[0]
       : undefined;
     if (previousSlotOwner) nextRoles.set(previousSlotOwner, "reference-image");
-    nextRoles.set(source.id, inputRole);
+    if (source) nextRoles.set(source.id, inputRole);
     const resolvedInputs = resolveCanvasVideoInputs(
-      [...existing, source],
+      [...existing, ...sourceInputs],
       videoMode,
       nextRoles,
       { maxReferenceImages: limits.maxReferenceImages },
     );
-    if (resolvedInputs.unused.some((node) => node.id === source.id)) {
+    if (resolvedInputs.unused.some((node) => sourceInputs.some((sourceNode) => sourceNode.id === node.id))) {
       const reason = videoMode === "reference"
         ? `当前模型最多接收 ${limits.maxReferenceImages} 张参考图。`
         : videoMode === "first-frame"
@@ -799,7 +841,7 @@ function connectCanvasNodesInDocument(
     }
     if (videoMode !== settings.inputMode) next = updateCanvasVideoMode(next, targetId, videoMode);
 
-    if (slotRole) {
+    if (slotRole && source) {
       const existingEdge = next.edges.find(
         (edge) =>
           edge.source === sourceId &&
@@ -829,17 +871,37 @@ function connectCanvasNodesInDocument(
       }
     }
   } else if (!inputRole) {
-    if (target.type === "prompt") inputRole = source.type === "prompt" || source.type === "generator" ? "context" : sourceKind === "video" ? "video" : "reference-image";
-    else if (source.type === "prompt" || source.type === "generator") inputRole = "context";
+    if (target.type === "prompt") inputRole = source?.type === "prompt" || source?.type === "generator" ? "context" : sourceKind === "video" ? "video" : "reference-image";
+    else if (source?.type === "prompt" || source?.type === "generator") inputRole = "context";
     else if (sourceKind === "video") inputRole = "video";
     else if (sourceKind === "image") inputRole = "reference-image";
   }
 
   const beforeEdges = next.edges.length;
   const existingInputs = incomingReferences(next, targetId).length;
-  next = addEdge(next, sourceId, targetId, sourcePort, targetPort, inputRole === "reference-image" || inputRole === "first-frame" || inputRole === "last-frame" ? "reference" : "manual", inputRole, existingInputs);
+  const hasReferenceInput = inputRole === "reference-image" || inputRole === "first-frame" || inputRole === "last-frame" || sourceHasImage || sourceHasVideo;
+  next = addEdge(next, sourceId, targetId, sourcePort, targetPort, hasReferenceInput ? "reference" : "manual", inputRole, existingInputs);
   if (next.edges.length === beforeEdges) return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
   return { ok: true, document: next, inputRole, videoMode };
+}
+
+function canvasVideoInputError(
+  inputs: ReturnType<typeof resolveCanvasVideoInputs>,
+  inputMode: CanvasVideoInputMode,
+  limits: ReturnType<typeof getVideoModelLimits>,
+) {
+  const connectedVideos = inputs.media.filter((node) => node.data.kind === "video");
+  if (!connectedVideos.length) return undefined;
+  if (inputMode === "text") {
+    return "已连接参考视频，但当前为文生视频模式；请切换到参考图/编辑模式后再生成。";
+  }
+  if (limits.maxReferenceVideos <= 0) {
+    return "当前视频模型不支持参考视频，请切换到支持参考视频的模型，或移除视频输入。";
+  }
+  if (connectedVideos.length > limits.maxReferenceVideos) {
+    return `当前模型最多接收 ${limits.maxReferenceVideos} 个参考视频，请减少视频输入或切换模型。`;
+  }
+  return undefined;
 }
 
 function copyParams(
@@ -4716,6 +4778,8 @@ export default function SuperCanvas() {
                 canvasInputRolesForTarget(docRef.current, generatorId),
                 { maxReferenceImages: videoLimits.maxReferenceImages },
               );
+              const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits);
+              if (videoInputError) throw new Error(videoInputError);
               const task = await generateCanvasVideo({
                 prompt,
                 model: effectiveParams.model,
@@ -5503,6 +5567,8 @@ export default function SuperCanvas() {
           new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
           { maxReferenceImages: videoLimits.maxReferenceImages },
         );
+        const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits);
+        if (videoInputError) throw new Error(videoInputError);
         const task = await generateCanvasVideo({
           prompt: draft.prompt, model: resolvedVideoModel.model?.id || "auto", operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
           references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
@@ -5890,6 +5956,10 @@ export default function SuperCanvas() {
           { maxReferenceImages: videoLimits.maxReferenceImages },
         )
       : undefined;
+    if (kind === "video" && videoParams && videoLimits && videoInputs) {
+      const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits);
+      if (videoInputError) return notify(videoInputError, "error");
+    }
     const refs = (kind === "video" ? videoInputs?.referenceImages || [] : inputSemantics.imageReferences)
       .map((node) => ({
           url: String(node.data.url || ""),
@@ -10948,19 +11018,31 @@ function CanvasNodeReferenceStrip({
   );
 
   const unusedImages = videoInputs?.unused.filter((item) => item.data.kind === "image") || [];
-  const connectedVideo = videoInputs?.referenceVideo;
+  const connectedVideos = references.filter((item) => item.data.kind === "video");
+  const connectedVideo = videoInputs?.referenceVideo || connectedVideos[0];
   const imageWarning = isVideoTarget && videoParams?.inputMode === "text" && references.some((item) => item.data.kind === "image");
+  const videoWarning = isVideoTarget && connectedVideos.length > 0 && (
+    videoParams?.inputMode === "text" || videoLimits?.maxReferenceVideos === 0
+  );
 
   return (
     <div className="canvas-editor-references" onDragOver={(event) => event.preventDefault()}>
       <div className="canvas-editor-section-head">
         <span><b>输入与引用</b><small>{isVideoTarget ? modeLabel : "拖动缩略图可调整顺序"}</small></span>
         <div>
-          <b>{videoLimits ? `${videoInputs?.referenceImages.length || 0}/${videoLimits.maxReferenceImages}` : `${references.length}/16`}</b>
+          <b>{videoLimits ? `图片 ${videoInputs?.referenceImages.length || 0}/${videoLimits.maxReferenceImages}` : `${references.length}/16`}</b>
+          {isVideoTarget && connectedVideos.length > 0 && <small>视频输入 {connectedVideos.length}/{videoLimits?.maxReferenceVideos ?? 10}</small>}
           <button type="button" onClick={() => inputRef.current?.click()}>＋ 添加</button>
         </div>
       </div>
       {imageWarning && <div className="canvas-editor-video-warning">已连接图片不会参与本次生成；当前为文生视频模式。</div>}
+      {videoWarning && (
+        <div className="canvas-editor-video-warning">
+          {videoLimits?.maxReferenceVideos === 0
+            ? "当前视频模型不支持参考视频；请切换模型或移除视频输入。"
+            : "已连接参考视频，但当前为文生视频模式；请切换到参考图/编辑模式后再生成。"}
+        </div>
+      )}
       {contexts.length > 0 && (
         <div className="canvas-editor-context-slot">
           <span className="canvas-editor-slot-label">文本上下文 <small>来自 @ 引用</small></span>

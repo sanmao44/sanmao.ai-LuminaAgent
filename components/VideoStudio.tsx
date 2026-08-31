@@ -39,7 +39,7 @@ type Props = {
 type UploadSlot = { name: string; url: string; kind: 'image' | 'video' | 'audio' };
 type VideoOperation = 'generate' | 'edit' | 'extend';
 type VideoInputMode = 'text' | 'first-frame' | 'frames' | 'reference';
-type MediaTransportStatus = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean };
+type MediaTransportStatus = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean; reachable?: boolean; publicUrl?: string };
 const MAX_65535_INLINE_BYTES = 64 * 1024 * 1024;
 const MAX_VIDEO_IMAGE_EDGE = 2048;
 const MAX_VIDEO_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -832,8 +832,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
          {inputModeOptions.length > 1 && <div className="video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : '参考图生视频' }))} ariaLabel="生成方式" /></div>}
          {modelLimits.notes.length > 0 && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
          {usesMediaRelay && inputMode !== 'text' && <div className={`video-model-notice video-media-relay-notice ${mediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
-          <div><strong>{mediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : mediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : '正在检查图片处理服务'}</strong>
-           <span>{mediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : mediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
+           <div><strong>{mediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : mediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : mediaStatus?.relayConfigured ? '自动图片中转暂不可达' : '正在检查图片处理服务'}</strong>
+           <span>{mediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : mediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : mediaStatus?.relayConfigured ? '后台正在重建临时通道，恢复后无需重启；也可以点击重新检查。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
           <div className="video-media-relay-actions"><button type="button" onClick={() => void refreshMediaStatus()} disabled={mediaStatusBusy}>{mediaStatusBusy ? '检查中…' : '重新检查'}</button>{mediaStatus?.mode === 'unavailable' && onOpenProviders && <button type="button" onClick={onOpenProviders}>高级设置</button>}</div>
          </div>}
         {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 仅接受 first_frame 或 reference；首尾帧会按两张参考图提交。本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}

@@ -25,3 +25,12 @@ test('resets unsupported restored operations in the parameter editor', () => {
   assert.match(parameterEditor, /operationIsSupported/);
   assert.match(parameterEditor, /operation: "generate"/);
 });
+
+test('treats coarse video-generate metadata as image-input capable', () => {
+  assert.match(parameterEditor, /const supportsImageInput =/);
+  assert.match(parameterEditor, /model\.capabilities\.includes\("video-generate"\)/);
+  assert.match(parameterEditor, /const supportsReferenceImages =/);
+  assert.match(parameterEditor, /\.\.\.\(supportsImageInput/);
+  assert.match(parameterEditor, /\.\.\.\(supportsReferenceImages/);
+  assert.match(parameterEditor, /const supportsAudio|supports\("video-audio"\)/);
+});

@@ -196,7 +196,9 @@ free_relay_start() {
   STDOUT_FILE="$STATE_ROOT/cloudflared.out.log"
   STDERR_FILE="$STATE_ROOT/cloudflared.err.log"
   rm -f "$STDOUT_FILE" "$STDERR_FILE"
-  "$CLOUDFLARED_BINARY" tunnel --no-autoupdate --url "http://127.0.0.1:$ORIGIN_PORT" >"$STDOUT_FILE" 2>"$STDERR_FILE" &
+  # Force HTTP/2 over TCP. QUIC is blocked or unstable on many home and
+  # corporate networks, which can leave a quick-tunnel URL unreachable.
+  "$CLOUDFLARED_BINARY" tunnel --no-autoupdate --protocol http2 --url "http://127.0.0.1:$ORIGIN_PORT" >"$STDOUT_FILE" 2>"$STDERR_FILE" &
   CLOUDFLARED_PID=$!
   printf '%s\n' "$CLOUDFLARED_PID" > "$STATE_ROOT/cloudflared.pid"
 
@@ -206,8 +208,21 @@ free_relay_start() {
     PUBLIC_URL=$(cat "$STDOUT_FILE" "$STDERR_FILE" 2>/dev/null | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | head -n 1 | tr -d '\r' || true)
     if [ -n "$PUBLIC_URL" ]; then
       printf '%s\n' "$PUBLIC_URL" > "$STATE_ROOT/public-url.txt"
-      printf '%s' "$PUBLIC_URL"
-      return 0
+      # cloudflared prints the URL before the edge is ready. Only publish a
+      # tunnel after the public health endpoint reaches the local service.
+      PROBE_ATTEMPT=0
+      while [ $PROBE_ATTEMPT -lt 40 ]; do
+        if ! free_relay_pid_is_cloudflared "$CLOUDFLARED_PID"; then break; fi
+        if free_relay_probe "$ROOT_TO_USE"; then
+          printf '%s' "$PUBLIC_URL"
+          return 0
+        fi
+        PROBE_ATTEMPT=$((PROBE_ATTEMPT + 1))
+        sleep 0.5
+      done
+      free_relay_stop "$ROOT_TO_USE"
+      printf '%s\n' 'Media relay address was not reachable; retrying.' >&2
+      return 1
     fi
     ATTEMPT=$((ATTEMPT + 1))
     sleep 0.5

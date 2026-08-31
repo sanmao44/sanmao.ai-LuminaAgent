@@ -28,14 +28,8 @@ if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
+  free_relay_stop "$ROOT_DIR"
   printf '%s\n' '正在准备免费媒体中转通道（首次运行会自动下载组件）…'
-  if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
-    export SANMAO_RELAY_MODE=1
-    export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"
-    export SANMAO_MEDIA_RELAY_URL="$RELAY_URL"
-  else
-    printf '%s\n' '免费媒体中转通道暂时不可用；文本和普通图片功能仍可使用。'
-  fi
 else
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
@@ -53,7 +47,28 @@ cleanup() {
 trap cleanup EXIT
 node node_modules/next/dist/bin/next start -H 127.0.0.1 -p "$PORT" &
 SERVER_PID=$!
+READY=0
+ATTEMPT=0
+while [ $ATTEMPT -lt 150 ]; do
+  ATTEMPT=$((ATTEMPT + 1))
+  sleep 0.2
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
+  if curl --noproxy '*' -fsS --connect-timeout 0.3 --max-time 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then READY=1; break; fi
+done
+if [ "$READY" -ne 1 ]; then
+  kill "$SERVER_PID" 2>/dev/null || true
+  wait "$SERVER_PID" 2>/dev/null || true
+  printf '%s\n' 'SANMAO.AI 服务启动超时。' >&2
+  exit 1
+fi
 if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+  if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
+    export SANMAO_RELAY_MODE=1
+    export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"
+    export SANMAO_MEDIA_RELAY_URL="$RELAY_URL"
+  else
+    printf '%s\n' '免费媒体中转通道暂时不可用；后台将继续自动重试。'
+  fi
   free_relay_watch "$ROOT_DIR" "$SERVER_PID" "$PORT" &
   RELAY_WATCH_PID=$!
 fi

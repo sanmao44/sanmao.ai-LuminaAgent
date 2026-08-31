@@ -462,6 +462,24 @@ test('supports group-level connections without expanding into member edges', () 
   assert.equal(model.addEdge(document, sourceGroup.id, sourceGroup.id).edges.length, 3);
 });
 
+test('expands every media member when a group feeds a video node', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/group-video-first.png', '第一张参考图', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/group-video-second.png', '第二张参考图', { x: 0, y: 300 });
+  const third = model.createMedia('image', '/group-video-third.png', '第三张参考图', { x: 0, y: 600 });
+  const target = model.createGenerator('video', { x: 760, y: 220 }, { inputMode: 'reference' });
+  let document = { ...empty, nodes: [first, second, third, target] };
+  document = model.createGroup(document, [first.id, second.id, third.id]);
+  const sourceGroup = document.groups[0];
+
+  document = model.addEdge(document, sourceGroup.id, target.id);
+  assert.deepEqual(
+    model.incomingReferences(document, target.id).map((node) => node.id),
+    [first.id, second.id, third.id],
+  );
+  assert.equal(document.edges[0].source, sourceGroup.id);
+});
+
 test('normalizes variant requirements by removing blank lines and capping at eight', () => {
   const requirements = model.normalizeVariantRequirements(
     '  夜景  \n\n俯拍视角\r\n  \n替换成红色包装\n' +

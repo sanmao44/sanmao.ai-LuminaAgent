@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
@@ -140,6 +140,24 @@ function isUsablePublicBaseUrl(value: string) {
   } catch { return false; }
 }
 
+function ensureAutomaticRelayBypass(value: string) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    if (!hostname.endsWith('.trycloudflare.com')) return;
+    // The launcher may enable a local system proxy for upstream model calls.
+    // Quick-tunnel health and uploads must bypass that proxy: many proxy
+    // clients do not support trycloudflare's edge handshake reliably.
+    for (const key of ['NO_PROXY', 'no_proxy']) {
+      const current = String(process.env[key] || '');
+      const entries = current.split(',').map((entry) => entry.trim()).filter(Boolean);
+      if (!entries.some((entry) => entry === 'trycloudflare.com' || entry === '.trycloudflare.com')) {
+        entries.push('trycloudflare.com', '.trycloudflare.com');
+        process.env[key] = entries.join(',');
+      }
+    }
+  } catch {}
+}
+
 function assertUsablePublicBaseUrl(value: string, code = AGNES_PUBLIC_MEDIA_URL_INVALID) {
   if (!isUsablePublicBaseUrl(value)) {
     throw new PublicMediaError('图片中转服务地址无效：必须是外网可访问的 HTTPS 地址。', code);
@@ -272,19 +290,33 @@ async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image
   const relay = mediaRelayUrl();
   if (!relay) return null;
   const uploadToken = String(process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN || '').trim();
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const endpoint = assertUsablePublicBaseUrl(attempt === 0 ? relay : mediaRelayUrl(), AGNES_MEDIA_RELAY_UNAVAILABLE);
-    const form = new FormData();
-    const blobBytes = new Uint8Array(data.byteLength);
-    blobBytes.set(data);
-    form.append('file', new Blob([blobBytes.buffer], { type: mime }), `agnes-input.${extensionForMime(mime)}`);
-    form.append('kind', kind);
+  // A watcher may replace the tunnel while an upload is in flight. Re-read
+  // public-url.txt for each retry so the request follows the recovered URL.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const candidate = attempt === 0 ? relay : mediaRelayUrl();
+    if (!candidate) {
+      await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+      continue;
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
+      const endpoint = assertUsablePublicBaseUrl(candidate, AGNES_MEDIA_RELAY_UNAVAILABLE);
+      ensureAutomaticRelayBypass(endpoint);
+      const form = new FormData();
+      const blobBytes = new Uint8Array(data.byteLength);
+      blobBytes.set(data);
+      form.append('file', new Blob([blobBytes.buffer], { type: mime }), `agnes-input.${extensionForMime(mime)}`);
+      form.append('kind', kind);
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 8_000);
       const response = await fetch(`${endpoint}/api/relay/media`, {
         method: 'POST',
         ...(uploadToken ? { headers: { 'x-sanmao-relay-token': uploadToken } } : {}),
         body: form,
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
+      timeout = undefined;
       const payload = await response.json().catch(() => ({})) as { url?: unknown; expiresAt?: unknown; error?: unknown };
       if (!response.ok || typeof payload.url !== 'string') {
         const message = typeof payload.error === 'string' ? payload.error : response.status === 429 ? '上传过于频繁，请稍后重试' : '图片不符合中转服务要求';
@@ -297,12 +329,22 @@ async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image
       if (!isUsablePublicBaseUrl(url) || parsed.origin !== new URL(endpoint).origin) throw new Error('中转服务返回的图片地址不安全');
       return { url, expiresAt: typeof payload.expiresAt === 'string' ? payload.expiresAt : undefined };
     } catch (error) {
+      if (timeout) clearTimeout(timeout);
       if (error instanceof PublicMediaError) throw error;
-      if (attempt === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
         continue;
       }
-      throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
+      // Leave the loop so the stale quick-tunnel URL can be invalidated
+      // before returning the user-facing relay error below.
+      if (process.env.SANMAO_RELAY_MODE === '1') {
+        try {
+          const file = path.join(dataDir(), 'free-relay', 'public-url.txt');
+          if (readFileSync(file, 'utf8').trim().replace(/\/+$/, '') === relay) rmSync(file, { force: true });
+        } catch {}
+      }
+      break;
+
     }
   }
   throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
@@ -315,6 +357,39 @@ export function getPublicMediaTransportStatus() {
     mode: relay ? 'relay' : publicBase ? 'self-hosted' : 'unavailable',
     relayConfigured: Boolean(relay),
     publicBaseConfigured: Boolean(publicBase),
+  } as const;
+}
+
+/**
+ * Return transport status with a short live probe for the automatically
+ * managed relay. A quick-tunnel URL can remain on disk after cloudflared has
+ * lost its edge connection, so configuration alone is not a health signal.
+ */
+export async function getPublicMediaTransportStatusLive() {
+  const status = getPublicMediaTransportStatus();
+  const relay = mediaRelayUrl();
+  if (!relay) return status;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_500);
+  let reachable = false;
+  try {
+    ensureAutomaticRelayBypass(relay);
+    const response = await fetch(`${relay}/api/health`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      const payload = await response.json().catch(() => null) as { service?: unknown; ok?: unknown } | null;
+      reachable = payload?.service === 'sanmao-ai-studio' && payload?.ok === true;
+    }
+  } catch {}
+  clearTimeout(timeout);
+  return {
+    ...status,
+    mode: reachable ? 'relay' : 'unavailable',
+    relayConfigured: true,
+    publicUrl: relay,
+    reachable,
   } as const;
 }
 

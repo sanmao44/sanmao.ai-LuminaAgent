@@ -257,16 +257,8 @@ if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
+  free_relay_stop "$ROOT_DIR"
   printf '%s\n' '正在准备免费媒体中转通道（首次运行会自动下载组件）…'
-  if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
-    export SANMAO_RELAY_MODE=1
-    export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"
-    export SANMAO_MEDIA_RELAY_URL="$RELAY_URL"
-    sanmao_log "已启动免费临时通道：$RELAY_URL" INFO
-  else
-    printf '%s\n' '免费媒体中转通道暂时不可用；文本和普通图片功能仍可使用。'
-    sanmao_log '免费临时通道未启动，本地图生视频将提示重试。' WARN
-  fi
 else
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
@@ -308,6 +300,20 @@ if [ $READY -ne 1 ]; then
   kill $SERVER_PID 2>/dev/null || true
   wait $SERVER_PID 2>/dev/null || true
   fail '启动超时。'
+fi
+
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+  if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
+    export SANMAO_RELAY_MODE=1
+    export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"
+    export SANMAO_MEDIA_RELAY_URL="$RELAY_URL"
+    sanmao_log "已启动免费临时通道：$RELAY_URL" INFO
+  else
+    printf '%s\n' '免费媒体中转通道暂时不可用；后台将继续自动重试。'
+    sanmao_log '免费临时通道首次启动失败，将继续自动重试。' WARN
+  fi
+  free_relay_watch "$ROOT_DIR" "$SERVER_PID" "$PORT" &
+  RELAY_WATCH_PID=$!
 fi
 
 printf 'SANMAO.AI 已启动：%s\n' $URL

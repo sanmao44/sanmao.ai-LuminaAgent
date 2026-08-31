@@ -118,10 +118,13 @@ function Start-SanmaoFreeRelayTunnel {
   $stdoutPath = Join-Path $stateRoot 'cloudflared.out.log'
   $stderrPath = Join-Path $stateRoot 'cloudflared.err.log'
   Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+  # QUIC is unreliable on a number of Windows networks. HTTP/2 over TCP is a
+  # little less aggressive, but keeps the quick tunnel reachable instead of
+  # repeatedly returning a URL whose edge connection is dead.
   try {
     $process = Start-Process `
       -FilePath $cloudflared `
-      -ArgumentList @('tunnel', '--no-autoupdate', '--url', "http://127.0.0.1:$OriginPort") `
+      -ArgumentList @('tunnel', '--no-autoupdate', '--protocol', 'http2', '--url', "http://127.0.0.1:$OriginPort") `
       -WorkingDirectory $Root `
       -WindowStyle Hidden `
       -RedirectStandardOutput $stdoutPath `
@@ -143,7 +146,22 @@ function Start-SanmaoFreeRelayTunnel {
     if ($match.Success) {
       $publicUrl = $match.Value.TrimEnd('/')
       Set-Content -LiteralPath (Join-Path $stateRoot 'public-url.txt') -Value $publicUrl -Encoding ASCII
-      return [pscustomobject]@{ ProcessId = $process.Id; PublicUrl = $publicUrl }
+      # cloudflared prints the quick-tunnel URL before the edge is ready. Do
+      # not publish that address to the app until the public health endpoint
+      # proves that the tunnel reaches the local service.
+      $reachable = $false
+      for ($probeAttempt = 0; $probeAttempt -lt 40; $probeAttempt++) {
+        if ($process.HasExited) { break }
+        if (Test-SanmaoFreeRelayReachable -Root $Root) { $reachable = $true; break }
+        Start-Sleep -Milliseconds 500
+      }
+      if ($reachable) {
+        return [pscustomobject]@{ ProcessId = $process.Id; PublicUrl = $publicUrl }
+      }
+      try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+      Remove-Item -LiteralPath (Join-Path $stateRoot 'cloudflared.pid'), (Join-Path $stateRoot 'public-url.txt') -Force -ErrorAction SilentlyContinue
+      Write-Warning '免费临时通道地址不可达；正在重新尝试。'
+      return $null
     }
     Start-Sleep -Milliseconds 500
   }

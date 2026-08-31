@@ -433,7 +433,10 @@ if ($existing) {
   $freeRelayMismatch =
     ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and (
       $existing.MediaRelayMode -in @('unknown', 'unavailable') -or
-      ($existing.MediaRelayMode -eq 'relay' -and -not (Test-SanmaoFreeRelayTunnel -Root $root))
+      ($existing.MediaRelayMode -eq 'relay' -and (
+        -not (Test-SanmaoFreeRelayTunnel -Root $root) -or
+        -not (Test-SanmaoFreeRelayReachable -Root $root)
+      ))
     )) -or
     (-not $script:MediaRelayRequired -and $existing.MediaRelayMode -eq 'relay')
   if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent -or $freeRelayMismatch) {
@@ -652,19 +655,15 @@ if ($port -gt $portEnd) {
   }
 }
 
+$freeRelayRequested = $FreeRelay.IsPresent -and $script:MediaRelayRequired
 if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
-  Write-Host '正在准备免费媒体中转通道…' -ForegroundColor Yellow
+  # Set relay mode before the Next process starts. The tunnel itself is
+  # created after the local health endpoint is ready; otherwise cloudflared
+  # can publish an address that points at a service which is not listening yet.
   Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
   $env:SANMAO_RELAY_MODE = '1'
   if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
     Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
-  }
-  $freeRelayInfo = Start-SanmaoFreeRelayTunnel -Root $root -OriginPort $port
-  if ($freeRelayInfo) {
-    $env:SANMAO_RELAY_MODE = '1'
-    $env:SANMAO_RELAY_PUBLIC_BASE_URL = $freeRelayInfo.PublicUrl
-    $env:SANMAO_MEDIA_RELAY_URL = $freeRelayInfo.PublicUrl
-    Write-SanmaoLauncherLog "已启动免费临时通道：$($freeRelayInfo.PublicUrl)" 'INFO'
   }
 } elseif (-not $script:MediaRelayRequired) {
   Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
@@ -692,18 +691,6 @@ $script:serverProcess = Start-Process `
   -RedirectStandardError $serverStderrPath `
   -PassThru
 
-if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
-  try {
-    $watchScript = Join-Path $PSScriptRoot 'free-relay-watch.ps1'
-    Start-Process -FilePath 'powershell.exe' `
-      -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id, '-OriginPort', [string]$port) `
-      -WorkingDirectory $root `
-      -WindowStyle Hidden | Out-Null
-  } catch {
-    Write-SanmaoLauncherLog "免费临时通道自动清理监视器启动失败：$($_.Exception.Message)" 'WARN'
-  }
-}
-
 Write-Host "正在等待 http://localhost:$port 启动..." -ForegroundColor Yellow
 Write-SanmaoLauncherLog "已启动服务进程 PID $($script:serverProcess.Id)，等待端口 $port 就绪。" 'INFO'
 $ready = $false
@@ -717,6 +704,30 @@ for ($i = 0; $i -lt 150; $i++) {
 
 if (-not $ready) {
   Fail '服务器没有在预期时间内启动。'
+}
+
+if ($freeRelayRequested) {
+  Write-Host '正在准备免费媒体中转通道…' -ForegroundColor Yellow
+  $freeRelayInfo = Start-SanmaoFreeRelayTunnel -Root $root -OriginPort $port
+  if ($freeRelayInfo) {
+    # The server reads the current URL from public-url.txt on each upload, so
+    # recovery does not require restarting the Next process.
+    $env:SANMAO_RELAY_MODE = '1'
+    $env:SANMAO_RELAY_PUBLIC_BASE_URL = $freeRelayInfo.PublicUrl
+    $env:SANMAO_MEDIA_RELAY_URL = $freeRelayInfo.PublicUrl
+    Write-SanmaoLauncherLog "已启动免费临时通道：$($freeRelayInfo.PublicUrl)" 'INFO'
+  } else {
+    Write-SanmaoLauncherLog '免费临时通道首次启动失败，监视器将自动重试。' 'WARN'
+  }
+  try {
+    $watchScript = Join-Path $PSScriptRoot 'free-relay-watch.ps1'
+    Start-Process -FilePath 'powershell.exe' `
+      -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id, '-OriginPort', [string]$port) `
+      -WorkingDirectory $root `
+      -WindowStyle Hidden | Out-Null
+  } catch {
+    Write-SanmaoLauncherLog "免费临时通道自动清理监视器启动失败：$($_.Exception.Message)" 'WARN'
+  }
 }
 
 $url = "http://localhost:$port"

@@ -542,6 +542,18 @@ function VideoEditor({
   );
   const supports = (capability: ModelCapability) =>
     !model || model.capabilities.includes(capability);
+  // Providers that expose only the coarse video-generate capability often do
+  // support image-to-video, but omit granular input metadata. Keep the canvas
+  // and main video panels consistent by treating it as image-input capable;
+  // audio remains gated by its explicit capability below.
+  const supportsImageInput =
+    !model ||
+    model.capabilities.includes("video-generate") ||
+    model.capabilities.includes("video-first-frame");
+  const supportsReferenceImages =
+    !model ||
+    model.capabilities.includes("video-generate") ||
+    model.capabilities.includes("video-reference");
   const supportsOperationEdit =
     !operationModel || operationModel.capabilities.includes("video-edit");
   const supportsOperationExtend =
@@ -573,7 +585,7 @@ function VideoEditor({
   ];
   const inputOptions = [
     { value: "text" as const, label: "文生视频", description: "仅使用提示词" },
-    ...(supports("video-first-frame")
+    ...(supportsImageInput
       ? [
           {
             value: "first-frame" as const,
@@ -587,7 +599,7 @@ function VideoEditor({
           },
         ]
       : []),
-    ...(supports("video-reference")
+    ...(supportsReferenceImages
       ? [
           {
             value: "reference" as const,

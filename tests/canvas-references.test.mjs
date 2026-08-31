@@ -72,6 +72,19 @@ test("resolves reference, first-frame, and first/last-frame slots without deleti
   assert.deepEqual(frames.unused.map((item) => item.id), ["img-3"]);
 });
 
+test("keeps grouped image references and video inputs separate", () => {
+  const result = references.resolveCanvasVideoInputs([
+    node("img-1", "media", "image"),
+    node("img-2", "media", "image"),
+    node("img-3", "media", "image"),
+    node("video-1", "media", "video"),
+  ], "reference", undefined, { maxReferenceImages: 16 });
+
+  assert.deepEqual(result.referenceImages.map((item) => item.id), ["img-1", "img-2", "img-3"]);
+  assert.equal(result.referenceVideo?.id, "video-1");
+  assert.deepEqual(result.unusedInputs, []);
+});
+
 test("preserves explicit frame roles while legacy reference roles fill the next available slot", () => {
   const images = [node("img-a", "media", "image"), node("img-b", "media", "image"), node("img-c", "media", "image")];
   const roles = new Map([
