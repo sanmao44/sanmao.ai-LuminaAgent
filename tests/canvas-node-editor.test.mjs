@@ -172,7 +172,7 @@ test("selected related canvas edges become dashed and animate their flow", () =>
   assert.match(styles, /canvas-edge-related-flow,html:not\(\[data-motion="on"\]\) \.canvas-edge\.related\{animation:none!important\}/);
 });
 
-test("canvas edges reveal one small, non-danger removal control without a modifier", () => {
+test("canvas edges reveal one small red removal control without a modifier", () => {
   assert.match(component, /const handleConnectionHover = useCallback/);
   assert.match(component, /showConnectionCancel\(edgeId\)/);
   assert.match(component, /onHover=\{\(\) => handleConnectionHover\(edge\.id\)\}/);
@@ -180,7 +180,8 @@ test("canvas edges reveal one small, non-danger removal control without a modifi
   assert.doesNotMatch(component, /悬停连线显示取消按钮/);
   assert.match(styles, /\.canvas-connection-cancel\{[^}]*width:14px[^}]*height:14px/);
   assert.match(styles, /\.canvas-connection-remove\{width:12px[^}]*height:12px/);
-  assert.doesNotMatch(styles, /\.canvas-connection-cancel\{[^}]*var\(--danger\)/);
+  assert.match(styles, /\.canvas-connection-cancel\{[^}]*color:color-mix\(in srgb,var\(--danger\)/);
+  assert.match(styles, /\.canvas-connection-cancel:hover,.canvas-connection-cancel:focus-visible\{[^}]*background:color-mix\(in srgb,var\(--danger-soft\)/);
 });
 
 test("nested node scrolling does not trigger canvas zoom", () => {
