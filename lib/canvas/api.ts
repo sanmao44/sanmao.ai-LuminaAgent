@@ -466,13 +466,22 @@ export async function generateCanvasVideo(input: {
         ? await compressReferenceDataUrl(await asDataUrl(input.lastFrame))
         : referenceData[1]
       : undefined;
+  if (input.inputMode === "first-frame" && !firstFrame) {
+    throw new Error("首帧模式请先添加首帧图片。");
+  }
+  if (input.inputMode === "frames" && (!firstFrame || !lastFrame)) {
+    throw new Error("首尾帧模式请先添加首帧和尾帧图片。");
+  }
   const videoMode = input.inputMode === "reference"
     ? "reference"
-    : input.inputMode === "first-frame" || input.inputMode === "frames"
+    : input.inputMode === "frames"
       ? "keyframe"
       : input.inputMode === "text"
         ? "text"
         : undefined;
+  const referenceVideo = input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend"
+    ? input.referenceVideo
+    : undefined;
   const result = await request<{
     task: {
       id: string;
@@ -498,7 +507,7 @@ export async function generateCanvasVideo(input: {
         ...(videoMode ? { videoMode } : {}),
         seconds: Number(input.duration || 5),
         aspectRatio: input.aspect || "16:9",
-        resolution: input.resolution || "720P",
+        resolution: input.resolution || "720p",
         ...(firstFrame ? { firstFrame } : {}),
         ...(lastFrame ? { lastFrame } : {}),
         referenceImages:
@@ -507,8 +516,8 @@ export async function generateCanvasVideo(input: {
             : input.inputMode
               ? []
               : referenceData,
-        ...(input.referenceVideo
-          ? { referenceVideo: input.referenceVideo }
+        ...(referenceVideo
+          ? { referenceVideo }
           : {}),
       },
     }),

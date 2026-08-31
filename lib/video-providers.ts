@@ -356,9 +356,15 @@ function validateAgnesV20Dimensions(width: number, height: number) {
 
 export function buildAgnesVideoPayload(rawModelId: string, input: VideoGenerationInput, media: { firstFrame?: string; lastFrame?: string; referenceImages?: string[]; referenceVideos?: string[]; audios?: string[] } = {}) {
   const model = String(rawModelId || '').trim();
-  const images = media.referenceImages || input.referenceImages || [];
-  const videos = media.referenceVideos || videoReferenceValues(input);
-  const audios = media.audios || audioValues(input);
+  const cleanMediaString = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+  const cleanMediaList = (value: unknown) => Array.isArray(value)
+    ? value.map(cleanMediaString).filter(Boolean)
+    : [];
+  const images = cleanMediaList(media.referenceImages ?? input.referenceImages);
+  const videos = cleanMediaList(media.referenceVideos ?? videoReferenceValues(input));
+  const audios = cleanMediaList(media.audios ?? audioValues(input));
+  const firstFrame = cleanMediaString(media.firstFrame) || cleanMediaString(input.firstFrame) || undefined;
+  const lastFrame = cleanMediaString(media.lastFrame) || cleanMediaString(input.lastFrame) || undefined;
   const isV20 = /agnes-video-v2\.0/i.test(model);
   if (isV20) {
     if (videos.length || audios.length) throw new VideoProviderError('Agnes Video V2.0 不接受参考视频或音频输入。', { code: 'AGNES_UNSUPPORTED_MEDIA' });
@@ -370,13 +376,22 @@ export function buildAgnesVideoPayload(rawModelId: string, input: VideoGeneratio
     if (!Number.isInteger(frameRate) || frameRate < 1 || frameRate > 60) throw new VideoProviderError('Agnes Video V2.0 的 frame_rate 必须在 1–60 之间。', { code: 'AGNES_INVALID_FRAME_RATE' });
     const extraBody: Record<string, unknown> = {};
     let image: string | string[] | undefined;
-    if (input.videoMode === 'keyframe' || input.lastFrame) {
-      const keyframes = [media.firstFrame || input.firstFrame, media.lastFrame || input.lastFrame].filter(Boolean);
-      if (!keyframes.length) throw new VideoProviderError('Agnes Video V2.0 关键帧模式至少需要一张首帧或尾帧图片。', { code: 'AGNES_KEYFRAME_REQUIRED' });
+    const hasFirstFrame = Boolean(firstFrame);
+    const hasLastFrame = Boolean(lastFrame);
+    if (input.videoMode && !['text', 'keyframe', 'reference'].includes(input.videoMode)) throw new VideoProviderError('Agnes Video V2.0 的视频模式无效。', { code: 'AGNES_INVALID_MODE' });
+    if (input.videoMode === 'text' && (hasFirstFrame || hasLastFrame || images.length)) throw new VideoProviderError('Agnes Video V2.0 文生视频模式不允许图片输入。', { code: 'AGNES_TEXT_MEDIA_NOT_ALLOWED' });
+    if (input.videoMode === 'reference' && (hasFirstFrame || hasLastFrame)) throw new VideoProviderError('Agnes Video V2.0 参考图模式不允许首帧或尾帧输入。', { code: 'AGNES_REFERENCE_FRAME_NOT_ALLOWED' });
+    if (input.videoMode === 'reference' && !images.length) throw new VideoProviderError('Agnes Video V2.0 参考图模式至少需要一张参考图片。', { code: 'AGNES_REFERENCE_REQUIRED' });
+    if ((input.videoMode === 'keyframe' || hasLastFrame) && (!hasFirstFrame || !hasLastFrame)) {
+      throw new VideoProviderError('Agnes Video V2.0 关键帧模式需要首帧和尾帧两张图片；单张图片请使用首帧模式。', { code: 'AGNES_KEYFRAME_REQUIRED' });
+    }
+    if (input.videoMode === 'keyframe' && images.length) throw new VideoProviderError('Agnes Video V2.0 关键帧模式不允许同时传入参考图片。', { code: 'AGNES_KEYFRAME_MEDIA_NOT_ALLOWED' });
+    if (input.videoMode === 'keyframe' || hasLastFrame) {
+      const keyframes = [firstFrame, lastFrame].filter(Boolean);
       extraBody.image = keyframes;
       extraBody.mode = 'keyframes';
-    } else if (media.firstFrame || input.firstFrame || images.length) {
-      image = media.firstFrame || input.firstFrame || (images.length === 1 ? images[0] : images);
+    } else if (firstFrame || images.length) {
+      image = firstFrame || (images.length === 1 ? images[0] : images);
     }
     return {
       model,
@@ -400,10 +415,10 @@ export function buildAgnesVideoPayload(rawModelId: string, input: VideoGeneratio
   if (flash && size !== '720P') throw new VideoProviderError('Agnes Video 2.5 Flash 固定使用 720P。', { code: 'AGNES_INVALID_SIZE' });
   if (flash && images.length > 5) throw new VideoProviderError('Agnes Video 2.5 Flash 最多接收 5 张参考图片。', { code: 'AGNES_REFERENCE_IMAGE_LIMIT' });
   if (flash && videos.length) throw new VideoProviderError('Agnes Video 2.5 Flash 不支持参考视频。', { code: 'AGNES_REFERENCE_VIDEO_UNSUPPORTED' });
-  const mode = input.videoMode || (input.firstFrame || input.lastFrame ? 'keyframe' : images.length || videos.length || audios.length ? 'reference' : 'text');
+  const mode = input.videoMode || (firstFrame || lastFrame ? 'keyframe' : images.length || videos.length || audios.length ? 'reference' : 'text');
   if (!['text', 'keyframe', 'reference'].includes(mode)) throw new VideoProviderError('Agnes Video 2.5 的 mode 必须为 text、keyframe 或 reference。', { code: 'AGNES_INVALID_MODE' });
-  const hasFirstFrame = Boolean(input.firstFrame || media.firstFrame);
-  const hasLastFrame = Boolean(input.lastFrame || media.lastFrame);
+  const hasFirstFrame = Boolean(firstFrame);
+  const hasLastFrame = Boolean(lastFrame);
   if (mode === 'text' && (hasFirstFrame || hasLastFrame || images.length || videos.length || audios.length)) throw new VideoProviderError('Agnes text 模式不允许首尾帧、参考图片、参考视频或音频输入。', { code: 'AGNES_TEXT_MEDIA_NOT_ALLOWED' });
   if (mode === 'keyframe' && !hasFirstFrame && !hasLastFrame) throw new VideoProviderError('Agnes keyframe 模式至少需要 first_frame 或 last_frame。', { code: 'AGNES_KEYFRAME_REQUIRED' });
   if (mode === 'keyframe' && (images.length || videos.length || audios.length)) throw new VideoProviderError('Agnes keyframe 模式不允许参考图片、参考视频或音频输入。', { code: 'AGNES_KEYFRAME_MEDIA_NOT_ALLOWED' });
@@ -419,8 +434,8 @@ export function buildAgnesVideoPayload(rawModelId: string, input: VideoGeneratio
     mode,
     ...(ratio ? { aspect_ratio: ratio } : {}),
     ...(mode === 'keyframe' ? {
-      ...(media.firstFrame || input.firstFrame ? { first_frame: media.firstFrame || input.firstFrame } : {}),
-      ...(media.lastFrame || input.lastFrame ? { last_frame: media.lastFrame || input.lastFrame } : {}),
+      ...(firstFrame ? { first_frame: firstFrame } : {}),
+      ...(lastFrame ? { last_frame: lastFrame } : {}),
     } : {}),
     ...(mode === 'reference' ? {
       ...(images.length ? { images: images.map((url) => ({ url })) } : {}),

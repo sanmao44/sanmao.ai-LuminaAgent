@@ -190,6 +190,18 @@ test('builds Agnes V2.0 image and keyframe video payloads', () => {
   const keyframes = video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'transition', videoMode: 'keyframe', firstFrame: 'https://cdn.example/first.png', lastFrame: 'https://cdn.example/last.png' });
   assert.deepEqual(keyframes.extra_body, { image: ['https://cdn.example/first.png', 'https://cdn.example/last.png'], mode: 'keyframes' });
   assert.equal(keyframes.image, undefined);
+  assert.throws(
+    () => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'incomplete', videoMode: 'keyframe', firstFrame: 'https://cdn.example/first.png' }),
+    (error) => error.code === 'AGNES_KEYFRAME_REQUIRED' && /两张图片/.test(error.message),
+  );
+  assert.throws(
+    () => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'text with image', videoMode: 'text', firstFrame: 'https://cdn.example/first.png' }),
+    (error) => error.code === 'AGNES_TEXT_MEDIA_NOT_ALLOWED',
+  );
+  assert.throws(
+    () => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'empty reference mode', videoMode: 'reference' }),
+    (error) => error.code === 'AGNES_REFERENCE_REQUIRED',
+  );
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad size', width: 1153, height: 768 }), /宽度和高度必须是 64 的倍数/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad', referenceVideo: 'https://cdn.example/ref.mp4' }), /不接受参考视频/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-v2.0', { prompt: 'bad', numFrames: 82 }), /8n \+ 1/);

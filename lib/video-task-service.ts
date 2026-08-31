@@ -15,23 +15,42 @@ function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGener
   const requestedSeconds = Number(input.seconds);
   const fallbackSeconds = Number.isFinite(defaultSeconds) ? Math.max(1, Math.min(60, defaultSeconds)) : 5;
   const seconds = Number.isFinite(requestedSeconds) ? Math.max(1, Math.min(60, requestedSeconds)) : fallbackSeconds;
+  const cleanString = (value: unknown) => {
+    if (typeof value !== 'string') return undefined;
+    const cleaned = value.trim();
+    return cleaned || undefined;
+  };
+  const cleanList = (value: unknown, maximum: number) => Array.isArray(value)
+    ? value.map(cleanString).filter((item): item is string => Boolean(item)).slice(0, maximum)
+    : [];
+  const firstFrame = cleanString(input.firstFrame);
+  const lastFrame = cleanString(input.lastFrame);
+  const singleReferenceVideo = cleanString(input.referenceVideo);
+  const singleAudio = cleanString(input.audio);
   const referenceVideos = Array.isArray(input.referenceVideos)
-    ? input.referenceVideos.filter((item): item is string => typeof item === 'string' && item.length > 0).slice(0, 10)
-    : input.referenceVideo ? [String(input.referenceVideo)] : [];
+    ? cleanList(input.referenceVideos, 10)
+    : singleReferenceVideo ? [singleReferenceVideo] : [];
   const audios = Array.isArray(input.audios)
-    ? input.audios.filter((item): item is string => typeof item === 'string' && item.length > 0).slice(0, 10)
-    : input.audio ? [String(input.audio)] : [];
+    ? cleanList(input.audios, 10)
+    : singleAudio ? [singleAudio] : [];
+  const normalizedReferenceVideos = referenceVideos.length
+    ? referenceVideos
+    : singleReferenceVideo ? [singleReferenceVideo] : [];
+  const normalizedAudios = audios.length
+    ? audios
+    : singleAudio ? [singleAudio] : [];
+  const referenceImages = cleanList(input.referenceImages, 16);
   return {
     prompt,
     operation,
     seconds,
     ...(input.aspectRatio ? { aspectRatio: String(input.aspectRatio) } : {}),
-    ...(input.resolution ? { resolution: String(input.resolution) } : {}),
-    ...(input.firstFrame ? { firstFrame: String(input.firstFrame) } : {}),
-    ...(input.lastFrame ? { lastFrame: String(input.lastFrame) } : {}),
-    referenceImages: Array.isArray(input.referenceImages) ? input.referenceImages.filter((item): item is string => typeof item === 'string' && item.length > 0).slice(0, 16) : [],
-    ...(referenceVideos.length ? { referenceVideos, referenceVideo: referenceVideos[0] } : {}),
-    ...(audios.length ? { audios, audio: audios[0] } : {}),
+    ...(input.resolution ? { resolution: String(input.resolution).trim().toLowerCase() } : {}),
+    ...(firstFrame ? { firstFrame } : {}),
+    ...(lastFrame ? { lastFrame } : {}),
+    referenceImages,
+    ...(normalizedReferenceVideos.length ? { referenceVideos: normalizedReferenceVideos, referenceVideo: normalizedReferenceVideos[0] } : {}),
+    ...(normalizedAudios.length ? { audios: normalizedAudios, audio: normalizedAudios[0] } : {}),
     ...(input.videoMode ? { videoMode: input.videoMode } : {}),
     ...(Number.isFinite(Number(input.width)) ? { width: Math.round(Number(input.width)) } : {}),
     ...(Number.isFinite(Number(input.height)) ? { height: Math.round(Number(input.height)) } : {}),
@@ -45,12 +64,12 @@ function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGener
 }
 
 function validItemCount(value: unknown) {
-  return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.length > 0).length : 0;
+  return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && Boolean(item.trim())).length : 0;
 }
 
 function effectiveMediaCount(values: unknown, single: unknown) {
   const arrayCount = validItemCount(values);
-  return arrayCount > 0 ? arrayCount : (typeof single === 'string' && single.length > 0 ? 1 : 0);
+  return arrayCount > 0 ? arrayCount : (typeof single === 'string' && Boolean(single.trim()) ? 1 : 0);
 }
 
 function assertGenericInputLimits(input: VideoGenerationInput) {
@@ -78,7 +97,9 @@ function validateModelInput(input: VideoGenerationInput, rawInput: VideoGenerati
     if (limits.allowedSeconds && !limits.allowedSeconds.includes(seconds)) throw new Error(`当前${providerLabel}模型仅支持 ${limits.minSeconds}–${limits.maxSeconds} 秒视频。`);
     if (!limits.fixedSeconds && !limits.allowedSeconds && (seconds < limits.minSeconds || seconds > limits.maxSeconds)) throw new Error(`当前${providerLabel}模型仅支持 ${limits.minSeconds}–${limits.maxSeconds} 秒视频。`);
   }
-  if (rawInput.resolution !== undefined && !omitsAspectRatioResolution && !limits.resolutions.includes(String(input.resolution))) {
+  const requestedResolution = String(input.resolution || '').trim().toLowerCase();
+  const allowedResolutions = limits.resolutions.map((value) => String(value).trim().toLowerCase());
+  if (rawInput.resolution !== undefined && !omitsAspectRatioResolution && !allowedResolutions.includes(requestedResolution)) {
     throw new Error(`当前${providerLabel}模型仅支持 ${limits.resolutions.join('、')}。`);
   }
 }
@@ -87,6 +108,15 @@ function validateAgnesInput(input: VideoGenerationInput, rawInput: VideoGenerati
   const lower = modelId.toLowerCase();
   if (/agnes-video-v2\.0/.test(lower)) {
     if (input.referenceVideos?.length || input.referenceVideo || input.audios?.length || input.audio) throw new Error('Agnes Video V2.0 不接受参考视频或音频输入。');
+    if (input.videoMode && !['text', 'keyframe', 'reference'].includes(input.videoMode)) throw new Error('Agnes Video V2.0 的视频模式无效。');
+    const hasFirstFrame = Boolean(input.firstFrame);
+    const hasLastFrame = Boolean(input.lastFrame);
+    const hasImages = Boolean(input.referenceImages?.length);
+    if (input.videoMode === 'text' && (hasFirstFrame || hasLastFrame || hasImages)) throw new Error('Agnes Video V2.0 文生视频模式不允许图片输入。');
+    if (input.videoMode === 'reference' && (hasFirstFrame || hasLastFrame)) throw new Error('Agnes Video V2.0 参考图模式不允许首帧或尾帧输入。');
+    if (input.videoMode === 'reference' && !hasImages) throw new Error('Agnes Video V2.0 参考图模式至少需要一张参考图片。');
+    if ((input.videoMode === 'keyframe' || hasLastFrame) && (!hasFirstFrame || !hasLastFrame)) throw new Error('Agnes Video V2.0 关键帧模式需要首帧和尾帧两张图片；单张图片请使用首帧模式。');
+    if (input.videoMode === 'keyframe' && hasImages) throw new Error('Agnes Video V2.0 关键帧模式不允许同时传入参考图片。');
     const frames = Number(input.numFrames ?? 81);
     const rate = Number(input.frameRate ?? 24);
     const width = Number(input.width ?? 1152);
@@ -147,7 +177,9 @@ function dataUriBytes(value: string) {
 }
 
 function inlineMediaBytes(input: VideoGenerationInput) {
-  return [input.firstFrame, input.lastFrame, ...(input.referenceImages || []), ...(input.referenceVideos || []), input.referenceVideo, ...(input.audios || []), input.audio]
+  const referenceVideos = input.referenceVideos?.length ? input.referenceVideos : input.referenceVideo ? [input.referenceVideo] : [];
+  const audios = input.audios?.length ? input.audios : input.audio ? [input.audio] : [];
+  return [input.firstFrame, input.lastFrame, ...(input.referenceImages || []), ...referenceVideos, ...audios]
     .filter((value): value is string => Boolean(value))
     .reduce((total, value) => total + dataUriBytes(value), 0);
 }

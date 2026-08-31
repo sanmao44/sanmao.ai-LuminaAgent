@@ -43,3 +43,25 @@ test('pure image generation excludes edit-only models and honors the configured 
   const selected = settings.resolveAvailableCreationModel(settings.defaultImageCreationSettings(runtime), runtime);
   assert.equal(selected.model?.id, 'gpt-image');
 });
+
+test('automatic video settings resolve the actual default video model', () => {
+  const videoRuntime = {
+    ...runtime,
+    models: [
+      { id: 'agnes-v20', rawId: 'agnes-video-v2.0', displayName: 'Agnes Video V2.0', providerId: 'agnes', kind: 'video', enabled: true, published: true, capabilities: ['video-generate', 'video-first-frame', 'video-reference'] },
+      { id: 'generic-video', rawId: 'generic-video', displayName: 'Generic Video', providerId: 'draw', kind: 'video', enabled: true, published: true, capabilities: ['video-generate'] },
+    ],
+    providers: [
+      { id: 'agnes', name: 'Agnes', platform: 'agnes' },
+      { id: 'draw', name: 'Draw', platform: 'openai' },
+    ],
+    settings: {
+      ...runtime.settings,
+      defaultVideoModelId: 'agnes-v20',
+      defaultProviderId: 'agnes',
+    },
+  };
+  const selected = settings.resolveAvailableCreationModel(settings.defaultVideoCreationSettings(videoRuntime), videoRuntime);
+  assert.equal(selected.model?.id, 'agnes-v20');
+  assert.equal(selected.model?.rawId, 'agnes-video-v2.0');
+});

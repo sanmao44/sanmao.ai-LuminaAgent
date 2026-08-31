@@ -911,11 +911,32 @@ function canvasVideoInputError(
   inputs: ReturnType<typeof resolveCanvasVideoInputs>,
   inputMode: CanvasVideoInputMode,
   limits: ReturnType<typeof getVideoModelLimits>,
+  operation: VideoCreationSettings["operation"] = "generate",
 ) {
+  const connectedImages = inputs.orderedImages;
   const connectedVideos = inputs.media.filter((node) => node.data.kind === "video");
-  if (!connectedVideos.length) return undefined;
   if (inputMode === "text") {
-    return "已连接参考视频，但当前为文生视频模式；请切换到参考图/编辑模式后再生成。";
+    if (connectedImages.length || connectedVideos.length) return "已连接图片或参考视频，但当前为文生视频模式；请切换到图片/参考模式，或移除输入后再生成。";
+    return undefined;
+  }
+  if (inputMode === "first-frame") {
+    if (!inputs.firstFrame) return "首帧模式请先连接一张首帧图片。";
+    if (inputs.unused.some((node) => node.data.kind === "image")) return "首帧模式只支持一张图片；请切换到首尾帧或参考图模式。";
+  }
+  if (inputMode === "frames") {
+    if (!inputs.firstFrame || !inputs.lastFrame) return "首尾帧模式请先连接首帧和尾帧两张图片。";
+    if (inputs.unused.some((node) => node.data.kind === "image")) return "首尾帧模式只支持首帧和尾帧两张图片；请移除多余图片或切换到参考图模式。";
+  }
+  if (inputMode === "reference") {
+    if (!inputs.referenceImages.length && !inputs.referenceVideo) return "参考图模式请先连接图片或参考视频。";
+    if (inputs.unused.some((node) => node.data.kind === "image")) return `当前模型最多接收 ${limits.maxReferenceImages} 张参考图，请减少图片输入。`;
+  }
+  if (connectedVideos.length && operation === "generate" && inputMode !== "reference") {
+    return "生成视频的首帧/首尾帧模式不能同时使用参考视频；请切换到参考图模式，或移除视频输入。";
+  }
+  if (!connectedVideos.length) return undefined;
+  if (inputMode !== "reference" && operation !== "generate" && limits.maxReferenceVideos <= 0) {
+    return "当前视频模型不支持参考视频，请切换到支持参考视频的模型，或移除视频输入。";
   }
   if (limits.maxReferenceVideos <= 0) {
     return "当前视频模型不支持参考视频，请切换到支持参考视频的模型，或移除视频输入。";
@@ -4744,7 +4765,7 @@ export default function SuperCanvas() {
                 canvasInputRolesForTarget(docRef.current, generatorId),
                 { maxReferenceImages: videoLimits.maxReferenceImages },
               );
-              const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits);
+              const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
               if (videoInputError) throw new Error(videoInputError);
               const task = await generateCanvasVideo({
                 prompt,
@@ -5533,7 +5554,7 @@ export default function SuperCanvas() {
           new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
           { maxReferenceImages: videoLimits.maxReferenceImages },
         );
-        const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits);
+        const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits, params.operation);
         if (videoInputError) throw new Error(videoInputError);
         const task = await generateCanvasVideo({
           prompt: draft.prompt, model: resolvedVideoModel.model?.id || "auto", operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
@@ -5923,7 +5944,7 @@ export default function SuperCanvas() {
         )
       : undefined;
     if (kind === "video" && videoParams && videoLimits && videoInputs) {
-      const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits);
+      const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
       if (videoInputError) return notify(videoInputError, "error");
     }
     const refs = (kind === "video" ? videoInputs?.referenceImages || [] : inputSemantics.imageReferences)
@@ -6259,11 +6280,11 @@ export default function SuperCanvas() {
             })),
           firstFrame: videoInputs?.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
           lastFrame: videoInputs?.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
-          referenceVideo:
-            referenceVideo ||
-            (videoInputs?.referenceVideo?.data.url
-              ? String(videoInputs.referenceVideo.data.url)
-              : undefined),
+           referenceVideo:
+             referenceVideo ||
+             (videoParams.inputMode === "reference" && videoInputs?.referenceVideo?.data.url
+               ? String(videoInputs.referenceVideo.data.url)
+               : undefined),
           audio: videoParams.audio,
         });
         updateDoc((value) => ({

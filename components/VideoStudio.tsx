@@ -218,7 +218,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   const supportsExtend = can('video-extend');
   const supportsFirst = can('video-first-frame') || can('video-generate') || uses65535Policy;
   const supportsReference = can('video-reference') || can('video-generate') || uses65535Policy;
-  const supportsAudio = can('video-audio') || !uses65535Policy;
+  const supportsAudio = !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
   const warnings: string[] = [];
 
   if (requestedModelId && requestedModelId !== 'auto' && !targetModel) warnings.push('历史模型已不可用，已切换到当前默认模型');
@@ -234,9 +234,12 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     warnings.push('当前模型不支持视频扩展，已切换为生成视频');
   }
 
-  const firstUrl = typeof input.firstFrame === 'string' ? input.firstFrame : '';
-  const lastUrl = typeof input.lastFrame === 'string' ? input.lastFrame : '';
-  const sourceReferenceUrls = Array.isArray(input.referenceImages) ? input.referenceImages.filter((value): value is string => typeof value === 'string' && Boolean(value)) : [];
+  const cleanUrl = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+  const firstUrl = cleanUrl(input.firstFrame);
+  const lastUrl = cleanUrl(input.lastFrame);
+  const sourceReferenceUrls = Array.isArray(input.referenceImages)
+    ? input.referenceImages.map(cleanUrl).filter(Boolean)
+    : [];
   let inputMode: VideoInputMode = 'text';
   let firstFrame: UploadSlot | null = null;
   let lastFrame: UploadSlot | null = null;
@@ -285,13 +288,14 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     }
   }
 
-  const inputReferenceVideo = typeof input.referenceVideo === 'string' ? input.referenceVideo : '';
+  const inputReferenceVideo = cleanUrl(input.referenceVideo)
+    || (Array.isArray(input.referenceVideos) ? input.referenceVideos.map(cleanUrl).find(Boolean) || '' : '');
   const referenceVideo = inputReferenceVideo && (operation !== 'generate' || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) ? uploadSlot(inputReferenceVideo, '参考视频', 'video') : null;
   if (inputReferenceVideo && !referenceVideo) warnings.push('当前操作不使用参考视频，已清除该素材');
 
   const sourceAudioUrls = Array.isArray(input.audios) && input.audios.length
-    ? input.audios.filter((value): value is string => typeof value === 'string' && Boolean(value))
-    : typeof input.audio === 'string' && input.audio ? [input.audio] : [];
+    ? input.audios.map(cleanUrl).filter(Boolean)
+    : cleanUrl(input.audio) ? [cleanUrl(input.audio)] : [];
   let audios: UploadSlot[] = [];
   if (sourceAudioUrls.length && supportsAudio) {
     const maxAudios = getVideoModelLimits(modelForLimits, provider).maxAudios;
@@ -319,9 +323,15 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
 
   const requestedRatio = typeof input.aspectRatio === 'string' && allRatios.includes(input.aspectRatio) ? input.aspectRatio : '16:9';
   if (input.aspectRatio && requestedRatio !== input.aspectRatio) warnings.push('比例已调整为当前支持的选项');
-  const requestedResolution = typeof input.resolution === 'string' ? input.resolution : '720p';
-  const resolution = limits.resolutions.includes(requestedResolution) ? requestedResolution : limits.resolutions[0] || '720p';
-  if (input.resolution && resolution !== input.resolution) warnings.push(`分辨率已调整为 ${resolution}`);
+  const requestedResolution = typeof input.resolution === 'string'
+    ? input.resolution
+    : typeof input.videoSize === 'string'
+      ? input.videoSize
+      : '720p';
+  const resolution = limits.resolutions.find(
+    (value) => value.toLowerCase() === requestedResolution.trim().toLowerCase(),
+  ) || limits.resolutions[0] || '720p';
+  if (input.resolution && resolution.toLowerCase() !== input.resolution.trim().toLowerCase()) warnings.push(`分辨率已调整为 ${resolution}`);
 
   return {
     modelId,
@@ -513,8 +523,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (!durationOptions.some((option) => option.value === seconds)) setSeconds(durationOptions[0]?.value || modelLimits.minSeconds);
     if (!modelLimits.resolutions.includes(resolution)) setResolution(modelLimits.resolutions[0] || '720p');
     setReferenceImages((old) => old.length > modelLimits.maxReferenceImages ? old.slice(0, modelLimits.maxReferenceImages) : old);
-    setAudios((old) => old.length > modelLimits.maxAudios ? old.slice(0, modelLimits.maxAudios) : old);
-  }, [durationOptions, modelLimits, resolution, seconds]);
+    setAudios((old) => !supportsAudio ? [] : old.length > modelLimits.maxAudios ? old.slice(0, modelLimits.maxAudios) : old);
+  }, [durationOptions, modelLimits, resolution, seconds, supportsAudio]);
 
   // Consume reference images pushed from the record view and map them to the
   // best-supported video input mode, degrading gracefully when the selected
@@ -751,7 +761,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         firstFrame: inputMode === 'first-frame' || inputMode === 'frames' ? firstFrame?.url : undefined,
         lastFrame: inputMode === 'frames' ? lastFrame?.url : undefined,
         referenceImages: inputMode === 'reference' ? referenceImages.map((item) => item.url) : [],
-        referenceVideo: usesAgnes ? (!usesAgnesV20 && !usesAgnesFlash && inputMode === 'reference' ? referenceVideo?.url : undefined) : referenceVideo?.url,
+        referenceVideo: usesAgnes
+          ? (!usesAgnesV20 && !usesAgnesFlash && inputMode === 'reference' ? referenceVideo?.url : undefined)
+          : operation !== 'generate' ? referenceVideo?.url : undefined,
         audios: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios.map((item) => item.url) : []) : audios.map((item) => item.url),
         audio: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios[0]?.url : undefined) : audios[0]?.url,
         ...(usesAgnes && !usesAgnesV20 ? { videoMode: inputMode === 'text' ? 'text' as const : inputMode === 'reference' ? 'reference' as const : 'keyframe' as const } : {}),

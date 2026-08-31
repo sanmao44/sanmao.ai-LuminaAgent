@@ -232,7 +232,7 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal(request.input, '/api/video/generate');
   assert.equal(payload.source, 'canvas');
   assert.equal(payload.model, 'video-model');
-  assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720P', referenceImages: [] });
+  assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720p', referenceImages: [] });
   assert.equal('audio' in payload.input, false);
 });
 
@@ -279,6 +279,27 @@ test('canvas video generation sends explicit reference mode inputs', async () =>
   }
 });
 
+test('canvas video generation does not leak reference video into image-only modes', async () => {
+  const mocks = withImageCanvas();
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = JSON.parse(options.body);
+      return jsonResponse({ task: { id: 'video-filtered', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: '首帧图片',
+      model: 'video-model',
+      inputMode: 'first-frame',
+      references: [{ url: 'data:image/png;base64,first' }],
+      referenceVideo: 'data:video/mp4;base64,should-not-be-sent',
+    }));
+
+    assert.equal('referenceVideo' in request.input, false);
+  } finally {
+    mocks.restore();
+  }
+});
+
 test('canvas video generation sends explicit first-frame and first/last-frame inputs', async () => {
   const mocks = withImageCanvas();
   try {
@@ -301,7 +322,7 @@ test('canvas video generation sends explicit first-frame and first/last-frame in
       });
     });
 
-    assert.equal(requests[0].input.videoMode, 'keyframe');
+    assert.equal('videoMode' in requests[0].input, false);
     assert.equal(requests[0].input.firstFrame, 'data:image/jpeg;base64,AA==');
     assert.equal('lastFrame' in requests[0].input, false);
     assert.deepEqual(requests[0].input.referenceImages, []);
@@ -309,6 +330,27 @@ test('canvas video generation sends explicit first-frame and first/last-frame in
     assert.equal(requests[1].input.firstFrame, 'data:image/jpeg;base64,AA==');
     assert.equal(requests[1].input.lastFrame, 'data:image/jpeg;base64,AA==');
     assert.deepEqual(requests[1].input.referenceImages, []);
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas video generation blocks incomplete frame inputs before network submission', async () => {
+  const mocks = withImageCanvas();
+  let fetchCalled = false;
+  try {
+    await assert.rejects(
+      () => withFetch(async () => {
+        fetchCalled = true;
+        return jsonResponse({ task: { id: 'should-not-submit', status: 'pending' } });
+      }, () => api.generateCanvasVideo({
+        prompt: '首尾帧不完整',
+        inputMode: 'frames',
+        references: [{ url: 'data:image/png;base64,first' }],
+      })),
+      /首尾帧模式请先添加首帧和尾帧图片/,
+    );
+    assert.equal(fetchCalled, false);
   } finally {
     mocks.restore();
   }

@@ -23,7 +23,10 @@ test('keeps edit and extend operation options capability-driven', () => {
 
 test('resets unsupported restored operations in the parameter editor', () => {
   assert.match(parameterEditor, /operationIsSupported/);
-  assert.match(parameterEditor, /operation: "generate"/);
+  assert.match(parameterEditor, /const nextOperation = operationIsSupported \? settings\.operation : "generate"/);
+  assert.match(parameterEditor, /const model = operationModel/);
+  assert.match(parameterEditor, /const allowedDurations = useMemo/);
+  assert.match(parameterEditor, /selectedResolution/);
 });
 
 test('treats coarse video-generate metadata as image-input capable', () => {

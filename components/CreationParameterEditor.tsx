@@ -15,6 +15,7 @@ import {
 } from "@/lib/creation/settings";
 import { resolveAvailableCreationModel } from "@/lib/creation/settings";
 import { getVideoModelLimits } from "@/lib/video-model-limits";
+import { is65535Provider } from "@/lib/video-platform";
 import type { ModelCapability, PublicState } from "@/lib/types";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 
@@ -529,15 +530,18 @@ function VideoEditor({
     key: K,
     value: VideoCreationSettings[K],
   ) => onChange({ ...settings, [key]: value });
-  const model = runtime?.models.find((item) => item.id === settings.model);
-  const provider = runtime?.providers.find(
-    (item) => item.id === model?.providerId,
-  );
   const operationModel = runtime
     ? resolveAvailableCreationModel(settings, runtime).model
     : null;
+  // The editor may receive `auto` or a historical model id. Always derive
+  // capabilities and limits from the model that will actually be submitted,
+  // otherwise automatic selection silently falls back to generic limits.
+  const model = operationModel;
+  const provider = runtime?.providers.find(
+    (item) => item.id === operationModel?.providerId,
+  );
   const limits = useMemo(
-    () => getVideoModelLimits(model, provider),
+    () => getVideoModelLimits(model || undefined, provider),
     [model, provider],
   );
   const supports = (capability: ModelCapability) =>
@@ -554,6 +558,8 @@ function VideoEditor({
     !model ||
     model.capabilities.includes("video-generate") ||
     model.capabilities.includes("video-reference");
+  const usesAgnesV20 = Boolean(model?.rawId && /agnes-video-v2\.0/i.test(model.rawId));
+  const supportsAudio = !usesAgnesV20 && (supports("video-audio") || !is65535Provider(provider));
   const supportsOperationEdit =
     !operationModel || operationModel.capabilities.includes("video-edit");
   const supportsOperationExtend =
@@ -610,15 +616,61 @@ function VideoEditor({
       : []),
   ];
   const showOperationField = operationOptions.length > 1;
+  const allowedDurations = useMemo(
+    () => durationValues(
+      limits.minSeconds,
+      limits.maxSeconds,
+      limits.fixedSeconds,
+      limits.allowedSeconds,
+    ),
+    [limits],
+  );
+  const selectedResolution =
+    limits.resolutions.find(
+      (value) => value.toLowerCase() === settings.resolution.toLowerCase(),
+    ) || limits.resolutions[0] || "720p";
   useEffect(() => {
     const operationIsSupported =
       settings.operation === "generate" ||
       (settings.operation === "edit" && supportsOperationEdit) ||
       (settings.operation === "extend" && supportsOperationExtend);
-    if (!operationIsSupported) {
-      onChange({ ...settings, operation: "generate" });
+    const nextOperation = operationIsSupported ? settings.operation : "generate";
+    const nextInputMode = inputOptions.some(
+      (option) => option.value === settings.inputMode,
+    )
+      ? settings.inputMode
+      : inputOptions[0]?.value || "text";
+    const nextDuration = allowedDurations.includes(settings.duration)
+      ? settings.duration
+      : allowedDurations[0] || limits.minSeconds;
+    const nextAudio = supportsAudio ? settings.audio : false;
+    if (
+      nextOperation !== settings.operation ||
+      nextInputMode !== settings.inputMode ||
+      nextDuration !== settings.duration ||
+      selectedResolution !== settings.resolution ||
+      nextAudio !== settings.audio
+    ) {
+      onChange({
+        ...settings,
+        operation: nextOperation,
+        inputMode: nextInputMode,
+        duration: nextDuration,
+        resolution: selectedResolution,
+        audio: nextAudio,
+      });
     }
-  }, [onChange, settings, supportsOperationEdit, supportsOperationExtend]);
+  }, [
+    allowedDurations,
+    inputOptions,
+    limits.minSeconds,
+    onChange,
+    selectedResolution,
+    settings,
+    supportsAudio,
+    supportsOperationEdit,
+    supportsOperationExtend,
+  ]);
   const inheritSettings =
     settings.operation !== "generate" &&
     Boolean(limits.inheritVideoSettingsFor?.includes(settings.operation));
@@ -684,12 +736,7 @@ function VideoEditor({
             disabled={inheritSettings}
             value={settings.duration}
             onChange={(value) => update("duration", value)}
-            options={durationValues(
-              limits.minSeconds,
-              limits.maxSeconds,
-              limits.fixedSeconds,
-              limits.allowedSeconds,
-            ).map((value) => ({ value, label: `${value} 秒` }))}
+            options={allowedDurations.map((value) => ({ value, label: `${value} 秒` }))}
             ariaLabel="视频时长"
           />
         </label>
@@ -713,7 +760,7 @@ function VideoEditor({
           <SelectMenu
             portalZIndex={portalZIndex}
             disabled={omitRatio}
-            value={settings.resolution}
+            value={selectedResolution}
             onChange={(value) => update("resolution", value)}
             options={limits.resolutions.map((value) => ({
               value,
@@ -732,7 +779,7 @@ function VideoEditor({
           <small>原生音频</small>
           <button
             type="button"
-            disabled={!supports("video-audio")}
+            disabled={!supportsAudio}
             className={settings.audio ? "active" : ""}
             aria-pressed={settings.audio}
             onClick={() => update("audio", !settings.audio)}
