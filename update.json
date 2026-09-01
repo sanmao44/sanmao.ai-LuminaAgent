@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip"
   ],
-  "sha256": "3745282a7251157abdfaF8f5ff569caa3a81d29e4abe01535c7d9bb987049757",
+  "sha256": "92044a5f26c54a896a1078b003293eb57bdbc6600c1775754f5cbf3ce1d33d36",
   "publishedAt": "2026-09-01T18:42:17+08:00",
   "notes": [
     "Hide the legacy bottom composer and keep the canvas node editor as the main editing surface.",
