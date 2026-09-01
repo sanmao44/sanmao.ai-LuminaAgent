@@ -261,6 +261,22 @@ function Test-SanmaoBuildStale {
   return $null -ne $newest -and $newest.LastWriteTimeUtc -gt $buildTime
 }
 
+function Get-SanmaoBuildId {
+  $buildIdPath = Join-Path $root '.next\BUILD_ID'
+  if (-not (Test-Path -LiteralPath $buildIdPath -PathType Leaf)) { return '' }
+  try { return (Get-Content -LiteralPath $buildIdPath -Raw -ErrorAction Stop).Trim() } catch { return '' }
+}
+
+function Test-SanmaoServedBuildStale {
+  $buildId = Get-SanmaoBuildId
+  $servedBuildIdPath = Join-Path $root '.next\.sanmao-running-build-id'
+  if ([string]::IsNullOrWhiteSpace($buildId) -or -not (Test-Path -LiteralPath $servedBuildIdPath -PathType Leaf)) { return $true }
+  try {
+    $servedBuildId = (Get-Content -LiteralPath $servedBuildIdPath -Raw -ErrorAction Stop).Trim()
+    return $servedBuildId -ne $buildId
+  } catch { return $true }
+}
+
 function Test-SanmaoBuildArtifacts {
   $requiredPaths = @(
     (Join-Path $root '.next\BUILD_ID'),
@@ -428,7 +444,7 @@ if ($existing) {
   $existingPort = [int]$existing.Port
   $modeMismatch = $existing.NetworkMode -ne $networkMode
   $lifecycleMismatch = $existing.LifecycleEnabled -ne (-not $Lan.IsPresent)
-  $buildStale = Test-SanmaoBuildStale
+  $buildStale = (Test-SanmaoBuildStale -or Test-SanmaoServedBuildStale)
   if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
   $freeRelayMismatch =
     ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and (
@@ -704,6 +720,11 @@ for ($i = 0; $i -lt 150; $i++) {
 
 if (-not $ready) {
   Fail '服务器没有在预期时间内启动。'
+}
+
+$runningBuildId = Get-SanmaoBuildId
+if ($runningBuildId) {
+  Set-Content -LiteralPath (Join-Path $root '.next\.sanmao-running-build-id') -Value $runningBuildId -Encoding ASCII
 }
 
 if ($freeRelayRequested) {

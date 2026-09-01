@@ -37,6 +37,18 @@ media_relay_required() {
 MEDIA_RELAY_REQUIRED=0
 if media_relay_required; then MEDIA_RELAY_REQUIRED=1; fi
 
+BUILD_ID="$ROOT_DIR/.next/BUILD_ID"
+RUNNING_BUILD_MARKER="$ROOT_DIR/.next/.sanmao-running-build-id"
+
+build_served_stale() {
+  [ -f "$BUILD_ID" ] || return 0
+  [ -f "$RUNNING_BUILD_MARKER" ] || return 0
+  CURRENT_BUILD_ID=`tr -d '\r\n' < "$BUILD_ID" 2>/dev/null || true`
+  SERVED_BUILD_ID=`tr -d '\r\n' < "$RUNNING_BUILD_MARKER" 2>/dev/null || true`
+  [ -n "$CURRENT_BUILD_ID" ] && [ "$CURRENT_BUILD_ID" = "$SERVED_BUILD_ID" ] || return 0
+  return 1
+}
+
 server_is_ready() {
   sanmao_server_health "$1"
 }
@@ -123,6 +135,11 @@ acquire_lock() {
 }
 
 EXISTING_PORT=`find_existing_server`
+if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && build_served_stale; then
+  sanmao_log "检测到当前服务使用旧构建，正在重启端口 $EXISTING_PORT" WARN
+  sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
+  EXISTING_PORT=0
+fi
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && ! server_lifecycle_enabled "$EXISTING_PORT"; then
   sanmao_log "检测到旧服务使用了旧生命周期设置，正在重启端口 $EXISTING_PORT" WARN
   sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
@@ -201,7 +218,6 @@ fi
 printf '\n==> 检查构建产物是否最新\n'
 
 NEXT_BIN="$ROOT_DIR/node_modules/.bin/next"
-BUILD_ID="$ROOT_DIR/.next/BUILD_ID"
 
 NEED_BUILD=0
 if [ "${SANMAO_FORCE_BUILD:-0}" = "1" ]; then
@@ -300,6 +316,10 @@ if [ $READY -ne 1 ]; then
   kill $SERVER_PID 2>/dev/null || true
   wait $SERVER_PID 2>/dev/null || true
   fail '启动超时。'
+fi
+
+if [ -f "$BUILD_ID" ]; then
+  tr -d '\r\n' < "$BUILD_ID" > "$RUNNING_BUILD_MARKER"
 fi
 
 if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
