@@ -160,6 +160,16 @@ export function imageModelOptions(runtime: PublicState | null | undefined) {
   );
 }
 
+export function imageEditModelOptions(runtime: PublicState | null | undefined) {
+  return (runtime?.models || []).filter(
+    (model) =>
+      model.enabled &&
+      model.published &&
+      model.kind === "image" &&
+      model.capabilities.includes("edit"),
+  );
+}
+
 export function videoModelOptions(runtime: PublicState | null | undefined) {
   return (runtime?.models || []).filter(
     (model) =>
@@ -536,7 +546,9 @@ export function resolveAvailableCreationModel(
 ): { model: RegistryModel | null; unavailableModelId?: string } {
   const candidates =
     settings.kind === "image"
-      ? imageModelOptions(runtime)
+      ? settings.mask
+        ? imageEditModelOptions(runtime)
+        : imageModelOptions(runtime)
       : settings.kind === "video"
         ? videoModelOptions(runtime)
         : agentModelOptions(runtime);

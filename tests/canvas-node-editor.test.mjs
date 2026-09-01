@@ -228,8 +228,8 @@ test("mask removal clears both current and persisted generation parameters", () 
   assert.match(component, /maskUrl: imageParams\.mask\?\.url/);
 });
 
-test("mask editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage\) => applyCanvasMask\(value, coverage\)\}/);
+test("local edit editor reports saving state and passes coverage into the attached image state", () => {
+  assert.match(component, /onApply=\{\(value, coverage, prompt\) => applyCanvasMask\(value, coverage, prompt\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /status: "pending"/);
   assert.match(component, /coverage: maskCoverage/);
@@ -237,15 +237,15 @@ test("mask editor reports saving state and passes coverage into the attached ima
   assert.match(styles, /\.canvas-mask-summary/);
 });
 
-test("mask summary only occupies editor space when a mask exists", () => {
+test("local edit summary only occupies editor space when a mask exists", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   const summaryStart = component.indexOf("function CanvasMaskSummary");
-  assert.ok(editorStart >= 0 && summaryStart > editorStart, "mask editor components should be present");
+  assert.ok(editorStart >= 0 && summaryStart > editorStart, "local edit editor components should be present");
   const editor = component.slice(editorStart, summaryStart);
-  assert.match(editor, /onMaskEdit && maskState && \(/);
+  assert.match(editor, /onLocalEdit && maskState && \(/);
   assert.doesNotMatch(editor, /尚未设置，绘制后只重新生成指定区域/);
   assert.doesNotMatch(styles, /\.canvas-mask-summary\.empty/);
-  assert.match(component, /label: node\.data\.mask \? "查看蒙版" : "绘制蒙版"/);
+  assert.match(component, /label: node\.data\.mask \? "查看局部编辑" : "局部编辑"/);
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {

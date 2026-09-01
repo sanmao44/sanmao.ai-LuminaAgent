@@ -112,8 +112,8 @@ export async function POST(request: Request) {
     if (camera && body.angleGuide === true && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始人物参考和 3D 构图导引。' }, { status: 400 });
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
     const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
-    if (rawMask && !mask) return Response.json({ error: '蒙版必须是 PNG 格式。' }, { status: 400 });
-    if (mask && !references.length) return Response.json({ error: '使用蒙版前请先添加一张参考图。' }, { status: 400 });
+    if (rawMask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
+    if (mask && !references.length) return Response.json({ error: '使用局部编辑前请先添加一张参考图。' }, { status: 400 });
     const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
     const responseFormat = ['url', 'b64_json'].includes(String(body.responseFormat || '').toLowerCase()) ? String(body.responseFormat).toLowerCase() as 'url' | 'b64_json' : undefined;
     const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;

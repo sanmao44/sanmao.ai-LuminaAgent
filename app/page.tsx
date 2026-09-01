@@ -11,7 +11,7 @@ import { agnesBillingLabel } from '@/lib/agnes';
 import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
 import { listChatSessions, listGallery, loadImageDirectoryHandle, patchGalleryItem, removeChatSession, removeGalleryItems, replaceChatSessions, replaceGalleryItems, saveChatSession, saveGalleryItems, saveImageDirectoryHandle } from '@/lib/client-history';
 import Link from 'next/link';
-import MaskEditor from '@/components/MaskEditor';
+import LocalEditEditor from '@/components/MaskEditor';
 import VideoStudio from '@/components/VideoStudio';
 import SelectMenu from '@/components/SelectMenu';
 import JimengProviderCard from '@/components/JimengProviderCard';
@@ -1723,7 +1723,7 @@ function ReferenceMentionMenu({ refs, open, query = '', onSelect, className = ''
         ]
     });
 }
-function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUpscaleModel, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onMaskEdit, onOpenProviders, onSubmit }) {
+function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUpscaleModel, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onLocalEdit, onOpenProviders, onSubmit }) {
     const ratio = editorRatio(editor);
     const selectedUpscaleOption = editor.mode === 'upscale' ? editor.modelId === 'auto' ? defaultUpscaleModel : upscaleModelOptions.find((model)=>model.id === editor.modelId) || defaultUpscaleModel : null;
     const selectedUpscaleIsCloud = isCloudUpscaleModel(selectedUpscaleOption);
@@ -1831,10 +1831,10 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
                                         /*#__PURE__*/ _jsxs("div", {
                                             children: [
                                                 /*#__PURE__*/ _jsx("strong", {
-                                                    children: editor.mask ? '已设置局部蒙版' : '局部修改'
+                                                    children: editor.mask ? '局部编辑范围已设置' : '局部编辑'
                                                 }),
                                                 /*#__PURE__*/ _jsx("small", {
-                                                    children: editor.mask ? '红色区域会交给模型重新绘制' : '绘制蒙版后，只重新生成指定区域'
+                                                    children: editor.mask ? '编辑范围内会生成新内容' : '指定范围后，只重新生成局部区域'
                                                 })
                                             ]
                                         }),
@@ -1844,8 +1844,8 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
                                                              /*#__PURE__*/ _jsx("button", {
                                                     type: "button",
                                                     className: "ghost-button",
-                                                    onClick: onMaskEdit,
-                                                    children: editor.mask ? '重新绘制' : '绘制蒙版'
+                                                    onClick: onLocalEdit,
+                                                    children: editor.mask ? '查看局部编辑' : '局部编辑'
                                                 }),
                                                 editor.mask && /*#__PURE__*/ _jsx("button", {
                                                     type: "button",
@@ -4804,7 +4804,7 @@ export default function Page() {
         const motionQuery = typeof window.matchMedia === 'function'
             ? window.matchMedia('(prefers-reduced-motion: reduce)')
             : { matches: false };
-        const celebrationLabels = /^(发送|提交后台|按当前机位生成|开始生成|开始\d+×超分|基于参考图生成|测试并连接|测试并保存|发布到生图|保存处理版本|应用蒙版|重试|重新生成|用此参数再生成)/;
+        const celebrationLabels = /^(发送|提交后台|按当前机位生成|开始生成|开始\d+×超分|基于参考图生成|测试并连接|测试并保存|发布到生图|保存处理版本|应用局部编辑|重试|重新生成|用此参数再生成)/;
         const isCelebrationButton = (button)=>{
             if (button.matches('.send-button, .angle-submit .primary-action, .generate-submit-sticky .primary-action')) return true;
             const label = button.textContent?.replace(/\s+/g, '').trim() || '';
@@ -5849,12 +5849,12 @@ export default function Page() {
         if (!generateMask) return;
         if (generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0])) {
             setGenerateMask(null);
-            notify('绘制蒙版仅支持 1 张已准备好的图片参考，原蒙版已清除');
+            notify('局部编辑仅支持 1 张已准备好的图片参考，原编辑范围已清除');
             return;
         }
         if (generateRefs[0]?.id !== generateMask.referenceId) {
             setGenerateMask(null);
-            notify('第一张参考图已变化，原蒙版已清除');
+            notify('第一张参考图已变化，原编辑范围已清除');
         }
     }, [
         generateRefs,
@@ -7519,21 +7519,24 @@ export default function Page() {
         if (submittedRefs.some((reference)=>reference.kind === 'video')) return notify('图片生成不能接收视频引用；请移除视频，或切换到视频工作台。');
         const submittedImageRefs = submittedRefs.filter((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference));
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
-        const submittedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
-        const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : activeProviderModels.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : defaultImageModel;
+        const hasLocalEditMask = Boolean((savedRequest ? savedRequest.mask?.dataUrl : generateMask?.dataUrl) && submittedImageRefs.length === 1);
+        const submittedImageModelOptions = hasLocalEditMask ? availableEditModels : availableGenerationModels;
+        const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
+        const submittedModelId = !submittedUpscaleMode && hasLocalEditMask && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId) ? 'auto' : requestedModelId;
+        const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
         const submittedSizeMode = savedRequest?.sizeMode || sizeMode;
         const submittedCustomWidth = savedRequest?.customWidth || customWidth;
         const submittedCustomHeight = savedRequest?.customHeight || customHeight;
         if (submittedRefs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再提交');
         if (!submittedUpscaleMode && !submittedPrompt) return notify('先描述你想生成什么');
         if (!submittedUpscaleMode && !isAngleGeneration && submittedSizeMode === 'custom' && (submittedCustomWidth < 1 || submittedCustomHeight < 1)) return notify('请输入有效的自定义宽高');
-        const hasAvailableModel = isAngleGeneration ? availableGenerationModels.length > 0 : submittedUpscaleMode ? availableUpscaleModels.length > 0 : availableGenerationModels.length > 0;
-        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : '还没有可用图片模型，请先到模型库启用模型');
+        const hasAvailableModel = isAngleGeneration ? availableGenerationModels.length > 0 : submittedUpscaleMode ? availableUpscaleModels.length > 0 : submittedImageModelOptions.length > 0;
+        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : hasLocalEditMask ? '还没有支持局部编辑的图片模型，请先到模型库启用带“修改”能力的图片模型' : '还没有可用图片模型，请先到模型库启用模型');
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
         const taskReferenceBytes = submittedImageRefs.reduce((total, reference)=>total + creativeReferenceUrl(reference).length, 0) + (isAngleGeneration ? 0 : savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0);
-        if (taskReferenceBytes > 7000000) return notify('参考图和蒙版总大小过大，已停止提交；请减少图片数量或重新上传后再试');
+        if (taskReferenceBytes > 7000000) return notify('参考图和局部编辑范围总大小过大，已停止提交；请减少图片数量或重新上传后再试');
         if (submittedUpscaleMode && (submittedRefs.some((reference)=>reference.kind !== 'image') || submittedImageRefs.length !== 1)) return notify('本地超分需要恰好 1 张图片引用，文本或视频不能用于超分');
         const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
         const taskCount = savedRequest ? Math.max(1, Math.min(8, savedRequest.count || 1)) : submittedUpscaleMode || isAngleGeneration ? 1 : count;
@@ -9021,6 +9024,8 @@ export default function Page() {
         markHistoryImageViewed(item);
         const lastCall = getLastModelCall('edit');
         const saved = lastCall?.params || {};
+        const legacySavedMask = item?.params?.mask || item?.mask;
+        const restoredMask = typeof legacySavedMask === 'string' ? legacySavedMask : legacySavedMask?.dataUrl || legacySavedMask?.url || null;
         const dimensions = outputDimensions(item.outputSize);
         const ratio = item.aspectRatio || (dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '自动');
         const tier = dimensions ? sizeTierFromDimensions(dimensions.width, dimensions.height) : '1k';
@@ -9044,7 +9049,8 @@ export default function Page() {
             sizeMode: rememberedSizeMode,
             sizeTier: rememberedTier,
             customWidth: typeof saved.customWidth === 'number' && saved.customWidth > 0 ? Math.round(saved.customWidth) : dimensions?.width || preset.width,
-            customHeight: typeof saved.customHeight === 'number' && saved.customHeight > 0 ? Math.round(saved.customHeight) : dimensions?.height || preset.height
+            customHeight: typeof saved.customHeight === 'number' && saved.customHeight > 0 ? Math.round(saved.customHeight) : dimensions?.height || preset.height,
+            mask: restoredMask
         });
         if (lastCall) notify('已恢复上次图片修改设置');
     }
@@ -11288,11 +11294,11 @@ export default function Page() {
                                                         type: "button",
                                                         className: `ghost-button mask-button ${generateMask ? 'active' : ''}`,
                                 disabled: generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0]) || generateRefs.some((ref)=>ref.pending),
-                                title: generateRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能绘制蒙版' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '绘制蒙版仅支持 1 张图片参考' : undefined,
-                                onClick: ()=>generateRefs.length === 1 && generateRefs[0]?.kind === 'image' && creativeReferenceUrl(generateRefs[0]) && !generateRefs[0]?.pending ? setMaskEditorOpen(true) : notify(generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '绘制蒙版仅支持 1 张图片参考' : '参考图正在准备，请稍候片刻'),
+                                title: generateRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能使用局部编辑' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '局部编辑仅支持 1 张图片参考' : undefined,
+                                onClick: ()=>generateRefs.length === 1 && generateRefs[0]?.kind === 'image' && creativeReferenceUrl(generateRefs[0]) && !generateRefs[0]?.pending ? setMaskEditorOpen(true) : notify(generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '局部编辑仅支持 1 张图片参考' : '参考图正在准备，请稍候片刻'),
                                                         children: [
                                                             "▧ ",
-                                                            generateMask ? '蒙版已设置' : '绘制蒙版',
+                                                            generateMask ? '局部编辑范围已设置' : '局部编辑',
                                                             generateMask && /*#__PURE__*/ _jsx("i", {})
                                                         ]
                                                     }),
@@ -11301,13 +11307,13 @@ export default function Page() {
                                                         className: "mask-remove",
                                                         onClick: ()=>{
                                                             setGenerateMask(null);
-                                                            notify('蒙版已移除');
+                                                            notify('局部编辑范围已移除');
                                                         },
                                                         children: "移除"
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
                                                         className: generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? 'mask-hint warning' : '',
-                                                        children: generateRefs.some((ref)=>ref.pending) ? '参考图正在准备，完成后即可提交' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '绘制蒙版仅支持 1 张图片参考' : generateMask ? '红色区域会重新绘制' : '可选：指定只修改参考图的局部区域'
+                                                        children: generateRefs.some((ref)=>ref.pending) ? '参考图正在准备，完成后即可提交' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '局部编辑仅支持 1 张图片参考' : generateMask ? '编辑范围内会生成新内容' : '可选：指定只修改参考图的局部区域'
                                                     })
                                                 ]
                                             }),
@@ -11517,9 +11523,9 @@ export default function Page() {
                                                                 children: "图片模型"
                                                             }),
                                                             /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                models: availableGenerationModels,
+                                                                models: generateMask && availableEditModels.length ? availableEditModels : availableGenerationModels,
                                                                 value: generateModelId,
-                                                                capability: "generate",
+                                                                capability: generateMask && availableEditModels.length ? "edit" : "generate",
                                                                 defaultProviderId: state.settings.defaultProviderId,
                                                                 defaultProviderName: defaultProvider?.name,
                                                                 defaultModelId: state.settings.defaultImageModelId,
@@ -12196,17 +12202,21 @@ export default function Page() {
                                     })
                                 ]
                             }),
-                            maskEditorOpen && generateRefs[0] && /*#__PURE__*/ _jsx(MaskEditor, {
+                            maskEditorOpen && generateRefs[0] && /*#__PURE__*/ _jsx(LocalEditEditor, {
                                 imageUrl: creativeReferenceUrl(generateRefs[0]),
                                 initialMaskDataUrl: generateMask?.referenceId === generateRefs[0].id ? generateMask.dataUrl : undefined,
+                                initialPrompt: generatePrompt,
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl)=>{
+                                onApply: (dataUrl, coverage, prompt)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
-                                        dataUrl
+                                        dataUrl,
+                                        coverage
                                     });
+                                    setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
+                                    setGeneratePrompt(prompt);
                                     setMaskEditorOpen(false);
-                                    notify('蒙版已设置，生成时会一并提交给服务商');
+                                    notify(`局部编辑范围已设置（覆盖 ${Math.round(coverage * 100)}%），生成时会一并提交给服务商`);
                                 }
                             }),
                             section === 'history' && recordTab === 'works' && /*#__PURE__*/ _jsxs("section", {
@@ -15180,7 +15190,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                     setEditorMaskOpen(false);
                     setEditor(null);
                 },
-                onMaskEdit: ()=>setEditorMaskOpen(true),
+                onLocalEdit: ()=>setEditorMaskOpen(true),
                 onOpenProviders: ()=>{
                     setEditorMaskOpen(false);
                     setEditor(null);
@@ -15188,17 +15198,19 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 },
                 onSubmit: runEditor
             }),
-            editorMaskOpen && editor?.mode === 'edit' && /*#__PURE__*/ _jsx(MaskEditor, {
+            editorMaskOpen && editor?.mode === 'edit' && /*#__PURE__*/ _jsx(LocalEditEditor, {
                 imageUrl: editor.item.url,
                 initialMaskDataUrl: editor.mask || undefined,
+                initialPrompt: editor.prompt,
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl)=>{
+                onApply: (dataUrl, coverage, prompt)=>{
                     setEditor((current)=>current ? {
                             ...current,
-                            mask: dataUrl
+                            mask: dataUrl,
+                            prompt
                         } : current);
                     setEditorMaskOpen(false);
-                    notify('蒙版已设置，提交修改时会一并发送');
+                    notify(`局部编辑范围已设置${coverage ? `（覆盖 ${Math.round(coverage * 100)}%）` : ''}，提交修改时会一并发送`);
                 }
             }),
             selectionPush && section === 'agent' && /*#__PURE__*/ _jsxs("div", {

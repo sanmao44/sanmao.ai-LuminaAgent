@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
     if (!prompt) return Response.json({ error: '请输入你想怎么修改图片。' }, { status: 400 });
     if (!references.length) return Response.json({ error: '请至少添加一张参考图。' }, { status: 400 });
-    if (body.mask && !mask) return Response.json({ error: '蒙版必须是 PNG 格式。' }, { status: 400 });
+    if (body.mask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
     const runtime = await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit');
     if (!runtime) return Response.json({ error: '没有支持图片修改的可用模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;

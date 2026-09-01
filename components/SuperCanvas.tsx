@@ -156,7 +156,7 @@ import MediaViewer, {
   type MediaViewerItem,
   type MediaViewerReference,
 } from "@/components/MediaViewer";
-import MaskEditor from "@/components/MaskEditor";
+import LocalEditEditor from "@/components/MaskEditor";
 import SelectMenu from "@/components/SelectMenu";
 import type {
   CanvasCamera,
@@ -7137,7 +7137,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string) => {
       const node = maskNodeId
         ? nodeById(docRef.current, maskNodeId)
         : undefined;
@@ -7164,7 +7164,7 @@ export default function SuperCanvas() {
                 ),
               );
         if (!existingDraft)
-          throw new Error("当前节点没有完整生成参数，无法使用蒙版。");
+          throw new Error("当前节点没有完整生成参数，无法使用局部编辑。");
         const uploaded = await uploadCanvasAsset(
           dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
         );
@@ -7177,6 +7177,7 @@ export default function SuperCanvas() {
           ...settings,
           mask: { assetId: uploaded.id, url: uploaded.url },
         } satisfies ImageCreationSettings;
+        const nextPrompt = prompt?.trim() || existingDraft.prompt;
         const maskCoverage = Math.max(0, Math.min(1, coverage));
         const mask: CanvasMaskState = {
           assetId: uploaded.id,
@@ -7194,12 +7195,14 @@ export default function SuperCanvas() {
                   ...item,
                   data: {
                     ...item.data,
+                    ...(nextPrompt ? { prompt: nextPrompt } : {}),
                     mask,
                     params: clone(params),
                     ...(item.data.generation
                       ? {
                           generation: {
                             ...item.data.generation,
+                            ...(nextPrompt ? { prompt: nextPrompt } : {}),
                             params: clone(params),
                           },
                         }
@@ -7210,22 +7213,22 @@ export default function SuperCanvas() {
           ),
         }));
         if (reuseDraft?.sourceNodeId === node.id) {
-          setReuseDraft({ ...existingDraft, params, dirty: true });
+          setReuseDraft({ ...existingDraft, prompt: nextPrompt, params, dirty: true });
           setExpandedEditorId(node.id);
           setSelectedIds(new Set([node.id]));
           setSelectedGroupId(null);
           setLightbox(null);
         } else {
-          openImageEditor(node, { params });
+          openImageEditor(node, { params, prompt: nextPrompt });
         }
         setMaskNodeId(null);
         notify(
-          `蒙版已保存（覆盖 ${Math.round(maskCoverage * 100)}%），点击生成即可创建右侧新图；原图保持不变`,
+          `局部编辑范围已保存（覆盖 ${Math.round(maskCoverage * 100)}%），点击生成即可创建右侧新图；原图保持不变`,
           "ok",
         );
       } catch (error) {
         notify(
-          error instanceof Error ? error.message : "蒙版保存失败",
+          error instanceof Error ? error.message : "局部编辑范围保存失败",
           "error",
         );
       }
@@ -7281,7 +7284,7 @@ export default function SuperCanvas() {
             ? { ...current, params: clone(cleanedParams), dirty: true }
             : current,
         );
-      notify("蒙版已移除，下一次生成不会再携带蒙版");
+      notify("局部编辑范围已移除，下一次生成不会再携带局部编辑");
     },
     [editorDrafts, notify, reuseDraft, runtime, updateDoc],
   );
@@ -8491,10 +8494,10 @@ export default function SuperCanvas() {
         {
           id: "mask",
           icon: "◌",
-          label: node.data.mask ? "查看蒙版" : "绘制蒙版",
+          label: node.data.mask ? "查看局部编辑" : "局部编辑",
           title: node.data.mask
-            ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
-            : "为当前图片绘制蒙版",
+            ? `局部编辑 · ${canvasMaskStatusLabel(node.data.mask.status)}`
+            : "为当前图片指定局部编辑范围",
           disabled: !hasMedia,
           onClick: () => openCanvasMaskEditor(node.id),
         },
@@ -8747,10 +8750,10 @@ export default function SuperCanvas() {
         {
           id: "mask",
           icon: "◌",
-          label: node.data.mask ? "查看蒙版" : "绘制蒙版",
+          label: node.data.mask ? "查看局部编辑" : "局部编辑",
           title: node.data.mask
-            ? `蒙版 · ${canvasMaskStatusLabel(node.data.mask.status)}`
-            : "为当前图片绘制蒙版",
+            ? `局部编辑 · ${canvasMaskStatusLabel(node.data.mask.status)}`
+            : "为当前图片指定局部编辑范围",
           disabled: !hasMedia,
           onClick: close(() => openCanvasMaskEditor(node.id)),
         },
@@ -9440,7 +9443,7 @@ export default function SuperCanvas() {
                     openCanvasMediaViewer(node.id)
                   }
                   onOutputPreview={(output) => openCanvasMediaViewer(output.id)}
-                  onMaskEdit={() => openCanvasMaskEditor(node.id)}
+                  onLocalEdit={() => openCanvasMaskEditor(node.id)}
                   onTextPreview={() => openCanvasTextViewer(node.id)}
                   onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
                   onRetryVariant={(variantIndex) =>
@@ -9543,8 +9546,8 @@ export default function SuperCanvas() {
               onReferenceDrop={addNodeReference}
               onAddReferenceFiles={addEditorReferenceFiles}
               maskState={maskStateForNode(editorNode)}
-              onMaskEdit={() => openCanvasMaskEditor(editorNode.id)}
-              onMaskRemove={() => removeCanvasMask(editorNode)}
+              onLocalEdit={() => openCanvasMaskEditor(editorNode.id)}
+              onLocalEditRemove={() => removeCanvasMask(editorNode)}
               branchDraft={reuseDraft?.sourceNodeId === editorNode.id ? reuseDraft : null}
               onDraftReferenceFiles={addReuseFiles}
               onDraftReferenceRemove={removeReuseReference}
@@ -10324,7 +10327,7 @@ export default function SuperCanvas() {
             : viewerVideoInPlace
               ? toggleEditor(viewerNode)
               : openReuseDraft(viewerNode) : undefined}
-          onMask={viewerIsMedia && viewerNode.data.kind === "image" ? () => openCanvasMaskEditor(viewerNode.id) : undefined}
+          onLocalEdit={viewerIsMedia && viewerNode.data.kind === "image" ? () => openCanvasMaskEditor(viewerNode.id) : undefined}
           onUpscale={viewerIsMedia && viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
           onContinue={viewerIsMedia ? () => continueFromMedia(viewerNode) : undefined}
           onReuse={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
@@ -10360,10 +10363,11 @@ export default function SuperCanvas() {
         />
       )}
       {maskNode?.data.url && (
-        <MaskEditor
+        <LocalEditEditor
           imageUrl={String(maskNode.data.url)}
           initialMaskDataUrl={maskNode.data.mask?.url || maskSettings?.mask?.url}
-          onApply={(value, coverage) => applyCanvasMask(value, coverage)}
+          initialPrompt={editorPromptFor(maskNode)}
+          onApply={(value, coverage, prompt) => applyCanvasMask(value, coverage, prompt)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}
@@ -11708,8 +11712,8 @@ type CanvasNodeEditorPopoverProps = {
   editorPrompt: string;
   editorParams?: CanvasGenerationParams;
   maskState?: CanvasMaskState;
-  onMaskEdit?: () => void;
-  onMaskRemove?: () => void;
+  onLocalEdit?: () => void;
+  onLocalEditRemove?: () => void;
   onToggleEditor: (node: CanvasNode) => void;
   onGenerate: (node: CanvasNode) => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
@@ -12035,8 +12039,8 @@ function CanvasNodeEditorPopover({
   editorPrompt,
   editorParams,
   maskState,
-  onMaskEdit,
-  onMaskRemove,
+  onLocalEdit,
+  onLocalEditRemove,
   onToggleEditor,
   onGenerate,
   onEditorPromptChange,
@@ -12366,11 +12370,11 @@ function CanvasNodeEditorPopover({
                 </div>
               )}
             </div>
-            {node.type === "media" && node.data.kind === "image" && node.data.url && onMaskEdit && maskState && (
+            {node.type === "media" && node.data.kind === "image" && node.data.url && onLocalEdit && maskState && (
               <CanvasMaskSummary
                 mask={maskState}
-                onEdit={onMaskEdit}
-                onRemove={onMaskRemove}
+                onEdit={onLocalEdit}
+                onRemove={onLocalEditRemove}
               />
             )}
             {branchDraft ? (
@@ -12480,15 +12484,15 @@ function CanvasMaskSummary({
     : "覆盖范围待计算";
   return (
     <div className={`canvas-mask-summary ${mask.status}`} data-canvas-wheel-isolate>
-      <button type="button" className="canvas-mask-summary-preview" onClick={onEdit} title="查看红色蒙版区域并重新绘制">
-        <span className="canvas-mask-thumb"><img src={mask.url} alt="蒙版缩略图" /></span>
+      <button type="button" className="canvas-mask-summary-preview" onClick={onEdit} title="查看局部编辑范围并继续编辑">
+        <span className="canvas-mask-thumb"><img src={mask.url} alt="局部编辑范围缩略图" /></span>
         <span>
-          <b>蒙版 · {canvasMaskStatusLabel(mask.status)}</b>
+          <b>局部编辑 · {canvasMaskStatusLabel(mask.status)}</b>
           <small>{coverage}{mask.error ? ` · ${mask.error}` : ""}</small>
         </span>
       </button>
       <div className="canvas-mask-summary-actions">
-        <button type="button" onClick={onEdit}>{mask.status === "used" ? "再次使用" : "查看 / 重绘"}</button>
+        <button type="button" onClick={onEdit}>{mask.status === "used" ? "再次使用" : "查看 / 编辑"}</button>
         {onRemove && <button type="button" className="danger" onClick={onRemove}>移除</button>}
       </div>
     </div>
@@ -12507,7 +12511,7 @@ function CanvasNodeCard({
   onRemoveFromGroup,
   onPreview,
   onTextPreview,
-  onMaskEdit,
+  onLocalEdit,
   onUseAsImagePrompt,
   onRetryVariant,
   onRetryFailedVariants,
@@ -12547,7 +12551,7 @@ function CanvasNodeCard({
   onRemoveFromGroup: () => void;
   onPreview: () => void;
   onTextPreview: () => void;
-  onMaskEdit: () => void;
+  onLocalEdit: () => void;
   onUseAsImagePrompt: () => void;
   onRetryVariant: (variantIndex: number) => void;
   onRetryFailedVariants: () => void;
@@ -12872,22 +12876,22 @@ function CanvasNodeCard({
               </span>
             )}
             {data.url && data.maskApplied && (
-              <span className="canvas-node-mask-badge used" title="本次生成请求使用了蒙版">
-                ◌ 本次使用蒙版
+              <span className="canvas-node-mask-badge used" title="本次生成请求使用了局部编辑">
+                ◌ 本次使用局部编辑
               </span>
             )}
             {data.url && maskState && !data.maskApplied && (
               <button
                 type="button"
                 className={`canvas-node-mask-badge ${maskState.status}`}
-                title={`蒙版 · ${canvasMaskStatusLabel(maskState.status)} · 点击查看或重绘`}
+                title={`局部编辑 · ${canvasMaskStatusLabel(maskState.status)} · 点击查看或继续编辑`}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onMaskEdit();
+                  onLocalEdit();
                 }}
               >
-                ◌ 蒙版 · {canvasMaskStatusLabel(maskState.status)}
+                ◌ 局部编辑 · {canvasMaskStatusLabel(maskState.status)}
               </button>
             )}
           </div>

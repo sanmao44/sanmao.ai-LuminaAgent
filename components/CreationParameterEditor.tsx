@@ -114,7 +114,7 @@ function ImageEditor({
               <ModelPicker
                 models={models}
                 value={settings.model}
-                capability="generate"
+                capability={settings.mask ? "edit" : "generate"}
                 portalZIndex={portalZIndex}
                 dialogPortalZIndex={dialogPortalZIndex}
                 defaultProviderId={runtime?.settings.defaultProviderId}
@@ -273,7 +273,7 @@ function ImageEditor({
           <ModelPicker
             models={models}
             value={settings.model}
-            capability="generate"
+            capability={settings.mask ? "edit" : "generate"}
             portalZIndex={portalZIndex}
             dialogPortalZIndex={dialogPortalZIndex}
             defaultProviderId={runtime?.settings.defaultProviderId}

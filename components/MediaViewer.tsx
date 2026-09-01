@@ -62,7 +62,7 @@ export default function MediaViewer({
   onPromptSave,
   onParametersChange,
   onEdit,
-  onMask,
+  onLocalEdit,
   onUpscale,
   onContinue,
   onReuse,
@@ -88,7 +88,7 @@ export default function MediaViewer({
   onPromptSave?: (value: string) => void;
   onParametersChange?: (settings: CreationSettings) => void;
   onEdit?: () => void;
-  onMask?: () => void;
+  onLocalEdit?: () => void;
   onAngle?: () => void;
   onUpscale?: () => void;
   onContinue?: () => void;
@@ -600,9 +600,9 @@ export default function MediaViewer({
           {surface === "canvas" ? (
             <>
               {onEdit && <button type="button" onClick={onEdit}>✎ 编辑节点</button>}
-              {onMask && item.kind === "image" && <button type="button" onClick={onMask}>◌ 蒙版</button>}
+              {onLocalEdit && item.kind === "image" && <button type="button" onClick={onLocalEdit}>◌ 局部编辑</button>}
             </>
-          ) : onEdit ? <button type="button" onClick={onEdit}>✎ 修改 / 蒙版</button> : null}
+          ) : onEdit ? <button type="button" onClick={onEdit}>✎ 修改图片</button> : null}
           {onAngle && item.kind === "image" && <button type="button" onClick={onAngle}>◌ 调整角度</button>}
           {onUpscale && item.kind === "image" && <button type="button" onClick={onUpscale}>↗ 超分</button>}
           {onContinue && <button type="button" onClick={onContinue}>{item.kind === "video" ? "▶ 继续生成 / 变体" : "▶ 继续生成"}</button>}
