@@ -70,6 +70,7 @@ test("recognizes mentions embedded in text when selecting references", () => {
   const result = refs.selectCreativeReferences("请让主体@1参考风格@3", available);
   assert.deepEqual(result.references.map((item) => item.id), ["image-1", "text-1"]);
   assert.equal(refs.hasReferenceMentions("主体@1参考"), true);
+  assert.deepEqual(refs.referenceMentionNumbers("主体@1参考风格@3"), [1, 3]);
 });
 
 test("turns natural image and video labels into real numbered mentions", () => {
