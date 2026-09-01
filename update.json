@@ -1,21 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.18",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.18",
+  "latestVersion": "0.7.19",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.19",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip"
   ],
-  "sha256": "11b0df72bfc6a9b4b4b281285ba4fdb02d445bd19a5e06ada9ff007335977fba",
-  "publishedAt": "2026-09-01T09:16:48+08:00",
+  "sha256": "637f76866db06b08cefb7dc0ca48095ef52d712ccaee789c71bcfacbd3bc0b25",
+  "publishedAt": "2026-09-01T18:42:17+08:00",
   "notes": [
-    "统一 Agent、图片/视频提示词、超级画布、画布节点编辑器和复用编辑器中的真实 @ 引用。",
-    "图片和视频引用发送真实媒体地址，文本引用发送真实文本内容，并在历史记录中保存实际使用的引用 ID。",
-    "引用菜单支持编号、筛选、缩略图和类型图标，点击引用卡片可放大查看图片/视频或打开完整文本。",
-    "输入 @ 时只提交被点名的引用；没有 @ 时继续提交全部已添加素材。",
-    "无效编号、准备中的素材或不支持视频输入的模型会在提交前阻止并提示原因。"
+    "Hide the legacy bottom composer and keep the canvas node editor as the main editing surface.",
+    "Keep the @ mention candidate menu above the node input with real thumbnails, numbers, and reference names.",
+    "Image, video, and text references continue to submit their real content without being covered by the editor.",
+    "Preserve the upper candidate menu and historical reference behavior."
   ]
 }
