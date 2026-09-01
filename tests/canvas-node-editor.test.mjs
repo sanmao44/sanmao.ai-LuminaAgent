@@ -32,6 +32,42 @@ test("image-connected video cards generate back into the current node", () => {
   assert.match(component, /生成到当前节点/);
 });
 
+test("overlay positioning ignores identical geometry updates", () => {
+  const toolbarStart = component.indexOf("function CanvasNodeQuickToolbar");
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  assert.ok(toolbarStart >= 0 && editorStart > toolbarStart, "canvas overlays should be present");
+  const toolbar = component.slice(toolbarStart, editorStart);
+  assert.match(toolbar, /setPosition\(\(current\) =>[\s\S]*current\.left === nextPosition\.left[\s\S]*current\.top === nextPosition\.top[\s\S]*\? current/);
+
+  const editor = component.slice(editorStart);
+  assert.match(editor, /setPosition\(\(current\) =>[\s\S]*current\.left === position\.left[\s\S]*current\.top === position\.top[\s\S]*current\.maxHeight === position\.maxHeight[\s\S]*\? current/);
+});
+
+test("editor generation forwards its draft without waiting for selection state", () => {
+  const editorStart = component.indexOf("const runEditorGeneration = useCallback");
+  const editorEnd = component.indexOf("const updateUpscaleParams", editorStart);
+  assert.ok(editorStart >= 0 && editorEnd > editorStart, "editor generation should be present");
+  const editor = component.slice(editorStart, editorEnd);
+  assert.match(editor, /const currentNode = nodeById\(docRef\.current, node\.id\)/);
+  assert.match(editor, /const generationRequest: CanvasGenerationRequest/);
+  assert.match(editor, /nodeId: currentNode\.id/);
+  assert.match(editor, /prompt: draft\?\.prompt \?\? editorPromptFor\(currentNode\)/);
+  assert.match(editor, /runGenerationRef\.current\?\.\(generationRequest\)/);
+  assert.doesNotMatch(editor, /setTimeout/);
+
+  const generationStart = component.indexOf("const runGeneration = useCallback");
+  const generationEnd = component.indexOf("runGenerationRef.current = runGeneration", generationStart);
+  assert.ok(generationStart >= 0 && generationEnd > generationStart, "generation implementation should be present");
+  const generation = component.slice(generationStart, generationEnd);
+  assert.match(generation, /async \(request\?: CanvasGenerationRequest\)/);
+  assert.match(generation, /nodeById\(docRef\.current, request\.nodeId\)/);
+  assert.match(generation, /const source = deckSource\(request\)/);
+  assert.match(generation, /const generationMode = source\.kind/);
+  assert.match(generation, /request\.prompt !== undefined/);
+  assert.match(generation, /if \(!request && reuseDraft\)/);
+  assert.doesNotMatch(generation, /if \(mode === "text"\)/);
+});
+
 test("upscale runs in place and keeps a visible processing state on the node", () => {
   const start = component.indexOf("const runUpscaleNode = useCallback");
   const end = component.indexOf("runUpscaleNodeRef.current = runUpscaleNode", start);
@@ -103,9 +139,9 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
 });
 
 test("prompt editor measures content and caps scrolling in both display modes", () => {
-  assert.match(component, /const promptRef = useRef<HTMLTextAreaElement \| null>\(null\)/);
-  assert.match(component, /textarea\.style\.height = "auto"/);
-  assert.match(component, /const contentHeight = textarea\.scrollHeight/);
+  assert.match(component, /const promptRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(component, /editor\.style\.height = "auto"/);
+  assert.match(component, /const contentHeight = (?:textarea|editor)\.scrollHeight/);
   assert.match(component, /promptExpanded \? \(mobile \? 360 : 460\) : \(mobile \? 220 : 260\)/);
   assert.match(component, /textarea\.style\.overflowY = contentHeight > maxHeight \? "auto" : "hidden"/);
 });

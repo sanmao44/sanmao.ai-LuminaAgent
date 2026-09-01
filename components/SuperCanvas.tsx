@@ -198,7 +198,9 @@ import {
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
 import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
-import { referenceMentionNumbers, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
+import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
+import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
+import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
@@ -427,16 +429,7 @@ function CanvasLayoutIcon({
 }
 
 function mentionStateForValue(value: string, cursor: number): MentionState {
-  const safeCursor = Number.isFinite(cursor)
-    ? Math.max(0, Math.min(cursor, value.length))
-    : value.length;
-  const match = /@([^\s@]*)$/.exec(value.slice(0, safeCursor));
-  if (!match) return null;
-  return {
-    start: safeCursor - match[0].length,
-    end: safeCursor,
-    query: match[1],
-  };
+  return creativeReferenceMentionRange(value, cursor);
 }
 
 type CanvasDrafts = {
@@ -451,6 +444,11 @@ type CanvasEditorDraft = {
   references?: CanvasReferenceDraft[];
   operation?: "generate" | "edit" | "extend";
   dirty?: boolean;
+};
+type CanvasGenerationRequest = {
+  nodeId?: string;
+  prompt?: string;
+  params?: CanvasGenerationParams;
 };
 type Interaction =
   | {
@@ -1148,6 +1146,78 @@ function mentionLabel(node: CanvasNode, index: number) {
   return `${index + 1}. ${node.data.name || (node.data.kind === "video" ? "视频素材" : "图片素材")}`;
 }
 
+function canvasMentionPreviewNode(document: CanvasDocument, node: CanvasNode) {
+  if (isCanvasReferenceableNode(node)) return node;
+  const outputIds = new Set(
+    document.edges.filter((edge) => edge.source === node.id).map((edge) => edge.target),
+  );
+  return document.nodes.find((candidate) =>
+    candidate.type === "media" &&
+    Boolean(candidate.data.url) &&
+    (candidate.data.generation?.sourceGeneratorId === node.id ||
+      candidate.data.generation?.parentNodeId === node.id ||
+      outputIds.has(candidate.id)),
+  );
+}
+
+function canvasMentionOption(
+  document: CanvasDocument,
+  node: CanvasNode,
+  index = 0,
+): ReferenceMentionOption {
+  const preview = canvasMentionPreviewNode(document, node);
+  const text = node.type === "prompt"
+    ? String(node.data.agentResponse || node.data.text || node.data.agentPrompt || "").trim()
+    : node.type === "generator"
+      ? String(node.data.prompt || node.data.agentPrompt || "").trim()
+      : "";
+  const kind: ReferenceMentionOption["kind"] = node.type === "prompt" || node.type === "generator"
+    ? "text"
+    : node.data.kind === "video" ? "video" : "image";
+  const previewKind = preview?.data.kind === "video" ? "video" : "image";
+  return {
+    id: node.id,
+    kind,
+    name: String(node.data.name || (node.type === "prompt" ? `Agent 文本${index + 1}` : node.type === "generator" ? `生成器${index + 1}` : node.data.kind === "video" ? `视频${index + 1}` : `图片${index + 1}`)),
+    ...(preview?.data.url ? { thumbnailUrl: String(preview.data.url), thumbnailKind: previewKind } : {}),
+    ...(node.type !== "prompt" && node.type !== "generator" && node.data.url ? { url: String(node.data.url) } : {}),
+    ...(text ? { text } : {}),
+  };
+}
+
+function CanvasReferenceMentionMenu({
+  document,
+  candidates,
+  open,
+  query,
+  onSelect,
+  className,
+}: {
+  document: CanvasDocument;
+  candidates: CanvasNode[];
+  open: boolean;
+  query?: string;
+  onSelect: (index: number) => void;
+  className: string;
+}) {
+  return (
+    <ReferenceMentionMenu
+      references={candidates.map((node, index) => canvasMentionOption(document, node, index))}
+      open={open}
+      query={query}
+      onSelect={onSelect}
+      className={className}
+      getLabel={(reference, index) => mentionLabel(candidates[index], index)}
+      getDescription={(reference, index) => {
+        const node = candidates[index];
+        return node.type === "prompt" || node.type === "generator"
+          ? reference.thumbnailUrl ? "文本上下文 · 已有真实结果缩略图" : "文本上下文"
+          : node.data.kind === "video" ? "视频引用 · 真实视频预览" : "图片参考 · 真实图片缩略图";
+      }}
+    />
+  );
+}
+
 function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | null {
   if (node.type === "prompt") {
     const text = String(node.data.agentResponse || node.data.text || "").trim();
@@ -1445,7 +1515,7 @@ export default function SuperCanvas() {
     pendingFilePositionRef.current = position || null;
     fileInputRef.current?.click();
   }, []);
-  const deckPromptRef = useRef<HTMLTextAreaElement | null>(null);
+  const deckPromptRef = useRef<HTMLDivElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
   const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
   const canvasPointerDownRef = useRef<{ pointerId: number; interactive: boolean } | null>(null);
@@ -1455,7 +1525,9 @@ export default function SuperCanvas() {
   const pollTimersRef = useRef<Set<number>>(new Set());
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
   const pollStartedAtRef = useRef<Map<string, number>>(new Map());
-  const runGenerationRef = useRef<(() => Promise<void>) | null>(null);
+  const runGenerationRef = useRef<
+    ((request?: CanvasGenerationRequest) => Promise<void>) | null
+  >(null);
   const runUpscaleNodeRef = useRef<((node: CanvasNode) => Promise<void>) | null>(null);
   const mountedRef = useRef(true);
   const generationKeysRef = useRef<Set<string>>(new Set());
@@ -4003,89 +4075,119 @@ export default function SuperCanvas() {
           ? Math.round(durationSeconds * 1000)
           : undefined;
       if ((!width || !height) && !durationMs) return;
-      updateDoc((value) => ({
-        ...value,
-        nodes: value.nodes.map((node) => {
+      updateDoc((value) => {
+        let changed = false;
+        const nodes = value.nodes.map((node) => {
           if (node.id !== nodeId || node.type !== "media") return node;
-          const nextData = {
-            ...node.data,
-            ...(width && height
-              ? { nativeWidth: width, nativeHeight: height }
-              : {}),
-            ...(durationMs ? { durationMs } : {}),
-          };
-          if (!width || !height)
-            return { ...node, data: nextData };
-          if (node.data.autoFit === false)
-            return {
-              ...node,
-              data: nextData,
-            };
+
+          const hasNaturalSize = Boolean(width && height);
+          const dimensionsChanged =
+            hasNaturalSize &&
+            (node.data.nativeWidth !== width || node.data.nativeHeight !== height);
+          const durationChanged =
+            durationMs !== undefined && node.data.durationMs !== durationMs;
+          const nextSize =
+            hasNaturalSize && node.data.autoFit !== false
+              ? mediaCardSizeForRatio(width / height, node.data.kind || "image")
+              : null;
+          const cardSizeChanged = Boolean(
+            nextSize && (node.w !== nextSize.w || node.h !== nextSize.h),
+          );
+
+          // loadedmetadata may fire again when a selected video is remounted.
+          // Returning the original node/document when nothing changed prevents
+          // that browser event from creating a React state-update loop.
+          if (!dimensionsChanged && !durationChanged && !cardSizeChanged)
+            return node;
+
+          changed = true;
           return {
             ...node,
-            ...mediaCardSizeForRatio(width / height, node.data.kind || "image"),
-            data: nextData,
+            ...(nextSize || {}),
+            data: {
+              ...node.data,
+              ...(hasNaturalSize
+                ? { nativeWidth: width, nativeHeight: height }
+                : {}),
+              ...(durationMs !== undefined ? { durationMs } : {}),
+            },
           };
-        }),
-      }));
+        });
+        return changed ? { ...value, nodes } : value;
+      });
     },
     [updateDoc],
   );
 
-  const deckSource = useCallback(() => {
-    if (selectedSingle?.type === "prompt") {
+  const deckSource = useCallback((request?: CanvasGenerationRequest) => {
+    const activeNode = request?.nodeId
+      ? nodeById(docRef.current, request.nodeId)
+      : selectedSingle;
+    const promptOverride =
+      request?.nodeId && activeNode?.id === request.nodeId
+        ? request.prompt
+        : undefined;
+    const paramsOverride =
+      request?.nodeId && activeNode?.id === request.nodeId
+        ? request.params
+        : undefined;
+    if (activeNode?.type === "prompt") {
       return {
         kind: "text" as const,
         // A completed Agent node displays its answer in `text`, but reruns
         // must use the original request so the conversation is reproducible.
-        prompt: String(
-          selectedSingle.data.agentPrompt || selectedSingle.data.text || "",
-        ),
+        prompt:
+          promptOverride ??
+          String(activeNode.data.agentPrompt || activeNode.data.text || ""),
         params: normalizeCreationSettings(
           "text",
-          selectedSingle.data.params,
+          paramsOverride?.kind === "text"
+            ? paramsOverride
+            : activeNode.data.params,
           runtime,
         ),
-        node: selectedSingle,
+        node: activeNode,
         target: null as CanvasNode | null,
       };
     }
-    if (selectedSingle?.type === "generator") {
-      const kind: CanvasMediaKind = selectedSingle.data.kind || "image";
+    if (activeNode?.type === "generator") {
+      const kind: CanvasMediaKind = activeNode.data.kind || "image";
       return {
         kind,
-        prompt: String(selectedSingle.data.prompt || ""),
-        params: copyParams(selectedSingle.data.params, kind, runtime),
-        node: selectedSingle,
+        prompt: promptOverride ?? String(activeNode.data.prompt || ""),
+        params: copyParams(paramsOverride || activeNode.data.params, kind, runtime),
+        node: activeNode,
         target: null as CanvasNode | null,
       };
     }
-    if (selectedSingle?.type === "media") {
-      const kind: CanvasMediaKind = selectedSingle.data.kind || "image";
+    if (activeNode?.type === "media") {
+      const kind: CanvasMediaKind = activeNode.data.kind || "image";
       return {
         kind,
-        prompt: String(
-          selectedSingle.data.generation?.prompt ||
-            selectedSingle.data.prompt ||
-            "",
-        ),
+        prompt:
+          promptOverride ??
+          String(activeNode.data.generation?.prompt || activeNode.data.prompt || ""),
         params: copyParams(
-          selectedSingle.data.generation?.params || selectedSingle.data.params,
+          paramsOverride || activeNode.data.generation?.params || activeNode.data.params,
           kind,
           runtime,
         ),
         node: null,
-        target: selectedSingle,
+        target: activeNode,
       };
     }
     const kind = mode;
     return {
       kind,
-      prompt: drafts[mode].prompt,
+      prompt: promptOverride ?? drafts[mode].prompt,
       params:
         mode === "text"
-          ? normalizeCreationSettings("text", drafts.text.params, runtime)
-          : copyParams(drafts[mode].params, mode, runtime),
+          ? normalizeCreationSettings(
+              "text",
+              paramsOverride?.kind === "text" ? paramsOverride : drafts.text.params,
+              runtime,
+            )
+          : copyParams(paramsOverride || drafts[mode].params, mode, runtime),
       node: null,
       target: null as CanvasNode | null,
     };
@@ -5906,13 +6008,17 @@ export default function SuperCanvas() {
     }
   }, [addLog, commit, notify, openNodePosition, pollVideo, runImageContinuation, runtime, screenToWorld, selectedSingle]);
 
-  const runGeneration = useCallback(async () => {
-    if (reuseDraft) {
+  const runGeneration = useCallback(async (request?: CanvasGenerationRequest) => {
+    if (!request && reuseDraft) {
       await runReuseGeneration(reuseDraft);
       return;
     }
-    const source = deckSource();
-    const selectedMediaTarget = selectedSingle?.type === "media" ? selectedSingle : null;
+    if (request?.nodeId && !nodeById(docRef.current, request.nodeId)) {
+      return notify("当前节点已不存在，请重新选择后再生成。", "error");
+    }
+    const source = deckSource(request);
+    const generationMode = source.kind;
+    const selectedMediaTarget = source.target?.type === "media" ? source.target : null;
     const selectedMediaReferences = selectedMediaTarget
       ? incomingReferences(docRef.current, selectedMediaTarget.id)
       : [];
@@ -5931,13 +6037,22 @@ export default function SuperCanvas() {
         ),
       );
       if (!draft) return notify("当前节点没有完整生成参数，无法创建新分支。", "error");
-      await runReuseGeneration(draft);
+      await runReuseGeneration(
+        request
+          ? {
+              ...draft,
+              ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+              ...(request.params ? { params: clone(request.params) } : {}),
+              dirty: true,
+            }
+          : draft,
+      );
       return;
     }
-    const sourceTarget = selectedSingle?.type === "media" ? selectedSingle : null;
-    if (source.node?.type === "generator" && mode !== "text")
+    const sourceTarget = selectedMediaTarget;
+    if (source.node?.type === "generator" && generationMode !== "text")
       return runVariantBatch(source.node.id);
-    if (mode === "text") {
+    if (generationMode === "text") {
       const rawPrompt = source.prompt.trim();
       if (!rawPrompt) return notify("请输入要交给 Agent 的内容。", "error");
       const settings =
@@ -6752,7 +6867,6 @@ export default function SuperCanvas() {
     commit,
     deckSource,
     mentionCandidates,
-    mode,
     notify,
     pollVideo,
     runVariantBatch,
@@ -7064,8 +7178,9 @@ export default function SuperCanvas() {
         void runUpscaleNodeRef.current?.(node);
         return;
       }
-      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
-      if (reuseDraft?.sourceNodeId === node.id && !inPlaceVideo) {
+      const currentNode = nodeById(docRef.current, node.id) || node;
+      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, currentNode);
+      if (reuseDraft?.sourceNodeId === currentNode.id && !inPlaceVideo) {
         const draft = cloneReuseDraft(reuseDraft);
         setExpandedEditorId(null);
         setReuseDraft(null);
@@ -7073,13 +7188,19 @@ export default function SuperCanvas() {
         return;
       }
       if (inPlaceVideo)
-        setReuseDraft((current) => current?.sourceNodeId === node.id ? null : current);
-      const draft = editorDrafts[node.id];
+        setReuseDraft((current) => current?.sourceNodeId === currentNode.id ? null : current);
+      const draft = editorDrafts[currentNode.id];
+      const params = draft?.params ? clone(draft.params) : editorParamsFor(currentNode);
+      const generationRequest: CanvasGenerationRequest = {
+        nodeId: currentNode.id,
+        prompt: draft?.prompt ?? editorPromptFor(currentNode),
+        ...(params ? { params } : {}),
+      };
       if (draft) {
         commit((valueDoc) => ({
           ...valueDoc,
           nodes: valueDoc.nodes.map((item) =>
-            item.id === node.id
+            item.id === currentNode.id
               ? {
                   ...item,
                   data: {
@@ -7102,13 +7223,13 @@ export default function SuperCanvas() {
           ),
         }));
       }
-      setSelectedIds(new Set([node.id]));
+      setSelectedIds(new Set([currentNode.id]));
       setSelectedGroupId(null);
-      setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
+      setMode(currentNode.type === "prompt" ? "text" : currentNode.data.kind === "video" ? "video" : "image");
       setExpandedEditorId(null);
-      window.setTimeout(() => void runGenerationRef.current?.(), 0);
+      void runGenerationRef.current?.(generationRequest);
     },
-    [commit, editorDrafts, reuseDraft, runReuseGeneration],
+    [commit, editorDrafts, editorParamsFor, editorPromptFor, reuseDraft, runReuseGeneration],
   );
 
   const updateUpscaleParams = useCallback((node: CanvasNode, params: CanvasUpscaleParams) => {
@@ -7632,7 +7753,7 @@ export default function SuperCanvas() {
         if (window.document.querySelector(".canvas-asset-preview-backdrop")) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest(
-          ".canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu.open,.select-menu-popover,.model-picker-trigger.open,.model-picker-panel,.model-picker-dialog-backdrop,.media-viewer-backdrop,.canvas-asset-preview-backdrop,.mask-editor-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
+          ".reference-mention-editor,.canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu.open,.select-menu-popover,.model-picker-trigger.open,.model-picker-panel,.model-picker-dialog-backdrop,.media-viewer-backdrop,.canvas-asset-preview-backdrop,.mask-editor-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
         )) return;
         event.preventDefault();
         event.stopPropagation();
@@ -7889,27 +8010,13 @@ export default function SuperCanvas() {
     return badges;
   }, [deck.params, document, mode, referenceOwnerId, reuseDraft, selectedNodes]);
   useEffect(() => {
-    const textarea = deckPromptRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
+    const editor = deckPromptRef.current;
+    if (!editor) return;
+    editor.style.height = "auto";
     const minHeight = window.innerWidth <= 720 ? 68 : 72;
     const maxHeight = window.innerWidth <= 720 ? 190 : 320;
-    textarea.style.height = `${Math.min(maxHeight, Math.max(minHeight, textarea.scrollHeight))}px`;
+    editor.style.height = `${Math.min(maxHeight, Math.max(minHeight, editor.scrollHeight))}px`;
   }, [composerPrompt, mode, reuseDraft, selectedSingle?.id]);
-  const filteredMentionCandidates = mentionCandidates.filter(
-    (node, index) =>
-      !mentionState?.query ||
-      mentionLabel(node, index)
-        .toLowerCase()
-        .includes(mentionState.query.toLowerCase()),
-  );
-  const filteredVariantMentionCandidates = mentionCandidates.filter(
-    (node, index) =>
-      !variantMentionState?.query ||
-      mentionLabel(node, index)
-        .toLowerCase()
-        .includes(variantMentionState.query.toLowerCase()),
-  );
   const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
     if (node.type !== "media") return;
     const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
@@ -8266,9 +8373,7 @@ export default function SuperCanvas() {
     [notify],
   );
   const updateDeckPrompt = useCallback(
-    (event: ReactChangeEvent<HTMLTextAreaElement>) => {
-      const value = event.target.value;
-      const cursor = event.target.selectionStart;
+    (value: string, cursor: number) => {
       if (reuseDraft) {
         setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
         setMentionState(mentionStateForValue(value, cursor));
@@ -8288,35 +8393,20 @@ export default function SuperCanvas() {
     },
     [openReuseDraft, reuseDraft, selectedSingle, updatePrompt],
   );
-  const chooseMention = useCallback(
-    (node: CanvasNode) => {
-      if (!mentionState) return;
-      const index = mentionCandidates.findIndex((item) => item.id === node.id);
-      if (index < 0) return;
-      const value = reuseDraft?.prompt || deck.prompt;
-      const next = `${value.slice(0, mentionState.start)}@${index + 1} ${value.slice(mentionState.end)}`;
-      if (reuseDraft) setReuseDraft((current) => current ? { ...current, prompt: next, dirty: true } : current);
-      else if (selectedSingle?.type === "media") {
-        if (
-          selectedSingle.data.kind === "image" ||
-          canvasVideoTargetHasImageReference(docRef.current, selectedSingle)
-        ) updatePrompt(next);
-        else openReuseDraft(selectedSingle, { prompt: next });
-      }
-      else updatePrompt(next);
+  const applyDeckMention = useCallback(
+    (value: string, cursor: number) => {
+      updateDeckPrompt(value, cursor);
       setMentionState(null);
       window.requestAnimationFrame(() => deckPromptRef.current?.focus());
     },
-    [deck.prompt, mentionCandidates, mentionState, openReuseDraft, reuseDraft, selectedSingle, updatePrompt],
+    [updateDeckPrompt],
   );
-  const chooseVariantMention = useCallback(
-    (node: CanvasNode) => {
-      if (!variantMentionState || selectedSingle?.type !== "generator") return;
-      const index = mentionCandidates.findIndex((item) => item.id === node.id);
-      if (index < 0) return;
-      const value = String(selectedSingle.data.variantRequirementsText ?? variantRequirementsFor(selectedSingle).join("\n"));
-      const next = `${value.slice(0, variantMentionState.start)}@${index + 1} ${value.slice(variantMentionState.end)}`;
-      updateVariantRequirements(next);
+  const applyDeckVariantMention = useCallback(
+    (index: number, value: string) => {
+      if (selectedSingle?.type !== "generator") return;
+      updateVariantRequirements(value);
+      const node = mentionCandidates[index];
+      if (!node) return;
       const role: CanvasInputRole = node.type === "prompt" || node.type === "generator"
         ? "context"
         : node.data.kind === "video"
@@ -8325,7 +8415,7 @@ export default function SuperCanvas() {
       addNodeReference(selectedSingle.id, node.id, role);
       setVariantMentionState(null);
     },
-    [addNodeReference, mentionCandidates, selectedSingle, updateVariantRequirements, variantMentionState],
+    [addNodeReference, mentionCandidates, selectedSingle, updateVariantRequirements],
   );
   const reorderReference = useCallback(
     (ownerId: string, draggedId: string, targetId: string) => {
@@ -9481,7 +9571,7 @@ export default function SuperCanvas() {
                   onReferenceDrop={addNodeReference}
                   onAddReferenceFiles={addEditorReferenceFiles}
                   editorContexts={incomingContext(document, node.id).filter((item) => item.type === "prompt" || item.type === "generator")}
-                  mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
+                   mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
                 />
               ))}
            </div>
@@ -9905,9 +9995,8 @@ export default function SuperCanvas() {
                 </div>
                 <div className="canvas-deck-prompt-row">
                   <div className="canvas-prompt-input-wrap">
-                  <textarea
+                  <ReferenceMentionEditor
                     ref={deckPromptRef}
-                    aria-label="创作提示词"
                     value={
                       selectedSingle?.type === "prompt"
                         ? String(
@@ -9917,24 +10006,12 @@ export default function SuperCanvas() {
                           )
                       : composerPrompt
                     }
+                    references={mentionCandidates.map((node, index) => canvasMentionOption(document, node, index))}
+                    ariaLabel="创作提示词"
+                    className="canvas-deck-prompt-editor"
+                    menuClassName="canvas-mention-menu"
                     onChange={updateDeckPrompt}
-                    onClick={(event) =>
-                      setMentionState(
-                        mentionStateForValue(
-                          event.currentTarget.value,
-                          event.currentTarget.selectionStart,
-                        ),
-                      )
-                    }
-                    onKeyUp={(event) => {
-                      if (event.key === "Escape") return;
-                      setMentionState(
-                        mentionStateForValue(
-                          event.currentTarget.value,
-                          event.currentTarget.selectionStart,
-                        ),
-                      );
-                    }}
+                    onMentionSelect={(_index, value, cursor) => applyDeckMention(value, cursor)}
                     onKeyDown={(event) => {
                       if (event.key === "Escape") setMentionState(null);
                       if (mode === "text" && event.key === "Enter" && !event.shiftKey) {
@@ -9947,7 +10024,7 @@ export default function SuperCanvas() {
                         event.key === "Enter"
                       ) {
                         event.preventDefault();
-                        void runGeneration();
+                          void runGeneration();
                       }
                     }}
                     placeholder={
@@ -9957,7 +10034,10 @@ export default function SuperCanvas() {
                           ? "输入要交给 Agent 的任务… 可连接上游文本形成对话上下文"
                           : "描述你想生成的画面… 输入 @ 可调用参考图"
                     }
-                    rows={2}
+                    transformPastedText={(text) => replaceNaturalReferenceLabels(
+                      text,
+                      mentionCandidates.map((node, index) => canvasMentionOption(document, node, index)),
+                    ).value}
                   />
                   {reuseDraft && composerPrompt && (
                     <button
@@ -9968,33 +10048,6 @@ export default function SuperCanvas() {
                     >
                       清空
                     </button>
-                  )}
-                  {mentionState && filteredMentionCandidates.length > 0 && (
-                    <div className="canvas-mention-menu">
-                      {filteredMentionCandidates.slice(0, 8).map((node) => (
-                        <button
-                          type="button"
-                          key={node.id}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => chooseMention(node)}
-                        >
-                          <b>
-                            @
-                            {mentionCandidates.findIndex(
-                              (item) => item.id === node.id,
-                            ) + 1}
-                          </b>
-                          <span>
-                            {mentionLabel(
-                              node,
-                              mentionCandidates.findIndex(
-                                (item) => item.id === node.id,
-                              ),
-                            )}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
                   )}
                   </div>
                   <button
@@ -10022,40 +10075,26 @@ export default function SuperCanvas() {
                       </div>
                       <span>{variantRequirementsFor(selectedSingle).length}/8</span>
                     </div>
-                    <textarea
-                      aria-label="变体要求，每行一条"
-                      rows={3}
+                    <ReferenceMentionEditor
+                      ariaLabel="变体要求，每行一条"
                       value={
                         selectedSingle.data.variantRequirementsText ??
                         variantRequirementsFor(selectedSingle).join("\n")
                       }
+                      references={mentionCandidates.map((node, index) => canvasMentionOption(document, node, index))}
+                      className="canvas-variant-requirements-editor"
+                      menuClassName="canvas-mention-menu canvas-variant-mention-menu"
+                      onChange={(value) => updateVariantRequirements(value)}
+                      onMentionSelect={(index, value) => applyDeckVariantMention(index, value)}
                       placeholder="改成夜景\n改为俯拍视角\n替换成红色包装"
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        updateVariantRequirements(value);
-                        setVariantMentionState(mentionStateForValue(value, event.target.selectionStart));
-                      }}
-                      onClick={(event) => setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
-                      onKeyUp={(event) => {
-                        if (event.key !== "Escape") setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart));
-                      }}
                       onKeyDown={(event) => {
                         if (event.key === "Escape") setVariantMentionState(null);
                       }}
+                      transformPastedText={(text) => replaceNaturalReferenceLabels(
+                        text,
+                        mentionCandidates.map((node, index) => canvasMentionOption(document, node, index)),
+                      ).value}
                     />
-                    {variantMentionState && filteredVariantMentionCandidates.length > 0 && (
-                      <div className="canvas-mention-menu canvas-variant-mention-menu">
-                        {filteredVariantMentionCandidates.slice(0, 8).map((node) => {
-                          const index = mentionCandidates.findIndex((item) => item.id === node.id);
-                          return (
-                            <button type="button" key={node.id} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseVariantMention(node)}>
-                              <b>@{index + 1}</b>
-                              <span>{mentionLabel(node, index)}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
                     <small className="canvas-variant-editor-note">
                       每条要求都会叠加到共同提示词，并按顺序生成独立结果。
                     </small>
@@ -11797,7 +11836,12 @@ function CanvasNodeQuickToolbar({
       width: toolbarRef.current?.offsetWidth || (compact ? 280 : 520),
       height: toolbarRef.current?.offsetHeight || 40,
     };
-    setPosition(placeCanvasNodeToolbar(anchor, stageSize, overlay, 10));
+    const nextPosition = placeCanvasNodeToolbar(anchor, stageSize, overlay, 10);
+    setPosition((current) =>
+      current.left === nextPosition.left && current.top === nextPosition.top
+        ? current
+        : nextPosition,
+    );
   }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node, stageRef]);
 
   useLayoutEffect(() => {
@@ -12062,12 +12106,10 @@ function CanvasNodeEditorPopover({
   onUpscaleParamsChange,
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
-  const [mentionState, setMentionState] = useState<MentionState>(null);
-  const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
   const data = node.data;
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
@@ -12076,62 +12118,9 @@ function CanvasNodeEditorPopover({
   const inPlaceVideo = canvasVideoTargetHasImageReference(document, node);
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
-  const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
-    if (item.id === node.id) return false;
-    if (!mentionState?.query) return true;
-    const query = mentionState.query.trim().toLowerCase();
-    if (/^\d+$/.test(query)) return String(index + 1).startsWith(query);
-    return [
-      mentionLabel(item, index),
-      nodeLabel(item),
-      item.data.name,
-      item.data.text,
-      item.data.prompt,
-      item.data.agentPrompt,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-  });
-  const visibleVariantMentionCandidates = mentionCandidates.filter((item, index) => {
-    if (item.id === node.id) return false;
-    if (!variantMentionState?.query) return true;
-    const query = variantMentionState.query.trim().toLowerCase();
-    if (/^\d+$/.test(query)) return String(index + 1).startsWith(query);
-    return [
-      mentionLabel(item, index),
-      nodeLabel(item),
-      item.data.name,
-      item.data.text,
-      item.data.prompt,
-      item.data.agentPrompt,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-  });
-  const chooseVariantMention = (candidate: CanvasNode) => {
-    if (!variantMentionState || node.type !== "generator") return;
-    const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
-    if (candidateIndex < 0) return;
-    const value = String(data.variantRequirementsText ?? variantRequirements.join("\n"));
-    const next = `${value.slice(0, variantMentionState.start)}@${candidateIndex + 1} ${value.slice(variantMentionState.end)}`;
-    onVariantRequirementsChange(node, next);
-    const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-      ? "context"
-      : candidate.data.kind === "video"
-        ? data.kind === "video" ? "video" : "reference-image"
-        : "reference-image";
-    onReferenceDrop(node.id, candidate.id, role);
-    setVariantMentionState(null);
-  };
 
   useEffect(() => {
     setPromptExpanded(false);
-    setMentionState(null);
-    setVariantMentionState(null);
   }, [node.id]);
 
   useLayoutEffect(() => {
@@ -12163,18 +12152,6 @@ function CanvasNodeEditorPopover({
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (mentionState) {
-        event.preventDefault();
-        event.stopPropagation();
-        setMentionState(null);
-        return;
-      }
-      if (variantMentionState) {
-        event.preventDefault();
-        event.stopPropagation();
-        setVariantMentionState(null);
-        return;
-      }
       if (promptExpanded) {
         event.preventDefault();
         event.stopPropagation();
@@ -12183,7 +12160,7 @@ function CanvasNodeEditorPopover({
     };
     window.addEventListener("keydown", handleEscape, true);
     return () => window.removeEventListener("keydown", handleEscape, true);
-  }, [mentionState, promptExpanded, variantMentionState]);
+  }, [promptExpanded]);
 
   const reposition = useCallback(() => {
     const stage = stageRef.current;
@@ -12224,7 +12201,13 @@ function CanvasNodeEditorPopover({
       14,
       12,
     );
-    setPosition(position);
+    setPosition((current) =>
+      current.left === position.left &&
+      current.top === position.top &&
+      current.maxHeight === position.maxHeight
+        ? current
+        : position,
+    );
   }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
 
   useLayoutEffect(() => {
@@ -12313,58 +12296,37 @@ function CanvasNodeEditorPopover({
                 <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
                 <small>@ 引用节点 · {node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
               </div>
-              <textarea
+              <ReferenceMentionEditor
                 ref={promptRef}
-                aria-label={`${nodeLabel(node)}提示词`}
                 value={editorPrompt}
-                placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
-                onChange={(event) => {
-                  const value = event.target.value;
+                references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+                ariaLabel={`${nodeLabel(node)}提示词`}
+                className="canvas-node-prompt-editor"
+                menuClassName="canvas-node-mention-menu"
+                onChange={(value) => onEditorPromptChange(node, value)}
+                onMentionSelect={(candidateIndex, value) => {
+                  const candidate = mentionCandidates[candidateIndex];
+                  if (!candidate) return;
                   onEditorPromptChange(node, value);
-                  setMentionState(mentionStateForValue(value, event.target.selectionStart));
+                  const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+                    ? "context"
+                    : candidate.data.kind === "video"
+                      ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
+                      : "reference-image";
+                  onReferenceDrop(node.id, candidate.id, role);
                 }}
-                onClick={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
-                onKeyUp={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+                placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setMentionState(null);
                   if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
                     event.preventDefault();
                     onGenerate(node);
                   }
                 }}
-                rows={3}
+                transformPastedText={(text) => replaceNaturalReferenceLabels(
+                  text,
+                  mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
+                ).value}
               />
-              {mentionState && visibleMentionCandidates.length > 0 && (
-                <div className="canvas-node-mention-menu">
-                  {visibleMentionCandidates.slice(0, 12).map((candidate) => {
-                    const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
-                    return (
-                      <button
-                        type="button"
-                        key={candidate.id}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => {
-                          const next = `${editorPrompt.slice(0, mentionState.start)}@${candidateIndex + 1} ${editorPrompt.slice(mentionState.end)}`;
-                          onEditorPromptChange(node, next);
-                          const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                            ? "context"
-                            : candidate.data.kind === "video"
-                              ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
-                              : "reference-image";
-                          onReferenceDrop(node.id, candidate.id, role);
-                          setMentionState(null);
-                        }}
-                      >
-                        <strong>@{candidateIndex + 1}</strong>
-                        <span className="canvas-node-mention-preview">
-                          {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" && candidate.data.kind === "video" ? "▶" : "✦"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
-                        </span>
-                        <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
             {node.type === "media" && node.data.kind === "image" && node.data.url && onMaskEdit && maskState && (
               <CanvasMaskSummary
@@ -12406,39 +12368,30 @@ function CanvasNodeEditorPopover({
             {node.type === "generator" && (
               <div className="canvas-node-variant-editor">
                 <label>变体要求 <small>每行一条，最多 8 条</small></label>
-                <textarea
-                  rows={2}
+                <ReferenceMentionEditor
                   value={data.variantRequirementsText ?? variantRequirements.join("\n")}
-                  placeholder="改成夜景\n改为俯拍视角"
-                  onChange={(event) => {
-                    const value = event.target.value;
+                  references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+                  ariaLabel={`${nodeLabel(node)}变体要求`}
+                  className="canvas-node-variant-requirements-editor"
+                  menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
+                  onChange={(value) => onVariantRequirementsChange(node, value)}
+                  onMentionSelect={(candidateIndex, value) => {
+                    const candidate = mentionCandidates[candidateIndex];
+                    if (!candidate) return;
                     onVariantRequirementsChange(node, value);
-                    setVariantMentionState(mentionStateForValue(value, event.target.selectionStart));
+                    const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+                      ? "context"
+                      : candidate.data.kind === "video"
+                        ? data.kind === "video" ? "video" : "reference-image"
+                        : "reference-image";
+                    onReferenceDrop(node.id, candidate.id, role);
                   }}
-                  onClick={(event) => setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
-                  onKeyUp={(event) => {
-                    if (event.key !== "Escape") setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart));
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") setVariantMentionState(null);
-                  }}
+                  placeholder="改成夜景\n改为俯拍视角"
+                  transformPastedText={(text) => replaceNaturalReferenceLabels(
+                    text,
+                    mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
+                  ).value}
                 />
-                {variantMentionState && visibleVariantMentionCandidates.length > 0 && (
-                  <div className="canvas-node-mention-menu canvas-variant-mention-menu">
-                    {visibleVariantMentionCandidates.slice(0, 12).map((candidate) => {
-                      const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
-                      return (
-                        <button type="button" key={candidate.id} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseVariantMention(candidate)}>
-                          <strong>@{candidateIndex + 1}</strong>
-                          <span className="canvas-node-mention-preview">
-                            {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" ? "✦" : "▤"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
-                          </span>
-                          <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             )}
             {node.type === "upscale" && upscaleParams && onUpscaleParamsChange ? (
@@ -12689,26 +12642,6 @@ function CanvasNodeCard({
         )
       : [];
   const [mentionState, setMentionState] = useState<MentionState>(null);
-  const visibleMentionCandidates = mentionCandidates.filter((item, index) => {
-    if (item.id === node.id) return false;
-    if (!mentionState?.query) return true;
-    const query = mentionState.query.trim().toLowerCase();
-    // Numeric queries address the visible mention number directly. This keeps
-    // “@2” deterministic instead of accidentally matching digits in a UUID.
-    if (/^\d+$/.test(query)) return String(index + 1).startsWith(query);
-    const search = [
-      mentionLabel(item, index),
-      nodeLabel(item),
-      item.data.name,
-      item.data.text,
-      item.data.prompt,
-      item.data.agentPrompt,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return search.includes(query);
-  });
   return (
     <article
       className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
@@ -12957,11 +12890,15 @@ function CanvasNodeCard({
             />
           )}
           {editing ? (
-            <textarea
+            <ReferenceMentionEditor
               value={agentInput}
+              references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+              className="canvas-card-agent-editor"
+              menuClassName="canvas-node-mention-menu"
+              ariaLabel="Agent 任务"
               placeholder="输入要交给 Agent 的任务…"
               autoFocus
-              onChange={(event) => onPromptChange(event.target.value)}
+              onChange={(value) => onPromptChange(value)}
               onBlur={(event) => {
                 const next = event.relatedTarget;
                 if (next instanceof HTMLElement && next.closest(".canvas-node-editor-popover")) return;
@@ -13168,40 +13105,27 @@ function CanvasNodeCard({
               }}
               rows={3}
             />
-            {mentionState && visibleMentionCandidates.length > 0 && (
-              <div className="canvas-node-mention-menu">
-                {visibleMentionCandidates.slice(0, 12).map((candidate, index) => (
-                  <button
-                    type="button"
-                    key={candidate.id}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      const activeMention = mentionState;
-                      if (!activeMention) return;
-                      const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
-                      const next = `${editorPrompt.slice(0, activeMention.start)}@${candidateIndex + 1} ${editorPrompt.slice(activeMention.end)}`;
-                      onEditorPromptChange(node, next);
-                      const role: CanvasInputRole =
-                        candidate.type === "prompt" || candidate.type === "generator"
-                          ? "context"
-                          : candidate.data.kind === "video"
-                            ? node.type === "prompt" || node.data.kind === "video"
-                              ? "video"
-                              : "reference-image"
-                            : "reference-image";
-                      onReferenceDrop(node.id, candidate.id, role);
-                      setMentionState(null);
-                    }}
-                  >
-                    <strong>@{mentionCandidates.findIndex((item) => item.id === candidate.id) + 1}</strong>
-                    <span className="canvas-node-mention-preview">
-                      {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" && candidate.data.kind === "video" ? "▶" : "✦"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
-                    </span>
-                    <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <CanvasReferenceMentionMenu
+              document={document}
+              candidates={mentionCandidates}
+              open={Boolean(mentionState)}
+              query={mentionState?.query}
+              className="canvas-node-mention-menu"
+              onSelect={(candidateIndex) => {
+                const candidate = mentionCandidates[candidateIndex];
+                const activeMention = mentionState;
+                if (!candidate || !activeMention) return;
+                const next = insertCreativeMention(editorPrompt, activeMention.end, candidateIndex).value;
+                onEditorPromptChange(node, next);
+                const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+                  ? "context"
+                  : candidate.data.kind === "video"
+                    ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
+                    : "reference-image";
+                onReferenceDrop(node.id, candidate.id, role);
+                setMentionState(null);
+              }}
+            />
           </div>
           <CanvasNodeReferenceStrip
             target={node}

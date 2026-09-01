@@ -33,6 +33,7 @@ import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
+import ReferenceMentionMenuBase from '@/components/ReferenceMentionMenu';
 import { appendTextReferenceContext, insertReferenceMention as insertCreativeMention, normalizeCreativeReference, referenceMentionRange as creativeReferenceMentionRange, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -1673,54 +1674,18 @@ function Dropdown({ value, options, onChange, placeholder = '请选择', classNa
     });
 }
 function ReferenceMentionMenu({ refs, open, query = '', onSelect, className = '' }) {
-    const normalizedQuery = String(query || '').trim().toLowerCase();
-    const visibleRefs = refs.map((ref, index) => ({ ref, index })).filter(({ ref, index }) => {
-        if (!normalizedQuery) return true;
-        const kindLabel = ref.kind === 'video' ? '视频参考视频' : ref.kind === 'text' ? '文本引用' : '图片参考图';
-        return `${kindLabel} ${index + 1} ${ref.name || ''} ${ref.text || ''}`.toLowerCase().includes(normalizedQuery);
-    });
-    if (!open || !visibleRefs.length) return null;
-    return /*#__PURE__*/ _jsxs("div", {
-        className: `reference-mention-menu ${className}`,
-        role: "listbox",
-        children: [
-            /*#__PURE__*/ _jsx("div", {
-                className: "reference-mention-title",
-                children: "选择引用 · 输入 @编号"
-            }),
-            visibleRefs.map(({ ref, index })=>/*#__PURE__*/ _jsxs("button", {
-                    type: "button",
-                    onMouseDown: (event)=>event.preventDefault(),
-                    onClick: ()=>onSelect(index),
-                    children: [
-                        /*#__PURE__*/ _jsxs("span", {
-                            className: "reference-mention-thumb",
-                            children: [
-                                ref.kind === 'video' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon video", children: ["▶", /*#__PURE__*/ _jsx("small", { children: "视频" })] }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon text", children: ["▤", /*#__PURE__*/ _jsx("small", { children: "文本" })] }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: "" }),
-                                /*#__PURE__*/ _jsxs("b", {
-                                    children: [
-                                        "@",
-                                        index + 1
-                                    ]
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsxs("span", {
-                            children: [
-                                /*#__PURE__*/ _jsxs("strong", {
-                                    children: [
-                                        ref.kind === 'video' ? "参考视频 " : ref.kind === 'text' ? "引用文本 " : "参考图 ",
-                                        index + 1
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsx("small", {
-                                    children: ref.kind === 'text' ? referencePreviewText(ref) : ref.name
-                                })
-                            ]
-                        })
-                    ]
-                }, ref.id))
-        ]
+    return /*#__PURE__*/ _jsx(ReferenceMentionMenuBase, {
+        references: refs.map((ref, index) => ({
+            id: ref.id || `reference-${index + 1}`,
+            kind: ref.kind || 'image',
+            name: ref.name || `引用素材 ${index + 1}`,
+            url: creativeReferenceUrl(ref),
+            text: ref.text
+        })),
+        open,
+        query,
+        onSelect,
+        className
     });
 }
 function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUpscaleModel, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onMaskEdit, onOpenProviders, onSubmit }) {

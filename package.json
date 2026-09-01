@@ -1,6 +1,6 @@
 {
   "name": "sanmao-ai-studio",
-  "version": "0.7.18",
+  "version": "0.7.19",
   "private": true,
   "scripts": {
     "dev": "next dev --webpack -p 3210",
