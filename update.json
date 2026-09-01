@@ -1,30 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.17",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.17",
+  "latestVersion": "0.7.18",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.18",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.17/SANMAO.AI-0.7.17.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.18/SANMAO.AI-0.7.18.zip"
   ],
-  "sha256": "cf1e188b15a3ecab48626a4153d99457c27003e1960d988c1cdfa789c7001e6b",
-  "publishedAt": "2026-08-31T19:18:15+08:00",
+  "sha256": "11b0df72bfc6a9b4b4b281285ba4fdb02d445bd19a5e06ada9ff007335977fba",
+  "publishedAt": "2026-09-01T09:16:48+08:00",
   "notes": [
-    "修复代理网络下临时媒体中转地址不可达时无法自动恢复的问题，后台会继续检测并重建可用通道。",
-    "允许部分能力描述不完整但实际支持图片输入的视频模型正常接收图片，减少不必要的模型限制。",
-    "修复超级画布中把分组媒体连接到视频节点时图片/视频输入丢失、模式不正确或数量限制未生效的问题。",
-    "修复网页长时间不操作后临时媒体中转通道断开，导致图片或视频功能无法继续使用的问题。",
-    "中转进程退出或公网地址失效时会由后台自动检测、重建并切换通道，网页和主服务无需重启。",
-    "上传失败会自动读取最新通道地址并重试；优化 Windows、macOS、Linux 启动入口，避免空闲或后台状态导致本地服务退出。",
-    "Agent 节点支持流式状态反馈、停止后继续、对话列表默认定位到底部，并修复旧请求覆盖新回复的问题。",
-    "修复描述画面等文字请求误触发图片生成的问题；服务端会拦截上游模型异常返回的图片工具调用。",
-    "超级画布全面优化节点编辑、层级、连线、拖拽、双击、引用素材、响应 lightbox、生成状态、恢复和移动端布局。",
-    "新增并优化超分节点、云高清连接引导、任务恢复、图片尺寸显示和多图片下载，保留原图并支持失败重试。",
-    "视频工作台增加任务分页、能力驱动的编辑/续写选项、输入媒体压缩和更稳定的任务轮询与状态反馈。",
-    "角度控制补充左右方向校准、镜头语义和重投影提示，减少人物朝向与画面方向理解偏差。",
-    "修复 Windows 启动器编码、重复启动和自动更新相关兼容问题，继续兼容 Windows、macOS、Linux 启动入口。",
-    "本次更新内置国内可达的镜像源（ghfast.top / gh-proxy.com），无需 VPN 也可自动检查并下载更新。"
+    "统一 Agent、图片/视频提示词、超级画布、画布节点编辑器和复用编辑器中的真实 @ 引用。",
+    "图片和视频引用发送真实媒体地址，文本引用发送真实文本内容，并在历史记录中保存实际使用的引用 ID。",
+    "引用菜单支持编号、筛选、缩略图和类型图标，点击引用卡片可放大查看图片/视频或打开完整文本。",
+    "输入 @ 时只提交被点名的引用；没有 @ 时继续提交全部已添加素材。",
+    "无效编号、准备中的素材或不支持视频输入的模型会在提交前阻止并提示原因。"
   ]
 }
