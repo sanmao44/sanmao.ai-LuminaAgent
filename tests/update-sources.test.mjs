@@ -187,6 +187,62 @@ test('package download falls back to the next source and still checks SHA-256', 
 
   globalThis.fetch = async (url) => {
     const value = String(url);
+    const version = value.includes('/old/') ? '0.7.18' : '0.7.19';
+    await new Promise((resolve) => setTimeout(resolve, version === '0.7.18' ? 5 : 25));
+    return new Response(JSON.stringify({
+      schemaVersion: 1,
+      latestVersion: version,
+      releaseUrl: `https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v${version}`,
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.latestVersion, '0.7.19');
+  assert.equal(status.hasUpdate, true);
+});
+
+test('manifest check returns an error status when every source fails', async () => {
+  delete process.env.SANMAO_UPDATE_MANIFEST_URL;
+  delete process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;
+  globalThis.fetch = async () => new Response('', { status: 502 });
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.configured, true);
+  assert.ok(status.error || typeof status.latestVersion === 'string');
+});
+
+test('package sources prefer declared mirrors and cap the candidate list', () => {
+  process.env.SANMAO_UPDATE_MIRRORS = 'https://mirror.example.com/sanmao/releases/download/v1/app.zip';
+  process.env.SANMAO_UPDATE_GITHUB_PROXIES = 'https://proxy.example/';
+  const status = {
+    packageUrl: 'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+    mirrorUrls: [
+      'https://gitee.com/o/r/releases/download/v1/app.zip',
+      'https://oss.example.com/sanmao-v1.zip',
+      'http://insecure.example.com/app.zip',
+      'https://user:pass@credential.example.com/app.zip',
+    ],
+  };
+
+  assert.deepEqual(local.packageSourceCandidates(status), [
+    'https://gitee.com/o/r/releases/download/v1/app.zip',
+    'https://oss.example.com/sanmao-v1.zip',
+    'https://mirror.example.com/sanmao/releases/download/v1/app.zip',
+    'https://proxy.example/https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+    'https://proxy.example/https://github.com/o/r/archive/refs/tags/v1.zip',
+    'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+  ]);
+});
+
+test('package download falls back to the next source and still checks SHA-256', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sanmao-update-test-'));
+  const destination = join(directory, 'app.zip');
+  const body = 'sanmao-package-body';
+  const sha256 = createHash('sha256').update(body).digest('hex');
+  const attempts = [];
+
+  globalThis.fetch = async (url) => {
+    const value = String(url);
     if (value === 'https://bad.example.com/app.zip') return new Response('bad', { status: 403 });
     if (value === 'https://mirror.example.com/app.zip') {
       return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });

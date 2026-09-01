@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
 import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
+import ReferenceMentionMenu from '@/components/ReferenceMentionMenu';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
@@ -997,20 +998,13 @@ function AudioUploadTray({ items, maxItems, onAdd, onRemove, inputRef }: { items
 }
 
 function VideoReferenceMentionMenu({ refs, open, query = '', onSelect }: { refs: CreativeReference[]; open: boolean; query?: string; onSelect: (index: number) => void }) {
-  const normalizedQuery = String(query || '').trim().toLowerCase();
-  const visibleRefs = refs.map((ref, index) => ({ ref, index })).filter(({ ref, index }) => {
-    if (!normalizedQuery) return true;
-    const kindLabel = ref.kind === 'video' ? '视频参考视频' : ref.kind === 'text' ? '文本引用' : '图片参考图';
-    return `${kindLabel} ${index + 1} ${ref.name || ''} ${ref.text || ''}`.toLowerCase().includes(normalizedQuery);
-  });
-  if (!open || !visibleRefs.length) return null;
-  return <div className="reference-mention-menu video-reference-mention-menu" role="listbox">
-    <div className="reference-mention-title">选择引用 · 输入 @编号</div>
-    {visibleRefs.map(({ ref, index }) => <button type="button" key={`${ref.id}-${index}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(index)}>
-      <span className="reference-mention-thumb">{ref.kind === 'video' ? <span className="reference-type-icon video">▶<small>视频</small></span> : ref.kind === 'text' ? <span className="reference-type-icon text">▤<small>文本</small></span> : <img src={ref.url} alt="" />}<b>@{index + 1}</b></span>
-      <span><strong>{ref.kind === 'video' ? '参考视频' : ref.kind === 'text' ? '引用文本' : '参考图'} {index + 1}</strong><small>{ref.kind === 'text' ? String(ref.text || '').replace(/\s+/g, ' ').slice(0, 64) : ref.name}</small></span>
-    </button>)}
-  </div>;
+  return <ReferenceMentionMenu
+    references={refs}
+    open={open}
+    query={query}
+    onSelect={onSelect}
+    className="video-reference-mention-menu"
+  />;
 }
 
 function CreativeTextReferenceTray({ items, startIndex, onAdd, onRemove, onPreview }: { items: CreativeReference[]; startIndex: number; onAdd: (files: FileList | null) => void; onRemove: (id: string) => void; onPreview: (item: CreativeReference) => void }) {

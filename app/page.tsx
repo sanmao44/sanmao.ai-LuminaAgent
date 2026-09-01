@@ -33,6 +33,7 @@ import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
+import ReferenceMentionMenuBase from '@/components/ReferenceMentionMenu';
 import { appendTextReferenceContext, insertReferenceMention as insertCreativeMention, normalizeCreativeReference, referenceMentionRange as creativeReferenceMentionRange, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -1673,11 +1674,18 @@ function Dropdown({ value, options, onChange, placeholder = '请选择', classNa
     });
 }
 function ReferenceMentionMenu({ refs, open, query = '', onSelect, className = '' }) {
-    const normalizedQuery = String(query || '').trim().toLowerCase();
-    const visibleRefs = refs.map((ref, index) => ({ ref, index })).filter(({ ref, index }) => {
-        if (!normalizedQuery) return true;
-        const kindLabel = ref.kind === 'video' ? '视频参考视频' : ref.kind === 'text' ? '文本引用' : '图片参考图';
-        return `${kindLabel} ${index + 1} ${ref.name || ''} ${ref.text || ''}`.toLowerCase().includes(normalizedQuery);
+    return /*#__PURE__*/ _jsx(ReferenceMentionMenuBase, {
+        references: refs.map((ref, index) => ({
+            id: ref.id || `reference-${index + 1}`,
+            kind: ref.kind || 'image',
+            name: ref.name || `引用素材 ${index + 1}`,
+            url: creativeReferenceUrl(ref),
+            text: ref.text
+        })),
+        open,
+        query,
+        onSelect,
+        className
     });
     if (!open || !visibleRefs.length) return null;
     return /*#__PURE__*/ _jsxs("div", {

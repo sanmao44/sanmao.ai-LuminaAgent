@@ -438,8 +438,8 @@ export function buildAgnesVideoPayload(rawModelId: string, input: VideoGeneratio
       ...(lastFrame ? { last_frame: lastFrame } : {}),
     } : {}),
     ...(mode === 'reference' ? {
-      ...(images.length ? { images: images.map((url) => ({ url })) } : {}),
-      ...(audios.length ? { audios: audios.map((url) => ({ url })) } : {}),
+      ...(images.length ? { images } : {}),
+      ...(audios.length ? { audios } : {}),
       ...(referenceVideos.length ? { videos: referenceVideos } : {}),
     } : {}),
   };

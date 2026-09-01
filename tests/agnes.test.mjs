@@ -213,11 +213,13 @@ test('builds Agnes 2.5 modes and enforces Flash restrictions', () => {
   const reference = video.buildAgnesVideoPayload('agnes-video-2.5', {
     prompt: 'use sources', seconds: 8, videoMode: 'reference', videoSize: '2K', referenceImages: ['a.png', 'b.png'], audios: ['a.mp3'], referenceVideos: ['v.mp4'], referenceVideoStartSeconds: 1, referenceVideoEndSeconds: 6, requireAudio: true,
   });
-  assert.deepEqual(reference.images, [{ url: 'a.png' }, { url: 'b.png' }]);
-  assert.deepEqual(reference.audios, [{ url: 'a.mp3' }]);
+  assert.deepEqual(reference.images, ['a.png', 'b.png']);
+  assert.deepEqual(reference.audios, ['a.mp3']);
   assert.deepEqual(reference.videos, [{ url: 'v.mp4', start_seconds: 1, end_seconds: 6, require_audio: true }]);
   const flash = video.buildAgnesVideoPayload('agnes-video-2.5-flash', { prompt: 'fast', seconds: 4, videoMode: 'reference', referenceImages: ['1.png'], audios: ['a.mp3'] });
   assert.equal(flash.size, '720P');
+  assert.deepEqual(flash.images, ['1.png']);
+  assert.deepEqual(flash.audios, ['a.mp3']);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-2.5-flash', { prompt: 'too many', seconds: 5, videoMode: 'reference', referenceImages: ['1', '2', '3', '4', '5', '6'] }), /最多接收 5 张/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-2.5-flash', { prompt: 'video', seconds: 5, videoMode: 'reference', referenceVideos: ['v.mp4'] }), /不支持参考视频/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-2.5', { prompt: 'bad', seconds: 5, videoMode: 'text', referenceImages: ['image.png'] }), /text 模式不允许/);

@@ -605,7 +605,6 @@ html[data-theme="dark"] .canvas-workspace{
 
 /* Node-first editor surface: the canvas remains the layout, each node owns
    its prompt, inputs, references, parameters and submit action. */
-.legacy-deck-hidden{display:none!important}
 .canvas-node:has(.canvas-node-editor){z-index:var(--canvas-z-local-editor);overflow:visible;box-shadow:0 18px 50px rgba(0,0,0,.28)}
 .canvas-node:has(.canvas-node-editor) .canvas-media-card,.canvas-node:has(.canvas-node-editor) .canvas-prompt-card,.canvas-node:has(.canvas-node-editor) .canvas-generator-card{height:auto;min-height:150px}
 .canvas-node:has(.canvas-node-editor) .canvas-media-stage{height:170px;min-height:0}
@@ -657,8 +656,6 @@ html[data-theme="dark"] .canvas-workspace{
   }
 }
 
-/* Must remain last so legacy workbench overrides cannot re-enable it. */
-
 /* v4: the editor is a card extension, not a detached modal. It keeps a
    stable world-space position so the canvas does not reflow, while sharing
    the node surface, status language and visual rhythm. */
@@ -688,8 +685,17 @@ html[data-theme="dark"] .canvas-workspace{
 @media(max-width:720px){.canvas-node-editor-popover{width:min(520px,calc(100vw - 16px));max-height:calc(100vh - 16px)}.canvas-node-editor-popover::before,.canvas-node-editor-popover::after{display:none}.canvas-node-editor-popover .canvas-node-editor-head{min-height:46px;padding:8px 10px}.canvas-node-editor-body{padding:8px 10px 6px}.canvas-node-editor-columns,.canvas-node-editor-popover[data-density="compact"] .canvas-node-editor-columns{grid-template-columns:minmax(0,1fr);gap:10px}.canvas-node-editor-copy,.canvas-node-editor-settings{gap:8px}.canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea{min-height:92px;max-height:190px}.canvas-node-editor-popover .creation-parameter-grid.primary,.canvas-node-editor-popover .creation-parameter-grid.advanced{grid-template-columns:repeat(2,minmax(0,1fr))}.canvas-node-editor-popover .canvas-reference-draft-strip{max-width:100%}}
 @media(max-width:540px){.canvas-node-editor-popover{width:calc(100vw - 16px);max-height:calc(100vh - 16px);border-radius:15px}.canvas-node-editor-popover .canvas-node-editor-actions{min-height:47px;padding:7px 10px 9px}.canvas-node-editor-actions>span{max-width:58%}.canvas-node-editor-popover .creation-parameter-grid.primary,.canvas-node-editor-popover .creation-parameter-grid.advanced{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-node-editor-popover{scroll-behavior:auto;transition:none}}
-div.canvas-deck.legacy-deck-hidden{display:none!important}
-
+.reference-mention-menu.canvas-mention-menu,.reference-mention-menu.canvas-node-mention-menu{width:auto;max-height:260px;gap:3px;padding:5px}
+.reference-mention-menu.canvas-mention-menu button,.reference-mention-menu.canvas-node-mention-menu button{display:grid;grid-template-columns:38px minmax(0,1fr);align-items:center;gap:8px;min-height:46px;padding:5px 7px}
+.reference-mention-menu.canvas-mention-menu button>.reference-mention-thumb,.reference-mention-menu.canvas-node-mention-menu button>.reference-mention-thumb{width:38px;height:38px;min-width:38px;display:grid;overflow:hidden;position:relative;place-items:center;border-radius:8px;background:var(--panel-3);color:var(--accent-text)}
+.reference-mention-menu.canvas-mention-menu button>.reference-mention-thumb>img,.reference-mention-menu.canvas-mention-menu button>.reference-mention-thumb>video,.reference-mention-menu.canvas-node-mention-menu button>.reference-mention-thumb>img,.reference-mention-menu.canvas-node-mention-menu button>.reference-mention-thumb>video{width:100%;height:100%;display:block;object-fit:cover}
+.reference-mention-menu.canvas-mention-menu button>.reference-mention-thumb>b,.reference-mention-menu.canvas-node-mention-menu button>.reference-mention-thumb>b{position:absolute;right:2px;bottom:2px;min-width:0;padding:2px 3px;border-radius:4px;background:rgba(15,16,22,.78);color:#fff;font-size:7px;line-height:1}
+.reference-mention-menu.canvas-mention-menu button>span:last-child,.reference-mention-menu.canvas-node-mention-menu button>span:last-child{display:grid;gap:2px;min-width:0;overflow:hidden}
+.reference-mention-text-thumbnail{display:grid;align-content:center;gap:2px;width:100%;height:100%;padding:4px;color:var(--accent-text);background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 18%,var(--panel-3)),var(--panel-3));font-size:8px}
+.reference-mention-text-thumbnail>b{font-size:7px;letter-spacing:.08em}.reference-mention-text-thumbnail>small{overflow:hidden;display:block;color:var(--text-2);font-size:6px;line-height:1.25;word-break:break-word}.reference-mention-fallback-thumbnail{font-size:16px}
+ .canvas-node-editor-popover:has(.reference-mention-menu){overflow:visible}
+ .canvas-node-editor-popover:has(.reference-mention-menu) .canvas-node-editor-body{overflow:visible}
+ .canvas-node-editor-popover:has(.reference-mention-menu) .reference-mention-menu{z-index:var(--canvas-z-local-menu)}
 /* v5: single-node actions live above the card. The rail owns its pointer
    events, while the action row scrolls inside the stage on narrow screens. */
 .canvas-node-quick-toolbar{position:absolute;z-index:var(--canvas-z-node-quick);display:flex;align-items:center;gap:7px;max-width:calc(100% - 20px);min-width:0;padding:5px 6px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));border-radius:13px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 10px 28px rgba(0,0,0,.24),0 0 0 3px color-mix(in srgb,var(--accent) 6%,transparent);backdrop-filter:blur(15px);pointer-events:auto;overflow:hidden;box-sizing:border-box}
@@ -1352,6 +1358,15 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   .media-viewer-shared>header{display:block}
   .media-viewer-shared>header>div:first-child{margin-bottom:8px}
   .media-viewer-shared>header>div:first-child>b{max-width:70vw}
+
+/* Keep a completed video node unmistakably playable without covering its metadata. */
+.canvas-video-play{position:absolute;z-index:var(--canvas-z-local-content);left:50%;top:50%;width:54px;height:54px;display:grid;place-items:center;padding:0;border:1px solid rgba(191,219,254,.72);border-radius:50%;background:linear-gradient(145deg,rgba(30,64,175,.88),rgba(37,99,235,.7));box-shadow:0 10px 24px rgba(15,23,42,.38),inset 0 1px 0 rgba(255,255,255,.42),0 0 0 5px rgba(96,165,250,.12);backdrop-filter:blur(8px);color:#fff;cursor:pointer;opacity:.9;transform:translate(-50%,-50%);transition:opacity .16s ease,transform .16s ease,box-shadow .16s ease,filter .16s ease}
+.canvas-video-play::before{content:"";position:absolute;inset:5px;border:1px solid rgba(219,234,254,.42);border-radius:50%;pointer-events:none}
+.canvas-video-play svg{position:relative;width:22px;height:22px;margin-left:2px;fill:currentColor;filter:drop-shadow(0 1px 2px rgba(15,23,42,.32))}
+.canvas-video-play:hover,.canvas-video-play:focus-visible{opacity:1;filter:brightness(1.08);transform:translate(-50%,-50%) scale(1.07);box-shadow:0 13px 28px rgba(15,23,42,.46),inset 0 1px 0 rgba(255,255,255,.5),0 0 0 7px rgba(96,165,250,.18)}
+.canvas-video-play:focus-visible{outline:3px solid color-mix(in srgb,#93c5fd 72%,transparent);outline-offset:3px}
+.canvas-video-play:active{transform:translate(-50%,-50%) scale(.98)}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-video-play{transition:none}html:not([data-motion="on"]) .canvas-video-play:hover,html:not([data-motion="on"]) .canvas-video-play:focus-visible,html:not([data-motion="on"]) .canvas-video-play:active{transform:translate(-50%,-50%)}}
   .media-viewer-shared .media-viewer-header-actions{width:100%;gap:4px;overflow:visible}
   .media-viewer-shared .media-viewer-header-actions>.media-viewer-header-button,
   .media-viewer-shared .media-viewer-download-button{width:34px;padding:0;gap:0}
@@ -1371,6 +1386,10 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-editor-frame-slots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.canvas-editor-frame-slot{display:grid;gap:6px;min-height:96px;padding:8px;border:1px dashed color-mix(in srgb,var(--accent) 48%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent-soft) 22%,var(--panel-2))}.canvas-editor-frame-slot.empty{place-items:stretch}.canvas-editor-frame-slot-empty{display:grid;place-items:center;min-height:60px;color:var(--muted);font-size:9px}.canvas-editor-frame-slot .canvas-editor-reference-item{margin:0}.canvas-editor-slot-label{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text-2);font-size:9px;font-weight:800}.canvas-editor-slot-label small{color:var(--muted);font-size:8px;font-weight:500}.canvas-editor-video-warning{margin-top:8px;padding:7px 9px;border:1px solid color-mix(in srgb,var(--warning) 45%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--warning) 10%,var(--panel-2));color:var(--warning);font-size:9px;line-height:1.45}.canvas-editor-video-input{margin-top:8px;color:var(--text-2);font-size:9px}.canvas-editor-unused-inputs{display:grid;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}.canvas-editor-unused-inputs .canvas-editor-reference-item{opacity:.62}.canvas-editor-reference-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-size:8px;font-weight:600}
 @media(max-width:540px){.canvas-editor-frame-slots{grid-template-columns:1fr}}
 
+/* Keep the old wide composer mounted for its state/measurement hooks, but do
+   not let later responsive or desktop layout rules make it visible again. */
+div.canvas-deck.legacy-deck-hidden{display:none!important}
+
 /* Frame slots contain the same reference item as the general strip, but the
    item also carries a name. Keep that name inside the slot instead of letting
    the fixed thumbnail box paint below its parent. */
@@ -1383,4 +1402,35 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 @media(max-width:720px){
   .canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-reference-items,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-reference-draft-items{max-height:116px;overflow-x:auto;overflow-y:auto}
   .canvas-node-editor-popover .canvas-node-editor-actions{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+}
+
+/* Rich @mentions: the stored value remains @1/@2, while the editing surface
+   shows the referenced asset instead of leaving a bare number in the prompt. */
+.reference-mention-editor{position:relative;display:flex;flex:1 1 auto;min-width:0;min-height:0;overflow:visible}
+.reference-mention-editor-content{box-sizing:border-box;width:100%;min-width:0;min-height:100%;max-width:100%;border:0;outline:0;color:var(--text);caret-color:var(--accent);font:inherit;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.reference-mention-editor-content:empty::before{content:attr(data-placeholder);color:var(--muted);opacity:.82;pointer-events:none}
+.reference-inline-mention{display:inline-flex;align-items:center;gap:4px;max-width:min(260px,calc(100% - 4px));margin:1px 2px;padding:2px 6px 2px 3px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel));color:var(--text);vertical-align:middle;line-height:1.15;user-select:all;white-space:nowrap}
+.reference-inline-mention-thumb{width:22px;height:22px;display:grid;place-items:center;flex:none;overflow:hidden;border-radius:50%;background:var(--panel-3);color:var(--accent-text)}
+.reference-inline-mention-thumb img,.reference-inline-mention-thumb video{display:block;width:100%;height:100%;object-fit:cover}
+.reference-inline-mention-label{display:inline-flex;align-items:center;gap:3px;min-width:0;max-width:214px;overflow:hidden}
+.reference-inline-mention-label b{flex:none;color:var(--accent-text);font-size:.9em;font-weight:850}
+.reference-inline-mention-label small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-size:.86em}
+.reference-inline-mention .reference-mention-text-thumbnail{font-size:6px}
+.reference-inline-mention .reference-mention-text-thumbnail small{font-size:5px}
+.canvas-prompt-input-wrap>.reference-mention-editor{align-self:stretch}
+.canvas-deck-main .reference-mention-editor-content{position:relative;z-index:var(--canvas-z-local-overlay);min-height:82px;max-height:320px;padding:6px 8px 6px 10px;font-size:11px;line-height:1.45;overflow-y:auto}
+.canvas-deck-main .reference-mention-editor-content:focus{outline:0}
+.canvas-variant-editor .reference-mention-editor-content{min-height:58px;max-height:120px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);font-size:9px;line-height:1.5;overflow-y:auto}
+.canvas-node-editor-popover .canvas-node-editor-prompt-wrap>.reference-mention-editor{min-height:120px;max-height:260px;padding:0}
+.canvas-node-editor-popover .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{min-height:120px;max-height:260px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:11px;background:color-mix(in srgb,var(--panel) 70%,var(--panel-2));font-size:10px;line-height:1.6;overflow-y:auto}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>.reference-mention-editor{flex:1 1 auto;min-height:0;max-height:none}
+.canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{flex:1 1 auto;min-height:0;max-height:none;padding:16px;border-radius:14px;font-size:13px;line-height:1.75}
+.canvas-node-variant-editor>.reference-mention-editor{min-height:72px;max-height:150px}
+.canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{min-height:72px;max-height:150px;padding:7px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:9px;background:var(--panel-2);font-size:9px;line-height:1.45;overflow-y:auto}
+.canvas-card-agent-editor{min-height:72px;padding:7px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);font-size:10px;line-height:1.55;overflow-y:auto}
+.reference-mention-editor .reference-mention-menu{bottom:calc(100% + 7px);max-width:calc(100vw - 24px)}
+@media(max-width:720px){
+  .canvas-deck-main .reference-mention-editor-content{min-height:72px;max-height:190px;font-size:12px}
+  .canvas-node-editor-popover .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{min-height:104px;max-height:220px}
+  .canvas-node-editor-popover.is-prompt-expanded .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{min-height:0;max-height:none;font-size:12px}
 }

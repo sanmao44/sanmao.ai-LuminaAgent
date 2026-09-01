@@ -635,42 +635,9 @@ function VideoEditor({
       (settings.operation === "edit" && supportsOperationEdit) ||
       (settings.operation === "extend" && supportsOperationExtend);
     const nextOperation = operationIsSupported ? settings.operation : "generate";
-    const nextInputMode = inputOptions.some(
-      (option) => option.value === settings.inputMode,
-    )
-      ? settings.inputMode
-      : inputOptions[0]?.value || "text";
-    const nextDuration = allowedDurations.includes(settings.duration)
-      ? settings.duration
-      : allowedDurations[0] || limits.minSeconds;
-    const nextAudio = supportsAudio ? settings.audio : false;
-    if (
-      nextOperation !== settings.operation ||
-      nextInputMode !== settings.inputMode ||
-      nextDuration !== settings.duration ||
-      selectedResolution !== settings.resolution ||
-      nextAudio !== settings.audio
-    ) {
-      onChange({
-        ...settings,
-        operation: nextOperation,
-        inputMode: nextInputMode,
-        duration: nextDuration,
-        resolution: selectedResolution,
-        audio: nextAudio,
-      });
-    }
-  }, [
-    allowedDurations,
-    inputOptions,
-    limits.minSeconds,
-    onChange,
-    selectedResolution,
-    settings,
-    supportsAudio,
-    supportsOperationEdit,
-    supportsOperationExtend,
-  ]);
+    if (nextOperation !== settings.operation)
+      onChange({ ...settings, operation: nextOperation });
+  }, [onChange, settings, supportsOperationEdit, supportsOperationExtend]);
   const inheritSettings =
     settings.operation !== "generate" &&
     Boolean(limits.inheritVideoSettingsFor?.includes(settings.operation));
