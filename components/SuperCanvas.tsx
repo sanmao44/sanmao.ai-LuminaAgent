@@ -1572,6 +1572,12 @@ export default function SuperCanvas() {
   const [generationKeys, setGenerationKeys] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<Notice | null>(null);
   const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
+  const toggleSnap = useCallback(() => {
+    setSnapEnabled((current) => !current);
+    setSnapGuides([]);
+    const interaction = interactionRef.current;
+    if (interaction?.kind === "drag") interaction.snapGuides = [];
+  }, []);
   const cancelPendingNodeClick = useCallback(() => {
     setPendingClickNodeId(null);
   }, []);
@@ -1633,6 +1639,7 @@ export default function SuperCanvas() {
   const [deckHeight, setDeckHeight] = useState(0);
   const [connectionStyle, setConnectionStyle] =
     useState<ConnectionStyle>("curve");
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [theme, setTheme] = useState<CanvasTheme>("light");
   const [mentionState, setMentionState] = useState<MentionState>(null);
   const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
@@ -2076,6 +2083,7 @@ export default function SuperCanvas() {
         window.localStorage.getItem(CANVAS_SETTINGS_KEY) || "null",
       ) as {
         connectionStyle?: unknown;
+        snapEnabled?: unknown;
       } | null;
       if (
         CONNECTION_STYLE_OPTIONS.some(
@@ -2083,6 +2091,7 @@ export default function SuperCanvas() {
         )
       )
         setConnectionStyle(raw!.connectionStyle as ConnectionStyle);
+      if (typeof raw?.snapEnabled === "boolean") setSnapEnabled(raw.snapEnabled);
     } catch {
       /* 使用默认设置 */
     }
@@ -2093,12 +2102,12 @@ export default function SuperCanvas() {
     try {
       window.localStorage.setItem(
         CANVAS_SETTINGS_KEY,
-        JSON.stringify({ connectionStyle }),
+        JSON.stringify({ connectionStyle, snapEnabled }),
       );
     } catch {
       /* 设置保存失败不应阻断画布 */
     }
-  }, [connectionStyle, ready]);
+  }, [connectionStyle, ready, snapEnabled]);
 
   useEffect(() => {
     if (!ready || !activeProjectId) return;
@@ -2895,26 +2904,28 @@ export default function SuperCanvas() {
               },
             ]),
           );
-          const snapResult = snapCanvasNodePositions(
-            docRef.current.nodes.map((node) => {
-              const size = nodeSize(node);
-              return {
-                id: node.id,
-                x: node.x,
-                y: node.y,
-                w: size.w,
-                h: size.h,
-              };
-            }),
-            interaction.nodeIds,
-            proposedPositions,
-            10 / Math.max(0.12, zoom),
-            {
-              releaseThreshold: 14 / Math.max(0.12, zoom),
-              previousGuides: interaction.snapGuides,
-              visibleNodeIds: visibleCanvasNodeIds,
-            },
-          );
+          const snapResult = snapEnabled
+            ? snapCanvasNodePositions(
+                docRef.current.nodes.map((node) => {
+                  const size = nodeSize(node);
+                  return {
+                    id: node.id,
+                    x: node.x,
+                    y: node.y,
+                    w: size.w,
+                    h: size.h,
+                  };
+                }),
+                interaction.nodeIds,
+                proposedPositions,
+                10 / Math.max(0.12, zoom),
+                {
+                  releaseThreshold: 14 / Math.max(0.12, zoom),
+                  previousGuides: interaction.snapGuides,
+                  visibleNodeIds: visibleCanvasNodeIds,
+                },
+              )
+            : { positions: proposedPositions, guides: [] as CanvasSnapGuide[] };
           interaction.snapGuides = snapResult.guides;
           setSnapGuides(snapResult.guides);
           updateDoc((value) => ({
@@ -3043,7 +3054,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [notify, setDoc, stagePoint, updateDoc, visibleCanvasNodeIds],
+    [notify, setDoc, snapEnabled, stagePoint, updateDoc, visibleCanvasNodeIds],
   );
 
   const finishInteraction = useCallback(
@@ -9159,6 +9170,16 @@ export default function SuperCanvas() {
             disabled={!redoStack.length}
           >
             ↷
+          </button>
+          <button
+            type="button"
+            className={`canvas-soft-button canvas-snap-button ${snapEnabled ? "active" : ""}`}
+            aria-pressed={snapEnabled}
+            aria-label={`节点吸附${snapEnabled ? "已开启" : "已关闭"}`}
+            title={`${snapEnabled ? "关闭" : "开启"}节点吸附：拖动节点时自动对齐边缘和中心线`}
+            onClick={toggleSnap}
+          >
+            ⌖ 吸附 {snapEnabled ? "开" : "关"}
           </button>
           <span className="canvas-separator" />
           <button
