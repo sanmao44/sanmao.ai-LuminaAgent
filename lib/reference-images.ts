@@ -9,12 +9,18 @@ export function normalizeReferenceRecords(input: unknown, options: { max?: numbe
     .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object'))
     .map<ReferenceImageRecord | null>((value) => {
       const rawUrl = typeof value.url === 'string' ? value.url.trim() : '';
-      const url = !options.keepDataUrls && rawUrl.startsWith('data:image/') ? '' : rawUrl;
+      const rawText = typeof value.text === 'string' ? value.text : typeof value.content === 'string' ? value.content : '';
+      const rawMimeType = typeof value.mimeType === 'string' ? value.mimeType.trim().slice(0, 120) : '';
+      const explicitKind = value.kind === 'image' || value.kind === 'video' || value.kind === 'text' ? value.kind : undefined;
+      const kind = explicitKind || (rawText && !rawUrl ? 'text' : /^video\//i.test(rawMimeType) || /^data:video\//i.test(rawUrl) ? 'video' : 'image');
+      const url = !options.keepDataUrls && /^data:(?:image|video)\//i.test(rawUrl) ? '' : rawUrl;
       const name = typeof value.name === 'string' ? value.name.trim().slice(0, 160) : '';
       const id = typeof value.id === 'string' && value.id.trim() ? value.id.trim().slice(0, 120) : undefined;
-      if (!rawUrl && !name) return null;
-      const record: ReferenceImageRecord = { name: name || '参考图', url };
+      if (!rawUrl && !rawText && !name) return null;
+      const record: ReferenceImageRecord = { name: name || (kind === 'video' ? '参考视频' : kind === 'text' ? '引用文本' : '参考图'), url, kind };
       if (id) record.id = id;
+      if (rawText) record.text = rawText.slice(0, 700_000);
+      if (rawMimeType) record.mimeType = rawMimeType;
       return record;
     })
     .filter((value): value is ReferenceImageRecord => value !== null)

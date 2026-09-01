@@ -3,6 +3,10 @@
 import { useRef, useState, type DragEvent, type ReactNode } from "react";
 import type { CanvasReferenceDraft } from "@/lib/canvas/reuse";
 
+function textPreview(value: string, max = 48) {
+  return value.replace(/\s+/g, " ").trim().slice(0, max) || "文本引用";
+}
+
 export default function CanvasReferenceDraftStrip({
   references,
   onFiles,
@@ -35,7 +39,8 @@ export default function CanvasReferenceDraftStrip({
 
   const acceptFiles = (files: File[]) => {
     const valid = files.filter(
-      (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
+      (file) => file.type.startsWith("image/") || file.type.startsWith("video/") ||
+        file.type.startsWith("text/") || /\.(txt|md|markdown|json|csv|tsv|html?|css|js|jsx|ts|tsx|py|java|sql|xml|svg|ya?ml|sh|ps1)$/i.test(file.name),
     );
     if (valid.length) onFiles(valid);
   };
@@ -115,7 +120,9 @@ export default function CanvasReferenceDraftStrip({
               onClick={() => onPreview?.(reference)}
               disabled={disabled}
             >
-              {reference.kind === "video" ? (
+              {reference.kind === "text" ? (
+                <span className="canvas-reference-draft-text-thumb"><b>▤</b><small>{textPreview(reference.text || "")}</small></span>
+              ) : reference.kind === "video" ? (
                 <video src={reference.url} muted playsInline />
               ) : (
                 <img src={reference.url} alt={reference.name} />
@@ -126,7 +133,7 @@ export default function CanvasReferenceDraftStrip({
             <button
               type="button"
               className="canvas-reference-draft-remove"
-              aria-label={`移除参考图 ${index + 1}`}
+              aria-label={`移除引用 ${index + 1}`}
               disabled={disabled}
               onClick={() => onRemove(reference.id)}
             >
@@ -151,7 +158,7 @@ export default function CanvasReferenceDraftStrip({
         hidden
         type="file"
         multiple
-        accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"
+        accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"
         onChange={(event) => {
           if (event.target.files) acceptFiles([...event.target.files]);
           event.currentTarget.value = "";

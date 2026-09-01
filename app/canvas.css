@@ -1378,3 +1378,9 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-editor-frame-slot .canvas-editor-reference-item.slot-item{width:100%;min-width:0;height:43px;display:grid;grid-template-columns:43px minmax(0,1fr);align-items:center;gap:7px;padding:0;overflow:visible}
 .canvas-editor-frame-slot .canvas-editor-reference-item.slot-item .canvas-editor-reference-preview{width:43px;height:43px;min-width:0}
 .canvas-editor-frame-slot .canvas-editor-reference-item.slot-item .canvas-editor-reference-name{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-variant-editor{position:relative}
+.canvas-node-variant-editor{position:relative}
+@media(max-width:720px){
+  .canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-reference-items,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-reference-draft-items{max-height:116px;overflow-x:auto;overflow-y:auto}
+  .canvas-node-editor-popover .canvas-node-editor-actions{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+}

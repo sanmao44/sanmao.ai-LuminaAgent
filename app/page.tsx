@@ -511,6 +511,11 @@ async function fileToChatFile(file) {
         size: file.size
     };
 }
+async function fileToCreativeReference(file, options) {
+    if (options?.target === 'angle' && !file.type.startsWith('image/')) throw new Error('角度控制台只接受图片参考');
+    if (file.type.startsWith('image/') || file.type.startsWith('video/')) return fileToReference(file, options);
+    return chatFileToReference(await fileToChatFile(file));
+}
 function chatFileToReference(file) {
     return {
         id: file.id || uid('ref'),
@@ -519,6 +524,9 @@ function chatFileToReference(file) {
         text: file.content,
         mimeType: file.mimeType || 'text/plain;charset=utf-8'
     };
+}
+function creativeReferenceUrl(reference) {
+    return typeof reference?.dataUrl === 'string' && reference.dataUrl ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : '';
 }
 async function prepareCreativeReferencesForAgent(references) {
     return Promise.all((references || []).slice(0, 16).map(async (rawReference, index) => {
@@ -664,7 +672,7 @@ function drawCanvasImageContain(context, image, x, y, width, height, radius = 0)
     return imageRect;
 }
 async function downloadShareImage(item) {
-    const references = galleryReferences(item);
+    const references = galleryReferences(item).filter((reference)=>reference.kind === 'image' && reference.url);
     if (!references.length) throw new Error('这张图片没有保存参考图，无法生成分享版');
     const images = await Promise.all([
         loadCanvasImage(item.url),
@@ -1664,8 +1672,14 @@ function Dropdown({ value, options, onChange, placeholder = '请选择', classNa
         className: `custom-dropdown ${className}`
     });
 }
-function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
-    if (!open || !refs.length) return null;
+function ReferenceMentionMenu({ refs, open, query = '', onSelect, className = '' }) {
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    const visibleRefs = refs.map((ref, index) => ({ ref, index })).filter(({ ref, index }) => {
+        if (!normalizedQuery) return true;
+        const kindLabel = ref.kind === 'video' ? '视频参考视频' : ref.kind === 'text' ? '文本引用' : '图片参考图';
+        return `${kindLabel} ${index + 1} ${ref.name || ''} ${ref.text || ''}`.toLowerCase().includes(normalizedQuery);
+    });
+    if (!open || !visibleRefs.length) return null;
     return /*#__PURE__*/ _jsxs("div", {
         className: `reference-mention-menu ${className}`,
         role: "listbox",
@@ -1674,7 +1688,7 @@ function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
                 className: "reference-mention-title",
                 children: "选择引用 · 输入 @编号"
             }),
-            refs.map((ref, index)=>/*#__PURE__*/ _jsxs("button", {
+            visibleRefs.map(({ ref, index })=>/*#__PURE__*/ _jsxs("button", {
                     type: "button",
                     onMouseDown: (event)=>event.preventDefault(),
                     onClick: ()=>onSelect(index),
@@ -1682,7 +1696,7 @@ function ReferenceMentionMenu({ refs, open, onSelect, className = '' }) {
                         /*#__PURE__*/ _jsxs("span", {
                             className: "reference-mention-thumb",
                             children: [
-                                ref.kind === 'video' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon video", children: ["▶", /*#__PURE__*/ _jsx("small", { children: "视频" })] }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon text", children: ["▤", /*#__PURE__*/ _jsx("small", { children: "文本" })] }) : /*#__PURE__*/ _jsx("img", { src: ref.dataUrl || ref.url, alt: "" }),
+                                ref.kind === 'video' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon video", children: ["▶", /*#__PURE__*/ _jsx("small", { children: "视频" })] }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon text", children: ["▤", /*#__PURE__*/ _jsx("small", { children: "文本" })] }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: "" }),
                                 /*#__PURE__*/ _jsxs("b", {
                                     children: [
                                         "@",
@@ -2292,7 +2306,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                             refs.length > 0 && /*#__PURE__*/ _jsxs("b", {
                                 children: [
                                     refs.length,
-                                    " 张已添加"
+                                    " 个已添加"
                                 ]
                             })
                         ]
@@ -2302,7 +2316,8 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                             onLocalUpscale && /*#__PURE__*/ _jsxs("button", {
                                 type: "button",
                                 className: `local-upscale-reference ${localUpscaleActive ? 'active' : ''}`,
-                                title: localUpscaleActive ? '返回普通生图模式' : refs.length !== 1 ? '请先添加 1 张参考图' : refs.some((ref)=>ref.pending) ? '参考图正在准备，请稍候片刻' : '使用本地上传图片进行超分',
+                                disabled: !localUpscaleActive && (refs.length !== 1 || refs[0]?.kind !== 'image' || !creativeReferenceUrl(refs[0]) || refs.some((ref)=>ref.pending)),
+                                title: localUpscaleActive ? '返回普通生图模式' : refs.length !== 1 || refs[0]?.kind !== 'image' ? '请先添加 1 张图片参考' : refs.some((ref)=>ref.pending) ? '参考图正在准备，请稍候片刻' : '使用本地上传图片进行超分',
                                 onClick: (event)=>{
                                     event.preventDefault();
                                     event.stopPropagation();
@@ -2371,7 +2386,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                                 },
                                 onDragEnd: ()=>setDragIndex(null),
                                 children: [
-                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: ref.dataUrl || ref.url, muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 42) })] }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: ref.dataUrl || ref.url, alt: ref.name }),
+                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 42) })] }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: creativeReferenceUrl(ref), alt: ref.name }),
                                     ref.pending && /*#__PURE__*/ _jsxs("span", {
                                         className: "reference-pending-overlay",
                                         children: [
@@ -2388,8 +2403,8 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                                     /*#__PURE__*/ _jsx("button", {
                                         type: "button",
                                         className: "reference-remove",
-                                        title: "移除参考图",
-                                        "aria-label": `移除参考图 ${index + 1}`,
+                                         title: "移除引用",
+                                         "aria-label": `移除引用 ${index + 1}`,
                                         draggable: false,
                                         onPointerDown: (event)=>event.stopPropagation(),
                                         onClick: (event)=>{
@@ -2414,7 +2429,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                                 size: 18
                             }),
                             /*#__PURE__*/ _jsx("span", {
-                                children: refs.length ? '继续添加参考图' : '点击、拖入或粘贴参考图'
+                                children: refs.length ? '继续添加引用' : '点击、拖入或粘贴图片、视频或文本'
                             })
                         ]
                     })
@@ -2424,7 +2439,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                 hidden: true,
                 ref: inputRef,
                 type: "file",
-                accept: "image/png,image/jpeg,image/webp",
+                 accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1",
                 multiple: true,
                 onChange: (e)=>{
                     if (e.target.files) onAdd(e.target.files);
@@ -2463,7 +2478,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                         }),
                         /*#__PURE__*/ _jsx("div", {
                             className: "reference-preview-stage",
-                            children: preview.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: preview.dataUrl || preview.url, controls: true, playsInline: true }) : preview.kind === 'text' ? /*#__PURE__*/ _jsx("pre", { children: preview.text }) : /*#__PURE__*/ _jsx("img", { src: preview.dataUrl || preview.url, alt: preview.name })
+                            children: preview.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(preview), controls: true, playsInline: true }) : preview.kind === 'text' ? /*#__PURE__*/ _jsx("pre", { children: preview.text }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(preview), alt: preview.name })
                         }),
                         /*#__PURE__*/ _jsxs("div", {
                             className: "reference-preview-footer",
@@ -2593,7 +2608,7 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                             references.slice(0, 4).map((reference, index) => /*#__PURE__*/ _jsxs("span", {
                                 className: "image-card-reference-thumb",
                                 children: [
-                                    /*#__PURE__*/ _jsx("img", {
+                                    reference.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: reference.url, muted: true, playsInline: true }) : reference.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(reference, 24) })] }) : /*#__PURE__*/ _jsx("img", {
                                         src: reference.url,
                                         alt: `参考图 ${index + 1}`
                                     }),
@@ -4926,6 +4941,7 @@ export default function Page() {
     const agentRequestsRef = useRef(new Map());
     const chatSaveQueuesRef = useRef(new Map());
     const [agentMentionOpen, setAgentMentionOpen] = useState(false);
+    const [agentMentionQuery, setAgentMentionQuery] = useState('');
     useEffect(()=>{
         if (!messageReferencePreview) return;
         const onKeyDown = (event)=>{
@@ -4952,6 +4968,7 @@ export default function Page() {
     const [generatePromptBeforeOptimization, setGeneratePromptBeforeOptimization] = useState(null);
     const generatePromptRef = useRef(null);
     const [generateMentionOpen, setGenerateMentionOpen] = useState(false);
+    const [generateMentionQuery, setGenerateMentionQuery] = useState('');
     const [generateModelId, setGenerateModelId] = useState('auto');
     const [generateUpscaleModelId, setGenerateUpscaleModelId] = useState('auto');
     const [generateWorkflow, setGenerateWorkflow] = useState('generate');
@@ -5830,9 +5847,9 @@ export default function Page() {
     ]);
     useEffect(()=>{
         if (!generateMask) return;
-        if (generateRefs.length !== 1) {
+        if (generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0])) {
             setGenerateMask(null);
-            notify('绘制蒙版仅支持上传 1 张参考图，原蒙版已清除');
+            notify('绘制蒙版仅支持 1 张已准备好的图片参考，原蒙版已清除');
             return;
         }
         if (generateRefs[0]?.id !== generateMask.referenceId) {
@@ -5856,7 +5873,10 @@ export default function Page() {
                 active = false;
             };
         }
-        void loadImageDimensions(generateRefs[0].dataUrl).then((size)=>{
+        if (generateRefs[0]?.kind !== 'image') return ()=>{
+            active = false;
+        };
+        void loadImageDimensions(creativeReferenceUrl(generateRefs[0])).then((size)=>{
             if (active) setGenerateUpscaleSourceSize(size);
         }).catch(()=>{
             if (active) setGenerateUpscaleSourceSize(null);
@@ -5876,7 +5896,10 @@ export default function Page() {
                 active = false;
             };
         }
-        void loadImageDimensions(generateRefs[0].dataUrl).then((size)=>{
+        if (generateRefs[0]?.kind !== 'image') return ()=>{
+            active = false;
+        };
+        void loadImageDimensions(creativeReferenceUrl(generateRefs[0])).then((size)=>{
             if (active) setGenerateAutoReferenceSize(size);
         }).catch(()=>{
             if (active) setGenerateAutoReferenceSize(null);
@@ -6844,7 +6867,7 @@ export default function Page() {
             notify('已返回普通生图模式');
             return;
         }
-        if (generateRefs.length !== 1) return notify('本地超分需要恰好 1 张参考图');
+        if (generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0])) return notify('本地超分需要恰好 1 张已准备好的图片参考');
         if (generateRefs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再超分');
         if (!availableUpscaleModels.length) return notify('还没有可用的超分模型。请到模型库重新读取并启用 SeedVR2-7B。');
         const lastCall = getLastModelCall('upscale');
@@ -6860,8 +6883,9 @@ export default function Page() {
                 angleReference
             ] : [];
             const room = Math.max(0, target === 'angle' ? 1 : 16 - current.length);
-            const refs = await Promise.all(Array.from(files).slice(0, room).map((file)=>fileToReference(file, {
-                    compressForChat: true
+            const refs = await Promise.all(Array.from(files).slice(0, room).map((file)=>fileToCreativeReference(file, {
+                    compressForChat: true,
+                    target
                 })));
             if (target === 'agent') setAgentRefs((old)=>[
                     ...old,
@@ -6880,10 +6904,10 @@ export default function Page() {
             const noticeParts = [];
             const optimizedCount = refs.filter((reference)=>reference.optimized).length;
             if (optimizedCount) noticeParts.push(`已自动优化 ${optimizedCount} 张图片后添加`);
-            if (Array.from(files).length > room) noticeParts.push(target === 'angle' ? '角度控制台只使用一张参考图' : '最多保留 16 张参考图');
+            if (Array.from(files).length > room) noticeParts.push(target === 'angle' ? '角度控制台只使用一张参考图' : '最多保留 16 个引用素材');
             if (noticeParts.length) notify(noticeParts.join('；'));
         } catch (error) {
-            notify(error instanceof Error ? error.message : '上传图片失败');
+            notify(error instanceof Error ? error.message : '读取引用素材失败');
         }
     }
     async function addAgentAttachments(files) {
@@ -6914,26 +6938,22 @@ export default function Page() {
         }
     }
     function referenceMentionRange(value, cursor) {
-        const safeCursor = Number.isFinite(cursor) ? Math.max(0, Math.min(cursor, value.length)) : value.length;
-        const match = /@[^\s@]*$/.exec(value.slice(0, safeCursor));
-        return match ? { start: safeCursor - match[0].length, end: safeCursor } : null;
+        return creativeReferenceMentionRange(value, cursor);
     }
-    function mentionIsOpen(value, cursor, refs) {
-        return refs.length > 0 && Boolean(referenceMentionRange(value, cursor));
+    function updateMentionState(value, cursor, refs, setOpen, setQuery) {
+        const range = referenceMentionRange(value, cursor);
+        setQuery(range?.query || '');
+        setOpen(refs.length > 0 && Boolean(range));
     }
     function insertReferenceMention(value, setter, setOpen, inputRef, index) {
         const textarea = inputRef.current;
         const cursor = textarea?.selectionStart ?? value.length;
-        const range = referenceMentionRange(value, cursor);
-        const start = range?.start ?? cursor;
-        const mention = `@${index + 1} `;
-        const next = `${value.slice(0, start)}${mention}${value.slice(cursor)}`;
-        setter(next);
+        const inserted = insertCreativeMention(value, cursor, index);
+        setter(inserted.value);
         setOpen(false);
         requestAnimationFrame(()=>{
             textarea?.focus();
-            const nextCursor = start + mention.length;
-            textarea?.setSelectionRange(nextCursor, nextCursor);
+            textarea?.setSelectionRange(inserted.cursor, inserted.cursor);
         });
     }
     async function pasteClipboardImages(target) {
@@ -7255,12 +7275,22 @@ export default function Page() {
         });
     }
     async function persistReferenceImages(references) {
-        const source = (references || []).map((reference, index)=>({
+        const normalized = (references || []).map((reference, index)=>normalizeCreativeReference(reference, index)).filter(Boolean);
+        const source = normalized.map((reference, index)=>({
             reference,
             index,
-            dataUrl: typeof reference?.dataUrl === 'string' ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : typeof reference === 'string' ? reference : ''
-        })).filter((entry)=>entry.dataUrl && (entry.dataUrl.startsWith('data:image/') || /^https?:\/\//i.test(entry.dataUrl) || entry.dataUrl.startsWith('/api/storage/file?'))).slice(0, 16);
+            dataUrl: reference.kind !== 'text' ? String(reference.url || '') : ''
+        })).filter((entry)=>entry.reference.kind === 'text' || (entry.dataUrl && (/^data:(?:image|video)\//i.test(entry.dataUrl) || /^https?:\/\//i.test(entry.dataUrl) || entry.dataUrl.startsWith('/api/storage/file?') || entry.dataUrl.startsWith('/api/storage/video?')))).slice(0, 16);
         if (!source.length) return [];
+        const textRecords = source.filter((entry)=>entry.reference.kind === 'text').map((entry)=>({
+            id: entry.reference.id,
+            kind: 'text',
+            name: entry.reference.name,
+            text: entry.reference.text || '',
+            mimeType: entry.reference.mimeType
+        }));
+        const mediaSource = source.filter((entry)=>entry.reference.kind !== 'text');
+        if (!mediaSource.length) return textRecords;
         try {
             const response = await fetch('/api/storage/images', {
                 method: 'POST',
@@ -7268,21 +7298,28 @@ export default function Page() {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    images: source.map((entry)=>({ url: entry.dataUrl }))
+                    images: mediaSource.filter((entry)=>entry.reference.kind === 'image').map((entry)=>({ url: entry.dataUrl }))
                 })
             });
             const data = await response.json().catch(()=>({}));
-            if (response.ok && Array.isArray(data.images)) return source.map((reference, index)=>({
-                id: reference.reference?.id,
-                name: reference.reference?.name || `参考图 ${reference.index + 1}`,
-                url: typeof data.images[index]?.url === 'string' ? data.images[index].url : reference.dataUrl
-            }));
+            const imageSource = mediaSource.filter((entry)=>entry.reference.kind === 'image');
+            if (response.ok && Array.isArray(data.images)) return [
+                ...textRecords,
+                ...mediaSource.map((entry)=>({
+                    id: entry.reference.id,
+                    kind: entry.reference.kind,
+                    name: entry.reference.name,
+                    url: entry.reference.kind === 'image'
+                        ? (typeof data.images[imageSource.indexOf(entry)]?.url === 'string' ? data.images[imageSource.indexOf(entry)].url : entry.dataUrl)
+                        : entry.dataUrl,
+                    mimeType: entry.reference.mimeType
+                }))
+            ];
         } catch  {}
-        return source.map((entry)=>({
-            id: entry.reference?.id,
-            name: entry.reference?.name || `参考图 ${entry.index + 1}`,
-            url: entry.dataUrl
-        }));
+        return [
+            ...textRecords,
+            ...mediaSource.map((entry)=>({ id: entry.reference.id, kind: entry.reference.kind, name: entry.reference.name, url: entry.dataUrl, mimeType: entry.reference.mimeType }))
+        ];
     }
     async function persistHistoryImage(image) {
         if (!image?.url || (!image.url.startsWith('data:image/') && !/^https?:\/\//i.test(image.url))) return image;
@@ -7466,7 +7503,6 @@ export default function Page() {
         const isAngleGeneration = Boolean(savedRequest?.angle || overrides?.angle);
         const submittedAngleOutput = savedRequest?.angleOutput || overrides?.angleOutput;
         const rawSubmittedPrompt = overrides?.prompt.trim() || generatePrompt.trim();
-        const submittedPrompt = rawSubmittedPrompt;
         const availableSubmittedRefs = savedRequest ? [
             ...savedRequest.references
         ] : overrides ? [
@@ -7474,9 +7510,14 @@ export default function Page() {
         ] : [
             ...generateRefs
         ];
-        const referenceSelection = selectCreativeReferences(rawSubmittedPrompt, availableSubmittedRefs);
+        const naturalReferenceReplacement = replaceNaturalReferenceLabels(rawSubmittedPrompt, availableSubmittedRefs);
+        if (naturalReferenceReplacement.unresolved.length && availableSubmittedRefs.length) return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join('、')}`);
+        const referenceSelection = selectCreativeReferences(naturalReferenceReplacement.value, availableSubmittedRefs);
         if (referenceSelection.invalidNumbers.length) return notify(`引用编号无效：${referenceSelection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
         const submittedRefs = referenceSelection.references;
+        const submittedPrompt = appendTextReferenceContext(naturalReferenceReplacement.value, submittedRefs);
+        if (submittedRefs.some((reference)=>reference.kind === 'video')) return notify('图片生成不能接收视频引用；请移除视频，或切换到视频工作台。');
+        const submittedImageRefs = submittedRefs.filter((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference));
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
         const submittedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : activeProviderModels.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : defaultImageModel;
@@ -7491,15 +7532,15 @@ export default function Page() {
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
-        const taskReferenceBytes = taskRefs.reduce((total, reference)=>total + reference.dataUrl.length, 0) + (isAngleGeneration ? 0 : savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0);
+        const taskReferenceBytes = submittedImageRefs.reduce((total, reference)=>total + creativeReferenceUrl(reference).length, 0) + (isAngleGeneration ? 0 : savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0);
         if (taskReferenceBytes > 7000000) return notify('参考图和蒙版总大小过大，已停止提交；请减少图片数量或重新上传后再试');
-        if (submittedUpscaleMode && taskRefs.length !== 1) return notify('本地超分需要恰好 1 张参考图');
-        const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : taskRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : taskRefs.length ? 'edit' : 'generate';
+        if (submittedUpscaleMode && (submittedRefs.some((reference)=>reference.kind !== 'image') || submittedImageRefs.length !== 1)) return notify('本地超分需要恰好 1 张图片引用，文本或视频不能用于超分');
+        const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
         const taskCount = savedRequest ? Math.max(1, Math.min(8, savedRequest.count || 1)) : submittedUpscaleMode || isAngleGeneration ? 1 : count;
         const taskModelId = submittedModelId;
         const taskModel = submittedModel;
         const requestedRatio = isAngleGeneration ? submittedAngleOutput?.aspectRatio || '自动' : savedRequest?.ratio || ratio;
-        const autoReferenceSize = requestedRatio === '自动' && taskRefs.length >= 1 && (isAngleGeneration || taskRefs.length === 1) ? (isAngleGeneration ? null : generateAutoReferenceSize) || await loadImageDimensions(taskRefs[0].dataUrl).catch(()=>null) : null;
+        const autoReferenceSize = requestedRatio === '自动' && submittedImageRefs.length >= 1 && (isAngleGeneration || submittedImageRefs.length === 1) ? (isAngleGeneration ? null : generateAutoReferenceSize) || await loadImageDimensions(creativeReferenceUrl(submittedImageRefs[0])).catch(()=>null) : null;
         const taskRatio = requestedRatio === '自动' && autoReferenceSize ? exactRatioFromDimensions(autoReferenceSize.width, autoReferenceSize.height) : requestedRatio;
         const taskCustomRatioWidth = savedRequest?.customRatioWidth || customRatioWidth;
         const taskCustomRatioHeight = savedRequest?.customRatioHeight || customRatioHeight;
@@ -7580,7 +7621,7 @@ export default function Page() {
             angleGuide: overrides?.angleGuide,
             angleOutput: overrides?.angleOutput
         };
-        const preferenceContext = taskMode === 'upscale' ? 'upscale' : taskRefs.length ? 'edit' : 'generate';
+        const preferenceContext = taskMode === 'upscale' ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
         const manualImageModel = taskModelId !== 'auto' ? activeProviderModels.find((model)=>model.id === taskModelId) : undefined;
         const recordImagePreference = (actualModelId)=>{
             if (isAngleGeneration) return;
@@ -7633,8 +7674,8 @@ export default function Page() {
         try {
             const referenceRecords = await persistReferenceImages(taskRefs);
             if (taskMode === 'upscale') {
-                if (!taskRefs.length) throw new Error('SeedVR2-7B 是图片超分模型，请先添加一张参考图，再点击生成。');
-                const sourceSize = await loadImageDimensions(taskRefs[0].dataUrl);
+                if (!submittedImageRefs.length) throw new Error('SeedVR2-7B 是图片超分模型，请先添加一张图片引用，再点击生成。');
+                const sourceSize = await loadImageDimensions(creativeReferenceUrl(submittedImageRefs[0]));
                  const targetSize = upscalePreviewDimensions(sourceSize, taskUpscaleScale, taskModel, taskUpscaleTarget);
                  const cloudUpscale = isCloudUpscaleModel(taskModel);
                  const taskCloudOutputFormat = cloudUpscale && taskModel?.outputFormats?.includes(taskUpscaleOutputFormat) ? taskUpscaleOutputFormat : undefined;
@@ -7647,7 +7688,7 @@ export default function Page() {
                         taskId,
                         prompt: taskPrompt,
                         model: taskModelId === 'auto' ? taskModel?.id : taskModelId,
-                        reference: taskRefs[0].dataUrl,
+                        reference: creativeReferenceUrl(submittedImageRefs[0]),
                         sourceImageId: taskRefs[0].id,
                          referenceImages: referenceRecords,
                          scale: taskUpscaleScale,
@@ -7740,7 +7781,7 @@ export default function Page() {
                                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                                     mask: taskMask,
-                                    references: taskRefs.map((r)=>r.dataUrl),
+                                    references: submittedImageRefs.map((r)=>creativeReferenceUrl(r)).filter(Boolean),
                                     referenceImages: referenceRecords,
                                     camera: isAngleGeneration ? taskRequest.angle : undefined,
                                     cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
@@ -7776,7 +7817,7 @@ export default function Page() {
                                 outputSize,
                                 outputFormat: actualOutputFormat,
                                 generationMs: durationMs,
-                                source: taskRefs.length ? 'edit' : 'generate',
+                                source: submittedImageRefs.length ? 'edit' : 'generate',
                                 references: referenceRecords,
                                 angle: taskRequest.angle
                             });
@@ -7802,7 +7843,7 @@ export default function Page() {
                 void refreshGenerationLogs();
                 await Promise.all(runs);
                 const durationMs = Math.round(performance.now() - requestStartedAt);
-                const info = `${resolvedModelName} · ${outputSize || '自动分辨率'} · ${taskRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${completedCount}/${taskCount} 张已返回${failedCount ? `，${failedCount} 张失败` : ''}`;
+                const info = `${resolvedModelName} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${completedCount}/${taskCount} 张已返回${failedCount ? `，${failedCount} 张失败` : ''}`;
                 const errorMessage = failures.length ? failures.join('；') : undefined;
                 patchGenerateTask(taskId, {
                     status: failedCount ? 'error' : 'success',
@@ -7835,7 +7876,7 @@ export default function Page() {
                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                     mask: taskMask,
-                    references: taskRefs.map((r)=>r.dataUrl),
+                    references: submittedImageRefs.map((r)=>creativeReferenceUrl(r)).filter(Boolean),
                     referenceImages: referenceRecords,
                     camera: isAngleGeneration ? taskRequest.angle : undefined,
                     cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
@@ -7870,11 +7911,11 @@ export default function Page() {
                 outputSize,
                 outputFormat: actualOutputFormat,
                 generationMs: durationMs,
-                source: taskRefs.length ? 'edit' : 'generate',
+                source: submittedImageRefs.length ? 'edit' : 'generate',
                 references: referenceRecords,
                 angle: taskRequest.angle
             });
-            const info = `${data.model?.name || '图片模型'} · ${outputSize || '自动分辨率'} · ${taskRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
+            const info = `${data.model?.name || '图片模型'} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
                     ...items,
                     ...old
@@ -8455,13 +8496,18 @@ export default function Page() {
     async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride) {
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
-        const content = text.trim();
-        if (!content && !agentFiles.length && !agentRefs.length) return;
+        const rawContent = text.trim();
+        if (!rawContent && !agentFiles.length && !agentRefs.length) return;
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
         const sessionId = activeChatId || uid('chat');
         if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，可点击左侧“新对话”并行进行');
         const currentSessionMessages = pendingChatMessagesRef.current.get(sessionId) || messages;
         const availableReferences = overrideRefs ? [...overrideRefs] : [...agentRefs];
+        const naturalReferenceReplacement = overrideRefs
+            ? { value: rawContent, unresolved: [] }
+            : replaceNaturalReferenceLabels(rawContent, availableReferences);
+        if (!overrideRefs && naturalReferenceReplacement.unresolved.length && availableReferences.length) return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join('、')}`);
+        const content = naturalReferenceReplacement.value;
         const selection = overrideRefs ? { references: availableReferences, invalidNumbers: [], hasMentions: false } : selectCreativeReferences(content, availableReferences);
         if (selection.invalidNumbers.length) return notify(`引用编号无效：${selection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
         let refs = selection.references;
@@ -8480,7 +8526,7 @@ export default function Page() {
             }
         }
         if (refs.some((reference)=>reference.pending)) return notify('引用素材正在准备，请稍候片刻再发送');
-        const files = overrideRefs ? [] : agentFiles.filter((file)=>refs.some((reference)=>reference.id === file.id));
+        const files = overrideRefs ? [] : agentFiles.filter((file)=>refs.some((reference)=>reference.id === file.id && reference.kind !== 'text'));
         const followUp = overrideRefs ? null : agentFollowUp;
         const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
         const requestIntent = classifyAgentDeliverable(requestContent, {
@@ -8785,7 +8831,14 @@ export default function Page() {
         if (generatePromptOptimizing || generateRefs.some((reference)=>reference.pending)) return;
         setGeneratePromptOptimizing(true);
         try {
-            const references = await Promise.all(generateRefs.slice(0, 4).map(async (reference)=>compressReferenceDataUrl(reference.dataUrl)));
+            const references = await Promise.all(generateRefs.slice(0, 4).map(async (reference)=>({
+                id: reference.id,
+                kind: reference.kind,
+                name: reference.name,
+                url: reference.kind === 'image' ? await compressReferenceDataUrl(creativeReferenceUrl(reference)) : creativeReferenceUrl(reference),
+                ...(reference.kind === 'text' ? { text: reference.text } : {}),
+                ...(reference.mimeType ? { mimeType: reference.mimeType } : {})
+            })));
             const optimized = await requestPromptOptimization(source, activeAgentModelId, references);
             setGeneratePromptBeforeOptimization(generatePrompt);
             setGeneratePrompt(optimized);
@@ -8794,7 +8847,7 @@ export default function Page() {
                 generatePromptRef.current?.focus();
                 generatePromptRef.current?.setSelectionRange(optimized.length, optimized.length);
             });
-            notify(references.length ? '已结合参考图完成 AI 优化，可继续修改后生成' : '已完成 AI 优化，可继续修改后生成');
+            notify(references.length ? '已结合引用素材完成 AI 优化，可继续修改后生成' : '已完成 AI 优化，可继续修改后生成');
         } catch (error) {
             notify(error instanceof Error ? error.message : 'AI 优化失败');
         } finally{
@@ -10458,7 +10511,7 @@ export default function Page() {
                                                                             "aria-label": `放大查看参考图 ${index + 1}`,
                                                                             onClick: ()=>setMessageReferencePreview(ref),
                                                                             children: [
-                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: ref.dataUrl || ref.url, muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "message-ref-text", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 28) })] }) : /*#__PURE__*/ _jsx("img", { src: ref.dataUrl || ref.url, alt: ref.name }),
+                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "message-ref-text", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 28) })] }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: ref.name }),
                                                                                 /*#__PURE__*/ _jsx("span", {
                                                                                     children: index + 1
                                                                                 })
@@ -10706,9 +10759,15 @@ export default function Page() {
                                                 agentRefs.length > 0 && /*#__PURE__*/ _jsx(ReferenceStrip, {
                                                     refs: agentRefs,
                                                     onAdd: (files)=>void addReferences(files, 'agent'),
-                                                    onRemove: (id)=>setAgentRefs((old)=>old.filter((x)=>x.id !== id)),
+                                                    onRemove: (id)=>{
+                                                        setAgentRefs((old)=>old.filter((x)=>x.id !== id));
+                                                        setAgentFiles((old)=>old.filter((file)=>file.id !== id));
+                                                    },
                                                     onReorder: (fromIndex, toIndex)=>setAgentRefs((old)=>reorderReferenceItems(old, fromIndex, toIndex)),
-                                                    onClear: ()=>setAgentRefs([]),
+                                                    onClear: ()=>{
+                                                        setAgentRefs([]);
+                                                        setAgentFiles([]);
+                                                    },
                                                     label: "本轮参考图"
                                                 }),
                                                 agentFiles.length > 0 && /*#__PURE__*/ _jsx(ChatFileList, {
@@ -10716,7 +10775,10 @@ export default function Page() {
                                                     onDownload: (file)=>{
                                                         void downloadChatFile(file).catch(()=>notify('文件下载失败'));
                                                     },
-                                                    onRemove: (file)=>setAgentFiles((old)=>old.filter((item)=>item.id !== file.id))
+                                                    onRemove: (file)=>{
+                                                        setAgentFiles((old)=>old.filter((item)=>item.id !== file.id));
+                                                        setAgentRefs((old)=>old.filter((reference)=>reference.id !== file.id));
+                                                    }
                                                 }),
                                                 agentFollowUp && /*#__PURE__*/ _jsxs("div", {
                                                     className: "agent-followup-card",
@@ -10795,23 +10857,43 @@ export default function Page() {
                                                      readOnly: agentMessageSelectionActive || promptOptimizing,
                                                     onChange: (e)=>{
                                                         setAgentInput(e.target.value);
-                                                        setAgentMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, agentRefs));
+                                                        updateMentionState(e.target.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery);
                                                     },
-                                                    onFocus: (e)=>setAgentMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs)),
-                                                    onClick: (e)=>setAgentMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs)),
+                                                    onFocus: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery),
+                                                    onClick: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery),
                                                     onKeyUp: (e)=>{
-                                                        if (e.key !== 'Escape') setAgentMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs));
+                                                        if (e.key !== 'Escape') updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery);
                                                     },
                                                     placeholder: "详细描述你想生成或修改的画面：主体外观与动作、场景环境、构图视角、光线色彩、风格材质、镜头感和需要避免的内容；也可以上传参考图让助手分析。",
                                                     onPaste: (e)=>{
                                                         const files = Array.from(e.clipboardData.files || []);
-                                                        if (files.some((f)=>f.type.startsWith('image/'))) {
+                                                                            if (files.some((f)=>f.type.startsWith('image/') || f.type.startsWith('video/'))) {
                                                             e.preventDefault();
                                                             void addReferences(files, 'agent');
+                                                            return;
                                                         }
+                                                        const pastedText = e.clipboardData.getData('text/plain');
+                                                        if (!pastedText || !agentRefs.length) return;
+                                                        const replaced = replaceNaturalReferenceLabels(pastedText, agentRefs);
+                                                        if (!replaced.replaced) return;
+                                                        e.preventDefault();
+                                                        const textarea = e.currentTarget;
+                                                        const start = textarea.selectionStart ?? agentInput.length;
+                                                        const end = textarea.selectionEnd ?? start;
+                                                        const next = `${agentInput.slice(0, start)}${replaced.value}${agentInput.slice(end)}`;
+                                                        setAgentInput(next);
+                                                        setAgentMentionOpen(false);
+                                                        requestAnimationFrame(()=>{
+                                                            textarea.focus();
+                                                            const cursor = start + replaced.value.length;
+                                                            textarea.setSelectionRange(cursor, cursor);
+                                                        });
                                                     },
                                                     onKeyDown: (e)=>{
-                                                        if (e.key === 'Escape') setAgentMentionOpen(false);
+                                                        if (e.key === 'Escape') {
+                                                            setAgentMentionOpen(false);
+                                                            setAgentMentionQuery('');
+                                                        }
                                                         if (e.key === 'Enter' && !e.shiftKey) {
                                                             e.preventDefault();
                                                             if (!activeAgentBusy) void sendAgent();
@@ -10821,6 +10903,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx(ReferenceMentionMenu, {
                                                     refs: agentRefs,
                                                     open: agentMentionOpen,
+                                                    query: agentMentionQuery,
                                                     className: "agent-mention-menu",
                                                     onSelect: (index)=>insertReferenceMention(agentInput, setAgentInput, setAgentMentionOpen, agentInputRef, index)
                                                 }),
@@ -10845,7 +10928,7 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("input", {
                                                                             type: "file",
                                                                             hidden: true,
-                                                                            accept: "image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1",
+                                                                            accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1",
                                                                             multiple: true,
                                                                             onChange: (e)=>{
                                                                                 if (e.target.files) void addAgentAttachments(e.target.files);
@@ -11129,21 +11212,44 @@ export default function Page() {
                                                         onChange: (e)=>{
                                                             setGeneratePrompt(e.target.value);
                                                             setGeneratePromptBeforeOptimization(null);
-                                                            setGenerateMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, generateRefs));
+                                                            updateMentionState(e.target.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery);
                                                         },
-                                                        onFocus: (e)=>setGenerateMentionOpen(mentionIsOpen(e.target.value, e.currentTarget.selectionStart, generateRefs)),
-                                                        onClick: (e)=>setGenerateMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs)),
+                                                        onFocus: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery),
+                                                        onClick: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery),
                                                         onKeyUp: (e)=>{
-                                                            if (e.key !== 'Escape') setGenerateMentionOpen(mentionIsOpen(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs));
+                                                            if (e.key !== 'Escape') updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery);
                                                         },
-                                                        onKeyDown: (e)=>{
-                                                            if (e.key === 'Escape') setGenerateMentionOpen(false);
+                                                    onKeyDown: (e)=>{
+                                                        if (e.key === 'Escape') {
+                                                            setGenerateMentionOpen(false);
+                                                            setGenerateMentionQuery('');
+                                                        }
+                                                        },
+                                                        onPaste: (e)=>{
+                                                            const pastedText = e.clipboardData.getData('text/plain');
+                                                            if (!pastedText || !generateRefs.length) return;
+                                                            const replaced = replaceNaturalReferenceLabels(pastedText, generateRefs);
+                                                            if (!replaced.replaced) return;
+                                                            e.preventDefault();
+                                                            const textarea = e.currentTarget;
+                                                            const start = textarea.selectionStart ?? generatePrompt.length;
+                                                            const end = textarea.selectionEnd ?? start;
+                                                            const next = `${generatePrompt.slice(0, start)}${replaced.value}${generatePrompt.slice(end)}`;
+                                                            setGeneratePrompt(next);
+                                                            setGeneratePromptBeforeOptimization(null);
+                                                            setGenerateMentionOpen(false);
+                                                            requestAnimationFrame(()=>{
+                                                                textarea.focus();
+                                                                const cursor = start + replaced.value.length;
+                                                                textarea.setSelectionRange(cursor, cursor);
+                                                            });
                                                         },
                                                         placeholder: generateUpscaleMode ? 'SeedVR2 超分不会根据提示词修改画面…' : '详细描述主体、场景、构图、光线、风格和需要避免的内容…'
                                                     }),
                                                     /*#__PURE__*/ _jsx(ReferenceMentionMenu, {
                                                         refs: generateRefs,
                                                         open: generateMentionOpen,
+                                                        query: generateMentionQuery,
                                                         className: "generate-mention-menu",
                                                         onSelect: (index)=>insertReferenceMention(generatePrompt, setGeneratePrompt, setGenerateMentionOpen, generatePromptRef, index)
                                                     }),
@@ -11181,9 +11287,9 @@ export default function Page() {
                                                     /*#__PURE__*/ _jsxs("button", {
                                                         type: "button",
                                                         className: `ghost-button mask-button ${generateMask ? 'active' : ''}`,
-                                                        disabled: generateRefs.length !== 1 || generateRefs.some((ref)=>ref.pending),
-                                                        title: generateRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能绘制蒙版' : generateRefs.length > 1 ? '绘制蒙版仅支持上传 1 张参考图' : undefined,
-                                                        onClick: ()=>generateRefs.length === 1 && !generateRefs[0]?.pending ? setMaskEditorOpen(true) : notify(generateRefs.length > 1 ? '绘制蒙版仅支持上传 1 张参考图' : '参考图正在准备，请稍候片刻'),
+                                disabled: generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0]) || generateRefs.some((ref)=>ref.pending),
+                                title: generateRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能绘制蒙版' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '绘制蒙版仅支持 1 张图片参考' : undefined,
+                                onClick: ()=>generateRefs.length === 1 && generateRefs[0]?.kind === 'image' && creativeReferenceUrl(generateRefs[0]) && !generateRefs[0]?.pending ? setMaskEditorOpen(true) : notify(generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '绘制蒙版仅支持 1 张图片参考' : '参考图正在准备，请稍候片刻'),
                                                         children: [
                                                             "▧ ",
                                                             generateMask ? '蒙版已设置' : '绘制蒙版',
@@ -11200,8 +11306,8 @@ export default function Page() {
                                                         children: "移除"
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
-                                                        className: generateRefs.length > 1 ? 'mask-hint warning' : '',
-                                                        children: generateRefs.some((ref)=>ref.pending) ? '参考图正在准备，完成后即可提交' : generateRefs.length > 1 ? '绘制蒙版仅支持 1 张参考图' : generateMask ? '红色区域会重新绘制' : '可选：指定只修改参考图的局部区域'
+                                                        className: generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? 'mask-hint warning' : '',
+                                                        children: generateRefs.some((ref)=>ref.pending) ? '参考图正在准备，完成后即可提交' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '绘制蒙版仅支持 1 张图片参考' : generateMask ? '红色区域会重新绘制' : '可选：指定只修改参考图的局部区域'
                                                     })
                                                 ]
                                             }),
@@ -12091,7 +12197,7 @@ export default function Page() {
                                 ]
                             }),
                             maskEditorOpen && generateRefs[0] && /*#__PURE__*/ _jsx(MaskEditor, {
-                                imageUrl: generateRefs[0].dataUrl,
+                                imageUrl: creativeReferenceUrl(generateRefs[0]),
                                 initialMaskDataUrl: generateMask?.referenceId === generateRefs[0].id ? generateMask.dataUrl : undefined,
                                 onCancel: ()=>setMaskEditorOpen(false),
                                 onApply: (dataUrl)=>{
@@ -15565,11 +15671,17 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                             ]
                         }),
                         /*#__PURE__*/ _jsx("div", {
-                            className: "reference-preview-stage",
-                            children: /*#__PURE__*/ _jsx("img", {
-                                src: messageReferencePreview.dataUrl,
-                                alt: messageReferencePreview.name
-                            })
+                                className: "reference-preview-stage",
+                                children: messageReferencePreview.kind === 'video' ? /*#__PURE__*/ _jsx("video", {
+                                    src: creativeReferenceUrl(messageReferencePreview),
+                                    controls: true,
+                                    playsInline: true
+                                }) : messageReferencePreview.kind === 'text' ? /*#__PURE__*/ _jsx("pre", {
+                                    children: messageReferencePreview.text
+                                }) : /*#__PURE__*/ _jsx("img", {
+                                    src: creativeReferenceUrl(messageReferencePreview),
+                                    alt: messageReferencePreview.name
+                                })
                         }),
                         /*#__PURE__*/ _jsxs("div", {
                             className: "reference-preview-footer",

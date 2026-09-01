@@ -214,11 +214,14 @@ export type VideoGenerationInput = {
   requireAudio?: boolean;
 };
 
-/** A persisted reference image used by a generation request. */
+/** A persisted creative reference used by a generation request or history log. */
 export type ReferenceImageRecord = {
   id?: string;
   name: string;
   url: string;
+  kind?: 'image' | 'video' | 'text';
+  text?: string;
+  mimeType?: string;
 };
 
 /** Persisted/wire-safe reference record shared by Agent and creative inputs. */
@@ -227,6 +230,10 @@ export type CreativeReferenceRecord = import('./creative-references').CreativeRe
 export type ClientReferenceImage = {
   id: string;
   name: string;
-  dataUrl: string;
+  kind?: 'image' | 'video' | 'text';
+  dataUrl?: string;
+  url?: string;
+  text?: string;
+  mimeType?: string;
   pending?: boolean;
 };

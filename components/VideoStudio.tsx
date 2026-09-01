@@ -7,7 +7,7 @@ import SelectMenu from '@/components/SelectMenu';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
-import { insertReferenceMention as insertCreativeMention, referenceMentionRange as creativeReferenceMentionRange, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { appendTextReferenceContext, insertReferenceMention as insertCreativeMention, referenceMentionRange as creativeReferenceMentionRange, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 
 type VideoTask = {
   id: string;
@@ -37,7 +37,7 @@ type Props = {
   onNotify: (message: string) => void;
 };
 
-type UploadSlot = { id?: string; name: string; url: string; kind: 'image' | 'video' | 'audio' };
+type UploadSlot = { id?: string; name: string; url: string; kind: 'image' | 'video' | 'audio' | 'text'; text?: string; mimeType?: string };
 type VideoOperation = 'generate' | 'edit' | 'extend';
 type VideoInputMode = 'text' | 'first-frame' | 'frames' | 'reference';
 type MediaTransportStatus = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean; reachable?: boolean; publicUrl?: string };
@@ -179,6 +179,13 @@ function uploadSlot(url: string, name: string, kind: UploadSlot['kind']): Upload
   return { id: `video-ref-${Math.random().toString(36).slice(2, 10)}`, url, name, kind };
 }
 
+const textReferenceExtensions = new Set(['txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'html', 'htm', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'sql', 'xml', 'svg', 'yaml', 'yml', 'sh', 'ps1']);
+
+function isTextReferenceFile(file: File) {
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  return file.type.startsWith('text/') || file.type === 'application/json' || file.type === 'application/xml' || file.type === 'image/svg+xml' || textReferenceExtensions.has(extension);
+}
+
 type VideoRestorePlan = {
   modelId: string;
   prompt: string;
@@ -191,6 +198,7 @@ type VideoRestorePlan = {
   lastFrame: UploadSlot | null;
   referenceImages: UploadSlot[];
   referenceVideo: UploadSlot | null;
+  referenceTexts: CreativeReference[];
   audios: UploadSlot[];
   agnesWidth: number;
   agnesHeight: number;
@@ -346,6 +354,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     lastFrame,
     referenceImages,
     referenceVideo,
+    referenceTexts: [],
     audios,
     agnesWidth: usesAgnesV20 && Number.isInteger(Number(input.width)) && Number(input.width) > 0 ? Number(input.width) : 1152,
     agnesHeight: usesAgnesV20 && Number.isInteger(Number(input.height)) && Number(input.height) > 0 ? Number(input.height) : 768,
@@ -371,9 +380,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [lastFrame, setLastFrame] = useState<UploadSlot | null>(null);
   const [referenceImages, setReferenceImages] = useState<UploadSlot[]>([]);
   const [referenceVideo, setReferenceVideo] = useState<UploadSlot | null>(null);
+  const [referenceTexts, setReferenceTexts] = useState<CreativeReference[]>([]);
   const [audios, setAudios] = useState<UploadSlot[]>([]);
   const [previewImage, setPreviewImage] = useState<UploadSlot | null>(null);
   const [referenceMentionOpen, setReferenceMentionOpen] = useState(false);
+  const [referenceMentionQuery, setReferenceMentionQuery] = useState('');
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -385,6 +396,15 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [jimengAccountBusy, setJimengAccountBusy] = useState(false);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!previewImage) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewImage(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [previewImage]);
 
   useEffect(() => {
     const next = promptPrefill?.trim();
@@ -483,9 +503,12 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const supportsFirst = can('video-first-frame') || can('video-generate') || uses65535Policy;
   const supportsReference = can('video-reference') || can('video-generate') || uses65535Policy;
   const referenceCandidates = useMemo<CreativeReference[]>(() => [
+    ...(firstFrame ? [{ id: firstFrame.id || 'video-first-frame', kind: 'image' as const, name: firstFrame.name, url: firstFrame.url }] : []),
+    ...(lastFrame ? [{ id: lastFrame.id || 'video-last-frame', kind: 'image' as const, name: lastFrame.name, url: lastFrame.url }] : []),
     ...referenceImages.map((item, index) => ({ id: item.id || `video-image-${index + 1}`, kind: 'image' as const, name: item.name, url: item.url })),
     ...(referenceVideo ? [{ id: referenceVideo.id || 'video-reference-video', kind: 'video' as const, name: referenceVideo.name, url: referenceVideo.url }] : []),
-  ], [referenceImages, referenceVideo]);
+    ...referenceTexts,
+  ], [firstFrame, lastFrame, referenceImages, referenceVideo, referenceTexts]);
   // 65535's documented native task schema currently has no audio input field.
   // Only expose audio there when the model metadata explicitly advertises it;
   // other compatible providers keep the existing flexible control.
@@ -639,6 +662,34 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setReferenceImages(next);
   }
 
+  async function addTextReferences(files: FileList | null) {
+    if (!files?.length) return;
+    const next = [...referenceTexts];
+    for (const file of Array.from(files).slice(0, Math.max(0, 8 - next.length))) {
+      if (!isTextReferenceFile(file)) {
+        onNotify(`${file.name} 不是可读取的文本文件，已跳过`);
+        continue;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        onNotify(`${file.name} 超过 2MB，已跳过`);
+        continue;
+      }
+      const text = await file.text();
+      if (!text.trim()) {
+        onNotify(`${file.name} 没有可读取的文字内容，已跳过`);
+        continue;
+      }
+      next.push({
+        id: `video-text-${Math.random().toString(36).slice(2, 10)}`,
+        kind: 'text',
+        name: file.name || '文本参考',
+        text,
+        mimeType: file.type || 'text/plain;charset=utf-8',
+      });
+    }
+    setReferenceTexts(next);
+  }
+
   async function addAudios(files: FileList | null) {
     if (!files?.length) return;
     const next = [...audios];
@@ -667,8 +718,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     return creativeReferenceMentionRange(value, cursor);
   }
 
-  function referenceMentionIsOpen(value: string, cursor: number) {
-    return supportsReferenceMentions && (inputMode === 'reference' || operation !== 'generate') && referenceCandidates.length > 0 && Boolean(referenceMentionRange(value, cursor));
+  function updateReferenceMentionState(value: string, cursor: number) {
+    const range = referenceMentionRange(value, cursor);
+    setReferenceMentionQuery(range?.query || '');
+    setReferenceMentionOpen(supportsReferenceMentions && referenceCandidates.length > 0 && Boolean(range));
   }
 
   function insertReferenceMention(index: number) {
@@ -684,7 +737,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   function clearReferences() {
     setReferenceImages([]);
+    setReferenceTexts([]);
     setReferenceMentionOpen(false);
+    setReferenceMentionQuery('');
     setPrompt((value) => value.replace(/@[0-9]+\s*/g, '').replace(/[ \t]{2,}/g, ' '));
   }
 
@@ -695,6 +750,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       || lastFrame
       || referenceImages.length
       || referenceVideo
+      || referenceTexts.length
       || audios.length
       || operation !== 'generate'
       || inputMode !== 'text'
@@ -721,6 +777,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setLastFrame(plan.lastFrame);
     setReferenceImages(plan.referenceImages);
     setReferenceVideo(plan.referenceVideo);
+    setReferenceTexts(plan.referenceTexts);
     setAudios(plan.audios);
     setAgnesWidth(plan.agnesWidth);
     setAgnesHeight(plan.agnesHeight);
@@ -738,34 +795,40 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (!models.length) return onNotify('请先在模型库启用一个视频模型');
     if (inputMode === 'first-frame' && !firstFrame) return onNotify('请先添加首帧图片');
     if (inputMode === 'frames' && (!firstFrame || !lastFrame)) return onNotify(`${uses65535Policy ? '双参考图' : '首尾帧'}模式请先添加首帧和尾帧图片`);
-    if (inputMode === 'reference' && !referenceImages.length && !(usesAgnes25 && (referenceVideo || audios.length))) return onNotify('参考图模式请先添加图片、视频或音频素材');
+    if (inputMode === 'reference' && !referenceImages.length && !referenceTexts.length && !(usesAgnes25 && (referenceVideo || audios.length))) return onNotify('参考图模式请先添加图片、视频或文本素材');
     if (referenceImages.length > modelLimits.maxReferenceImages) return onNotify(`当前模型最多接收 ${modelLimits.maxReferenceImages} 张参考图`);
     if (audios.length > modelLimits.maxAudios) return onNotify(`当前模型最多接收 ${modelLimits.maxAudios} 段音频`);
     if (usesAgnesV20 && (!Number.isInteger(agnesNumFrames) || agnesNumFrames < 1 || agnesNumFrames > 441 || (agnesNumFrames - 1) % 8 !== 0)) return onNotify('Agnes V2.0 帧数必须不超过 441 且满足 8n + 1');
     if (usesAgnesV20 && (!Number.isInteger(agnesWidth) || !Number.isInteger(agnesHeight) || agnesWidth < 64 || agnesHeight < 64 || agnesWidth > 3840 || agnesHeight > 3840 || agnesWidth % 64 !== 0 || agnesHeight % 64 !== 0)) return onNotify('Agnes V2.0 宽度和高度必须是 64 的倍数，范围为 64–3840');
     if (usesAgnesV20 && (!Number.isInteger(agnesFrameRate) || agnesFrameRate < 1 || agnesFrameRate > 60)) return onNotify('Agnes V2.0 帧率必须在 1–60 之间');
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
-    const referenceSelection = selectCreativeReferences(prompt, referenceCandidates);
+    const naturalReferenceReplacement = replaceNaturalReferenceLabels(prompt, referenceCandidates);
+    if (naturalReferenceReplacement.unresolved.length && referenceCandidates.length) return onNotify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join('、')}`);
+    const referenceSelection = selectCreativeReferences(naturalReferenceReplacement.value, referenceCandidates);
     if (referenceSelection.invalidNumbers.length) return onNotify(`提示词中的引用编号无效：${referenceSelection.invalidNumbers.map((number) => `@${number}`).join('、')}`);
-    if (referenceSelection.hasMentions && inputMode !== 'reference' && operation === 'generate') return onNotify('提示词中有 @引用，请先切换到参考图输入方式');
-    const selectedReferenceImages = referenceSelection.references.filter((reference) => reference.kind === 'image');
-    const selectedReferenceVideos = referenceSelection.references.filter((reference) => reference.kind === 'video');
+    const selectedReferences = referenceSelection.references;
+    const usesSelectedReferences = (id?: string) => !referenceSelection.hasMentions || Boolean(id && selectedReferences.some((reference) => reference.id === id));
+    const selectedFirstFrame = firstFrame && usesSelectedReferences(firstFrame.id) ? firstFrame : null;
+    const selectedLastFrame = lastFrame && usesSelectedReferences(lastFrame.id) ? lastFrame : null;
+    const selectedReferenceImages = referenceImages.filter((item) => usesSelectedReferences(item.id));
+    const selectedReferenceVideos = referenceCandidates.filter((reference) => reference.kind === 'video' && (!referenceSelection.hasMentions || selectedReferences.some((item) => item.id === reference.id)));
+    const submittedPrompt = appendTextReferenceContext(naturalReferenceReplacement.value, selectedReferences);
     setBusy(true);
     try {
       const inheritsVideoSettings = operation !== 'generate' && (modelLimits.inheritVideoSettingsFor?.includes(operation) || false);
       const omitsAspectRatioResolution = inheritsVideoSettings || (operation !== 'generate' && (modelLimits.omitAspectRatioResolutionFor?.includes(operation) || false));
       const input: VideoGenerationInput = {
-        prompt,
+        prompt: submittedPrompt,
         operation,
         ...(!usesAgnesV20 && !inheritsVideoSettings ? { seconds } : {}),
         ...(!usesAgnesV20 && !omitsAspectRatioResolution ? { aspectRatio: ratio, resolution } : {}),
-        firstFrame: inputMode === 'first-frame' || inputMode === 'frames' ? firstFrame?.url : undefined,
-        lastFrame: inputMode === 'frames' ? lastFrame?.url : undefined,
-        referenceImages: inputMode === 'reference' ? selectedReferenceImages.map((item) => item.url!).filter(Boolean) : [],
-        referenceVideos: inputMode === 'reference' ? selectedReferenceVideos.map((item) => item.url!).filter(Boolean) : [],
+        firstFrame: (inputMode === 'first-frame' || inputMode === 'frames') ? selectedFirstFrame?.url : undefined,
+        lastFrame: inputMode === 'frames' ? selectedLastFrame?.url : undefined,
+        referenceImages: inputMode === 'reference' ? selectedReferenceImages.map((item) => item.url).filter((value): value is string => Boolean(value)) : [],
+        referenceVideos: (inputMode === 'reference' || operation !== 'generate') ? selectedReferenceVideos.map((item) => item.url).filter((value): value is string => Boolean(value)) : [],
         referenceVideo: usesAgnes
           ? (!usesAgnesV20 && !usesAgnesFlash && inputMode === 'reference' ? selectedReferenceVideos[0]?.url : undefined)
-          : (inputMode === 'reference' || operation !== 'generate') ? selectedReferenceVideos[0]?.url || (referenceSelection.hasMentions ? undefined : referenceVideo?.url) : undefined,
+          : (inputMode === 'reference' || operation !== 'generate') ? selectedReferenceVideos[0]?.url || (!referenceSelection.hasMentions ? referenceVideo?.url : undefined) : undefined,
         audios: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios.map((item) => item.url) : []) : audios.map((item) => item.url),
         audio: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios[0]?.url : undefined) : audios[0]?.url,
         ...(usesAgnes && !usesAgnesV20 ? { videoMode: inputMode === 'text' ? 'text' as const : inputMode === 'reference' ? 'reference' as const : 'keyframe' as const } : {}),
@@ -838,7 +901,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
          <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
            <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className={`video-live-pill ${usesAgnes && !selectedProvider?.credentialVerifiedAt ? 'needs-verification' : ''}`}>{usesAgnes ? selectedProvider?.credentialVerifiedAt ? '● Agnes Key 已验证' : '● Agnes Key 待验证' : '● 已连接'}</span></div>
-      <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); setReferenceMentionOpen(referenceMentionIsOpen(event.target.value, event.currentTarget.selectionStart)); }} onFocus={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onClick={(event) => setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart))} onKeyUp={(event) => { if (event.key !== 'Escape') setReferenceMentionOpen(referenceMentionIsOpen(event.currentTarget.value, event.currentTarget.selectionStart)); }} onKeyDown={(event) => { if (event.key === 'Escape') setReferenceMentionOpen(false); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片或视频'} maxLength={6000} />{supportsReferenceMentions && referenceCandidates.length > 0 && <VideoReferenceMentionMenu refs={referenceCandidates} open={referenceMentionOpen} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
+          <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); updateReferenceMentionState(event.target.value, event.currentTarget.selectionStart); }} onFocus={(event) => updateReferenceMentionState(event.currentTarget.value, event.currentTarget.selectionStart)} onClick={(event) => updateReferenceMentionState(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyUp={(event) => { if (event.key !== 'Escape') updateReferenceMentionState(event.currentTarget.value, event.currentTarget.selectionStart); }} onKeyDown={(event) => { if (event.key === 'Escape') { setReferenceMentionOpen(false); setReferenceMentionQuery(''); } }} onPaste={(event) => { const pastedText = event.clipboardData.getData('text/plain'); if (!pastedText || !referenceCandidates.length) return; const replaced = replaceNaturalReferenceLabels(pastedText, referenceCandidates); if (!replaced.replaced) return; event.preventDefault(); const textarea = event.currentTarget; const start = textarea.selectionStart ?? prompt.length; const end = textarea.selectionEnd ?? start; const next = `${prompt.slice(0, start)}${replaced.value}${prompt.slice(end)}`; setPrompt(next); setReferenceMentionOpen(false); setReferenceMentionQuery(''); requestAnimationFrame(() => { textarea.focus(); const cursor = start + replaced.value.length; textarea.setSelectionRange(cursor, cursor); }); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'} maxLength={6000} />{supportsReferenceMentions && referenceCandidates.length > 0 && <VideoReferenceMentionMenu refs={referenceCandidates} open={referenceMentionOpen} query={referenceMentionQuery} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
          <div className={`video-fields-two ${showOperationField ? '' : 'video-fields-single'}`}>
           <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
           {showOperationField && <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>}
@@ -882,9 +945,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
           {(inputMode === 'first-frame' || inputMode === 'frames') && <UploadSlot label="首帧" value={firstFrame} onClick={() => inputRefs.current.first?.click()} onRemove={() => setFirstFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.first = node; }} accept="image/*" onChange={() => void selectFile('first', setFirstFrame, 'image')} />}
           {inputMode === 'frames' && <UploadSlot label="尾帧" value={lastFrame} onClick={() => inputRefs.current.last?.click()} onRemove={() => setLastFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.last = node; }} accept="image/*" onChange={() => void selectFile('last', setLastFrame, 'image')} />}
           {inputMode === 'reference' && <ReferenceImageTray items={referenceImages} maxItems={modelLimits.maxReferenceImages} onAdd={addReferences} onRemove={(index) => setReferenceImages((old) => old.filter((_, itemIndex) => itemIndex !== index))} onClear={clearReferences} onMove={moveReference} onReorder={reorderReferences} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.refs = node; }} />}
-           {((operation === 'edit' || operation === 'extend') || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) && <UploadSlot label="参考视频" value={referenceVideo} onClick={() => inputRefs.current.video?.click()} onRemove={() => setReferenceVideo(null)} inputRef={(node) => { inputRefs.current.video = node; }} accept="video/*" onChange={() => void selectFile('video', setReferenceVideo, 'video')} />}
+           {((operation === 'edit' || operation === 'extend') || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) && <UploadSlot label="参考视频" value={referenceVideo} onClick={() => inputRefs.current.video?.click()} onRemove={() => setReferenceVideo(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.video = node; }} accept="video/*" onChange={() => void selectFile('video', setReferenceVideo, 'video')} />}
           {supportsAudio && <AudioUploadTray items={audios} maxItems={modelLimits.maxAudios} onAdd={addAudios} onRemove={(index) => setAudios((old) => old.filter((_, itemIndex) => itemIndex !== index))} inputRef={(node) => { inputRefs.current.audio = node; }} />}
           </div>
+          <CreativeTextReferenceTray items={referenceTexts} startIndex={referenceCandidates.length - referenceTexts.length} onAdd={addTextReferences} onRemove={(id) => setReferenceTexts((old) => old.filter((item) => item.id !== id))} onPreview={(item) => setPreviewImage({ id: item.id, name: item.name, url: '', kind: 'text', text: item.text, mimeType: item.mimeType })} />
         </div>
         <button className="video-primary-button video-submit" type="submit" disabled={busy}><span>{busy ? '提交中…' : '开始生成视频'}</span><b>↗</b></button>
         </form>
@@ -910,7 +974,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         </div>
       </aside>
     </div>}
-    {previewImage && <div className="video-media-dialog" role="dialog" aria-modal="true" aria-label="查看参考图" onClick={() => setPreviewImage(null)}><div className="video-media-dialog-inner" onClick={(event) => event.stopPropagation()}><button type="button" className="video-media-dialog-close" aria-label="关闭预览" onClick={() => setPreviewImage(null)}>×</button><img src={previewImage.url} alt={previewImage.name} /><span>{previewImage.name}</span></div></div>}
+    {previewImage && <div className="video-media-dialog" role="dialog" aria-modal="true" aria-label={previewImage.kind === 'video' ? '查看参考视频' : previewImage.kind === 'text' ? '查看引用文本' : '查看参考图'} onClick={() => setPreviewImage(null)}><div className="video-media-dialog-inner" onClick={(event) => event.stopPropagation()}><button type="button" className="video-media-dialog-close" aria-label="关闭预览" onClick={() => setPreviewImage(null)}>×</button>{previewImage.kind === 'video' ? <video src={previewImage.url} controls playsInline autoPlay /> : previewImage.kind === 'text' ? <pre className="video-text-reference-lightbox">{previewImage.text}</pre> : <img src={previewImage.url} alt={previewImage.name} />}<span>{previewImage.name}</span></div></div>}
   </section>;
 }
 
@@ -932,23 +996,35 @@ function AudioUploadTray({ items, maxItems, onAdd, onRemove, inputRef }: { items
   </div>;
 }
 
-function VideoReferenceMentionMenu({ refs, open, onSelect }: { refs: CreativeReference[]; open: boolean; onSelect: (index: number) => void }) {
-  if (!open || !refs.length) return null;
+function VideoReferenceMentionMenu({ refs, open, query = '', onSelect }: { refs: CreativeReference[]; open: boolean; query?: string; onSelect: (index: number) => void }) {
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const visibleRefs = refs.map((ref, index) => ({ ref, index })).filter(({ ref, index }) => {
+    if (!normalizedQuery) return true;
+    const kindLabel = ref.kind === 'video' ? '视频参考视频' : ref.kind === 'text' ? '文本引用' : '图片参考图';
+    return `${kindLabel} ${index + 1} ${ref.name || ''} ${ref.text || ''}`.toLowerCase().includes(normalizedQuery);
+  });
+  if (!open || !visibleRefs.length) return null;
   return <div className="reference-mention-menu video-reference-mention-menu" role="listbox">
     <div className="reference-mention-title">选择引用 · 输入 @编号</div>
-    {refs.map((ref, index) => <button type="button" key={`${ref.name}-${index}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(index)}>
-      <span className="reference-mention-thumb">{ref.kind === 'video' ? <span className="reference-type-icon video">▶<small>视频</small></span> : <img src={ref.url} alt="" />}<b>@{index + 1}</b></span>
-      <span><strong>{ref.kind === 'video' ? '参考视频' : '参考图'} {index + 1}</strong><small>{ref.name}</small></span>
+    {visibleRefs.map(({ ref, index }) => <button type="button" key={`${ref.id}-${index}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(index)}>
+      <span className="reference-mention-thumb">{ref.kind === 'video' ? <span className="reference-type-icon video">▶<small>视频</small></span> : ref.kind === 'text' ? <span className="reference-type-icon text">▤<small>文本</small></span> : <img src={ref.url} alt="" />}<b>@{index + 1}</b></span>
+      <span><strong>{ref.kind === 'video' ? '参考视频' : ref.kind === 'text' ? '引用文本' : '参考图'} {index + 1}</strong><small>{ref.kind === 'text' ? String(ref.text || '').replace(/\s+/g, ' ').slice(0, 64) : ref.name}</small></span>
     </button>)}
+  </div>;
+}
+
+function CreativeTextReferenceTray({ items, startIndex, onAdd, onRemove, onPreview }: { items: CreativeReference[]; startIndex: number; onAdd: (files: FileList | null) => void; onRemove: (id: string) => void; onPreview: (item: CreativeReference) => void }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return <div className="video-text-reference-tray">
+    <div className="video-text-reference-head"><div><strong>文本引用</strong><small>{items.length ? `${items.length} 个 · 会作为真实提示词上下文提交` : '可选，支持 TXT、Markdown、JSON、CSV 等文本文件'}</small></div><button type="button" onClick={() => inputRef.current?.click()}>＋ 添加文本</button></div>
+    <input ref={inputRef} hidden type="file" multiple accept=".txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1,text/*,application/json" onChange={(event) => { onAdd(event.target.files); event.currentTarget.value = ''; }} />
+    {items.length > 0 && <div className="video-text-reference-list">{items.map((item, index) => <div className="video-text-reference-item" key={item.id}><button type="button" className="video-text-reference-open" onClick={() => onPreview(item)}><span className="video-file-icon">▤</span><span><b>@{startIndex + index + 1} · {item.name}</b><small>{String(item.text || '').replace(/\s+/g, ' ').slice(0, 100)}</small></span></button><button type="button" className="video-text-reference-remove" onClick={() => onRemove(item.id)} aria-label={`删除文本引用 ${item.name}`}>×</button></div>)}</div>}
   </div>;
 }
 
 function UploadSlot({ label, value, count, onClick, onRemove, onPreview, inputRef, accept, multiple, onChange, onFiles }: { label: string; value: UploadSlot | null; count?: number; onClick: () => void; onRemove: () => void; onPreview?: (value: UploadSlot) => void; inputRef: (node: HTMLInputElement | null) => void; accept: string; multiple?: boolean; onChange?: () => void; onFiles?: (files: FileList | null) => void }) {
   return <div className={`video-upload-slot ${value ? 'has-file' : ''}`}><input ref={inputRef} type="file" accept={accept} multiple={multiple} onChange={(event) => onFiles ? void onFiles(event.target.files) : onChange?.()} /><button type="button" className="video-upload-button" onClick={(event) => {
-    if (value?.kind === 'image' && onPreview && event.target instanceof HTMLImageElement) {
-      onPreview(value);
-      return;
-    }
+    if (value && onPreview) { onPreview(value); return; }
     onClick();
-  }}>{value ? <>{value.kind === 'image' ? <img src={value.url} alt={value.name} title="点击查看完整图片" /> : <span className="video-file-icon">{value.kind === 'video' ? '▶' : '♫'}</span>}<span className="video-upload-name">{count && count > 1 ? `${count} 张参考图` : value.name}</span><i onClick={(event) => { event.stopPropagation(); onRemove(); }}>×</i></> : <><span className="video-upload-plus">＋</span><span>{label}</span><small>点击或拖入</small></>}</button></div>;
+  }}>{value ? <>{value.kind === 'image' ? <img src={value.url} alt={value.name} title="点击查看完整图片" /> : <span className="video-file-icon">{value.kind === 'video' ? '▶' : value.kind === 'text' ? '▤' : '♫'}</span>}<span className="video-upload-name">{count && count > 1 ? `${count} 张参考图` : value.name}</span><i onClick={(event) => { event.stopPropagation(); onRemove(); }}>×</i></> : <><span className="video-upload-plus">＋</span><span>{label}</span><small>点击或拖入</small></>}</button></div>;
 }

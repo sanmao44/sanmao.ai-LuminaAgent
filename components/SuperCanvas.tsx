@@ -198,7 +198,7 @@ import {
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
 import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
-import { referenceMentionNumbers, appendTextReferenceContext } from "@/lib/creative-references";
+import { referenceMentionNumbers, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
 
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
@@ -233,6 +233,18 @@ function hasExternalFileTransfer(dataTransfer: DataTransfer) {
     dataTransfer.types.includes("Files") ||
     [...dataTransfer.items].some((item) => item.kind === "file")
   );
+}
+
+const CANVAS_TEXT_REFERENCE_EXTENSIONS = new Set([
+  "txt", "md", "markdown", "json", "csv", "tsv", "html", "htm", "css",
+  "js", "jsx", "ts", "tsx", "py", "java", "sql", "xml", "svg", "yaml",
+  "yml", "sh", "ps1",
+]);
+
+function isCanvasTextReferenceFile(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  return file.type.startsWith("text/") || CANVAS_TEXT_REFERENCE_EXTENSIONS.has(extension) ||
+    ["application/json", "application/xml", "image/svg+xml"].includes(file.type);
 }
 
 type Notice = { message: string; kind: "ok" | "error" };
@@ -1137,6 +1149,32 @@ function mentionLabel(node: CanvasNode, index: number) {
 }
 
 function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | null {
+  if (node.type === "prompt") {
+    const text = String(node.data.agentResponse || node.data.text || "").trim();
+    if (!text) return null;
+    return {
+      id: `node-ref:${node.id}`,
+      nodeId: node.id,
+      kind: "text",
+      text,
+      mimeType: "text/plain;charset=utf-8",
+      name: String(node.data.name || node.data.role || "文本引用"),
+      origin: "node",
+    };
+  }
+  if (node.type === "generator") {
+    const text = String(node.data.prompt || node.data.agentPrompt || "").trim();
+    if (!text) return null;
+    return {
+      id: `node-ref:${node.id}`,
+      nodeId: node.id,
+      kind: "text",
+      text,
+      mimeType: "text/plain;charset=utf-8",
+      name: String(node.data.name || "生成提示词"),
+      origin: "node",
+    };
+  }
   if (!isCanvasReferenceableNode(node)) return null;
   return {
     id: `node-ref:${node.id}`,
@@ -1146,6 +1184,25 @@ function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | 
     name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : "图片素材")),
     origin: "node",
   };
+}
+
+function canvasReferenceRecordsFromNodes(nodes: CanvasNode[]) {
+  const seen = new Set<string>();
+  return nodes
+    .map((node) => {
+      const draft = canvasReferenceDraftFromNode(node);
+      if (!draft || seen.has(node.id)) return null;
+      seen.add(node.id);
+      return {
+        id: node.id,
+        kind: draft.kind,
+        name: draft.name,
+        url: draft.url || "",
+        ...(draft.text ? { text: draft.text } : {}),
+        ...(draft.mimeType ? { mimeType: draft.mimeType } : {}),
+      };
+    })
+    .filter((reference): reference is NonNullable<typeof reference> => Boolean(reference));
 }
 
 function canvasVideoTargetHasImageReference(
@@ -1498,6 +1555,7 @@ export default function SuperCanvas() {
     useState<ConnectionStyle>("curve");
   const [theme, setTheme] = useState<CanvasTheme>("light");
   const [mentionState, setMentionState] = useState<MentionState>(null);
+  const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
   const [panActive, setPanActive] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [assetRefresh, setAssetRefresh] = useState(0);
@@ -1526,6 +1584,7 @@ export default function SuperCanvas() {
     setConnectionTargetId(null);
     setConnection(null);
     setMentionState(null);
+    setVariantMentionState(null);
   }, []);
   const openCanvasMediaViewer = useCallback(
     (nodeId: string, compare = false) => {
@@ -3669,11 +3728,13 @@ export default function SuperCanvas() {
 
   const handleFiles = useCallback(
     async (files: FileList | File[], position?: Point) => {
-      const list = [...files].filter(
+      const allFiles = [...files];
+      const list = allFiles.filter(
         (file) =>
           file.type.startsWith("image/") || file.type.startsWith("video/"),
       );
-      if (!list.length) return notify("请选择图片或视频素材。", "error");
+      const textFiles = allFiles.filter(isCanvasTextReferenceFile);
+      if (!list.length && !textFiles.length) return notify("请选择图片、视频或文本素材。", "error");
       const rect = stageRef.current?.getBoundingClientRect();
       const center = {
         x: (rect?.left || 0) + (rect?.width || stageSize.width) / 2,
@@ -3718,6 +3779,35 @@ export default function SuperCanvas() {
             error instanceof Error ? error.message : "素材上传失败。",
             "error",
           );
+        }
+      }
+      for (const [index, file] of textFiles.entries()) {
+        try {
+          if (file.size > 2 * 1024 * 1024) throw new Error(`${file.name} 超过 2MB，请先拆分文件`);
+          const text = await file.text();
+          if (!text.trim()) throw new Error(`${file.name} 没有可读取的文字内容`);
+          const draft = createPrompt(
+            {
+              x: base.x + ((list.length + index) % 3) * 350,
+              y: base.y + Math.floor((list.length + index) / 3) * 270,
+            },
+            text,
+          );
+          const textNode: CanvasNode = {
+            ...draft,
+            ...openNodePosition({ x: draft.x, y: draft.y }, draft, nodes),
+            data: {
+              ...draft.data,
+              name: file.name || `文本引用 ${index + 1}`,
+              role: "文本引用",
+              text,
+              params: normalizeCreationSettings("text", null, runtime),
+            },
+          };
+          nodes.push(textNode);
+          addLog(`已导入文本引用：${file.name}`);
+        } catch (error) {
+          notify(error instanceof Error ? error.message : "文本导入失败。", "error");
         }
       }
       if (nodes.length) {
@@ -4533,26 +4623,6 @@ export default function SuperCanvas() {
         ...sourceParams,
         model: resolvedModel.model?.id || "auto",
       } as ImageCreationSettings | VideoCreationSettings;
-      const incoming = incomingContext(docRef.current, generatorId);
-      const linked = [
-        ...new Map(
-          incoming
-            .filter((node) => isCanvasReferenceableNode(node))
-            .map((node) => [node.id, node]),
-        ).values(),
-      ];
-      const context = [
-        ...incoming.filter((node) => node.type === "prompt"),
-        ...linked,
-      ];
-      const refs = linked
-        .map((node) => ({
-          url: String(node.data.url || ""),
-          name: String(node.data.name || "参考素材"),
-        }))
-        .filter((item) => item.url);
-      const commonPrompt = String(generator.data.prompt || "").trim();
-      const batchName = `${kind === "video" ? "视频" : "图片"}变体批次`;
       const updateVariantState = (
         value: CanvasDocument,
         index: number,
@@ -4588,6 +4658,58 @@ export default function SuperCanvas() {
         });
         return { ...value, nodes: nextNodes };
       };
+      const incoming = incomingContext(docRef.current, generatorId);
+      const candidateNodes = (mentionCandidates.length ? mentionCandidates : incoming)
+        .filter((node) => node.id !== generatorId && isCanvasMentionableNode(node));
+      const candidateReferences = candidateNodes
+        .map(canvasReferenceDraftFromNode)
+        .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
+      const commonPrompt = String(generator.data.prompt || "").trim();
+      const naturalCommonPrompt = replaceNaturalReferenceLabels(commonPrompt, candidateReferences);
+      const naturalRequirements = requirements.map((requirement) => replaceNaturalReferenceLabels(requirement, candidateReferences));
+      const unresolvedReferenceLabels = [
+        ...naturalCommonPrompt.unresolved,
+        ...naturalRequirements.flatMap((result) => result.unresolved),
+      ];
+      const selection = selectCreativeReferences(
+        [naturalCommonPrompt.value, ...naturalRequirements.map((result) => result.value)].join("\n"),
+        candidateReferences,
+      );
+      if (unresolvedReferenceLabels.length || selection.invalidNumbers.length) {
+        const invalid = selection.invalidNumbers.map((number) => `@${number}`);
+        const unresolved = Array.from(new Set(unresolvedReferenceLabels));
+        const message = invalid.length
+          ? `引用编号无效：${invalid.join("、")}`
+          : `找不到这些引用素材：${unresolved.join("、")}`;
+        requested.forEach((index) => {
+          updateDoc((value) => updateVariantState(value, index, {
+            status: "failed",
+            error: message,
+          }));
+        });
+        notify(message, "error");
+        return;
+      }
+      const selectedNodeIds = new Set(selection.references.map((reference) => reference.nodeId || reference.id));
+      const inputNodes = selection.hasMentions
+        ? candidateNodes.filter((node) => selectedNodeIds.has(node.id))
+        : incoming;
+      const linked = [
+        ...new Map(
+          inputNodes
+            .filter((node) => isCanvasReferenceableNode(node))
+            .map((node) => [node.id, node]),
+        ).values(),
+      ];
+      const context = inputNodes.filter((node) => node.type === "prompt");
+      const refs = linked
+        .filter((node) => node.data.kind === "image")
+        .map((node) => ({
+          url: String(node.data.url || ""),
+          name: String(node.data.name || "参考素材"),
+        }))
+        .filter((item) => item.url);
+      const batchName = `${kind === "video" ? "视频" : "图片"}变体批次`;
       const attachBatchGroup = (
         value: CanvasDocument,
         newResultIds: string[],
@@ -4624,14 +4746,17 @@ export default function SuperCanvas() {
           : next;
       };
       const promptFor = (index: number) => {
-        const instruction = requirements[index];
+        const instruction = naturalRequirements[index]?.value || requirements[index];
         return smartPrompt(
-          [
-            commonPrompt,
-            instruction ? `变体要求：${instruction}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n"),
+          resolveMentionTokens(
+            [
+              naturalCommonPrompt.value,
+              instruction ? `变体要求：${instruction}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            candidateNodes,
+          ),
           context,
         );
       };
@@ -4703,6 +4828,18 @@ export default function SuperCanvas() {
       };
 
       try {
+        if (kind === "image" && linked.some((node) => node.data.kind === "video")) {
+          const message = "图片变体生成不能接收视频引用；请移除视频素材或切换到视频变体生成器。";
+          requested.forEach((index) => {
+            updateDoc((value) => updateVariantState(value, index, {
+              status: "failed",
+              error: message,
+            }));
+          });
+          addLog(`图片变体生成已阻止：${message}`);
+          notify(message, "error");
+          return;
+        }
         for (const index of requested) {
           if (!mountedRef.current) return;
           const prompt = promptFor(index);
@@ -4811,6 +4948,7 @@ export default function SuperCanvas() {
                     : imageParams.resolution,
                 outputFormat: imageParams.outputFormat,
                 parentId: generatorId,
+                references: canvasReferenceRecordsFromNodes(linked),
               }).catch(() => addLog("图片变体已生成，但写入历史失败"));
             } else {
               const videoParams = effectiveParams as VideoCreationSettings;
@@ -4952,7 +5090,7 @@ export default function SuperCanvas() {
         setGenerationKeys(new Set(generationKeysRef.current));
       }
     },
-    [addLog, notify, resolveAvailableCreationModel, runtime, updateDoc],
+    [addLog, mentionCandidates, notify, resolveAvailableCreationModel, runtime, updateDoc],
   );
 
   useEffect(() => {
@@ -5051,9 +5189,10 @@ export default function SuperCanvas() {
       if (!reuseDraft || !files.length) return;
       const pending = files.map((file, index) => ({
         id: uid("draft-ref"),
-        kind: (file.type.startsWith("video/") ? "video" : "image") as CanvasMediaKind,
-        url: URL.createObjectURL(file),
-        name: file.name || `参考图 ${index + 1}`,
+        kind: (isCanvasTextReferenceFile(file) ? "text" : file.type.startsWith("video/") ? "video" : "image") as CanvasReferenceDraft["kind"],
+        ...(isCanvasTextReferenceFile(file) ? {} : { url: URL.createObjectURL(file) }),
+        name: file.name || `参考素材 ${index + 1}`,
+        ...(isCanvasTextReferenceFile(file) ? { mimeType: file.type || "text/plain;charset=utf-8" } : {}),
         origin: "upload" as const,
         pending: true,
       }));
@@ -5062,6 +5201,24 @@ export default function SuperCanvas() {
       for (const [index, file] of files.entries()) {
         const draftRef = pending[index];
         try {
+          if (isCanvasTextReferenceFile(file)) {
+            if (file.size > 2 * 1024 * 1024) throw new Error(`${file.name} 超过 2MB，请先拆分文件`);
+            const text = await file.text();
+            if (!text.trim()) throw new Error(`${file.name} 没有可读取的文字内容`);
+            setReuseDraft((current) => {
+              if (!current) return current;
+              return {
+                ...current,
+                references: current.references.map((reference) =>
+                  reference.id === draftRef.id
+                    ? { ...reference, text, mimeType: file.type || "text/plain;charset=utf-8", pending: false, error: undefined }
+                    : reference,
+                ),
+                dirty: true,
+              };
+            });
+            continue;
+          }
           const asset = await uploadCanvasAsset(file);
           if (asset.kind === "image" && asset.optimized) optimizedImageCount += 1;
           setReuseDraft((current) => {
@@ -5083,7 +5240,7 @@ export default function SuperCanvas() {
           } : current);
           notify(error instanceof Error ? error.message : "参考图上传失败。", "error");
         } finally {
-          URL.revokeObjectURL(draftRef.url);
+          if (draftRef.url?.startsWith("blob:")) URL.revokeObjectURL(draftRef.url);
         }
       }
       if (optimizedImageCount)
@@ -5146,9 +5303,16 @@ export default function SuperCanvas() {
     if (!runtime?.models?.some((model) => model.kind === "chat" && model.enabled !== false && model.published !== false))
       return notify("没有可用的对话模型，请先在主界面模型库启用。", "error");
     try {
+      const prompt = appendTextReferenceContext(reuseDraft.prompt, reuseDraft.references.map((reference) => ({
+        id: reference.id,
+        kind: reference.kind,
+        name: reference.name,
+        ...(reference.url ? { url: reference.url } : {}),
+        ...(reference.text ? { text: reference.text } : {}),
+      })));
       const value = await requestPromptOptimization(
-        reuseDraft.prompt,
-        reuseDraft.references.map((reference) => ({ url: reference.url, name: reference.name })),
+        prompt,
+        reuseDraft.references.filter((reference) => reference.kind === "image" && reference.url).map((reference) => ({ url: reference.url!, name: reference.name })),
         runtime.settings.agentModelId || undefined,
       );
       setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
@@ -5181,12 +5345,30 @@ export default function SuperCanvas() {
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind !== "image") return;
     if (!draft.prompt.trim()) return notify("请输入生成提示词。", "error");
-    if (draft.references.some((reference) => reference.pending || reference.error)) {
+    const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
+    if (naturalReferenceReplacement.unresolved.length && draft.references.length) {
+      return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
+    }
+    const selection = selectCreativeReferences(naturalReferenceReplacement.value, draft.references);
+    if (selection.invalidNumbers.length) {
+      return notify(`引用编号无效：${selection.invalidNumbers.map((number) => `@${number}`).join("、")}`, "error");
+    }
+    const selectedReferenceIds = new Set(selection.references.map((reference) => reference.id));
+    const selectedReferences = draft.references.filter((reference) => selectedReferenceIds.has(reference.id));
+    if (selectedReferences.some((reference) => reference.pending || reference.error)) {
       return notify("请等待参考图准备完成，或移除失败的参考图。", "error");
     }
-    if (draft.references.some((reference) => reference.kind !== "image")) {
+    if (selectedReferences.some((reference) => reference.kind === "video")) {
       return notify("图片生成只能使用图片参考，请移除视频素材。", "error");
     }
+    const prompt = appendTextReferenceContext(naturalReferenceReplacement.value, selectedReferences.map((reference) => ({
+      id: reference.id,
+      kind: reference.kind,
+      name: reference.name,
+      ...(reference.url ? { url: reference.url } : {}),
+      ...(reference.text ? { text: reference.text } : {}),
+      ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
+    })));
     const source = draft.sourceNodeId
       ? nodeById(docRef.current, draft.sourceNodeId)
       : undefined;
@@ -5244,6 +5426,21 @@ export default function SuperCanvas() {
       }
       return true;
     };
+    const addTextReference = (id: string) => {
+      if (!id || resolvedReferenceIds.includes(id)) return false;
+      resolvedReferenceIds.push(id);
+      referenceEdges.push({
+        id: uid("edge"),
+        source: id,
+        target: "",
+        sourcePort: "right",
+        targetPort: "left",
+        inputRole: "context",
+        order: resolvedReferenceIds.length - 1,
+        kind: "reference",
+      });
+      return true;
+    };
 
     addReference(
       source.id,
@@ -5251,12 +5448,42 @@ export default function SuperCanvas() {
       String(source.data.name || "当前图片"),
     );
 
-    for (const [index, reference] of draft.references.entries()) {
+    for (const [index, reference] of selectedReferences.entries()) {
       const existing = reference.nodeId
         ? nodeById(docRef.current, reference.nodeId)
         : undefined;
+      if (reference.kind === "text") {
+        if (existing?.type === "prompt" && String(existing.data.text || existing.data.agentResponse || "").trim()) {
+          addTextReference(existing.id);
+        } else if (reference.text?.trim()) {
+          const materialized = createPrompt(
+            { x: outputPosition.x - 430, y: outputPosition.y + index * 300 },
+            reference.text,
+          );
+          const materializedWithMetadata = {
+            ...materialized,
+            data: {
+              ...materialized.data,
+              name: reference.name,
+              role: "文本引用",
+              mimeType: reference.mimeType,
+            },
+          };
+          const placed = {
+            ...materializedWithMetadata,
+            ...openNodePosition(
+              { x: materialized.x, y: materialized.y },
+              materializedWithMetadata,
+              [...materializedReferences, outputReservation],
+            ),
+          };
+          materializedReferences.push(placed);
+          addTextReference(placed.id);
+        }
+        continue;
+      }
       const existingUrl = existing?.type === "media" ? String(existing.data.url || "") : "";
-      const url = existingUrl || reference.url;
+      const url = existingUrl || reference.url || "";
       const name = existing?.type === "media"
         ? String(existing.data.name || reference.name || "参考图片")
         : reference.name;
@@ -5309,7 +5536,7 @@ export default function SuperCanvas() {
       statusLabel: status === "running" ? "图片续生成中" : status === "completed" ? "图片已完成" : "图片生成失败",
       generation: {
         kind: "image",
-        prompt: draft.prompt,
+        prompt,
         params: clone(params),
         operation: "edit",
         referenceIds: [...resolvedReferenceIds],
@@ -5360,7 +5587,7 @@ export default function SuperCanvas() {
     try {
       const result = await generateCanvasImage({
         taskId,
-        prompt: draft.prompt,
+        prompt,
         model: params.model,
         count: params.count,
         aspect: params.aspect === "自定义"
@@ -5454,8 +5681,11 @@ export default function SuperCanvas() {
         delete next[source.id];
         return next;
       });
+      const usedReferenceNodes = resolvedReferenceIds
+        .map((id) => nodeById(docRef.current, id) || materializedReferences.find((node) => node.id === id))
+        .filter((node): node is CanvasNode => Boolean(node));
       void recordCanvasImages(result.images, {
-        prompt: draft.prompt,
+        prompt,
         source: "canvas",
         modelId: params.model,
         modelName: result.model?.name,
@@ -5464,6 +5694,7 @@ export default function SuperCanvas() {
         outputSize: params.sizeMode === "custom" ? `${params.width}x${params.height}` : params.resolution,
         outputFormat: params.outputFormat,
         parentId: source.id,
+        references: canvasReferenceRecordsFromNodes(usedReferenceNodes),
       }).then(() => setAssetRefresh((value) => value + 1)).catch(() => addLog("图片续生成完成，但写入主界面历史失败"));
       notify(`已生成 ${result.images.length} 张新图片，原图已保留`);
       addLog(`图片续生成完成：${result.images.length} 张`);
@@ -5499,9 +5730,26 @@ export default function SuperCanvas() {
       return;
     }
     if (!draft.prompt.trim()) return notify("请输入生成提示词。", "error");
-    if (draft.references.some((reference) => reference.pending || reference.error)) {
+    const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
+    if (naturalReferenceReplacement.unresolved.length && draft.references.length) {
+      return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
+    }
+    const selection = selectCreativeReferences(naturalReferenceReplacement.value, draft.references);
+    if (selection.invalidNumbers.length) {
+      return notify(`引用编号无效：${selection.invalidNumbers.map((number) => `@${number}`).join("、")}`, "error");
+    }
+    const selectedReferenceIds = new Set(selection.references.map((reference) => reference.id));
+    const selectedReferences = draft.references.filter((reference) => selectedReferenceIds.has(reference.id));
+    if (selectedReferences.some((reference) => reference.pending || reference.error)) {
       return notify("请等待参考图准备完成，或移除失败的参考图。", "error");
     }
+    const prompt = appendTextReferenceContext(naturalReferenceReplacement.value, selectedReferences.map((reference) => ({
+      id: reference.id,
+      kind: reference.kind,
+      name: reference.name,
+      ...(reference.url ? { url: reference.url } : {}),
+      ...(reference.text ? { text: reference.text } : {}),
+    })));
     const activeKey = `reuse:${draft.sourceNodeId || draft.kind}`;
     if (generationKeysRef.current.has(activeKey)) return notify("这个复用任务正在生成，请稍候。", "error");
     const source = draft.sourceNodeId ? nodeById(docRef.current, draft.sourceNodeId) : undefined;
@@ -5515,7 +5763,7 @@ export default function SuperCanvas() {
       ...openNodePosition(seed, generatorBase),
       data: {
         ...generatorBase.data,
-        prompt: draft.prompt,
+        prompt,
         role: "复用参数生成器",
         status: "running" as const,
         processingStartedAt: Date.now(),
@@ -5527,32 +5775,43 @@ export default function SuperCanvas() {
     };
     const materializedReferences: CanvasNode[] = [];
     const resolvedReferenceIds: string[] = [];
-    for (const [index, reference] of draft.references.entries()) {
+    for (const [index, reference] of selectedReferences.entries()) {
       const existing = reference.nodeId ? nodeById(docRef.current, reference.nodeId) : undefined;
       if (existing?.type === "media" && existing.data.url) {
         resolvedReferenceIds.push(existing.id);
         continue;
       }
-      const materialized = createMedia(
-        reference.kind,
-        reference.url,
-        reference.name,
-        { x: generator.x - 430, y: generator.y + index * 285 },
-        { role: "复用参考素材", ...(reference.assetId ? { sourceAssetId: reference.assetId } : {}) },
-      );
+      if (reference.kind === "text" && existing?.type === "prompt" && String(existing.data.text || "").trim()) {
+        resolvedReferenceIds.push(existing.id);
+        continue;
+      }
+      const materialized = reference.kind === "text"
+        ? createPrompt({ x: generator.x - 430, y: generator.y + index * 285 }, reference.text || "")
+        : createMedia(
+            reference.kind,
+            reference.url || "",
+            reference.name,
+            { x: generator.x - 430, y: generator.y + index * 285 },
+            { role: "复用参考素材", ...(reference.assetId ? { sourceAssetId: reference.assetId } : {}) },
+          );
+      const materializedWithMetadata = reference.kind === "text"
+        ? { ...materialized, data: { ...materialized.data, name: reference.name, role: "文本引用", mimeType: reference.mimeType } }
+        : materialized;
       const placed = { ...materialized, ...openNodePosition({ x: generator.x - 430, y: generator.y + index * 285 }, materialized) };
-      materializedReferences.push(placed);
+      materializedReferences.push({ ...materializedWithMetadata, ...openNodePosition({ x: generator.x - 430, y: generator.y + index * 285 }, materializedWithMetadata) });
       resolvedReferenceIds.push(placed.id);
     }
-    const referenceByIndex = draft.references.map((reference, index) => ({ reference, id: resolvedReferenceIds[index] }));
+    const referenceByIndex = selectedReferences.map((reference, index) => ({ reference, id: resolvedReferenceIds[index] }));
     const referenceInputNodes = referenceByIndex.map(({ reference, id }) => {
       const existing = nodeById(docRef.current, id);
       return existing || {
         id,
-        type: "media" as const,
+        type: reference.kind === "text" ? "prompt" as const : "media" as const,
         x: 0,
         y: 0,
-        data: { kind: reference.kind, url: reference.url, name: reference.name },
+        data: reference.kind === "text"
+          ? { text: reference.text || "", name: reference.name, role: "文本引用" }
+          : { kind: reference.kind, url: reference.url, name: reference.name },
       };
     });
     const reuseInputMode = draft.kind === "video" ? (draft.params as VideoCreationSettings).inputMode : undefined;
@@ -5580,7 +5839,7 @@ export default function SuperCanvas() {
       statusLabel: draft.kind === "video" ? "视频任务提交中" : "图片生成中",
       generation: {
         kind: draft.kind,
-        prompt: draft.prompt,
+        prompt,
         params: clone(draft.params),
         operation: draft.operation,
         referenceIds: resolvedReferenceIds,
@@ -5618,7 +5877,7 @@ export default function SuperCanvas() {
         const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits, params.operation);
         if (videoInputError) throw new Error(videoInputError);
         const task = await generateCanvasVideo({
-          prompt: draft.prompt, model: resolvedVideoModel.model?.id || "auto", operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
+          prompt, model: resolvedVideoModel.model?.id || "auto", operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
           references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
           referenceVideos: videoInputs.referenceVideos.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考视频") })),
           firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
@@ -5630,7 +5889,7 @@ export default function SuperCanvas() {
               : undefined,
           audio: params.audio,
         });
-        updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id ? { ...node, data: { ...node.data, status: "running", statusLabel: "视频生成中" } } : node.id === output.id ? { ...node, data: { ...node.data, jobId: task.id, status: task.status === "done" ? "completed" : "running", progress: Number(task.progress || 0), url: task.videoUrls?.[0] || node.data.url, statusLabel: task.status === "done" ? "视频已完成" : "视频生成中", generation: { kind: "video", prompt: draft.prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, taskId: task.id, createdAt: Date.now() } } } : node) }));
+        updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id ? { ...node, data: { ...node.data, status: "running", statusLabel: "视频生成中" } } : node.id === output.id ? { ...node, data: { ...node.data, jobId: task.id, status: task.status === "done" ? "completed" : "running", progress: Number(task.progress || 0), url: task.videoUrls?.[0] || node.data.url, statusLabel: task.status === "done" ? "视频已完成" : "视频生成中", generation: { kind: "video", prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, taskId: task.id, createdAt: Date.now() } } } : node) }));
         writeSharedCreationSettings(params);
         setReuseDraft(null);
         if (task.status === "done") notify("视频复用生成完成");
@@ -5679,8 +5938,8 @@ export default function SuperCanvas() {
     if (source.node?.type === "generator" && mode !== "text")
       return runVariantBatch(source.node.id);
     if (mode === "text") {
-      const prompt = source.prompt.trim();
-      if (!prompt) return notify("请输入要交给 Agent 的内容。", "error");
+      const rawPrompt = source.prompt.trim();
+      if (!rawPrompt) return notify("请输入要交给 Agent 的内容。", "error");
       const settings =
         source.params.kind === "text"
           ? source.params
@@ -5689,12 +5948,33 @@ export default function SuperCanvas() {
       const activeKey = generationKey(source);
       if (generationKeysRef.current.has(activeKey))
         return notify("这个 Agent 节点正在回复。", "error");
-      generationKeysRef.current.add(activeKey);
-      setGenerationKeys(new Set(generationKeysRef.current));
       const incoming = source.node
         ? incomingContext(docRef.current, source.node.id)
         : selectedNodes;
-      const contextMessages = incoming
+      const candidateNodes = mentionCandidates.length ? mentionCandidates : incoming;
+      const candidateReferences = candidateNodes
+        .filter((node) => node.id !== source.node?.id && isCanvasMentionableNode(node))
+        .map(canvasReferenceDraftFromNode)
+        .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
+      const naturalReferenceReplacement = replaceNaturalReferenceLabels(rawPrompt, candidateReferences);
+      if (naturalReferenceReplacement.unresolved.length && candidateReferences.length) {
+        return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
+      }
+      const selection = selectCreativeReferences(naturalReferenceReplacement.value, candidateReferences);
+      if (selection.invalidNumbers.length) {
+        return notify(`引用编号无效：${Array.from(new Set(selection.invalidNumbers)).map((number) => `@${number}`).join("、")}`, "error");
+      }
+      const selectedReferenceIds = new Set(selection.references.map((reference) => reference.nodeId || reference.id));
+      const referenceNodes = selection.hasMentions
+        ? candidateNodes.filter((node) => selectedReferenceIds.has(node.id))
+        : incoming.filter(
+            (node) => (isCanvasReferenceableNode(node) && (node.data.kind === "image" || node.data.kind === "video"))
+              || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim())),
+          );
+      const prompt = naturalReferenceReplacement.value;
+      generationKeysRef.current.add(activeKey);
+      setGenerationKeys(new Set(generationKeysRef.current));
+      const contextMessages = referenceNodes
         .filter((node) => node.type === "prompt" && node.data.text)
         .map((node) => ({
           role: String(node.data.role || "").includes("回复")
@@ -5705,10 +5985,6 @@ export default function SuperCanvas() {
       // Keep the three source kinds distinct all the way to the Agent API.
       // In particular, a video node must never be silently converted to an
       // image reference, while prompt nodes retain their actual text.
-      const referenceNodes = incoming.filter(
-        (node) => (isCanvasReferenceableNode(node) && (node.data.kind === "image" || node.data.kind === "video"))
-          || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim())),
-      );
       const agentMessages = [
         ...contextMessages,
         { role: "user" as const, content: prompt },
@@ -5931,6 +6207,7 @@ export default function SuperCanvas() {
             outputSize: imageSettings.resolution,
             outputFormat: imageSettings.outputFormat,
             parentId: inputId,
+            references: canvasReferenceRecordsFromNodes(referenceNodes),
           });
         addLog(`Agent 回复完成：${responseModel}`);
         notify(
@@ -5979,18 +6256,36 @@ export default function SuperCanvas() {
           ...incoming.filter((node) => isCanvasReferenceableNode(node)),
         ]
       : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
-    const explicitMentionNumbers = referenceMentionNumbers(source.prompt);
+    const naturalReferenceReplacement = replaceNaturalReferenceLabels(
+      source.prompt,
+      mentionCandidates.map((candidate, index) => ({
+        id: candidate.id,
+        kind: candidate.type === "prompt" || candidate.type === "generator"
+          ? "text" as const
+          : candidate.data.kind === "video" ? "video" as const : "image" as const,
+        name: String(candidate.data.name || mentionLabel(candidate, index)),
+        ...(candidate.data.url ? { url: String(candidate.data.url) } : {}),
+        ...(candidate.data.text || candidate.data.agentResponse || candidate.data.prompt || candidate.data.agentPrompt
+          ? { text: String(candidate.data.text || candidate.data.agentResponse || candidate.data.prompt || candidate.data.agentPrompt) }
+          : {}),
+      })),
+    );
+    if (naturalReferenceReplacement.unresolved.length && mentionCandidates.length) {
+      return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
+    }
+    const sourcePrompt = naturalReferenceReplacement.value;
+    const explicitMentionNumbers = referenceMentionNumbers(sourcePrompt);
     const invalidMentionNumbers = explicitMentionNumbers.filter((number) => number < 1 || number > mentionCandidates.length);
     if (invalidMentionNumbers.length) return notify(`引用编号无效：${Array.from(new Set(invalidMentionNumbers)).map((number) => `@${number}`).join("、")}`, "error");
     const hasExplicitMentions = explicitMentionNumbers.length > 0;
-    const mentionedNodes = [...source.prompt.matchAll(/@([0-9]+)/g)]
+    const mentionedNodes = [...sourcePrompt.matchAll(/@([0-9]+)/g)]
       .map((match) => mentionCandidates[Number(match[1]) - 1])
       .filter((node): node is CanvasNode => Boolean(node));
     const linked = [
       ...new Map(
         [
           ...(hasExplicitMentions ? currentTargetInput : baseLinked),
-          ...mentionedMedia(source.prompt, mentionCandidates),
+          ...mentionedMedia(sourcePrompt, mentionCandidates),
         ].map((node) => [node.id, node]),
       ).values(),
     ];
@@ -6000,7 +6295,7 @@ export default function SuperCanvas() {
       ...(hasExplicitMentions ? [] : selectedNodes.filter((node) => node.type === "prompt")),
     ];
     const prompt = smartPrompt(
-      resolveMentionTokens(source.prompt, mentionCandidates),
+      resolveMentionTokens(sourcePrompt, mentionCandidates),
       context,
     );
     if (!prompt.trim()) return notify("请输入生成提示词。", "error");
@@ -6009,6 +6304,9 @@ export default function SuperCanvas() {
       kind === "video" ? "video" : "image",
       kind === "video" ? (source.params as VideoCreationSettings).inputMode : undefined,
     );
+    if (kind === "image" && inputSemantics.videoReferences.length) {
+      return notify("图片生成不能接收视频引用；请移除视频素材或切换到视频模式。", "error");
+    }
     const resolvedModel = resolveAvailableCreationModel(source.params, runtime);
     const effectiveParams = {
       ...source.params,
@@ -6286,6 +6584,7 @@ export default function SuperCanvas() {
               : imageParams.resolution,
           outputFormat: imageParams.outputFormat,
           parentId: sourceTarget?.data.url ? sourceTarget.id : undefined,
+          references: canvasReferenceRecordsFromNodes(linked),
         })
           .then(() => setAssetRefresh((value) => value + 1))
           .catch(() => addLog("图片已生成，但写入主界面历史失败"));
@@ -6683,12 +6982,31 @@ export default function SuperCanvas() {
     async (targetId: string, files: File[]) => {
       const target = nodeById(docRef.current, targetId);
       if (!target || !files.length) return;
-      const existing = incomingReferences(docRef.current, targetId).length;
+      const existing = incomingContext(docRef.current, targetId).filter(isCanvasMentionableNode).length;
       if (existing >= 16) return notify("参考图最多 16 张。", "error");
       const nodes: CanvasNode[] = [];
       let optimizedImageCount = 0;
       for (const [index, file] of files.slice(0, 16 - existing).entries()) {
         try {
+          if (isCanvasTextReferenceFile(file)) {
+            if (file.size > 2 * 1024 * 1024) throw new Error(`${file.name} 超过 2MB，请先拆分文件`);
+            const text = await file.text();
+            if (!text.trim()) throw new Error(`${file.name} 没有可读取的文字内容`);
+            const prompt = createPrompt(
+              { x: target.x - nodeSize(target).w - 90, y: target.y + index * 230 },
+              text,
+            );
+            nodes.push({
+              ...prompt,
+              data: {
+                ...prompt.data,
+                name: file.name || "文本引用",
+                role: "文本引用",
+                mimeType: file.type || "text/plain;charset=utf-8",
+              },
+            });
+            continue;
+          }
           const asset = await uploadCanvasAsset(file);
           if (asset.kind === "image" && asset.optimized) optimizedImageCount += 1;
           if (target.data.kind === "image" && asset.kind !== "image") {
@@ -6732,7 +7050,7 @@ export default function SuperCanvas() {
       }
       notify(
         optimizedImageCount
-          ? `已自动优化 ${optimizedImageCount} 张图片后上传，已添加 ${accepted.size} 张参考素材`
+          ? `已自动优化 ${optimizedImageCount} 张图片后上传，已添加 ${accepted.size} 个参考素材`
           : `已添加 ${accepted.size} 张参考素材${rejected.length ? `，${rejected.length} 张未接入` : ""}`,
       );
       if (rejected.length) addLog(`有 ${rejected.length} 张上传素材未接入目标节点`);
@@ -7322,6 +7640,10 @@ export default function SuperCanvas() {
           setMentionState(null);
           return;
         }
+        if (variantMentionState) {
+          setVariantMentionState(null);
+          return;
+        }
         if (connectionNodePicker || connectionTargetId) {
           setConnectionNodePicker(null);
           setConnectionTargetId(null);
@@ -7441,6 +7763,7 @@ export default function SuperCanvas() {
     fitView,
     makeGroup,
     mentionState,
+    variantMentionState,
     pasteFromClipboard,
     redo,
     runGeneration,
@@ -7522,8 +7845,8 @@ export default function SuperCanvas() {
         .map((reference) => reference.nodeId ? nodeById(document, reference.nodeId) : undefined)
         .filter((node): node is CanvasNode => Boolean(node))
     : referenceOwnerId
-    ? incomingReferences(document, referenceOwnerId)
-    : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
+    ? incomingContext(document, referenceOwnerId).filter(isCanvasMentionableNode)
+    : selectedNodes.filter(isCanvasMentionableNode);
   const composerReferences = reuseDraft ? reuseDraft.references : references;
   const composerPrompt = reuseDraft ? reuseDraft.prompt : deck.prompt;
   const composerSemanticBadges = useMemo(() => {
@@ -7579,6 +7902,13 @@ export default function SuperCanvas() {
       mentionLabel(node, index)
         .toLowerCase()
         .includes(mentionState.query.toLowerCase()),
+  );
+  const filteredVariantMentionCandidates = mentionCandidates.filter(
+    (node, index) =>
+      !variantMentionState?.query ||
+      mentionLabel(node, index)
+        .toLowerCase()
+        .includes(variantMentionState.query.toLowerCase()),
   );
   const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
     if (node.type !== "media") return;
@@ -7978,6 +8308,24 @@ export default function SuperCanvas() {
       window.requestAnimationFrame(() => deckPromptRef.current?.focus());
     },
     [deck.prompt, mentionCandidates, mentionState, openReuseDraft, reuseDraft, selectedSingle, updatePrompt],
+  );
+  const chooseVariantMention = useCallback(
+    (node: CanvasNode) => {
+      if (!variantMentionState || selectedSingle?.type !== "generator") return;
+      const index = mentionCandidates.findIndex((item) => item.id === node.id);
+      if (index < 0) return;
+      const value = String(selectedSingle.data.variantRequirementsText ?? variantRequirementsFor(selectedSingle).join("\n"));
+      const next = `${value.slice(0, variantMentionState.start)}@${index + 1} ${value.slice(variantMentionState.end)}`;
+      updateVariantRequirements(next);
+      const role: CanvasInputRole = node.type === "prompt" || node.type === "generator"
+        ? "context"
+        : node.data.kind === "video"
+          ? selectedSingle.data.kind === "video" ? "video" : "reference-image"
+          : "reference-image";
+      addNodeReference(selectedSingle.id, node.id, role);
+      setVariantMentionState(null);
+    },
+    [addNodeReference, mentionCandidates, selectedSingle, updateVariantRequirements, variantMentionState],
   );
   const reorderReference = useCallback(
     (ownerId: string, draggedId: string, targetId: string) => {
@@ -9206,7 +9554,7 @@ export default function SuperCanvas() {
               onDraftReferencePaste={pasteReuseReference}
               editorContexts={incomingContext(document, editorNode.id).filter((item) => item.type === "prompt" || item.type === "generator")}
               onTextPreview={(context) => openCanvasTextViewer(context.id)}
-              mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
+              mentionCandidates={mentionCandidates}
               onOutputPreview={(output) => {
                 cancelPendingNodeClick();
                 openCanvasMediaViewer(output.id);
@@ -9537,7 +9885,9 @@ export default function SuperCanvas() {
                       document={document}
                       ownerId={referenceOwnerId}
                       nodes={references}
-                      onPreview={(node) => openCanvasMediaViewer(node.id)}
+                      onPreview={(node) => node.type === "prompt" || node.type === "generator"
+                        ? openCanvasTextViewer(node.id)
+                        : openCanvasMediaViewer(node.id)}
                       onReorder={reorderReference}
                       onRemove={removeComposerReference}
                       onClear={clearComposerReferences}
@@ -9680,8 +10030,32 @@ export default function SuperCanvas() {
                         variantRequirementsFor(selectedSingle).join("\n")
                       }
                       placeholder="改成夜景\n改为俯拍视角\n替换成红色包装"
-                      onChange={(event) => updateVariantRequirements(event.target.value)}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        updateVariantRequirements(value);
+                        setVariantMentionState(mentionStateForValue(value, event.target.selectionStart));
+                      }}
+                      onClick={(event) => setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+                      onKeyUp={(event) => {
+                        if (event.key !== "Escape") setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart));
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setVariantMentionState(null);
+                      }}
                     />
+                    {variantMentionState && filteredVariantMentionCandidates.length > 0 && (
+                      <div className="canvas-mention-menu canvas-variant-mention-menu">
+                        {filteredVariantMentionCandidates.slice(0, 8).map((node) => {
+                          const index = mentionCandidates.findIndex((item) => item.id === node.id);
+                          return (
+                            <button type="button" key={node.id} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseVariantMention(node)}>
+                              <b>@{index + 1}</b>
+                              <span>{mentionLabel(node, index)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     <small className="canvas-variant-editor-note">
                       每条要求都会叠加到共同提示词，并按顺序生成独立结果。
                     </small>
@@ -10926,7 +11300,7 @@ function CanvasReferenceList({
   variant?: "card" | "deck";
 }) {
   const references = ownerId
-    ? incomingReferences(document, ownerId)
+    ? incomingContext(document, ownerId).filter(isCanvasMentionableNode)
     : nodes || [];
   return (
     <div className={`canvas-reference-list-shell ${variant}`}>
@@ -10935,11 +11309,11 @@ function CanvasReferenceList({
           <div
             className="canvas-reference-item"
             key={item.id}
-            draggable={Boolean(ownerId)}
+            draggable={Boolean(ownerId && isCanvasReferenceableNode(item))}
             title={ownerId ? "拖动调整参考顺序" : item.data.name || "参考素材"}
             onPointerDown={(event) => event.stopPropagation()}
             onDragStart={(event: ReactDragEvent<HTMLDivElement>) => {
-              if (!ownerId) return;
+              if (!ownerId || !isCanvasReferenceableNode(item)) return;
               event.dataTransfer.effectAllowed = "move";
               event.dataTransfer.setData("text/plain", item.id);
             }}
@@ -10949,17 +11323,19 @@ function CanvasReferenceList({
             onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
               event.preventDefault();
               const draggedId = event.dataTransfer.getData("text/plain");
-              if (ownerId && draggedId) onReorder(ownerId, draggedId, item.id);
+              if (ownerId && draggedId && isCanvasReferenceableNode(item)) onReorder(ownerId, draggedId, item.id);
             }}
           >
             <button
               type="button"
               className="canvas-reference-preview-button"
-              aria-label={`预览参考图 ${index + 1}`}
+              aria-label={`预览引用 ${index + 1}`}
               onClick={(event) => { event.stopPropagation(); onPreview?.(item); }}
             >
               <span className="canvas-reference-index">{index + 1}</span>
-              {item.data.kind === "video" ? (
+              {item.type === "prompt" || item.type === "generator" ? (
+                <span className="canvas-reference-text-thumb"><b>{item.type === "generator" ? "✦" : "▤"}</b><small>{String(item.data.agentResponse || item.data.text || item.data.prompt || "文本引用").replace(/\s+/g, " ").trim().slice(0, 42)}</small></span>
+              ) : item.data.kind === "video" ? (
                 <video src={item.data.url} muted playsInline />
               ) : (
                 <img src={item.data.url} alt={item.data.name || "参考素材"} />
@@ -10967,13 +11343,13 @@ function CanvasReferenceList({
             </button>
             <b>
               {item.data.name ||
-                (item.data.kind === "video" ? "视频素材" : "图片素材")}
+                (item.type === "prompt" ? "文本引用" : item.data.kind === "video" ? "视频素材" : "图片素材")}
             </b>
             {onRemove && (
               <button
                 type="button"
                 className="canvas-reference-remove"
-                aria-label={`移除参考图 ${index + 1}`}
+                  aria-label={`移除引用 ${index + 1}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   onRemove(item.id);
@@ -11167,7 +11543,7 @@ function CanvasNodeReferenceStrip({
           <div className="canvas-editor-reference-items">{unusedImages.map((reference, index) => renderItem(reference, references.findIndex((item) => item.id === reference.id), "unused-item"))}</div>
         </div>
       )}
-      <input ref={inputRef} hidden type="file" multiple accept={target.data.kind === "image" ? "image/png,image/jpeg,image/webp" : "image/png,image/jpeg,image/webp,video/mp4,video/webm"} onChange={(event) => { if (event.target.files) onAddFiles(target.id, [...event.target.files]); event.currentTarget.value = ""; }} />
+      <input ref={inputRef} hidden type="file" multiple accept={target.data.kind === "image" ? "image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1" : "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"} onChange={(event) => { if (event.target.files) onAddFiles(target.id, [...event.target.files]); event.currentTarget.value = ""; }} />
     </div>
   );
 }
@@ -11691,6 +12067,7 @@ function CanvasNodeEditorPopover({
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [mentionState, setMentionState] = useState<MentionState>(null);
+  const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
   const data = node.data;
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
@@ -11717,10 +12094,44 @@ function CanvasNodeEditorPopover({
       .toLowerCase()
       .includes(query);
   });
+  const visibleVariantMentionCandidates = mentionCandidates.filter((item, index) => {
+    if (item.id === node.id) return false;
+    if (!variantMentionState?.query) return true;
+    const query = variantMentionState.query.trim().toLowerCase();
+    if (/^\d+$/.test(query)) return String(index + 1).startsWith(query);
+    return [
+      mentionLabel(item, index),
+      nodeLabel(item),
+      item.data.name,
+      item.data.text,
+      item.data.prompt,
+      item.data.agentPrompt,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+  const chooseVariantMention = (candidate: CanvasNode) => {
+    if (!variantMentionState || node.type !== "generator") return;
+    const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
+    if (candidateIndex < 0) return;
+    const value = String(data.variantRequirementsText ?? variantRequirements.join("\n"));
+    const next = `${value.slice(0, variantMentionState.start)}@${candidateIndex + 1} ${value.slice(variantMentionState.end)}`;
+    onVariantRequirementsChange(node, next);
+    const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+      ? "context"
+      : candidate.data.kind === "video"
+        ? data.kind === "video" ? "video" : "reference-image"
+        : "reference-image";
+    onReferenceDrop(node.id, candidate.id, role);
+    setVariantMentionState(null);
+  };
 
   useEffect(() => {
     setPromptExpanded(false);
     setMentionState(null);
+    setVariantMentionState(null);
   }, [node.id]);
 
   useLayoutEffect(() => {
@@ -11758,6 +12169,12 @@ function CanvasNodeEditorPopover({
         setMentionState(null);
         return;
       }
+      if (variantMentionState) {
+        event.preventDefault();
+        event.stopPropagation();
+        setVariantMentionState(null);
+        return;
+      }
       if (promptExpanded) {
         event.preventDefault();
         event.stopPropagation();
@@ -11766,7 +12183,7 @@ function CanvasNodeEditorPopover({
     };
     window.addEventListener("keydown", handleEscape, true);
     return () => window.removeEventListener("keydown", handleEscape, true);
-  }, [mentionState, promptExpanded]);
+  }, [mentionState, promptExpanded, variantMentionState]);
 
   const reposition = useCallback(() => {
     const stage = stageRef.current;
@@ -11993,8 +12410,35 @@ function CanvasNodeEditorPopover({
                   rows={2}
                   value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                   placeholder="改成夜景\n改为俯拍视角"
-                  onChange={(event) => onVariantRequirementsChange(node, event.target.value)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    onVariantRequirementsChange(node, value);
+                    setVariantMentionState(mentionStateForValue(value, event.target.selectionStart));
+                  }}
+                  onClick={(event) => setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
+                  onKeyUp={(event) => {
+                    if (event.key !== "Escape") setVariantMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart));
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setVariantMentionState(null);
+                  }}
                 />
+                {variantMentionState && visibleVariantMentionCandidates.length > 0 && (
+                  <div className="canvas-node-mention-menu canvas-variant-mention-menu">
+                    {visibleVariantMentionCandidates.slice(0, 12).map((candidate) => {
+                      const candidateIndex = mentionCandidates.findIndex((item) => item.id === candidate.id);
+                      return (
+                        <button type="button" key={candidate.id} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseVariantMention(candidate)}>
+                          <strong>@{candidateIndex + 1}</strong>
+                          <span className="canvas-node-mention-preview">
+                            {candidate.type === "prompt" || candidate.type === "generator" ? <i>{candidate.type === "generator" ? "✦" : "▤"}</i> : candidate.data.kind === "video" ? <video src={candidate.data.url} muted playsInline /> : <img src={candidate.data.url} alt="" />}
+                          </span>
+                          <span className="canvas-node-mention-copy"><b>{nodeLabel(candidate)}</b><small>{candidate.type === "prompt" || candidate.type === "generator" ? "文本上下文" : candidate.data.kind === "video" ? "视频引用" : "图片参考"}</small></span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
             {node.type === "upscale" && upscaleParams && onUpscaleParamsChange ? (
@@ -13357,7 +13801,10 @@ function CanvasTextLightbox({
   const text =
     node?.type === "prompt"
       ? String(node.data.agentResponse || node.data.text || "")
-      : "";
+      : node?.type === "generator"
+        ? String(node.data.prompt || node.data.agentPrompt || node.data.variantRequirementsText || "")
+        : "";
+  const editable = node?.type === "prompt";
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
   const [selection, setSelection] = useState<{
@@ -13425,7 +13872,7 @@ function CanvasTextLightbox({
   }, [clearSelection, text]);
 
   const saveEdit = useCallback(() => {
-    if (!node) return;
+    if (!node || !editable) return;
     const value = draft;
     if (!value.trim()) {
       onNotify("回复内容不能为空。", "error");
@@ -13435,7 +13882,7 @@ function CanvasTextLightbox({
     setDraft(value);
     setEditing(false);
     clearSelection();
-  }, [clearSelection, draft, node, onNotify, onUpdate]);
+  }, [clearSelection, draft, editable, node, onNotify, onUpdate]);
 
   useEffect(() => {
     if (!editing) return;
@@ -13475,7 +13922,7 @@ function CanvasTextLightbox({
     return () => document.removeEventListener("pointerdown", handleOutsidePointer);
   }, [clearSelection, editing, selection]);
 
-  if (!node || node.type !== "prompt" || !text) return null;
+  if (!node || (node.type !== "prompt" && node.type !== "generator") || !text) return null;
   const copyText = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -13506,7 +13953,7 @@ function CanvasTextLightbox({
       className="canvas-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label={editing ? "编辑 Agent 回复" : "Agent 回复"}
+      aria-label={editing ? "编辑文本引用" : "文本引用"}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -13514,18 +13961,20 @@ function CanvasTextLightbox({
       <div className={`canvas-text-lightbox${editing ? " is-editing" : ""}`}>
         <header>
           <div>
-            <b>{editing ? "编辑 Agent 回复" : "Agent 回复"}</b>
+            <b>{editing ? "编辑文本引用" : node.type === "generator" ? "生成器文本引用" : "Agent 回复"}</b>
             <small>
               {editing
                 ? "保存后保留为 Agent 回复"
-                : node.data.model
+                : node.type === "generator"
+                  ? "生成器共同提示词"
+                  : node.data.model
                   ? `对话模型 · ${String(node.data.model)}`
                   : "对话模型"}
-              {!editing && node.data.agentPrompt ? " · 已保留原始任务" : ""}
+              {!editing && node.type === "prompt" && node.data.agentPrompt ? " · 已保留原始任务" : ""}
             </small>
           </div>
           <div className="canvas-text-lightbox-actions">
-            {!editing && <button className="canvas-text-edit-trigger" type="button" onClick={() => { setDraft(text); clearSelection(); setEditing(true); }}>编辑</button>}
+            {!editing && editable && <button className="canvas-text-edit-trigger" type="button" onClick={() => { setDraft(text); clearSelection(); setEditing(true); }}>编辑</button>}
             {!editing && <button type="button" onClick={() => void copyText()}>复制全文</button>}
             <button type="button" onClick={onClose} aria-label="关闭 Agent 回复">
               ×
@@ -13568,8 +14017,8 @@ function CanvasTextLightbox({
               >
                 <span>{selection.text.length.toLocaleString()} 字</span>
                 <button type="button" onClick={() => void copySelection()}>复制选段</button>
-                <button type="button" className="primary" onClick={() => runSelectionAction((value) => onCreateAgentNode(node, value))}>创建 Agent 节点</button>
-                <button type="button" onClick={() => runSelectionAction((value) => onUseAsImagePrompt(node, value))}>转图片</button>
+                {editable && <button type="button" className="primary" onClick={() => runSelectionAction((value) => onCreateAgentNode(node, value))}>创建 Agent 节点</button>}
+                {editable && <button type="button" onClick={() => runSelectionAction((value) => onUseAsImagePrompt(node, value))}>转图片</button>}
               </div>
             )}
           </>
@@ -13586,7 +14035,7 @@ function CanvasTextLightbox({
           ) : (
             <>
               <span>{text.length.toLocaleString()} 字</span>
-              <span>选中文字可生成新节点 · 按 Esc 关闭</span>
+              <span>{editable ? "选中文字可生成新节点 · 按 Esc 关闭" : "点击关闭 · 按 Esc 关闭"}</span>
             </>
           )}
         </footer>

@@ -10,8 +10,10 @@ export type CanvasReferenceOrigin = "node" | "asset" | "upload" | "paste";
 
 export type CanvasReferenceDraft = {
   id: string;
-  kind: CanvasMediaKind;
-  url: string;
+  kind: CanvasMediaKind | "text";
+  url?: string;
+  text?: string;
+  mimeType?: string;
   name: string;
   origin: CanvasReferenceOrigin;
   nodeId?: string;
@@ -37,8 +39,11 @@ export type ReferenceDraftResult = {
   rejected: CanvasReferenceDraft[];
 };
 
-export function referenceDraftKey(reference: Pick<CanvasReferenceDraft, "kind" | "url">) {
-  return `${reference.kind}:${reference.url.trim()}`;
+export function referenceDraftKey(reference: Pick<CanvasReferenceDraft, "kind" | "url" | "text">) {
+  const value = reference.kind === "text"
+    ? String(reference.text || "").trim()
+    : String(reference.url || "").trim();
+  return `${reference.kind}:${value}`;
 }
 
 export function dedupeReferenceDrafts(
@@ -48,7 +53,10 @@ export function dedupeReferenceDrafts(
   const seen = new Set<string>();
   return references.filter((reference) => {
     const key = referenceDraftKey(reference);
-    if (!reference.url.trim() || seen.has(key) || seen.size >= limit) return false;
+    const usable = reference.pending || (reference.kind === "text"
+      ? Boolean(String(reference.text || "").trim())
+      : Boolean(String(reference.url || "").trim()));
+    if (!usable || seen.has(key) || seen.size >= limit) return false;
     seen.add(key);
     return true;
   });
@@ -65,7 +73,10 @@ export function addReferenceDrafts(
   const next = [...current];
   for (const reference of incoming) {
     const key = referenceDraftKey(reference);
-    if (!reference.url.trim() || existing.has(key) || next.length >= limit) {
+    const usable = reference.pending || (reference.kind === "text"
+      ? Boolean(String(reference.text || "").trim())
+      : Boolean(String(reference.url || "").trim()));
+    if (!usable || existing.has(key) || next.length >= limit) {
       rejected.push(reference);
       continue;
     }
