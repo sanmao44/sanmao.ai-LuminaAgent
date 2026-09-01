@@ -33,8 +33,8 @@ import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
-import ReferenceMentionMenuBase from '@/components/ReferenceMentionMenu';
-import { appendTextReferenceContext, insertReferenceMention as insertCreativeMention, normalizeCreativeReference, referenceMentionRange as creativeReferenceMentionRange, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
+import { appendTextReferenceContext, normalizeCreativeReference, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -528,6 +528,26 @@ function chatFileToReference(file) {
 }
 function creativeReferenceUrl(reference) {
     return typeof reference?.dataUrl === 'string' && reference.dataUrl ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : '';
+}
+function referenceMentionOptions(references) {
+    return (references || []).map((reference, index)=>({
+        id: reference.id || `reference-${index + 1}`,
+        kind: reference.kind || 'image',
+        name: reference.name || `引用素材 ${index + 1}`,
+        url: creativeReferenceUrl(reference),
+        text: reference.text
+    }));
+}
+function focusContentEditableToEnd(element) {
+    if (!element) return;
+    element.focus();
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
 }
 async function prepareCreativeReferencesForAgent(references) {
     return Promise.all((references || []).slice(0, 16).map(async (rawReference, index) => {
@@ -1671,64 +1691,6 @@ function Dropdown({ value, options, onChange, placeholder = '请选择', classNa
         onChange,
         ariaLabel: placeholder,
         className: `custom-dropdown ${className}`
-    });
-}
-function ReferenceMentionMenu({ refs, open, query = '', onSelect, className = '' }) {
-    return /*#__PURE__*/ _jsx(ReferenceMentionMenuBase, {
-        references: refs.map((ref, index) => ({
-            id: ref.id || `reference-${index + 1}`,
-            kind: ref.kind || 'image',
-            name: ref.name || `引用素材 ${index + 1}`,
-            url: creativeReferenceUrl(ref),
-            text: ref.text
-        })),
-        open,
-        query,
-        onSelect,
-        className
-    });
-    if (!open || !visibleRefs.length) return null;
-    return /*#__PURE__*/ _jsxs("div", {
-        className: `reference-mention-menu ${className}`,
-        role: "listbox",
-        children: [
-            /*#__PURE__*/ _jsx("div", {
-                className: "reference-mention-title",
-                children: "选择引用 · 输入 @编号"
-            }),
-            visibleRefs.map(({ ref, index })=>/*#__PURE__*/ _jsxs("button", {
-                    type: "button",
-                    onMouseDown: (event)=>event.preventDefault(),
-                    onClick: ()=>onSelect(index),
-                    children: [
-                        /*#__PURE__*/ _jsxs("span", {
-                            className: "reference-mention-thumb",
-                            children: [
-                                ref.kind === 'video' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon video", children: ["▶", /*#__PURE__*/ _jsx("small", { children: "视频" })] }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-type-icon text", children: ["▤", /*#__PURE__*/ _jsx("small", { children: "文本" })] }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: "" }),
-                                /*#__PURE__*/ _jsxs("b", {
-                                    children: [
-                                        "@",
-                                        index + 1
-                                    ]
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsxs("span", {
-                            children: [
-                                /*#__PURE__*/ _jsxs("strong", {
-                                    children: [
-                                        ref.kind === 'video' ? "参考视频 " : ref.kind === 'text' ? "引用文本 " : "参考图 ",
-                                        index + 1
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsx("small", {
-                                    children: ref.kind === 'text' ? referencePreviewText(ref) : ref.name
-                                })
-                            ]
-                        })
-                    ]
-                }, ref.id))
-        ]
     });
 }
 function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUpscaleModel, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onLocalEdit, onOpenProviders, onSubmit }) {
@@ -4948,8 +4910,6 @@ export default function Page() {
     const pendingChatMessagesRef = useRef(new Map());
     const agentRequestsRef = useRef(new Map());
     const chatSaveQueuesRef = useRef(new Map());
-    const [agentMentionOpen, setAgentMentionOpen] = useState(false);
-    const [agentMentionQuery, setAgentMentionQuery] = useState('');
     useEffect(()=>{
         if (!messageReferencePreview) return;
         const onKeyDown = (event)=>{
@@ -4975,8 +4935,6 @@ export default function Page() {
     const [generatePromptOptimizing, setGeneratePromptOptimizing] = useState(false);
     const [generatePromptBeforeOptimization, setGeneratePromptBeforeOptimization] = useState(null);
     const generatePromptRef = useRef(null);
-    const [generateMentionOpen, setGenerateMentionOpen] = useState(false);
-    const [generateMentionQuery, setGenerateMentionQuery] = useState('');
     const [generateModelId, setGenerateModelId] = useState('auto');
     const [generateUpscaleModelId, setGenerateUpscaleModelId] = useState('auto');
     const [generateWorkflow, setGenerateWorkflow] = useState('generate');
@@ -6945,25 +6903,6 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '读取文本文件失败');
         }
     }
-    function referenceMentionRange(value, cursor) {
-        return creativeReferenceMentionRange(value, cursor);
-    }
-    function updateMentionState(value, cursor, refs, setOpen, setQuery) {
-        const range = referenceMentionRange(value, cursor);
-        setQuery(range?.query || '');
-        setOpen(refs.length > 0 && Boolean(range));
-    }
-    function insertReferenceMention(value, setter, setOpen, inputRef, index) {
-        const textarea = inputRef.current;
-        const cursor = textarea?.selectionStart ?? value.length;
-        const inserted = insertCreativeMention(value, cursor, index);
-        setter(inserted.value);
-        setOpen(false);
-        requestAnimationFrame(()=>{
-            textarea?.focus();
-            textarea?.setSelectionRange(inserted.cursor, inserted.cursor);
-        });
-    }
     async function pasteClipboardImages(target) {
         try {
             if (!navigator.clipboard?.read) throw new Error('当前浏览器不支持一键读取剪贴板，请在参考图区按 Ctrl+V');
@@ -8238,12 +8177,10 @@ export default function Page() {
             role: message.role,
             content: excerpt
         });
-        setAgentMentionOpen(false);
         requestAnimationFrame(()=>{
             const input = agentInputRef.current;
             if (!input) return;
-            input.focus();
-            input.setSelectionRange(input.value.length, input.value.length);
+            focusContentEditableToEnd(input);
         });
         notify('已引用这条消息，可直接补充你的追问');
     }
@@ -8824,8 +8761,7 @@ export default function Page() {
             const optimized = await requestPromptOptimization(source, activeAgentModelId);
             setAgentInput(optimized);
             requestAnimationFrame(()=>{
-                agentInputRef.current?.focus();
-                agentInputRef.current?.setSelectionRange(optimized.length, optimized.length);
+                focusContentEditableToEnd(agentInputRef.current);
             });
             notify('已完成 AI 优化，可继续修改后发送');
         } catch (error) {
@@ -8853,10 +8789,8 @@ export default function Page() {
             const optimized = await requestPromptOptimization(source, activeAgentModelId, references);
             setGeneratePromptBeforeOptimization(generatePrompt);
             setGeneratePrompt(optimized);
-            setGenerateMentionOpen(false);
             requestAnimationFrame(()=>{
-                generatePromptRef.current?.focus();
-                generatePromptRef.current?.setSelectionRange(optimized.length, optimized.length);
+                focusContentEditableToEnd(generatePromptRef.current);
             });
             notify(references.length ? '已结合引用素材完成 AI 优化，可继续修改后生成' : '已完成 AI 优化，可继续修改后生成');
         } catch (error) {
@@ -8869,7 +8803,6 @@ export default function Page() {
         if (generatePromptBeforeOptimization === null) return;
         setGeneratePrompt(generatePromptBeforeOptimization);
         setGeneratePromptBeforeOptimization(null);
-        setGenerateMentionOpen(false);
         window.setTimeout(()=>generatePromptRef.current?.focus(), 0);
         notify('已撤销 AI 优化');
     }
@@ -10865,61 +10798,30 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsxs("div", {
                                                     className: "agent-textarea-wrap",
                                                     children: [
-                                                /*#__PURE__*/ _jsx("textarea", {
+                                                /*#__PURE__*/ _jsx(ReferenceMentionEditor, {
                                                     ref: agentInputRef,
                                                     value: agentInput,
-                                                     readOnly: agentMessageSelectionActive || promptOptimizing,
-                                                    onChange: (e)=>{
-                                                        setAgentInput(e.target.value);
-                                                        updateMentionState(e.target.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery);
-                                                    },
-                                                    onFocus: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery),
-                                                    onClick: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery),
-                                                    onKeyUp: (e)=>{
-                                                        if (e.key !== 'Escape') updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, agentRefs, setAgentMentionOpen, setAgentMentionQuery);
-                                                    },
+                                                    references: referenceMentionOptions(agentRefs),
+                                                    readOnly: agentMessageSelectionActive || promptOptimizing,
                                                     placeholder: "详细描述你想生成或修改的画面：主体外观与动作、场景环境、构图视角、光线色彩、风格材质、镜头感和需要避免的内容；也可以上传参考图让助手分析。",
-                                                    onPaste: (e)=>{
-                                                        const files = Array.from(e.clipboardData.files || []);
-                                                                            if (files.some((f)=>f.type.startsWith('image/') || f.type.startsWith('video/'))) {
-                                                            e.preventDefault();
+                                                    className: "agent-prompt-mention-editor",
+                                                    menuClassName: "agent-mention-menu",
+                                                    ariaLabel: "Agent 输入",
+                                                    onChange: (value)=>setAgentInput(value),
+                                                    transformPastedText: (value)=>replaceNaturalReferenceLabels(value, agentRefs).value,
+                                                    onPaste: (event)=>{
+                                                        const files = Array.from(event.clipboardData.files || []);
+                                                        if (files.some((file)=>file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+                                                            event.preventDefault();
                                                             void addReferences(files, 'agent');
-                                                            return;
                                                         }
-                                                        const pastedText = e.clipboardData.getData('text/plain');
-                                                        if (!pastedText || !agentRefs.length) return;
-                                                        const replaced = replaceNaturalReferenceLabels(pastedText, agentRefs);
-                                                        if (!replaced.replaced) return;
-                                                        e.preventDefault();
-                                                        const textarea = e.currentTarget;
-                                                        const start = textarea.selectionStart ?? agentInput.length;
-                                                        const end = textarea.selectionEnd ?? start;
-                                                        const next = `${agentInput.slice(0, start)}${replaced.value}${agentInput.slice(end)}`;
-                                                        setAgentInput(next);
-                                                        setAgentMentionOpen(false);
-                                                        requestAnimationFrame(()=>{
-                                                            textarea.focus();
-                                                            const cursor = start + replaced.value.length;
-                                                            textarea.setSelectionRange(cursor, cursor);
-                                                        });
                                                     },
-                                                    onKeyDown: (e)=>{
-                                                        if (e.key === 'Escape') {
-                                                            setAgentMentionOpen(false);
-                                                            setAgentMentionQuery('');
-                                                        }
-                                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                                            e.preventDefault();
+                                                    onKeyDown: (event)=>{
+                                                        if (event.key === 'Enter' && !event.shiftKey) {
+                                                            event.preventDefault();
                                                             if (!activeAgentBusy) void sendAgent();
                                                         }
                                                     }
-                                                }),
-                                                /*#__PURE__*/ _jsx(ReferenceMentionMenu, {
-                                                    refs: agentRefs,
-                                                    open: agentMentionOpen,
-                                                    query: agentMentionQuery,
-                                                    className: "agent-mention-menu",
-                                                    onSelect: (index)=>insertReferenceMention(agentInput, setAgentInput, setAgentMentionOpen, agentInputRef, index)
                                                 }),
                                                 agentInput && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsx("button", {
                                                     type: "button",
@@ -11219,54 +11121,21 @@ export default function Page() {
                                                             })
                                                         ]
                                                     }),
-                                                    /*#__PURE__*/ _jsx("textarea", {
-                                                        ref: generatePromptRef,
-                                                        readOnly: generatePromptOptimizing,
-                                                        value: generatePrompt,
-                                                        onChange: (e)=>{
-                                                            setGeneratePrompt(e.target.value);
-                                                            setGeneratePromptBeforeOptimization(null);
-                                                            updateMentionState(e.target.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery);
-                                                        },
-                                                        onFocus: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery),
-                                                        onClick: (e)=>updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery),
-                                                        onKeyUp: (e)=>{
-                                                            if (e.key !== 'Escape') updateMentionState(e.currentTarget.value, e.currentTarget.selectionStart, generateRefs, setGenerateMentionOpen, setGenerateMentionQuery);
-                                                        },
-                                                    onKeyDown: (e)=>{
-                                                        if (e.key === 'Escape') {
-                                                            setGenerateMentionOpen(false);
-                                                            setGenerateMentionQuery('');
-                                                        }
-                                                        },
-                                                        onPaste: (e)=>{
-                                                            const pastedText = e.clipboardData.getData('text/plain');
-                                                            if (!pastedText || !generateRefs.length) return;
-                                                            const replaced = replaceNaturalReferenceLabels(pastedText, generateRefs);
-                                                            if (!replaced.replaced) return;
-                                                            e.preventDefault();
-                                                            const textarea = e.currentTarget;
-                                                            const start = textarea.selectionStart ?? generatePrompt.length;
-                                                            const end = textarea.selectionEnd ?? start;
-                                                            const next = `${generatePrompt.slice(0, start)}${replaced.value}${generatePrompt.slice(end)}`;
-                                                            setGeneratePrompt(next);
-                                                            setGeneratePromptBeforeOptimization(null);
-                                                            setGenerateMentionOpen(false);
-                                                            requestAnimationFrame(()=>{
-                                                                textarea.focus();
-                                                                const cursor = start + replaced.value.length;
-                                                                textarea.setSelectionRange(cursor, cursor);
-                                                            });
-                                                        },
-                                                        placeholder: generateUpscaleMode ? 'SeedVR2 超分不会根据提示词修改画面…' : '详细描述主体、场景、构图、光线、风格和需要避免的内容…'
-                                                    }),
-                                                    /*#__PURE__*/ _jsx(ReferenceMentionMenu, {
-                                                        refs: generateRefs,
-                                                        open: generateMentionOpen,
-                                                        query: generateMentionQuery,
-                                                        className: "generate-mention-menu",
-                                                        onSelect: (index)=>insertReferenceMention(generatePrompt, setGeneratePrompt, setGenerateMentionOpen, generatePromptRef, index)
-                                                    }),
+                                                     /*#__PURE__*/ _jsx(ReferenceMentionEditor, {
+                                                         ref: generatePromptRef,
+                                                         value: generatePrompt,
+                                                         references: referenceMentionOptions(generateRefs),
+                                                         readOnly: generatePromptOptimizing,
+                                                         placeholder: generateUpscaleMode ? 'SeedVR2 超分不会根据提示词修改画面…' : '详细描述主体、场景、构图、光线、风格和需要避免的内容…',
+                                                         className: "generate-prompt-mention-editor",
+                                                         menuClassName: "generate-mention-menu",
+                                                         ariaLabel: "生图提示词",
+                                                         onChange: (value)=>{
+                                                             setGeneratePrompt(value);
+                                                             setGeneratePromptBeforeOptimization(null);
+                                                         },
+                                                         transformPastedText: (value)=>replaceNaturalReferenceLabels(value, generateRefs).value
+                                                     }),
                                                     generatePrompt && /*#__PURE__*/ _jsx("button", {
                                                         type: "button",
                                                         className: "prompt-clear",

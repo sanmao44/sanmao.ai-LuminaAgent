@@ -316,6 +316,27 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 .reference-mention-menu button>span:last-child{display:grid;gap:2px;min-width:0}
 .reference-mention-menu strong{font-size:9px}
 .reference-mention-menu small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:8px}
+.reference-mention-editor{position:relative;min-width:0}
+.reference-mention-editor-content{box-sizing:border-box;width:100%;outline:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;color:var(--text)}
+.reference-mention-editor-content:empty::before{content:attr(data-placeholder);color:var(--muted);pointer-events:none}
+.reference-inline-mention{display:inline-flex;align-items:center;vertical-align:middle;gap:5px;max-width:calc(100% - 4px);margin:0 2px 2px 0;padding:3px 8px 3px 4px;border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel-3));color:var(--accent-text);line-height:1.15;user-select:none;white-space:normal}
+.reference-inline-mention-thumb{display:grid;place-items:center;flex:none;width:22px;height:22px;overflow:hidden;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:50%;background:var(--panel-3)}
+.reference-inline-mention-thumb img,.reference-inline-mention-thumb video{display:block;width:100%;height:100%;object-fit:cover}
+.reference-inline-mention-thumb .reference-mention-text-thumbnail{display:grid;place-items:center;width:100%;height:100%;padding:0;font-size:6px;line-height:1}
+.reference-inline-mention-thumb .reference-mention-text-thumbnail>b{font-size:6px}.reference-inline-mention-thumb .reference-mention-text-thumbnail>small{display:none}
+.reference-inline-mention-label{display:inline-flex;align-items:baseline;gap:4px;min-width:0;max-width:220px}
+.reference-inline-mention-label>b{font-size:11px;font-weight:900;white-space:nowrap}.reference-inline-mention-label>small{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-size:9px}
+.reference-inline-mention:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.legacy-reference-mention-input{display:none!important}
+.agent-composer .reference-mention-editor{min-height:58px}
+.agent-composer .reference-mention-editor-content{min-height:58px;max-height:320px;padding:12px 72px 12px 13px;border:1px solid var(--agent-composer-divider);border-radius:14px;background:var(--agent-input-bg);overflow-y:auto;font-size:14px;line-height:1.65;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease}
+.agent-composer .reference-mention-editor-content:hover{border-color:color-mix(in srgb,var(--accent) 25%,var(--agent-composer-divider))}
+.agent-composer .reference-mention-editor-content:focus{border-color:color-mix(in srgb,var(--accent) 65%,var(--agent-composer-border));background:var(--agent-composer-inner);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
+.agent-composer .reference-mention-editor-content[contenteditable="false"]{cursor:wait;opacity:.78}
+.prompt-field .reference-mention-editor{min-height:128px}
+.prompt-field .reference-mention-editor-content{min-height:128px;max-height:360px;overflow-y:auto;border:1px solid var(--line);background:var(--panel-2);border-radius:12px;padding:11px 52px 11px 12px;line-height:1.65;font-size:11px}
+.prompt-field .reference-mention-editor-content:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.prompt-field .reference-mention-editor-content[contenteditable="false"]{cursor:wait;opacity:.78}
 
 /* References attached to a chat message open in the preview dialog when clicked. */
 .message-refs{position:relative;overflow:visible}

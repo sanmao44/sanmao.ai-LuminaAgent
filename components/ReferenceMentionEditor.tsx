@@ -204,6 +204,7 @@ type ReferenceMentionEditorProps = {
   getLabel?: (reference: ReferenceMentionOption, index: number) => ReactNode;
   getDescription?: (reference: ReferenceMentionOption, index: number) => ReactNode;
   transformPastedText?: (value: string) => string;
+  readOnly?: boolean;
 };
 
 const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditorProps>(function ReferenceMentionEditor({
@@ -227,6 +228,7 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
   getLabel,
   getDescription,
   transformPastedText,
+  readOnly = false,
 }, forwardedRef) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const pendingCursor = useRef<number | null>(null);
@@ -346,7 +348,8 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
       <div
         ref={editorRef}
         className="reference-mention-editor-content"
-        contentEditable
+        contentEditable={!readOnly}
+        aria-readonly={readOnly || undefined}
         suppressContentEditableWarning
         role="textbox"
         aria-label={ariaLabel}
