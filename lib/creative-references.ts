@@ -96,22 +96,29 @@ export function normalizeCreativeReferences(input: unknown, max = 16): CreativeR
   return result;
 }
 
-/** Return the active @query at a textarea cursor, if there is one. */
+/** Return the active @query at a textarea cursor, if there is one.
+ *
+ * An @ mention is an inline editing affordance, so it may start after any
+ * character.  Restricting the preceding character to whitespace made the
+ * menu work only at the beginning of a sentence (or after a manually added
+ * space), which is especially surprising in Chinese text where words are
+ * commonly written without spaces.
+ */
 export function referenceMentionRange(value: string, cursor = value.length): ReferenceMentionRange | null {
   const safeCursor = Math.max(0, Math.min(Number.isFinite(cursor) ? cursor : value.length, value.length));
   const before = value.slice(0, safeCursor);
-  const match = /(^|[\s([\u3000])@([^\s@]*)$/.exec(before);
+  const match = /@([^\s@]*)$/.exec(before);
   if (!match) return null;
-  const token = `@${match[2]}`;
-  return { start: safeCursor - token.length, end: safeCursor, query: match[2] };
+  const token = `@${match[1]}`;
+  return { start: safeCursor - token.length, end: safeCursor, query: match[1] };
 }
 
 export function hasReferenceMentions(value: string) {
-  return /(?:^|[\s([\u3000])@[0-9]+\b/.test(value);
+  return /@[0-9]+\b/.test(value);
 }
 
 export function referenceMentionNumbers(value: string) {
-  return [...String(value || "").matchAll(/(?:^|[^\w])@([0-9]+)\b/g)].map((match) => Number(match[1]));
+  return [...String(value || "").matchAll(/@([0-9]+)\b/g)].map((match) => Number(match[1]));
 }
 
 export function invalidReferenceMentionNumbers(value: string, references: readonly CreativeReference[]) {
