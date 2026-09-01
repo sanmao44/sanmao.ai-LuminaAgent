@@ -30,6 +30,23 @@ test("inserts a numbered mention at the active cursor and replaces the active qu
   assert.equal(middle.value, "A @1 B");
 });
 
+test("opens and inserts mentions after any text character", () => {
+  assert.deepEqual(refs.referenceMentionRange("主体@图", 4), {
+    start: 2,
+    end: 4,
+    query: "图",
+  });
+  assert.deepEqual(refs.referenceMentionRange("look@ref", 8), {
+    start: 4,
+    end: 8,
+    query: "ref",
+  });
+
+  const inserted = refs.insertReferenceMention("主体@图之后", 4, 1);
+  assert.equal(inserted.value, "主体@2 之后");
+  assert.equal(inserted.cursor, 5);
+});
+
 test("selects exact references with mentions and all references without mentions", () => {
   assert.deepEqual(refs.selectCreativeReferences("请使用 @1 和 @3", available), {
     references: [available[0], available[2]],
@@ -47,6 +64,12 @@ test("selects exact references with mentions and all references without mentions
 test("deduplicates repeated mentions while preserving mention order", () => {
   const result = refs.selectCreativeReferences("@2 @1 @2", available);
   assert.deepEqual(result.references.map((item) => item.id), ["video-1", "image-1"]);
+});
+
+test("recognizes mentions embedded in text when selecting references", () => {
+  const result = refs.selectCreativeReferences("请让主体@1参考风格@3", available);
+  assert.deepEqual(result.references.map((item) => item.id), ["image-1", "text-1"]);
+  assert.equal(refs.hasReferenceMentions("主体@1参考"), true);
 });
 
 test("turns natural image and video labels into real numbered mentions", () => {
