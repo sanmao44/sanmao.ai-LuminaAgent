@@ -126,6 +126,25 @@ test('manifest check falls back from a failing GitHub URL to a mirror', async ()
   assert.deepEqual(calls, ['https://raw.example.test/fail.json', 'https://cdn.example.test/ok.json']);
 });
 
+test('manifest check selects the newest successful source instead of the fastest stale mirror', async () => {
+  process.env.SANMAO_UPDATE_MANIFEST_URL = 'https://mirror.example.test/old/update.json';
+  process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://mirror.example.test/new/update.json';
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    const version = value.includes('/old/') ? '0.7.18' : '0.7.19';
+    await new Promise((resolve) => setTimeout(resolve, version === '0.7.18' ? 5 : 25));
+    return new Response(JSON.stringify({
+      schemaVersion: 1,
+      latestVersion: version,
+      releaseUrl: `https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v${version}`,
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.latestVersion, '0.7.19');
+  assert.equal(status.hasUpdate, true);
+});
+
 test('manifest check returns an error status when every source fails', async () => {
   delete process.env.SANMAO_UPDATE_MANIFEST_URL;
   delete process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;

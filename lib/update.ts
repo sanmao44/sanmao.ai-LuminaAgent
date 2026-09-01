@@ -180,9 +180,18 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
 
   const checkedAt = new Date().toISOString();
   try {
-    // Query all sensible sources at once and accept the first healthy one, so a
-    // no-VPN client keeps working even when a blocked/cached mirror answers first.
-    const status = await Promise.any(urls.map((url) => fetchManifestFromSource(url, checkedAt)));
+    // Query all sensible sources at once, but wait for every response before
+    // selecting a result. A CDN can return an older, cached manifest with HTTP
+    // 200; accepting the first healthy response would hide a newer release
+    // that another source already knows about.
+    const results = await Promise.allSettled(urls.map((url) => fetchManifestFromSource(url, checkedAt)));
+    const statuses = results
+      .filter((result): result is PromiseFulfilledResult<UpdateStatus> => result.status === 'fulfilled')
+      .map((result) => result.value);
+    if (!statuses.length) throw new Error('所有更新清单源均不可用');
+    const status = statuses.reduce((latest, candidate) => (
+      compareVersions(candidate.latestVersion || '0.0.0', latest.latestVersion || '0.0.0') > 0 ? candidate : latest
+    ));
     cached = { expiresAt: Date.now() + cacheTtlMs, status };
     return status;
   } catch (error) {
