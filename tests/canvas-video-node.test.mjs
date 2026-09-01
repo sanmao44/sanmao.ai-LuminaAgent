@@ -40,6 +40,11 @@ test("video canvas cards expose a persistent visual and accessible distinction",
   assert.match(component, /className=\{`canvas-media-card\$\{data\.kind === "video" \? " video" : ""\}`\}/);
   assert.match(component, /className="canvas-video-mark"/);
   assert.match(component, /▶ 视频\{videoDuration \? ` · \$\{videoDuration\}` : ""\}/);
+  assert.match(component, /className="canvas-video-play"/);
+  assert.match(component, /title="播放视频预览"/);
+  assert.match(component, /aria-label=\{`播放视频预览\$\{videoDuration/);
+  assert.match(component, /onClick=\{\(event\) => \{\s*event\.stopPropagation\(\);\s*onPreview\(\);/);
+  assert.match(component, /<svg viewBox="0 0 24 24" aria-hidden="true">/);
   assert.match(component, /aria-label=\{`视频预览\$\{videoDuration/);
   assert.match(component, /className="canvas-image-resolution canvas-video-resolution"/);
   assert.match(component, /title=\{`视频分辨率 \$\{videoResolution\}`\}/);

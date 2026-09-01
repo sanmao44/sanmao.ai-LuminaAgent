@@ -1358,6 +1358,15 @@ html[data-theme="dark"] .canvas-workspace{
   .media-viewer-shared>header{display:block}
   .media-viewer-shared>header>div:first-child{margin-bottom:8px}
   .media-viewer-shared>header>div:first-child>b{max-width:70vw}
+
+/* Keep a completed video node unmistakably playable without covering its metadata. */
+.canvas-video-play{position:absolute;z-index:var(--canvas-z-local-content);left:50%;top:50%;width:54px;height:54px;display:grid;place-items:center;padding:0;border:1px solid rgba(191,219,254,.72);border-radius:50%;background:linear-gradient(145deg,rgba(30,64,175,.88),rgba(37,99,235,.7));box-shadow:0 10px 24px rgba(15,23,42,.38),inset 0 1px 0 rgba(255,255,255,.42),0 0 0 5px rgba(96,165,250,.12);backdrop-filter:blur(8px);color:#fff;cursor:pointer;opacity:.9;transform:translate(-50%,-50%);transition:opacity .16s ease,transform .16s ease,box-shadow .16s ease,filter .16s ease}
+.canvas-video-play::before{content:"";position:absolute;inset:5px;border:1px solid rgba(219,234,254,.42);border-radius:50%;pointer-events:none}
+.canvas-video-play svg{position:relative;width:22px;height:22px;margin-left:2px;fill:currentColor;filter:drop-shadow(0 1px 2px rgba(15,23,42,.32))}
+.canvas-video-play:hover,.canvas-video-play:focus-visible{opacity:1;filter:brightness(1.08);transform:translate(-50%,-50%) scale(1.07);box-shadow:0 13px 28px rgba(15,23,42,.46),inset 0 1px 0 rgba(255,255,255,.5),0 0 0 7px rgba(96,165,250,.18)}
+.canvas-video-play:focus-visible{outline:3px solid color-mix(in srgb,#93c5fd 72%,transparent);outline-offset:3px}
+.canvas-video-play:active{transform:translate(-50%,-50%) scale(.98)}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-video-play{transition:none}html:not([data-motion="on"]) .canvas-video-play:hover,html:not([data-motion="on"]) .canvas-video-play:focus-visible,html:not([data-motion="on"]) .canvas-video-play:active{transform:translate(-50%,-50%)}}
   .media-viewer-shared .media-viewer-header-actions{width:100%;gap:4px;overflow:visible}
   .media-viewer-shared .media-viewer-header-actions>.media-viewer-header-button,
   .media-viewer-shared .media-viewer-download-button{width:34px;padding:0;gap:0}

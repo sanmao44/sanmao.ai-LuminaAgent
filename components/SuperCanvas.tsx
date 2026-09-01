@@ -12757,6 +12757,23 @@ function CanvasNodeCard({
               />
             )}
             {data.kind === "video" && data.url && (
+              <button
+                type="button"
+                className="canvas-video-play"
+                title="播放视频预览"
+                aria-label={`播放视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPreview();
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 6.8v10.4a1 1 0 0 0 1.53.85l7.78-5.2a1 1 0 0 0 0-1.7l-7.78-5.2A1 1 0 0 0 9 6.8Z" />
+                </svg>
+              </button>
+            )}
+            {data.kind === "video" && data.url && (
               <span
                 className="canvas-video-mark"
                 title={`视频${videoDuration ? ` · ${videoDuration}` : ""}`}
