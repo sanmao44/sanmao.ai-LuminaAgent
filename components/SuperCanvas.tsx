@@ -205,6 +205,14 @@ import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 type Mode = CanvasMediaKind | "text";
 type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
+type CanvasCursorTask =
+  | "idle"
+  | "panning"
+  | "selecting"
+  | "connecting"
+  | "dragging"
+  | "resizing"
+  | "copying";
 type Point = { x: number; y: number };
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
 
@@ -1628,6 +1636,7 @@ export default function SuperCanvas() {
   const [theme, setTheme] = useState<CanvasTheme>("light");
   const [mentionState, setMentionState] = useState<MentionState>(null);
   const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
+  const [panReady, setPanReady] = useState(false);
   const [panActive, setPanActive] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [assetRefresh, setAssetRefresh] = useState(0);
@@ -2346,17 +2355,25 @@ export default function SuperCanvas() {
     const handleSpaceDown = (event: KeyboardEvent) => {
       if (event.code !== "Space" || isEditableTarget(event.target)) return;
       spaceHeldRef.current = true;
+      setPanReady(true);
+      if (!interactionRef.current) setCursorTask("idle");
       event.preventDefault();
       if (interactionRef.current?.kind === "pan") setPanActive(true);
     };
     const handleSpaceUp = (event: KeyboardEvent) => {
       if (event.code !== "Space") return;
       spaceHeldRef.current = false;
-      if (!interactionRef.current) setPanActive(false);
+      setPanReady(false);
+      if (!interactionRef.current) {
+        setPanActive(false);
+        setCursorTask("idle");
+      }
     };
     const handleWindowBlur = () => {
       spaceHeldRef.current = false;
+      setPanReady(false);
       setPanActive(false);
+      setCursorTask("idle");
     };
     window.addEventListener("keydown", handleSpaceDown);
     window.addEventListener("keyup", handleSpaceUp);
@@ -2438,6 +2455,7 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent) => {
       event.preventDefault();
       event.stopPropagation();
+      setCursorTask("selecting");
       const point = stagePoint(event.clientX, event.clientY);
       setMarquee({ x: point.x, y: point.y, w: 0, h: 0 });
       interactionRef.current = {
@@ -2509,6 +2527,7 @@ export default function SuperCanvas() {
         clearSelectionOnClick:
           event.button === 0 && !event.shiftKey && !spaceHeldRef.current,
       };
+      setCursorTask("panning");
       setPanActive(true);
       capture(event);
     },
@@ -2534,6 +2553,7 @@ export default function SuperCanvas() {
       event.preventDefault();
       event.stopPropagation();
       cancelPendingNodeClick();
+      setCursorTask("dragging");
       setNodeGestureActive(true);
       setQuickToolbarNodeId(null);
       const now = Date.now();
@@ -2632,6 +2652,7 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set(ids));
       setSelectedEdgeId(null);
       setQuickToolbarNodeId(null);
+      setCursorTask("dragging");
       const positions = Object.fromEntries(
         ids.map((id) => {
           const item = nodeById(docRef.current, id);
@@ -2659,6 +2680,7 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent, group: CanvasGroup) => {
       event.preventDefault();
       event.stopPropagation();
+      setCursorTask("resizing");
       const bounds = groupBounds(docRef.current, group.id);
       const origin = { x: bounds.x + 30, y: bounds.y + 48 };
       const nodes = Object.fromEntries(
@@ -2693,6 +2715,7 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent, node: CanvasNode) => {
       event.preventDefault();
       event.stopPropagation();
+      setCursorTask("resizing");
       setQuickToolbarNodeId(null);
       setDraggingNodeIds(new Set([node.id]));
       const size = nodeSize(node);
@@ -2714,6 +2737,7 @@ export default function SuperCanvas() {
     (event: ReactPointerEvent, nodeId: string, port: "left" | "right") => {
       event.preventDefault();
       event.stopPropagation();
+      setCursorTask("connecting");
       const point = stagePoint(event.clientX, event.clientY);
       setConnectionNodePicker(null);
       setConnection({
@@ -2742,6 +2766,7 @@ export default function SuperCanvas() {
       event?.preventDefault();
       event?.stopPropagation();
       interactionRef.current = null;
+      setCursorTask("idle");
       setConnection(null);
       setConnectionNodePicker(null);
       setConnectionTargetId(null);
@@ -3222,6 +3247,7 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
+      setCursorTask("idle");
       setMarquee(null);
       try {
         stageRef.current?.releasePointerCapture(event.pointerId);
@@ -3257,6 +3283,7 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
+      setCursorTask("idle");
       setMarquee(null);
       setConnection(null);
       setConnectionNodePicker(null);
@@ -3277,6 +3304,7 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
+      setCursorTask("idle");
       setMarquee(null);
       setConnection(null);
       setConnectionNodePicker(null);
@@ -3284,6 +3312,23 @@ export default function SuperCanvas() {
     };
     window.addEventListener("blur", handleWindowBlur);
     return () => window.removeEventListener("blur", handleWindowBlur);
+  }, []);
+
+  useEffect(() => {
+    // Drops handled by nested panels stop bubbling before the stage can clear
+    // its drag state. Capture the browser-level end events so the cursor never
+    // remains in the copy state after a completed or cancelled drag.
+    const clearDragCursor = () => {
+      setFileDropActive(false);
+      setAssetDropGroupId(null);
+      setCursorTask("idle");
+    };
+    window.addEventListener("dragend", clearDragCursor, true);
+    window.addEventListener("drop", clearDragCursor, true);
+    return () => {
+      window.removeEventListener("dragend", clearDragCursor, true);
+      window.removeEventListener("drop", clearDragCursor, true);
+    };
   }, []);
 
   const zoomAt = useCallback(
@@ -9248,7 +9293,8 @@ export default function SuperCanvas() {
       )}
       <div
         ref={stageRef}
-        className={`canvas-stage ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""}`}
+        className={`canvas-stage ${panReady ? "is-pan-ready" : ""} ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""} ${cursorTask !== "idle" ? `is-cursor-${cursorTask}` : ""}`}
+        data-canvas-cursor-task={cursorTask}
         tabIndex={-1}
         aria-keyshortcuts="Delete"
         onPointerDown={handleStagePointerDown}
@@ -9307,18 +9353,21 @@ export default function SuperCanvas() {
           const isCanvasNodeDrag =
             event.dataTransfer.types.includes("application/x-sanmao-canvas-node") ||
             Boolean(target.closest(".canvas-node"));
-          if (!isReferenceDrag && !isCanvasNodeDrag) event.preventDefault();
+          if (isReferenceDrag || isCanvasNodeDrag) setCursorTask("copying");
+          else event.preventDefault();
         }}
         onDragOver={(event) => {
           if (hasExternalFileTransfer(event.dataTransfer)) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
+            setCursorTask("copying");
             setFileDropActive(true);
             return;
           }
           if (event.dataTransfer.types.includes("application/x-sanmao-asset")) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
+            setCursorTask("copying");
             setAssetDropGroupId(
               groupAtPoint(
                 docRef.current,
@@ -9331,6 +9380,7 @@ export default function SuperCanvas() {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setAssetDropGroupId(null);
             setFileDropActive(false);
+            setCursorTask("idle");
           }
         }}
         onDrop={(event) => {
@@ -9338,6 +9388,7 @@ export default function SuperCanvas() {
             event.preventDefault();
             event.stopPropagation();
             setFileDropActive(false);
+            setCursorTask("idle");
             if (event.dataTransfer.files.length) {
               void handleFiles(
                 event.dataTransfer.files,
@@ -9473,7 +9524,7 @@ export default function SuperCanvas() {
                 return (
                   <div
                     key={group.id}
-                    className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""} ${connection?.sourceId === group.id ? "connection-source" : ""} ${connectionTargetId === group.id ? "connection-target" : ""} ${assetDropGroupId === group.id ? "asset-drop-target" : ""}`}
+                    className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""} ${selectedGroupId === group.id && draggingNodeIds.size > 0 ? "dragging" : ""} ${connection?.sourceId === group.id ? "connection-source" : ""} ${connectionTargetId === group.id ? "connection-target" : ""} ${assetDropGroupId === group.id ? "asset-drop-target" : ""}`}
                     data-canvas-connectable-id={group.id}
                     style={{
                       left: bounds.x,
@@ -12648,7 +12699,7 @@ function CanvasNodeCard({
   const [mentionState, setMentionState] = useState<MentionState>(null);
   return (
     <article
-      className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""}`}
+      className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}`}
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
