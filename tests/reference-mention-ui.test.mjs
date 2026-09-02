@@ -87,3 +87,7 @@ test("video prompt exposes a one-click clear action without changing other input
   assert.match(video, /setPrompt\(''\)/);
   assert.match(video, /promptRef\.current\?\.focus\(\)/);
 });
+
+test("video studio leaves document references to Agent and canvas", () => {
+  assert.doesNotMatch(video, /文本引用|CreativeTextReferenceTray|appendTextReferenceContext|textReferenceExtensions/);
+});
