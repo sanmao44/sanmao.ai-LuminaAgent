@@ -8,6 +8,20 @@ export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type CanvasMaskStatus = 'pending' | 'running' | 'used' | 'failed';
+/** Local, non-generative image operations available from an image node. */
+export type CanvasImageOperation = 'outpaint' | 'resize' | 'crop' | 'grid' | 'transform';
+
+export type CanvasImageOperationMeta = {
+  operation: CanvasImageOperation;
+  sourceNodeId?: string;
+  inputWidth: number;
+  inputHeight: number;
+  outputWidth: number;
+  outputHeight: number;
+  prompt?: string;
+  params?: Record<string, string | number | boolean | number[]>;
+  createdAt?: number;
+};
 export type CanvasInputRole =
   | 'prompt'
   | 'context'
@@ -155,6 +169,8 @@ export type CanvasNodeData = {
   /** True when this result was created from a request that included a mask. */
   maskApplied?: boolean;
   maskSourceNodeId?: string;
+  /** Metadata for a locally rendered image transform. */
+  imageOperation?: CanvasImageOperationMeta;
   [key: string]: unknown;
 };
 

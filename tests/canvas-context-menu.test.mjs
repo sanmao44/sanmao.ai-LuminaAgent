@@ -37,7 +37,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /label: "创建副本"/);
   assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*\)/);
   assert.match(contextMenu, /label: "复制图片"/);
-  assert.match(contextMenu, /label: "超分"/);
+  assert.match(contextMenu, /label: "图片编辑"/);
   assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
   assert.match(contextMenu, /label: "下载"/);
   assert.match(contextMenu, /label: "加入资产"/);
@@ -58,15 +58,15 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(quickActions, /useMemo<CanvasQuickToolbarActions>/);
   assert.match(quickActions, /id: "mask"/);
   assert.match(quickActions, /局部编辑/);
-  assert.match(quickActions, /label: "超分"/);
+  assert.match(quickActions, /label: "图片编辑"/);
   assert.match(quickActions, /label: "作为参考"/);
   assert.match(quickActions, /label: "下载"/);
   assert.match(quickActions, /label: "加入资产"/);
   assert.match(quickActions, /label: "删除"/);
   assert.doesNotMatch(quickActions, /id: "edit"/);
   assert.doesNotMatch(quickActions, /label: "编辑"/);
-  assert.doesNotMatch(quickActions, /id: "image-operations"/);
-  assert.doesNotMatch(quickActions, /label: "图像操作"/);
+  assert.match(quickActions, /id: "image-operations"/);
+  assert.match(quickActions, /icon: "image-operations"/);
   assert.doesNotMatch(quickActions, /id: "more"/);
   assert.doesNotMatch(quickActions, /label: "更多"/);
   assert.doesNotMatch(quickActions, /label: "预览"/);

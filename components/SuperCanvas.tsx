@@ -81,6 +81,7 @@ import {
   generateCanvasVideo,
   inferCanvasAgentTask,
   loadCanvasRuntime,
+  asDataUrl,
   uploadCanvasAsset,
 } from "@/lib/canvas/api";
 import {
@@ -169,6 +170,9 @@ import MediaViewer, {
 } from "@/components/MediaViewer";
 import LocalEditEditor from "@/components/MaskEditor";
 import SelectMenu from "@/components/SelectMenu";
+import CanvasImageEditorWorkbench, {
+  type CanvasImageEditorSaveRequest,
+} from "@/components/canvas/CanvasImageEditorWorkbench";
 import type {
   CanvasCamera,
   CanvasConnectionStyle,
@@ -176,6 +180,7 @@ import type {
   CanvasEdge,
   CanvasGenerationParams,
   CanvasGroup,
+  CanvasImageOperationMeta,
   CanvasInputRole,
   CanvasMediaKind,
   CanvasMaskState,
@@ -186,6 +191,11 @@ import type {
   CanvasVariantState,
   CanvasUpscaleParams,
 } from "@/lib/canvas/types";
+import {
+  renderCanvasImageGrid,
+  renderCanvasImageOperation,
+  type ImageSize,
+} from "@/lib/canvas/image-operations";
 import {
   canvasMaskStateFromParams,
   canvasMaskStatusLabel,
@@ -1976,6 +1986,7 @@ export default function SuperCanvas() {
   const [quickToolbarNodeId, setQuickToolbarNodeId] = useState<string | null>(
     null,
   );
+  const [imageEditorNodeId, setImageEditorNodeId] = useState<string | null>(null);
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
@@ -8235,6 +8246,193 @@ export default function SuperCanvas() {
     notify("已创建超分节点，请设置参数后提交");
   }, [commit, notify, selectedSingle]);
 
+  const openImageOperations = useCallback((node: CanvasNode) => {
+    if (node.type !== "media" || node.data.kind !== "image" || !node.data.url)
+      return notify("请先选择一张已完成的图片", "error");
+    setImageEditorNodeId(node.id);
+    setQuickToolbarNodeId(null);
+    setExpandedEditorId(null);
+    setSelectedIds(new Set([node.id]));
+    setSelectedGroupId(null);
+    setLightbox(null);
+  }, [notify]);
+
+  const saveImageOperation = useCallback(async (request: CanvasImageEditorSaveRequest) => {
+    const source = imageEditorNodeId
+      ? nodeById(docRef.current, imageEditorNodeId)
+      : undefined;
+    if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url)
+      throw new Error("当前图片节点已不存在，请重新选择图片");
+
+    const sourceDataUrl = await asDataUrl(String(source.data.url));
+    const sourceParams = source.data.generation?.params || source.data.params || defaultParams("image", runtime);
+    const sourceName = String(source.data.name || "图片");
+    const createdAt = Date.now();
+    const operationLabel = request.operation === "outpaint"
+      ? "扩图"
+      : request.operation === "resize"
+        ? "缩放"
+        : request.operation === "crop"
+          ? "裁切"
+          : request.operation === "grid"
+            ? "宫格切分"
+            : "镜像-旋转";
+
+    if (request.operation === "grid") {
+      const outputs = await renderCanvasImageGrid(sourceDataUrl, request.inputSize, request.lines);
+      if (outputs.length < 2) throw new Error("宫格至少需要生成 2 个切片");
+      const assets = [] as Array<{ asset: Awaited<ReturnType<typeof uploadCanvasAsset>>; size: ImageSize }>;
+      for (const output of outputs) {
+        const asset = await uploadCanvasAsset(new File([output.blob], `${sourceName}-宫格-${assets.length + 1}.png`, { type: "image/png" }));
+        assets.push({ asset, size: output.size });
+      }
+      let next: CanvasDocument = { ...docRef.current };
+      const createdNodes: CanvasNode[] = [];
+      const edges: CanvasEdge[] = [];
+      for (const [index, output] of assets.entries()) {
+        const column = index % Math.max(1, request.lines.vertical.length + 1);
+        const row = Math.floor(index / Math.max(1, request.lines.vertical.length + 1));
+        const outputSize = mediaCardSizeForRatio(output.size.width / output.size.height, "image");
+        const meta: CanvasImageOperationMeta = {
+          operation: "grid",
+          sourceNodeId: source.id,
+          inputWidth: request.inputSize.width,
+          inputHeight: request.inputSize.height,
+          outputWidth: output.size.width,
+          outputHeight: output.size.height,
+          params: { lines: [...request.lines.vertical, ...request.lines.horizontal] },
+          createdAt,
+        };
+        const draft = {
+          ...createMedia("image", output.asset.url, `${sourceName} · 宫格 ${index + 1}`, {
+            x: source.x + nodeSize(source).w + 90 + column * (outputSize.w + 24),
+            y: source.y + row * (outputSize.h + 24),
+          }, {
+          role: "宫格切分结果",
+          status: "completed",
+          statusLabel: "本地宫格切分结果",
+          assetId: output.asset.id,
+          sourceAssetId: output.asset.id,
+          mimeType: output.asset.mime,
+          autoFit: true,
+          nativeWidth: output.size.width,
+          nativeHeight: output.size.height,
+          imageOperation: meta,
+          generation: {
+            kind: "image",
+            prompt: "",
+            params: clone(sourceParams),
+            operation: "edit",
+            referenceIds: [source.id],
+            parentNodeId: source.id,
+            createdAt,
+          },
+          }),
+          ...outputSize,
+        };
+        const positioned = {
+          ...draft,
+          ...openNodePosition({ x: draft.x, y: draft.y }, draft, createdNodes),
+        };
+        createdNodes.push(positioned);
+        edges.push({ id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
+      }
+      next = { ...next, nodes: [...next.nodes, ...createdNodes], edges: [...next.edges, ...edges] };
+      next = createGroup(next, createdNodes.map((node) => node.id), "宫格切分");
+      const group = next.groups.at(-1);
+      commit(() => next);
+      setSelectedIds(new Set(createdNodes.map((node) => node.id)));
+      setSelectedGroupId(group?.id || null);
+      setImageEditorNodeId(null);
+      notify(`已生成 ${createdNodes.length} 个宫格切片，并自动成组`);
+      addLog(`图片宫格切分完成：${sourceName} · ${createdNodes.length} 张`);
+      return;
+    }
+
+    const rendered = request.operation === "outpaint"
+      ? await renderCanvasImageOperation(sourceDataUrl, { operation: "outpaint", margins: request.margins })
+      : request.operation === "resize"
+        ? await renderCanvasImageOperation(sourceDataUrl, { operation: "resize", width: request.target.width, height: request.target.height })
+        : request.operation === "crop"
+          ? await renderCanvasImageOperation(sourceDataUrl, { operation: "crop", rect: request.rect })
+          : await renderCanvasImageOperation(sourceDataUrl, { operation: "transform", rotation: request.rotation, flipX: request.flipX, flipY: request.flipY });
+    const asset = await uploadCanvasAsset(new File([rendered.blob], `${sourceName}-${operationLabel}.png`, { type: "image/png" }));
+    const outputSize = mediaCardSizeForRatio(rendered.size.width / rendered.size.height, "image");
+    const metaParams: CanvasImageOperationMeta["params"] = request.operation === "outpaint"
+      ? { top: request.margins.top, right: request.margins.right, bottom: request.margins.bottom, left: request.margins.left }
+      : request.operation === "resize"
+        ? { longEdge: Math.max(request.target.width, request.target.height) }
+        : request.operation === "crop"
+          ? { x: request.rect.x, y: request.rect.y, width: request.rect.width, height: request.rect.height, aspect: request.aspect }
+          : { rotation: request.rotation, flipX: request.flipX, flipY: request.flipY };
+    const imageOperation: CanvasImageOperationMeta = {
+      operation: request.operation,
+      sourceNodeId: source.id,
+      inputWidth: request.inputSize.width,
+      inputHeight: request.inputSize.height,
+      outputWidth: rendered.size.width,
+      outputHeight: rendered.size.height,
+      ...(request.operation === "outpaint" ? { prompt: request.prompt } : {}),
+      params: metaParams,
+      createdAt,
+    };
+    const resultName = `${sourceName} · ${operationLabel}`;
+    const resultData = {
+      kind: "image" as const,
+      url: asset.url,
+      name: resultName,
+      role: `${operationLabel}结果`,
+      status: "completed" as const,
+      statusLabel: `本地${operationLabel}结果`,
+      assetId: asset.id,
+      sourceAssetId: asset.id,
+      mimeType: asset.mime,
+      autoFit: source.data.autoFit !== false,
+      nativeWidth: rendered.size.width,
+      nativeHeight: rendered.size.height,
+      imageOperation,
+      ...(request.operation === "outpaint" ? { prompt: request.prompt } : {}),
+      ...(source.data.params || source.data.generation?.params ? { params: clone(sourceParams) } : {}),
+      generation: {
+        kind: "image" as const,
+        prompt: request.operation === "outpaint" ? request.prompt : `本地${operationLabel}`,
+        params: clone(sourceParams),
+        operation: request.operation === "outpaint" ? "extend" as const : "edit" as const,
+        referenceIds: [source.id],
+        parentNodeId: source.id,
+        createdAt,
+      },
+    };
+    if (request.saveMode === "replace") {
+      commit((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === source.id ? { ...node, ...(source.data.autoFit !== false ? outputSize : {}), data: { ...node.data, ...resultData } } : node),
+      }));
+      setSelectedIds(new Set([source.id]));
+      notify(`已${operationLabel}并覆盖当前节点`);
+      addLog(`图片${operationLabel}完成并覆盖：${sourceName}`);
+    } else {
+      const draft = {
+        ...createMedia("image", asset.url, resultName, {
+          x: source.x + nodeSize(source).w + 90,
+          y: source.y,
+        }, resultData),
+        ...outputSize,
+      };
+      const positioned = { ...draft, ...openNodePosition({ x: draft.x, y: draft.y }, draft) };
+      const next: CanvasDocument = {
+        ...docRef.current,
+        nodes: [...docRef.current.nodes, positioned],
+        edges: [...docRef.current.edges, { id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" }],
+      };
+      commit(() => next);
+      setSelectedIds(new Set([positioned.id]));
+      notify(`已${operationLabel}并生成新节点`);
+      addLog(`图片${operationLabel}完成：${sourceName}`);
+    }
+    setImageEditorNodeId(null);
+  }, [addLog, commit, imageEditorNodeId, notify, openNodePosition, runtime]);
+
   const runUpscaleNode = useCallback(async (node: CanvasNode) => {
     if (node.type !== "upscale") return;
     const source = canvasUpscaleSource(docRef.current, node.id);
@@ -9463,11 +9661,11 @@ export default function SuperCanvas() {
             onClick: () => openCanvasMaskEditor(node.id),
           },
           {
-            id: "upscale",
-            icon: "upscale",
-            label: "超分",
+            id: "image-operations",
+            icon: "image-operations",
+            label: "图片编辑",
             disabled: !hasMedia,
-            onClick: () => createUpscaleFromSource(node),
+            onClick: () => openImageOperations(node),
           },
           ...supportingActions(hasMedia, canAddAsset),
         ],
@@ -9562,6 +9760,7 @@ export default function SuperCanvas() {
     downloadCanvasNode,
     generationKeys,
     openImageEditor,
+    openImageOperations,
     retryFailedVariants,
     createUpscaleFromSource,
     selectedGroupId,
@@ -9648,11 +9847,11 @@ export default function SuperCanvas() {
     if (node.type === "media" && node.data.kind === "image") {
       const mediaActions: CanvasQuickAction[] = [
         {
-          id: "upscale",
-          icon: "↗",
-          label: "超分",
+          id: "image-operations",
+          icon: "✦",
+          label: "图片编辑",
           disabled: !hasMedia,
-          onClick: close(() => createUpscaleFromSource(node)),
+          onClick: close(() => openImageOperations(node)),
         },
         {
           id: "copy-image",
@@ -9782,6 +9981,7 @@ export default function SuperCanvas() {
     copyCanvasImage,
     copySelection,
     createUpscaleFromSource,
+    openImageOperations,
     downloadCanvasNode,
     duplicateSelection,
     generationKeys,
@@ -10424,6 +10624,23 @@ export default function SuperCanvas() {
             actions={quickActions}
           />
         )}
+        {imageEditorNodeId && !nodeGestureActive && (() => {
+          const imageEditorNode = document.nodes.find((item) => item.id === imageEditorNodeId);
+          if (!imageEditorNode || imageEditorNode.type !== "media" || imageEditorNode.data.kind !== "image" || !imageEditorNode.data.url) return null;
+          return (
+            <CanvasImageEditorWorkbench
+              node={imageEditorNode}
+              document={document}
+              stageRef={stageRef}
+              onClose={() => setImageEditorNodeId(null)}
+              onUpscale={() => {
+                setImageEditorNodeId(null);
+                createUpscaleFromSource(imageEditorNode);
+              }}
+              onSave={saveImageOperation}
+            />
+          );
+        })()}
         {expandedEditorId && !nodeGestureActive && (() => {
           const editorNode = document.nodes.find((item) => item.id === expandedEditorId);
           if (!editorNode) return null;

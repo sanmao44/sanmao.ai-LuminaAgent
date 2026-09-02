@@ -1,20 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.22",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.22",
+  "latestVersion": "0.7.23",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.23",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.22/SANMAO.AI-0.7.22.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.22/SANMAO.AI-0.7.22.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.22/SANMAO.AI-0.7.22.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.22/SANMAO.AI-0.7.22.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip"
   ],
-  "sha256": "186462e72c35c39e9f41db745b79679373e9c5bcf84c64472531b64ffea23d6a",
+  "sha256": "6e6108b7a8035637b11b0f5507e11938ca7b7b8d23ac20d6400e7002b86fdf98",
   "publishedAt": "2026-09-03T00:00:00+08:00",
   "notes": [
-    "Add an independent audio node for importing, playing, replacing, downloading, and saving reference audio.",
-    "Allow audio-to-video connections with a fixed audio input role while preserving unsupported audio links and warning clearly.",
-    "Clean legacy pseudo-video audio parameters so audio stays out of image, video, Agent, and variant generation settings.",
-    "Replace browser gray audio controls with a consistent purple rounded player across canvas previews and references."
+    "Replace the image-node super-resolution shortcut with an in-node image editing workbench for super resolution, outpainting, resizing, cropping, grid splitting, and mirror/rotation.",
+    "Keep super resolution on the existing dedicated settings panel while enabling local preview, drag handles, presets, and save-to-new-node or overwrite workflows for the other operations.",
+    "Render local image transformations to PNG, upload only after processing succeeds, preserve lineage and undo behavior, and automatically group grid-split results."
   ]
 }
