@@ -422,10 +422,15 @@ export function canConnect(
   if (!nodeById(document, target) && !groupById(document, target)) return { ok: false, reason: "目标节点不存在" };
   if (hasPath(document, source, target)) return { ok: false, reason: "这条连接会形成循环" };
   const sourceNode = nodeById(document, source);
+  const sourceGroup = groupById(document, source);
   const targetNode = nodeById(document, target);
   const targetKind = targetNode && (targetNode.type === "media" || targetNode.type === "generator")
     ? targetNode.data.kind
     : undefined;
+  const sourceHasAudio = Boolean(
+    (sourceNode && sourceNode.data.kind === "audio") ||
+    sourceGroup?.nodeIds.some((nodeId) => nodeById(document, nodeId)?.data.kind === "audio"),
+  );
   if (
     targetKind === "image" &&
     sourceNode &&
@@ -436,8 +441,7 @@ export function canConnect(
   if (targetKind === "audio")
     return { ok: false, reason: "音频节点目前是独立素材输入，不能接收其他节点。" };
   if (
-    sourceNode &&
-    sourceNode.data.kind === "audio" &&
+    sourceHasAudio &&
     targetKind !== "video"
   )
     return { ok: false, reason: "参考音频只能连接到视频节点。" };

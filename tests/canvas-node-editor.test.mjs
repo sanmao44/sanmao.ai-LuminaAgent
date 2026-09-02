@@ -258,6 +258,23 @@ test("nested node scrolling does not trigger canvas zoom", () => {
   assert.match(styles, /overscroll-behavior:contain/);
 });
 
+test("audio nodes use the branded rounded player instead of browser gray controls", () => {
+  const playerStart = component.indexOf("function CanvasAudioPlayer");
+  const playerEnd = component.indexOf("function CanvasAudioNodePanel", playerStart);
+  assert.ok(playerStart >= 0 && playerEnd > playerStart, "audio player should be a dedicated component");
+  const player = component.slice(playerStart, playerEnd);
+  assert.match(player, /className=\{`canvas-audio-player\$\{compact/);
+  assert.match(player, /className="canvas-audio-player-native"/);
+  assert.match(player, /className="canvas-audio-player-play"/);
+  assert.match(player, /aria-label="音频播放进度"/);
+  assert.match(player, /aria-label="音量"/);
+  assert.doesNotMatch(player, /controls/);
+  assert.match(component, /data-node-kind=\{node\.type === "prompt" \? "agent" : node\.type === "upscale" \? "upscale" : data\.kind === "video" \? "video" : data\.kind === "audio" \? "audio"/);
+  assert.match(styles, /\.canvas-audio-player\{[^}]*border-radius:15px/);
+  assert.match(styles, /\.canvas-audio-player-play\{[^}]*border-radius:50%/);
+  assert.match(styles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
+});
+
 test("image node editing persists parameters without turning uploads into generated media", () => {
   assert.match(component, /role: "参考素材",\s*mimeType: asset\.mime,\s*\.\.\.defaultMediaParams\(asset\.kind, runtime\)/);
   assert.match(component, /generation: item\.data\.generation/);

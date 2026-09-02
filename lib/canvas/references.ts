@@ -222,10 +222,10 @@ export function resolveCanvasVideoInputs(
   if (inputMode === "text") unused.push(...videos);
   else if (videos.length > referenceVideos.length) unused.push(...videos.slice(referenceVideos.length));
   const audioLimit = Math.max(0, Math.floor(options.maxAudios ?? 10));
-  const audios = inputMode === "text" || options.supportsAudio === false
+  const audios = inputMode !== "reference" || options.supportsAudio === false
     ? []
     : orderedAudios.slice(0, audioLimit);
-  if (inputMode === "text" || options.supportsAudio === false) unused.push(...orderedAudios);
+  if (inputMode !== "reference" || options.supportsAudio === false) unused.push(...orderedAudios);
   else if (orderedAudios.length > audios.length) unused.push(...orderedAudios.slice(audios.length));
 
   return {

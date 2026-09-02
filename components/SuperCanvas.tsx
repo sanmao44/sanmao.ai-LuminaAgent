@@ -907,13 +907,6 @@ function connectCanvasNodesInDocument(
         reason: "当前视频模型不支持参考视频，请切换到支持参考视频的模型，或移除视频输入。",
       };
     }
-    if (sourceHasAudio && (!capabilities.supportsAudio || limits.maxAudios <= 0)) {
-      return {
-        ok: false,
-        document,
-        reason: "当前视频模型不支持参考音频，请切换到支持音频输入的模型，或移除音频。",
-      };
-    }
     const existing = incomingReferences(document, targetId);
     const existingVideoCount = existing.filter((node) => node.data.kind === "video").length;
     const existingAudioCount = existing.filter((node) => node.data.kind === "audio").length;
@@ -942,7 +935,7 @@ function connectCanvasNodesInDocument(
     const explicitSlot = requestedRole === "first-frame" || requestedRole === "last-frame";
     if (automatic && !explicitSlot) {
       videoMode = combined.some((node) => node.data.kind === "audio")
-        ? capabilities.supportsAudio && capabilities.supportsReference && limits.maxAudios > 0 ? "reference" : undefined
+        ? capabilities.supportsAudio && capabilities.supportsReference && limits.maxAudios > 0 ? "reference" : settings.inputMode
         : combined.some((node) => node.data.kind === "video")
         ? capabilities.supportsReference && limits.maxReferenceVideos > 0 ? "reference" : undefined
         : preferredCanvasVideoInputModeForImageCount(combinedImages.length, capabilities);
@@ -963,10 +956,6 @@ function connectCanvasNodesInDocument(
       else if (requestedRole === "first-frame" && videoMode !== "frames") videoMode = "first-frame";
       if (videoMode === "reference" && !capabilities.supportsReference)
         return { ok: false, document, reason: "当前模型不支持参考图，请切换到支持参考图的视频模型。" };
-      if (sourceHasAudio && (!capabilities.supportsAudio || limits.maxAudios <= 0))
-        return { ok: false, document, reason: "当前视频模型不支持参考音频，请切换到支持音频输入的模型。" };
-      if (sourceHasAudio && videoMode !== "reference")
-        return { ok: false, document, reason: "参考音频需要参考模式，请切换生成方式或恢复自动后再接入音频。" };
       if ((videoMode === "first-frame" || videoMode === "frames") && !capabilities.supportsFirstFrame)
         return { ok: false, document, reason: "当前模型不支持首帧/首尾帧，请切换到支持首帧的视频模型。" };
       if (videoMode === "text" && (sourceHasImage || sourceHasVideo))
@@ -1067,12 +1056,9 @@ function canvasVideoInputError(
   const connectedVideos = inputs.media.filter((node) => node.data.kind === "video");
   const connectedAudios = inputs.media.filter((node) => node.data.kind === "audio");
   if (inputMode === "text") {
-    if (connectedImages.length || connectedVideos.length || connectedAudios.length) return "已连接图片、参考视频或参考音频，但当前为文生视频模式；请切换到图片/参考模式，或移除输入后再生成。";
+    if (connectedImages.length || connectedVideos.length) return "已连接图片或参考视频，但当前为文生视频模式；请切换到图片/参考模式，或移除输入后再生成。";
     return undefined;
   }
-  if (connectedAudios.length && !inputs.audios.length) return "当前视频模型不支持参考音频，请切换到支持音频输入的模型，或移除音频。";
-  if (connectedAudios.length && inputMode !== "reference") return "参考音频需要参考模式，请切换生成方式后再生成。";
-  if (connectedAudios.length > limits.maxAudios) return `当前模型最多接收 ${limits.maxAudios} 段参考音频，请减少音频输入。`;
   if (inputMode === "first-frame") {
     if (!inputs.firstFrame) return "首帧模式请先连接一张首帧图片。";
     if (inputs.unused.some((node) => node.data.kind === "image")) return "首帧模式只支持一张图片；请切换到首尾帧或参考图模式。";
@@ -1691,6 +1677,7 @@ function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | 
     kind: node.data.kind,
     url: String(node.data.url),
     name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : node.data.kind === "audio" ? "音频素材" : "图片素材")),
+    ...(node.data.mimeType ? { mimeType: String(node.data.mimeType) } : {}),
     origin: "node",
   };
 }
@@ -2134,6 +2121,18 @@ export default function SuperCanvas() {
     (nodeId: string) => {
       closeCanvasOverlayConflicts();
       setAssetCollectionPickerNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasAudioPanel = useCallback(
+    (nodeId: string) => {
+      closeCanvasOverlayConflicts();
+      setSelectedIds(new Set([nodeId]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      setExpandedEditorId(nodeId);
+      setLightbox(null);
+      setReuseDraft(null);
     },
     [closeCanvasOverlayConflicts],
   );
@@ -3502,7 +3501,13 @@ export default function SuperCanvas() {
             setQuickToolbarNodeId(null);
             setExpandedEditorId(null);
             if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
-            if (isCanvasReferenceableNode(node))
+            if (node.type === "media" && node.data.kind === "audio") {
+              setSelectedIds(new Set([node.id]));
+              setSelectedGroupId(null);
+              setQuickToolbarNodeId(null);
+              setExpandedEditorId(node.id);
+              setLightbox(null);
+            } else if (isCanvasReferenceableNode(node))
               openCanvasMediaViewer(node.id);
             else if (node.type === "prompt") openCanvasTextViewer(node.id);
           } else if (!interaction.shiftKey) {
@@ -4670,6 +4675,33 @@ export default function SuperCanvas() {
       request?.nodeId && activeNode?.id === request.nodeId
         ? request.params
         : undefined;
+    if (activeNode?.type === "media" && activeNode.data.kind === "audio") {
+      if (mode === "text") {
+        return {
+          kind: "text" as const,
+          prompt: drafts.text.prompt,
+          params: normalizeCreationSettings("text", drafts.text.params, runtime),
+          node: null,
+          target: null,
+        };
+      }
+      if (mode === "video") {
+        return {
+          kind: "video" as const,
+          prompt: drafts.video.prompt,
+          params: copyParams(drafts.video.params, "video", runtime),
+          node: null,
+          target: null,
+        };
+      }
+      return {
+        kind: "image" as const,
+        prompt: drafts.image.prompt,
+        params: copyParams(drafts.image.params, "image", runtime),
+        node: null,
+        target: null,
+      };
+    }
     if (activeNode?.type === "prompt") {
       return {
         kind: "text" as const,
@@ -4691,7 +4723,7 @@ export default function SuperCanvas() {
     }
     if (activeNode?.type === "generator") {
       const prompt = promptOverride ?? String(activeNode.data.prompt || "");
-      if (activeNode.data.kind === "video" || activeNode.data.kind === "audio") {
+      if (activeNode.data.kind === "video") {
         return {
           kind: "video" as const,
           prompt,
@@ -4711,13 +4743,13 @@ export default function SuperCanvas() {
     if (activeNode?.type === "media") {
       const prompt = promptOverride ?? String(activeNode.data.generation?.prompt || activeNode.data.prompt || "");
       const value = paramsOverride || activeNode.data.generation?.params || activeNode.data.params;
-      if (activeNode.data.kind === "video" || activeNode.data.kind === "audio") {
+      if (activeNode.data.kind === "video") {
         return {
           kind: "video" as const,
           prompt,
           params: copyParams(value, "video", runtime),
           node: null,
-          target: activeNode.data.kind === "audio" ? null : activeNode,
+          target: activeNode,
         };
       }
       return {
@@ -4968,6 +5000,10 @@ export default function SuperCanvas() {
 
   const updateParams = useCallback(
     (settings: CreationSettings) => {
+      if (selectedSingle?.type === "media" && selectedSingle.data.kind === "audio") {
+        notify("音频节点不支持生成参数。", "error");
+        return;
+      }
       const source = deckSource();
       if (source.node) {
         const currentParams = source.node.data.params;
@@ -5091,7 +5127,7 @@ export default function SuperCanvas() {
         }));
       writeSharedCreationSettings(settings);
     },
-    [deckSource, runtime, updateDoc],
+    [deckSource, notify, runtime, selectedSingle, updateDoc],
   );
 
   const pollVideo = useCallback(
@@ -6663,11 +6699,18 @@ export default function SuperCanvas() {
   }, [addLog, commit, notify, openNodePosition, pollVideo, runImageContinuation, runtime, screenToWorld, selectedSingle]);
 
   const runGeneration = useCallback(async (request?: CanvasGenerationRequest) => {
+    const requestedNode = request?.nodeId
+      ? nodeById(docRef.current, request.nodeId)
+      : selectedSingle;
+    if (requestedNode?.type === "media" && requestedNode.data.kind === "audio") {
+      notify("音频节点是独立素材输入，请将它连接到视频节点后生成。", "error");
+      return;
+    }
     if (!request && reuseDraft) {
       await runReuseGeneration(reuseDraft);
       return;
     }
-    if (request?.nodeId && !nodeById(docRef.current, request.nodeId)) {
+    if (request?.nodeId && !requestedNode) {
       return notify("当前节点已不存在，请重新选择后再生成。", "error");
     }
     const source = deckSource(request);
@@ -7558,6 +7601,7 @@ export default function SuperCanvas() {
       const draft = editorDrafts[node.id];
       if (draft) return draft.prompt;
       if (node.type === "prompt") return String(node.data.agentPrompt || node.data.text || "");
+      if (node.type === "media" && node.data.kind === "audio") return "";
       return String(node.data.generation?.prompt || node.data.prompt || "");
     },
     [editorDrafts],
@@ -7568,6 +7612,7 @@ export default function SuperCanvas() {
       const draft = editorDrafts[node.id];
       if (draft?.params) return draft.params;
       if (node.type === "prompt") return normalizeCreationSettings("text", node.data.params, runtime);
+      if (node.type === "media" && node.data.kind === "audio") return undefined;
       const kind = node.data.kind === "video" ? "video" : "image";
       return copyParams(node.data.generation?.params || node.data.params, kind, runtime);
     },
@@ -7623,6 +7668,10 @@ export default function SuperCanvas() {
         openImageEditor(node);
         return;
       }
+      if (node.type === "media" && node.data.kind === "audio") {
+        openCanvasAudioPanel(node.id);
+        return;
+      }
       // A card can be draggable, so keep editor opening independent from the
       // drag gesture. Some persisted legacy nodes also carry partial params;
       // opening the editor must still work with a safe default in that case.
@@ -7645,7 +7694,7 @@ export default function SuperCanvas() {
       setMode(node.type === "prompt" ? "text" : node.data.kind === "video" ? "video" : "image");
       setLightbox(null);
     },
-    [editorParamsFor, editorPromptFor, expandedEditorId, openImageEditor, openReuseDraft, reuseDraft],
+    [editorParamsFor, editorPromptFor, expandedEditorId, openCanvasAudioPanel, openImageEditor, openReuseDraft, reuseDraft],
   );
 
   useEffect(() => {
@@ -7657,6 +7706,7 @@ export default function SuperCanvas() {
 
   const updateEditorPrompt = useCallback(
     (node: CanvasNode, value: string) => {
+      if (node.type === "media" && node.data.kind === "audio") return;
       setEditorDrafts((current) => ({
         ...current,
         [node.id]: { ...current[node.id], prompt: value },
@@ -7709,6 +7759,7 @@ export default function SuperCanvas() {
 
   const updateEditorParams = useCallback(
     (node: CanvasNode, settings: CreationSettings) => {
+      if (node.type === "media" && node.data.kind === "audio") return;
       setEditorDrafts((current) => ({
         ...current,
         [node.id]: { ...current[node.id], prompt: editorPromptFor(node), params: clone(settings) },
@@ -7785,6 +7836,10 @@ export default function SuperCanvas() {
     async (targetId: string, files: File[]) => {
       const target = nodeById(docRef.current, targetId);
       if (!target || !files.length) return;
+      if (target.type === "media" && target.data.kind === "audio") {
+        notify("音频节点请使用“添加音频”或“替换音频”，不能添加生成参考。", "error");
+        return;
+      }
       const existing = incomingContext(docRef.current, targetId).filter(isCanvasMentionableNode).length;
       if (existing >= 16) return notify("参考图最多 16 张。", "error");
       const nodes: CanvasNode[] = [];
@@ -7915,6 +7970,10 @@ export default function SuperCanvas() {
 
   const runEditorGeneration = useCallback(
     (node: CanvasNode) => {
+      if (node.type === "media" && node.data.kind === "audio") {
+        notify("音频节点是独立素材输入，请将它连接到视频节点后生成。", "error");
+        return;
+      }
       if (node.type === "upscale") {
         void runUpscaleNodeRef.current?.(node);
         return;
@@ -7970,7 +8029,7 @@ export default function SuperCanvas() {
       setExpandedEditorId(null);
       void runGenerationRef.current?.(generationRequest);
     },
-    [commit, editorDrafts, editorParamsFor, editorPromptFor, reuseDraft, runReuseGeneration],
+    [commit, editorDrafts, editorParamsFor, editorPromptFor, notify, reuseDraft, runReuseGeneration],
   );
 
   const updateUpscaleParams = useCallback((node: CanvasNode, params: CanvasUpscaleParams) => {
@@ -8718,6 +8777,7 @@ export default function SuperCanvas() {
     [document.camera, selectNode, selectedIds, stagePoint],
   );
   const deck = deckSource();
+  const selectedAudioNode = selectedSingle?.type === "media" && selectedSingle.data.kind === "audio";
   const deckKind = deck.kind;
   const generationBusy = reuseDraft
     ? generationKeys.has(`reuse:${reuseDraft.sourceNodeId || reuseDraft.kind}`)
@@ -8789,6 +8849,10 @@ export default function SuperCanvas() {
   }, [composerPrompt, mode, reuseDraft, selectedSingle?.id]);
   const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
     if (node.type !== "media") return;
+    if (node.data.kind === "audio") {
+      notify("音频节点不支持提示词或生成参数。", "error");
+      return;
+    }
     const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
     if (node.data.kind === "image") {
       openImageEditor(node, { prompt: value });
@@ -8920,6 +8984,10 @@ export default function SuperCanvas() {
   const continueFromMedia = useCallback(
     (node: CanvasNode) => {
       if (node.type !== "media" || !node.data.kind) return;
+      if (node.data.kind === "audio") {
+        notify("音频节点只能作为视频参考输入，不能继续生成。", "error");
+        return;
+      }
       if (node.data.kind === "video") {
         const params = node.data.generation?.params as VideoCreationSettings | undefined;
         openReuseDraft(
@@ -8930,11 +8998,15 @@ export default function SuperCanvas() {
         );
       } else openImageEditor(node);
     },
-    [openImageEditor, openReuseDraft],
+    [notify, openImageEditor, openReuseDraft],
   );
   const updateViewerParams = useCallback(
     (node: CanvasNode, settings: CreationSettings) => {
       if (node.type !== "media" || settings.kind === "text") return;
+      if (node.data.kind === "audio") {
+        notify("音频节点不支持生成参数。", "error");
+        return;
+      }
       if (reuseDraft?.sourceNodeId === node.id) {
         setReuseDraft((current) => current ? { ...current, params: clone(settings), dirty: true } : current);
         setExpandedEditorId(node.id);
@@ -9361,6 +9433,20 @@ export default function SuperCanvas() {
           onClick: () => openAssetCollectionPicker(node),
         },
       ];
+    if (node.type === "media" && node.data.kind === "audio") {
+      const hasMedia = Boolean(node.data.url);
+      const canAddAsset = canAddCanvasAsset(node);
+      return {
+        primaryActions: [
+          { id: "edit-audio", icon: "edit", label: hasMedia ? "编辑 / 替换" : "添加音频", onClick: () => openCanvasAudioPanel(node.id) },
+          { id: "play-audio", icon: "play", label: "播放", disabled: !hasMedia, onClick: () => openCanvasAudioPanel(node.id) },
+          { id: "download-audio", icon: "download", label: "下载", disabled: !hasMedia, onClick: () => downloadCanvasNode(node) },
+          { id: "asset-audio", icon: "asset", label: "加入资产", disabled: !canAddAsset, onClick: () => openAssetCollectionPicker(node) },
+        ],
+        menuGroups: [],
+        dangerAction: { id: "delete-audio", icon: "delete", label: "删除", danger: true, onClick: deleteSelection },
+      };
+    }
     if (node.type === "media" && node.data.kind === "image") {
       const hasMedia = Boolean(node.data.url);
       const canAddAsset = canAddCanvasAsset(node);
@@ -9470,6 +9556,7 @@ export default function SuperCanvas() {
     openAssetCollectionPicker,
     openCanvasMaskEditor,
     openCanvasTextViewer,
+    openCanvasAudioPanel,
     continueFromMedia,
     deleteSelection,
     downloadCanvasNode,
@@ -9548,6 +9635,16 @@ export default function SuperCanvas() {
       },
     ];
     const layerGroup: CanvasContextMenuGroup = { label: "层级", actions: layerActions };
+    if (node.type === "media" && node.data.kind === "audio") {
+      const audioActions: CanvasQuickAction[] = [
+        { id: "edit-audio", icon: "✎", label: hasMedia ? "编辑 / 替换" : "添加音频", onClick: close(() => openCanvasAudioPanel(node.id)) },
+        { id: "play-audio", icon: "▶", label: "播放", disabled: !hasMedia, onClick: close(() => openCanvasAudioPanel(node.id)) },
+        { id: "download-audio", icon: "↓", label: "下载", disabled: !hasMedia, onClick: close(() => downloadCanvasNode(node)) },
+        { id: "asset-audio", icon: "★", label: "加入资产", disabled: !canAddAsset, onClick: close(() => openAssetCollectionPicker(node)) },
+        { id: "delete-audio", icon: "×", label: "删除", danger: true, onClick: close(deleteSelection) },
+      ];
+      return [{ label: "音频操作", actions: audioActions }];
+    }
     if (node.type === "media" && node.data.kind === "image") {
       const mediaActions: CanvasQuickAction[] = [
         {
@@ -9678,6 +9775,7 @@ export default function SuperCanvas() {
     ];
   }, [
     openAssetCollectionPicker,
+    openCanvasAudioPanel,
     contextNode,
     contextMenu?.world,
     continueFromMedia,
@@ -10392,6 +10490,8 @@ export default function SuperCanvas() {
               upscaleParams={editorNode.type === "upscale" ? editorNode.data.params as CanvasUpscaleParams : undefined}
               upscaleSourceUrl={editorNode.type === "upscale" ? canvasUpscaleSource(document, editorNode.id)?.data.url : undefined}
               onUpscaleParamsChange={(params) => updateUpscaleParams(editorNode, params)}
+              onReplaceAudio={replaceAudioNode}
+              onAudioDurationChange={(nodeId, durationSeconds) => setMediaNaturalSize(nodeId, 0, 0, durationSeconds)}
             />
           );
         })()}
@@ -10568,7 +10668,7 @@ export default function SuperCanvas() {
             </div>
           </div>
         )}
-        <div ref={deckRef} className={`canvas-deck legacy-deck-hidden ${deckCollapsed ? "collapsed" : ""}`}>
+        <div ref={deckRef} className={`canvas-deck legacy-deck-hidden ${deckCollapsed ? "collapsed" : ""}${selectedAudioNode ? " audio-node-selected" : ""}`}>
           <div className="canvas-deck-top">
             <div className="canvas-mode-switch">
               <button
@@ -10633,7 +10733,7 @@ export default function SuperCanvas() {
               {deckCollapsed ? "⌃" : "⌄"}
             </button>
           </div>
-          {!deckCollapsed && (
+          {!deckCollapsed && !selectedAudioNode && (
             <>
               <div
                 className="canvas-deck-main"
@@ -12045,7 +12145,7 @@ function CanvasAssetDrawer({
               {preview.kind === "video" ? (
                 <video src={preview.url} controls autoPlay playsInline />
               ) : preview.kind === "audio" ? (
-                <audio src={preview.url} controls autoPlay />
+                <CanvasAudioPlayer src={preview.url} name={preview.name} autoPlay />
               ) : (
                 <img src={preview.url} alt={preview.name} />
               )}
@@ -12264,7 +12364,12 @@ function CanvasNodeReferenceStrip({
     >
       <button type="button" className="canvas-editor-reference-preview" onClick={() => onPreview(reference)} title={reference.data.name || `引用 ${index + 1}`}>
         <span>{index + 1}</span>
-        {reference.data.kind === "video" ? <video src={reference.data.url} muted playsInline /> : reference.data.kind === "audio" ? <audio src={reference.data.url} controls onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} /> : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
+        {reference.data.kind === "video" ? <video src={reference.data.url} muted playsInline /> : reference.data.kind === "audio" ? (
+          <span className="canvas-editor-reference-audio-preview" aria-label="音频参考">
+            <span aria-hidden="true">♫</span>
+            <i aria-hidden="true"><b /><b /><b /><b /><b /><b /><b /></i>
+          </span>
+        ) : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
       </button>
       <b className="canvas-editor-reference-name">{reference.data.name || (reference.data.kind === "video" ? "视频素材" : reference.data.kind === "audio" ? "音频素材" : "图片素材")}</b>
       <button type="button" className="canvas-editor-reference-remove" aria-label={`移除引用 ${index + 1}`} onClick={() => onRemove(target.id, reference.id)}>×</button>
@@ -12516,6 +12621,216 @@ function CanvasUpscaleSettingsPanel({
   );
 }
 
+function formatCanvasAudioDuration(durationMs?: number) {
+  if (!Number.isFinite(durationMs) || !durationMs || durationMs <= 0) return "时长读取中";
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatCanvasAudioTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const totalSeconds = Math.floor(seconds);
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
+function CanvasAudioPlayer({
+  src,
+  name,
+  compact = false,
+  autoPlay = false,
+  onDuration,
+}: {
+  src: string;
+  name?: string;
+  compact?: boolean;
+  autoPlay?: boolean;
+  onDuration?: (durationSeconds: number) => void;
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+
+  useEffect(() => {
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [src]);
+
+  const togglePlayback = async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      try {
+        await audio.play();
+      } catch {
+        setPlaying(false);
+      }
+    } else {
+      audio.pause();
+    }
+  };
+
+  return (
+    <div
+      className={`canvas-audio-player${compact ? " compact" : ""}`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        autoPlay={autoPlay}
+        aria-label={`音频播放器${name ? `：${name}` : ""}`}
+        className="canvas-audio-player-native"
+        onLoadedMetadata={(event) => {
+          const nextDuration = event.currentTarget.duration;
+          if (!Number.isFinite(nextDuration) || nextDuration <= 0) return;
+          setDuration(nextDuration);
+          onDuration?.(nextDuration);
+        }}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrentTime(0);
+        }}
+        onError={() => setPlaying(false)}
+      />
+      <button
+        type="button"
+        className="canvas-audio-player-play"
+        aria-label={playing ? "暂停音频" : "播放音频"}
+        title={playing ? "暂停" : "播放"}
+        onClick={togglePlayback}
+      >
+        <span aria-hidden="true">{playing ? "Ⅱ" : "▶"}</span>
+      </button>
+      <div className="canvas-audio-player-track">
+        <input
+          type="range"
+          min="0"
+          max={duration || 0}
+          step="0.01"
+          value={Math.min(currentTime, duration || 0)}
+          aria-label="音频播放进度"
+          disabled={!duration}
+          onChange={(event) => {
+            const nextTime = Number(event.target.value);
+            if (!audioRef.current || !Number.isFinite(nextTime)) return;
+            audioRef.current.currentTime = nextTime;
+            setCurrentTime(nextTime);
+          }}
+        />
+        <div className="canvas-audio-player-time" aria-live="off">
+          <span>{formatCanvasAudioTime(currentTime)}</span>
+          <span>{duration ? formatCanvasAudioTime(duration) : "--:--"}</span>
+        </div>
+      </div>
+      {!compact && (
+        <label className="canvas-audio-player-volume" title="音量">
+          <span aria-hidden="true">◖</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={volume}
+            aria-label="音量"
+            onChange={(event) => {
+              const nextVolume = Number(event.target.value);
+              setVolume(nextVolume);
+              if (audioRef.current) audioRef.current.volume = nextVolume;
+            }}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function CanvasAudioNodePanel({
+  node,
+  onReplaceAudio,
+  onDurationChange,
+}: {
+  node: CanvasNode;
+  onReplaceAudio: (nodeId: string, file: File) => void;
+  onDurationChange: (nodeId: string, durationSeconds: number) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const data = node.data;
+  const hasAudio = Boolean(data.url);
+  return (
+    <div
+      className="canvas-audio-node-panel"
+      data-canvas-wheel-isolate
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <div className="canvas-audio-panel-intro">
+        <div className="canvas-audio-panel-intro-copy">
+          <span className="canvas-audio-panel-icon" aria-hidden="true">♫</span>
+          <div>
+            <b>{hasAudio ? "参考音频" : "导入参考音频"}</b>
+            <small>独立素材 · 仅连接到视频节点</small>
+          </div>
+        </div>
+        <span className={`canvas-audio-panel-state${hasAudio ? " ready" : " empty"}`}>
+          {hasAudio ? "已就绪" : "待导入"}
+        </span>
+      </div>
+      {hasAudio ? (
+        <div className="canvas-audio-panel-player">
+          <CanvasAudioPlayer
+            src={String(data.url)}
+            name={String(data.name || "音频素材")}
+            onDuration={(duration) => onDurationChange(node.id, duration)}
+          />
+          <div className="canvas-audio-panel-meta">
+            <b title={String(data.name || "音频素材")}>{String(data.name || "音频素材")}</b>
+            <div className="canvas-audio-panel-meta-chips">
+              <span>{String(data.mimeType || "audio/*")}</span>
+              <span>{formatCanvasAudioDuration(data.durationMs)}</span>
+              {data.assetId && <span title={String(data.assetId)}>资产 {String(data.assetId)}</span>}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="canvas-audio-panel-empty">
+          <span>尚未添加文件</span>
+          <small>支持 MP3、WAV、M4A、AAC、OGG、FLAC 等音频格式</small>
+        </div>
+      )}
+      <div className="canvas-audio-panel-actions">
+        <button type="button" className="canvas-audio-panel-upload" onClick={() => inputRef.current?.click()}>
+          {hasAudio ? "替换音频" : "添加音频"}
+        </button>
+        <span>{hasAudio ? "替换成功后会保留节点、分组和视频连线" : "导入后即可拖动右侧端口连接视频"}</span>
+      </div>
+      <input
+        ref={inputRef}
+        hidden
+        type="file"
+        accept="audio/*"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onReplaceAudio(node.id, file);
+          event.currentTarget.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
 type CanvasNodeEditorPopoverProps = {
   node: CanvasNode;
   document: CanvasDocument;
@@ -12551,6 +12866,8 @@ type CanvasNodeEditorPopoverProps = {
   upscaleParams?: CanvasUpscaleParams;
   upscaleSourceUrl?: string;
   onUpscaleParamsChange?: (params: CanvasUpscaleParams) => void;
+  onReplaceAudio: (nodeId: string, file: File) => void;
+  onAudioDurationChange: (nodeId: string, durationSeconds: number) => void;
 };
 
 type CanvasQuickAction = {
@@ -13214,6 +13531,8 @@ function CanvasNodeEditorPopover({
   upscaleParams,
   upscaleSourceUrl,
   onUpscaleParamsChange,
+  onReplaceAudio,
+  onAudioDurationChange,
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLDivElement | null>(null);
@@ -13221,6 +13540,7 @@ function CanvasNodeEditorPopover({
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const data = node.data;
+  const audioNode = node.type === "media" && data.kind === "audio";
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
@@ -13285,7 +13605,7 @@ function CanvasNodeEditorPopover({
     // Use the density's preferred height instead of the currently rendered
     // height. A previously constrained panel can then grow again after the
     // node is panned upward or the viewport becomes taller.
-    const popoverHeight = microEditor ? 400 : nextCompact ? 520 : 580;
+     const popoverHeight = audioNode ? 330 : microEditor ? 400 : nextCompact ? 520 : 580;
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -13318,7 +13638,7 @@ function CanvasNodeEditorPopover({
         ? current
         : position,
     );
-  }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
+  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
 
   useLayoutEffect(() => {
     reposition();
@@ -13352,7 +13672,7 @@ function CanvasNodeEditorPopover({
       className={`canvas-node-editor-popover canvas-node-editor-dock${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement="bottom"
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
-      data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : "image"}
+      data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
       data-node-id={node.id}
       aria-label={`${nodeLabel(node)}编辑器`}
@@ -13366,17 +13686,17 @@ function CanvasNodeEditorPopover({
       onDoubleClick={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
-      <div className="canvas-node-editor-head">
+       <div className="canvas-node-editor-head">
         <div className="canvas-node-editor-identity">
           <span className="canvas-node-editor-status-dot" aria-hidden="true" />
           <div>
             <b>{nodeLabel(node)}</b>
-            <small>{promptExpanded ? "文本编辑 · 专注输入" : node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : "图片节点"} · 节点内编辑</small>
+             <small>{promptExpanded ? "文本编辑 · 专注输入" : node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : audioNode ? "音频素材" : "图片节点"} · 节点内编辑</small>
           </div>
         </div>
         <div className="canvas-node-editor-head-actions">
           <span>编辑中</span>
-          <button
+           {!audioNode && <button
             type="button"
             className="canvas-node-editor-expand"
             title={promptExpanded ? "收回编辑" : "放大编辑"}
@@ -13388,7 +13708,7 @@ function CanvasNodeEditorPopover({
             }}
           >
             <span aria-hidden="true">{promptExpanded ? "⤡" : "⤢"}</span>
-          </button>
+           </button>}
           <button
             type="button"
             className={node.type === "upscale" && pending ? "canvas-node-editor-collapse" : undefined}
@@ -13399,7 +13719,13 @@ function CanvasNodeEditorPopover({
         </div>
       </div>
       <div className="canvas-node-editor-body">
-        <div className="canvas-node-editor-columns">
+         {audioNode ? (
+           <CanvasAudioNodePanel
+             node={node}
+             onReplaceAudio={onReplaceAudio}
+             onDurationChange={onAudioDurationChange}
+           />
+         ) : <div className="canvas-node-editor-columns">
           <div className="canvas-node-editor-copy">
             <div className="canvas-node-editor-prompt-wrap">
               <div className="canvas-node-editor-prompt-label">
@@ -13524,12 +13850,12 @@ function CanvasNodeEditorPopover({
               />
             )}
           </div>
-        </div>
-      </div>
-      <div className="canvas-node-editor-actions">
+         </div>}
+       </div>
+       {!audioNode && <div className="canvas-node-editor-actions">
         <span>{node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
         <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={pending || upscaleMissingInput} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "upscale" ? "提交超分" : node.type === "prompt" ? "发送" : inPlaceVideo ? "生成到当前节点" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
-      </div>
+       </div>}
     </div>
   );
 }
@@ -13733,8 +14059,10 @@ function CanvasNodeCard({
             ? data.generation
               ? "视频生成结果"
               : "视频素材"
-            : "空视频节点"
-      : nodeStatus(node);
+             : "空视频节点"
+       : node.type === "media" && data.kind === "audio"
+         ? data.url ? "音频素材" : "等待导入音频"
+         : nodeStatus(node);
   const completedVariants = variantStates.filter(
     (state) => state.status === "completed",
   ).length;
@@ -13823,6 +14151,7 @@ function CanvasNodeCard({
       onDoubleClick={(event) => {
         event.stopPropagation();
         if (node.type === "prompt") onEdit(true);
+        else if (node.type === "media" && node.data.kind === "audio") onToggleEditor(node);
         else if (isCanvasReferenceableNode(node)) onPreview();
         else onToggleEditor(node);
       }}
@@ -13874,7 +14203,7 @@ function CanvasNodeCard({
               <div className="canvas-media-state draft">
                 <span>{data.kind === "video" ? "▶" : data.kind === "audio" ? "♫" : "▣"}</span>
                 <b>{data.kind === "video" ? "空视频节点" : data.kind === "audio" ? "空音频节点" : "空图片节点"}</b>
-                <small>选中后在下方生成</small>
+                 <small>{data.kind === "audio" ? "等待导入音频" : "选中后在下方生成"}</small>
               </div>
             ) : data.kind === "video" ? (
               <video
@@ -13903,17 +14232,18 @@ function CanvasNodeCard({
               />
             ) : data.kind === "audio" ? (
               <div className="canvas-audio-stage">
-                <span className="canvas-audio-icon" aria-hidden="true">♫</span>
-                <audio
-                  src={data.url}
-                  controls
-                  preload="metadata"
-                  aria-label={`音频预览${data.name ? `：${data.name}` : ""}`}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => event.stopPropagation()}
-                  onLoadedMetadata={(event) =>
-                    onNaturalSize(node.id, 0, 0, event.currentTarget.duration)
-                  }
+                <div className="canvas-audio-visual">
+                  <span className="canvas-audio-icon" aria-hidden="true">♫</span>
+                  <div>
+                    <b>参考音频</b>
+                    <small>连接到视频节点</small>
+                  </div>
+                </div>
+                <CanvasAudioPlayer
+                  src={String(data.url)}
+                  name={String(data.name || "音频素材")}
+                  compact
+                  onDuration={(duration) => onNaturalSize(node.id, 0, 0, duration)}
                 />
                 <span className="canvas-audio-mark">♫ 音频节点</span>
               </div>
@@ -14027,10 +14357,10 @@ function CanvasNodeCard({
             </span>
             <span className="canvas-node-title">
               <b>{data.name || (data.kind === "video" ? "视频素材" : data.kind === "audio" ? "音频素材" : "素材")}</b>
-              <small>{data.model || (data.kind === "video" ? "视频" : data.kind === "audio" ? "音频" : nodeStatus(node))}</small>
+              <small>{data.model || (data.kind === "video" ? "视频" : data.kind === "audio" ? `${data.mimeType || "音频"}${data.durationMs ? ` · ${formatCanvasAudioDuration(data.durationMs)}` : ""}` : nodeStatus(node))}</small>
             </span>
             <em className={data.kind === "video" ? "video-status" : data.kind === "audio" ? "audio-status" : undefined}>
-              {mediaFooterStatus}
+              {data.kind === "audio" && data.url ? "已就绪" : mediaFooterStatus}
             </em>
           </div>
         </div>
