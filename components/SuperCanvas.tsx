@@ -4,12 +4,14 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  memo,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ChangeEvent as ReactChangeEvent,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   type ReactNode,
@@ -46,6 +48,7 @@ import {
   nodeSize,
   normalizeDocument,
   recoverInterruptedCanvasDocument,
+  removeCanvasReference,
   removeEdge,
   removeNodes,
   moveNodesToGroup,
@@ -787,6 +790,28 @@ function updateCanvasVideoMode(
   };
 }
 
+/** Keep an already-open editor draft aligned with externally synchronized node modes. */
+function syncCanvasEditorDraftInputModes(
+  drafts: Record<string, CanvasEditorDraft>,
+  document: CanvasDocument,
+  runtime: CanvasRuntimeState | null,
+) {
+  let next = drafts;
+  Object.entries(drafts).forEach(([nodeId, draft]) => {
+    if (!draft.params || draft.params.kind !== "video") return;
+    const node = nodeById(document, nodeId);
+    if (!node || node.data.kind !== "video") return;
+    const params = videoParamsForCanvasNode(node, runtime);
+    if (draft.params.inputMode === params.inputMode) return;
+    if (next === drafts) next = { ...drafts };
+    next[nodeId] = {
+      ...draft,
+      params: { ...draft.params, inputMode: params.inputMode },
+    };
+  });
+  return next;
+}
+
 function connectCanvasNodesInDocument(
   document: CanvasDocument,
   sourceId: string,
@@ -1238,6 +1263,11 @@ function canvasVideoInputCapabilities(
 }
 
 function referenceNodesForCanvasEdge(document: CanvasDocument, edge: CanvasEdge) {
+  if (Array.isArray(edge.sourceNodeIds)) {
+    return [...new Set(edge.sourceNodeIds)]
+      .map((id) => nodeById(document, id))
+      .filter((node): node is CanvasNode => Boolean(node && isCanvasReferenceableNode(node)));
+  }
   const source = nodeById(document, edge.source);
   const sourceGroup = groupById(document, edge.source) || (source?.groupId ? groupById(document, source.groupId) : undefined);
   if (sourceGroup) return groupNodes(document, sourceGroup.id).filter(isCanvasReferenceableNode);
@@ -1751,6 +1781,8 @@ export default function SuperCanvas() {
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
   const docRef = useRef<CanvasDocument>(normalizeDocument(null));
   const saveTimerRef = useRef<number | null>(null);
+  const zoomFrameRef = useRef<number | null>(null);
+  const pendingZoomCameraRef = useRef<CanvasCamera | null>(null);
   const pollTimersRef = useRef<Set<number>>(new Set());
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
   const pollStartedAtRef = useRef<Map<string, number>>(new Map());
@@ -2076,6 +2108,7 @@ export default function SuperCanvas() {
       docRef.current,
       syncCanvasVideoReferences(next, runtime),
     );
+    setEditorDrafts((current) => syncCanvasEditorDraftInputModes(current, normalized, runtime));
     docRef.current = normalized;
     setDocument(normalized);
   }, [runtime]);
@@ -2204,6 +2237,9 @@ export default function SuperCanvas() {
   }, [activePanel, ready, refreshGenerationLogs]);
 
   useEffect(() => {
+    // React Strict Mode re-runs effects in development. Restore the mount
+    // guard before the second setup so queued camera frames are not dropped.
+    mountedRef.current = true;
     let cancelled = false;
     let stopWorkspaceSync = () => {};
     const start = async () => {
@@ -3576,22 +3612,40 @@ export default function SuperCanvas() {
   const zoomAt = useCallback(
     (clientX: number, clientY: number, factor: number) => {
       const point = stagePoint(clientX, clientY);
+      // Wheel events can arrive faster than React can commit a render. Build
+      // on the latest effective camera (including an update waiting for the
+      // next frame) instead of a stale render closure, then commit once per
+      // animation frame.
+      const currentCamera = pendingZoomCameraRef.current || docRef.current.camera;
       const before = {
-        x: (point.x - document.camera.x) / document.camera.zoom,
-        y: (point.y - document.camera.y) / document.camera.zoom,
+        x: (point.x - currentCamera.x) / currentCamera.zoom,
+        y: (point.y - currentCamera.y) / currentCamera.zoom,
       };
-      const zoom = clamp(document.camera.zoom * factor, 0.12, 3);
-      updateDoc((value) => ({
-        ...value,
-        camera: {
-          x: point.x - before.x * zoom,
-          y: point.y - before.y * zoom,
-          zoom,
-        },
-      }));
+      const zoom = clamp(currentCamera.zoom * factor, 0.12, 3);
+      pendingZoomCameraRef.current = {
+        x: point.x - before.x * zoom,
+        y: point.y - before.y * zoom,
+        zoom,
+      };
+      if (zoomFrameRef.current !== null) return;
+      zoomFrameRef.current = window.requestAnimationFrame(() => {
+        zoomFrameRef.current = null;
+        const nextCamera = pendingZoomCameraRef.current;
+        pendingZoomCameraRef.current = null;
+        if (!nextCamera || !mountedRef.current) return;
+        updateDoc((value) => ({ ...value, camera: nextCamera }));
+      });
     },
-    [document.camera, stagePoint, updateDoc],
+    [stagePoint, updateDoc],
   );
+  useEffect(() => {
+    return () => {
+      if (zoomFrameRef.current !== null)
+        window.cancelAnimationFrame(zoomFrameRef.current);
+      zoomFrameRef.current = null;
+      pendingZoomCameraRef.current = null;
+    };
+  }, []);
   const panToWorld = useCallback(
     (x: number, y: number) => {
       updateDoc((value) => ({
@@ -4617,6 +4671,60 @@ export default function SuperCanvas() {
       setExpandedEditorId(nextImageNode.id);
       setTextLightboxNodeId(null);
       notify("已创建图片分支，文本已填入画布编辑器");
+    },
+    [commit, notify, runtime],
+  );
+
+  const createVideoBranchFromText = useCallback(
+    (node: CanvasNode, value: string) => {
+      if (node.type !== "prompt") return;
+      const response = value.trim();
+      if (!response) return;
+      const videoParams = normalizeCreationSettings("video", null, runtime);
+      const videoNode = createEmptyMedia(
+        "video",
+        {
+          x: node.x + nodeSize(node).w + 90,
+          y: node.y,
+        },
+        videoParams,
+      );
+      const nextVideoNode: CanvasNode = {
+        ...videoNode,
+        data: {
+          ...videoNode.data,
+          role: "Agent 转视频",
+          prompt: response,
+          generation: videoNode.data.generation
+            ? { ...videoNode.data.generation, prompt: response }
+            : videoNode.data.generation,
+        },
+      };
+      commit((current) =>
+        addEdge(
+          { ...current, nodes: [...current.nodes, nextVideoNode] },
+          node.id,
+          nextVideoNode.id,
+          "right",
+          "left",
+          "generated",
+          "context",
+        ),
+      );
+      setEditorDrafts((current) => ({
+        ...current,
+        [nextVideoNode.id]: {
+          prompt: response,
+          params: videoParams,
+          dirty: true,
+        },
+      }));
+      setSelectedIds(new Set([nextVideoNode.id]));
+      setSelectedGroupId(null);
+      setMode("video");
+      setExpandedEditorId(nextVideoNode.id);
+      setTextLightboxNodeId(null);
+      notify("已创建视频分支，文本已填入画布编辑器");
     },
     [commit, notify, runtime],
   );
@@ -7404,8 +7512,8 @@ export default function SuperCanvas() {
 
   const removeNodeReference = useCallback(
     (targetId: string, sourceId: string) => {
-      const edgeIds = referenceEdgeIdsForCanvasSource(docRef.current, targetId, sourceId);
-      if (edgeIds.length) commit((value) => edgeIds.reduce((next, id) => removeEdge(next, id), value));
+      const next = removeCanvasReference(docRef.current, targetId, sourceId);
+      if (next !== docRef.current) commit(() => next);
     },
     [commit],
   );
@@ -8769,8 +8877,8 @@ export default function SuperCanvas() {
   );
   const removeComposerReference = useCallback((nodeId: string) => {
     if (referenceOwnerId) {
-      const edgeIds = referenceEdgeIdsForCanvasSource(docRef.current, referenceOwnerId, nodeId);
-      if (edgeIds.length) commit((value) => edgeIds.reduce((next, id) => removeEdge(next, id), value));
+      const next = removeCanvasReference(docRef.current, referenceOwnerId, nodeId);
+      if (next !== docRef.current) commit(() => next);
     }
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -9091,12 +9199,6 @@ export default function SuperCanvas() {
       setContextMenu(null);
       action();
     };
-    const editAction: CanvasQuickAction = {
-      id: "adjust",
-      icon: "⚙",
-      label: "调整参数",
-      onClick: close(() => toggleEditor(node)),
-    };
     const canvasActions: CanvasQuickAction[] = [
       {
         id: "copy-nodes",
@@ -9150,48 +9252,14 @@ export default function SuperCanvas() {
       },
     ];
     const layerGroup: CanvasContextMenuGroup = { label: "层级", actions: layerActions };
-    const cleanupActions: CanvasQuickAction[] = [
-      {
-        id: "delete",
-        icon: "⌫",
-        label: selectedIds.size > 1 ? `删除 ${selectedIds.size} 个对象` : "删除",
-        danger: true,
-        onClick: close(deleteSelection),
-      },
-    ];
     if (node.type === "media" && node.data.kind === "image") {
       const mediaActions: CanvasQuickAction[] = [
-        {
-          id: "preview",
-          icon: "⤢",
-          label: "预览",
-          disabled: !hasMedia,
-          onClick: close(() => openCanvasMediaViewer(node.id)),
-        },
-        editAction,
-        {
-          id: "mask",
-          icon: "◌",
-          label: node.data.mask ? "查看局部编辑" : "局部编辑",
-          title: node.data.mask
-            ? `局部编辑 · ${canvasMaskStatusLabel(node.data.mask.status)}`
-            : "为当前图片指定局部编辑范围",
-          disabled: !hasMedia,
-          onClick: close(() => openCanvasMaskEditor(node.id)),
-        },
         {
           id: "upscale",
           icon: "↗",
           label: "超分",
           disabled: !hasMedia,
           onClick: close(() => createUpscaleFromSource(node)),
-        },
-        {
-          id: "reference",
-          icon: "⌁",
-          label: "作为参考",
-          disabled: !hasMedia,
-          onClick: close(() => addCurrentNodeToReuse(node)),
         },
         {
           id: "copy-image",
@@ -9220,32 +9288,16 @@ export default function SuperCanvas() {
         { label: "快速操作", actions: mediaActions },
         { label: "复制与整理", actions: canvasActions },
         layerGroup,
-        { label: "删除", actions: cleanupActions },
       ];
     }
     if (node.type === "media" && node.data.kind === "video") {
       const mediaActions: CanvasQuickAction[] = [
-        {
-          id: "preview",
-          icon: "⤢",
-          label: "预览",
-          disabled: !hasMedia,
-          onClick: close(() => openCanvasMediaViewer(node.id)),
-        },
-        editAction,
         {
           id: "continue",
           icon: "▶",
           label: "继续生成 / 变体",
           disabled: !hasMedia,
           onClick: close(() => continueFromMedia(node)),
-        },
-        {
-          id: "reference",
-          icon: "⌁",
-          label: "作为参考",
-          disabled: !hasMedia,
-          onClick: close(() => addCurrentNodeToReuse(node)),
         },
         {
           id: "download",
@@ -9266,20 +9318,11 @@ export default function SuperCanvas() {
         { label: "快速操作", actions: mediaActions },
         { label: "复制与整理", actions: canvasActions },
         layerGroup,
-        { label: "删除", actions: cleanupActions },
       ];
     }
     if (node.type === "prompt") {
       const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
       const promptActions: CanvasQuickAction[] = [
-        editAction,
-        {
-          id: "preview",
-          icon: "⤢",
-          label: "放大查看",
-          disabled: !hasResponse,
-          onClick: close(() => openCanvasTextViewer(node.id)),
-        },
         {
           id: "image",
           icon: "✦",
@@ -9292,7 +9335,6 @@ export default function SuperCanvas() {
         { label: "快速操作", actions: promptActions },
         { label: "复制与整理", actions: canvasActions },
         layerGroup,
-        { label: "删除", actions: cleanupActions },
       ];
     }
     if (node.type === "generator") {
@@ -9301,7 +9343,6 @@ export default function SuperCanvas() {
         {
           label: "快速操作",
           actions: [
-            editAction,
             {
               id: "retry",
               icon: "↻",
@@ -9313,7 +9354,6 @@ export default function SuperCanvas() {
         },
         { label: "复制与整理", actions: canvasActions },
         layerGroup,
-        { label: "删除", actions: cleanupActions },
       ];
     }
     if (node.type === "upscale") {
@@ -9322,14 +9362,6 @@ export default function SuperCanvas() {
         {
           label: "快速操作",
           actions: [
-            editAction,
-            {
-              id: "preview",
-              icon: "⤢",
-              label: "预览",
-              disabled: !hasResult,
-              onClick: close(() => openCanvasMediaViewer(node.id)),
-            },
             {
               id: "download",
               icon: "↓",
@@ -9342,39 +9374,34 @@ export default function SuperCanvas() {
         },
         { label: "复制与整理", actions: canvasActions },
         layerGroup,
-        { label: "删除", actions: cleanupActions },
       ];
     }
     return [
-      { label: "快速操作", actions: [editAction] },
       { label: "复制与整理", actions: canvasActions },
       layerGroup,
-      { label: "删除", actions: cleanupActions },
     ];
   }, [
-    addCurrentNodeToReuse,
     openAssetCollectionPicker,
-    openCanvasMaskEditor,
-    openCanvasMediaViewer,
-    openCanvasTextViewer,
     contextNode,
     contextMenu?.world,
     continueFromMedia,
     copyCanvasImage,
     copySelection,
     createUpscaleFromSource,
-    deleteSelection,
     downloadCanvasNode,
     duplicateSelection,
     generationKeys,
     pasteFromClipboard,
     retryFailedVariants,
-    selectedIds.size,
-    toggleEditor,
     useAgentResponseAsImagePrompt,
     reorderSelection,
     selectedIds,
   ]);
+
+  // Below this threshold the canvas is an overview, not a reading surface.
+  // The CSS tier removes filters and animation-heavy decoration while keeping
+  // the actual node geometry and hit targets unchanged.
+  const canvasZoomTier = document.camera.zoom < 0.28 ? "overview" : "detail";
 
   if (!ready)
     return (
@@ -9401,7 +9428,11 @@ export default function SuperCanvas() {
         <div className="canvas-topbar-main">
           <button
             type="button"
-            className="canvas-brand"
+            className={`canvas-brand ${projectMenuOpen ? "open" : ""}`}
+            aria-haspopup="menu"
+            aria-expanded={projectMenuOpen}
+            aria-label={`编辑画布：${currentProject?.name || "无限画布"}，点击切换画布项目`}
+            title="编辑画布 · 点击切换或新建画布"
             onClick={(event) => {
               event.stopPropagation();
               setProjectMenuOpen((value) => !value);
@@ -9410,11 +9441,19 @@ export default function SuperCanvas() {
             <span className="canvas-logo-mark">
               <img src="/brand-mark.png" alt="" />
             </span>
-            <span>
+            <span className="canvas-brand-copy">
               <b>SANMAO.AI</b>
-              <small>{currentProject?.name || "无限画布"}</small>
+              <small className="canvas-brand-workspace">
+                <span className="canvas-brand-workspace-mark" aria-hidden="true">✦</span>
+                <span className="canvas-brand-workspace-label">编辑画布</span>
+                <span className="canvas-brand-workspace-divider" aria-hidden="true">·</span>
+                <span className="canvas-brand-project-name">{currentProject?.name || "无限画布"}</span>
+              </small>
             </span>
-            <i>⌄</i>
+            <span className={`canvas-brand-chevron ${projectMenuOpen ? "open" : ""}`} aria-hidden="true">
+              <small>切换</small>
+              <i>⌄</i>
+            </span>
           </button>
           <button
             type="button"
@@ -9753,6 +9792,7 @@ export default function SuperCanvas() {
         <div className="canvas-world">
           <div
             className="canvas-world-content"
+            data-zoom-tier={canvasZoomTier}
             style={{
               transform: `translate3d(${document.camera.x}px,${document.camera.y}px,0) scale(${document.camera.zoom})`,
             }}
@@ -9866,7 +9906,7 @@ export default function SuperCanvas() {
             </div>
             <div className="canvas-node-layer">
               {visibleCanvasNodes.map((node) => (
-                <CanvasNodeCard
+                <MemoizedCanvasNodeCard
                   key={node.id}
                   node={node}
                   selected={selectedIds.has(node.id)}
@@ -10752,6 +10792,7 @@ export default function SuperCanvas() {
           onUpdate={updateTextNode}
           onCreateAgentNode={createViewerAgentNode}
           onUseAsImagePrompt={createImageBranchFromText}
+          onUseAsVideoPrompt={createVideoBranchFromText}
         />
       )}
       {maskNode?.data.url && (
@@ -12400,7 +12441,7 @@ function CanvasNodeContextMenu({
         <small>{selectionCount > 1 ? `已选择 ${selectionCount} 个对象` : "节点操作"}</small>
       </div>
       <div className="canvas-context-menu-body">
-        {groups.map((group) => (
+        {groups.filter((group) => group.actions.length > 0).map((group) => (
           <div className="canvas-menu-group" key={group.label}>
             <div className="canvas-menu-group-title">
               <span className="canvas-menu-group-mark" aria-hidden="true">⌘</span>
@@ -13010,6 +13051,39 @@ function CanvasNodeCard({
         )
       : [];
   const [mentionState, setMentionState] = useState<MentionState>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoPlaybackState, setVideoPlaybackState] = useState<
+    "paused" | "playing" | "ended"
+  >("paused");
+  const videoIsPlaying = videoPlaybackState === "playing";
+  const videoHasEnded = videoPlaybackState === "ended";
+  const videoControlLabel = videoIsPlaying
+    ? "暂停视频预览"
+    : videoHasEnded
+      ? "重新播放视频预览"
+      : "播放视频预览";
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.currentTime = 0;
+    }
+    setVideoPlaybackState("paused");
+  }, [data.url]);
+
+  const toggleVideoPlayback = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (video.ended) video.currentTime = 0;
+    if (video.paused) {
+      void video.play().catch(() => setVideoPlaybackState("paused"));
+    } else {
+      video.pause();
+    }
+  };
   return (
     <article
       className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}`}
@@ -13095,12 +13169,20 @@ function CanvasNodeCard({
               </div>
             ) : data.kind === "video" ? (
               <video
+                ref={videoRef}
                 src={data.url}
                 muted
                 playsInline
                 preload="metadata"
                 draggable={false}
                 aria-label={`视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
+                onPlay={() => setVideoPlaybackState("playing")}
+                onPause={() =>
+                  setVideoPlaybackState((current) =>
+                    current === "ended" ? current : "paused",
+                  )
+                }
+                onEnded={() => setVideoPlaybackState("ended")}
                 onLoadedMetadata={(event) =>
                   onNaturalSize(
                     node.id,
@@ -13127,17 +13209,22 @@ function CanvasNodeCard({
             {data.kind === "video" && data.url && (
               <button
                 type="button"
-                className="canvas-video-play"
-                title="播放视频预览"
-                aria-label={`播放视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
+                className={`canvas-video-play${videoIsPlaying ? " is-playing" : ""}${videoHasEnded ? " is-ended" : ""}`}
+                title={videoControlLabel}
+                aria-label={`${videoControlLabel}${videoDuration ? `，时长 ${videoDuration}` : ""}`}
+                aria-pressed={videoIsPlaying}
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onPreview();
-                }}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onClick={toggleVideoPlayback}
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M9 6.8v10.4a1 1 0 0 0 1.53.85l7.78-5.2a1 1 0 0 0 0-1.7l-7.78-5.2A1 1 0 0 0 9 6.8Z" />
+                  {videoIsPlaying ? (
+                    <path d="M7 6.5A1.5 1.5 0 0 1 8.5 5h1A1.5 1.5 0 0 1 11 6.5v11A1.5 1.5 0 0 1 9.5 19h-1A1.5 1.5 0 0 1 7 17.5v-11Zm6 0A1.5 1.5 0 0 1 14.5 5h1A1.5 1.5 0 0 1 17 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-1a1.5 1.5 0 0 1-1.5-1.5v-11Z" />
+                  ) : videoHasEnded ? (
+                    <path d="M12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.43 0 2.74.5 3.77 1.34L13.5 9.6H20V3.1l-2.77 2.77A9.96 9.96 0 0 0 12 4Z" />
+                  ) : (
+                    <path d="M9 6.8v10.4a1 1 0 0 0 1.53.85l7.78-5.2a1 1 0 0 0 0-1.7l-7.78-5.2A1 1 0 0 0 9 6.8Z" />
+                  )}
                 </svg>
               </button>
             )}
@@ -13576,6 +13663,25 @@ function CanvasNodeCard({
     </article>
   );
 }
+
+// Camera updates replace the document object, but they do not change the
+// node/edge/group collections. Keep node cards out of that render path; this
+// matters most when a canvas contains many image previews and rich text.
+const MemoizedCanvasNodeCard = memo(
+  CanvasNodeCard,
+  (previous, next) =>
+    previous.node === next.node &&
+    previous.selected === next.selected &&
+    previous.dragging === next.dragging &&
+    previous.document.nodes === next.document.nodes &&
+    previous.document.edges === next.document.edges &&
+    previous.document.groups === next.document.groups &&
+    previous.runtime === next.runtime &&
+    previous.editorPrompt === next.editorPrompt &&
+    previous.editorParams === next.editorParams &&
+    previous.expanded === next.expanded &&
+    previous.editing === next.editing,
+);
 
 function CanvasMinimap({
   document,
@@ -14099,6 +14205,7 @@ function CanvasTextLightbox({
   onUpdate,
   onCreateAgentNode,
   onUseAsImagePrompt,
+  onUseAsVideoPrompt,
 }: {
   node?: CanvasNode;
   onClose: () => void;
@@ -14106,6 +14213,7 @@ function CanvasTextLightbox({
   onUpdate: (node: CanvasNode, value: string) => void;
   onCreateAgentNode: (node: CanvasNode, value: string) => void;
   onUseAsImagePrompt: (node: CanvasNode, value: string) => void;
+  onUseAsVideoPrompt: (node: CanvasNode, value: string) => void;
 }) {
   const text =
     node?.type === "prompt"
@@ -14328,6 +14436,7 @@ function CanvasTextLightbox({
                 <button type="button" onClick={() => void copySelection()}>复制选段</button>
                 {editable && <button type="button" className="primary" onClick={() => runSelectionAction((value) => onCreateAgentNode(node, value))}>创建 Agent 节点</button>}
                 {editable && <button type="button" onClick={() => runSelectionAction((value) => onUseAsImagePrompt(node, value))}>转图片</button>}
+                {editable && <button type="button" onClick={() => runSelectionAction((value) => onUseAsVideoPrompt(node, value))}>转视频</button>}
               </div>
             )}
           </>
@@ -14450,7 +14559,7 @@ function CanvasActivityDrawer({
                 <div className="canvas-task-log-status">{generationLogStatusLabel(log.status)}</div>
                 <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{log.status === "pending" && <small className="pending-note">任务正在后台生成，可继续使用画布</small>}{log.error && <small className="error-note">{log.error}</small>}</div>
                 <div className="canvas-task-log-meta"><span>{kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span>{generationLogDuration(log)}</span><span>{kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
-                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId(log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{log.status === "error" && <button type="button" onClick={(event) => { event.stopPropagation(); onRetryTask(log); }}>重试</button>}<button type="button" onClick={(event) => { event.stopPropagation(); onFocusTask(log, Boolean(urls.length)); }}>{urls.length ? "打开结果" : "定位节点"}</button></div>
+                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{log.status === "error" && <button type="button" onClick={(event) => { event.stopPropagation(); onRetryTask(log); }}>重试</button>}<button type="button" onClick={(event) => { event.stopPropagation(); onFocusTask(log, Boolean(urls.length)); }}>{urls.length ? "打开结果" : "定位节点"}</button></div>
                 {selectedId === log.id && <div className="canvas-task-log-detail"><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
               </article>;
             })}

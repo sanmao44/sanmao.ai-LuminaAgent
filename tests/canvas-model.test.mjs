@@ -137,6 +137,77 @@ test('hydrates legacy video media params from generation params', () => {
   assert.equal(created.data.params.model, 'created-video-model');
 });
 
+test('sizes video cards from the requested aspect ratio and intrinsic metadata', () => {
+  const wide = model.createMedia('video', '/wide.mp4', '宽屏视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: '16:9' },
+  });
+  const portrait = model.createMedia('video', '/portrait.mp4', '竖屏视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: '9:16' },
+  });
+  const square = model.createMedia('video', '/square.mp4', '方形视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: '1:1' },
+  });
+  const automatic = model.createMedia('video', '/automatic.mp4', '自动视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: 'auto' },
+  });
+  const defaultSize = model.mediaCardSizeForRatio(undefined, 'video');
+
+  const previewRatio = (node) => node.w / (node.h - 42);
+  assert.ok(Math.abs(previewRatio(wide) - 16 / 9) < 0.02);
+  assert.ok(Math.abs(previewRatio(portrait) - 9 / 16) < 0.02);
+  assert.ok(Math.abs(previewRatio(square) - 1) < 0.02);
+  assert.ok(Math.abs(previewRatio(automatic) - 16 / 9) < 0.02);
+  assert.ok(Math.abs(defaultSize.w / (defaultSize.h - 42) - 16 / 9) < 0.02);
+  assert.ok(portrait.h > wide.h);
+
+  const intrinsic = model.createMedia('video', '/intrinsic.mp4', '真实尺寸视频', { x: 0, y: 0 }, {
+    nativeWidth: 1080,
+    nativeHeight: 1920,
+    params: { kind: 'video', aspect: '16:9' },
+  });
+  assert.ok(Math.abs(previewRatio(intrinsic) - 9 / 16) < 0.02);
+
+  const normalized = model.normalizeDocument({
+    nodes: [{
+      id: 'legacy-video-size',
+      type: 'media',
+      x: 0,
+      y: 0,
+      w: 420,
+      h: 290,
+      data: {
+        kind: 'video',
+        url: '/legacy-portrait.mp4',
+        nativeWidth: 1080,
+        nativeHeight: 1920,
+        params: { kind: 'video', aspect: '16:9' },
+      },
+    }],
+  });
+  const normalizedVideo = normalized.nodes[0];
+  assert.ok(Math.abs(previewRatio(normalizedVideo) - 9 / 16) < 0.02);
+
+  const manual = model.normalizeDocument({
+    nodes: [{
+      id: 'manual-video-size',
+      type: 'media',
+      x: 0,
+      y: 0,
+      w: 510,
+      h: 330,
+      data: {
+        kind: 'video',
+        url: '/manual-video.mp4',
+        autoFit: false,
+        nativeWidth: 1080,
+        nativeHeight: 1920,
+      },
+    }],
+  }).nodes[0];
+  assert.equal(manual.w, 510);
+  assert.equal(manual.h, 330);
+});
+
 test('canvas upscale nodes preserve provider-specific settings', () => {
   const cloud = model.createUpscaleNode({ x: 0, y: 0 }, {
     model: 'aliyun-standard-super-resolution',
@@ -796,6 +867,26 @@ test('removing an input edge also removes its persisted reference metadata', () 
   assert.deepEqual(model.incomingReferences(next, target.id).map((node) => node.id), [second.id]);
   assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.referenceOrder, [second.id]);
   assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.generation?.referenceIds, [second.id]);
+});
+
+test('removes one member from a grouped reference without dropping the other members', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/group-remove-first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/group-remove-second.png', '第二张', { x: 360, y: 0 });
+  const third = model.createMedia('image', '/group-remove-third.png', '第三张', { x: 720, y: 0 });
+  const target = model.createGenerator('video', { x: 1100, y: 0 }, { inputMode: 'reference' });
+  let document = { ...empty, nodes: [first, second, third, target] };
+  document = model.createGroup(document, [first.id, second.id, third.id]);
+  const group = document.groups[0];
+  document = model.addEdge(document, group.id, target.id, 'right', 'left', 'reference');
+
+  const next = model.removeCanvasReference(document, target.id, second.id);
+  assert.deepEqual(model.incomingReferences(next, target.id).map((node) => node.id), [first.id, third.id]);
+  assert.equal(next.groups.some((item) => item.id === group.id), true);
+  const groupEdge = next.edges.find((edge) => edge.source === group.id && edge.target === target.id);
+  assert.ok(groupEdge);
+  assert.deepEqual(groupEdge.sourceNodeIds, [first.id, third.id]);
+  assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.referenceOrder, [first.id, third.id]);
 });
 
 test('adds dropped nodes to the group under the pointer and keeps membership consistent', () => {

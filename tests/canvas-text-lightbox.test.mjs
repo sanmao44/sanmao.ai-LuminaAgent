@@ -51,8 +51,10 @@ test("Agent response selection toolbar only operates on selected body text", () 
   assert.match(lightbox, /复制选段/);
   assert.match(lightbox, /创建 Agent 节点/);
   assert.match(lightbox, /转图片/);
+  assert.match(lightbox, /转视频/);
   assert.match(lightbox, /onCreateAgentNode\(node, value\)/);
   assert.match(lightbox, /onUseAsImagePrompt\(node, value\)/);
+  assert.match(lightbox, /onUseAsVideoPrompt\(node, value\)/);
   assert.match(lightbox, /onPointerDown=\{\(event\) =>/);
   assert.doesNotMatch(lightbox, /onClick=\{\(event\) => \{\s*if \(event\.target === event\.currentTarget\) onClose\(\)/);
 });

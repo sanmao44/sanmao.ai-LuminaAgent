@@ -124,6 +124,36 @@ function normalizeVideoNodeParams(data: CanvasNodeData) {
   return normalizeCreationSettings("video", currentParams);
 }
 
+const DEFAULT_VIDEO_ASPECT_RATIO = 16 / 9;
+const MEDIA_CARD_FOOTER_HEIGHT = 42;
+
+function positiveRatio(value: unknown) {
+  const ratio = Number(value);
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
+}
+
+function ratioFromAspect(value: unknown, fallback: number) {
+  const match = String(value || "")
+    .trim()
+    .match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+  if (!match) return fallback;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  const ratio = width / height;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : fallback;
+}
+
+function videoAspectRatio(params?: CanvasGenerationParams) {
+  const aspect = params && "aspect" in params ? params.aspect : undefined;
+  return ratioFromAspect(aspect, DEFAULT_VIDEO_ASPECT_RATIO);
+}
+
+function nativeMediaRatio(data: CanvasNodeData) {
+  const width = positiveRatio(data.nativeWidth);
+  const height = positiveRatio(data.nativeHeight);
+  return width && height ? width / height : null;
+}
+
 function normalizeNode(value: unknown): CanvasNode | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<CanvasNode> & { data?: unknown };
@@ -242,6 +272,14 @@ function normalizeNode(value: unknown): CanvasNode | null {
     );
     if (mask) data.mask = mask as CanvasMaskState;
   }
+  const videoSizeRatio =
+    type === "media" && data.kind === "video" && data.autoFit !== false
+      ? nativeMediaRatio(data) ||
+        videoAspectRatio(data.params as CanvasGenerationParams | undefined)
+      : null;
+  const intrinsicVideoSize = videoSizeRatio
+    ? mediaCardSizeForRatio(videoSizeRatio, "video")
+    : undefined;
   return {
     id: String(raw.id),
     type,
@@ -253,6 +291,7 @@ function normalizeNode(value: unknown): CanvasNode | null {
       ? { zIndex: Math.trunc(raw.zIndex) }
       : {}),
     ...(raw.groupId ? { groupId: String(raw.groupId) } : {}),
+    ...(intrinsicVideoSize || {}),
     data,
   };
 }
@@ -270,6 +309,9 @@ function normalizeEdge(value: unknown): CanvasEdge | null {
     id: String(raw.id),
     source: String(raw.source),
     target: String(raw.target),
+    ...(Array.isArray(raw.sourceNodeIds)
+      ? { sourceNodeIds: [...new Set(raw.sourceNodeIds.map((id) => String(id)))] }
+      : {}),
     sourcePort: raw.sourcePort === "left" ? "left" : "right",
     targetPort: raw.targetPort === "right" ? "right" : "left",
     ...(raw.inputRole ? { inputRole: normalizeInputRole(raw.inputRole) } : {}),
@@ -1325,13 +1367,14 @@ export function edgeTouchesSelection(
 }
 
 export function mediaCardSizeForRatio(
-  ratio = 1,
+  ratio?: number,
   kind: CanvasMediaKind = "image",
 ) {
-  if (kind === "video") return { w: 420, h: 290 };
-  const safeRatio = Number(ratio) || 1;
-  const footer = 48;
-  let width = 380;
+  const safeRatio =
+    positiveRatio(ratio) ||
+    (kind === "video" ? DEFAULT_VIDEO_ASPECT_RATIO : 1);
+  const footer = kind === "video" ? MEDIA_CARD_FOOTER_HEIGHT : 48;
+  let width = kind === "video" ? 420 : 380;
   let stage = width / safeRatio;
   if (stage > 520) {
     stage = 520;
@@ -1356,7 +1399,8 @@ export function smartMediaSize(
   kind: CanvasMediaKind,
   params?: CanvasGenerationParams,
 ) {
-  if (kind === "video") return mediaCardSizeForRatio(16 / 9, kind);
+  if (kind === "video")
+    return mediaCardSizeForRatio(videoAspectRatio(params), kind);
   const aspect = params && "aspect" in params ? params.aspect : "1:1";
   const [a, b] = String(aspect || "1:1")
     .split(":")
@@ -1371,13 +1415,21 @@ export function createMedia(
   position: { x: number; y: number },
   data: CanvasNodeData = {},
 ): CanvasNode {
+  const normalizedVideoParams =
+    kind === "video" ? normalizeVideoNodeParams(data) : undefined;
+  const size =
+    kind === "video"
+      ? mediaCardSizeForRatio(
+          nativeMediaRatio(data) || videoAspectRatio(normalizedVideoParams),
+          kind,
+        )
+      : { w: 380, h: 270 };
   return {
     id: uid("node"),
     type: "media",
     x: position.x,
     y: position.y,
-    w: kind === "video" ? 420 : 380,
-    h: kind === "video" ? 290 : 270,
+    ...size,
     data: {
       kind,
       url,
@@ -1388,7 +1440,7 @@ export function createMedia(
         ? { videoInputModeAuto: true }
         : {}),
       ...data,
-      ...(kind === "video" ? { params: normalizeVideoNodeParams(data) } : {}),
+      ...(normalizedVideoParams ? { params: normalizedVideoParams } : {}),
     },
   };
 }
@@ -1628,19 +1680,80 @@ export function removeEdge(document: CanvasDocument, id: string) {
   };
 }
 
+/**
+ * Remove one reference from a target without treating a group connection as
+ * an all-or-nothing input. Group edges keep their boundary connection and
+ * persist the remaining member ids when an individual member is removed.
+ */
+export function removeCanvasReference(
+  document: CanvasDocument,
+  targetId: string,
+  sourceId: string,
+) {
+  const matchingEdges = document.edges.filter((edge) =>
+    edge.target === targetId &&
+    !["generated", "variant", "lineage"].includes(edge.kind || "") &&
+    referenceNodeIdsForEdge(document, edge).includes(sourceId),
+  );
+  if (!matchingEdges.length) return document;
+
+  let next = document;
+  for (const edge of matchingEdges) {
+    const source = nodeById(next, edge.source);
+    const sourceGroup = groupById(next, edge.source) ||
+      (source?.groupId ? groupById(next, source.groupId) : undefined);
+    const sourceNodes = referenceNodeIdsForEdge(next, edge)
+      .map((id) => nodeById(next, id))
+      .filter((node): node is CanvasNode => Boolean(node));
+    if (!sourceNodes.some((node) => node.id === sourceId)) continue;
+
+    const remainingSourceIds = sourceNodes
+      .filter((node) => node.id !== sourceId)
+      .map((node) => node.id);
+    if (!sourceGroup || !remainingSourceIds.length) {
+      next = removeEdge(next, edge.id);
+      continue;
+    }
+
+    // Keep the group boundary connection and persist the user's per-target
+    // subset instead of re-expanding the whole group on every render.
+    next = {
+      ...next,
+      edges: next.edges.map((item) =>
+        item.id === edge.id
+          ? { ...item, sourceNodeIds: remainingSourceIds }
+          : item,
+      ),
+    };
+  }
+
+  const desiredOrder = incomingReferences(document, targetId)
+    .map((node) => node.id)
+    .filter((id) => id !== sourceId);
+  return reorderReferences(next, targetId, desiredOrder);
+}
+
 function referenceNodeIdsForEdge(document: CanvasDocument, edge: CanvasEdge) {
   if (["generated", "variant", "lineage"].includes(edge.kind || "")) return [];
+  return sourceNodesForEdge(document, edge)
+    .filter((node) => isCanvasReferenceableNode(node))
+    .map((node) => node.id);
+}
+
+function sourceNodesForEdge(document: CanvasDocument, edge: CanvasEdge) {
+  if (Array.isArray(edge.sourceNodeIds)) {
+    return [...new Set(edge.sourceNodeIds)]
+      .map((id) => nodeById(document, id))
+      .filter((node): node is CanvasNode => Boolean(node));
+  }
   const sourceGroup = groupById(document, edge.source);
   const source = nodeById(document, edge.source);
   const effectiveGroup = sourceGroup || (source?.groupId ? groupById(document, source.groupId) : undefined);
-  const sourceNodes = effectiveGroup
+  return effectiveGroup
     ? groupNodes(document, effectiveGroup.id)
     : source
       ? [source]
       : [];
-  return sourceNodes
-    .filter((node) => isCanvasReferenceableNode(node))
-    .map((node) => node.id);
 }
 
 function removeEdgesAndPruneReferences(
@@ -1860,31 +1973,21 @@ export function incomingContext(document: CanvasDocument, entityId: string) {
       return left.index - right.index;
     })
     .map(({ edge }) => edge)
-    .flatMap((edge) => {
-      const sourceGroup = groupById(document, edge.source);
-      if (sourceGroup)
-        return sourceGroup.nodeIds.map((id) => nodeById(document, id));
-      const source = nodeById(document, edge.source);
-      const sourceNodeGroup = source?.groupId
-        ? groupById(document, source.groupId)
-        : undefined;
-      return sourceNodeGroup
-        ? sourceNodeGroup.nodeIds.map((id) => nodeById(document, id))
-        : [source];
-    })
-    .filter((node): node is CanvasNode => Boolean(node));
+    .flatMap((edge) => sourceNodesForEdge(document, edge))
+    .filter((node): node is CanvasNode => node !== undefined);
   const storedOrder =
     "nodeIds" in entity
       ? []
       : entity.data.referenceOrder?.length
         ? entity.data.referenceOrder
         : entity.data.generation?.referenceIds || [];
+  const directIds = new Set(direct.map((node) => node.id));
   const virtual = storedOrder
     .map((id) => nodeById(document, id))
-    .filter(
-      (node): node is CanvasNode =>
-        isCanvasReferenceableNode(node),
-    );
+    .filter((node): node is CanvasNode => {
+      if (!node || !isCanvasReferenceableNode(node)) return false;
+      return directIds.has(node.id);
+    });
   const seen = new Set<string>();
   return [...virtual, ...direct].filter(
     (node) => !seen.has(node.id) && Boolean(seen.add(node.id)),

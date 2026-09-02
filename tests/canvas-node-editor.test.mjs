@@ -68,6 +68,12 @@ test("editor generation forwards its draft without waiting for selection state",
   assert.doesNotMatch(generation, /if \(mode === "text"\)/);
 });
 
+test("open editor drafts follow externally synchronized video input modes", () => {
+  assert.match(component, /function syncCanvasEditorDraftInputModes\(/);
+  assert.match(component, /params: \{ \.\.\.draft\.params, inputMode: params\.inputMode \}/);
+  assert.match(component, /setEditorDrafts\(\(current\) => syncCanvasEditorDraftInputModes\(current, normalized, runtime\)\)/);
+});
+
 test("upscale runs in place and keeps a visible processing state on the node", () => {
   const start = component.indexOf("const runUpscaleNode = useCallback");
   const end = component.indexOf("runUpscaleNodeRef.current = runUpscaleNode", start);

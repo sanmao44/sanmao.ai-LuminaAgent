@@ -12,6 +12,15 @@ const styles = await readFile(
 );
 
 test("card context menus select the target and preserve selected multi-actions", () => {
+  const contextMenuStart = component.indexOf("const contextMenuGroups = useMemo");
+  const contextMenuEnd = component.indexOf("function CanvasNodeContextMenu", contextMenuStart);
+  assert.ok(contextMenuStart >= 0 && contextMenuEnd > contextMenuStart, "node context menu builder should exist");
+  const contextMenu = component.slice(contextMenuStart, contextMenuEnd);
+  const quickActionsStart = component.indexOf("const quickActions = useMemo");
+  const quickActionsEnd = component.indexOf("const contextNode =", quickActionsStart);
+  assert.ok(quickActionsStart >= 0 && quickActionsEnd > quickActionsStart, "node quick toolbar builder should exist");
+  const quickActions = component.slice(quickActionsStart, quickActionsEnd);
+
   assert.match(component, /type CanvasContextMenuState/);
   assert.match(component, /menu: "node" \| "create" \| "tools"/);
   assert.match(component, /nodeId\?: string/);
@@ -22,9 +31,24 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
   assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*\)/);
-  assert.match(component, /label: "复制图片"/);
-  assert.match(component, /label: "调整参数"/);
-  assert.match(component, /label: selectedIds\.size > 1 \? `删除/);
+  assert.match(contextMenu, /label: "复制图片"/);
+  assert.match(contextMenu, /label: "超分"/);
+  assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
+  assert.match(contextMenu, /label: "下载"/);
+  assert.match(contextMenu, /label: "加入资产"/);
+  assert.match(component, /groups\.filter\(\(group\) => group\.actions\.length > 0\)/);
+  assert.doesNotMatch(contextMenu, /label: "预览"/);
+  assert.doesNotMatch(contextMenu, /label: "放大查看"/);
+  assert.doesNotMatch(contextMenu, /label: "调整参数"/);
+  assert.doesNotMatch(contextMenu, /局部编辑/);
+  assert.doesNotMatch(contextMenu, /label: "作为参考"/);
+  assert.doesNotMatch(contextMenu, /id: "delete"/);
+  assert.doesNotMatch(contextMenu, /label: "删除"/);
+  assert.doesNotMatch(contextMenu, /label: selectedIds\.size > 1 \? `删除/);
+  assert.match(quickActions, /label: "预览"/);
+  assert.match(quickActions, /局部编辑/);
+  assert.match(quickActions, /label: "作为参考"/);
+  assert.match(quickActions, /label: "删除"/);
 });
 
 test("layer actions respect the selected node's real z-index and explain boundary no-ops", () => {

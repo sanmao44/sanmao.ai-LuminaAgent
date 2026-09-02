@@ -176,6 +176,8 @@ export type CanvasEdge = {
   id: string;
   source: string;
   target: string;
+  /** Optional subset of a grouped source selected for this connection. */
+  sourceNodeIds?: string[];
   sourcePort?: 'left' | 'right';
   targetPort?: 'left' | 'right';
   inputRole?: CanvasInputRole;

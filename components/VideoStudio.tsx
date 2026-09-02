@@ -876,7 +876,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
          <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
            <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className={`video-live-pill ${usesAgnes && !selectedProvider?.credentialVerifiedAt ? 'needs-verification' : ''}`}>{usesAgnes ? selectedProvider?.credentialVerifiedAt ? '● Agnes Key 已验证' : '● Agnes Key 待验证' : '● 已连接'}</span></div>
-          <div className="video-field video-prompt-field"><span>提示词</span><ReferenceMentionEditor
+          <div className="video-field video-prompt-field"><div className="video-prompt-heading"><span>提示词</span>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); window.setTimeout(() => promptRef.current?.focus(), 0); }}>清空文本</button>}</div><ReferenceMentionEditor
             ref={promptRef}
             value={prompt}
             references={supportsReferenceMentions ? referenceCandidates : []}

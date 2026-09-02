@@ -138,6 +138,19 @@ function ProcessingGlyph({ kind }: { kind: CanvasProcessingKind }) {
   );
 }
 
+function processingStageLabel(
+  kind: CanvasProcessingKind,
+  waiting: boolean,
+  hasProgress: boolean,
+) {
+  if (waiting) return "队列等待";
+  if (kind === "video") return hasProgress ? "远程渲染" : "准备任务";
+  if (kind === "agent") return "思考中";
+  if (kind === "generator") return "分支处理中";
+  if (kind === "upscale") return "放大处理中";
+  return "生成处理中";
+}
+
 export default function CanvasProcessingIndicator({
   label,
   progress,
@@ -168,28 +181,38 @@ export default function CanvasProcessingIndicator({
   const elapsed = formatProcessingTime(elapsedMilliseconds);
   const hasProgress = typeof progress === "number";
   const phase = waiting ? "queued" : "running";
+  const stageLabel = processingStageLabel(kind, waiting, hasProgress);
 
   return (
     <div
       className={`canvas-processing-indicator kind-${kind} is-${phase}${compact ? " compact" : ""}`}
+      data-processing-phase={stageLabel}
+      data-processing-kind={kind}
       role="status"
       aria-live="polite"
       aria-label={`${label}，${waiting ? "正在等待" : "正在运行"}`}
     >
       <span className="canvas-processing-visual" aria-hidden="true">
-        <i className="canvas-processing-orbit orbit-outer" />
-        <i className="canvas-processing-orbit orbit-inner" />
+        <span className="canvas-processing-orbit orbit-outer" />
+        <span className="canvas-processing-orbit orbit-inner" />
         <span className="canvas-processing-glyph">
           <ProcessingGlyph kind={kind} />
         </span>
+        <span className="canvas-processing-live-dot" />
       </span>
       <span className="canvas-processing-copy">
         <span className="canvas-processing-title">
           <b>{label}</b>
-          <em>{waiting ? "排队" : "运行"}</em>
+          <em>
+            <span className="canvas-processing-status-dot" aria-hidden="true" />
+            {waiting ? "排队" : "运行"}
+          </em>
         </span>
         <span className="canvas-processing-details">
-          <small>{waiting ? "已等待" : "已运行"}</small>
+          <small>{stageLabel}</small>
+          <span className="canvas-processing-details-separator" aria-hidden="true">
+            ·
+          </span>
           <time
             className="canvas-processing-elapsed"
             dateTime={`PT${Math.floor(elapsedMilliseconds / 1000)}S`}

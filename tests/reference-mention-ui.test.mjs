@@ -80,3 +80,10 @@ test("video prompt uses the same blur-safe inline mention editor", () => {
   assert.doesNotMatch(video, /referenceMentionOpen|referenceMentionQuery/);
   assert.doesNotMatch(video, /<textarea ref=\{promptRef\}/);
 });
+
+test("video prompt exposes a one-click clear action without changing other inputs", () => {
+  assert.match(video, /className=\"video-prompt-clear\"/);
+  assert.match(video, /title=\"一键清空提示词\"/);
+  assert.match(video, /setPrompt\(''\)/);
+  assert.match(video, /promptRef\.current\?\.focus\(\)/);
+});
