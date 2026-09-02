@@ -1685,3 +1685,11 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 /* Keep the middle-button affordance visible without becoming another canvas
    hit target. The highlighted wheel makes the supported pan gesture obvious
    even before the user opens the keyboard-shortcut panel. */
+
+.canvas-asset-kind{grid-template-columns:repeat(5,minmax(0,1fr))}
+.canvas-global-asset-audio-preview{width:100%;height:100%;display:grid;place-items:center;align-content:center;gap:7px;background:radial-gradient(circle at center,color-mix(in srgb,var(--accent) 27%,transparent),transparent 64%),var(--panel-3);color:var(--accent-text)}
+.canvas-global-asset-audio-preview span{font-size:37px;line-height:1}.canvas-global-asset-audio-preview b{font-size:9px}
+.canvas-asset-preview-stage audio{width:min(620px,100%)}
+.canvas-media-card.audio{border:1px solid color-mix(in srgb,#c084fc 30%,transparent)}
+.canvas-audio-stage{width:100%;height:100%;display:grid;place-items:center;align-content:center;gap:12px;padding:18px;box-sizing:border-box;background:radial-gradient(circle at center,color-mix(in srgb,var(--accent) 22%,transparent),transparent 62%),var(--panel-3)}
+.canvas-audio-icon{font-size:42px;line-height:1;color:var(--accent-text)}.canvas-audio-stage audio{width:min(92%,360px)}.canvas-audio-mark{padding:4px 8px;border-radius:999px;background:color-mix(in srgb,var(--accent) 18%,rgba(0,0,0,.35));color:var(--accent-text);font-size:9px;font-weight:850}.canvas-node-footer em.audio-status{border:1px solid color-mix(in srgb,#c084fc 34%,transparent);background:color-mix(in srgb,#9333ea 18%,var(--accent-soft));color:#d8b4fe}

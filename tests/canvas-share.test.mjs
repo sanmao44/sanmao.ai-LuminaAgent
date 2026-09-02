@@ -20,5 +20,5 @@ test('super canvas routes image sharing through the branded share exporter', asy
 test('media viewer does not expose a misleading share action for videos', async () => {
   const component = await readFile(new URL('../components/MediaViewer.tsx', import.meta.url), 'utf8');
   assert.match(component, /download\("share"\).*disabled=\{item\.kind !== "image"\}/);
-  assert.match(component, /item\.kind === "video" \? "原视频" : "原图"/);
+  assert.match(component, /item\.kind === "video" \? "原视频" : item\.kind === "audio" \? "原音频" : "原图"/);
 });

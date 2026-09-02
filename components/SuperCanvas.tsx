@@ -326,6 +326,7 @@ const CANVAS_ASSET_SMART_COLLECTION_IDS = new Set([
   "reference",
   "image",
   "video",
+  "audio",
 ]);
 const CANVAS_ASSET_NON_READY_STATUSES = new Set(["queued", "running", "failed"]);
 
@@ -339,7 +340,6 @@ function isAssignableCanvasAssetCollection(collectionId: string) {
 function canAddCanvasAsset(node: CanvasNode) {
   return (
     node.type === "media" &&
-    node.data.kind !== "audio" &&
     Boolean(node.data.url) &&
     !CANVAS_ASSET_NON_READY_STATUSES.has(String(node.data.status || ""))
   );
@@ -2221,7 +2221,7 @@ export default function SuperCanvas() {
         .filter((node) => node.type === "media" && Boolean(node.data.url))
         .map((node) => ({
           id: `canvas:${activeProjectId}:${node.id}`,
-          kind: node.data.kind === "video" ? "video" : "image",
+          kind: node.data.kind || "image",
           url: String(node.data.url),
           name: String(node.data.name || "画布素材"),
           source: (node.data.generation
@@ -2609,11 +2609,11 @@ export default function SuperCanvas() {
           id: String(
             node.data.assetId || `canvas-${activeProjectId}-${node.id}`,
           ),
-          kind: node.data.kind === "video" ? "video" : "image",
+          kind: node.data.kind || "image",
           url: String(node.data.url),
           name: String(
             node.data.name ||
-              (node.data.kind === "video" ? "画布视频" : "画布图片"),
+              (node.data.kind === "video" ? "画布视频" : node.data.kind === "audio" ? "画布音频" : "画布图片"),
           ),
           source: node.data.generation ? "canvas-output" : "canvas-upload",
           createdAt: Number(node.data.generation?.createdAt || Date.now()),
@@ -4308,10 +4308,10 @@ export default function SuperCanvas() {
       const allFiles = [...files];
       const list = allFiles.filter(
         (file) =>
-          file.type.startsWith("image/") || file.type.startsWith("video/"),
+          file.type.startsWith("image/") || file.type.startsWith("video/") || file.type.startsWith("audio/"),
       );
       const textFiles = allFiles.filter(isCanvasTextReferenceFile);
-      if (!list.length && !textFiles.length) return notify("请选择图片、视频或文本素材。", "error");
+      if (!list.length && !textFiles.length) return notify("请选择图片、视频、音频或文本素材。", "error");
       const rect = stageRef.current?.getBoundingClientRect();
       const center = {
         x: (rect?.left || 0) + (rect?.width || stageSize.width) / 2,
@@ -4349,7 +4349,7 @@ export default function SuperCanvas() {
             : draft;
           nodes.push({ ...draft, x: point.x, y: point.y });
           addLog(
-            `已导入${asset.kind === "video" ? "视频" : "图片"}：${file.name}`,
+            `已导入${asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"}：${file.name}`,
           );
         } catch (error) {
           notify(
@@ -5689,7 +5689,10 @@ export default function SuperCanvas() {
                 firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
                 lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
                 referenceVideo: videoInputs.referenceVideo?.data.url ? String(videoInputs.referenceVideo.data.url) : undefined,
-                audio: videoParams.audio,
+                audios: videoInputs.audios.map((item) => ({
+                  url: String(item.data.url),
+                  name: String(item.data.name || "参考音频"),
+                })),
               });
               const target = createMedia(
                 "video",
@@ -5897,7 +5900,7 @@ export default function SuperCanvas() {
       if (!reuseDraft || !files.length) return;
       const pending = files.map((file, index) => ({
         id: uid("draft-ref"),
-        kind: (isCanvasTextReferenceFile(file) ? "text" : file.type.startsWith("video/") ? "video" : "image") as CanvasReferenceDraft["kind"],
+        kind: (isCanvasTextReferenceFile(file) ? "text" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "image") as CanvasReferenceDraft["kind"],
         ...(isCanvasTextReferenceFile(file) ? {} : { url: URL.createObjectURL(file) }),
         name: file.name || `参考素材 ${index + 1}`,
         ...(isCanvasTextReferenceFile(file) ? { mimeType: file.type || "text/plain;charset=utf-8" } : {}),
@@ -5946,7 +5949,7 @@ export default function SuperCanvas() {
             ...current,
             references: current.references.map((reference) => reference.id === draftRef.id ? { ...reference, pending: false, error: error instanceof Error ? error.message : "上传失败" } : reference),
           } : current);
-          notify(error instanceof Error ? error.message : "参考图上传失败。", "error");
+          notify(error instanceof Error ? error.message : "参考素材上传失败。", "error");
         } finally {
           if (draftRef.url?.startsWith("blob:")) URL.revokeObjectURL(draftRef.url);
         }
@@ -6596,7 +6599,10 @@ export default function SuperCanvas() {
             : videoInputs.referenceVideo?.data.url
               ? String(videoInputs.referenceVideo.data.url)
               : undefined,
-          audio: params.audio,
+          audios: videoInputs.audios.map((item) => ({
+            url: String(item.data.url),
+            name: String(item.data.name || "参考音频"),
+          })),
         });
         updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id ? { ...node, data: { ...node.data, status: "running", statusLabel: "视频生成中" } } : node.id === output.id ? { ...node, data: { ...node.data, jobId: task.id, status: task.status === "done" ? "completed" : "running", progress: Number(task.progress || 0), url: task.videoUrls?.[0] || node.data.url, statusLabel: task.status === "done" ? "视频已完成" : "视频生成中", generation: { kind: "video", prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, taskId: task.id, createdAt: Date.now() } } } : node) }));
         writeSharedCreationSettings(params);
@@ -6802,14 +6808,15 @@ export default function SuperCanvas() {
         streamFrame = window.requestAnimationFrame(flushStreamedText);
       };
       try {
+        const agentReferenceNodes = referenceNodes.filter((node) => node.type === "prompt" || node.data.kind !== "audio");
         const response = await generateCanvasAgent({
           messages: agentMessages,
           model: effectiveSettings.model,
           webMode: effectiveSettings.webMode,
-          task: inferCanvasAgentTask(prompt, referenceNodes.some((node) => node.data.kind === "image")),
+          task: inferCanvasAgentTask(prompt, agentReferenceNodes.some((node) => node.data.kind === "image")),
           deliverable: intentDecision.deliverable,
           intentReason: intentDecision.reason,
-          references: referenceNodes.map((node) => node.type === "prompt"
+          references: agentReferenceNodes.map((node) => node.type === "prompt"
             ? { id: `node-ref:${node.id}`, nodeId: node.id, kind: "text" as const, name: String(node.data.name || node.data.role || "文本上下文"), text: String(node.data.text || node.data.agentResponse || "") }
             : { id: `node-ref:${node.id}`, nodeId: node.id, kind: node.data.kind as "image" | "video", name: String(node.data.name || (node.data.kind === "video" ? "参考视频" : "参考图")), url: String(node.data.url || "") }),
         }, (event) => {
@@ -7401,7 +7408,10 @@ export default function SuperCanvas() {
              (videoParams.inputMode === "reference" && videoInputs?.referenceVideo?.data.url
                ? String(videoInputs.referenceVideo.data.url)
                : undefined),
-          audio: videoParams.audio,
+          audios: (videoInputs?.audios || []).map((item) => ({
+            url: String(item.data.url),
+            name: String(item.data.name || "参考音频"),
+          })),
         });
         updateDoc((value) => ({
           ...value,
@@ -8261,11 +8271,11 @@ export default function SuperCanvas() {
         ),
       );
       setSelectedGroupId(targetGroup?.id || null);
-      setMode(asset.kind);
-      notify(
-        targetGroup
-          ? `已将${asset.kind === "video" ? "视频" : "图片"}加入${targetGroup.name}`
-          : `已将${asset.kind === "video" ? "视频" : "图片"}添加到画布`,
+       if (asset.kind !== "audio") setMode(asset.kind);
+       notify(
+         targetGroup
+           ? `已将${asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"}加入${targetGroup.name}`
+           : `已将${asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"}添加到画布`,
       );
     },
     [
@@ -8391,7 +8401,7 @@ export default function SuperCanvas() {
       event.preventDefault();
       try {
         const asset = JSON.parse(raw) as AssetRecord;
-        if (!asset?.url || (asset.kind !== "image" && asset.kind !== "video"))
+        if (!asset?.url || (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio"))
           throw new Error("invalid asset");
         const targetNodeId = (event.target as HTMLElement | null)
           ?.closest<HTMLElement>("[data-canvas-node-id]")?.dataset.canvasNodeId;
@@ -8853,7 +8863,7 @@ export default function SuperCanvas() {
     if (!canAddCanvasAsset(node)) return null;
     return {
       id: `canvas:${activeProjectId}:${node.id}`,
-      kind: node.data.kind === "video" ? "video" : "image",
+      kind: node.data.kind || "image",
       url: String(node.data.url),
       name: String(node.data.name || "画布素材"),
       source: node.data.generation ? "canvas-output" : "canvas-upload",
@@ -8908,7 +8918,7 @@ export default function SuperCanvas() {
     }
     const anchor = window.document.createElement("a");
     anchor.href = String(node.data.url);
-    anchor.download = `${String(node.data.name || "SANMAO素材")}.${node.data.kind === "video" ? "mp4" : "png"}`;
+    anchor.download = `${String(node.data.name || "SANMAO素材")}.${node.data.kind === "video" ? "mp4" : node.data.kind === "audio" ? "mp3" : "png"}`;
     anchor.rel = "noreferrer";
     anchor.click();
     notify("已开始下载");
@@ -8918,8 +8928,9 @@ export default function SuperCanvas() {
       notify("分享版目前只支持已完成的图片节点。", "error");
       return;
     }
-    const references = incomingReferences(docRef.current, node.id)
-      .map((reference) => ({
+      const references = incomingReferences(docRef.current, node.id)
+        .filter((reference) => reference.data.kind !== "audio")
+        .map((reference) => ({
         id: reference.id,
         name: String(reference.data.name || "参考素材"),
         url: String(reference.data.url || ""),
@@ -10927,7 +10938,7 @@ export default function SuperCanvas() {
         const viewerIsMedia = viewerNode.type === "media";
         const viewerItem: MediaViewerItem = {
           id: viewerNode.id,
-          kind: viewerNode.data.kind === "video" ? "video" : "image",
+          kind: viewerNode.data.kind || "image",
           url: String(viewerNode.data.url),
           name: String(viewerNode.data.name || (viewerNode.type === "upscale" ? "超分结果" : "画布素材")),
           prompt: String(viewerNode.data.generation?.prompt || viewerNode.data.prompt || ""),
@@ -10936,7 +10947,7 @@ export default function SuperCanvas() {
         };
         const viewerReferences: MediaViewerReference[] = incomingReferences(document, viewerNode.id).map((reference) => ({
           id: reference.id,
-          kind: reference.data.kind === "video" ? ("video" as const) : ("image" as const),
+          kind: reference.data.kind || "image",
           url: String(reference.data.url || ""),
           name: String(reference.data.name || "参考素材"),
         })).filter((reference) => Boolean(reference.url));
@@ -11367,7 +11378,7 @@ function CanvasAssetDrawer({
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<"all" | "image" | "video">("all");
+  const [kind, setKind] = useState<"all" | "image" | "video" | "audio">("all");
   const [source, setSource] = useState<"all" | AssetSource>("all");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sort, setSort] = useState<"newest" | "oldest" | "name">("newest");
@@ -11479,7 +11490,7 @@ function CanvasAssetDrawer({
       if (collection === "all") return true;
       if (collection === "uncategorized") return !asset.collectionIds?.length;
       if (collection === "favorite") return asset.favorite;
-      if (collection === "image" || collection === "video") return asset.kind === collection;
+      if (collection === "image" || collection === "video" || collection === "audio") return asset.kind === collection;
       if (collection === "generated") return asset.source === "history" || asset.source === "video-task" || asset.source === "canvas-output";
       if (collection === "reference") return asset.source === "canvas-upload" || asset.tags?.includes("参考");
       if (collection === "recent") return asset.createdAt >= Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -11569,7 +11580,7 @@ function CanvasAssetDrawer({
   };
 
   const addSelectedAssetsToCollection = async () => {
-    if (collection === "all" || collection === "uncategorized" || collection === "favorite" || collection === "recent" || collection === "generated" || collection === "reference" || collection === "image" || collection === "video") {
+    if (collection === "all" || collection === "uncategorized" || collection === "favorite" || collection === "recent" || collection === "generated" || collection === "reference" || collection === "image" || collection === "video" || collection === "audio") {
       onNotify("请先在集合筛选中选择一个自定义集合，再批量归类。", "error");
       return;
     }
@@ -11693,6 +11704,13 @@ function CanvasAssetDrawer({
             </button>
             <button
               type="button"
+              className={kind === "audio" ? "active" : ""}
+              onClick={() => setKind("audio")}
+            >
+              音频
+            </button>
+            <button
+              type="button"
               className={favoritesOnly ? "active favorite" : ""}
               onClick={() => setFavoritesOnly((value) => !value)}
             >
@@ -11798,10 +11816,15 @@ function CanvasAssetDrawer({
                         playsInline
                         preload="metadata"
                       />
+                    ) : asset.kind === "audio" ? (
+                      <div className="canvas-global-asset-audio-preview">
+                        <span aria-hidden="true">♫</span>
+                        <b>参考音频</b>
+                      </div>
                     ) : (
                       <img src={asset.url} alt={asset.name} loading="lazy" />
                     )}
-                    <span>{asset.kind === "video" ? "▶ 视频" : "▣ 图片"}</span>
+                    <span>{asset.kind === "video" ? "▶ 视频" : asset.kind === "audio" ? "♫ 音频" : "▣ 图片"}</span>
                   </button>
                   <div className="canvas-global-asset-copy">
                     <label className="canvas-asset-select"><input type="checkbox" checked={selectedAssetIds.has(asset.id)} onChange={(event) => setSelectedAssetIds((current) => { const next = new Set(current); if (event.target.checked) next.add(asset.id); else next.delete(asset.id); return next; })} aria-label={`选择资产 ${asset.name}`} /><b title={asset.name}>{asset.name}</b></label>
@@ -11913,6 +11936,8 @@ function CanvasAssetDrawer({
             <div className="canvas-asset-preview-stage">
               {preview.kind === "video" ? (
                 <video src={preview.url} controls autoPlay playsInline />
+              ) : preview.kind === "audio" ? (
+                <audio src={preview.url} controls autoPlay />
               ) : (
                 <img src={preview.url} alt={preview.name} />
               )}
@@ -12131,9 +12156,9 @@ function CanvasNodeReferenceStrip({
     >
       <button type="button" className="canvas-editor-reference-preview" onClick={() => onPreview(reference)} title={reference.data.name || `引用 ${index + 1}`}>
         <span>{index + 1}</span>
-        {reference.data.kind === "video" ? <video src={reference.data.url} muted playsInline /> : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
+        {reference.data.kind === "video" ? <video src={reference.data.url} muted playsInline /> : reference.data.kind === "audio" ? <audio src={reference.data.url} controls onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} /> : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
       </button>
-      <b className="canvas-editor-reference-name">{reference.data.name || (reference.data.kind === "video" ? "视频素材" : "图片素材")}</b>
+      <b className="canvas-editor-reference-name">{reference.data.name || (reference.data.kind === "video" ? "视频素材" : reference.data.kind === "audio" ? "音频素材" : "图片素材")}</b>
       <button type="button" className="canvas-editor-reference-remove" aria-label={`移除引用 ${index + 1}`} onClick={() => onRemove(target.id, reference.id)}>×</button>
     </div>
   );
@@ -12150,11 +12175,16 @@ function CanvasNodeReferenceStrip({
   );
 
   const unusedImages = videoInputs?.unused.filter((item) => item.data.kind === "image") || [];
+  const unusedAudios = videoInputs?.unused.filter((item) => item.data.kind === "audio") || [];
   const connectedVideos = references.filter((item) => item.data.kind === "video");
+  const connectedAudios = references.filter((item) => item.data.kind === "audio");
   const connectedVideo = videoInputs?.referenceVideo || connectedVideos[0];
   const imageWarning = isVideoTarget && videoParams?.inputMode === "text" && references.some((item) => item.data.kind === "image");
   const videoWarning = isVideoTarget && connectedVideos.length > 0 && (
     videoParams?.inputMode === "text" || videoLimits?.maxReferenceVideos === 0
+  );
+  const audioWarning = isVideoTarget && connectedAudios.length > 0 && (
+    videoParams?.inputMode === "text" || videoLimits?.maxAudios === 0 || unusedAudios.length > 0
   );
 
   return (
@@ -12162,8 +12192,9 @@ function CanvasNodeReferenceStrip({
       <div className="canvas-editor-section-head">
         <span><b>输入与引用</b><small>{isVideoTarget ? `${target.data.videoInputModeAuto === false ? "手动锁定" : "自动匹配"} · ${modeLabel}` : "拖动缩略图可调整顺序"}</small></span>
         <div>
-          <b>{videoLimits ? `图片 ${connectedImageCount}/${videoLimits.maxReferenceImages}` : `${references.length}/16`}</b>
-          {isVideoTarget && connectedVideos.length > 0 && <small>视频输入 {connectedVideos.length}/{videoLimits?.maxReferenceVideos ?? 10}</small>}
+           <b>{videoLimits ? `图片 ${connectedImageCount}/${videoLimits.maxReferenceImages}` : `${references.length}/16`}</b>
+           {isVideoTarget && connectedVideos.length > 0 && <small>视频输入 {connectedVideos.length}/{videoLimits?.maxReferenceVideos ?? 10}</small>}
+           {isVideoTarget && references.some((item) => item.data.kind === "audio") && <small>音频输入 {references.filter((item) => item.data.kind === "audio").length}/{videoLimits?.maxAudios ?? 10}</small>}
           {isVideoTarget && target.data.videoInputModeAuto === false && onRestoreAutomatic && <button type="button" onClick={() => onRestoreAutomatic(target.id)}>恢复自动</button>}
           <button type="button" onClick={() => inputRef.current?.click()}>＋ 添加</button>
         </div>
@@ -12177,6 +12208,7 @@ function CanvasNodeReferenceStrip({
             : "已连接参考视频，但当前为文生视频模式；请切换到参考图/编辑模式后再生成。"}
         </div>
       )}
+      {audioWarning && <div className="canvas-editor-video-warning">已连接参考音频，但当前模式或模型不会提交音频；请切换到参考模式或支持音频输入的模型。</div>}
       {contexts.length > 0 && (
         <div className="canvas-editor-context-slot">
           <span className="canvas-editor-slot-label">文本上下文 <small>来自 @ 引用</small></span>
@@ -12198,7 +12230,7 @@ function CanvasNodeReferenceStrip({
         </div>
       ) : (
         <div className="canvas-editor-reference-slot" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop(event)}>
-          <span className="canvas-editor-slot-label">{target.type === "prompt" ? "上下文与参考" : "参考图"} <small>按编号提交</small></span>
+           <span className="canvas-editor-slot-label">{target.type === "prompt" ? "上下文与参考" : "参考素材"} <small>按编号提交</small></span>
           <div className="canvas-editor-reference-items">
             {(isVideoTarget ? videoInputs?.referenceImages || [] : references).map((reference, index) => renderItem(reference, index))}
             {!references.length && <small className="canvas-editor-reference-empty">拖入节点，或点击添加本地素材</small>}
@@ -12206,13 +12238,20 @@ function CanvasNodeReferenceStrip({
         </div>
       )}
       {isVideoTarget && connectedVideos.length > 0 && <div className="canvas-editor-video-input">视频输入：{connectedVideos.map((video, index) => `${index + 1}. ${video.data.name || "已连接参考视频"}`).join(" · ")}</div>}
+      {isVideoTarget && references.some((item) => item.data.kind === "audio") && <div className="canvas-editor-video-input">音频输入：{references.filter((item) => item.data.kind === "audio").map((audio, index) => `${index + 1}. ${audio.data.name || "已连接参考音频"}`).join(" · ")}</div>}
       {isVideoTarget && unusedImages.length > 0 && (
         <div className="canvas-editor-unused-inputs">
           <span className="canvas-editor-slot-label">本次未使用 <small>切换生成方式或移除连线后可重新使用</small></span>
           <div className="canvas-editor-reference-items">{unusedImages.map((reference, index) => renderItem(reference, references.findIndex((item) => item.id === reference.id), "unused-item"))}</div>
         </div>
       )}
-      <input ref={inputRef} hidden type="file" multiple accept={target.data.kind === "image" ? "image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1" : "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"} onChange={(event) => { if (event.target.files) onAddFiles(target.id, [...event.target.files]); event.currentTarget.value = ""; }} />
+      {isVideoTarget && unusedAudios.length > 0 && (
+        <div className="canvas-editor-unused-inputs">
+          <span className="canvas-editor-slot-label">未使用音频 <small>切换到参考模式或支持音频的模型后可提交</small></span>
+          <div className="canvas-editor-reference-items">{unusedAudios.map((reference) => renderItem(reference, references.findIndex((item) => item.id === reference.id), "unused-item"))}</div>
+        </div>
+      )}
+      <input ref={inputRef} hidden type="file" multiple accept={target.data.kind === "image" ? "image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1" : "image/png,image/jpeg,image/webp,video/mp4,video/webm,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"} onChange={(event) => { if (event.target.files) onAddFiles(target.id, [...event.target.files]); event.currentTarget.value = ""; }} />
     </div>
   );
 }
@@ -13555,6 +13594,8 @@ function CanvasNodeCard({
         ) / variantStates.length,
       )
     : processingProgress;
+  const processingMediaLabel =
+    data.kind === "video" ? "视频" : data.kind === "audio" ? "音频" : "图片";
   const processingLabel =
     data.status === "queued"
       ? data.statusLabel || "排队等待中"
@@ -13563,7 +13604,7 @@ function CanvasNodeCard({
           ? "Agent 正在思考"
           : node.type === "generator"
             ? "批量处理中"
-            : `${data.kind === "video" ? "视频" : "图片"}生成中`);
+            : `${processingMediaLabel}生成中`);
   const processingKind: CanvasProcessingKind =
     node.type === "prompt"
       ? "agent"
@@ -13650,7 +13691,7 @@ function CanvasNodeCard({
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
-      data-node-kind={node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : "image"}
+      data-node-kind={node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       aria-busy={pending}
       style={{
         left: node.x,
@@ -13700,7 +13741,7 @@ function CanvasNodeCard({
         onPointerDown={(event) => onConnect(event, node.id, "left")}
       />
       {node.type === "media" && (
-        <div className={`canvas-media-card${data.kind === "video" ? " video" : ""}`}>
+        <div className={`canvas-media-card${data.kind === "video" ? " video" : data.kind === "audio" ? " audio" : ""}`}>
           <div className="canvas-media-stage">
             {pending ? (
               <div className="canvas-media-state pending">
@@ -13723,8 +13764,8 @@ function CanvasNodeCard({
               </div>
             ) : !data.url ? (
               <div className="canvas-media-state draft">
-                <span>{data.kind === "video" ? "▶" : "▣"}</span>
-                <b>{data.kind === "video" ? "空视频节点" : "空图片节点"}</b>
+                <span>{data.kind === "video" ? "▶" : data.kind === "audio" ? "♫" : "▣"}</span>
+                <b>{data.kind === "video" ? "空视频节点" : data.kind === "audio" ? "空音频节点" : "空图片节点"}</b>
                 <small>选中后在下方生成</small>
               </div>
             ) : data.kind === "video" ? (
@@ -13752,6 +13793,22 @@ function CanvasNodeCard({
                   )
                 }
               />
+            ) : data.kind === "audio" ? (
+              <div className="canvas-audio-stage">
+                <span className="canvas-audio-icon" aria-hidden="true">♫</span>
+                <audio
+                  src={data.url}
+                  controls
+                  preload="metadata"
+                  aria-label={`音频预览${data.name ? `：${data.name}` : ""}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                  onLoadedMetadata={(event) =>
+                    onNaturalSize(node.id, 0, 0, event.currentTarget.duration)
+                  }
+                />
+                <span className="canvas-audio-mark">♫ 音频节点</span>
+              </div>
             ) : (
               <img
                 src={data.url}
@@ -13858,13 +13915,13 @@ function CanvasNodeCard({
           </div>
           <div className="canvas-node-footer">
             <span className="canvas-type-icon">
-              {data.kind === "video" ? "▶" : "▣"}
+              {data.kind === "video" ? "▶" : data.kind === "audio" ? "♫" : "▣"}
             </span>
             <span className="canvas-node-title">
-              <b>{data.name || (data.kind === "video" ? "视频素材" : "素材")}</b>
-              <small>{data.model || (data.kind === "video" ? "视频" : nodeStatus(node))}</small>
+              <b>{data.name || (data.kind === "video" ? "视频素材" : data.kind === "audio" ? "音频素材" : "素材")}</b>
+              <small>{data.model || (data.kind === "video" ? "视频" : data.kind === "audio" ? "音频" : nodeStatus(node))}</small>
             </span>
-            <em className={data.kind === "video" ? "video-status" : undefined}>
+            <em className={data.kind === "video" ? "video-status" : data.kind === "audio" ? "audio-status" : undefined}>
               {mediaFooterStatus}
             </em>
           </div>

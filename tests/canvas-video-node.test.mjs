@@ -37,7 +37,7 @@ test("formats loaded video durations without showing invalid values", () => {
 test("video canvas cards expose a persistent visual and accessible distinction", () => {
   assert.match(types, /durationMs\?: number/);
   assert.match(component, /formatCanvasVideoDuration\(data\.durationMs\)/);
-  assert.match(component, /className=\{`canvas-media-card\$\{data\.kind === "video" \? " video" : ""\}`\}/);
+  assert.match(component, /className=\{`canvas-media-card\$\{data\.kind === "video" \? " video" : data\.kind === "audio" \? " audio" : ""\}`\}/);
   assert.match(component, /className="canvas-video-mark"/);
   assert.match(component, /▶ 视频\{videoDuration \? ` · \$\{videoDuration\}` : ""\}/);
   assert.match(component, /className=\{`canvas-video-play/);

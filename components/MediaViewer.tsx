@@ -8,14 +8,14 @@ import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 
 export type MediaViewerReference = {
   id: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   url: string;
   name: string;
 };
 
 export type MediaViewerItem = {
   id: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   url: string;
   name: string;
   prompt?: string;
@@ -315,7 +315,7 @@ export default function MediaViewer({
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (zoom <= 1 || event.button !== 0) return;
     const target = event.target as Element;
-    if (target.closest("button, input, textarea, select, option, video, .media-viewer-divider")) return;
+    if (target.closest("button, input, textarea, select, option, video, audio, .media-viewer-divider")) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerStart.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
@@ -349,9 +349,9 @@ export default function MediaViewer({
     setDragging(false);
   };
 
-  const handleMediaLoad = (side: MediaViewerSide, element: HTMLImageElement | HTMLVideoElement) => {
-    const width = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
-    const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
+  const handleMediaLoad = (side: MediaViewerSide, element: HTMLImageElement | HTMLVideoElement | HTMLAudioElement) => {
+    const width = element instanceof HTMLVideoElement ? element.videoWidth : element instanceof HTMLImageElement ? element.naturalWidth : 640;
+    const height = element instanceof HTMLVideoElement ? element.videoHeight : element instanceof HTMLImageElement ? element.naturalHeight : 120;
     if (!width || !height) return;
     setMediaSizes((current) =>
       current[side].width === width && current[side].height === height
@@ -457,8 +457,9 @@ export default function MediaViewer({
     if (onDownload) return onDownload(variant);
     const anchor = document.createElement("a");
     anchor.href = item.url;
-    const originalLabel = item.kind === "video" ? "原视频" : "原图";
-    anchor.download = `${item.name || "SANMAO素材"}-${variant === "share" ? "分享版" : originalLabel}.${item.kind === "video" ? "mp4" : "png"}`;
+    const originalLabel = item.kind === "video" ? "原视频" : item.kind === "audio" ? "原音频" : "原图";
+    const extension = item.kind === "video" ? "mp4" : item.kind === "audio" ? "mp3" : "png";
+    anchor.download = `${item.name || "SANMAO素材"}-${variant === "share" ? "分享版" : originalLabel}.${extension}`;
     anchor.click();
   };
 
@@ -497,7 +498,7 @@ export default function MediaViewer({
             )}
             {parameters && <button type="button" className={`media-viewer-header-button media-viewer-settings-button ${showParameters ? "active" : ""}`} onClick={() => setShowParameters((value) => !value)}><span className="media-viewer-button-icon" aria-hidden="true">⚙</span><span>参数调整</span></button>}
             <div className="media-viewer-download-group" role="group" aria-label="下载">
-              <button type="button" className="media-viewer-download-button original" onClick={() => download("original")}><span className="media-viewer-button-icon" aria-hidden="true">↓</span><span>{item.kind === "video" ? "原视频" : "原图"}</span></button>
+              <button type="button" className="media-viewer-download-button original" onClick={() => download("original")}><span className="media-viewer-button-icon" aria-hidden="true">↓</span><span>{item.kind === "video" ? "原视频" : item.kind === "audio" ? "原音频" : "原图"}</span></button>
               <button type="button" className="media-viewer-download-button share" onClick={() => download("share")} disabled={item.kind !== "image"}><span className="media-viewer-button-icon" aria-hidden="true">⇩</span><span>分享版</span></button>
             </div>
             <button type="button" className="media-viewer-close-button" onClick={onClose} aria-label="关闭预览"><span aria-hidden="true">×</span></button>
@@ -562,7 +563,7 @@ export default function MediaViewer({
           ) : (
             <div className="media-viewer-single-layer">
               <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
-                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : <img className="media-viewer-copyable-image" draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />}
+                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : item.kind === "audio" ? <audio src={item.url} controls style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : <img className="media-viewer-copyable-image" draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />}
               </div>
             </div>
           )}
@@ -571,12 +572,12 @@ export default function MediaViewer({
 
         {references.length > 0 && (
           <section className="media-viewer-reference-panel">
-            <div className="media-viewer-reference-head"><b>参考图 · {references.length} 张</b><small>点击切换对比对象</small></div>
+            <div className="media-viewer-reference-head"><b>参考素材 · {references.length} 项</b><small>点击切换对比对象</small></div>
             <div className="media-viewer-reference-list">
               {references.map((reference, index) => (
                 <button type="button" className={reference.id === selectedReference?.id ? "active" : ""} key={reference.id} onClick={() => { setSelectedReferenceId(reference.id); if (reference.kind === "image") setCompare(true); }}>
-                  {reference.kind === "video" ? <video src={reference.url} muted playsInline /> : <img src={reference.url} alt={reference.name} />}
-                  <span>图 {index + 1}</span>
+                  {reference.kind === "video" ? <video src={reference.url} muted playsInline /> : reference.kind === "audio" ? <span className="media-viewer-audio-thumb">♫</span> : <img src={reference.url} alt={reference.name} />}
+                  <span>{reference.kind === "audio" ? "音频" : "图"} {index + 1}</span>
                 </button>
               ))}
             </div>
