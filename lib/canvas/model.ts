@@ -70,7 +70,7 @@ function nodeType(value: unknown): CanvasNode["type"] {
 }
 
 function mediaKind(value: unknown): CanvasMediaKind {
-  return value === "video" ? "video" : "image";
+  return value === "video" ? "video" : value === "audio" ? "audio" : "image";
 }
 
 /** Nodes that currently expose a usable image/video URL to other nodes. */
@@ -345,6 +345,7 @@ function normalizeInputRole(value: unknown): CanvasInputRole | undefined {
   return value === "prompt" ||
     value === "context" ||
     value === "reference-image" ||
+    value === "audio" ||
     value === "mask" ||
     value === "video" ||
     value === "first-frame" ||
@@ -364,6 +365,7 @@ function inferInputRoleFromNodes(
   const sourceKind = source.type === "media" || source.type === "upscale" ? source.data.kind : undefined;
   const targetKind = target.type === "media" || target.type === "generator" ? target.data.kind : undefined;
   if (!sourceKind || !targetKind) return undefined;
+  if (sourceKind === "audio") return targetKind === "video" ? "audio" : undefined;
   if (targetKind === "image") return sourceKind === "video" ? "video" : "reference-image";
   if (sourceKind === "video") return "video";
   if (inputMode === "frames") return position === 0 ? "first-frame" : position === 1 ? "last-frame" : "reference-image";
@@ -408,6 +410,14 @@ export function canConnect(
     sourceNode.data.kind === "video"
   )
     return { ok: false, reason: "图片节点不能接收视频作为图片参考。" };
+  if (
+    sourceNode &&
+    sourceNode.data.kind === "audio" &&
+    targetKind !== "video"
+  )
+    return { ok: false, reason: "参考音频只能连接到视频节点。" };
+  if (inputRole === "audio" && targetKind !== "video")
+    return { ok: false, reason: "参考音频只能连接到视频节点。" };
   if (targetNode?.type === "upscale") {
     if (!isCanvasReadyImageSource(sourceNode))
       return { ok: false, reason: "超分节点只接受一张已完成的图片" };
@@ -1409,6 +1419,7 @@ export function mediaCardSizeForRatio(
   ratio?: number,
   kind: CanvasMediaKind = "image",
 ) {
+  if (kind === "audio") return { w: 380, h: 176 };
   const safeRatio =
     positiveRatio(ratio) ||
     (kind === "video" ? DEFAULT_VIDEO_ASPECT_RATIO : 1);
@@ -1473,7 +1484,9 @@ export function createMedia(
           nativeMediaRatio(data) || videoAspectRatio(normalizedVideoParams),
           kind,
         )
-      : { w: 380, h: 270 };
+      : kind === "audio"
+        ? mediaCardSizeForRatio(1, kind)
+        : { w: 380, h: 270 };
   return {
     id: uid("node"),
     type: "media",
@@ -1483,7 +1496,7 @@ export function createMedia(
     data: {
       kind,
       url,
-      name: name || (kind === "video" ? "视频素材" : "图片素材"),
+      name: name || (kind === "video" ? "视频素材" : kind === "audio" ? "音频素材" : "图片素材"),
       role: "参考",
       autoFit: true,
       ...(kind === "video" && typeof data.videoInputModeAuto !== "boolean"

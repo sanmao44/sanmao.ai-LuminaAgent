@@ -19,6 +19,7 @@ import {
   localSegmentationUnavailableMessage,
   segmentLocalSubject,
 } from '@/lib/local-segmentation';
+import { LOCAL_SEGMENTATION_BROWSER_INFO } from '@/lib/local-segmentation-browser';
 
 export type LocalEditIntent = 'remove' | 'replace' | 'add' | 'subject';
 
@@ -312,6 +313,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [, setHistoryVersion] = useState(0);
+  const [, setSegmentationVersion] = useState(0);
+
+  useEffect(() => {
+    const provider = getLocalSegmentationProvider();
+    return provider?.subscribe?.(() => setSegmentationVersion((value) => value + 1));
+  }, []);
 
   const refreshPreview = () => {
     const mask = maskCanvasRef.current;
@@ -707,6 +714,33 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       restoreSnapshot(before);
     } finally {
       setSmartBusy(false);
+    }
+  }
+
+  async function installLocalSegmentationModel() {
+    const provider = getLocalSegmentationProvider();
+    if (!provider?.load) {
+      setSmartError(localSegmentationUnavailableMessage());
+      return;
+    }
+    setSmartError('');
+    try {
+      await provider.load();
+    } catch (cause) {
+      // The provider keeps the detailed state for the install card; this note
+      // also gives a clear fallback when the card is below the fold on mobile.
+      setSmartError(cause instanceof Error ? `模型安装失败：${cause.message}` : '模型安装失败，请检查网络后重试');
+    }
+  }
+
+  async function clearLocalSegmentationModel() {
+    const provider = getLocalSegmentationProvider();
+    if (!provider?.clear) return;
+    try {
+      await provider.clear();
+      setSmartError('本地模型已清除；仍可继续使用点选和手动画区。');
+    } catch (cause) {
+      setSmartError(cause instanceof Error ? cause.message : '清除本地模型失败');
     }
   }
 
@@ -1198,6 +1232,11 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   const history = historyRef.current;
   const imageCanvas = imageCanvasRef.current;
   const ratio = imageCanvas ? `${imageCanvas.width} / ${imageCanvas.height}` : '16 / 9';
+  const segmentationProvider = getLocalSegmentationProvider();
+  const segmentationStatus = segmentationProvider?.status() || 'unavailable';
+  const segmentationProgress = Math.round(segmentationProvider?.progress?.() || 0);
+  const segmentationCached = Boolean(segmentationProvider?.cached?.());
+  const segmentationProviderError = segmentationProvider?.error?.() || '';
   return (
     <div className="mask-editor-backdrop local-edit-backdrop" style={{ zIndex: CANVAS_Z_INDEX.modal }} onMouseDown={(event) => { if (!saving && event.target === event.currentTarget) onCancel(); }}>
       <div className="mask-editor local-edit-workbench surface" role="dialog" aria-modal="true" aria-labelledby="local-edit-title">
@@ -1286,6 +1325,16 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
               <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
               <label><span>边缘羽化</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather}px</b></label>
             </div>
+            <section className="local-edit-segmentation-card" aria-label="本地主体识别模型">
+              <div className="local-edit-segmentation-head"><span>本地主体识别</span><b>{segmentationStatus === 'ready' ? '已安装' : segmentationCached ? '已缓存' : '免费可用'}</b></div>
+              <p>首次使用下载{LOCAL_SEGMENTATION_BROWSER_INFO.estimatedLabel}，模型只保存在此浏览器，图片不会上传。</p>
+              {segmentationStatus === 'loading' && <div className="local-edit-segmentation-progress" aria-live="polite"><progress max="100" value={segmentationProgress} /><span>正在安装 {segmentationProgress}%</span></div>}
+              {segmentationProviderError && segmentationStatus === 'error' && <div className="local-edit-segmentation-error" role="alert">{segmentationProviderError}</div>}
+              <div className="local-edit-segmentation-actions">
+                <button type="button" disabled={segmentationStatus === 'loading' || saving} onClick={() => void installLocalSegmentationModel()}>{segmentationStatus === 'ready' ? '已就绪，可直接识别' : segmentationStatus === 'error' ? '重试安装' : segmentationCached ? '启用本地模型' : '安装免费主体识别模型'}</button>
+                {segmentationStatus === 'ready' && <button type="button" className="danger" disabled={saving} onClick={() => void clearLocalSegmentationModel()}>清除本地模型</button>}
+              </div>
+            </section>
              <div className="local-edit-intents" aria-label="提示词快捷模板">
               <span>快捷意图</span>
               {LOCAL_EDIT_INTENTS.map((intent) => <button key={intent.value} type="button" disabled={saving} onClick={() => addIntent(intent.value)}>{intent.label}</button>)}

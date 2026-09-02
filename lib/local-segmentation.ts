@@ -13,6 +13,16 @@ export type LocalSegmentationProvider = {
   id: string;
   modelName: string;
   status: () => LocalSegmentationStatus;
+  /** A best-effort 0-100 download/load progress value for the UI. */
+  progress?: () => number;
+  /** A provider-owned error message that can be shown beside the install action. */
+  error?: () => string;
+  /** Whether the model files are already present in this browser's cache. */
+  cached?: () => boolean;
+  /** Remove the provider's local model files and release its runtime. */
+  clear?: () => Promise<void>;
+  /** Notify consumers when status/progress changes. */
+  subscribe?: (listener: () => void) => () => void;
   load?: () => Promise<void>;
   segment: (imageDataUrl: string, point: LocalEditPoint) => Promise<LocalSegmentationResult>;
 };

@@ -3,7 +3,7 @@ import type { PublicState, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale';
-export type CanvasMediaKind = 'image' | 'video';
+export type CanvasMediaKind = 'image' | 'video' | 'audio';
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -12,6 +12,7 @@ export type CanvasInputRole =
   | 'prompt'
   | 'context'
   | 'reference-image'
+  | 'audio'
   | 'mask'
   | 'video'
   | 'first-frame'

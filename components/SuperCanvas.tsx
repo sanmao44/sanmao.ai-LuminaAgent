@@ -123,6 +123,7 @@ import {
   type CanvasVideoInputMode,
 } from "@/lib/canvas/references";
 import { getVideoModelLimits } from "@/lib/video-model-limits";
+import { is65535Provider } from "@/lib/video-platform";
 import {
   fitCanvasNodeEditorBelow,
   placeCanvasGroupToolbar,
@@ -212,7 +213,8 @@ import { insertReferenceMention as insertCreativeMention, referenceMentionNumber
 import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 
-type Mode = CanvasMediaKind | "text";
+type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
+type Mode = CanvasGenerationMode | "text";
 type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
 type CanvasCursorTask =
@@ -337,6 +339,7 @@ function isAssignableCanvasAssetCollection(collectionId: string) {
 function canAddCanvasAsset(node: CanvasNode) {
   return (
     node.type === "media" &&
+    node.data.kind !== "audio" &&
     Boolean(node.data.url) &&
     !CANVAS_ASSET_NON_READY_STATUSES.has(String(node.data.status || ""))
   );
@@ -455,6 +458,10 @@ type CanvasDrafts = {
   video: { prompt: string; params: VideoCreationSettings };
   text: { prompt: string; params: AgentCreationSettings };
 };
+type CanvasDeckSource =
+  | { kind: "text"; prompt: string; params: AgentCreationSettings; node: CanvasNode | null; target: CanvasNode | null }
+  | { kind: "image"; prompt: string; params: ImageCreationSettings; node: CanvasNode | null; target: CanvasNode | null }
+  | { kind: "video"; prompt: string; params: VideoCreationSettings; node: CanvasNode | null; target: CanvasNode | null };
 type CanvasEditorDraft = {
   prompt: string;
   params?: CanvasGenerationParams;
@@ -700,11 +707,14 @@ function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+function defaultParams(kind: "image", runtime: CanvasRuntimeState | null): ImageCreationSettings;
+function defaultParams(kind: "video" | "audio", runtime: CanvasRuntimeState | null): VideoCreationSettings;
+function defaultParams(kind: CanvasMediaKind, runtime: CanvasRuntimeState | null): CanvasGenerationParams;
 function defaultParams(
   kind: CanvasMediaKind,
   runtime: CanvasRuntimeState | null,
 ): CanvasGenerationParams {
-  return readSharedCreationSettings(kind, runtime);
+  return readSharedCreationSettings(kind === "audio" ? "video" : kind, runtime);
 }
 
 type CanvasConnectionResult = {
@@ -853,6 +863,7 @@ function connectCanvasNodesInDocument(
       : [];
   const sourceHasImage = sourceInputs.some((node) => node.data.kind === "image");
   const sourceHasVideo = sourceInputs.some((node) => node.data.kind === "video");
+  const sourceHasAudio = sourceInputs.some((node) => node.data.kind === "audio");
   let inputRole = requestedRole;
   let videoMode: CanvasVideoInputMode | undefined;
   let next = document;
@@ -860,8 +871,11 @@ function connectCanvasNodesInDocument(
   if (targetKind === "image" && (sourceKind === "video" || sourceHasVideo)) {
     return { ok: false, document, reason: "图片节点不能接收视频作为图片参考。" };
   }
+  if ((sourceKind === "audio" || sourceHasAudio) && targetKind !== "video") {
+    return { ok: false, document, reason: "参考音频只能连接到视频节点。" };
+  }
 
-  if (targetKind === "video" && (sourceKind === "image" || sourceHasImage || sourceHasVideo)) {
+  if (targetKind === "video" && (sourceKind === "image" || sourceKind === "audio" || sourceHasImage || sourceHasVideo || sourceHasAudio)) {
     const settings = target.data.params && typeof target.data.params === "object" && "inputMode" in target.data.params
       ? target.data.params as VideoCreationSettings
       : normalizeCreationSettings("video", target.data.params, runtime);
@@ -875,15 +889,31 @@ function connectCanvasNodesInDocument(
         reason: "当前视频模型不支持参考视频，请切换到支持参考视频的模型，或移除视频输入。",
       };
     }
+    if (sourceHasAudio && (!capabilities.supportsAudio || limits.maxAudios <= 0)) {
+      return {
+        ok: false,
+        document,
+        reason: "当前视频模型不支持参考音频，请切换到支持音频输入的模型，或移除音频。",
+      };
+    }
     const existing = incomingReferences(document, targetId);
     const existingVideoCount = existing.filter((node) => node.data.kind === "video").length;
+    const existingAudioCount = existing.filter((node) => node.data.kind === "audio").length;
     const duplicateSourceIds = new Set(existing.map((node) => node.id));
     const newVideoCount = sourceInputs.filter((node) => node.data.kind === "video" && !duplicateSourceIds.has(node.id)).length;
+    const newAudioCount = sourceInputs.filter((node) => node.data.kind === "audio" && !duplicateSourceIds.has(node.id)).length;
     if (existingVideoCount + newVideoCount > limits.maxReferenceVideos) {
       return {
         ok: false,
         document,
         reason: `当前模型最多接收 ${limits.maxReferenceVideos} 个参考视频，请减少视频输入或切换模型。`,
+      };
+    }
+    if (existingAudioCount + newAudioCount > limits.maxAudios) {
+      return {
+        ok: false,
+        document,
+        reason: `当前模型最多接收 ${limits.maxAudios} 段参考音频，请减少音频输入或切换模型。`,
       };
     }
     const combined = [
@@ -893,16 +923,20 @@ function connectCanvasNodesInDocument(
     const automatic = target.data.videoInputModeAuto !== false;
     const explicitSlot = requestedRole === "first-frame" || requestedRole === "last-frame";
     if (automatic && !explicitSlot) {
-      videoMode = combined.some((node) => node.data.kind === "video")
+      videoMode = combined.some((node) => node.data.kind === "audio")
+        ? capabilities.supportsAudio && capabilities.supportsReference && limits.maxAudios > 0 ? "reference" : undefined
+        : combined.some((node) => node.data.kind === "video")
         ? capabilities.supportsReference && limits.maxReferenceVideos > 0 ? "reference" : undefined
         : preferredCanvasVideoInputModeForImageCount(combinedImages.length, capabilities);
       if (!videoMode && (combinedImages.length || combined.some((node) => node.data.kind === "video"))) {
         return {
           ok: false,
           document,
-          reason: combinedImages.length >= 3
-            ? "当前模型不支持多张参考图生视频，请切换到支持参考图的视频模型。"
-            : "当前模型不支持图片输入，请切换到支持首帧或参考图的视频模型。",
+            reason: combined.some((node) => node.data.kind === "audio")
+              ? "参考音频需要当前模型支持参考模式和音频输入，请切换模型。"
+              : combinedImages.length >= 3
+              ? "当前模型不支持多张参考图生视频，请切换到支持参考图的视频模型。"
+              : "当前模型不支持图片输入，请切换到支持首帧或参考图的视频模型。",
         };
       }
     } else {
@@ -911,6 +945,10 @@ function connectCanvasNodesInDocument(
       else if (requestedRole === "first-frame" && videoMode !== "frames") videoMode = "first-frame";
       if (videoMode === "reference" && !capabilities.supportsReference)
         return { ok: false, document, reason: "当前模型不支持参考图，请切换到支持参考图的视频模型。" };
+      if (sourceHasAudio && (!capabilities.supportsAudio || limits.maxAudios <= 0))
+        return { ok: false, document, reason: "当前视频模型不支持参考音频，请切换到支持音频输入的模型。" };
+      if (sourceHasAudio && videoMode !== "reference")
+        return { ok: false, document, reason: "参考音频需要参考模式，请切换生成方式或恢复自动后再接入音频。" };
       if ((videoMode === "first-frame" || videoMode === "frames") && !capabilities.supportsFirstFrame)
         return { ok: false, document, reason: "当前模型不支持首帧/首尾帧，请切换到支持首帧的视频模型。" };
       if (videoMode === "text" && (sourceHasImage || sourceHasVideo))
@@ -923,7 +961,9 @@ function connectCanvasNodesInDocument(
       : -1;
     inputRole = explicitSlot
       ? requestedRole
-      : sourceHasVideo && !sourceHasImage
+        : sourceHasAudio && !sourceHasImage && !sourceHasVideo
+          ? "audio"
+          : sourceHasVideo && !sourceHasImage
         ? "video"
         : sourceGroup
           ? "reference-image"
@@ -975,7 +1015,7 @@ function connectCanvasNodesInDocument(
 
   const beforeEdges = next.edges.length;
   const existingInputs = incomingReferences(next, targetId).length;
-  const hasReferenceInput = inputRole === "reference-image" || inputRole === "first-frame" || inputRole === "last-frame" || sourceHasImage || sourceHasVideo;
+  const hasReferenceInput = inputRole === "reference-image" || inputRole === "first-frame" || inputRole === "last-frame" || inputRole === "audio" || sourceHasImage || sourceHasVideo || sourceHasAudio;
   next = addEdge(next, sourceId, targetId, sourcePort, targetPort, hasReferenceInput ? "reference" : "manual", inputRole, existingInputs);
   if (next.edges.length === beforeEdges) return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
   const synchronized = targetKind === "video"
@@ -1007,10 +1047,14 @@ function canvasVideoInputError(
 ) {
   const connectedImages = inputs.orderedImages;
   const connectedVideos = inputs.media.filter((node) => node.data.kind === "video");
+  const connectedAudios = inputs.media.filter((node) => node.data.kind === "audio");
   if (inputMode === "text") {
-    if (connectedImages.length || connectedVideos.length) return "已连接图片或参考视频，但当前为文生视频模式；请切换到图片/参考模式，或移除输入后再生成。";
+    if (connectedImages.length || connectedVideos.length || connectedAudios.length) return "已连接图片、参考视频或参考音频，但当前为文生视频模式；请切换到图片/参考模式，或移除输入后再生成。";
     return undefined;
   }
+  if (connectedAudios.length && !inputs.audios.length) return "当前视频模型不支持参考音频，请切换到支持音频输入的模型，或移除音频。";
+  if (connectedAudios.length && inputMode !== "reference") return "参考音频需要参考模式，请切换生成方式后再生成。";
+  if (connectedAudios.length > limits.maxAudios) return `当前模型最多接收 ${limits.maxAudios} 段参考音频，请减少音频输入。`;
   if (inputMode === "first-frame") {
     if (!inputs.firstFrame) return "首帧模式请先连接一张首帧图片。";
     if (inputs.unused.some((node) => node.data.kind === "image")) return "首帧模式只支持一张图片；请切换到首尾帧或参考图模式。";
@@ -1041,11 +1085,27 @@ function canvasVideoInputError(
 
 function copyParams(
   value: unknown,
+  kind: "image",
+  runtime: CanvasRuntimeState | null,
+): ImageCreationSettings;
+function copyParams(
+  value: unknown,
+  kind: "video" | "audio",
+  runtime: CanvasRuntimeState | null,
+): VideoCreationSettings;
+function copyParams(
+  value: unknown,
   kind: CanvasMediaKind,
   runtime: CanvasRuntimeState | null,
-) {
+): CanvasGenerationParams;
+function copyParams(
+  value: unknown,
+  kind: CanvasMediaKind,
+  runtime: CanvasRuntimeState | null,
+): CanvasGenerationParams {
+  const creationKind = kind === "audio" ? "video" : kind;
   return normalizeCreationSettings(
-    kind,
+    creationKind,
     value && typeof value === "object"
       ? clone(value as CanvasGenerationParams)
       : defaultParams(kind, runtime),
@@ -1353,6 +1413,7 @@ function canvasVideoInputCapabilities(
     supportsReference: !model || capabilities.includes("video-reference") || capabilities.includes("video-generate"),
     supportsFirstFrame: !model || capabilities.includes("video-first-frame") || capabilities.includes("video-generate"),
     supportsFrames: !model || capabilities.includes("video-first-frame") || capabilities.includes("video-generate"),
+    supportsAudio: !model || capabilities.includes("video-audio"),
     model,
   };
 }
@@ -1408,6 +1469,7 @@ function defaultCanvasVideoInputRole(
   inputMode: CanvasVideoInputMode,
   imagePosition: number,
 ): CanvasInputRole | undefined {
+  if (node.data.kind === "audio") return "audio";
   if (node.data.kind === "video") return "video";
   if (inputMode === "frames") return imagePosition === 0 ? "first-frame" : imagePosition === 1 ? "last-frame" : "reference-image";
   if (inputMode === "first-frame") return imagePosition === 0 ? "first-frame" : "reference-image";
@@ -1454,12 +1516,15 @@ function syncCanvasVideoReferences(
       : incomingReferences(next, target.id);
     const images = references.filter((node) => node.data.kind === "image");
     const videos = references.filter((node) => node.data.kind === "video");
+    const audios = references.filter((node) => node.data.kind === "audio");
     const capabilities = canvasVideoInputCapabilities(settings, runtime);
     const limits = getVideoModelLimits(capabilities.model || undefined, runtime?.providers.find((item) => item.id === capabilities.model?.providerId));
     const automatic = target.data.videoInputModeAuto !== false;
     let inputMode = settings.inputMode;
     if (automatic) {
-      if (videos.length > 0) {
+      if (audios.length > 0 && capabilities.supportsAudio && capabilities.supportsReference && limits.maxAudios > 0) {
+        inputMode = "reference";
+      } else if (videos.length > 0) {
         inputMode = capabilities.supportsReference && limits.maxReferenceVideos > 0 ? "reference" : "text";
       } else {
         inputMode = preferredCanvasVideoInputModeForImageCount(images.length, capabilities) || "text";
@@ -1602,12 +1667,13 @@ function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | 
     };
   }
   if (!isCanvasReferenceableNode(node)) return null;
+  if (!node.data.kind) return null;
   return {
     id: `node-ref:${node.id}`,
     nodeId: node.id,
-    kind: node.data.kind === "video" ? "video" : "image",
+    kind: node.data.kind,
     url: String(node.data.url),
-    name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : "图片素材")),
+    name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : node.data.kind === "audio" ? "音频素材" : "图片素材")),
     origin: "node",
   };
 }
@@ -1617,7 +1683,7 @@ function canvasReferenceRecordsFromNodes(nodes: CanvasNode[]) {
   return nodes
     .map((node) => {
       const draft = canvasReferenceDraftFromNode(node);
-      if (!draft || seen.has(node.id)) return null;
+      if (!draft || draft.kind === "audio" || seen.has(node.id)) return null;
       seen.add(node.id);
       return {
         id: node.id,
@@ -1667,6 +1733,7 @@ function resolveMentionTokens(prompt: string, candidates: CanvasNode[]) {
 
 function isCanvasMentionableNode(node: CanvasNode | undefined) {
   return Boolean(node && (isCanvasReferenceableNode(node)
+    && node.data.kind !== "audio"
     || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim()))
     || (node.type === "generator" && Boolean(String(node.data.prompt || "").trim()))));
 }
@@ -4559,7 +4626,7 @@ export default function SuperCanvas() {
     [updateDoc],
   );
 
-  const deckSource = useCallback((request?: CanvasGenerationRequest) => {
+  const deckSource = useCallback((request?: CanvasGenerationRequest): CanvasDeckSource => {
     const activeNode = request?.nodeId
       ? nodeById(docRef.current, request.nodeId)
       : selectedSingle;
@@ -4591,45 +4658,73 @@ export default function SuperCanvas() {
       };
     }
     if (activeNode?.type === "generator") {
-      const kind: CanvasMediaKind = activeNode.data.kind || "image";
+      const prompt = promptOverride ?? String(activeNode.data.prompt || "");
+      if (activeNode.data.kind === "video" || activeNode.data.kind === "audio") {
+        return {
+          kind: "video" as const,
+          prompt,
+          params: copyParams(paramsOverride || activeNode.data.params, "video", runtime),
+          node: activeNode,
+          target: null,
+        };
+      }
       return {
-        kind,
-        prompt: promptOverride ?? String(activeNode.data.prompt || ""),
-        params: copyParams(paramsOverride || activeNode.data.params, kind, runtime),
+        kind: "image" as const,
+        prompt,
+        params: copyParams(paramsOverride || activeNode.data.params, "image", runtime),
         node: activeNode,
-        target: null as CanvasNode | null,
+        target: null,
       };
     }
     if (activeNode?.type === "media") {
-      const kind: CanvasMediaKind = activeNode.data.kind || "image";
+      const prompt = promptOverride ?? String(activeNode.data.generation?.prompt || activeNode.data.prompt || "");
+      const value = paramsOverride || activeNode.data.generation?.params || activeNode.data.params;
+      if (activeNode.data.kind === "video" || activeNode.data.kind === "audio") {
+        return {
+          kind: "video" as const,
+          prompt,
+          params: copyParams(value, "video", runtime),
+          node: null,
+          target: activeNode.data.kind === "audio" ? null : activeNode,
+        };
+      }
       return {
-        kind,
-        prompt:
-          promptOverride ??
-          String(activeNode.data.generation?.prompt || activeNode.data.prompt || ""),
-        params: copyParams(
-          paramsOverride || activeNode.data.generation?.params || activeNode.data.params,
-          kind,
-          runtime,
-        ),
+        kind: "image" as const,
+        prompt,
+        params: copyParams(value, "image", runtime),
         node: null,
         target: activeNode,
       };
     }
     const kind = mode;
+    if (kind === "text") {
+      return {
+        kind,
+        prompt: promptOverride ?? drafts.text.prompt,
+        params: normalizeCreationSettings(
+          "text",
+          paramsOverride?.kind === "text" ? paramsOverride : drafts.text.params,
+          runtime,
+        ),
+        node: null,
+        target: null,
+      };
+    }
+    if (kind === "video") {
+      return {
+        kind,
+        prompt: promptOverride ?? drafts.video.prompt,
+        params: copyParams(paramsOverride || drafts.video.params, "video", runtime),
+        node: null,
+        target: null,
+      };
+    }
     return {
       kind,
-      prompt: promptOverride ?? drafts[mode].prompt,
-      params:
-        mode === "text"
-          ? normalizeCreationSettings(
-              "text",
-              paramsOverride?.kind === "text" ? paramsOverride : drafts.text.params,
-              runtime,
-            )
-          : copyParams(paramsOverride || drafts[mode].params, mode, runtime),
+      prompt: promptOverride ?? drafts.image.prompt,
+      params: copyParams(paramsOverride || drafts.image.params, "image", runtime),
       node: null,
-      target: null as CanvasNode | null,
+      target: null,
     };
   }, [drafts, mode, runtime, selectedSingle]);
 
@@ -5571,7 +5666,7 @@ export default function SuperCanvas() {
                 linked,
                 videoParams.inputMode,
                 canvasInputRolesForTarget(docRef.current, generatorId),
-                { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos },
+                { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(videoParams, runtime).supportsAudio },
               );
               const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
               if (videoInputError) throw new Error(videoInputError);
@@ -5738,7 +5833,7 @@ export default function SuperCanvas() {
         includeSourceReference?: boolean;
       },
     ) => {
-      if (source.type !== "media" || !source.data.kind || !source.data.url) {
+      if (source.type !== "media" || !source.data.kind || source.data.kind === "audio" || !source.data.url) {
         notify("只有已完成的图片或视频节点可以复用参数。", "error");
         return;
       }
@@ -5772,7 +5867,7 @@ export default function SuperCanvas() {
         ...(options?.operation ? { operation: options.operation } : {}),
         dirty: Boolean(options),
       });
-      setMode(source.data.kind);
+      setMode(source.data.kind === "video" ? "video" : "image");
       setExpandedEditorId(source.id);
       setSelectedIds(new Set([source.id]));
       setSelectedGroupId(null);
@@ -6486,7 +6581,7 @@ export default function SuperCanvas() {
           referenceInputNodes,
           params.inputMode,
           new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
-          { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos },
+          { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(params, runtime).supportsAudio },
         );
         const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits, params.operation);
         if (videoInputError) throw new Error(videoInputError);
@@ -6954,7 +7049,7 @@ export default function SuperCanvas() {
           linked,
           videoParams.inputMode,
           ownerId ? canvasInputRolesForTarget(docRef.current, ownerId) : undefined,
-          { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos },
+          { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(videoParams, runtime).supportsAudio },
         )
       : undefined;
     if (kind === "video" && videoParams && videoLimits && videoInputs) {
@@ -11992,7 +12087,7 @@ function CanvasNodeReferenceStrip({
         references,
         videoParams.inputMode,
         canvasInputRolesForTarget(document, target.id),
-          { maxReferenceImages: videoLimits?.maxReferenceImages, maxReferenceVideos: videoLimits?.maxReferenceVideos },
+          { maxReferenceImages: videoLimits?.maxReferenceImages, maxReferenceVideos: videoLimits?.maxReferenceVideos, maxAudios: videoLimits?.maxAudios, supportsAudio: videoModel ? canvasVideoInputCapabilities(videoParams, runtime).supportsAudio : undefined },
       )
     : undefined;
   const connectedImageCount = references.filter((item) => item.data.kind === "image").length;

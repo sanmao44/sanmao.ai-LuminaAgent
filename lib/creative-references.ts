@@ -7,6 +7,20 @@
  */
 export type CreativeReferenceKind = "image" | "video" | "text";
 
+/** Canvas may carry audio as a video-only input. */
+export type CreativeReferenceLikeKind = CreativeReferenceKind | "audio";
+
+export type CreativeReferenceLike = {
+  id: string;
+  kind: CreativeReferenceLikeKind;
+  name: string;
+  url?: string;
+  text?: string;
+  mimeType?: string;
+  pending?: boolean;
+  error?: string;
+};
+
 export type CreativeReference = {
   id: string;
   kind: CreativeReferenceKind;
@@ -153,7 +167,7 @@ function chineseNumber(value: string) {
  * mentions.  Only labels that resolve to an existing reference are changed;
  * unrelated prose remains untouched so paste never destroys user content.
  */
-export function replaceNaturalReferenceLabels(value: string, references: readonly CreativeReference[]) {
+export function replaceNaturalReferenceLabels<T extends CreativeReferenceLike>(value: string, references: readonly T[]) {
   const unresolved: string[] = [];
   let replaced = false;
   const patterns = [
@@ -178,19 +192,19 @@ export function replaceNaturalReferenceLabels(value: string, references: readonl
   return { value: output, replaced, unresolved: Array.from(new Set(unresolved)) };
 }
 
-export type ReferenceSelection = {
-  references: CreativeReference[];
+export type ReferenceSelection<T extends CreativeReferenceLike = CreativeReference> = {
+  references: T[];
   invalidNumbers: number[];
   hasMentions: boolean;
 };
 
 /** With mentions select exactly those records; without mentions preserve legacy all-input behaviour. */
-export function selectCreativeReferences(value: string, available: readonly CreativeReference[]): ReferenceSelection {
+export function selectCreativeReferences<T extends CreativeReferenceLike>(value: string, available: readonly T[]): ReferenceSelection<T> {
   const numbers = referenceMentionNumbers(value);
   const hasMentions = numbers.length > 0;
   const invalidNumbers = Array.from(new Set(numbers.filter((number) => number < 1 || number > available.length)));
   if (!hasMentions) return { references: [...available], invalidNumbers, hasMentions };
-  const selected: CreativeReference[] = [];
+  const selected: T[] = [];
   const seen = new Set<string>();
   for (const number of numbers) {
     const reference = available[number - 1];
@@ -206,7 +220,7 @@ export function referencePreviewText(reference: CreativeReference, max = 96) {
   return String(reference.text || "").replace(/\s+/g, " ").trim().slice(0, max) || reference.name;
 }
 
-export function appendTextReferenceContext(prompt: string, references: readonly CreativeReference[]) {
+export function appendTextReferenceContext<T extends CreativeReferenceLike>(prompt: string, references: readonly T[]) {
   const textReferences = references.filter((reference) => reference.kind === "text" && reference.text?.trim());
   if (!textReferences.length) return prompt;
   return `${prompt.trim()}\n\n${textReferences.map((reference) => `[引用文本：${reference.name}]\n${reference.text}`).join("\n\n")}`.trim();

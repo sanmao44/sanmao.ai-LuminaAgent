@@ -8,12 +8,14 @@ export type CanvasVideoInputCapabilities = {
   supportsFirstFrame?: boolean;
   /** Some registries publish a dedicated two-frame capability. */
   supportsFrames?: boolean;
+  supportsAudio?: boolean;
   maxReferenceImages?: number;
   maxReferenceVideos?: number;
+  maxAudios?: number;
 };
 
 export type CanvasInputSemantics = {
-  /** Image/video-producing nodes remain in their visible canvas order. */
+  /** Media-producing nodes remain in their visible canvas order. */
   media: CanvasNode[];
   /** Only image-producing nodes can be sent to an image model or multimodal Agent. */
   imageReferences: CanvasNode[];
@@ -28,6 +30,8 @@ export type CanvasInputSemantics = {
   referenceVideo?: CanvasNode;
   /** All video inputs, retained for multi-video providers. */
   referenceVideos: CanvasNode[];
+  /** Audio-producing nodes are never sent to image models or Agents. */
+  audioReferences: CanvasNode[];
 };
 
 export type CanvasVideoInputs = {
@@ -45,6 +49,10 @@ export type CanvasVideoInputs = {
   referenceVideo?: CanvasNode;
   /** All connected video inputs that will be submitted, in canvas order. */
   referenceVideos: CanvasNode[];
+  /** Audio inputs actually submitted with the video request. */
+  audios: CanvasNode[];
+  /** All connected audio inputs before mode/capability filtering. */
+  orderedAudios: CanvasNode[];
   /** Inputs that remain connected but will not be submitted this time. */
   unused: CanvasNode[];
   /** Alias used by canvas UI and callers that need to explain ignored inputs. */
@@ -140,6 +148,7 @@ export function inferCanvasInputRole(
   const sourceKind = videoKind(source);
   const targetKind = videoKind(target);
   if (!sourceKind || !targetKind) return undefined;
+  if (sourceKind === "audio") return targetKind === "video" ? "audio" : undefined;
   if (targetKind === "image") {
     return sourceKind === "video" ? "video" : "reference-image";
   }
@@ -176,6 +185,7 @@ export function resolveCanvasVideoInputs(
   const media = uniqueNodes(nodes);
   const orderedImages = media.filter((node) => videoKind(node) === "image");
   const videos = media.filter((node) => videoKind(node) === "video");
+  const orderedAudios = media.filter((node) => videoKind(node) === "audio");
   const unused: CanvasNode[] = [];
   const used = new Set<string>();
   const mark = (node: CanvasNode | undefined) => {
@@ -211,6 +221,12 @@ export function resolveCanvasVideoInputs(
   const referenceVideos = inputMode === "text" ? [] : videos.slice(0, videoLimit);
   if (inputMode === "text") unused.push(...videos);
   else if (videos.length > referenceVideos.length) unused.push(...videos.slice(referenceVideos.length));
+  const audioLimit = Math.max(0, Math.floor(options.maxAudios ?? 10));
+  const audios = inputMode === "text" || options.supportsAudio === false
+    ? []
+    : orderedAudios.slice(0, audioLimit);
+  if (inputMode === "text" || options.supportsAudio === false) unused.push(...orderedAudios);
+  else if (orderedAudios.length > audios.length) unused.push(...orderedAudios.slice(audios.length));
 
   return {
     media,
@@ -220,6 +236,8 @@ export function resolveCanvasVideoInputs(
     lastFrame,
     referenceVideo,
     referenceVideos,
+    audios,
+    orderedAudios,
     unused,
     unusedInputs: unused,
   };
@@ -240,12 +258,13 @@ export function resolveCanvasInputSemantics(
     (node) => node.data.kind === "image",
   );
   const videoReferences = media.filter((node) => node.data.kind === "video");
+  const audioReferences = media.filter((node) => node.data.kind === "audio");
   const textContext = nodes.filter(
     (node) => node.type === "prompt" && Boolean(String(node.data.text || "").trim()),
   );
 
   if (mode === "image" || mode === "agent") {
-    return { media, imageReferences, videoReferences, referenceVideos: videoReferences, textContext };
+    return { media, imageReferences, videoReferences, referenceVideos: videoReferences, audioReferences, textContext };
   }
 
   const firstFrame =
@@ -262,5 +281,6 @@ export function resolveCanvasInputSemantics(
     lastFrame,
     referenceVideo: videoReferences[0],
     referenceVideos: videoReferences,
+    audioReferences,
   };
 }
