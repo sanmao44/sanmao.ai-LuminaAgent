@@ -59,15 +59,18 @@ function centeredLeft(
   return anchor.left + anchor.width / 2 - overlay.width / 2;
 }
 
-/** Places the compact action rail above a node at a stable screen offset. */
+/** Places the compact action rail above a node and keeps it inside the stage horizontally. */
 export function placeCanvasNodeToolbar(
   anchor: CanvasOverlayAnchor,
   stage: CanvasOverlayStage,
   overlay: CanvasOverlaySize,
   gap = 10,
 ): CanvasOverlayPosition {
+  const centered = centeredLeft(anchor, stage, overlay);
+  const margin = 10;
+  const maxLeft = Math.max(margin, stage.width - overlay.width - margin);
   return {
-    left: centeredLeft(anchor, stage, overlay),
+    left: Math.min(Math.max(centered, margin), maxLeft),
     top: anchor.top - overlay.height - gap,
   };
 }

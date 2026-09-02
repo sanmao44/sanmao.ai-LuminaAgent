@@ -1,5 +1,6 @@
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from '../creation/settings';
 import type { PublicState, UpscaleOutputFormat } from '../types';
+import type { LocalEditAnnotation } from '../local-edit';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale';
 export type CanvasMediaKind = 'image' | 'video';
@@ -93,6 +94,7 @@ export type CanvasMaskState = {
   assetId?: string;
   status: CanvasMaskStatus;
   coverage?: number;
+  annotations?: LocalEditAnnotation[];
   taskId?: string;
   error?: string;
   createdAt?: number;

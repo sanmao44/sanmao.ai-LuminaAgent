@@ -6,6 +6,7 @@ const component = await readFile(
   new URL("../components/SuperCanvas.tsx", import.meta.url),
   "utf8",
 );
+const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 
 test("task log detail button toggles the currently selected task", () => {
   const drawerStart = component.indexOf("function CanvasActivityDrawer(");
@@ -16,4 +17,16 @@ test("task log detail button toggles the currently selected task", () => {
     drawer,
     /setSelectedId\(\(value\) => value === log\.id \? null : log\.id\)/,
   );
+});
+
+test("task log metadata keeps the important output details visually distinct", () => {
+  assert.match(component, /className="canvas-task-log-meta-count"/);
+  assert.match(component, /className="canvas-task-log-meta-duration"/);
+  assert.match(component, /className="canvas-task-log-meta-size"/);
+  assert.match(
+    styles,
+    /\.canvas-task-log-meta span\{[^}]*min-height:22px[^}]*font-size:8px[^}]*font-weight:800/,
+  );
+  assert.match(styles, /\.canvas-task-log-meta-count\{[^}]*color:var\(--accent-text\)/);
+  assert.match(styles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
 });

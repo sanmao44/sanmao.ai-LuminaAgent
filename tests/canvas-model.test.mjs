@@ -14,9 +14,15 @@ async function loadTypeScript(path) {
     const settingsUrl = new URL('../lib/creation/settings.ts', import.meta.url);
     const maskUrl = new URL('../lib/canvas/mask.ts', import.meta.url);
     const layersUrl = new URL('../lib/canvas/layers.ts', import.meta.url);
+    const localEditUrl = new URL('../lib/local-edit.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
     const maskSource = await readFile(maskUrl, 'utf8');
     const layersSource = await readFile(layersUrl, 'utf8');
+    const localEditSource = await readFile(localEditUrl, 'utf8');
+    const localEditRuntime = ts.transpileModule(localEditSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: localEditUrl.pathname,
+    }).outputText.replace(/\bexport\s+/g, '');
     const settingsCompiled = ts.transpileModule(settingsSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: settingsUrl.pathname,
@@ -30,15 +36,22 @@ async function loadTypeScript(path) {
         return providerModels.find((model) => model.id === defaultModelId)
           || providerModels[0]
           || models.find((model) => model.id === defaultModelId)
-          || models[0];
+        || models[0];
       };`,
+    ).replace(
+      /^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
+      '',
     );
     const maskCompiled = ts.transpileModule(maskSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: maskUrl.pathname,
     }).outputText
       .replace(/\bobjectValue\b/g, 'maskObjectValue')
-      .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber');
+      .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber')
+      .replace(
+        /^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
+        '',
+      );
     const layersCompiled = ts.transpileModule(layersSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: layersUrl.pathname,
@@ -53,7 +66,7 @@ async function loadTypeScript(path) {
       /^\s*import\s+\{\s*normalizeCanvasNodeLayers\s*\}\s+from\s+["']\.\/layers["'];?\s*$/m,
       '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
@@ -232,6 +245,45 @@ test('canvas upscale nodes preserve provider-specific settings', () => {
   assert.equal(legacy.data.params.seed, 123);
   assert.equal(legacy.data.params.colorCorrection, 'none');
   assert.equal(legacy.data.params.algorithm, 'nearest');
+});
+
+test('completed upscale result cards follow intrinsic image proportions', () => {
+  const base = model.createUpscaleNode({ x: 0, y: 0 });
+  const portrait = model.normalizeDocument({
+    nodes: [{
+      ...base,
+      data: {
+        ...base.data,
+        url: '/portrait-upscaled.png',
+        nativeWidth: 3456,
+        nativeHeight: 6144,
+        status: 'completed',
+      },
+    }],
+  }).nodes[0];
+  const expected = model.upscaleCardSizeForRatio(3456 / 6144);
+
+  assert.equal(portrait.w, expected.w);
+  assert.equal(portrait.h, expected.h);
+  assert.equal(portrait.data.autoFit, true);
+
+  const manual = model.normalizeDocument({
+    nodes: [{
+      ...base,
+      w: 510,
+      h: 330,
+      data: {
+        ...base.data,
+        autoFit: false,
+        url: '/portrait-upscaled.png',
+        nativeWidth: 3456,
+        nativeHeight: 6144,
+        status: 'completed',
+      },
+    }],
+  }).nodes[0];
+  assert.equal(manual.w, 510);
+  assert.equal(manual.h, 330);
 });
 
 function layerNode(id, zIndex) {
@@ -589,6 +641,24 @@ test('expands every media member when a group feeds a video node', () => {
   assert.equal(document.edges[0].source, sourceGroup.id);
 });
 
+test('keeps a member connection scoped to that member instead of its group', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/member-first.png', '缁勫唴绗竴寮犲弬鑰冨浘', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/member-second.png', '缁勫唴绗簩寮犲弬鑰冨浘', { x: 0, y: 300 });
+  const third = model.createMedia('image', '/member-third.png', '缁勫唴绗笁寮犲弬鑰冨浘', { x: 0, y: 600 });
+  const target = model.createGenerator('video', { x: 760, y: 220 }, { inputMode: 'reference' });
+  let document = { ...empty, nodes: [first, second, third, target] };
+  document = model.createGroup(document, [first.id, second.id, third.id]);
+
+  document = model.addEdge(document, second.id, target.id);
+
+  assert.deepEqual(
+    model.incomingReferences(document, target.id).map((node) => node.id),
+    [second.id],
+  );
+  assert.equal(document.edges[0].source, second.id);
+});
+
 test('normalizes variant requirements by removing blank lines and capping at eight', () => {
   const requirements = model.normalizeVariantRequirements(
     '  夜景  \n\n俯拍视角\r\n  \n替换成红色包装\n' +
@@ -825,14 +895,14 @@ test('uses group boundary ports for shared edge geometry', () => {
   );
 });
 
-test('expands a grouped source into all media references and preserves manual order', () => {
+test('expands an explicit group source into all media references and preserves manual order', () => {
   const empty = model.normalizeDocument(null);
   const first = model.createMedia('image', '/first.png', '第一张', { x: 0, y: 0 });
   const second = model.createMedia('image', '/second.png', '第二张', { x: 360, y: 0 });
   const generator = model.createGenerator('image', { x: 720, y: 0 });
   let document = { ...empty, nodes: [first, second, generator] };
   document = model.createGroup(document, [first.id, second.id]);
-  document = model.addEdge(document, first.id, generator.id);
+  document = model.addEdge(document, document.groups[0].id, generator.id);
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第一张', '第二张']);
   document = model.reorderReferences(document, generator.id, [second.id, first.id]);
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第二张', '第一张']);

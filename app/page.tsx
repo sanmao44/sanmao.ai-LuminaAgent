@@ -5622,9 +5622,10 @@ export default function Page() {
                     parentId: sourceImageId,
                     sourceImageId,
                     upscaleProvider: data.model?.provider,
-                    upscaleModel: data.model?.id,
-                    upscaleScale: task.request?.upscaleScale || 2,
-                    upscaleTaskId: task.upscaleTaskId
+                     upscaleModel: data.model?.id,
+                     upscaleScale: task.request?.upscaleScale || 2,
+                     upscaleTaskId: task.upscaleTaskId,
+                     annotations: task.request?.mask?.annotations
                 });
                 setResultItems((old)=>[...items, ...old]);
                 patchGenerateTask(task.id, { status: 'success', completedAt: Date.now(), items, itemIds: items.map((item)=>item.id), info: `${data.model?.name || '高清放大'} · 已恢复完成` });
@@ -7341,10 +7342,11 @@ export default function Page() {
                 upscaleScale: meta.upscaleScale,
                 upscaleTaskId: meta.upscaleTaskId,
                 references: meta.references?.length ? meta.references : meta.compareReference ? [meta.compareReference] : undefined,
-                compareReferenceUrl: meta.references?.[0]?.url || meta.compareReference?.url,
-                compareReferenceName: meta.references?.[0]?.name || meta.compareReference?.name,
-                angle: meta.angle
-            }));
+                 compareReferenceUrl: meta.references?.[0]?.url || meta.compareReference?.url,
+                 compareReferenceName: meta.references?.[0]?.name || meta.compareReference?.name,
+                 angle: meta.angle,
+                 annotations: Array.isArray(meta.annotations) && meta.annotations.length ? meta.annotations : undefined
+             }));
         await saveGalleryItems(items);
         setGallery((old)=>[
                 ...items,
@@ -7501,7 +7503,8 @@ export default function Page() {
         const taskQuality = isAngleGeneration ? '自动' : savedRequest?.quality || quality;
         const taskOutputFormat = isAngleGeneration ? 'png' : savedRequest?.outputFormat || outputFormat;
         const taskBackgroundMode = isAngleGeneration ? 'auto' : savedRequest?.backgroundMode || backgroundMode;
-        const taskMask = savedRequest ? savedRequest.mask?.dataUrl : generateMask?.dataUrl;
+        const taskMaskAsset = savedRequest ? savedRequest.mask : generateMask;
+        const taskMask = taskMaskAsset?.dataUrl;
         const taskUpscaleScale = savedRequest?.upscaleScale || generateUpscaleScale;
         const taskUpscaleTarget = savedRequest?.upscaleTarget || generateUpscaleTarget;
         const taskUpscaleSeed = savedRequest?.upscaleSeed ?? generateUpscaleSeed;
@@ -7676,8 +7679,9 @@ export default function Page() {
                     upscaleScale: taskUpscaleScale,
                     upscaleOutputFormat: taskCloudOutputFormat,
                     upscaleOutputQuality: taskCloudOutputFormat === 'jpg' ? taskUpscaleOutputQuality : undefined,
-                    upscaleTaskId: upscaleData.taskId,
-                    references: referenceRecords
+                     upscaleTaskId: upscaleData.taskId,
+                     references: referenceRecords,
+                     annotations: taskMaskAsset?.annotations
                 });
                 const info = `${upscaleData.model?.name || '超分模型'} · ${taskUpscaleScale}× · 图片超分 · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
                 setResultItems((old)=>[
@@ -7768,8 +7772,9 @@ export default function Page() {
                                 outputFormat: actualOutputFormat,
                                 generationMs: durationMs,
                                 source: submittedImageRefs.length ? 'edit' : 'generate',
-                                references: referenceRecords,
-                                angle: taskRequest.angle
+                                 references: referenceRecords,
+                                 angle: taskRequest.angle,
+                                 annotations: taskMaskAsset?.annotations
                             });
                             completedCount += items.length;
                             resolvedModelName = childData.model?.name || resolvedModelName;
@@ -7862,8 +7867,9 @@ export default function Page() {
                 outputFormat: actualOutputFormat,
                 generationMs: durationMs,
                 source: submittedImageRefs.length ? 'edit' : 'generate',
-                references: referenceRecords,
-                angle: taskRequest.angle
+                 references: referenceRecords,
+                 angle: taskRequest.angle,
+                 annotations: taskMaskAsset?.annotations
             });
             const info = `${data.model?.name || '图片模型'} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
@@ -8967,6 +8973,7 @@ export default function Page() {
         const saved = lastCall?.params || {};
         const legacySavedMask = item?.params?.mask || item?.mask;
         const restoredMask = typeof legacySavedMask === 'string' ? legacySavedMask : legacySavedMask?.dataUrl || legacySavedMask?.url || null;
+        const restoredAnnotations = Array.isArray(item?.annotations) ? item.annotations : Array.isArray(legacySavedMask?.annotations) ? legacySavedMask.annotations : [];
         const dimensions = outputDimensions(item.outputSize);
         const ratio = item.aspectRatio || (dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '自动');
         const tier = dimensions ? sizeTierFromDimensions(dimensions.width, dimensions.height) : '1k';
@@ -8991,7 +8998,8 @@ export default function Page() {
             sizeTier: rememberedTier,
             customWidth: typeof saved.customWidth === 'number' && saved.customWidth > 0 ? Math.round(saved.customWidth) : dimensions?.width || preset.width,
             customHeight: typeof saved.customHeight === 'number' && saved.customHeight > 0 ? Math.round(saved.customHeight) : dimensions?.height || preset.height,
-            mask: restoredMask
+            mask: restoredMask,
+            annotations: restoredAnnotations
         });
         if (lastCall) notify('已恢复上次图片修改设置');
     }
@@ -9114,7 +9122,19 @@ export default function Page() {
                     info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · 后台处理中`,
                     items: [],
                     itemIds: [],
-                    request: currentEditor.mode === 'upscale' ? { sourceImageId: currentEditor.item.id, upscaleScale: currentEditor.scale, upscaleOutputFormat: currentEditor.upscaleOutputFormat, upscaleOutputQuality: currentEditor.upscaleOutputQuality, modelId: currentEditor.modelId, references: [{ id: currentEditor.item.id, name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }] } : undefined
+                    request: currentEditor.mode === 'upscale' ? { sourceImageId: currentEditor.item.id, upscaleScale: currentEditor.scale, upscaleOutputFormat: currentEditor.upscaleOutputFormat, upscaleOutputQuality: currentEditor.upscaleOutputQuality, modelId: currentEditor.modelId, references: [{ id: currentEditor.item.id, kind: 'image', name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }] } : {
+                        modelId: currentEditor.modelId,
+                        ratio: currentEditor.ratio,
+                        count: currentEditor.count,
+                        quality: currentEditor.quality,
+                        fidelity: currentEditor.fidelity,
+                        sizeMode: currentEditor.sizeMode,
+                        sizeTier: currentEditor.sizeTier,
+                        customWidth: currentEditor.customWidth,
+                        customHeight: currentEditor.customHeight,
+                        references: [{ id: currentEditor.item.id, kind: 'image', name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }],
+                        mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [] } : null
+                    }
                 },
                 ...old
             ]);
@@ -9250,10 +9270,11 @@ export default function Page() {
                 upscaleProvider: currentEditor.mode === 'upscale' ? data.model?.provider : undefined,
                 upscaleModel: currentEditor.mode === 'upscale' ? data.model?.id : undefined,
                 upscaleScale: currentEditor.mode === 'upscale' ? currentEditor.scale : undefined,
-                upscaleTaskId: currentEditor.mode === 'upscale' ? data.taskId : undefined,
-                generationMs: durationMs,
-                references: [editorReference]
-            });
+                 upscaleTaskId: currentEditor.mode === 'upscale' ? data.taskId : undefined,
+                 generationMs: durationMs,
+                 references: [editorReference],
+                 annotations: currentEditor.mode === 'edit' && Array.isArray(currentEditor.annotations) ? currentEditor.annotations : undefined
+             });
             const info = `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${data.model?.name || '图片模型'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
                     ...items,
@@ -12083,12 +12104,14 @@ export default function Page() {
                                 imageUrl: creativeReferenceUrl(generateRefs[0]),
                                 initialMaskDataUrl: generateMask?.referenceId === generateRefs[0].id ? generateMask.dataUrl : undefined,
                                 initialPrompt: generatePrompt,
+                                initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl, coverage, prompt)=>{
+                                onApply: (dataUrl, coverage, prompt, annotations)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
                                         dataUrl,
-                                        coverage
+                                        coverage,
+                                        annotations
                                     });
                                     setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
                                     setGeneratePrompt(prompt);
@@ -15079,12 +15102,14 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 imageUrl: editor.item.url,
                 initialMaskDataUrl: editor.mask || undefined,
                 initialPrompt: editor.prompt,
+                initialAnnotations: editor.annotations || [],
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl, coverage, prompt)=>{
+                onApply: (dataUrl, coverage, prompt, annotations)=>{
                     setEditor((current)=>current ? {
                             ...current,
                             mask: dataUrl,
-                            prompt
+                            prompt,
+                            annotations
                         } : current);
                     setEditorMaskOpen(false);
                     notify(`局部编辑范围已设置${coverage ? `（覆盖 ${Math.round(coverage * 100)}%）` : ''}，提交修改时会一并发送`);

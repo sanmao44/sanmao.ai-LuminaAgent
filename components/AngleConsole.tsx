@@ -551,7 +551,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
           scene.background = savedBackground;
           scene.overrideMaterial = savedOverride;
           [floor.visible, grid.visible, helper.visible, camRig.visible] = savedVisibility;
-          return { id: `angle-guide-${crypto.randomUUID()}`, name: `3D水平构图导引-${captureOutput.width}x${captureOutput.height}.webp`, dataUrl };
+          return { id: `angle-guide-${crypto.randomUUID()}`, kind: 'image', name: `3D水平构图导引-${captureOutput.width}x${captureOutput.height}.webp`, url: dataUrl, dataUrl };
         },
       };
 

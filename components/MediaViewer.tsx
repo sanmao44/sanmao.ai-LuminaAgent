@@ -457,7 +457,8 @@ export default function MediaViewer({
     if (onDownload) return onDownload(variant);
     const anchor = document.createElement("a");
     anchor.href = item.url;
-    anchor.download = `${item.name || "SANMAO素材"}-${variant === "share" ? "分享版" : "原图"}.${item.kind === "video" ? "mp4" : "png"}`;
+    const originalLabel = item.kind === "video" ? "原视频" : "原图";
+    anchor.download = `${item.name || "SANMAO素材"}-${variant === "share" ? "分享版" : originalLabel}.${item.kind === "video" ? "mp4" : "png"}`;
     anchor.click();
   };
 
@@ -496,7 +497,7 @@ export default function MediaViewer({
             )}
             {parameters && <button type="button" className={`media-viewer-header-button media-viewer-settings-button ${showParameters ? "active" : ""}`} onClick={() => setShowParameters((value) => !value)}><span className="media-viewer-button-icon" aria-hidden="true">⚙</span><span>参数调整</span></button>}
             <div className="media-viewer-download-group" role="group" aria-label="下载">
-              <button type="button" className="media-viewer-download-button original" onClick={() => download("original")}><span className="media-viewer-button-icon" aria-hidden="true">↓</span><span>原图</span></button>
+              <button type="button" className="media-viewer-download-button original" onClick={() => download("original")}><span className="media-viewer-button-icon" aria-hidden="true">↓</span><span>{item.kind === "video" ? "原视频" : "原图"}</span></button>
               <button type="button" className="media-viewer-download-button share" onClick={() => download("share")} disabled={item.kind !== "image"}><span className="media-viewer-button-icon" aria-hidden="true">⇩</span><span>分享版</span></button>
             </div>
             <button type="button" className="media-viewer-close-button" onClick={onClose} aria-label="关闭预览"><span aria-hidden="true">×</span></button>

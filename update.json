@@ -9,8 +9,8 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip"
   ],
-  "sha256": "6b8ddc67ffd57bbc183d755961aae10d3e7e23b92aa6987667b2f8c0f30bdf93",
-  "publishedAt": "2026-09-02T09:28:24+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-09-02T00:00:00+08:00",
   "notes": [
     "Allow @ references at any text position and continue adding later references after normal text.",
     "Hide the candidate menu when @ is not active and display references as thumbnails with numbers instead of file names.",

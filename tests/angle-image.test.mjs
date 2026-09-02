@@ -46,4 +46,6 @@ test('the exported 3D guide stays level even when the preview has Roll', async (
   const captureBlock = consoleSource.slice(consoleSource.indexOf('capture: async'), consoleSource.indexOf('const defaultLoader'));
   assert.match(captureBlock, /Reference 2 always remains level/);
   assert.doesNotMatch(captureBlock, /guideCamera\.rotateZ/);
+  assert.match(captureBlock, /kind: 'image'/);
+  assert.match(captureBlock, /url: dataUrl/);
 });

@@ -31,9 +31,18 @@ test("keeps overlay offsets attached when the node is outside the viewport", () 
   const stage = { width: 360, height: 300 };
   const toolbar = layout.placeCanvasNodeToolbar(anchor, stage, { width: 420, height: 42 });
   const editor = layout.placeCanvasNodeEditor(anchor, stage, { width: 420, height: 420 });
-  assert.deepEqual(toolbar, { left: -94, top: -44 });
+  assert.deepEqual(toolbar, { left: 10, top: -44 });
   assert.deepEqual(editor, { left: -94, top: 242 });
   assert.equal(editor.top - (anchor.top + anchor.height), 14);
+});
+
+test("keeps a wide toolbar inside the stage near the right edge", () => {
+  const anchor = { left: 286, top: 260, width: 120, height: 160 };
+  const stage = { width: 390, height: 844 };
+  assert.deepEqual(
+    layout.placeCanvasNodeToolbar(anchor, stage, { width: 188, height: 47 }),
+    { left: 192, top: 203 },
+  );
 });
 
 test("fits a tall editor below its node without moving it across the anchor", () => {

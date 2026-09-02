@@ -126,6 +126,12 @@ function normalizeVideoNodeParams(data: CanvasNodeData) {
 
 const DEFAULT_VIDEO_ASPECT_RATIO = 16 / 9;
 const MEDIA_CARD_FOOTER_HEIGHT = 42;
+const MEDIA_IMAGE_FOOTER_HEIGHT = 48;
+// The upscale card has a header and a status row instead of the compact
+// media footer. Keep this value in one place so the result preview can use
+// the full image ratio while the node still reserves its chrome.
+const UPSCALE_CARD_HORIZONTAL_CHROME = 34;
+const UPSCALE_CARD_CHROME_HEIGHT = 111;
 
 function positiveRatio(value: unknown) {
   const ratio = Number(value);
@@ -180,6 +186,7 @@ function normalizeNode(value: unknown): CanvasNode | null {
       ...(data.params && typeof data.params === "object" ? data.params : {}),
     });
     data.kind = "image";
+    data.autoFit = data.autoFit !== false;
     data.status = data.status || "draft";
     data.statusLabel = data.statusLabel || "等待连接图片";
     if (data.generation && typeof data.generation === "object") {
@@ -280,6 +287,13 @@ function normalizeNode(value: unknown): CanvasNode | null {
   const intrinsicVideoSize = videoSizeRatio
     ? mediaCardSizeForRatio(videoSizeRatio, "video")
     : undefined;
+  const upscaleSizeRatio =
+    type === "upscale" && data.url && data.autoFit !== false
+      ? nativeMediaRatio(data)
+      : null;
+  const intrinsicUpscaleSize = upscaleSizeRatio
+    ? upscaleCardSizeForRatio(upscaleSizeRatio)
+    : undefined;
   return {
     id: String(raw.id),
     type,
@@ -291,7 +305,7 @@ function normalizeNode(value: unknown): CanvasNode | null {
       ? { zIndex: Math.trunc(raw.zIndex) }
       : {}),
     ...(raw.groupId ? { groupId: String(raw.groupId) } : {}),
-    ...(intrinsicVideoSize || {}),
+    ...(intrinsicVideoSize || intrinsicUpscaleSize || {}),
     data,
   };
 }
@@ -1373,7 +1387,7 @@ export function mediaCardSizeForRatio(
   const safeRatio =
     positiveRatio(ratio) ||
     (kind === "video" ? DEFAULT_VIDEO_ASPECT_RATIO : 1);
-  const footer = kind === "video" ? MEDIA_CARD_FOOTER_HEIGHT : 48;
+  const footer = kind === "video" ? MEDIA_CARD_FOOTER_HEIGHT : MEDIA_IMAGE_FOOTER_HEIGHT;
   let width = kind === "video" ? 420 : 380;
   let stage = width / safeRatio;
   if (stage > 520) {
@@ -1393,6 +1407,17 @@ export function mediaCardSizeForRatio(
     width = stage * safeRatio;
   }
   return { w: Math.round(width), h: Math.round(stage + footer) };
+}
+
+/** Size an upscale node so its result area follows the generated image ratio. */
+export function upscaleCardSizeForRatio(ratio?: number) {
+  const mediaSize = mediaCardSizeForRatio(ratio, "image");
+  return {
+    // The result preview sits inside the node border and the card's 16px
+    // horizontal padding, so add that chrome around the ratio-sized area.
+    w: mediaSize.w + UPSCALE_CARD_HORIZONTAL_CHROME,
+    h: Math.round(mediaSize.h - MEDIA_IMAGE_FOOTER_HEIGHT + UPSCALE_CARD_CHROME_HEIGHT),
+  };
 }
 
 export function smartMediaSize(
@@ -1479,8 +1504,11 @@ export function createGenerator(
     type: "generator",
     x: position.x,
     y: position.y,
-    w: 306,
-    h: 238,
+    // A generator card carries a prompt, status list and retry controls. Give
+    // new nodes enough room for the first variant to remain readable without
+    // requiring an immediate manual resize.
+    w: 390,
+    h: 390,
     data: {
       kind,
       params: normalizedParams,
@@ -1540,6 +1568,7 @@ export function createUpscaleNode(position: { x: number; y: number } = { x: 0, y
     h: 260,
     data: {
       kind: "image",
+      autoFit: true,
       role: "独立超分",
       status: "draft",
       statusLabel: "等待连接图片",
@@ -1699,9 +1728,7 @@ export function removeCanvasReference(
 
   let next = document;
   for (const edge of matchingEdges) {
-    const source = nodeById(next, edge.source);
-    const sourceGroup = groupById(next, edge.source) ||
-      (source?.groupId ? groupById(next, source.groupId) : undefined);
+    const sourceGroup = groupById(next, edge.source);
     const sourceNodes = referenceNodeIdsForEdge(next, edge)
       .map((id) => nodeById(next, id))
       .filter((node): node is CanvasNode => Boolean(node));
@@ -1741,19 +1768,17 @@ function referenceNodeIdsForEdge(document: CanvasDocument, edge: CanvasEdge) {
 }
 
 function sourceNodesForEdge(document: CanvasDocument, edge: CanvasEdge) {
+  const sourceGroup = groupById(document, edge.source);
+  if (!sourceGroup) {
+    const source = nodeById(document, edge.source);
+    return source ? [source] : [];
+  }
   if (Array.isArray(edge.sourceNodeIds)) {
     return [...new Set(edge.sourceNodeIds)]
       .map((id) => nodeById(document, id))
       .filter((node): node is CanvasNode => Boolean(node));
   }
-  const sourceGroup = groupById(document, edge.source);
-  const source = nodeById(document, edge.source);
-  const effectiveGroup = sourceGroup || (source?.groupId ? groupById(document, source.groupId) : undefined);
-  return effectiveGroup
-    ? groupNodes(document, effectiveGroup.id)
-    : source
-      ? [source]
-      : [];
+  return groupNodes(document, sourceGroup.id);
 }
 
 function removeEdgesAndPruneReferences(

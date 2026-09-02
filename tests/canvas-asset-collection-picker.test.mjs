@@ -53,3 +53,18 @@ test("asset registration preserves existing collections and rejects smart views 
   assert.match(component, /CANVAS_ASSET_NON_READY_STATUSES = new Set\(\["queued", "running", "failed"\]\)/);
   assert.match(component, /if \(!isAssignableCanvasAssetCollection\(collection\)\)/);
 });
+
+test("asset drawer makes new collection creation a clear primary action", () => {
+  const drawer = component.slice(
+    component.indexOf("function CanvasAssetDrawer"),
+    component.indexOf("function CanvasAssetCollectionPicker", component.indexOf("function CanvasAssetDrawer")),
+  );
+  assert.match(drawer, /className="canvas-asset-new-collection" aria-label="新建资产合集"/);
+  assert.match(drawer, /className="canvas-asset-new-collection-head"/);
+  assert.match(drawer, />新建合集<\/b>/);
+  assert.match(drawer, /创建后自动切换到新合集/);
+  assert.match(drawer, /placeholder="输入合集名称，例如：灵感参考"/);
+  assert.match(drawer, /disabled=\{!newCollectionName\.trim\(\)\}/);
+  assert.match(styles, /\.canvas-asset-new-collection\{display:grid;[^}]*border:1px solid color-mix/);
+  assert.match(styles, /\.canvas-asset-new-collection-form button\{[^}]*background:linear-gradient/);
+});

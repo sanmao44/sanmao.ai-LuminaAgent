@@ -144,6 +144,14 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
   assert.match(styles, /@media\(max-width:720px\)\{\.canvas-image-resolution/);
 });
 
+test("upscale result frames use the loaded image dimensions for auto-fit", () => {
+  assert.match(component, /upscaleCardSizeForRatio/);
+  assert.match(component, /node\.type !== "media" && node\.type !== "upscale"/);
+  assert.match(component, /className="canvas-upscale-card-result"[\s\S]*?onLoad=\{\(event\) =>\s*onNaturalSize\(/);
+  assert.match(component, /item\.data\.autoFit !== false \? upscaleCardSizeForRatio\(/);
+  assert.match(component, /autoFit: item\.data\.autoFit !== false/);
+});
+
 test("prompt editor measures content and caps scrolling in both display modes", () => {
   assert.match(component, /const promptRef = useRef<HTMLDivElement \| null>\(null\)/);
   assert.match(component, /editor\.style\.height = "auto"/);
@@ -271,7 +279,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt\) => applyCanvasMask\(value, coverage, prompt\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations\) => applyCanvasMask\(value, coverage, prompt, annotations\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /status: "pending"/);
   assert.match(component, /coverage: maskCoverage/);

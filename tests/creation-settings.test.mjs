@@ -3,12 +3,24 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
 
+async function compileTypeScript(path, transform = (source) => source) {
+  const sourceUrl = new URL(path, import.meta.url);
+  const source = transform(await readFile(sourceUrl, 'utf8'));
+  return ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: sourceUrl.pathname,
+  }).outputText;
+}
+
+const localEditRuntime = (await compileTypeScript('../lib/local-edit.ts'))
+  .replace(/\bexport\s+/g, '');
 const sourceUrl = new URL('../lib/creation/settings.ts', import.meta.url);
-const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: sourceUrl.pathname,
-}).outputText
+const compiled = await compileTypeScript('../lib/creation/settings.ts', (source) => source
+  .replace(
+    /^import\s+\{\s*normalizeLocalEditAnnotations\s*,\s*type\s+LocalEditAnnotation\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
+    localEditRuntime,
+  ));
+const compiledWithMocks = compiled
   .replace(
     /^\s*import\s+\{\s*getLastModelCall\s*\}\s+from\s+["']\.\.\/model-preferences["'];?\s*$/m,
     'const getLastModelCall = () => null;',
@@ -23,7 +35,7 @@ const compiled = ts.transpileModule(source, {
         || models[0];
     };`,
   );
-const settings = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const settings = await import(`data:text/javascript;base64,${Buffer.from(compiledWithMocks).toString('base64')}`);
 
 const runtime = {
   models: [
@@ -64,4 +76,23 @@ test('automatic video settings resolve the actual default video model', () => {
   const selected = settings.resolveAvailableCreationModel(settings.defaultVideoCreationSettings(videoRuntime), videoRuntime);
   assert.equal(selected.model?.id, 'agnes-v20');
   assert.equal(selected.model?.rawId, 'agnes-video-v2.0');
+});
+
+test('image settings retain local-edit annotations in the persisted mask', () => {
+  const result = settings.normalizeImageCreationSettings({
+    kind: 'image',
+    model: 'qwen-edit',
+    mask: {
+      url: '/mask.png',
+      annotations: [{
+        id: 'text',
+        kind: 'rectangle',
+        description: '替换背景文字',
+        geometry: { kind: 'rectangle', x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+        createdAt: 456,
+      }],
+    },
+  }, runtime);
+
+  assert.equal(result.mask?.annotations?.[0].description, '替换背景文字');
 });

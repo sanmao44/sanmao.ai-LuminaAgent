@@ -80,11 +80,16 @@ test('canvas exposes a multi-image download action without replacing single down
   assert.match(component, /const downloadCanvasNode = useCallback/);
 });
 
-test('upscale results expose preview and download actions on the infinite canvas', async () => {
+test('upscale results expose a direct download action on the infinite canvas', async () => {
   const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+  const quickActionsStart = component.indexOf('const quickActions = useMemo');
+  const contextMenuStart = component.indexOf('const contextMenuGroups = useMemo', quickActionsStart);
+  assert.ok(quickActionsStart >= 0 && contextMenuStart > quickActionsStart);
+  const quickActions = component.slice(quickActionsStart, contextMenuStart);
   assert.match(component, /node\.type !== "media" && node\.type !== "upscale"/);
   assert.match(
-    component,
-    /if \(node\.type === "upscale"\) \{[\s\S]*?const hasResult = Boolean\(node\.data\.url\)[\s\S]*?id: "preview"[\s\S]*?id: "download"[\s\S]*?下载超分节点生成的图片/,
+    quickActions,
+    /if \(node\.type === "upscale"\) \{[\s\S]*?const hasResult = Boolean\(node\.data\.url\)[\s\S]*?primaryActions: \[[\s\S]*?id: "download"[\s\S]*?下载超分节点生成的图片/,
   );
+  assert.doesNotMatch(quickActions, /if \(node\.type === "upscale"\) \{[\s\S]*?menuGroups: \[\s*\{/);
 });

@@ -28,6 +28,17 @@ test("processing feedback uses one restrained signal animation system", () => {
   assert.match(motion, /canvas-processing-indeterminate/);
   assert.match(motion, /canvas-processing-node-signal/);
   assert.match(motion, /canvas-processing-edge/);
+  assert.match(motion, /\.canvas-processing-indicator\.is-running[^}]*--processing-accent:var\(--canvas-node-running\)/);
+  assert.match(
+    styles,
+    /\.canvas-node\.status-running \.canvas-type-icon[^}]*background:color-mix\(in srgb,var\(--node-effective\) 14%,transparent\);color:var\(--node-effective\)/,
+    "running node icons should use the shared running color",
+  );
+  assert.match(
+    styles,
+    /\.canvas-node\.status-running \.canvas-upscale-card-head>span/,
+    "upscale running icons should use the shared running color",
+  );
   assert.ok(
     motion.includes(".canvas-node.status-running::after") &&
       motion.includes("inset:0"),

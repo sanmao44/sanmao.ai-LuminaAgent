@@ -1,6 +1,7 @@
 import type { PublicState, RegistryModel } from "../types";
 import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
+import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
 
 export type ImageSizeMode = "system" | "custom";
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
@@ -17,6 +18,7 @@ export type CanvasMaskAsset = {
   assetId?: string;
   url: string;
   referenceId?: string;
+  annotations?: LocalEditAnnotation[];
 };
 
 export type ImageCreationSettings = {
@@ -268,6 +270,7 @@ export function normalizeImageCreationSettings(
       ? raw.quality
       : "自动";
   const maskRaw = objectValue(raw.mask);
+  const maskAnnotations = normalizeLocalEditAnnotations(maskRaw.annotations);
   const mask =
     typeof maskRaw.url === "string" && maskRaw.url
       ? {
@@ -277,6 +280,9 @@ export function normalizeImageCreationSettings(
             : {}),
           ...(typeof maskRaw.referenceId === "string"
             ? { referenceId: maskRaw.referenceId }
+            : {}),
+          ...(maskAnnotations.length
+            ? { annotations: maskAnnotations }
             : {}),
         }
       : undefined;
