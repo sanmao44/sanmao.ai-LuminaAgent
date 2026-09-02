@@ -128,6 +128,8 @@ export type CanvasNodeData = {
   videoInputModeAuto?: boolean;
   assetId?: string;
   sourceAssetId?: string;
+  /** MIME type of an imported media asset, kept for reliable audio handling. */
+  mimeType?: string;
   autoFit?: boolean;
   nativeWidth?: number;
   nativeHeight?: number;

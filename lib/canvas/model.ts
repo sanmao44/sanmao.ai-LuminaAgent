@@ -176,6 +176,27 @@ function normalizeNode(value: unknown): CanvasNode | null {
   const type = nodeType(raw.type);
   if (type === "media" || type === "generator")
     data.kind = mediaKind(data.kind);
+  if (type === "media" && data.kind === "audio") {
+    const legacyParams =
+      data.params && typeof data.params === "object"
+        ? data.params as Record<string, unknown>
+        : undefined;
+    if (legacyParams?.kind === "video" || "inputMode" in (legacyParams || {}))
+      delete data.params;
+    const legacyGenerationParams =
+      data.generation?.params && typeof data.generation.params === "object"
+        ? data.generation.params as Record<string, unknown>
+        : undefined;
+    if (
+      legacyGenerationParams?.kind === "video" ||
+      "inputMode" in (legacyGenerationParams || {})
+    )
+      delete data.generation;
+    if (!data.url && data.status === "draft") {
+      data.statusLabel = "等待导入音频";
+      data.role = "待导入";
+    }
+  }
   if (type === "media" && data.kind === "video")
     data.params = normalizeVideoNodeParams(data);
   if (type === "prompt")
@@ -252,16 +273,18 @@ function normalizeNode(value: unknown): CanvasNode | null {
     data.videoInputModeAuto = true;
   if (type === "media" && data.generation) {
     const kind = mediaKind(data.generation.kind || data.kind);
-    data.generation = {
-      ...data.generation,
-      kind,
-      params:
-        data.generation.operation === "upscale"
-          ? normalizeUpscaleParams(data.generation.params)
-          : kind === "image"
-          ? normalizeCreationSettings("image", data.generation.params)
-          : normalizeCreationSettings("video", data.generation.params),
-    };
+    data.generation = kind === "audio"
+      ? { ...data.generation, kind }
+      : {
+          ...data.generation,
+          kind,
+          params:
+            data.generation.operation === "upscale"
+              ? normalizeUpscaleParams(data.generation.params)
+              : kind === "image"
+              ? normalizeCreationSettings("image", data.generation.params)
+              : normalizeCreationSettings("video", data.generation.params),
+        };
   }
   if (type === "media" && data.kind === "image") {
     const generationParams = data.generation?.params;
@@ -410,6 +433,8 @@ export function canConnect(
     sourceNode.data.kind === "video"
   )
     return { ok: false, reason: "图片节点不能接收视频作为图片参考。" };
+  if (targetKind === "audio")
+    return { ok: false, reason: "音频节点目前是独立素材输入，不能接收其他节点。" };
   if (
     sourceNode &&
     sourceNode.data.kind === "audio" &&
@@ -1529,7 +1554,7 @@ export function createPrompt(
 }
 
 export function createGenerator(
-  kind: CanvasMediaKind,
+  kind: Exclude<CanvasMediaKind, "audio">,
   position: { x: number; y: number },
   params?: CanvasGenerationParams,
 ): CanvasNode {
@@ -1565,6 +1590,20 @@ export function createEmptyMedia(
   position: { x: number; y: number },
   params?: CanvasGenerationParams,
 ): CanvasNode {
+  if (kind === "audio") {
+    return createMedia(
+      "audio",
+      "",
+      "空音频节点",
+      position,
+      {
+        role: "待导入",
+        status: "draft",
+        statusLabel: "等待导入音频",
+        referenceOrder: [],
+      },
+    );
+  }
   const normalizedParams =
     kind === "image"
       ? normalizeCreationSettings("image", params)

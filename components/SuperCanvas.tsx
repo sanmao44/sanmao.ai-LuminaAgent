@@ -453,6 +453,10 @@ function mentionStateForValue(value: string, cursor: number): MentionState {
   return creativeReferenceMentionRange(value, cursor);
 }
 
+function isCanvasAudioFile(file: File) {
+  return file.type.startsWith("audio/") || /\.(aac|flac|m4a|mp3|oga|ogg|opus|wav|webm)$/i.test(file.name);
+}
+
 type CanvasDrafts = {
   image: { prompt: string; params: ImageCreationSettings };
   video: { prompt: string; params: VideoCreationSettings };
@@ -562,6 +566,7 @@ type ConnectionPreview = {
 type ConnectableNodeKind =
   | "image"
   | "video"
+  | "audio"
   | "text"
   | "workflowImage"
   | "workflowVideo"
@@ -647,6 +652,12 @@ const CONNECTION_NODE_OPTIONS: Array<{
     description: "连接到视频生成节点",
   },
   {
+    kind: "audio",
+    icon: "♫",
+    label: "音频节点",
+    description: "作为视频生成的参考音频",
+  },
+  {
     kind: "text",
     icon: "T",
     label: "Agent 节点",
@@ -708,13 +719,20 @@ function formatPercent(value: number) {
 }
 
 function defaultParams(kind: "image", runtime: CanvasRuntimeState | null): ImageCreationSettings;
-function defaultParams(kind: "video" | "audio", runtime: CanvasRuntimeState | null): VideoCreationSettings;
-function defaultParams(kind: CanvasMediaKind, runtime: CanvasRuntimeState | null): CanvasGenerationParams;
+function defaultParams(kind: "video", runtime: CanvasRuntimeState | null): VideoCreationSettings;
+function defaultParams(kind: CanvasGenerationMode, runtime: CanvasRuntimeState | null): CanvasGenerationParams;
 function defaultParams(
-  kind: CanvasMediaKind,
+  kind: CanvasGenerationMode,
   runtime: CanvasRuntimeState | null,
 ): CanvasGenerationParams {
-  return readSharedCreationSettings(kind === "audio" ? "video" : kind, runtime);
+  return readSharedCreationSettings(kind, runtime);
+}
+
+function defaultMediaParams(
+  kind: CanvasMediaKind,
+  runtime: CanvasRuntimeState | null,
+): { params?: CanvasGenerationParams } {
+  return kind === "audio" ? {} : { params: defaultParams(kind, runtime) };
 }
 
 type CanvasConnectionResult = {
@@ -1090,22 +1108,21 @@ function copyParams(
 ): ImageCreationSettings;
 function copyParams(
   value: unknown,
-  kind: "video" | "audio",
+  kind: "video",
   runtime: CanvasRuntimeState | null,
 ): VideoCreationSettings;
 function copyParams(
   value: unknown,
-  kind: CanvasMediaKind,
+  kind: CanvasGenerationMode,
   runtime: CanvasRuntimeState | null,
 ): CanvasGenerationParams;
 function copyParams(
   value: unknown,
-  kind: CanvasMediaKind,
+  kind: CanvasGenerationMode,
   runtime: CanvasRuntimeState | null,
 ): CanvasGenerationParams {
-  const creationKind = kind === "audio" ? "video" : kind;
   return normalizeCreationSettings(
-    creationKind,
+    kind,
     value && typeof value === "object"
       ? clone(value as CanvasGenerationParams)
       : defaultParams(kind, runtime),
@@ -1136,7 +1153,7 @@ function nodeLabel(node: CanvasNode) {
   if (node.type === "prompt") return "Agent 节点";
   if (node.type === "generator")
     return node.data.kind === "video" ? "视频变体生成器" : "图片变体生成器";
-  return node.data.kind === "video" ? "视频卡片" : "图片卡片";
+  return node.data.kind === "video" ? "视频卡片" : node.data.kind === "audio" ? "音频节点" : "图片卡片";
 }
 
 function canvasUpscaleSource(document: CanvasDocument, nodeId: string) {
@@ -3995,7 +4012,7 @@ export default function SuperCanvas() {
 
   const addNode = useCallback(
     (
-      kind: "image" | "video" | "text" | "workflowImage" | "workflowVideo" | "upscale",
+      kind: "image" | "video" | "audio" | "text" | "workflowImage" | "workflowVideo" | "upscale",
       position?: Point,
     ) => {
       if (kind === "upscale") {
@@ -4014,25 +4031,32 @@ export default function SuperCanvas() {
         return;
       }
       const mediaKind =
-        kind === "workflowVideo" || kind === "video" ? "video" : "image";
-      const params = defaultParams(mediaKind, runtime);
+        kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const seed =
         position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
       const draft =
         kind === "text"
           ? createPrompt(seed)
-          : kind === "workflowImage" || kind === "workflowVideo"
-            ? createGenerator(mediaKind, seed, params)
-            : createEmptyMedia(mediaKind, seed, params);
+          : kind === "workflowImage"
+            ? createGenerator("image", seed, defaultParams("image", runtime))
+            : kind === "workflowVideo"
+              ? createGenerator("video", seed, defaultParams("video", runtime))
+              : createEmptyMedia(
+                  mediaKind,
+                  seed,
+                  mediaKind === "audio" ? undefined : defaultParams(mediaKind, runtime),
+                );
       const point = position ? seed : openNodePosition(seed, draft);
       const node = { ...draft, x: point.x, y: point.y };
       commit((value) => ({ ...value, nodes: [...value.nodes, node] }));
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
-      setMode(kind === "text" ? "text" : mediaKind);
+      if (kind === "text") setMode("text");
+      else if (mediaKind !== "audio") setMode(mediaKind);
+      if (mediaKind === "audio") setExpandedEditorId(node.id);
       setContextMenu(null);
       notify(
-        `已添加${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : "图片"}节点`,
+        `已添加${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [
@@ -4068,16 +4092,21 @@ export default function SuperCanvas() {
         return notify("超分节点只接受一张已完成的图片", "error");
       }
       const mediaKind =
-        kind === "workflowVideo" || kind === "video" ? "video" : "image";
-      const params = defaultParams(mediaKind, runtime);
+        kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const draft =
         kind === "upscale"
           ? createUpscaleNode(picker.world)
           : kind === "text"
           ? createPrompt(picker.world)
-          : kind === "workflowImage" || kind === "workflowVideo"
-            ? createGenerator(mediaKind, picker.world, params)
-            : createEmptyMedia(mediaKind, picker.world, params);
+          : kind === "workflowImage"
+            ? createGenerator("image", picker.world, defaultParams("image", runtime))
+            : kind === "workflowVideo"
+              ? createGenerator("video", picker.world, defaultParams("video", runtime))
+              : createEmptyMedia(
+                  mediaKind,
+                  picker.world,
+                  mediaKind === "audio" ? undefined : defaultParams(mediaKind, runtime),
+                );
       const size = nodeSize(draft);
       const seed = {
         x: picker.world.x - size.w / 2,
@@ -4102,10 +4131,12 @@ export default function SuperCanvas() {
       setConnectionNodePicker(null);
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
-      setMode(kind === "text" ? "text" : mediaKind);
+      if (kind === "text") setMode("text");
+      else if (mediaKind !== "audio") setMode(mediaKind);
+      if (mediaKind === "audio") setExpandedEditorId(node.id);
       if (kind === "upscale") setExpandedEditorId(node.id);
       notify(
-        `已添加并连接${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : "图片"}节点`,
+        `已添加并连接${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [commit, notify, openNodePosition, runtime],
@@ -4334,7 +4365,8 @@ export default function SuperCanvas() {
             },
             {
               role: "参考素材",
-              params: defaultParams(asset.kind, runtime),
+              mimeType: asset.mime,
+              ...defaultMediaParams(asset.kind, runtime),
             },
           );
           const point = position
@@ -5016,6 +5048,11 @@ export default function SuperCanvas() {
           writeSharedCreationSettings(settings);
           return;
         }
+        if (target.data.kind === "audio") {
+          notify("音频节点只能作为视频参考输入，不能编辑生成参数。", "error");
+          return;
+        }
+        const targetKind = target.data.kind === "video" ? "video" : "image";
         const references = incomingReferences(docRef.current, target.id)
           .map(canvasReferenceDraftFromNode)
           .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
@@ -5024,7 +5061,7 @@ export default function SuperCanvas() {
           references,
           copyParams(
             target.data.generation?.params || target.data.params,
-            target.data.kind || "image",
+            targetKind,
             runtime,
           ),
         );
@@ -5032,7 +5069,7 @@ export default function SuperCanvas() {
           setReuseDraft((current) => current?.sourceNodeId === target.id
             ? { ...current, params: clone(settings), dirty: true }
             : { ...draft, params: clone(settings), dirty: true });
-          setMode(target.data.kind === "video" ? "video" : "image");
+          setMode(targetKind);
           setDeckCollapsed(false);
         }
         return;
@@ -6437,6 +6474,10 @@ export default function SuperCanvas() {
 
   const runReuseGeneration = useCallback(async (draftInput: CanvasReuseDraft) => {
     const draft = cloneReuseDraft(draftInput);
+    if (draft.kind === "audio") {
+      notify("音频节点只能作为视频参考输入，不能复用为生成节点。", "error");
+      return;
+    }
     if (draft.kind === "image") {
       await runImageContinuation(draft);
       return;
@@ -6637,6 +6678,10 @@ export default function SuperCanvas() {
       : [];
     const inPlaceVideoTarget = shouldGenerateVideoInPlace(selectedMediaTarget || undefined, selectedMediaReferences);
     if (selectedMediaTarget?.data.url && !inPlaceVideoTarget) {
+      if (selectedMediaTarget.data.kind === "audio") {
+        return notify("音频节点只能作为视频参考输入，不能直接生成新分支。", "error");
+      }
+      const targetKind = selectedMediaTarget.data.kind === "video" ? "video" : "image";
       const references = incomingReferences(docRef.current, selectedMediaTarget.id)
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
@@ -6645,7 +6690,7 @@ export default function SuperCanvas() {
         references,
         copyParams(
           selectedMediaTarget.data.generation?.params || selectedMediaTarget.data.params,
-          selectedMediaTarget.data.kind || "image",
+          targetKind,
           runtime,
         ),
       );
@@ -7778,7 +7823,8 @@ export default function SuperCanvas() {
             }, {
               role: "参考素材",
               assetId: asset.id,
-              params: defaultParams(asset.kind, runtime),
+              mimeType: asset.mime,
+              ...defaultMediaParams(asset.kind, runtime),
             }),
           );
         } catch (error) {
@@ -7815,6 +7861,56 @@ export default function SuperCanvas() {
       if (rejected.length) addLog(`有 ${rejected.length} 张上传素材未接入目标节点`);
     },
     [addLog, commit, notify, runtime],
+  );
+
+  const replaceAudioNode = useCallback(
+    async (nodeId: string, file: File) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (!node || node.type !== "media" || node.data.kind !== "audio") return;
+      if (!isCanvasAudioFile(file)) {
+        notify("音频节点只接受音频文件。", "error");
+        return;
+      }
+      try {
+        const asset = await uploadCanvasAsset(file);
+        commit((value) => ({
+          ...value,
+          nodes: value.nodes.map((item) => {
+            if (item.id !== nodeId || item.type !== "media" || item.data.kind !== "audio") return item;
+            const {
+              generation: _generation,
+              params: _params,
+              model: _model,
+              prompt: _prompt,
+              jobId: _jobId,
+              progress: _progress,
+              processingStartedAt: _processingStartedAt,
+              durationMs: _durationMs,
+              ...baseData
+            } = item.data;
+            return {
+              ...item,
+              data: {
+                ...baseData,
+                kind: "audio",
+                url: asset.url,
+                name: asset.name || file.name || "音频素材",
+                role: "参考素材",
+                status: "completed",
+                statusLabel: "音频素材",
+                assetId: asset.id,
+                sourceAssetId: asset.id,
+                mimeType: asset.mime || file.type || undefined,
+              },
+            };
+          }),
+        }));
+        notify(node.data.url ? "音频已替换，原有视频连线已保留" : "音频已添加，可连接到视频节点");
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "音频上传失败，原音频未改变。", "error");
+      }
+    },
+    [commit, notify],
   );
 
   const runEditorGeneration = useCallback(
@@ -8247,7 +8343,7 @@ export default function SuperCanvas() {
       const draft = createMedia(asset.kind, asset.url, asset.name, seed, {
         role: "资产中心",
         sourceAssetId: asset.id,
-        params: defaultParams(asset.kind, runtime),
+        ...defaultMediaParams(asset.kind, runtime),
       });
       const targetGroup = position
         ? groupAtPoint(docRef.current, seed)
@@ -8314,7 +8410,7 @@ export default function SuperCanvas() {
             asset.url,
             asset.name,
             { x: ownerBounds.x - 430, y: ownerBounds.y },
-            { role: "参考素材", sourceAssetId: asset.id, params: defaultParams(asset.kind, runtime) },
+            { role: "参考素材", sourceAssetId: asset.id, ...defaultMediaParams(asset.kind, runtime) },
           );
       const sourceNode =
         existing ||
@@ -10807,6 +10903,18 @@ export default function SuperCanvas() {
               </button>
               <button
                 type="button"
+                className="canvas-menu-item canvas-menu-item-audio"
+                onClick={() => addNode("audio", contextMenu.world)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">♫</span>
+                <span className="canvas-menu-copy">
+                  <b>音频节点</b>
+                  <small>导入后连接到视频作为参考音频</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
                 className="canvas-menu-item canvas-menu-item-agent"
                 onClick={() => addNode("text", contextMenu.world)}
               >
@@ -10893,7 +11001,7 @@ export default function SuperCanvas() {
               >
                 <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
                 <span className="canvas-menu-copy">
-                  <b>导入图片 / 视频</b>
+                  <b>导入图片 / 视频 / 音频</b>
                   <small>支持多选，放置到右键位置</small>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
@@ -11108,7 +11216,7 @@ export default function SuperCanvas() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept="image/*,video/*,audio/*"
         multiple
         hidden
         onChange={(event) => {

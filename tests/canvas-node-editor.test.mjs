@@ -259,7 +259,7 @@ test("nested node scrolling does not trigger canvas zoom", () => {
 });
 
 test("image node editing persists parameters without turning uploads into generated media", () => {
-  assert.match(component, /role: "参考素材",\s*params: defaultParams\(asset\.kind, runtime\)/);
+  assert.match(component, /role: "参考素材",\s*mimeType: asset\.mime,\s*\.\.\.defaultMediaParams\(asset\.kind, runtime\)/);
   assert.match(component, /generation: item\.data\.generation/);
   assert.match(component, /params: clone\(settings\)/);
   assert.match(component, /prompt: value/);
