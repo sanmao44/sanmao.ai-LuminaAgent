@@ -4,6 +4,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $passwordPath = Join-Path $root '.data\lan-password'
 $startScript = Join-Path $PSScriptRoot 'start.ps1'
 $launcherLogPath = Join-Path $root '.data\logs\launcher.log'
+$startStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
+$startStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 $script:FormsReady = $false
 $script:StartingForm = $null
 $script:StartingStatus = $null
@@ -71,6 +73,11 @@ function Use-SanmaoWindowsPowerShellModules {
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
   if ($modulePaths.Count -gt 0) { $env:PSModulePath = $modulePaths -join ';' }
 }
+
+# Windows PowerShell 5.1 does not auto-load these assemblies. They must be
+# loaded before the typed controls and color palette below are defined.
+Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+Add-Type -AssemblyName System.Drawing -ErrorAction Stop
 
 function Initialize-SanmaoLanForms {
   if ($script:FormsReady) { return }
@@ -594,6 +601,25 @@ function Show-SanmaoLanError([string]$message) {
   }
 }
 
+function Get-SanmaoLanStartFailureMessage([int]$exitCode) {
+  $message = $ui.StartFailed -f $exitCode
+  $details = @()
+  foreach ($path in @($startStderrPath, $startStdoutPath)) {
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+    try {
+      $lines = @(Get-Content -LiteralPath $path -Tail 12 -ErrorAction Stop |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+      if ($lines.Count -gt 0) {
+        $details += ("{0}:{1}" -f (Split-Path -Leaf $path), ([Environment]::NewLine + ($lines -join [Environment]::NewLine)))
+      }
+    } catch {}
+  }
+  if ($details.Count -gt 0) {
+    return $message + [Environment]::NewLine + [Environment]::NewLine + ($details -join ([Environment]::NewLine + [Environment]::NewLine))
+  }
+  return $message
+}
+
 try {
   Write-SanmaoLanLauncherLog $ui.LogStarted
   $configured = $env:SANMAO_ADMIN_PASSWORD
@@ -629,9 +655,19 @@ try {
   $server = $null
   while (-not $server -and [DateTime]::UtcNow -lt $startDeadline) {
     Start-Sleep -Milliseconds 250
-    $startProcess.Refresh()
+    # Check the health endpoint before checking the helper process. When the
+    # service was already running, start.ps1 can exit successfully in the same
+    # interval after deciding to reuse it.
     $server = Get-SanmaoLanServerInfo
-    if (-not $server) { Update-SanmaoLanStartingForm $ui.StartingService }
+    if ($server) { break }
+    $startProcess.Refresh()
+    if ($startProcess.HasExited) {
+      if ($startProcess.ExitCode -ne 0) {
+        throw (Get-SanmaoLanStartFailureMessage $startProcess.ExitCode)
+      }
+      break
+    }
+    Update-SanmaoLanStartingForm $ui.StartingService
   }
   # Open the canvas as soon as the health endpoint responds. The launcher
   # script may still be finishing cleanup, but the service is already usable.
