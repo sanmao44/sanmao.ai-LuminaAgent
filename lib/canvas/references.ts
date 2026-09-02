@@ -6,6 +6,8 @@ export type CanvasVideoInputMode = "text" | "first-frame" | "frames" | "referenc
 export type CanvasVideoInputCapabilities = {
   supportsReference?: boolean;
   supportsFirstFrame?: boolean;
+  /** Some registries publish a dedicated two-frame capability. */
+  supportsFrames?: boolean;
   maxReferenceImages?: number;
   maxReferenceVideos?: number;
 };
@@ -93,6 +95,38 @@ export function preferredCanvasVideoInputMode(
   if (capabilityValue(capabilities, "reference")) return "reference";
   if (capabilityValue(capabilities, "first-frame")) return "first-frame";
   return undefined;
+}
+
+/**
+ * Pick the automatic video input mode from the number of connected stills.
+ * The returned mode never silently discards an image: callers should keep the
+ * connection and surface a limit/capability warning when the chosen mode
+ * cannot submit every connected image.
+ */
+export function preferredCanvasVideoInputModeForImageCount(
+  imageCount: number,
+  capabilities: ReadonlyArray<string> | CanvasVideoInputCapabilities,
+): CanvasVideoInputMode | undefined {
+  const count = Math.max(0, Math.floor(Number(imageCount) || 0));
+  if (count === 0) return undefined;
+
+  const supportsReference = capabilityValue(capabilities, "reference");
+  const supportsFirstFrame = capabilityValue(capabilities, "first-frame");
+  const supportsFrames = typeof capabilities === "object" && capabilities !== null && !Array.isArray(capabilities)
+    ? Boolean((capabilities as CanvasVideoInputCapabilities).supportsFrames ?? supportsFirstFrame)
+    : supportsFirstFrame;
+
+  if (count === 1) {
+    if (supportsFirstFrame) return "first-frame";
+    if (supportsReference) return "reference";
+    return undefined;
+  }
+  if (count === 2) {
+    if (supportsFrames) return "frames";
+    if (supportsReference) return "reference";
+    return undefined;
+  }
+  return supportsReference ? "reference" : undefined;
 }
 
 /** Infer the persisted role for a normal/legacy edge from its endpoints. */

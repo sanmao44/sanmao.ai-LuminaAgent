@@ -131,7 +131,7 @@ test('manifest check selects the newest successful source instead of the fastest
   process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://mirror.example.test/new/update.json';
   globalThis.fetch = async (url) => {
     const value = String(url);
-    const version = value.includes('/old/') ? '0.7.18' : '0.7.19';
+    const version = value.includes('/old/') ? '0.7.18' : '0.7.20';
     await new Promise((resolve) => setTimeout(resolve, version === '0.7.18' ? 5 : 25));
     return new Response(JSON.stringify({
       schemaVersion: 1,
@@ -141,7 +141,7 @@ test('manifest check selects the newest successful source instead of the fastest
   };
 
   const status = await update.getUpdateStatus(true);
-  assert.equal(status.latestVersion, '0.7.19');
+  assert.equal(status.latestVersion, '0.7.20');
   assert.equal(status.hasUpdate, true);
 });
 
@@ -187,7 +187,7 @@ test('package download falls back to the next source and still checks SHA-256', 
 
   globalThis.fetch = async (url) => {
     const value = String(url);
-    const version = value.includes('/old/') ? '0.7.18' : '0.7.19';
+    const version = value.includes('/old/') ? '0.7.18' : '0.7.20';
     await new Promise((resolve) => setTimeout(resolve, version === '0.7.18' ? 5 : 25));
     return new Response(JSON.stringify({
       schemaVersion: 1,
@@ -197,7 +197,7 @@ test('package download falls back to the next source and still checks SHA-256', 
   };
 
   const status = await update.getUpdateStatus(true);
-  assert.equal(status.latestVersion, '0.7.19');
+  assert.equal(status.latestVersion, '0.7.20');
   assert.equal(status.hasUpdate, true);
 });
 

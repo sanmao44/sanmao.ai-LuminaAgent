@@ -489,7 +489,7 @@ if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
 }
 
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.7.19' -ForegroundColor White
+Write-Host '        SANMAO.AI 一键启动器 0.7.20' -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js

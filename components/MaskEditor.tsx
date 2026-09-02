@@ -25,16 +25,17 @@ export const LOCAL_EDIT_INTENTS: ReadonlyArray<{ value: LocalEditIntent; label: 
   { value: 'subject', label: '保持主体', prompt: '保持主体、姿态和构图不变，只编辑指定范围。' },
 ];
 
-type LocalEditTool = 'brush' | 'eraser' | 'rectangle' | 'ellipse' | 'pan';
+type LocalEditTool = 'brush' | 'eraser' | 'rectangle' | 'ellipse' | 'lasso' | 'pan';
 type PreviewMode = 'overlay' | 'original' | 'range';
 type Point = { x: number; y: number };
 type HistoryState = { states: ImageData[]; index: number };
 type Gesture = {
   pointerId: number;
-  kind: 'draw' | 'shape' | 'pan';
+  kind: 'draw' | 'shape' | 'lasso' | 'pan';
   before?: ImageData;
   start?: Point;
   last?: Point;
+  path?: Point[];
   panStart?: Point;
   moved?: boolean;
 };
@@ -45,6 +46,14 @@ function samePixels(left: ImageData, right: ImageData) {
     if (left.data[index] !== right.data[index]) return false;
   }
   return true;
+}
+
+function formatCoverage(value: number) {
+  const percent = value * 100;
+  if (percent <= 0) return '0%';
+  if (percent < 0.05) return '<0.1%';
+  if (percent < 1) return `${percent.toFixed(1)}%`;
+  return `${Math.round(percent)}%`;
 }
 
 function drawMaskOverlay(mask: HTMLCanvasElement, overlay: HTMLCanvasElement) {
@@ -240,20 +249,21 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     };
   }
 
-  function radiusFor(canvas: HTMLCanvasElement) {
-    const rect = canvas.getBoundingClientRect();
-    const unscaledWidth = rect.width / Math.max(0.5, zoom);
-    return brushSize * canvas.width / Math.max(1, unscaledWidth) / 2;
+  function radiusFor() {
+    // Brush size is expressed in source-image pixels. The canvas is rendered
+    // at a different CSS size and the mask canvas is hidden, so deriving the
+    // radius from a DOM rect makes the brush unstable or effectively full
+    // image in embedded browsers.
+    return Math.max(1, brushSize / 2);
   }
 
   function drawBrush(context: CanvasRenderingContext2D, current: Point, previous?: Point) {
-    const canvas = context.canvas;
     const erase = tool === 'eraser';
     context.save();
     context.globalCompositeOperation = erase ? 'source-over' : 'destination-out';
     context.fillStyle = '#fff';
     context.strokeStyle = '#fff';
-    context.lineWidth = radiusFor(canvas) * 2;
+    context.lineWidth = radiusFor() * 2;
     context.lineCap = 'round';
     context.lineJoin = 'round';
     context.beginPath();
@@ -262,7 +272,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       context.lineTo(current.x, current.y);
       context.stroke();
     } else {
-      context.arc(current.x, current.y, radiusFor(canvas), 0, Math.PI * 2);
+      context.arc(current.x, current.y, radiusFor(), 0, Math.PI * 2);
       context.fill();
     }
     context.restore();
@@ -286,10 +296,29 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     context.restore();
   }
 
+  function drawLasso(context: CanvasRenderingContext2D, path: Point[]) {
+    if (path.length < 2) return;
+    context.save();
+    context.globalCompositeOperation = 'destination-out';
+    context.fillStyle = '#fff';
+    context.beginPath();
+    context.moveTo(path[0].x, path[0].y);
+    path.slice(1).forEach((item) => context.lineTo(item.x, item.y));
+    context.closePath();
+    context.fill();
+    context.restore();
+  }
+
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!ready || saving) return;
+    event.preventDefault();
+    event.stopPropagation();
     const canvas = event.currentTarget;
-    canvas.setPointerCapture(event.pointerId);
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Some embedded webviews can reject capture for a synthetic pointer.
+    }
     const panGesture = tool === 'pan' || event.button === 1 || spacePressedRef.current;
     const current = point(event);
     const maskContext = maskCanvasRef.current?.getContext('2d');
@@ -298,6 +327,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       ? { pointerId: event.pointerId, kind: 'pan', panStart: { x: event.clientX - pan.x, y: event.clientY - pan.y } }
       : tool === 'rectangle' || tool === 'ellipse'
         ? { pointerId: event.pointerId, kind: 'shape', before, start: current, last: current }
+        : tool === 'lasso'
+          ? { pointerId: event.pointerId, kind: 'lasso', before, start: current, last: current, path: [current] }
         : { pointerId: event.pointerId, kind: 'draw', before, last: current };
     if (!panGesture && (tool === 'brush' || tool === 'eraser')) {
       if (maskContext) drawBrush(maskContext, current);
@@ -308,6 +339,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
     const current = point(event);
     gesture.moved = true;
     if (gesture.kind === 'pan') {
@@ -319,6 +352,11 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     if (gesture.kind === 'shape' && gesture.before && gesture.start) {
       context.putImageData(gesture.before, 0, 0);
       drawShape(context, gesture.start, current);
+    } else if (gesture.kind === 'lasso' && gesture.before && gesture.path) {
+      const nextPath = [...gesture.path, current];
+      context.putImageData(gesture.before, 0, 0);
+      drawLasso(context, nextPath);
+      gesture.path = nextPath;
     } else {
       drawBrush(context, current, gesture.last);
     }
@@ -326,13 +364,23 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     refreshPreview();
   }
 
-  function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
+  function finishGesture(event: React.PointerEvent<HTMLCanvasElement>) {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
     if (gesture.kind !== 'pan') pushHistory(gesture.before);
     gestureRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     refreshPreview();
+  }
+
+  function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
+    finishGesture(event);
+  }
+
+  function handleLostPointerCapture(event: React.PointerEvent<HTMLCanvasElement>) {
+    finishGesture(event);
   }
 
   function resetAll(protect: boolean) {
@@ -341,8 +389,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     if (!canvas || !context) return;
     const before = context.getImageData(0, 0, canvas.width, canvas.height);
     context.globalCompositeOperation = 'source-over';
-    context.fillStyle = protect ? '#fff' : 'rgba(0,0,0,0)';
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    if (protect) {
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    } else {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+    }
     pushHistory(before);
     refreshPreview();
   }
@@ -415,7 +467,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         <div className="local-edit-workbench-toolbar" role="toolbar" aria-label="局部编辑工具">
           <div className="local-edit-workbench-tool-row">
             {([
-              ['brush', '画笔'], ['eraser', '橡皮擦'], ['rectangle', '矩形选区'], ['ellipse', '椭圆选区'], ['pan', '拖动画布'],
+              ['brush', '画笔标记'], ['eraser', '橡皮擦'], ['rectangle', '矩形选区'], ['ellipse', '椭圆选区'], ['lasso', '自由圈选'], ['pan', '拖动画布'],
             ] as const).map(([value, label]) => <button key={value} type="button" disabled={!ready || saving} className={tool === value ? 'active' : ''} aria-pressed={tool === value} onClick={() => setTool(value)}>{label}</button>)}
           </div>
           <div className="local-edit-workbench-tool-row local-edit-workbench-view-tools">
@@ -427,32 +479,36 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
             <button type="button" disabled={!ready || saving} onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>适应</button>
           </div>
         </div>
-        <div className="local-edit-canvas-stage" data-preview={previewMode} onWheel={(event) => { event.preventDefault(); zoomBy(event.deltaY > 0 ? -0.1 : 0.1); }}>
-          {!ready && <div className="mask-loading">正在读取图片…</div>}
-          <div className="local-edit-canvas-stack" style={{ aspectRatio: ratio, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: useToolCursor(tool) }}>
-            <canvas ref={imageCanvasRef} className="mask-canvas base" aria-label="原图预览" />
-            <canvas ref={overlayCanvasRef} className="mask-canvas overlay" aria-label="局部编辑范围" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} />
-            <canvas ref={maskCanvasRef} className="mask-canvas mask-data" aria-hidden="true" />
+        <div className="local-edit-workbench-body">
+          <div className="local-edit-canvas-stage" data-preview={previewMode} onWheel={(event) => { event.preventDefault(); zoomBy(event.deltaY > 0 ? -0.1 : 0.1); }}>
+            {!ready && <div className="mask-loading">正在读取图片…</div>}
+            <div className="local-edit-canvas-stack" style={{ aspectRatio: ratio, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: useToolCursor(tool) }}>
+              <canvas ref={imageCanvasRef} className="mask-canvas base" aria-label="原图预览" />
+              <canvas ref={overlayCanvasRef} className="mask-canvas overlay" aria-label="局部编辑范围" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} onLostPointerCapture={handleLostPointerCapture} />
+              <canvas ref={maskCanvasRef} className="mask-canvas mask-data" aria-hidden="true" />
+            </div>
+          </div>
+          <div className="local-edit-workbench-sidebar">
+            <div className="local-edit-workbench-summary">
+                <span>编辑范围 <b>{formatCoverage(coverage)}</b></span>
+              <span>历史 {Math.max(0, history.index)} / 20</span>
+              <div className="local-edit-preview-switch" role="group" aria-label="预览模式">
+                {([['overlay', '叠加预览'], ['original', '原图'], ['range', '编辑范围']] as const).map(([value, label]) => <button key={value} type="button" className={previewMode === value ? 'active' : ''} aria-pressed={previewMode === value} onClick={() => setPreviewMode(value)}>{label}</button>)}
+              </div>
+            </div>
+            <div className="local-edit-workbench-controls">
+              <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
+              <label><span>边缘羽化</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather}px</b></label>
+            </div>
+            <div className="local-edit-intents" aria-label="提示词快捷模板">
+              <span>快捷意图</span>
+              {LOCAL_EDIT_INTENTS.map((intent) => <button key={intent.value} type="button" disabled={saving} onClick={() => addIntent(intent.value)}>{intent.label}</button>)}
+            </div>
+            <label className="local-edit-prompt"><span>编辑提示词</span><textarea value={prompt} disabled={saving} onChange={(event) => setPrompt(event.target.value)} placeholder="描述编辑范围内要移除、替换或添加的内容…" /></label>
+            <div className="local-edit-workbench-presets"><button type="button" disabled={!ready || saving} onClick={() => resetAll(true)}>保护全图</button><button type="button" disabled={!ready || saving} onClick={() => resetAll(false)}>编辑全图</button><small>红色区域是编辑范围；橡皮擦会恢复保护。</small></div>
+            <div className="mask-editor-actions local-edit-workbench-actions"><button type="button" className="secondary-action" disabled={saving} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving || coverage <= 0} onClick={() => void applyLocalEdit()}>{saving ? '正在提交…' : '应用局部编辑'}</button></div>
           </div>
         </div>
-        <div className="local-edit-workbench-summary">
-          <span>编辑范围 <b>{Math.round(coverage * 100)}%</b></span>
-          <span>历史 {Math.max(0, history.index)} / 20</span>
-          <div className="local-edit-preview-switch" role="group" aria-label="预览模式">
-            {([['overlay', '叠加预览'], ['original', '原图'], ['range', '编辑范围']] as const).map(([value, label]) => <button key={value} type="button" className={previewMode === value ? 'active' : ''} aria-pressed={previewMode === value} onClick={() => setPreviewMode(value)}>{label}</button>)}
-          </div>
-        </div>
-        <div className="local-edit-workbench-controls">
-          <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
-          <label><span>边缘羽化</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather}px</b></label>
-        </div>
-        <div className="local-edit-intents" aria-label="提示词快捷模板">
-          <span>快捷意图</span>
-          {LOCAL_EDIT_INTENTS.map((intent) => <button key={intent.value} type="button" disabled={saving} onClick={() => addIntent(intent.value)}>{intent.label}</button>)}
-        </div>
-        <label className="local-edit-prompt"><span>编辑提示词</span><textarea value={prompt} disabled={saving} onChange={(event) => setPrompt(event.target.value)} placeholder="描述编辑范围内要移除、替换或添加的内容…" /></label>
-        <div className="local-edit-workbench-presets"><button type="button" disabled={!ready || saving} onClick={() => resetAll(true)}>保护全图</button><button type="button" disabled={!ready || saving} onClick={() => resetAll(false)}>编辑全图</button><small>选区默认增加编辑范围；橡皮擦恢复原图保护。</small></div>
-        <div className="mask-editor-actions local-edit-workbench-actions"><button type="button" className="secondary-action" disabled={saving} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving || coverage <= 0} onClick={() => void applyLocalEdit()}>{saving ? '正在提交…' : '应用局部编辑'}</button></div>
       </div>
     </div>
   );

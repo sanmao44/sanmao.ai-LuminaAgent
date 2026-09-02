@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.19",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.19",
+  "latestVersion": "0.7.20",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.20",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.19/SANMAO.AI-0.7.19.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip"
   ],
-  "sha256": "92044a5f26c54a896a1078b003293eb57bdbc6600c1775754f5cbf3ce1d33d36",
-  "publishedAt": "2026-09-01T18:42:17+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-09-02T00:00:00+08:00",
   "notes": [
-    "Hide the legacy bottom composer and keep the canvas node editor as the main editing surface.",
-    "Keep the @ mention candidate menu above the node input with real thumbnails, numbers, and reference names.",
-    "Image, video, and text references continue to submit their real content without being covered by the editor.",
-    "Preserve the upper candidate menu and historical reference behavior."
+    "Allow @ references at any text position and continue adding later references after normal text.",
+    "Hide the candidate menu when @ is not active and display references as thumbnails with numbers instead of file names.",
+    "Fix reference menu layering, excessive top spacing, and input focus accidentally triggering AI optimization.",
+    "Keep real image, video, and text reference content across the canvas, Agent, and image/video editors."
   ]
 }

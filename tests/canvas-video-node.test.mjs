@@ -62,3 +62,20 @@ test("video metadata persists both intrinsic size and duration on media nodes", 
   assert.match(component, /event\.currentTarget\.duration/);
   assert.match(component, /nativeWidth: width, nativeHeight: height/);
 });
+
+test("video canvas input mode supports automatic locking and restoration", () => {
+  assert.match(types, /videoInputModeAuto\?: boolean/);
+  assert.match(component, /videoInputModeAuto !== false/);
+  assert.match(component, /videoInputModeAuto: false/);
+  assert.match(component, /恢复自动/);
+  assert.match(component, /preferredCanvasVideoInputModeForImageCount/);
+  assert.match(component, /syncCanvasVideoReferences/);
+});
+
+test("video reference synchronization hydrates legacy generation params", () => {
+  assert.match(component, /function videoParamsForCanvasNode\(node: CanvasNode, runtime: CanvasRuntimeState \| null\)/);
+  assert.match(component, /node\.data\.generation\?\.params/);
+  assert.doesNotMatch(component, /target\.data\.kind !== "video" \|\|[\s\S]{0,160}!target\.data\.params/);
+  assert.match(component, /!hasTopLevelVideoParams/);
+  assert.match(component, /updateCanvasVideoMode\(next, target\.id, inputMode, runtime\)/);
+});

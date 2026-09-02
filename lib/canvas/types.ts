@@ -118,6 +118,8 @@ export type CanvasNodeData = {
   agentResponse?: string;
   prompt?: string;
   params?: CanvasNodeParams;
+  /** Video nodes automatically derive their input mode from connected images until locked. */
+  videoInputModeAuto?: boolean;
   assetId?: string;
   sourceAssetId?: string;
   autoFit?: boolean;

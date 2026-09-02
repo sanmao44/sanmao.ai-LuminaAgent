@@ -12,6 +12,7 @@ import {
   type AgentCreationSettings,
   type ImageCreationSettings,
   type VideoCreationSettings,
+  type VideoInputMode,
 } from "@/lib/creation/settings";
 import { resolveAvailableCreationModel } from "@/lib/creation/settings";
 import { getVideoModelLimits } from "@/lib/video-model-limits";
@@ -28,6 +29,8 @@ type Props = {
   portalZIndex?: number;
   dialogPortalZIndex?: number;
   onChange: (settings: CreationSettings) => void;
+  /** Called only when a user explicitly picks a video input mode. */
+  onVideoInputModeChange?: (mode: VideoInputMode) => void;
 };
 
 const ratioDescriptions: Record<string, string> = {
@@ -516,6 +519,7 @@ function VideoEditor({
   runtime,
   unavailableModelId,
   onChange,
+  onVideoInputModeChange,
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
   dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
 }: {
@@ -525,6 +529,7 @@ function VideoEditor({
   portalZIndex?: number;
   dialogPortalZIndex?: number;
   onChange: Props["onChange"];
+  onVideoInputModeChange?: Props["onVideoInputModeChange"];
 }) {
   const update = <K extends keyof VideoCreationSettings>(
     key: K,
@@ -691,7 +696,10 @@ function VideoEditor({
           <SelectMenu
             portalZIndex={portalZIndex}
             value={settings.inputMode}
-            onChange={(value) => update("inputMode", value)}
+            onChange={(value) => {
+              onVideoInputModeChange?.(value);
+              update("inputMode", value);
+            }}
             options={inputOptions}
             ariaLabel="视频生成方式"
           />
@@ -861,6 +869,7 @@ export default function CreationParameterEditor({
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
   dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
   onChange,
+  onVideoInputModeChange,
 }: Props) {
   return settings.kind === "video" ? (
     <VideoEditor
@@ -870,6 +879,7 @@ export default function CreationParameterEditor({
       portalZIndex={portalZIndex}
       dialogPortalZIndex={dialogPortalZIndex}
       onChange={onChange}
+      onVideoInputModeChange={onVideoInputModeChange}
     />
   ) : settings.kind === "text" ? (
     <AgentEditor

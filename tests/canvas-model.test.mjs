@@ -99,6 +99,44 @@ test('recovers interrupted local canvas work while preserving remote video tasks
   assert.equal(result.document.nodes.find((node) => node.id === 'video-1').data.status, 'running');
 });
 
+test('hydrates legacy video media params from generation params', () => {
+  const result = model.normalizeDocument({
+    nodes: [
+      {
+        id: 'legacy-video',
+        type: 'media',
+        x: 0,
+        y: 0,
+        data: {
+          kind: 'video',
+          url: '/legacy-video.mp4',
+          generation: {
+            kind: 'video',
+            prompt: '镜头推进',
+            params: { model: 'legacy-video-model', inputMode: 'frames', duration: 8 },
+          },
+        },
+      },
+    ],
+  });
+
+  const legacy = result.nodes[0];
+  assert.equal(legacy.data.params.inputMode, 'frames');
+  assert.equal(legacy.data.params.model, 'legacy-video-model');
+  assert.equal(legacy.data.generation.params.inputMode, 'frames');
+  assert.equal(legacy.data.videoInputModeAuto, true);
+
+  const created = model.createMedia('video', '/created-video.mp4', '创建的视频', { x: 0, y: 0 }, {
+    generation: {
+      kind: 'video',
+      prompt: '参考生成',
+      params: { model: 'created-video-model', inputMode: 'reference' },
+    },
+  });
+  assert.equal(created.data.params.inputMode, 'reference');
+  assert.equal(created.data.params.model, 'created-video-model');
+});
+
 test('canvas upscale nodes preserve provider-specific settings', () => {
   const cloud = model.createUpscaleNode({ x: 0, y: 0 }, {
     model: 'aliyun-standard-super-resolution',
@@ -727,6 +765,37 @@ test('expands a grouped source into all media references and preserves manual or
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第一张', '第二张']);
   document = model.reorderReferences(document, generator.id, [second.id, first.id]);
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第二张', '第一张']);
+});
+
+test('removing an input edge also removes its persisted reference metadata', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/remove-first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/remove-second.png', '第二张', { x: 360, y: 0 });
+  const target = model.createGenerator('video', { x: 720, y: 0 }, { inputMode: 'frames' });
+  let document = {
+    ...empty,
+    nodes: [
+      first,
+      second,
+      {
+        ...target,
+        data: {
+          ...target.data,
+          referenceOrder: [first.id, second.id],
+          generation: { kind: 'video', prompt: '', params: target.data.params, referenceIds: [first.id, second.id] },
+        },
+      },
+    ],
+  };
+  document = model.addEdge(document, first.id, target.id, 'right', 'left', 'reference', 'first-frame', 0);
+  document = model.addEdge(document, second.id, target.id, 'right', 'left', 'reference', 'last-frame', 1);
+  const firstEdge = document.edges.find((edge) => edge.source === first.id);
+  assert.ok(firstEdge);
+
+  const next = model.removeEdge(document, firstEdge.id);
+  assert.deepEqual(model.incomingReferences(next, target.id).map((node) => node.id), [second.id]);
+  assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.referenceOrder, [second.id]);
+  assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.generation?.referenceIds, [second.id]);
 });
 
 test('adds dropped nodes to the group under the pointer and keeps membership consistent', () => {

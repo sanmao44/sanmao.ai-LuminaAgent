@@ -17,6 +17,7 @@ const raster = await loadTypeScript("../lib/local-edit.ts");
 const editor = await readFile(new URL("../components/MaskEditor.tsx", import.meta.url), "utf8");
 const settings = await readFile(new URL("../lib/creation/settings.ts", import.meta.url), "utf8");
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const viewer = await readFile(new URL("../components/MediaViewer.tsx", import.meta.url), "utf8");
 const canvas = await readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
 
@@ -50,6 +51,22 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /outputContext\.filter = `blur\(\$\{feather\}px\)`/);
   assert.match(editor, /请先指定编辑区域，再应用局部编辑/);
   assert.match(editor, /disabled=\{!ready \|\| saving \|\| coverage <= 0\}/);
+});
+
+test("local edit exposes reliable pointer tools, free lasso selection, and a fixed no-scroll workbench", () => {
+  assert.match(editor, /type LocalEditTool = 'brush' \| 'eraser' \| 'rectangle' \| 'ellipse' \| 'lasso' \| 'pan'/);
+  assert.match(editor, /function drawLasso\(context: CanvasRenderingContext2D, path: Point\[\]\)/);
+  assert.match(editor, /function radiusFor\(\)/);
+  assert.match(editor, /return Math\.max\(1, brushSize \/ 2\);/);
+  assert.doesNotMatch(editor, /getBoundingClientRect\(\).*brushSize/);
+  assert.match(editor, /function formatCoverage\(value: number\)/);
+  assert.match(editor, /return '<0\.1%';/);
+  assert.match(editor, /percent\.toFixed\(1\)/);
+  assert.match(editor, /event\.preventDefault\(\);/);
+  assert.match(editor, /onLostPointerCapture=\{handleLostPointerCapture\}/);
+  assert.match(editor, /context\.clearRect\(0, 0, canvas\.width, canvas\.height\);/);
+  assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);
+  assert.match(styles, /\.local-edit-workbench-body\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(260px,320px\)/);
 });
 
 test("local edit shortcuts append prompts without submitting automatically", () => {

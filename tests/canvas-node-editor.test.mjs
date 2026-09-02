@@ -276,7 +276,7 @@ test("local edit editor reports saving state and passes coverage into the attach
 test("local edit summary only occupies editor space when a mask exists", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   const summaryStart = component.indexOf("function CanvasMaskSummary");
-  assert.ok(editorStart >= 0 && summaryStart > editorStart, "local edit editor components should be present");
+  assert.ok(editorStart >= 0 && summaryStart > editorStart, "mask editor components should be present");
   const editor = component.slice(editorStart, summaryStart);
   assert.match(editor, /onLocalEdit && maskState && \(/);
   assert.doesNotMatch(editor, /尚未设置，绘制后只重新生成指定区域/);

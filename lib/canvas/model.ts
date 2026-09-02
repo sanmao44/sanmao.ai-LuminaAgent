@@ -116,6 +116,14 @@ function normalizeUpscaleParams(value: unknown): CanvasUpscaleParams {
   };
 }
 
+function normalizeVideoNodeParams(data: CanvasNodeData) {
+  const currentParams =
+    data.params && typeof data.params === "object"
+      ? data.params
+      : data.generation?.params;
+  return normalizeCreationSettings("video", currentParams);
+}
+
 function normalizeNode(value: unknown): CanvasNode | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<CanvasNode> & { data?: unknown };
@@ -132,6 +140,8 @@ function normalizeNode(value: unknown): CanvasNode | null {
   const type = nodeType(raw.type);
   if (type === "media" || type === "generator")
     data.kind = mediaKind(data.kind);
+  if (type === "media" && data.kind === "video")
+    data.params = normalizeVideoNodeParams(data);
   if (type === "prompt")
     data.params = normalizeCreationSettings("text", data.params);
   if (type === "upscale") {
@@ -157,6 +167,8 @@ function normalizeNode(value: unknown): CanvasNode | null {
   }
   if (type === "generator") {
     const kind = mediaKind(data.kind || "image");
+    if (kind === "video" && typeof data.videoInputModeAuto !== "boolean")
+      data.videoInputModeAuto = true;
     data.params =
       kind === "image"
         ? normalizeCreationSettings("image", data.params)
@@ -199,6 +211,8 @@ function normalizeNode(value: unknown): CanvasNode | null {
         }));
     }
   }
+  if (type === "media" && data.kind === "video" && typeof data.videoInputModeAuto !== "boolean")
+    data.videoInputModeAuto = true;
   if (type === "media" && data.generation) {
     const kind = mediaKind(data.generation.kind || data.kind);
     data.generation = {
@@ -1370,7 +1384,11 @@ export function createMedia(
       name: name || (kind === "video" ? "视频素材" : "图片素材"),
       role: "参考",
       autoFit: true,
+      ...(kind === "video" && typeof data.videoInputModeAuto !== "boolean"
+        ? { videoInputModeAuto: true }
+        : {}),
       ...data,
+      ...(kind === "video" ? { params: normalizeVideoNodeParams(data) } : {}),
     },
   };
 }
@@ -1414,6 +1432,7 @@ export function createGenerator(
     data: {
       kind,
       params: normalizedParams,
+      ...(kind === "video" ? { videoInputModeAuto: true } : {}),
       prompt: "",
       status: "idle",
       variantRequirements: [""],
@@ -1443,6 +1462,7 @@ export function createEmptyMedia(
         role: "待生成",
         status: "draft",
         statusLabel: kind === "video" ? "等待生成视频" : "等待生成图片",
+        ...(kind === "video" ? { videoInputModeAuto: true } : {}),
         generation: {
           kind,
           prompt: "",
@@ -1565,10 +1585,71 @@ export function addEdge(
 }
 
 export function removeEdge(document: CanvasDocument, id: string) {
+  const removed = document.edges.find((edge) => edge.id === id);
+  if (!removed) return document;
+  const edges = document.edges.filter((edge) => edge.id !== id);
+  const target = nodeById(document, removed.target);
+  const removedReferenceIds = referenceNodeIdsForEdge(document, removed);
+  if (!target || !removedReferenceIds.length) return { ...document, edges };
+
+  const remainingReferenceIds = new Set(
+    edges.flatMap((edge) => referenceNodeIdsForEdge(document, edge)),
+  );
+  const removedSet = new Set(removedReferenceIds);
+  const prune = (value: unknown) => {
+    if (!Array.isArray(value)) return value;
+    const next = value.filter((referenceId) => !removedSet.has(String(referenceId)) || remainingReferenceIds.has(String(referenceId)));
+    return next.length === value.length && next.every((referenceId, index) => referenceId === value[index])
+      ? value
+      : next;
+  };
+  const referenceOrder = prune(target.data.referenceOrder);
+  const referenceIds = prune(target.data.generation?.referenceIds);
+  const referenceOrderChanged = referenceOrder !== target.data.referenceOrder;
+  const referenceIdsChanged = referenceIds !== target.data.generation?.referenceIds;
+  if (!referenceOrderChanged && !referenceIdsChanged) return { ...document, edges };
   return {
     ...document,
-    edges: document.edges.filter((edge) => edge.id !== id),
+    edges,
+    nodes: document.nodes.map((node) =>
+      node.id !== target.id
+        ? node
+        : {
+            ...node,
+            data: {
+              ...node.data,
+              ...(referenceOrderChanged ? { referenceOrder: referenceOrder as string[] } : {}),
+              ...(referenceIdsChanged && node.data.generation
+                ? { generation: { ...node.data.generation, referenceIds: referenceIds as string[] } }
+                : {}),
+            },
+          },
+    ),
   };
+}
+
+function referenceNodeIdsForEdge(document: CanvasDocument, edge: CanvasEdge) {
+  if (["generated", "variant", "lineage"].includes(edge.kind || "")) return [];
+  const sourceGroup = groupById(document, edge.source);
+  const source = nodeById(document, edge.source);
+  const effectiveGroup = sourceGroup || (source?.groupId ? groupById(document, source.groupId) : undefined);
+  const sourceNodes = effectiveGroup
+    ? groupNodes(document, effectiveGroup.id)
+    : source
+      ? [source]
+      : [];
+  return sourceNodes
+    .filter((node) => isCanvasReferenceableNode(node))
+    .map((node) => node.id);
+}
+
+function removeEdgesAndPruneReferences(
+  document: CanvasDocument,
+  shouldRemove: (edge: CanvasEdge) => boolean,
+) {
+  return document.edges
+    .filter(shouldRemove)
+    .reduce((next, edge) => removeEdge(next, edge.id), document);
 }
 
 export function createGroup(
@@ -1684,10 +1765,14 @@ export function detachNodesFromGroups(
       .filter((group) => !groups.some((item) => item.id === group.id))
       .map((group) => group.id),
   );
+  const withoutRemovedEdges = removeEdgesAndPruneReferences(
+    document,
+    (edge) => removedGroupIds.has(edge.source) || removedGroupIds.has(edge.target),
+  );
 
   return {
-    ...document,
-    nodes: document.nodes.map((node) =>
+    ...withoutRemovedEdges,
+    nodes: withoutRemovedEdges.nodes.map((node) =>
       validIds.has(node.id)
         ? { ...node, groupId: undefined }
         : node.groupId && survivingMembership.has(node.id)
@@ -1697,25 +1782,22 @@ export function detachNodesFromGroups(
             : node,
     ),
     groups,
-    edges: document.edges.filter(
-      (edge) =>
-        !removedGroupIds.has(edge.source) && !removedGroupIds.has(edge.target),
-    ),
   };
 }
 
 export function ungroup(document: CanvasDocument, groupId: string) {
   const group = groupById(document, groupId);
   if (!group) return document;
+  const withoutGroupEdges = removeEdgesAndPruneReferences(
+    document,
+    (edge) => edge.source === groupId || edge.target === groupId,
+  );
   return {
-    ...document,
-    nodes: document.nodes.map((node) =>
+    ...withoutGroupEdges,
+    nodes: withoutGroupEdges.nodes.map((node) =>
       group.nodeIds.includes(node.id) ? { ...node, groupId: undefined } : node,
     ),
     groups: document.groups.filter((item) => item.id !== groupId),
-    edges: document.edges.filter(
-      (edge) => edge.source !== groupId && edge.target !== groupId,
-    ),
   };
 }
 
@@ -1737,9 +1819,17 @@ export function removeNodes(document: CanvasDocument, ids: string[]) {
       group.nodeIds.map((id) => [id, group.id] as const),
     ),
   );
+  const withoutRemovedEdges = removeEdgesAndPruneReferences(
+    document,
+    (edge) =>
+      set.has(edge.source) ||
+      set.has(edge.target) ||
+      groupIds.has(edge.source) ||
+      groupIds.has(edge.target),
+  );
   return {
-    ...document,
-    nodes: document.nodes
+    ...withoutRemovedEdges,
+    nodes: withoutRemovedEdges.nodes
       .filter((node) => !set.has(node.id))
       .map((node) =>
         node.groupId && survivingMembership.has(node.id)
@@ -1747,13 +1837,6 @@ export function removeNodes(document: CanvasDocument, ids: string[]) {
           : { ...node, groupId: undefined },
       ),
     groups,
-    edges: document.edges.filter(
-      (edge) =>
-        !set.has(edge.source) &&
-        !set.has(edge.target) &&
-        !groupIds.has(edge.source) &&
-        !groupIds.has(edge.target),
-    ),
   };
 }
 
@@ -1847,7 +1930,11 @@ export function reorderReferences(
     ...document,
     edges: document.edges.map((edge) => {
       if (edge.target !== ownerId) return edge;
-      const index = next.indexOf(edge.source);
+      const sourceReferenceIds = referenceNodeIdsForEdge(document, edge);
+      const index = sourceReferenceIds
+        .map((id) => next.indexOf(id))
+        .filter((value) => value >= 0)
+        .sort((left, right) => left - right)[0] ?? next.indexOf(edge.source);
       return index >= 0
         ? {
             ...edge,
