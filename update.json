@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "377e0fb5efebd1a533b3b172110554ce1f576edcf86b9bc488401adbddbdb6eb",
   "publishedAt": "2026-09-02T00:00:00+08:00",
   "notes": [
     "Arrange only the cards inside a selected object group while preserving the group and external graph.",
