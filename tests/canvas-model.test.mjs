@@ -1111,6 +1111,44 @@ test('keeps complete groups together and preserves relative positions for partia
   assert.deepEqual({ x: partialSecond.x, y: partialSecond.y }, { x: second.x, y: second.y });
 });
 
+test('arranges cards inside a selected group without moving the group or external graph', () => {
+  const first = model.createMedia('image', '/group-first.png', '第一张', { x: 1240, y: 420 });
+  const second = model.createGenerator('image', { x: 120, y: 760 });
+  const third = model.createMedia('image', '/group-third.png', '第三张', { x: 360, y: 120 });
+  const outside = model.createPrompt({ x: 2400, y: 1400 }, '组外节点');
+  let document = arrangeDocument([first, second, third, outside]);
+  document = model.createGroup(document, [first.id, second.id, third.id], '待整理组');
+  const group = document.groups[0];
+  document = model.addEdge(document, second.id, first.id);
+  document = model.addEdge(document, group.id, outside.id);
+  document = model.addEdge(document, third.id, outside.id);
+
+  const beforeOutside = { x: outside.x, y: outside.y };
+  const beforeEdges = JSON.stringify(document.edges);
+  const beforeGroups = JSON.stringify(document.groups);
+  const beforeGroupBounds = model.groupBounds(document, group.id);
+  const arranged = model.arrangeCanvasGroup(document, group.id);
+  const byId = (id) => arranged.document.nodes.find((node) => node.id === id);
+  const arrangedFirst = byId(first.id);
+  const arrangedSecond = byId(second.id);
+  const arrangedThird = byId(third.id);
+  const arrangedOutside = byId(outside.id);
+
+  assert.equal(arranged.changed, true);
+  assert.deepEqual(arranged.arrangedIds, group.nodeIds);
+  assert.ok(arrangedSecond.x < arrangedFirst.x);
+  assert.equal(overlaps(arrangedFirst, arrangedSecond), false);
+  assert.equal(overlaps(arrangedFirst, arrangedThird), false);
+  assert.equal(overlaps(arrangedSecond, arrangedThird), false);
+  assert.deepEqual({ x: arrangedOutside.x, y: arrangedOutside.y }, beforeOutside);
+  assert.equal(JSON.stringify(arranged.document.edges), beforeEdges);
+  assert.equal(JSON.stringify(arranged.document.groups), beforeGroups);
+  assert.deepEqual(
+    { x: model.groupBounds(arranged.document, group.id).x, y: model.groupBounds(arranged.document, group.id).y },
+    { x: beforeGroupBounds.x, y: beforeGroupBounds.y },
+  );
+});
+
 test('handles cycles, empty selections, and deterministic output', () => {
   const first = model.createPrompt({ x: 1000, y: 20 }, 'A');
   const second = model.createGenerator('image', { x: -1000, y: 20 });

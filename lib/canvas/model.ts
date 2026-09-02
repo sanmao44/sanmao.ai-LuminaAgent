@@ -1190,25 +1190,24 @@ function arrangeLayered(
   };
 }
 
-export function arrangeCanvas(
+function arrangeCanvasSelection(
   document: CanvasDocument,
-  selectedIds?: string[],
+  selected: Set<string>,
+  collapseFullGroups: boolean,
 ): CanvasArrangeResult {
   const allNodes = document.nodes;
-  const selected =
-    selectedIds === undefined
-      ? new Set(allNodes.map((node) => node.id))
-      : new Set(selectedIds.filter((id) => nodeById(document, id)));
   if (!selected.size)
     return { document: clone(document), arrangedIds: [], changed: false };
   const fullGroupIds = new Set(
-    document.groups
-      .filter(
-        (group) =>
-          group.nodeIds.length >= 2 &&
-          group.nodeIds.every((id) => selected.has(id)),
-      )
-      .map((group) => group.id),
+    collapseFullGroups
+      ? document.groups
+          .filter(
+            (group) =>
+              group.nodeIds.length >= 2 &&
+              group.nodeIds.every((id) => selected.has(id)),
+          )
+          .map((group) => group.id)
+      : [],
   );
   const coveredNodeIds = new Set<string>();
   const entities: ArrangeEntity[] = [];
@@ -1285,6 +1284,32 @@ export function arrangeCanvas(
     return { ...node, x, y };
   });
   return { document: next, arrangedIds: [...selected], changed };
+}
+
+export function arrangeCanvas(
+  document: CanvasDocument,
+  selectedIds?: string[],
+): CanvasArrangeResult {
+  const selected =
+    selectedIds === undefined
+      ? new Set(document.nodes.map((node) => node.id))
+      : new Set(selectedIds.filter((id) => nodeById(document, id)));
+  return arrangeCanvasSelection(document, selected, true);
+}
+
+/** Arranges every node inside one group without moving the group as an entity. */
+export function arrangeCanvasGroup(
+  document: CanvasDocument,
+  groupId: string,
+): CanvasArrangeResult {
+  const group = groupById(document, groupId);
+  const selected = new Set(
+    (group?.nodeIds || []).filter((id) => nodeById(document, id)),
+  );
+  if (!group || selected.size < 2) {
+    return { document: clone(document), arrangedIds: [...selected], changed: false };
+  }
+  return arrangeCanvasSelection(document, selected, false);
 }
 
 export function entityPortPoint(

@@ -30,8 +30,9 @@ test("variant generators expose shared contextual help in cards and editors", ()
 });
 
 test("variant generator help stays in the node flow and supports visual states", () => {
-  assert.match(styles, /\.canvas-generator-help\{display:contents\}/);
-  assert.match(styles, /\.canvas-generator-help-popover\{[^}]*flex:1 0 100%/);
+  assert.match(styles, /\.canvas-generator-head\{display:grid;grid-template-columns:auto minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
+  assert.match(styles, /\.canvas-node-variant-editor-head\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
+  assert.match(styles, /\.canvas-generator-help-popover\{[^}]*grid-column:1\/-1;grid-row:2/);
   assert.match(styles, /\.canvas-generator-help-popover\[data-kind="image"\]/);
   assert.match(styles, /\.canvas-generator-help-popover\[data-kind="video"\]/);
   assert.match(styles, /\.canvas-generator-help-trigger:focus-visible/);
@@ -42,4 +43,19 @@ test("variant generator help stays in the node flow and supports visual states",
   assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\) \.canvas-generator-head b\{[^}]*font-size:15px/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-node-variant-editor>\.reference-mention-editor \.reference-mention-editor-content\{[^}]*font-size:12px/);
   assert.match(styles, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(component, /data-kind=\{kind\}/);
+  assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\)\{[^}]*border:1px solid/);
+  assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\)::before/);
+  assert.match(styles, /\.canvas-generator-help-trigger\[data-kind="image"\]/);
+  assert.match(styles, /\.canvas-generator-help-trigger\[data-kind="video"\]/);
+  assert.doesNotMatch(component, /collapsedGeneratorOutputIds/);
+  assert.match(component, /const visibleCanvasNodes = useMemo\(\s*\(\) => sortCanvasNodesByLayer\(document\.nodes\)/);
+  assert.match(component, /let nextResultPlacement = docRef\.current\.nodes\.filter\(/);
+  assert.match(component, /const column = placement % 2/);
+  assert.match(component, /const row = Math\.floor\(placement \/ 2\)/);
+  assert.match(component, /x: generator\.x \+ nodeSize\(generator\)\.w \+ 110 \+ column \* 380/);
+  assert.match(component, /y: generator\.y \+ row \* 300/);
+  assert.match(styles, /\.canvas-generator-head>\.canvas-generator-help-trigger\{grid-column:3;grid-row:1\}/);
+  assert.match(styles, /\.canvas-node-variant-editor-head>\.canvas-generator-help-trigger\{grid-column:2;grid-row:1\}/);
+  assert.match(styles, /\.canvas-generator-help-popover\{[^}]*grid-column:1\/-1/);
 });

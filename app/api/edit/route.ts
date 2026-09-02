@@ -5,6 +5,7 @@ import { persistGenerationResult } from '@/lib/generation-persistence';
 import { getPublicState, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
+import { enforceLocalEditMask } from '@/lib/local-edit-composite';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -56,7 +57,13 @@ export async function POST(request: Request) {
     };
     aspectRatioForLog = input.aspectRatio;
     logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
-    const images = await editImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
+    const providerImages = await editImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
+    const images = mask
+      ? await enforceLocalEditMask(providerImages, resolvedReferences[0], mask, {
+          storagePath,
+          signal: requestController.signal,
+        })
+      : providerImages;
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
     const stored = await persistGenerationResult({ images, storagePath, startedAt, providerFinishedAt, logId });

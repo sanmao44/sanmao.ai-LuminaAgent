@@ -92,6 +92,9 @@ export type CanvasNodePresentation = {
 export type CanvasMaskState = {
   url: string;
   assetId?: string;
+  /** A locally moved source image that must replace the original first reference. */
+  sourceAssetId?: string;
+  sourceUrl?: string;
   status: CanvasMaskStatus;
   coverage?: number;
   annotations?: LocalEditAnnotation[];

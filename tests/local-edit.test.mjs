@@ -116,9 +116,62 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /pushHistory\(gesture\.before\)/);
   assert.match(editor, /restoreHistory\(historyRef\.current\.index - 1\)/);
   assert.match(editor, /restoreHistory\(historyRef\.current\.index \+ 1\)/);
-  assert.match(editor, /outputContext\.filter = `blur\(\$\{feather\}px\)`/);
+  assert.match(editor, /featherLocalEditMask\(sourcePixels, source\.width, source\.height, feather\)/);
+  assert.doesNotMatch(editor, /outputContext\.filter = `blur\(\$\{feather\}px\)`/);
+  assert.match(editor, /drawMaskOverlay\(mask, overlay, feather\)/);
+  assert.match(editor, /Math\.max\(0\.2, Math\.min\(3/);
+  assert.match(editor, /const scale = Math\.min\(availableWidth \/ canvas\.width, availableHeight \/ canvas\.height\)/);
+  assert.match(editor, /onClick=\{fitCanvas\}/);
   assert.match(editor, /请先指定编辑区域，再应用局部编辑/);
   assert.match(editor, /disabled=\{!ready \|\| saving \|\| Boolean\(pendingAnnotation\) \|\| Boolean\(movingAnnotation\)/);
+});
+
+test("completed marks stay editable without opening a text dialog", () => {
+  assert.match(editor, /function commitAnnotation\(annotation: LocalEditAnnotation, before: HistorySnapshot\)/);
+  assert.match(editor, /commitAnnotation\(annotation, gesture\.before\)/);
+  assert.match(editor, /commitAnnotation\(annotation, before\)/);
+  assert.match(editor, /function annotationPreviewStyle\(annotation: LocalEditAnnotation, imageUrl: string\)/);
+  assert.match(editor, /className="local-edit-selection-thumb"/);
+  assert.match(editor, /<button type="button" onClick=\{\(\) => editAnnotation\(annotation\)\}>修改<\/button>/);
+  assert.match(styles, /\.local-edit-selection-thumb\{[^}]*background-repeat:no-repeat/);
+});
+
+test("pixel feathering creates a real alpha transition around an editable region", () => {
+  const mask = raster.createProtectedMask(21, 21);
+  raster.applyRectangleMask(mask, 21, 21, 5, 5, 16, 16);
+  const unchanged = raster.featherLocalEditMask(mask, 21, 21, 0);
+  assert.deepEqual([...unchanged], [...mask]);
+
+  const feathered = raster.featherLocalEditMask(mask, 21, 21, 2);
+  const alphaAt = (x, y) => feathered[(y * 21 + x) * 4 + 3];
+  assert.equal(alphaAt(10, 10), 0);
+  assert.ok(alphaAt(4, 10) > 0 && alphaAt(4, 10) < 255);
+  assert.equal(alphaAt(2, 10), 255);
+  assert.equal(alphaAt(10, 10) < alphaAt(4, 10), true);
+});
+
+test("moving a selection changes image pixels and clears its original location", () => {
+  const source = Uint8ClampedArray.from([
+    255, 0, 0, 255,
+    0, 255, 0, 255,
+    0, 0, 255, 255,
+    255, 255, 255, 255,
+  ]);
+  const selection = raster.createProtectedMask(4, 1);
+  selection[4 + 3] = 0;
+  const moved = raster.moveLocalEditPixels(source, selection, 4, 1, 2, 0);
+  assert.deepEqual([...moved], [
+    255, 0, 0, 255,
+    0, 0, 0, 0,
+    0, 0, 255, 255,
+    0, 255, 0, 255,
+  ]);
+  assert.deepEqual([...source], [
+    255, 0, 0, 255,
+    0, 255, 0, 255,
+    0, 0, 255, 255,
+    255, 255, 255, 255,
+  ]);
 });
 
 test("local edit exposes reliable pointer tools, free lasso selection, and a fixed no-scroll workbench", () => {
@@ -133,8 +186,10 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /event\.preventDefault\(\);/);
   assert.match(editor, /onLostPointerCapture=\{handleLostPointerCapture\}/);
   assert.match(editor, /context\.clearRect\(0, 0, canvas\.width, canvas\.height\);/);
-  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\]\)/);
+  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], sourceImageDataUrl\?: string\)/);
   assert.match(editor, /function beginMoveAnnotation/);
+  assert.match(editor, /moveLocalEditPixels\(/);
+  assert.match(editor, /sourceImageChangedRef\.current \? exportSourceImage\(\) : undefined/);
   assert.match(editor, /function deleteAnnotation/);
   assert.match(editor, /补充.*说明/);
   assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);

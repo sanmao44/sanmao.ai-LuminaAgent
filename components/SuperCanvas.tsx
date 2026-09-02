@@ -22,6 +22,7 @@ import {
   addEdge,
   alignCanvasNodes,
   arrangeCanvas,
+  arrangeCanvasGroup,
   clone,
   connectionPath,
   createEmptyMedia,
@@ -124,8 +125,10 @@ import {
 import { getVideoModelLimits } from "@/lib/video-model-limits";
 import {
   fitCanvasNodeEditorBelow,
+  placeCanvasGroupToolbar,
   placeCanvasContextMenu,
   placeCanvasNodeToolbar,
+  type CanvasGroupToolbarPlacement,
 } from "@/lib/canvas/editor-layout";
 import {
   createCanvasImageZip,
@@ -1218,19 +1221,20 @@ function CanvasGeneratorHelp({ kind }: { kind: CanvasMediaKind }) {
   }, [open]);
 
   return (
-    <div
-      className={`canvas-generator-help${open ? " is-open" : ""}`}
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={(event) => event.stopPropagation()}
-    >
+    <>
       <button
         type="button"
         className="canvas-generator-help-trigger"
+        data-kind={kind}
         title={`查看${label}使用方法`}
         aria-label={`查看${label}使用方法`}
         aria-expanded={open}
         aria-controls={panelId}
-        onClick={() => setOpen((value) => !value)}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
       >
         ?
       </button>
@@ -1241,6 +1245,8 @@ function CanvasGeneratorHelp({ kind }: { kind: CanvasMediaKind }) {
           data-kind={kind}
           role="region"
           aria-label={`${label}使用方法`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
         >
           <div className="canvas-generator-help-title">
             <b>{label}怎么用</b>
@@ -1272,7 +1278,7 @@ function CanvasGeneratorHelp({ kind }: { kind: CanvasMediaKind }) {
           </ol>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -2127,24 +2133,9 @@ export default function SuperCanvas() {
       ),
     [document, selectedGroupId, selectedIds],
   );
-  const collapsedGeneratorOutputIds = useMemo(() => {
-    const generatorIds = new Set(
-      document.nodes.filter((node) => node.type === "generator").map((node) => node.id),
-    );
-    return new Set(
-      document.nodes
-        .filter(
-          (node) =>
-            node.type === "media" &&
-            Boolean(node.data.generation?.sourceGeneratorId) &&
-            generatorIds.has(String(node.data.generation?.sourceGeneratorId)),
-        )
-        .map((node) => node.id),
-    );
-  }, [document.nodes]);
   const visibleCanvasNodes = useMemo(
-    () => sortCanvasNodesByLayer(document.nodes).filter((node) => !collapsedGeneratorOutputIds.has(node.id)),
-    [collapsedGeneratorOutputIds, document.nodes],
+    () => sortCanvasNodesByLayer(document.nodes),
+    [document.nodes],
   );
   const visibleCanvasNodeIds = useMemo(
     () => new Set(visibleCanvasNodes.map((node) => node.id)),
@@ -3809,26 +3800,41 @@ export default function SuperCanvas() {
 
   const arrangeCanvasAction = useCallback(() => {
     const selected = selectedIds.size ? [...selectedIds] : undefined;
-    const result = arrangeCanvas(docRef.current, selected);
+    const activeGroup = selectedGroupId
+      ? groupById(docRef.current, selectedGroupId)
+      : undefined;
+    const result = activeGroup
+      ? arrangeCanvasGroup(docRef.current, activeGroup.id)
+      : arrangeCanvas(docRef.current, selected);
     if (result.changed) {
       setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60));
       setRedoStack([]);
       setDoc(result.document);
       addLog(
-        selected
+        activeGroup
+          ? `已整理组内的 ${result.arrangedIds.length} 个卡片`
+          : selected
           ? `已整理选中的 ${result.arrangedIds.length} 个节点`
           : `已整理全部 ${result.arrangedIds.length} 个节点`,
       );
       notify(
-        selected
+        activeGroup
+          ? `已整理组内的 ${result.arrangedIds.length} 个卡片`
+          : selected
           ? `已整理选中的 ${result.arrangedIds.length} 个节点`
           : `已整理全部 ${result.arrangedIds.length} 个节点`,
       );
     } else {
-      notify(selected ? "选中节点无需重新整理" : "画布无需重新整理");
+      notify(
+        activeGroup
+          ? "组内卡片无需重新整理"
+          : selected
+            ? "选中节点无需重新整理"
+            : "画布无需重新整理",
+      );
     }
     fitView(result.arrangedIds);
-  }, [addLog, fitView, notify, selectedIds, setDoc]);
+  }, [addLog, fitView, notify, selectedGroupId, selectedIds, setDoc]);
 
   const reorderSelection = useCallback(
     (action: CanvasNodeLayerAction, nodeIds?: string[]) => {
@@ -5302,8 +5308,10 @@ export default function SuperCanvas() {
       const context = inputNodes.filter((node) => node.type === "prompt");
       const refs = linked
         .filter((node) => node.data.kind === "image")
-        .map((node) => ({
-          url: String(node.data.url || ""),
+        .map((node, index) => ({
+          url: kind === "image" && index === 0 && (effectiveParams as ImageCreationSettings).mask?.sourceUrl
+            ? String((effectiveParams as ImageCreationSettings).mask?.sourceUrl)
+            : String(node.data.url || ""),
           name: String(node.data.name || "参考素材"),
         }))
         .filter((item) => item.url);
@@ -5358,14 +5366,20 @@ export default function SuperCanvas() {
           context,
         );
       };
-      const positionFor = (index: number, outputIndex = 0) => ({
-        x:
-          generator.x +
-          nodeSize(generator).w +
-          110 +
-          (outputIndex % 2) * 350,
-        y: generator.y + index * 300 + Math.floor(outputIndex / 2) * 280,
-      });
+      let nextResultPlacement = docRef.current.nodes.filter(
+        (node) =>
+          node.type === "media" &&
+          node.data.generation?.sourceGeneratorId === generatorId,
+      ).length;
+      const positionFor = () => {
+        const placement = nextResultPlacement++;
+        const column = placement % 2;
+        const row = Math.floor(placement / 2);
+        return {
+          x: generator.x + nodeSize(generator).w + 110 + column * 380,
+          y: generator.y + row * 300,
+        };
+      };
 
       const applyVideoTask = (
         value: CanvasDocument,
@@ -5491,7 +5505,7 @@ export default function SuperCanvas() {
                   "image",
                   image.url,
                   `图片变体 ${index + 1}-${outputIndex + 1}`,
-                  positionFor(index, outputIndex),
+                  positionFor(),
                   {
                     role: "变体结果",
                     model: result.model?.name || imageParams.model,
@@ -5586,7 +5600,7 @@ export default function SuperCanvas() {
                 "video",
                 task.videoUrls?.[0] || "",
                 `视频变体 ${index + 1}`,
-                positionFor(index),
+                positionFor(),
                 {
                   role: "变体结果",
                   model: task.modelId || videoParams.model,
@@ -6043,7 +6057,7 @@ export default function SuperCanvas() {
 
     addReference(
       source.id,
-      String(source.data.url),
+      String(params.mask?.sourceUrl || source.data.url),
       String(source.data.name || "当前图片"),
     );
 
@@ -6948,8 +6962,10 @@ export default function SuperCanvas() {
       if (videoInputError) return notify(videoInputError, "error");
     }
     const refs = (kind === "video" ? videoInputs?.referenceImages || [] : inputSemantics.imageReferences)
-      .map((node) => ({
-          url: String(node.data.url || ""),
+      .map((node, index) => ({
+          url: kind === "image" && index === 0 && (source.params as ImageCreationSettings).mask?.sourceUrl
+            ? String((source.params as ImageCreationSettings).mask?.sourceUrl)
+            : String(node.data.url || ""),
           name: String(node.data.name || "参考素材"),
         }))
       .filter((item) => item.url);
@@ -7782,7 +7798,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = []) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], sourceImageDataUrl?: string) => {
       const node = maskNodeId
         ? nodeById(docRef.current, maskNodeId)
         : undefined;
@@ -7813,6 +7829,9 @@ export default function SuperCanvas() {
         const uploaded = await uploadCanvasAsset(
           dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
         );
+        const movedSource = sourceImageDataUrl
+          ? await uploadCanvasAsset(dataUrlFile(sourceImageDataUrl, `moved-source-${node.id}.png`))
+          : undefined;
         const settings = copyParams(
           existingDraft.params,
           "image",
@@ -7820,13 +7839,19 @@ export default function SuperCanvas() {
         ) as ImageCreationSettings;
         const params = {
           ...settings,
-          mask: { assetId: uploaded.id, url: uploaded.url, ...(annotations.length ? { annotations } : {}) },
+          mask: {
+            assetId: uploaded.id,
+            url: uploaded.url,
+            ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
+            ...(annotations.length ? { annotations } : {}),
+          },
         } satisfies ImageCreationSettings;
         const nextPrompt = prompt?.trim() || existingDraft.prompt;
         const maskCoverage = Math.max(0, Math.min(1, coverage));
         const mask: CanvasMaskState = {
           assetId: uploaded.id,
           url: uploaded.url,
+          ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
           status: "pending",
           coverage: maskCoverage,
           ...(annotations.length ? { annotations } : {}),
@@ -9471,6 +9496,52 @@ export default function SuperCanvas() {
   // The CSS tier removes filters and animation-heavy decoration while keeping
   // the actual node geometry and hit targets unchanged.
   const canvasZoomTier = document.camera.zoom < 0.28 ? "overview" : "detail";
+  const selectionToolbarContent = selectedNodes.length >= 2 ? (
+    <>
+      <b>
+        {selectedGroupId
+          ? "已选对象组"
+          : `已选 ${selectedNodes.length} 个对象`}
+      </b>
+      <span />
+      {!selectedGroupId && (
+        <button type="button" onClick={makeGroup}>
+          ⌘ 成组
+        </button>
+      )}
+      {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
+        <button type="button" onClick={() => void runOneTakeFromSelection()}>🎬 一镜到底</button>
+      )}
+      {selectedImageDownloads.length >= 2 && (
+        <button
+          type="button"
+          title="按选择顺序打包下载图片"
+          aria-label={`批量下载 ${selectedImageDownloads.length} 张图片`}
+          disabled={batchDownloading}
+          onClick={() => void downloadSelectedImages()}
+        >
+          {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageDownloads.length} 张`}
+        </button>
+      )}
+      {selectedGroupId && (
+        <button type="button" onClick={breakGroup}>
+          解组
+        </button>
+      )}
+      <button type="button" onClick={arrangeCanvasAction}>
+        {selectedGroupId ? "⌗ 整理组内" : "⌗ 整理选中"}
+      </button>
+      <button type="button" onClick={duplicateSelection}>
+        ⧉ 复制
+      </button>
+      <button type="button" onClick={() => fitView([...selectedIds])}>
+        ⌗ 聚焦
+      </button>
+      <button type="button" className="danger" onClick={deleteSelection}>
+        ⌫ 删除
+      </button>
+    </>
+  ) : null;
 
   if (!ready)
     return (
@@ -9934,6 +10005,7 @@ export default function SuperCanvas() {
                     key={group.id}
                     className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""} ${selectedGroupId === group.id && draggingNodeIds.size > 0 ? "dragging" : ""} ${connection?.sourceId === group.id ? "connection-source" : ""} ${connectionTargetId === group.id ? "connection-target" : ""} ${assetDropGroupId === group.id ? "asset-drop-target" : ""}`}
                     data-canvas-connectable-id={group.id}
+                    data-canvas-group-id={group.id}
                     style={{
                       left: bounds.x,
                       top: bounds.y,
@@ -10223,50 +10295,24 @@ export default function SuperCanvas() {
           </div>
         )}
         {selectedNodes.length >= 2 && (
-          <div className="canvas-selection-toolbar">
-            <b>
-              {selectedGroupId
-                ? "已选对象组"
-                : `已选 ${selectedNodes.length} 个对象`}
-            </b>
-            <span />
-            {!selectedGroupId && (
-              <button type="button" onClick={makeGroup}>
-                ⌘ 成组
-              </button>
-            )}
-            {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
-              <button type="button" onClick={() => void runOneTakeFromSelection()}>🎬 一镜到底</button>
-            )}
-            {selectedImageDownloads.length >= 2 && (
-              <button
-                type="button"
-                title="按选择顺序打包下载图片"
-                aria-label={`批量下载 ${selectedImageDownloads.length} 张图片`}
-                disabled={batchDownloading}
-                onClick={() => void downloadSelectedImages()}
-              >
-                {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageDownloads.length} 张`}
-              </button>
-            )}
-            {selectedGroupId && (
-              <button type="button" onClick={breakGroup}>
-                解组
-              </button>
-            )}
-            <button type="button" onClick={arrangeCanvasAction}>
-              ⌗ 整理选中
-            </button>
-            <button type="button" onClick={duplicateSelection}>
-              ⧉ 复制
-            </button>
-            <button type="button" onClick={() => fitView([...selectedIds])}>
-              ⌗ 聚焦
-            </button>
-            <button type="button" className="danger" onClick={deleteSelection}>
-              ⌫ 删除
-            </button>
-          </div>
+          selectedGroupId && selectedGroup ? (
+            <CanvasGroupSelectionToolbar
+              group={selectedGroup}
+              document={document}
+              stageRef={stageRef}
+            >
+              {selectionToolbarContent}
+            </CanvasGroupSelectionToolbar>
+          ) : (
+            <div
+              className="canvas-selection-toolbar"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onWheel={(event) => event.stopPropagation()}
+            >
+              {selectionToolbarContent}
+            </div>
+          )
         )}
         {selectedNodes.length >= 2 && !selectedGroupId && (
           <div
@@ -10874,7 +10920,7 @@ export default function SuperCanvas() {
           initialMaskDataUrl={maskNode.data.mask?.url || maskSettings?.mask?.url}
           initialPrompt={editorPromptFor(maskNode)}
           initialAnnotations={maskNode.data.mask?.annotations || maskSettings?.mask?.annotations || []}
-          onApply={(value, coverage, prompt, annotations) => applyCanvasMask(value, coverage, prompt, annotations)}
+          onApply={(value, coverage, prompt, annotations, sourceImageDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, sourceImageDataUrl)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}
@@ -12332,6 +12378,105 @@ function CanvasActionIcon({ name }: { name: string }) {
   }
 }
 
+function CanvasGroupSelectionToolbar({
+  group,
+  document,
+  stageRef,
+  children,
+}: {
+  group: CanvasGroup;
+  document: CanvasDocument;
+  stageRef: RefObject<HTMLDivElement | null>;
+  children: ReactNode;
+}) {
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState<CanvasGroupToolbarPlacement>({
+    left: 10,
+    top: 10,
+    placement: "above",
+  });
+
+  const reposition = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const stageRect = stage.getBoundingClientRect();
+    const groupElement = Array.from(
+      stage.querySelectorAll<HTMLElement>("[data-canvas-group-id]"),
+    ).find((element) => element.dataset.canvasGroupId === group.id);
+    const groupRect = groupElement?.getBoundingClientRect();
+    const bounds = groupRect
+      ? {
+          left: groupRect.left - stageRect.left,
+          top: groupRect.top - stageRect.top,
+          width: groupRect.width,
+          height: groupRect.height,
+        }
+      : (() => {
+          const groupBoundsValue = groupBounds(document, group.id);
+          const zoom = Math.max(0.12, document.camera.zoom || 1);
+          return {
+            left: groupBoundsValue.x * zoom + document.camera.x,
+            top: groupBoundsValue.y * zoom + document.camera.y,
+            width: groupBoundsValue.w * zoom,
+            height: groupBoundsValue.h * zoom,
+          };
+        })();
+    const stageSize = {
+      width: Math.max(1, stage.clientWidth),
+      height: Math.max(1, stage.clientHeight),
+    };
+    const overlay = {
+      width: toolbarRef.current?.offsetWidth || 520,
+      height: toolbarRef.current?.offsetHeight || 40,
+    };
+    const nextPosition = placeCanvasGroupToolbar(bounds, stageSize, overlay, 10);
+    setPosition((current) =>
+      current.left === nextPosition.left &&
+      current.top === nextPosition.top &&
+      current.placement === nextPosition.placement
+        ? current
+        : nextPosition,
+    );
+  }, [document, group.id, stageRef]);
+
+  useLayoutEffect(() => {
+    reposition();
+    let frame = 0;
+    const handleResize = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(reposition);
+    };
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(handleResize)
+      : null;
+    if (observer) {
+      if (toolbarRef.current) observer.observe(toolbarRef.current);
+      if (stageRef.current) observer.observe(stageRef.current);
+    }
+    window.addEventListener("resize", handleResize);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [reposition, stageRef]);
+
+  return (
+    <div
+      ref={toolbarRef}
+      className="canvas-selection-toolbar canvas-group-selection-toolbar"
+      data-placement={position.placement}
+      aria-label={`${group.name}对象组工具`}
+      style={{ left: position.left, top: position.top }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
 function CanvasNodeQuickToolbar({
   node,
   document,
@@ -13756,7 +13901,7 @@ function CanvasNodeCard({
         <div className="canvas-generator-card">
           <div className="canvas-generator-head">
             <span>{data.kind === "video" ? "▶" : "✦"}</span>
-            <div>
+            <div className="canvas-generator-head-copy">
               <b>{data.kind === "video" ? "视频变体生成器" : "图片变体生成器"}</b>
               <small>
                 {data.status === "running"

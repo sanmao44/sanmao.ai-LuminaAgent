@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.20",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.20",
+  "latestVersion": "0.7.21",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.21",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip"
   ],
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "publishedAt": "2026-09-02T00:00:00+08:00",
   "notes": [
-    "Allow @ references at any text position and continue adding later references after normal text.",
-    "Hide the candidate menu when @ is not active and display references as thumbnails with numbers instead of file names.",
-    "Fix reference menu layering, excessive top spacing, and input focus accidentally triggering AI optimization.",
-    "Keep real image, video, and text reference content across the canvas, Agent, and image/video editors."
+    "Arrange only the cards inside a selected object group while preserving the group and external graph.",
+    "Place the selected-group toolbar on the group card and keep ordinary multi-select behavior unchanged.",
+    "Size video previews from the requested and intrinsic aspect ratios, with in-node play, pause, and replay controls.",
+    "Unify canvas running-state feedback, interaction animation, and reference handling across image, video, and text workflows."
   ]
 }

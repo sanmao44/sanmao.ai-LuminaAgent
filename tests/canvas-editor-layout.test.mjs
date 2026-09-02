@@ -45,6 +45,36 @@ test("keeps a wide toolbar inside the stage near the right edge", () => {
   );
 });
 
+test("places a group toolbar above the selected group", () => {
+  const anchor = { left: 300, top: 240, width: 380, height: 280 };
+  const stage = { width: 1280, height: 720 };
+
+  assert.deepEqual(
+    layout.placeCanvasGroupToolbar(anchor, stage, { width: 420, height: 36 }),
+    { left: 280, top: 194, placement: "above" },
+  );
+});
+
+test("moves a group toolbar inside the group when the top edge is too close", () => {
+  const anchor = { left: 300, top: 30, width: 380, height: 280 };
+  const stage = { width: 1280, height: 720 };
+
+  assert.deepEqual(
+    layout.placeCanvasGroupToolbar(anchor, stage, { width: 420, height: 36 }),
+    { left: 280, top: 40, placement: "inside" },
+  );
+});
+
+test("keeps a group toolbar within the horizontal stage margins", () => {
+  const anchor = { left: 1120, top: 240, width: 180, height: 280 };
+  const stage = { width: 1280, height: 720 };
+
+  assert.deepEqual(
+    layout.placeCanvasGroupToolbar(anchor, stage, { width: 360, height: 36 }),
+    { left: 910, top: 194, placement: "above" },
+  );
+});
+
 test("fits a tall editor below its node without moving it across the anchor", () => {
   const anchor = { left: 300, top: 180, width: 380, height: 260 };
   const stage = { width: 1280, height: 720 };

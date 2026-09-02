@@ -216,6 +216,130 @@ export function calculateEditableCoverage(pixels: Uint8ClampedArray): number {
   return editable / (pixels.length / 4);
 }
 
+/**
+ * Move the selected pixels to a new location while keeping the source image
+ * immutable. The selection follows the mask contract: alpha 0 is selected
+ * and alpha 255 is protected. The caller can therefore use the returned
+ * pixels for both the live editor preview and the submitted edit reference.
+ */
+export function moveLocalEditPixels(
+  source: Uint8ClampedArray,
+  selectionMask: Uint8ClampedArray,
+  width: number,
+  height: number,
+  dx: number,
+  dy: number,
+) {
+  const pixelCount = Math.max(0, Math.min(source.length, selectionMask.length) - (Math.min(source.length, selectionMask.length) % 4));
+  if (width < 1 || height < 1 || source.length !== width * height * 4 || selectionMask.length !== source.length) {
+    throw new Error("Local-edit move buffers must match the canvas dimensions");
+  }
+  const output = new Uint8ClampedArray(source);
+  const offsetX = Math.round(dx);
+  const offsetY = Math.round(dy);
+  const original = new Uint8ClampedArray(source);
+
+  // Clear the selected source pixels first. Reading from `original` below
+  // makes overlapping moves deterministic and prevents dragging from leaving
+  // trails when the pointer moves repeatedly.
+  for (let index = 3; index < pixelCount; index += 4) {
+    const weight = 1 - selectionMask[index] / 255;
+    if (weight <= 0) continue;
+    const sourceIndex = index - 3;
+    const keep = 1 - weight;
+    output[sourceIndex] = Math.round(original[sourceIndex] * keep);
+    output[sourceIndex + 1] = Math.round(original[sourceIndex + 1] * keep);
+    output[sourceIndex + 2] = Math.round(original[sourceIndex + 2] * keep);
+    output[sourceIndex + 3] = Math.round(original[sourceIndex + 3] * keep);
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceIndex = (y * width + x) * 4;
+      const weight = 1 - selectionMask[sourceIndex + 3] / 255;
+      if (weight <= 0) continue;
+      const targetX = x + offsetX;
+      const targetY = y + offsetY;
+      if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height) continue;
+      const targetIndex = (targetY * width + targetX) * 4;
+      if (weight >= 0.999) {
+        output[targetIndex] = original[sourceIndex];
+        output[targetIndex + 1] = original[sourceIndex + 1];
+        output[targetIndex + 2] = original[sourceIndex + 2];
+        output[targetIndex + 3] = original[sourceIndex + 3];
+        continue;
+      }
+      const keep = 1 - weight;
+      for (let channel = 0; channel < 4; channel += 1) {
+        output[targetIndex + channel] = Math.round(
+          output[targetIndex + channel] * keep + original[sourceIndex + channel] * weight,
+        );
+      }
+    }
+  }
+  return output;
+}
+
+/**
+ * Soften the protected/editable boundary of a local-edit mask.
+ *
+ * The mask contract stores editable pixels as transparent and protected
+ * pixels as opaque.  Keeping this operation in pixel space avoids relying on
+ * CanvasRenderingContext2D.filter, which is unavailable or inconsistent in
+ * some embedded browsers.  A clamped box blur gives a predictable, fast
+ * linear feather while preserving the white RGB mask channels.
+ */
+export function featherLocalEditMask(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  if (width <= 0 || height <= 0 || !pixels.length || radius <= 0) {
+    return new Uint8ClampedArray(pixels);
+  }
+  const safeRadius = Math.max(1, Math.round(radius));
+  const pixelCount = width * height;
+  const alpha = new Float32Array(pixelCount);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    alpha[pixel] = pixels[pixel * 4 + 3] ?? 255;
+  }
+
+  const horizontal = new Float32Array(pixelCount);
+  const prefix = new Float64Array(Math.max(width, height) + 1);
+  for (let y = 0; y < height; y += 1) {
+    prefix[0] = 0;
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      prefix[x + 1] = prefix[x] + alpha[row + x];
+    }
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - safeRadius);
+      const right = Math.min(width - 1, x + safeRadius);
+      horizontal[row + x] = (prefix[right + 1] - prefix[left]) / (right - left + 1);
+    }
+  }
+
+  const output = new Uint8ClampedArray(pixels.length);
+  for (let x = 0; x < width; x += 1) {
+    prefix[0] = 0;
+    for (let y = 0; y < height; y += 1) {
+      prefix[y + 1] = prefix[y] + horizontal[y * width + x];
+    }
+    for (let y = 0; y < height; y += 1) {
+      const top = Math.max(0, y - safeRadius);
+      const bottom = Math.min(height - 1, y + safeRadius);
+      const pixel = y * width + x;
+      const index = pixel * 4;
+      output[index] = 255;
+      output[index + 1] = 255;
+      output[index + 2] = 255;
+      output[index + 3] = Math.round((prefix[bottom + 1] - prefix[top]) / (bottom - top + 1));
+    }
+  }
+  return output;
+}
+
 function writeAlpha(
   pixels: Uint8ClampedArray,
   width: number,

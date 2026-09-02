@@ -279,7 +279,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations\) => applyCanvasMask\(value, coverage, prompt, annotations\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, sourceImageDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, sourceImageDataUrl\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /status: "pending"/);
   assert.match(component, /coverage: maskCoverage/);
@@ -336,6 +336,20 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
   assert.match(styles, /\.canvas-selection-layout-group\.alignment/);
   assert.match(styles, /\.canvas-selection-layout-group\.distribution/);
   assert.match(styles, /\.canvas-selection-layout-tooltip::after/);
+});
+
+test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {
+  assert.match(component, /function CanvasGroupSelectionToolbar\(/);
+  assert.match(component, /data-canvas-group-id=\{group\.id\}/);
+  assert.match(component, /placeCanvasGroupToolbar\(bounds, stageSize, overlay, 10\)/);
+  assert.match(component, /arrangeCanvasGroup\(docRef\.current, activeGroup\.id\)/);
+  assert.match(component, /selectedGroupId \? "⌗ 整理组内" : "⌗ 整理选中"/);
+  assert.match(
+    component,
+    /selectedNodes\.length >= 2 && \(\s*selectedGroupId && selectedGroup \?\s*\(\s*<CanvasGroupSelectionToolbar[\s\S]*?<\/CanvasGroupSelectionToolbar>\s*\)\s*:\s*\(\s*<div\s+className="canvas-selection-toolbar"/,
+  );
+  assert.match(component, /selectedNodes\.length >= 2 && !selectedGroupId/);
+  assert.match(styles, /\.canvas-group-selection-toolbar\{[^}]*transform:none/);
 });
 
 test("canvas image parameters collapse into a compact one-line collection", () => {

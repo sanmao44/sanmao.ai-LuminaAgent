@@ -7473,6 +7473,10 @@ export default function Page() {
         const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
         const submittedModelId = !submittedUpscaleMode && hasLocalEditMask && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId) ? 'auto' : requestedModelId;
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
+        const movedSourceDataUrl = submittedImageRefs.length === 1
+            ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
+            : '';
+        const submittedImageReferenceUrls = submittedImageRefs.map((reference, index)=>index === 0 && movedSourceDataUrl ? movedSourceDataUrl : creativeReferenceUrl(reference)).filter(Boolean);
         const submittedSizeMode = savedRequest?.sizeMode || sizeMode;
         const submittedCustomWidth = savedRequest?.customWidth || customWidth;
         const submittedCustomHeight = savedRequest?.customHeight || customHeight;
@@ -7484,7 +7488,7 @@ export default function Page() {
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
-        const taskReferenceBytes = submittedImageRefs.reduce((total, reference)=>total + creativeReferenceUrl(reference).length, 0) + (isAngleGeneration ? 0 : savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0);
+        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : savedRequest ? (savedRequest.mask?.dataUrl.length || 0) + (savedRequest.mask?.sourceImageDataUrl?.length || 0) : (generateMask?.dataUrl.length || 0) + (generateMask?.sourceImageDataUrl?.length || 0));
         if (taskReferenceBytes > 7000000) return notify('参考图和局部编辑范围总大小过大，已停止提交；请减少图片数量或重新上传后再试');
         if (submittedUpscaleMode && (submittedRefs.some((reference)=>reference.kind !== 'image') || submittedImageRefs.length !== 1)) return notify('本地超分需要恰好 1 张图片引用，文本或视频不能用于超分');
         const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
@@ -7735,7 +7739,7 @@ export default function Page() {
                                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                                     mask: taskMask,
-                                    references: submittedImageRefs.map((r)=>creativeReferenceUrl(r)).filter(Boolean),
+                                     references: submittedImageReferenceUrls,
                                     referenceImages: referenceRecords,
                                     camera: isAngleGeneration ? taskRequest.angle : undefined,
                                     cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
@@ -7831,7 +7835,7 @@ export default function Page() {
                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                     mask: taskMask,
-                    references: submittedImageRefs.map((r)=>creativeReferenceUrl(r)).filter(Boolean),
+                    references: submittedImageReferenceUrls,
                     referenceImages: referenceRecords,
                     camera: isAngleGeneration ? taskRequest.angle : undefined,
                     cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
@@ -9133,7 +9137,7 @@ export default function Page() {
                         customWidth: currentEditor.customWidth,
                         customHeight: currentEditor.customHeight,
                         references: [{ id: currentEditor.item.id, kind: 'image', name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }],
-                        mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [] } : null
+                         mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [], ...(currentEditor.sourceImageDataUrl ? { sourceImageDataUrl: currentEditor.sourceImageDataUrl } : {}) } : null
                     }
                 },
                 ...old
@@ -9162,7 +9166,7 @@ export default function Page() {
         const editorReference = {
             id: currentEditor.item.id,
             name: `上一版-${currentEditor.item.id.slice(-6)}`,
-            url: currentEditor.item.url
+            url: currentEditor.sourceImageDataUrl || currentEditor.item.url
         };
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
@@ -9206,7 +9210,7 @@ export default function Page() {
                 quality: currentEditor.quality,
                 fidelity: currentEditor.fidelity,
                 references: [
-                    currentEditor.item.url
+                    editorReference.url
                 ],
                 referenceImages: [editorReference],
                 mask: currentEditor.mask || undefined
@@ -12106,12 +12110,13 @@ export default function Page() {
                                 initialPrompt: generatePrompt,
                                 initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl, coverage, prompt, annotations)=>{
+                                onApply: (dataUrl, coverage, prompt, annotations, sourceImageDataUrl)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
                                         dataUrl,
                                         coverage,
-                                        annotations
+                                        annotations,
+                                        ...(sourceImageDataUrl ? { sourceImageDataUrl } : {})
                                     });
                                     setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
                                     setGeneratePrompt(prompt);
@@ -15104,12 +15109,13 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 initialPrompt: editor.prompt,
                 initialAnnotations: editor.annotations || [],
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl, coverage, prompt, annotations)=>{
+                onApply: (dataUrl, coverage, prompt, annotations, sourceImageDataUrl)=>{
                     setEditor((current)=>current ? {
                             ...current,
                             mask: dataUrl,
                             prompt,
-                            annotations
+                            annotations,
+                            ...(sourceImageDataUrl ? { sourceImageDataUrl } : {})
                         } : current);
                     setEditorMaskOpen(false);
                     notify(`局部编辑范围已设置${coverage ? `（覆盖 ${Math.round(coverage * 100)}%）` : ''}，提交修改时会一并发送`);

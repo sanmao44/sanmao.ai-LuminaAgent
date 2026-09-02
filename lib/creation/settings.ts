@@ -17,6 +17,9 @@ export type AgentWebMode = "off" | "auto" | "always";
 export type CanvasMaskAsset = {
   assetId?: string;
   url: string;
+  /** A locally moved source image that must replace the original first reference. */
+  sourceAssetId?: string;
+  sourceUrl?: string;
   referenceId?: string;
   annotations?: LocalEditAnnotation[];
 };
@@ -277,6 +280,12 @@ export function normalizeImageCreationSettings(
           url: maskRaw.url,
           ...(typeof maskRaw.assetId === "string"
             ? { assetId: maskRaw.assetId }
+            : {}),
+          ...(typeof maskRaw.sourceAssetId === "string"
+            ? { sourceAssetId: maskRaw.sourceAssetId }
+            : {}),
+          ...(typeof maskRaw.sourceUrl === "string"
+            ? { sourceUrl: maskRaw.sourceUrl }
             : {}),
           ...(typeof maskRaw.referenceId === "string"
             ? { referenceId: maskRaw.referenceId }

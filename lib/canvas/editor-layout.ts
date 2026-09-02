@@ -20,6 +20,10 @@ export type CanvasOverlayPosition = {
   top: number;
 };
 
+export type CanvasGroupToolbarPlacement = CanvasOverlayPosition & {
+  placement: "above" | "inside";
+};
+
 export type CanvasOverlayFit = CanvasOverlayPosition & {
   maxHeight: number;
 };
@@ -72,6 +76,31 @@ export function placeCanvasNodeToolbar(
   return {
     left: Math.min(Math.max(centered, margin), maxLeft),
     top: anchor.top - overlay.height - gap,
+  };
+}
+
+/** Places a group selection toolbar at the group's top edge. If the group is
+ * too close to the visible top edge, keep the toolbar attached inside it. */
+export function placeCanvasGroupToolbar(
+  anchor: CanvasOverlayAnchor,
+  stage: CanvasOverlayStage,
+  overlay: CanvasOverlaySize,
+  gap = 10,
+  margin = 10,
+): CanvasGroupToolbarPlacement {
+  const centered = centeredLeft(anchor, stage, overlay);
+  const maxLeft = Math.max(margin, stage.width - overlay.width - margin);
+  const aboveTop = anchor.top - overlay.height - gap;
+  const placement = aboveTop >= margin ? "above" : "inside";
+  const insideTop = anchor.top + gap;
+  const maxTop = Math.max(margin, stage.height - overlay.height - margin);
+
+  return {
+    left: Math.min(Math.max(centered, margin), maxLeft),
+    top: placement === "above"
+      ? aboveTop
+      : Math.min(Math.max(insideTop, margin), maxTop),
+    placement,
   };
 }
 
