@@ -11075,7 +11075,7 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("label", {
+                                            /*#__PURE__*/ _jsxs("div", {
                                                 className: "field-block prompt-field",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {

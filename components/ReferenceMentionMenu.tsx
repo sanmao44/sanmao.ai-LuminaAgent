@@ -50,8 +50,6 @@ export default function ReferenceMentionMenu({
   className = "",
   limit = 12,
   title = "选择引用 · 输入 @编号",
-  getLabel,
-  getDescription,
 }: {
   references: readonly ReferenceMentionOption[];
   open: boolean;
@@ -60,8 +58,6 @@ export default function ReferenceMentionMenu({
   className?: string;
   limit?: number;
   title?: ReactNode;
-  getLabel?: (reference: ReferenceMentionOption, index: number) => ReactNode;
-  getDescription?: (reference: ReferenceMentionOption, index: number) => ReactNode;
 }) {
   const normalizedQuery = String(query || "").trim().toLowerCase();
   const visibleReferences = references
@@ -92,17 +88,14 @@ export default function ReferenceMentionMenu({
           type="button"
           role="option"
           key={reference.id}
+          aria-label={`引用 @${index + 1}`}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onSelect(index)}
         >
           <span className="reference-mention-thumb">
             <ReferenceMentionThumbnail reference={reference} />
-            <b>@{index + 1}</b>
           </span>
-          <span>
-            <strong>{getLabel?.(reference, index) || `${kindLabel(reference.kind)} ${index + 1}`}</strong>
-            <small>{getDescription?.(reference, index) || (reference.kind === "text" ? previewText(reference.text || "") : reference.name)}</small>
-          </span>
+          <span className="reference-mention-index">@{index + 1}</span>
         </button>
       ))}
     </div>

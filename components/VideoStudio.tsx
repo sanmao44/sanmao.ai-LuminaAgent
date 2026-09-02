@@ -4,11 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
 import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
-import ReferenceMentionMenu from '@/components/ReferenceMentionMenu';
+import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
-import { appendTextReferenceContext, insertReferenceMention as insertCreativeMention, referenceMentionRange as creativeReferenceMentionRange, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 
 type VideoTask = {
   id: string;
@@ -384,8 +384,6 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [referenceTexts, setReferenceTexts] = useState<CreativeReference[]>([]);
   const [audios, setAudios] = useState<UploadSlot[]>([]);
   const [previewImage, setPreviewImage] = useState<UploadSlot | null>(null);
-  const [referenceMentionOpen, setReferenceMentionOpen] = useState(false);
-  const [referenceMentionQuery, setReferenceMentionQuery] = useState('');
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -396,7 +394,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [jimengAccountError, setJimengAccountError] = useState('');
   const [jimengAccountBusy, setJimengAccountBusy] = useState(false);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!previewImage) return;
@@ -715,32 +713,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     reorderReferences(index, index + direction);
   }
 
-  function referenceMentionRange(value: string, cursor: number) {
-    return creativeReferenceMentionRange(value, cursor);
-  }
-
-  function updateReferenceMentionState(value: string, cursor: number) {
-    const range = referenceMentionRange(value, cursor);
-    setReferenceMentionQuery(range?.query || '');
-    setReferenceMentionOpen(supportsReferenceMentions && referenceCandidates.length > 0 && Boolean(range));
-  }
-
-  function insertReferenceMention(index: number) {
-    const cursor = promptRef.current?.selectionStart ?? prompt.length;
-    const inserted = insertCreativeMention(prompt, cursor, index);
-    setPrompt(inserted.value);
-    setReferenceMentionOpen(false);
-    requestAnimationFrame(() => {
-      promptRef.current?.focus();
-      promptRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
-    });
-  }
-
   function clearReferences() {
     setReferenceImages([]);
     setReferenceTexts([]);
-    setReferenceMentionOpen(false);
-    setReferenceMentionQuery('');
     setPrompt((value) => value.replace(/@[0-9]+\s*/g, '').replace(/[ \t]{2,}/g, ' '));
   }
 
@@ -784,7 +759,6 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setAgnesHeight(plan.agnesHeight);
     setAgnesNumFrames(plan.agnesNumFrames);
     setAgnesFrameRate(plan.agnesFrameRate);
-    setReferenceMentionOpen(false);
     setPreviewImage(null);
     setSelectedTaskId(task.id);
     onNotify(plan.warnings.length ? `已恢复参数；${plan.warnings.join('；')}` : '已恢复这条任务的全部参数');
@@ -902,7 +876,17 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
          <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
            <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className={`video-live-pill ${usesAgnes && !selectedProvider?.credentialVerifiedAt ? 'needs-verification' : ''}`}>{usesAgnes ? selectedProvider?.credentialVerifiedAt ? '● Agnes Key 已验证' : '● Agnes Key 待验证' : '● 已连接'}</span></div>
-          <label className="video-field video-prompt-field"><span>提示词</span><textarea ref={promptRef} value={prompt} onChange={(event) => { setPrompt(event.target.value); updateReferenceMentionState(event.target.value, event.currentTarget.selectionStart); }} onFocus={(event) => updateReferenceMentionState(event.currentTarget.value, event.currentTarget.selectionStart)} onClick={(event) => updateReferenceMentionState(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyUp={(event) => { if (event.key !== 'Escape') updateReferenceMentionState(event.currentTarget.value, event.currentTarget.selectionStart); }} onKeyDown={(event) => { if (event.key === 'Escape') { setReferenceMentionOpen(false); setReferenceMentionQuery(''); } }} onPaste={(event) => { const pastedText = event.clipboardData.getData('text/plain'); if (!pastedText || !referenceCandidates.length) return; const replaced = replaceNaturalReferenceLabels(pastedText, referenceCandidates); if (!replaced.replaced) return; event.preventDefault(); const textarea = event.currentTarget; const start = textarea.selectionStart ?? prompt.length; const end = textarea.selectionEnd ?? start; const next = `${prompt.slice(0, start)}${replaced.value}${prompt.slice(end)}`; setPrompt(next); setReferenceMentionOpen(false); setReferenceMentionQuery(''); requestAnimationFrame(() => { textarea.focus(); const cursor = start + replaced.value.length; textarea.setSelectionRange(cursor, cursor); }); }} placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'} maxLength={6000} />{supportsReferenceMentions && referenceCandidates.length > 0 && <VideoReferenceMentionMenu refs={referenceCandidates} open={referenceMentionOpen} query={referenceMentionQuery} onSelect={insertReferenceMention} />}<small>{prompt.length}/6000</small></label>
+          <div className="video-field video-prompt-field"><span>提示词</span><ReferenceMentionEditor
+            ref={promptRef}
+            value={prompt}
+            references={supportsReferenceMentions ? referenceCandidates : []}
+            className="video-prompt-mention-editor"
+            menuClassName="video-reference-mention-menu"
+            ariaLabel="视频提示词"
+            placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
+            onChange={(value) => setPrompt(value.slice(0, 6000))}
+            transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
+          /><small>{prompt.length}/6000</small></div>
          <div className={`video-fields-two ${showOperationField ? '' : 'video-fields-single'}`}>
           <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
           {showOperationField && <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>}
@@ -995,16 +979,6 @@ function AudioUploadTray({ items, maxItems, onAdd, onRemove, inputRef }: { items
     </label>
     {items.length > 0 && <div className="video-audio-list">{items.map((item, index) => <div className="video-audio-item" key={`${item.name}-${index}`}><span className="video-file-icon">♫</span><span title={item.name}>{item.name}</span><button type="button" onClick={() => onRemove(index)} aria-label={`删除第 ${index + 1} 段音频`}>×</button></div>)}</div>}
   </div>;
-}
-
-function VideoReferenceMentionMenu({ refs, open, query = '', onSelect }: { refs: CreativeReference[]; open: boolean; query?: string; onSelect: (index: number) => void }) {
-  return <ReferenceMentionMenu
-    references={refs}
-    open={open}
-    query={query}
-    onSelect={onSelect}
-    className="video-reference-mention-menu"
-  />;
 }
 
 function CreativeTextReferenceTray({ items, startIndex, onAdd, onRemove, onPreview }: { items: CreativeReference[]; startIndex: number; onAdd: (files: FileList | null) => void; onRemove: (id: string) => void; onPreview: (item: CreativeReference) => void }) {
