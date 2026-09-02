@@ -14,9 +14,15 @@ async function loadTypeScript(path) {
     const settingsUrl = new URL('../lib/creation/settings.ts', import.meta.url);
     const maskUrl = new URL('../lib/canvas/mask.ts', import.meta.url);
     const layersUrl = new URL('../lib/canvas/layers.ts', import.meta.url);
+    const localEditUrl = new URL('../lib/local-edit.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
     const maskSource = await readFile(maskUrl, 'utf8');
     const layersSource = await readFile(layersUrl, 'utf8');
+    const localEditSource = await readFile(localEditUrl, 'utf8');
+    const localEditRuntime = ts.transpileModule(localEditSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: localEditUrl.pathname,
+    }).outputText.replace(/\bexport\s+/g, '');
     const settingsCompiled = ts.transpileModule(settingsSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: settingsUrl.pathname,
@@ -30,15 +36,22 @@ async function loadTypeScript(path) {
         return providerModels.find((model) => model.id === defaultModelId)
           || providerModels[0]
           || models.find((model) => model.id === defaultModelId)
-          || models[0];
+        || models[0];
       };`,
+    ).replace(
+      /^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
+      '',
     );
     const maskCompiled = ts.transpileModule(maskSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: maskUrl.pathname,
     }).outputText
       .replace(/\bobjectValue\b/g, 'maskObjectValue')
-      .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber');
+      .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber')
+      .replace(
+        /^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
+        '',
+      );
     const layersCompiled = ts.transpileModule(layersSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: layersUrl.pathname,
@@ -53,7 +66,7 @@ async function loadTypeScript(path) {
       /^\s*import\s+\{\s*normalizeCanvasNodeLayers\s*\}\s+from\s+["']\.\/layers["'];?\s*$/m,
       '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
@@ -99,6 +112,115 @@ test('recovers interrupted local canvas work while preserving remote video tasks
   assert.equal(result.document.nodes.find((node) => node.id === 'video-1').data.status, 'running');
 });
 
+test('hydrates legacy video media params from generation params', () => {
+  const result = model.normalizeDocument({
+    nodes: [
+      {
+        id: 'legacy-video',
+        type: 'media',
+        x: 0,
+        y: 0,
+        data: {
+          kind: 'video',
+          url: '/legacy-video.mp4',
+          generation: {
+            kind: 'video',
+            prompt: '镜头推进',
+            params: { model: 'legacy-video-model', inputMode: 'frames', duration: 8 },
+          },
+        },
+      },
+    ],
+  });
+
+  const legacy = result.nodes[0];
+  assert.equal(legacy.data.params.inputMode, 'frames');
+  assert.equal(legacy.data.params.model, 'legacy-video-model');
+  assert.equal(legacy.data.generation.params.inputMode, 'frames');
+  assert.equal(legacy.data.videoInputModeAuto, true);
+
+  const created = model.createMedia('video', '/created-video.mp4', '创建的视频', { x: 0, y: 0 }, {
+    generation: {
+      kind: 'video',
+      prompt: '参考生成',
+      params: { model: 'created-video-model', inputMode: 'reference' },
+    },
+  });
+  assert.equal(created.data.params.inputMode, 'reference');
+  assert.equal(created.data.params.model, 'created-video-model');
+});
+
+test('sizes video cards from the requested aspect ratio and intrinsic metadata', () => {
+  const wide = model.createMedia('video', '/wide.mp4', '宽屏视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: '16:9' },
+  });
+  const portrait = model.createMedia('video', '/portrait.mp4', '竖屏视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: '9:16' },
+  });
+  const square = model.createMedia('video', '/square.mp4', '方形视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: '1:1' },
+  });
+  const automatic = model.createMedia('video', '/automatic.mp4', '自动视频', { x: 0, y: 0 }, {
+    params: { kind: 'video', aspect: 'auto' },
+  });
+  const defaultSize = model.mediaCardSizeForRatio(undefined, 'video');
+
+  const previewRatio = (node) => node.w / (node.h - 42);
+  assert.ok(Math.abs(previewRatio(wide) - 16 / 9) < 0.02);
+  assert.ok(Math.abs(previewRatio(portrait) - 9 / 16) < 0.02);
+  assert.ok(Math.abs(previewRatio(square) - 1) < 0.02);
+  assert.ok(Math.abs(previewRatio(automatic) - 16 / 9) < 0.02);
+  assert.ok(Math.abs(defaultSize.w / (defaultSize.h - 42) - 16 / 9) < 0.02);
+  assert.ok(portrait.h > wide.h);
+
+  const intrinsic = model.createMedia('video', '/intrinsic.mp4', '真实尺寸视频', { x: 0, y: 0 }, {
+    nativeWidth: 1080,
+    nativeHeight: 1920,
+    params: { kind: 'video', aspect: '16:9' },
+  });
+  assert.ok(Math.abs(previewRatio(intrinsic) - 9 / 16) < 0.02);
+
+  const normalized = model.normalizeDocument({
+    nodes: [{
+      id: 'legacy-video-size',
+      type: 'media',
+      x: 0,
+      y: 0,
+      w: 420,
+      h: 290,
+      data: {
+        kind: 'video',
+        url: '/legacy-portrait.mp4',
+        nativeWidth: 1080,
+        nativeHeight: 1920,
+        params: { kind: 'video', aspect: '16:9' },
+      },
+    }],
+  });
+  const normalizedVideo = normalized.nodes[0];
+  assert.ok(Math.abs(previewRatio(normalizedVideo) - 9 / 16) < 0.02);
+
+  const manual = model.normalizeDocument({
+    nodes: [{
+      id: 'manual-video-size',
+      type: 'media',
+      x: 0,
+      y: 0,
+      w: 510,
+      h: 330,
+      data: {
+        kind: 'video',
+        url: '/manual-video.mp4',
+        autoFit: false,
+        nativeWidth: 1080,
+        nativeHeight: 1920,
+      },
+    }],
+  }).nodes[0];
+  assert.equal(manual.w, 510);
+  assert.equal(manual.h, 330);
+});
+
 test('canvas upscale nodes preserve provider-specific settings', () => {
   const cloud = model.createUpscaleNode({ x: 0, y: 0 }, {
     model: 'aliyun-standard-super-resolution',
@@ -123,6 +245,45 @@ test('canvas upscale nodes preserve provider-specific settings', () => {
   assert.equal(legacy.data.params.seed, 123);
   assert.equal(legacy.data.params.colorCorrection, 'none');
   assert.equal(legacy.data.params.algorithm, 'nearest');
+});
+
+test('completed upscale result cards follow intrinsic image proportions', () => {
+  const base = model.createUpscaleNode({ x: 0, y: 0 });
+  const portrait = model.normalizeDocument({
+    nodes: [{
+      ...base,
+      data: {
+        ...base.data,
+        url: '/portrait-upscaled.png',
+        nativeWidth: 3456,
+        nativeHeight: 6144,
+        status: 'completed',
+      },
+    }],
+  }).nodes[0];
+  const expected = model.upscaleCardSizeForRatio(3456 / 6144);
+
+  assert.equal(portrait.w, expected.w);
+  assert.equal(portrait.h, expected.h);
+  assert.equal(portrait.data.autoFit, true);
+
+  const manual = model.normalizeDocument({
+    nodes: [{
+      ...base,
+      w: 510,
+      h: 330,
+      data: {
+        ...base.data,
+        autoFit: false,
+        url: '/portrait-upscaled.png',
+        nativeWidth: 3456,
+        nativeHeight: 6144,
+        status: 'completed',
+      },
+    }],
+  }).nodes[0];
+  assert.equal(manual.w, 510);
+  assert.equal(manual.h, 330);
 });
 
 function layerNode(id, zIndex) {
@@ -480,6 +641,24 @@ test('expands every media member when a group feeds a video node', () => {
   assert.equal(document.edges[0].source, sourceGroup.id);
 });
 
+test('keeps a member connection scoped to that member instead of its group', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/member-first.png', '缁勫唴绗竴寮犲弬鑰冨浘', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/member-second.png', '缁勫唴绗簩寮犲弬鑰冨浘', { x: 0, y: 300 });
+  const third = model.createMedia('image', '/member-third.png', '缁勫唴绗笁寮犲弬鑰冨浘', { x: 0, y: 600 });
+  const target = model.createGenerator('video', { x: 760, y: 220 }, { inputMode: 'reference' });
+  let document = { ...empty, nodes: [first, second, third, target] };
+  document = model.createGroup(document, [first.id, second.id, third.id]);
+
+  document = model.addEdge(document, second.id, target.id);
+
+  assert.deepEqual(
+    model.incomingReferences(document, target.id).map((node) => node.id),
+    [second.id],
+  );
+  assert.equal(document.edges[0].source, second.id);
+});
+
 test('normalizes variant requirements by removing blank lines and capping at eight', () => {
   const requirements = model.normalizeVariantRequirements(
     '  夜景  \n\n俯拍视角\r\n  \n替换成红色包装\n' +
@@ -716,17 +895,68 @@ test('uses group boundary ports for shared edge geometry', () => {
   );
 });
 
-test('expands a grouped source into all media references and preserves manual order', () => {
+test('expands an explicit group source into all media references and preserves manual order', () => {
   const empty = model.normalizeDocument(null);
   const first = model.createMedia('image', '/first.png', '第一张', { x: 0, y: 0 });
   const second = model.createMedia('image', '/second.png', '第二张', { x: 360, y: 0 });
   const generator = model.createGenerator('image', { x: 720, y: 0 });
   let document = { ...empty, nodes: [first, second, generator] };
   document = model.createGroup(document, [first.id, second.id]);
-  document = model.addEdge(document, first.id, generator.id);
+  document = model.addEdge(document, document.groups[0].id, generator.id);
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第一张', '第二张']);
   document = model.reorderReferences(document, generator.id, [second.id, first.id]);
   assert.deepEqual(model.incomingReferences(document, generator.id).map((node) => node.data.name), ['第二张', '第一张']);
+});
+
+test('removing an input edge also removes its persisted reference metadata', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/remove-first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/remove-second.png', '第二张', { x: 360, y: 0 });
+  const target = model.createGenerator('video', { x: 720, y: 0 }, { inputMode: 'frames' });
+  let document = {
+    ...empty,
+    nodes: [
+      first,
+      second,
+      {
+        ...target,
+        data: {
+          ...target.data,
+          referenceOrder: [first.id, second.id],
+          generation: { kind: 'video', prompt: '', params: target.data.params, referenceIds: [first.id, second.id] },
+        },
+      },
+    ],
+  };
+  document = model.addEdge(document, first.id, target.id, 'right', 'left', 'reference', 'first-frame', 0);
+  document = model.addEdge(document, second.id, target.id, 'right', 'left', 'reference', 'last-frame', 1);
+  const firstEdge = document.edges.find((edge) => edge.source === first.id);
+  assert.ok(firstEdge);
+
+  const next = model.removeEdge(document, firstEdge.id);
+  assert.deepEqual(model.incomingReferences(next, target.id).map((node) => node.id), [second.id]);
+  assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.referenceOrder, [second.id]);
+  assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.generation?.referenceIds, [second.id]);
+});
+
+test('removes one member from a grouped reference without dropping the other members', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/group-remove-first.png', '第一张', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/group-remove-second.png', '第二张', { x: 360, y: 0 });
+  const third = model.createMedia('image', '/group-remove-third.png', '第三张', { x: 720, y: 0 });
+  const target = model.createGenerator('video', { x: 1100, y: 0 }, { inputMode: 'reference' });
+  let document = { ...empty, nodes: [first, second, third, target] };
+  document = model.createGroup(document, [first.id, second.id, third.id]);
+  const group = document.groups[0];
+  document = model.addEdge(document, group.id, target.id, 'right', 'left', 'reference');
+
+  const next = model.removeCanvasReference(document, target.id, second.id);
+  assert.deepEqual(model.incomingReferences(next, target.id).map((node) => node.id), [first.id, third.id]);
+  assert.equal(next.groups.some((item) => item.id === group.id), true);
+  const groupEdge = next.edges.find((edge) => edge.source === group.id && edge.target === target.id);
+  assert.ok(groupEdge);
+  assert.deepEqual(groupEdge.sourceNodeIds, [first.id, third.id]);
+  assert.deepEqual(next.nodes.find((node) => node.id === target.id)?.data.referenceOrder, [first.id, third.id]);
 });
 
 test('adds dropped nodes to the group under the pointer and keeps membership consistent', () => {
@@ -879,6 +1109,44 @@ test('keeps complete groups together and preserves relative positions for partia
   const partialSecond = partial.document.nodes.find((node) => node.id === second.id);
   assert.equal(partialFirst.groupId, partialSecond.groupId);
   assert.deepEqual({ x: partialSecond.x, y: partialSecond.y }, { x: second.x, y: second.y });
+});
+
+test('arranges cards inside a selected group without moving the group or external graph', () => {
+  const first = model.createMedia('image', '/group-first.png', '第一张', { x: 1240, y: 420 });
+  const second = model.createGenerator('image', { x: 120, y: 760 });
+  const third = model.createMedia('image', '/group-third.png', '第三张', { x: 360, y: 120 });
+  const outside = model.createPrompt({ x: 2400, y: 1400 }, '组外节点');
+  let document = arrangeDocument([first, second, third, outside]);
+  document = model.createGroup(document, [first.id, second.id, third.id], '待整理组');
+  const group = document.groups[0];
+  document = model.addEdge(document, second.id, first.id);
+  document = model.addEdge(document, group.id, outside.id);
+  document = model.addEdge(document, third.id, outside.id);
+
+  const beforeOutside = { x: outside.x, y: outside.y };
+  const beforeEdges = JSON.stringify(document.edges);
+  const beforeGroups = JSON.stringify(document.groups);
+  const beforeGroupBounds = model.groupBounds(document, group.id);
+  const arranged = model.arrangeCanvasGroup(document, group.id);
+  const byId = (id) => arranged.document.nodes.find((node) => node.id === id);
+  const arrangedFirst = byId(first.id);
+  const arrangedSecond = byId(second.id);
+  const arrangedThird = byId(third.id);
+  const arrangedOutside = byId(outside.id);
+
+  assert.equal(arranged.changed, true);
+  assert.deepEqual(arranged.arrangedIds, group.nodeIds);
+  assert.ok(arrangedSecond.x < arrangedFirst.x);
+  assert.equal(overlaps(arrangedFirst, arrangedSecond), false);
+  assert.equal(overlaps(arrangedFirst, arrangedThird), false);
+  assert.equal(overlaps(arrangedSecond, arrangedThird), false);
+  assert.deepEqual({ x: arrangedOutside.x, y: arrangedOutside.y }, beforeOutside);
+  assert.equal(JSON.stringify(arranged.document.edges), beforeEdges);
+  assert.equal(JSON.stringify(arranged.document.groups), beforeGroups);
+  assert.deepEqual(
+    { x: model.groupBounds(arranged.document, group.id).x, y: model.groupBounds(arranged.document, group.id).y },
+    { x: beforeGroupBounds.x, y: beforeGroupBounds.y },
+  );
 });
 
 test('handles cycles, empty selections, and deterministic output', () => {

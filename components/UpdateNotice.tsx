@@ -18,6 +18,10 @@ type UpdateStatus = {
 
 type ApplyState = 'idle' | 'working' | 'started' | 'error';
 type CheckNoticeTone = 'success' | 'error';
+type UpdateProgressResponse = {
+  progress?: UpdateProgress | null;
+  currentVersion?: string;
+};
 type UpdateProgress = {
   jobId: string;
   version: string;
@@ -64,9 +68,12 @@ export default function UpdateNotice() {
   const [applyState, setApplyState] = useState<ApplyState>('idle');
   const [applyMessage, setApplyMessage] = useState('');
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
+  const [refreshRequired, setRefreshRequired] = useState(false);
+  const [refreshedVersion, setRefreshedVersion] = useState('');
   const [checkNotice, setCheckNotice] = useState('');
   const [checkNoticeTone, setCheckNoticeTone] = useState<CheckNoticeTone>('success');
   const checkNoticeTimerRef = useRef<number | null>(null);
+  const updateTargetVersionRef = useRef<string | null>(null);
 
   const announceCheckResult = useCallback((message: string, tone: CheckNoticeTone = 'success') => {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
@@ -84,6 +91,15 @@ export default function UpdateNotice() {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
   }, []);
 
+  const announceRefreshRequired = useCallback((version: string) => {
+    updateTargetVersionRef.current = null;
+    setUpdateProgress(null);
+    setApplyState('idle');
+    setShowModal(false);
+    setRefreshedVersion(version);
+    setRefreshRequired(true);
+  }, []);
+
   const readProgress = useCallback(async (jobId?: string) => {
     try {
       const params = new URLSearchParams();
@@ -91,12 +107,18 @@ export default function UpdateNotice() {
       const query = params.toString() ? `?${params.toString()}` : '';
       const response = await fetch(`/api/update/progress${query}`, { cache: 'no-store' });
       if (!response.ok) return null;
-      const data = await response.json() as { progress?: UpdateProgress | null };
+      const data = await response.json() as UpdateProgressResponse;
       if (!data.progress) {
+        const targetVersion = updateTargetVersionRef.current;
+        if (targetVersion && data.currentVersion && isVersionAtLeast(data.currentVersion, targetVersion)) {
+          announceRefreshRequired(data.currentVersion);
+          return null;
+        }
         setUpdateProgress(null);
         setApplyState('idle');
         return null;
       }
+      updateTargetVersionRef.current = data.progress.version;
       setUpdateProgress(data.progress);
       setApplyMessage(data.progress.error || data.progress.message);
       setApplyState(data.progress.stage === 'failed' ? 'error' : data.progress.stage === 'completed' ? 'started' : 'started');
@@ -104,7 +126,7 @@ export default function UpdateNotice() {
     } catch {
       return null;
     }
-  }, []);
+  }, [announceRefreshRequired]);
 
   useEffect(() => {
     void readProgress();
@@ -113,6 +135,11 @@ export default function UpdateNotice() {
   useEffect(() => {
     if (!updateProgress || updateProgress.stage === 'failed' || !status?.currentVersion) return;
     if (isVersionAtLeast(status.currentVersion, updateProgress.version)) {
+      if (updateTargetVersionRef.current) {
+        announceRefreshRequired(status.currentVersion);
+        return;
+      }
+      updateTargetVersionRef.current = null;
       setUpdateProgress(null);
       setApplyState('idle');
       return;
@@ -129,7 +156,7 @@ export default function UpdateNotice() {
             setStatus(next);
             if (isVersionAtLeast(next.currentVersion, progress.version)) {
               window.clearInterval(poll);
-              window.location.reload();
+              announceRefreshRequired(next.currentVersion);
             }
           }
         } catch {
@@ -141,7 +168,7 @@ export default function UpdateNotice() {
       cancelled = true;
       window.clearInterval(poll);
     };
-  }, [readProgress, status?.currentVersion, updateProgress?.jobId, updateProgress?.stage]);
+  }, [announceRefreshRequired, readProgress, status?.currentVersion, updateProgress?.jobId, updateProgress?.stage]);
 
   const check = useCallback(async (force = false) => {
     setBusy(true);
@@ -193,9 +220,10 @@ export default function UpdateNotice() {
     setApplyMessage('正在启动后台更新任务，用户数据不会被覆盖。');
     try {
       const response = await fetch('/api/update/apply', { method: 'POST', cache: 'no-store' });
-      const data = await response.json() as { started?: boolean; jobId?: string; error?: string };
+      const data = await response.json() as { started?: boolean; jobId?: string; version?: string; error?: string };
       if (!response.ok || !data.started) throw new Error(data.error || '更新准备失败');
 
+      updateTargetVersionRef.current = data.version || status.latestVersion || null;
       setApplyState('started');
       await readProgress(data.jobId);
       if (runInBackground) setShowModal(false);
@@ -230,7 +258,21 @@ export default function UpdateNotice() {
 
   return (
     <>
-      {updateProgress ? (
+      {refreshRequired ? (
+        <button
+          type="button"
+          className="update-progress-tray complete refresh-required"
+          onClick={() => window.location.reload()}
+          aria-label="刷新页面以使用新版本"
+        >
+          <span className="update-progress-tray-orb" aria-hidden="true" />
+          <span className="update-progress-tray-copy">
+            <strong>更新完成，请刷新页面</strong>
+            <small>已更新到 v{refreshedVersion || status?.currentVersion || '最新版本'}</small>
+          </span>
+          <span className="update-progress-tray-value">刷新</span>
+        </button>
+      ) : updateProgress ? (
         <button
           type="button"
           className={`update-progress-tray ${updateProgress.stage === 'failed' ? 'error' : updateProgress.stage === 'completed' ? 'complete' : ''}`}

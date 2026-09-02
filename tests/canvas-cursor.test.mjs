@@ -3,8 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const css = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
+const globalCss = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const component = await readFile(
   new URL("../components/SuperCanvas.tsx", import.meta.url),
+  "utf8",
+);
+const maskEditor = await readFile(
+  new URL("../components/MaskEditor.tsx", import.meta.url),
   "utf8",
 );
 
@@ -27,6 +32,18 @@ test("space-pan cursor state follows the keyboard lifecycle", () => {
   assert.match(component, /className=\{`canvas-stage \$\{panReady \? "is-pan-ready" : ""\} \$\{panActive \? "is-panning" : ""\}/);
   assert.match(component, /className=\{`canvas-node node-color-\$\{colorKey\} status-\$\{status\}[^`]*\$\{dragging \? "dragging" : ""\}/);
   assert.match(component, /className=\{`canvas-group[^`]*selectedGroupId === group\.id && draggingNodeIds\.size > 0 \? "dragging" : ""/);
+});
+
+test("canvas shows a non-interactive middle-button pan affordance", () => {
+  assert.doesNotMatch(component, /canvas-middle-pan-hint/);
+  assert.match(maskEditor, /className="local-edit-pan-hint"/);
+  assert.match(maskEditor, /aria-label="按住鼠标中键拖动画布"/);
+  assert.match(maskEditor, /className="local-edit-pan-mouse"/);
+  assert.match(maskEditor, /className="wheel"/);
+  assert.match(globalCss, /\.local-edit-pan-hint\{[^}]*pointer-events:none/);
+  assert.match(globalCss, /\.local-edit-pan-hint\.active\{[^}]*box-shadow/);
+  assert.match(globalCss, /@media\(max-width:760px\)/);
+  assert.match(globalCss, /\.local-edit-pan-hint\{flex:1 1 150px/);
 });
 
 test("canvas cursor follows the active pointer task", () => {

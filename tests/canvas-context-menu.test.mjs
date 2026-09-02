@@ -12,6 +12,15 @@ const styles = await readFile(
 );
 
 test("card context menus select the target and preserve selected multi-actions", () => {
+  const contextMenuStart = component.indexOf("const contextMenuGroups = useMemo");
+  const contextMenuEnd = component.indexOf("function CanvasNodeContextMenu", contextMenuStart);
+  assert.ok(contextMenuStart >= 0 && contextMenuEnd > contextMenuStart, "node context menu builder should exist");
+  const contextMenu = component.slice(contextMenuStart, contextMenuEnd);
+  const quickActionsStart = component.indexOf("const quickActions = useMemo");
+  const quickActionsEnd = component.indexOf("const contextNode =", quickActionsStart);
+  assert.ok(quickActionsStart >= 0 && quickActionsEnd > quickActionsStart, "node quick toolbar builder should exist");
+  const quickActions = component.slice(quickActionsStart, quickActionsEnd);
+
   assert.match(component, /type CanvasContextMenuState/);
   assert.match(component, /menu: "node" \| "create" \| "tools"/);
   assert.match(component, /nodeId\?: string/);
@@ -22,9 +31,48 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
   assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*\)/);
-  assert.match(component, /label: "复制图片"/);
-  assert.match(component, /label: "调整参数"/);
-  assert.match(component, /label: selectedIds\.size > 1 \? `删除/);
+  assert.match(contextMenu, /label: "复制图片"/);
+  assert.match(contextMenu, /label: "超分"/);
+  assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
+  assert.match(contextMenu, /label: "下载"/);
+  assert.match(contextMenu, /label: "加入资产"/);
+  assert.match(component, /groups\.filter\(\(group\) => group\.actions\.length > 0\)/);
+  assert.doesNotMatch(contextMenu, /label: "预览"/);
+  assert.doesNotMatch(contextMenu, /label: "放大查看"/);
+  assert.doesNotMatch(contextMenu, /label: "调整参数"/);
+  assert.doesNotMatch(contextMenu, /局部编辑/);
+  assert.doesNotMatch(contextMenu, /label: "作为参考"/);
+  assert.doesNotMatch(contextMenu, /id: "delete"/);
+  assert.doesNotMatch(contextMenu, /label: "删除"/);
+  assert.doesNotMatch(contextMenu, /label: selectedIds\.size > 1 \? `删除/);
+  assert.match(quickActions, /useMemo<CanvasQuickToolbarActions>/);
+  assert.match(quickActions, /id: "mask"/);
+  assert.match(quickActions, /局部编辑/);
+  assert.match(quickActions, /label: "超分"/);
+  assert.match(quickActions, /label: "作为参考"/);
+  assert.match(quickActions, /label: "下载"/);
+  assert.match(quickActions, /label: "加入资产"/);
+  assert.match(quickActions, /label: "删除"/);
+  assert.doesNotMatch(quickActions, /id: "edit"/);
+  assert.doesNotMatch(quickActions, /label: "编辑"/);
+  assert.doesNotMatch(quickActions, /id: "image-operations"/);
+  assert.doesNotMatch(quickActions, /label: "图像操作"/);
+  assert.doesNotMatch(quickActions, /id: "more"/);
+  assert.doesNotMatch(quickActions, /label: "更多"/);
+  assert.doesNotMatch(quickActions, /label: "预览"/);
+  assert.match(component, /aria-haspopup="menu"/);
+  assert.match(component, /aria-controls={`canvas-quick-menu-\$\{node\.id\}-\$\{group\.id\}`}/);
+  assert.match(component, /aria-expanded=\{openGroupId === group\.id\}/);
+  assert.match(component, /className="canvas-node-quick-menu"/);
+  assert.match(component, /const focusFirstAction = \(\) =>/);
+  assert.match(component, /window\.document\.activeElement !== action/);
+  assert.match(component, /closeMenu\(true\)/);
+  assert.match(component, /addEventListener\("keydown", closeOnEscape, true\)/);
+  assert.match(component, /querySelector\("\.canvas-node-quick-menu"\)/);
+  assert.match(component, /event\.key !== "Escape"/);
+  assert.match(component, /\["ArrowDown", "ArrowUp", "Home", "End"\]/);
+  assert.match(styles, /\.canvas-node-quick-menu\{width:min\(266px/);
+  assert.match(styles, /\.canvas-node-quick-menu-trigger\.open/);
 });
 
 test("layer actions respect the selected node's real z-index and explain boundary no-ops", () => {
@@ -79,6 +127,12 @@ test("blank canvas separates creation from compact canvas operations", () => {
   assert.match(component, /pasteFromClipboard\(position\)/);
   assert.match(component, /支持多选，放置到右键位置/);
   assert.match(component, /<b>适应视图<\/b>/);
+  const toolsMenu = component.slice(component.indexOf('ariaLabel="画布操作菜单"'));
+  const arrangeIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>一键整理<\/b>/)?.[1];
+  const fitIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>适应视图<\/b>/)?.[1];
+  assert.equal(arrangeIcon, "⌗");
+  assert.equal(fitIcon, "⛶");
+  assert.notEqual(arrangeIcon, fitIcon);
   assert.match(styles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
   assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
 });

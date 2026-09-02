@@ -1,6 +1,7 @@
 import type { PublicState, RegistryModel } from "../types";
 import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
+import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
 
 export type ImageSizeMode = "system" | "custom";
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
@@ -16,7 +17,11 @@ export type AgentWebMode = "off" | "auto" | "always";
 export type CanvasMaskAsset = {
   assetId?: string;
   url: string;
+  /** A locally moved source image that must replace the original first reference. */
+  sourceAssetId?: string;
+  sourceUrl?: string;
   referenceId?: string;
+  annotations?: LocalEditAnnotation[];
 };
 
 export type ImageCreationSettings = {
@@ -268,6 +273,7 @@ export function normalizeImageCreationSettings(
       ? raw.quality
       : "自动";
   const maskRaw = objectValue(raw.mask);
+  const maskAnnotations = normalizeLocalEditAnnotations(maskRaw.annotations);
   const mask =
     typeof maskRaw.url === "string" && maskRaw.url
       ? {
@@ -275,8 +281,17 @@ export function normalizeImageCreationSettings(
           ...(typeof maskRaw.assetId === "string"
             ? { assetId: maskRaw.assetId }
             : {}),
+          ...(typeof maskRaw.sourceAssetId === "string"
+            ? { sourceAssetId: maskRaw.sourceAssetId }
+            : {}),
+          ...(typeof maskRaw.sourceUrl === "string"
+            ? { sourceUrl: maskRaw.sourceUrl }
+            : {}),
           ...(typeof maskRaw.referenceId === "string"
             ? { referenceId: maskRaw.referenceId }
+            : {}),
+          ...(maskAnnotations.length
+            ? { annotations: maskAnnotations }
             : {}),
         }
       : undefined;

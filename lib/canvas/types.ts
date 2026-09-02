@@ -1,5 +1,6 @@
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from '../creation/settings';
 import type { PublicState, UpscaleOutputFormat } from '../types';
+import type { LocalEditAnnotation } from '../local-edit';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale';
 export type CanvasMediaKind = 'image' | 'video';
@@ -91,8 +92,12 @@ export type CanvasNodePresentation = {
 export type CanvasMaskState = {
   url: string;
   assetId?: string;
+  /** A locally moved source image that must replace the original first reference. */
+  sourceAssetId?: string;
+  sourceUrl?: string;
   status: CanvasMaskStatus;
   coverage?: number;
+  annotations?: LocalEditAnnotation[];
   taskId?: string;
   error?: string;
   createdAt?: number;
@@ -118,6 +123,8 @@ export type CanvasNodeData = {
   agentResponse?: string;
   prompt?: string;
   params?: CanvasNodeParams;
+  /** Video nodes automatically derive their input mode from connected images until locked. */
+  videoInputModeAuto?: boolean;
   assetId?: string;
   sourceAssetId?: string;
   autoFit?: boolean;
@@ -174,6 +181,8 @@ export type CanvasEdge = {
   id: string;
   source: string;
   target: string;
+  /** Optional subset of a grouped source selected for this connection. */
+  sourceNodeIds?: string[];
   sourcePort?: 'left' | 'right';
   targetPort?: 'left' | 'right';
   inputRole?: CanvasInputRole;

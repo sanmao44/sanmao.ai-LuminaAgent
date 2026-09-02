@@ -40,10 +40,17 @@ test("video canvas cards expose a persistent visual and accessible distinction",
   assert.match(component, /className=\{`canvas-media-card\$\{data\.kind === "video" \? " video" : ""\}`\}/);
   assert.match(component, /className="canvas-video-mark"/);
   assert.match(component, /▶ 视频\{videoDuration \? ` · \$\{videoDuration\}` : ""\}/);
-  assert.match(component, /className="canvas-video-play"/);
-  assert.match(component, /title="播放视频预览"/);
-  assert.match(component, /aria-label=\{`播放视频预览\$\{videoDuration/);
-  assert.match(component, /onClick=\{\(event\) => \{\s*event\.stopPropagation\(\);\s*onPreview\(\);/);
+  assert.match(component, /className=\{`canvas-video-play/);
+  assert.match(component, /title=\{videoControlLabel\}/);
+  assert.match(component, /aria-label=\{`\$\{videoControlLabel\}/);
+  assert.match(component, /onClick=\{toggleVideoPlayback\}/);
+  assert.match(component, /video\.play\(\)/);
+  assert.match(component, /video\.pause\(\)/);
+  assert.match(component, /video\.ended/);
+  const playButtonStart = component.indexOf("className={`canvas-video-play");
+  const playButtonEnd = component.indexOf("</button>", playButtonStart);
+  assert.ok(playButtonStart >= 0 && playButtonEnd > playButtonStart);
+  assert.doesNotMatch(component.slice(playButtonStart, playButtonEnd), /onPreview\(\)/);
   assert.match(component, /<svg viewBox="0 0 24 24" aria-hidden="true">/);
   assert.match(component, /aria-label=\{`视频预览\$\{videoDuration/);
   assert.match(component, /className="canvas-image-resolution canvas-video-resolution"/);
@@ -51,6 +58,8 @@ test("video canvas cards expose a persistent visual and accessible distinction",
   assert.match(component, /视频生成结果/);
   assert.match(component, /视频生成失败/);
   assert.match(styles, /\.canvas-media-card\.video\{/);
+  assert.match(styles, /\.canvas-media-card\{[^}]*display:flex;flex-direction:column/);
+  assert.match(styles, /\.canvas-media-stage\{[^}]*height:auto;flex:1 1 auto/);
   assert.match(styles, /\.canvas-video-mark\{[^}]*border-radius:999px/);
   assert.match(styles, /\.canvas-node-footer em\.video-status\{/);
   assert.match(styles, /\.canvas-video-resolution\{[^}]*border-color:rgba\(147,197,253/);
@@ -61,4 +70,21 @@ test("video metadata persists both intrinsic size and duration on media nodes", 
   assert.match(component, /Math\.round\(durationSeconds \* 1000\)/);
   assert.match(component, /event\.currentTarget\.duration/);
   assert.match(component, /nativeWidth: width, nativeHeight: height/);
+});
+
+test("video canvas input mode supports automatic locking and restoration", () => {
+  assert.match(types, /videoInputModeAuto\?: boolean/);
+  assert.match(component, /videoInputModeAuto !== false/);
+  assert.match(component, /videoInputModeAuto: false/);
+  assert.match(component, /恢复自动/);
+  assert.match(component, /preferredCanvasVideoInputModeForImageCount/);
+  assert.match(component, /syncCanvasVideoReferences/);
+});
+
+test("video reference synchronization hydrates legacy generation params", () => {
+  assert.match(component, /function videoParamsForCanvasNode\(node: CanvasNode, runtime: CanvasRuntimeState \| null\)/);
+  assert.match(component, /node\.data\.generation\?\.params/);
+  assert.doesNotMatch(component, /target\.data\.kind !== "video" \|\|[\s\S]{0,160}!target\.data\.params/);
+  assert.match(component, /!hasTopLevelVideoParams/);
+  assert.match(component, /updateCanvasVideoMode\(next, target\.id, inputMode, runtime\)/);
 });

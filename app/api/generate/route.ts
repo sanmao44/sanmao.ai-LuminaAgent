@@ -8,6 +8,7 @@ import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
+import { enforceLocalEditMask } from '@/lib/local-edit-composite';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -137,12 +138,18 @@ export async function POST(request: Request) {
     const providerImages = references.length
       ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references, mask, fidelity: camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
       : await generateImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
-    const generatedImages = camera && angleOutput
+    const normalizedImages = camera && angleOutput
       ? await normalizeAngleOutputSize(providerImages, angleOutput.width, angleOutput.height, effectiveAngle(camera.roll), requestController.signal)
       : providerImages;
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
     const storagePath = (await getPublicState()).settings.imageStoragePath;
+    const generatedImages = mask
+      ? await enforceLocalEditMask(normalizedImages, references[0], mask, {
+          storagePath,
+          signal: requestController.signal,
+        })
+      : normalizedImages;
     const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId });
     return Response.json({ ok: true, images: stored.images, mode: references.length ? 'reference' : 'generate', model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {

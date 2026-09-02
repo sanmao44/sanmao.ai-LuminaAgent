@@ -101,7 +101,14 @@ html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height
  .video-preview-player:-webkit-full-screen{width:100vw;height:100vh;max-width:none;max-height:none;aspect-ratio:auto;margin:0;border-radius:0;object-fit:contain;background:#000}
 .video-operation-field{grid-template-columns:minmax(0,1fr)}
 .video-prompt-field{position:relative}
-.video-reference-mention-menu{left:0;top:calc(100% - 4px)}
+.video-prompt-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.video-prompt-heading>span{font-size:11px;font-weight:850;color:var(--text-2)}
+.video-prompt-clear{height:27px;padding:0 9px;border:1px solid color-mix(in srgb,var(--danger) 42%,var(--line));border-radius:8px;background:var(--danger-soft);color:var(--danger);font-size:9px;font-weight:850;cursor:pointer;white-space:nowrap}
+.video-prompt-clear:hover{background:var(--danger);color:#fff}
+.video-field .reference-mention-editor{min-width:0}
+.video-field .reference-mention-editor-content{box-sizing:border-box;width:100%;min-height:148px;max-height:280px;padding:11px 13px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2);line-height:1.6;overflow-y:auto}
+.video-field .reference-mention-editor-content:focus{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}
+.video-reference-mention-menu{left:0;top:calc(100% + 8px);bottom:auto;transform:none}
 .video-reference-tray-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:none}
 .video-reference-clear{min-height:28px;padding:0 10px;border:1px solid color-mix(in srgb,var(--danger) 42%,var(--line));border-radius:999px;background:var(--danger-soft);color:var(--danger);font-size:9px;font-weight:850;cursor:pointer}
 .video-reference-clear:hover{background:var(--danger);color:#fff}
@@ -162,7 +169,7 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
   .video-card-heading small,.video-task-list-heading small,.video-input-heading small{font-size:10px}
   .video-prompt-field{margin-top:12px;gap:5px}
   .video-field{gap:5px}
-  .video-field>span,.video-option-segment>span,.video-input-heading span{font-size:10px}
+  .video-field>span,.video-prompt-heading>span,.video-option-segment>span,.video-input-heading span{font-size:10px}
   .video-field textarea{height:84px;min-height:78px;padding:9px 11px;line-height:1.5}
   .video-field small{font-size:9px;margin-top:-3px}
   .video-fields-two{gap:10px;margin-top:9px}

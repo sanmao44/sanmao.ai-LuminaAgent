@@ -68,10 +68,17 @@ export function sortCanvasNodesByLayer(nodes: CanvasNode[]) {
 export function normalizeCanvasNodeLayers(nodes: CanvasNode[]) {
   const ordered = sortCanvasNodesByLayer(nodes);
   const rankById = new Map(ordered.map((node, index) => [node.id, index]));
-  return nodes.map((node, index) => ({
-    ...node,
-    zIndex: CANVAS_NODE_BASE_Z_INDEX + (rankById.get(node.id) ?? index),
-  }));
+  let changed = false;
+  const normalized = nodes.map((node, index) => {
+    const zIndex = CANVAS_NODE_BASE_Z_INDEX + (rankById.get(node.id) ?? index);
+    if (node.zIndex === zIndex) return node;
+    changed = true;
+    return { ...node, zIndex };
+  });
+  // Camera-only updates are frequent while zooming/panning. Preserve the
+  // array and node identities when the layer values are already normalized so
+  // memoized node cards do not repaint the entire canvas for every frame.
+  return changed ? normalized : nodes;
 }
 
 /** Assigns newly inserted nodes above every existing node. */
@@ -102,9 +109,10 @@ export function normalizeCanvasDocumentLayers(
   const previousIds = new Set(previous.nodes.map((node) => node.id));
   const inserted = next.nodes.filter((node) => !previousIds.has(node.id));
   if (!inserted.length) {
+    const nodes = normalizeCanvasNodeLayers(next.nodes);
     return {
       ...next,
-      nodes: normalizeCanvasNodeLayers(next.nodes),
+      nodes,
     };
   }
   const insertedIds = new Set(inserted.map((node) => node.id));

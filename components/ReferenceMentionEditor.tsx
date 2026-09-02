@@ -8,6 +8,7 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -73,6 +74,10 @@ function caretOffset(root: HTMLElement, container: Node, offset: number) {
         });
       }
       found = true;
+      return;
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      total += node.textContent?.length || 0;
       return;
     }
     if (node instanceof HTMLElement) {
@@ -145,6 +150,24 @@ function setCaretOffset(root: HTMLElement, target: number) {
   }
 }
 
+function isMentionTriggerAtCaret(root: HTMLElement, container: Node, offset: number) {
+  if (!root.contains(container)) return false;
+  if (container instanceof HTMLElement && container.dataset.mentionIndex !== undefined) return false;
+
+  if (container.nodeType === Node.TEXT_NODE) {
+    const text = container.textContent || "";
+    return /@([^\s@]*)$/.test(text.slice(0, Math.max(0, Math.min(offset, text.length))));
+  }
+
+  if (container instanceof HTMLElement) {
+    const children = Array.from(container.childNodes);
+    const previous = children[Math.max(0, Math.min(offset, children.length)) - 1];
+    if (previous instanceof HTMLElement && previous.dataset.mentionIndex !== undefined) return false;
+    if (previous?.nodeType === Node.TEXT_NODE) return /@([^\s@]*)$/.test(previous.textContent || "");
+  }
+  return false;
+}
+
 function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -176,7 +199,7 @@ function renderMentionHtml(value: string, references: readonly ReferenceMentionO
     const reference = references[index];
     if (!reference) continue;
     if (match.index > cursor) html += escapeHtml(value.slice(cursor, match.index));
-    html += `<span class="reference-inline-mention" contenteditable="false" data-mention-index="${index}" title="${escapeHtml(`${reference.name} · @${index + 1}`)}"><span class="reference-inline-mention-thumb">${mentionThumbnailHtml(reference)}</span><span class="reference-inline-mention-label"><b>@${index + 1}</b><small>${escapeHtml(reference.name || `图片${index + 1}`)}</small></span></span>`;
+    html += `<span class="reference-inline-mention" contenteditable="false" data-mention-index="${index}" title="${escapeHtml(`引用 @${index + 1}`)}"><span class="reference-inline-mention-thumb">${mentionThumbnailHtml(reference)}</span><span class="reference-inline-mention-label"><b>@${index + 1}</b></span></span>`;
     cursor = match.index + match[0].length;
   }
   if (cursor < value.length) html += escapeHtml(value.slice(cursor));
@@ -201,8 +224,6 @@ type ReferenceMentionEditorProps = {
   className?: string;
   menuClassName?: string;
   menuTitle?: ReactNode;
-  getLabel?: (reference: ReferenceMentionOption, index: number) => ReactNode;
-  getDescription?: (reference: ReferenceMentionOption, index: number) => ReactNode;
   transformPastedText?: (value: string) => string;
   readOnly?: boolean;
 };
@@ -225,8 +246,6 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
   className = "",
   menuClassName = "",
   menuTitle,
-  getLabel,
-  getDescription,
   transformPastedText,
   readOnly = false,
 }, forwardedRef) {
@@ -237,6 +256,9 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
   const hasRenderedRef = useRef(false);
   const renderedValueRef = useRef("");
   const renderedReferencesKeyRef = useRef("");
+  const latestValueRef = useRef(value);
+  const latestCursorRef = useRef(value.length);
+  const mentionUpdateFrameRef = useRef<number | null>(null);
   const [mentionState, setMentionState] = useState<ReferenceMentionRange | null>(null);
 
   useImperativeHandle(forwardedRef, () => editorRef.current as HTMLDivElement);
@@ -269,6 +291,9 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     if (shouldRender) {
       editor.innerHTML = renderMentionHtml(value, references);
       hasRenderedRef.current = true;
+      latestValueRef.current = value;
+    } else {
+      latestValueRef.current = serializeEditor(editor);
     }
     // The native DOM is already the source of truth after a typing/paste
     // event, so advance the bookkeeping even when a rebuild was skipped.
@@ -283,6 +308,26 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     if (document.activeElement === editor) setCaretOffset(editor, cursor);
   }, [references, referencesKey, value]);
 
+  useEffect(() => () => {
+    if (mentionUpdateFrameRef.current !== null) {
+      window.cancelAnimationFrame(mentionUpdateFrameRef.current);
+    }
+  }, []);
+
+  const readEditorState = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode)) {
+      return { value: latestValueRef.current, cursor: latestCursorRef.current };
+    }
+    const serialized = serializeEditor(editor);
+    const range = selection.getRangeAt(0);
+    const cursor = caretOffset(editor, range.startContainer, range.startOffset);
+    latestValueRef.current = serialized;
+    latestCursorRef.current = cursor;
+    return { value: serialized, cursor };
+  };
+
   const updateMentionState = () => {
     const editor = editorRef.current;
     const selection = window.getSelection();
@@ -293,7 +338,23 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     const range = selection.getRangeAt(0);
     const serialized = serializeEditor(editor);
     const cursor = caretOffset(editor, range.startContainer, range.startOffset);
-    setMentionState(references.length ? referenceMentionRange(serialized, cursor) : null);
+    latestValueRef.current = serialized;
+    latestCursorRef.current = cursor;
+    setMentionState(
+      !readOnly && references.length && isMentionTriggerAtCaret(editor, range.startContainer, range.startOffset)
+        ? referenceMentionRange(serialized, cursor)
+        : null,
+    );
+  };
+
+  const scheduleMentionStateUpdate = () => {
+    if (mentionUpdateFrameRef.current !== null) {
+      window.cancelAnimationFrame(mentionUpdateFrameRef.current);
+    }
+    mentionUpdateFrameRef.current = window.requestAnimationFrame(() => {
+      mentionUpdateFrameRef.current = null;
+      updateMentionState();
+    });
   };
 
   const handleInput = () => {
@@ -305,15 +366,26 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     const cursor = selection?.rangeCount && anchorNode && editor.contains(anchorNode)
       ? caretOffset(editor, anchorNode, selection.anchorOffset)
       : serialized.length;
+    latestValueRef.current = serialized;
+    latestCursorRef.current = cursor;
     skipRenderRef.current = true;
     onChange(serialized, cursor);
-    setMentionState(references.length ? referenceMentionRange(serialized, cursor) : null);
+    setMentionState(
+      !readOnly && references.length && selection?.rangeCount && anchorNode
+        ? isMentionTriggerAtCaret(editor, anchorNode, selection.anchorOffset)
+          ? referenceMentionRange(serialized, cursor)
+          : null
+        : null,
+    );
   };
 
   const handleMentionSelect = (index: number) => {
-    const activeMention = mentionState;
+    const current = readEditorState();
+    const activeMention = referenceMentionRange(current.value, current.cursor) || mentionState;
     if (!activeMention) return;
-    const inserted = insertReferenceMention(value, activeMention.end, index);
+    const inserted = insertReferenceMention(current.value, activeMention.end, index);
+    latestValueRef.current = inserted.value;
+    latestCursorRef.current = inserted.cursor;
     forceRenderRef.current = true;
     pendingCursor.current = inserted.cursor;
     setMentionState(null);
@@ -337,10 +409,20 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     const to = Math.max(start, end);
     const normalizedText = transformPastedText?.(pastedText.replace(/\r\n?/g, "\n")) ?? pastedText.replace(/\r\n?/g, "\n");
     const next = `${serialized.slice(0, from)}${normalizedText}${serialized.slice(to)}`;
+    latestValueRef.current = next;
+    latestCursorRef.current = from + normalizedText.length;
     forceRenderRef.current = true;
     pendingCursor.current = from + normalizedText.length;
     onChange(next, pendingCursor.current);
-    setMentionState(references.length ? referenceMentionRange(next, pendingCursor.current) : null);
+    const pastedMention = referenceMentionRange(next, pendingCursor.current);
+    const mentionContinuesFromCaret = isMentionTriggerAtCaret(editor, range.startContainer, range.startOffset);
+    setMentionState(
+      !readOnly && references.length && pastedMention && (
+        mentionContinuesFromCaret || (pastedMention.start >= from && normalizedText.includes("@"))
+      )
+        ? pastedMention
+        : null,
+    );
   };
 
   return (
@@ -358,7 +440,13 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
         onInput={handleInput}
         onPointerDown={onPointerDown}
         onFocus={(event) => { updateMentionState(); onFocus?.(event); }}
-        onBlur={onBlur}
+        onBlur={(event) => {
+          const next = event.relatedTarget;
+          if (!(next instanceof Element && next.closest(".reference-mention-menu"))) {
+            setMentionState(null);
+          }
+          onBlur?.(event);
+        }}
         onClick={(event) => { updateMentionState(); onClick?.(event); }}
         onKeyUp={(event) => { updateMentionState(); onKeyUp?.(event); }}
         onKeyDown={(event) => {
@@ -366,19 +454,18 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
             event.preventDefault();
             setMentionState(null);
           }
+          if (event.key === "@") scheduleMentionStateUpdate();
           onKeyDown?.(event);
         }}
         onPaste={handlePaste}
       />
       <ReferenceMentionMenu
         references={references}
-        open={Boolean(mentionState)}
+        open={Boolean(mentionState) && !readOnly && references.length > 0}
         query={mentionState?.query}
         onSelect={handleMentionSelect}
         className={menuClassName}
         title={menuTitle}
-        getLabel={getLabel}
-        getDescription={getDescription}
       />
     </div>
   );

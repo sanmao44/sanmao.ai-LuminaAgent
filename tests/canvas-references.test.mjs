@@ -109,6 +109,19 @@ test("selects reference mode before first-frame mode and infers typed edge roles
   assert.equal(references.inferCanvasInputRole(source, target, "reference", 0), "reference-image");
 });
 
+test("automatically selects video mode from connected image count with capability fallback", () => {
+  const full = { supportsFirstFrame: true, supportsFrames: true, supportsReference: true };
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(0, full), undefined);
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(1, full), "first-frame");
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(2, full), "frames");
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(3, full), "reference");
+
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(1, { supportsReference: true }), "reference");
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(2, { supportsReference: true }), "reference");
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(3, { supportsFirstFrame: true }), undefined);
+  assert.equal(references.preferredCanvasVideoInputModeForImageCount(2, ["video-first-frame", "video-reference"]), "frames");
+});
+
 test("uses a connected still image as an in-place video generation target", () => {
   const image = node("image", "media", "image");
   const video = node("video", "media", "video");

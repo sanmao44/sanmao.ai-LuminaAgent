@@ -2,6 +2,7 @@ import type { ClientReferenceImage, ReferenceImageRecord, WebSearchDecisionMeta,
 import type { AngleCameraState } from './angle-control';
 import { emitWorkspaceChange } from './workspace-events';
 import type { UpscaleOutputFormat } from './types';
+import type { LocalEditAnnotation } from './local-edit';
 
 export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas' | 'upscale';
 
@@ -32,6 +33,7 @@ export type GalleryItem = {
   compareReferenceUrl?: string;
   compareReferenceName?: string;
   angle?: AngleCameraState;
+  annotations?: LocalEditAnnotation[];
 };
 
 export type ChatFile = {

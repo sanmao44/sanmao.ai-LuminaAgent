@@ -3,17 +3,26 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 
-async function loadTypeScript(path) {
+async function compileTypeScript(path, transform = (source) => source) {
   const sourceUrl = new URL(path, import.meta.url);
-  const source = await readFile(sourceUrl, "utf8");
-  const compiled = ts.transpileModule(source, {
+  const source = transform(await readFile(sourceUrl, "utf8"));
+  return ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: sourceUrl.pathname,
   }).outputText;
+}
+
+async function loadTypeScript(path, transform) {
+  const compiled = await compileTypeScript(path, transform);
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 }
 
-const mask = await loadTypeScript("../lib/canvas/mask.ts");
+const localEditRuntime = (await compileTypeScript("../lib/local-edit.ts"))
+  .replace(/\bexport\s+/g, "");
+const mask = await loadTypeScript("../lib/canvas/mask.ts", (source) => source.replace(
+  /^import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
+  localEditRuntime,
+));
 
 function imageNode(id, extra = {}) {
   return {
@@ -124,4 +133,21 @@ test("canvasMaskStateFromParams keeps legacy request data compatible", () => {
     coverage: 0.25,
     taskId: "task-3",
   });
+});
+
+test("canvas mask state preserves normalized local-edit annotations", () => {
+  const result = mask.normalizeCanvasMaskState({
+    url: "/mask-annotated.png",
+    annotations: [{
+      id: "shoe",
+      kind: "point",
+      description: "修改鞋子",
+      geometry: { kind: "point", x: 0.5, y: 0.5, radius: 0.04 },
+      createdAt: 123,
+    }],
+  });
+
+  assert.equal(result.annotations?.length, 1);
+  assert.equal(result.annotations?.[0].geometry.kind, "point");
+  assert.equal(result.annotations?.[0].description, "修改鞋子");
 });

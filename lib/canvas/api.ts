@@ -397,12 +397,18 @@ export async function generateCanvasImage(input: {
   maskUrl?: string;
   references?: Array<{ url: string; name?: string }>;
 }) {
+  const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   const references = await Promise.all(
     (input.references || [])
       .slice(0, 16)
-      .map(async (item) => compressReferenceDataUrl(await asDataUrl(item.url))),
+      .map(async (item, index) => {
+        const dataUrl = await asDataUrl(item.url);
+        // The first reference is the source image for local editing. Keep it
+        // at the same dimensions as the mask; compressing only the source
+        // makes otherwise valid edit requests look like the mask was ignored.
+        return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
+      }),
   );
-  const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   return request<{
     images: Array<{ url: string; revisedPrompt?: string }>;
     model?: { id?: string; name?: string; provider?: string };

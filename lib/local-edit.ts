@@ -1,5 +1,211 @@
 export type LocalEditRasterMode = "edit" | "protect";
 
+export type LocalEditAnnotationKind =
+  | "brush"
+  | "rectangle"
+  | "ellipse"
+  | "lasso"
+  | "point"
+  | "smart";
+
+export type LocalEditPoint = { x: number; y: number };
+
+export type LocalEditAnnotationGeometry =
+  | { kind: "brush"; points: LocalEditPoint[]; radius: number }
+  | { kind: "rectangle" | "ellipse"; x: number; y: number; width: number; height: number }
+  | { kind: "lasso"; points: LocalEditPoint[] }
+  | { kind: "point"; x: number; y: number; radius: number }
+  /** A smart-selection mask can be supplied by an optional local provider. */
+  | { kind: "smart"; x: number; y: number; width: number; height: number; maskDataUrl?: string };
+
+/** Serializable, source-image-normalized region metadata shown in the editor. */
+export type LocalEditAnnotation = {
+  id: string;
+  kind: LocalEditAnnotationKind;
+  description: string;
+  geometry: LocalEditAnnotationGeometry;
+  createdAt: number;
+};
+
+function clampUnit(value: number) {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function normalizePoint(value: unknown): LocalEditPoint | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  return { x: clampUnit(Number(raw.x)), y: clampUnit(Number(raw.y)) };
+}
+
+/** Normalize persisted annotations defensively so old/partial backups remain usable. */
+export function normalizeLocalEditAnnotations(value: unknown, limit = 16): LocalEditAnnotation[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, Math.max(1, limit)).flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Record<string, unknown>;
+    const rawGeometry = raw.geometry;
+    if (!rawGeometry || typeof rawGeometry !== "object") return [];
+    const geometry = rawGeometry as Record<string, unknown>;
+    const kind = String(geometry.kind || raw.kind || "");
+    let normalized: LocalEditAnnotationGeometry | null = null;
+    if (kind === "point") {
+      normalized = {
+        kind: "point",
+        x: clampUnit(Number(geometry.x)),
+        y: clampUnit(Number(geometry.y)),
+        radius: Math.max(0.001, Math.min(1, Number(geometry.radius) || 0.03)),
+      };
+    } else if (kind === "brush") {
+      const points = Array.isArray(geometry.points)
+        ? geometry.points.map(normalizePoint).filter((point): point is LocalEditPoint => Boolean(point))
+        : [];
+      if (points.length) normalized = { kind: "brush", points, radius: Math.max(0.001, Math.min(1, Number(geometry.radius) || 0.03)) };
+    } else if (kind === "lasso") {
+      const points = Array.isArray(geometry.points)
+        ? geometry.points.map(normalizePoint).filter((point): point is LocalEditPoint => Boolean(point))
+        : [];
+      if (points.length >= 3) normalized = { kind: "lasso", points };
+    } else if (kind === "rectangle" || kind === "ellipse" || kind === "smart") {
+      const x = Math.min(0.999, clampUnit(Number(geometry.x)));
+      const y = Math.min(0.999, clampUnit(Number(geometry.y)));
+      const width = Math.min(1 - x, Math.max(0.001, Math.min(1, Number(geometry.width) || 0.001)));
+      const height = Math.min(1 - y, Math.max(0.001, Math.min(1, Number(geometry.height) || 0.001)));
+      normalized = {
+        kind,
+        x,
+        y,
+        width,
+        height,
+        ...(typeof geometry.maskDataUrl === "string" && geometry.maskDataUrl ? { maskDataUrl: geometry.maskDataUrl } : {}),
+      } as LocalEditAnnotationGeometry;
+    }
+    if (!normalized) return [];
+    return [{
+      id: typeof raw.id === "string" && raw.id ? raw.id : `annotation-${index + 1}`,
+      kind: normalized.kind,
+      description: typeof raw.description === "string" ? raw.description : "",
+      geometry: normalized,
+      createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : Date.now(),
+    }];
+  });
+}
+
+function sourcePoint(point: LocalEditPoint, width: number, height: number) {
+  return { x: clampUnit(point.x) * width, y: clampUnit(point.y) * height };
+}
+
+function sourceRadius(radius: number, width: number, height: number) {
+  return Math.max(1, Math.max(width, height) * Math.max(0.001, Math.min(1, radius)));
+}
+
+/** Rasterize one normalized annotation into the shared editable mask. */
+export function applyLocalEditAnnotationMask(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  annotation: LocalEditAnnotation,
+  mode: LocalEditRasterMode = "edit",
+  smartMaskPixels?: Uint8ClampedArray,
+) {
+  const geometry = annotation.geometry;
+  if (geometry.kind === "smart" && smartMaskPixels) {
+    const pixelCount = Math.min(pixels.length, smartMaskPixels.length);
+    for (let index = 3; index < pixelCount; index += 4) {
+      // Smart providers return the same mask convention as the service API:
+      // transparent pixels are selected for editing, opaque pixels are kept.
+      if (smartMaskPixels[index] < 128) {
+        pixels[index - 3] = 255;
+        pixels[index - 2] = 255;
+        pixels[index - 1] = 255;
+        pixels[index] = mode === "edit" ? 0 : 255;
+      }
+    }
+    return pixels;
+  }
+  if (geometry.kind === "point") {
+    const point = sourcePoint(geometry, width, height);
+    return applyBrushMask(pixels, width, height, point.x, point.y, sourceRadius(geometry.radius, width, height), mode);
+  }
+  if (geometry.kind === "brush") {
+    const points = geometry.points.map((item) => sourcePoint(item, width, height));
+    for (let index = 0; index < points.length; index += 1) {
+      applyBrushMask(pixels, width, height, points[index].x, points[index].y, sourceRadius(geometry.radius, width, height), mode);
+      if (index > 0) {
+        const previous = points[index - 1];
+        const current = points[index];
+        const distance = Math.hypot(current.x - previous.x, current.y - previous.y);
+        const steps = Math.max(1, Math.ceil(distance / Math.max(1, sourceRadius(geometry.radius, width, height) * 0.55)));
+        for (let step = 1; step < steps; step += 1) {
+          const ratio = step / steps;
+          applyBrushMask(pixels, width, height, previous.x + (current.x - previous.x) * ratio, previous.y + (current.y - previous.y) * ratio, sourceRadius(geometry.radius, width, height), mode);
+        }
+      }
+    }
+    return pixels;
+  }
+  if (geometry.kind === "lasso") {
+    const points = geometry.points.map((item) => sourcePoint(item, width, height));
+    if (points.length < 3) return pixels;
+    const minX = Math.max(0, Math.floor(Math.min(...points.map((item) => item.x))));
+    const maxX = Math.min(width - 1, Math.ceil(Math.max(...points.map((item) => item.x))));
+    const minY = Math.max(0, Math.floor(Math.min(...points.map((item) => item.y))));
+    const maxY = Math.min(height - 1, Math.ceil(Math.max(...points.map((item) => item.y))));
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        let inside = false;
+        for (let index = 0, previous = points.length - 1; index < points.length; previous = index++) {
+          const current = points[index];
+          const before = points[previous];
+          const intersects = ((current.y > y) !== (before.y > y)) && x < ((before.x - current.x) * (y - current.y)) / (before.y - current.y || 1) + current.x;
+          if (intersects) inside = !inside;
+        }
+        if (inside) writeAlpha(pixels, width, x, y, mode === "edit" ? 0 : 255);
+      }
+    }
+    return pixels;
+  }
+  const left = clampUnit(geometry.x) * width;
+  const top = clampUnit(geometry.y) * height;
+  const right = Math.min(width, left + Math.max(1, geometry.width * width));
+  const bottom = Math.min(height, top + Math.max(1, geometry.height * height));
+  if (geometry.kind === "ellipse") return applyEllipseMask(pixels, width, height, left, top, right, bottom, mode);
+  return applyRectangleMask(pixels, width, height, left, top, right, bottom, mode);
+}
+
+/** Rasterize and merge a collection of normalized annotations into one mask. */
+export function rasterizeLocalEditAnnotations(
+  width: number,
+  height: number,
+  annotations: LocalEditAnnotation[] = [],
+  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+) {
+  const pixels = createProtectedMask(width, height);
+  normalizeLocalEditAnnotations(annotations).forEach((annotation) => {
+    applyLocalEditAnnotationMask(
+      pixels,
+      width,
+      height,
+      annotation,
+      "edit",
+      smartMasks?.get(annotation.id),
+    );
+  });
+  return pixels;
+}
+
+/** Compile the region descriptions into a provider-compatible prompt. */
+export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnnotation[] = []) {
+  const base = String(prompt || "").trim().replace(/\n\n局部区域说明：[\s\S]*$/u, "").trim();
+  const descriptions = normalizeLocalEditAnnotations(annotations)
+    .map((annotation, index) => ({ index: index + 1, text: annotation.description.trim() }))
+    .filter((item) => item.text);
+  if (!descriptions.length) return base;
+  const context = descriptions.map((item) => `区域 ${item.index}：${item.text}`).join("\n");
+  return base
+    ? `${base}\n\n局部区域说明：\n${context}`
+    : `请根据以下局部区域说明进行局部重绘：\n${context}`;
+}
+
 /** Count pixels whose alpha means "regenerate this area" in a mask PNG. */
 export function calculateEditableCoverage(pixels: Uint8ClampedArray): number {
   if (!pixels.length) return 0;
@@ -8,6 +214,130 @@ export function calculateEditableCoverage(pixels: Uint8ClampedArray): number {
     if (pixels[index] < 128) editable += 1;
   }
   return editable / (pixels.length / 4);
+}
+
+/**
+ * Move the selected pixels to a new location while keeping the source image
+ * immutable. The selection follows the mask contract: alpha 0 is selected
+ * and alpha 255 is protected. The caller can therefore use the returned
+ * pixels for both the live editor preview and the submitted edit reference.
+ */
+export function moveLocalEditPixels(
+  source: Uint8ClampedArray,
+  selectionMask: Uint8ClampedArray,
+  width: number,
+  height: number,
+  dx: number,
+  dy: number,
+) {
+  const pixelCount = Math.max(0, Math.min(source.length, selectionMask.length) - (Math.min(source.length, selectionMask.length) % 4));
+  if (width < 1 || height < 1 || source.length !== width * height * 4 || selectionMask.length !== source.length) {
+    throw new Error("Local-edit move buffers must match the canvas dimensions");
+  }
+  const output = new Uint8ClampedArray(source);
+  const offsetX = Math.round(dx);
+  const offsetY = Math.round(dy);
+  const original = new Uint8ClampedArray(source);
+
+  // Clear the selected source pixels first. Reading from `original` below
+  // makes overlapping moves deterministic and prevents dragging from leaving
+  // trails when the pointer moves repeatedly.
+  for (let index = 3; index < pixelCount; index += 4) {
+    const weight = 1 - selectionMask[index] / 255;
+    if (weight <= 0) continue;
+    const sourceIndex = index - 3;
+    const keep = 1 - weight;
+    output[sourceIndex] = Math.round(original[sourceIndex] * keep);
+    output[sourceIndex + 1] = Math.round(original[sourceIndex + 1] * keep);
+    output[sourceIndex + 2] = Math.round(original[sourceIndex + 2] * keep);
+    output[sourceIndex + 3] = Math.round(original[sourceIndex + 3] * keep);
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceIndex = (y * width + x) * 4;
+      const weight = 1 - selectionMask[sourceIndex + 3] / 255;
+      if (weight <= 0) continue;
+      const targetX = x + offsetX;
+      const targetY = y + offsetY;
+      if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height) continue;
+      const targetIndex = (targetY * width + targetX) * 4;
+      if (weight >= 0.999) {
+        output[targetIndex] = original[sourceIndex];
+        output[targetIndex + 1] = original[sourceIndex + 1];
+        output[targetIndex + 2] = original[sourceIndex + 2];
+        output[targetIndex + 3] = original[sourceIndex + 3];
+        continue;
+      }
+      const keep = 1 - weight;
+      for (let channel = 0; channel < 4; channel += 1) {
+        output[targetIndex + channel] = Math.round(
+          output[targetIndex + channel] * keep + original[sourceIndex + channel] * weight,
+        );
+      }
+    }
+  }
+  return output;
+}
+
+/**
+ * Soften the protected/editable boundary of a local-edit mask.
+ *
+ * The mask contract stores editable pixels as transparent and protected
+ * pixels as opaque.  Keeping this operation in pixel space avoids relying on
+ * CanvasRenderingContext2D.filter, which is unavailable or inconsistent in
+ * some embedded browsers.  A clamped box blur gives a predictable, fast
+ * linear feather while preserving the white RGB mask channels.
+ */
+export function featherLocalEditMask(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  if (width <= 0 || height <= 0 || !pixels.length || radius <= 0) {
+    return new Uint8ClampedArray(pixels);
+  }
+  const safeRadius = Math.max(1, Math.round(radius));
+  const pixelCount = width * height;
+  const alpha = new Float32Array(pixelCount);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    alpha[pixel] = pixels[pixel * 4 + 3] ?? 255;
+  }
+
+  const horizontal = new Float32Array(pixelCount);
+  const prefix = new Float64Array(Math.max(width, height) + 1);
+  for (let y = 0; y < height; y += 1) {
+    prefix[0] = 0;
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      prefix[x + 1] = prefix[x] + alpha[row + x];
+    }
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - safeRadius);
+      const right = Math.min(width - 1, x + safeRadius);
+      horizontal[row + x] = (prefix[right + 1] - prefix[left]) / (right - left + 1);
+    }
+  }
+
+  const output = new Uint8ClampedArray(pixels.length);
+  for (let x = 0; x < width; x += 1) {
+    prefix[0] = 0;
+    for (let y = 0; y < height; y += 1) {
+      prefix[y + 1] = prefix[y] + horizontal[y * width + x];
+    }
+    for (let y = 0; y < height; y += 1) {
+      const top = Math.max(0, y - safeRadius);
+      const bottom = Math.min(height - 1, y + safeRadius);
+      const pixel = y * width + x;
+      const index = pixel * 4;
+      output[index] = 255;
+      output[index + 1] = 255;
+      output[index + 2] = 255;
+      output[index + 3] = Math.round((prefix[bottom + 1] - prefix[top]) / (bottom - top + 1));
+    }
+  }
+  return output;
 }
 
 function writeAlpha(

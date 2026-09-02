@@ -255,6 +255,28 @@ test('canvas image generation compresses reference images before submitting', as
   }
 });
 
+test('canvas local editing keeps the source reference aligned with its mask', async () => {
+  const mocks = withImageCanvas({ width: 3200, height: 1800 });
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      return jsonResponse({ images: [{ url: '/generated.png' }] });
+    }, () => api.generateCanvasImage({
+      prompt: 'local edit',
+      maskUrl: 'data:image/png;base64,MASK',
+      references: [{ url: 'data:image/png;base64,SOURCE' }],
+    }));
+
+    const payload = JSON.parse(request.options.body);
+    assert.deepEqual(payload.references, ['data:image/png;base64,SOURCE']);
+    assert.equal(payload.mask, 'data:image/png;base64,MASK');
+    assert.deepEqual(mocks.encodedTypes, []);
+  } finally {
+    mocks.restore();
+  }
+});
+
 test('canvas video generation sends explicit reference mode inputs', async () => {
   const mocks = withImageCanvas();
   try {

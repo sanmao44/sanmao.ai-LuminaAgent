@@ -9,5 +9,8 @@ export async function GET(request: Request) {
   // Clear progress left by an updater after the app has already reached the
   // recorded version (including a restart that stopped at 98%).
   const progress = await getLatestUpdateProgress(jobId, currentVersion);
-  return Response.json({ progress }, { headers: { 'Cache-Control': 'no-store' } });
+  // The progress record is intentionally cleared once the new server is up.
+  // Keep the server version in the response so an older page can still tell
+  // that the update succeeded and ask the user to refresh.
+  return Response.json({ progress, currentVersion }, { headers: { 'Cache-Control': 'no-store' } });
 }

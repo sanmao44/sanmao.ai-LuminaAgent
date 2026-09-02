@@ -1,4 +1,5 @@
 import type { CanvasDocument, CanvasMaskState, CanvasMaskStatus } from './types';
+import { normalizeLocalEditAnnotations } from '../local-edit';
 
 const MASK_STATUSES: CanvasMaskStatus[] = ['pending', 'running', 'used', 'failed'];
 
@@ -24,13 +25,21 @@ export function normalizeCanvasMaskState(value: unknown, fallback?: unknown): Ca
     ? raw.status as CanvasMaskStatus
     : 'pending';
   const coverage = finiteNumber(raw.coverage ?? fallbackRaw.coverage);
+  const annotations = normalizeLocalEditAnnotations(raw.annotations ?? fallbackRaw.annotations);
   return {
     url,
     ...(typeof (raw.assetId ?? fallbackRaw.assetId) === 'string'
       ? { assetId: String(raw.assetId ?? fallbackRaw.assetId) }
       : {}),
+    ...(typeof (raw.sourceAssetId ?? fallbackRaw.sourceAssetId) === 'string'
+      ? { sourceAssetId: String(raw.sourceAssetId ?? fallbackRaw.sourceAssetId) }
+      : {}),
+    ...(typeof (raw.sourceUrl ?? fallbackRaw.sourceUrl) === 'string'
+      ? { sourceUrl: String(raw.sourceUrl ?? fallbackRaw.sourceUrl) }
+      : {}),
     status,
     ...(coverage !== undefined ? { coverage: Math.max(0, Math.min(1, coverage)) } : {}),
+    ...(annotations.length ? { annotations } : {}),
     ...(typeof raw.taskId === 'string' ? { taskId: raw.taskId } : {}),
     ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
     ...(finiteNumber(raw.createdAt) !== undefined ? { createdAt: finiteNumber(raw.createdAt) } : {}),

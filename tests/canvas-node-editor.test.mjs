@@ -68,6 +68,12 @@ test("editor generation forwards its draft without waiting for selection state",
   assert.doesNotMatch(generation, /if \(mode === "text"\)/);
 });
 
+test("open editor drafts follow externally synchronized video input modes", () => {
+  assert.match(component, /function syncCanvasEditorDraftInputModes\(/);
+  assert.match(component, /params: \{ \.\.\.draft\.params, inputMode: params\.inputMode \}/);
+  assert.match(component, /setEditorDrafts\(\(current\) => syncCanvasEditorDraftInputModes\(current, normalized, runtime\)\)/);
+});
+
 test("upscale runs in place and keeps a visible processing state on the node", () => {
   const start = component.indexOf("const runUpscaleNode = useCallback");
   const end = component.indexOf("runUpscaleNodeRef.current = runUpscaleNode", start);
@@ -136,6 +142,14 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
   assert.match(styles, /\.canvas-image-resolution\{[^}]*right:10px[^}]*bottom:10px/);
   assert.match(styles, /font-variant-numeric:tabular-nums/);
   assert.match(styles, /@media\(max-width:720px\)\{\.canvas-image-resolution/);
+});
+
+test("upscale result frames use the loaded image dimensions for auto-fit", () => {
+  assert.match(component, /upscaleCardSizeForRatio/);
+  assert.match(component, /node\.type !== "media" && node\.type !== "upscale"/);
+  assert.match(component, /className="canvas-upscale-card-result"[\s\S]*?onLoad=\{\(event\) =>\s*onNaturalSize\(/);
+  assert.match(component, /item\.data\.autoFit !== false \? upscaleCardSizeForRatio\(/);
+  assert.match(component, /autoFit: item\.data\.autoFit !== false/);
 });
 
 test("prompt editor measures content and caps scrolling in both display modes", () => {
@@ -265,7 +279,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt\) => applyCanvasMask\(value, coverage, prompt\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, sourceImageDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, sourceImageDataUrl\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /status: "pending"/);
   assert.match(component, /coverage: maskCoverage/);
@@ -276,7 +290,7 @@ test("local edit editor reports saving state and passes coverage into the attach
 test("local edit summary only occupies editor space when a mask exists", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   const summaryStart = component.indexOf("function CanvasMaskSummary");
-  assert.ok(editorStart >= 0 && summaryStart > editorStart, "local edit editor components should be present");
+  assert.ok(editorStart >= 0 && summaryStart > editorStart, "mask editor components should be present");
   const editor = component.slice(editorStart, summaryStart);
   assert.match(editor, /onLocalEdit && maskState && \(/);
   assert.doesNotMatch(editor, /尚未设置，绘制后只重新生成指定区域/);
@@ -322,6 +336,20 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
   assert.match(styles, /\.canvas-selection-layout-group\.alignment/);
   assert.match(styles, /\.canvas-selection-layout-group\.distribution/);
   assert.match(styles, /\.canvas-selection-layout-tooltip::after/);
+});
+
+test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {
+  assert.match(component, /function CanvasGroupSelectionToolbar\(/);
+  assert.match(component, /data-canvas-group-id=\{group\.id\}/);
+  assert.match(component, /placeCanvasGroupToolbar\(bounds, stageSize, overlay, 10\)/);
+  assert.match(component, /arrangeCanvasGroup\(docRef\.current, activeGroup\.id\)/);
+  assert.match(component, /selectedGroupId \? "⌗ 整理组内" : "⌗ 整理选中"/);
+  assert.match(
+    component,
+    /selectedNodes\.length >= 2 && \(\s*selectedGroupId && selectedGroup \?\s*\(\s*<CanvasGroupSelectionToolbar[\s\S]*?<\/CanvasGroupSelectionToolbar>\s*\)\s*:\s*\(\s*<div\s+className="canvas-selection-toolbar"/,
+  );
+  assert.match(component, /selectedNodes\.length >= 2 && !selectedGroupId/);
+  assert.match(styles, /\.canvas-group-selection-toolbar\{[^}]*transform:none/);
 });
 
 test("canvas image parameters collapse into a compact one-line collection", () => {
