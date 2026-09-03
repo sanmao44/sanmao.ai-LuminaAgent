@@ -1,20 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.21",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.21",
+  "latestVersion": "0.7.23",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.23",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.21/SANMAO.AI-0.7.21.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip"
   ],
-  "sha256": "377e0fb5efebd1a533b3b172110554ce1f576edcf86b9bc488401adbddbdb6eb",
-  "publishedAt": "2026-09-02T00:00:00+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-09-03T00:00:00+08:00",
   "notes": [
-    "Arrange only the cards inside a selected object group while preserving the group and external graph.",
-    "Place the selected-group toolbar on the group card and keep ordinary multi-select behavior unchanged.",
-    "Size video previews from the requested and intrinsic aspect ratios, with in-node play, pause, and replay controls.",
-    "Unify canvas running-state feedback, interaction animation, and reference handling across image, video, and text workflows."
+    "Replace the image-node super-resolution shortcut with an in-node image editing workbench for super resolution, outpainting, resizing, cropping, grid splitting, and mirror/rotation.",
+    "Keep super resolution on the existing dedicated settings panel while enabling local preview, drag handles, presets, and save-to-new-node or overwrite workflows for the other operations.",
+    "Render local image transformations to PNG, upload only after processing succeeds, preserve lineage and undo behavior, and automatically group grid-split results."
   ]
 }

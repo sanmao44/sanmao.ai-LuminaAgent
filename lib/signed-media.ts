@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
 import { resolveStoredVideoFile } from './video-storage';
+import { getDefaultAudioStoragePath, resolveStoredAudioFile } from './audio-storage';
 
 export const AGNES_PUBLIC_MEDIA_URL_REQUIRED = 'AGNES_PUBLIC_MEDIA_URL_REQUIRED';
 export const AGNES_PUBLIC_MEDIA_URL_INVALID = 'AGNES_PUBLIC_MEDIA_URL_INVALID';
@@ -56,12 +57,14 @@ async function configuredStorageRoot(kind: 'image' | 'video' | 'audio') {
     ? process.env.SANMAO_IMAGE_STORAGE_PATH
     : kind === 'video'
       ? process.env.SANMAO_VIDEO_STORAGE_PATH
-      : '';
+      : process.env.SANMAO_AUDIO_STORAGE_PATH;
   if (environmentRoot?.trim()) return environmentRoot.trim();
-  if (kind === 'audio') return '';
+  if (kind === 'audio') return getDefaultAudioStoragePath();
   try {
     const state = JSON.parse(await readFile(path.join(dataDir(), 'state.json'), 'utf8')) as { settings?: Record<string, unknown> };
-    const configured = state.settings?.[kind === 'image' ? 'imageStoragePath' : 'videoStoragePath'];
+    const configured = state.settings?.[
+      kind === 'image' ? 'imageStoragePath' : kind === 'video' ? 'videoStoragePath' : 'audioStoragePath'
+    ];
     return typeof configured === 'string' ? configured.trim() : '';
   } catch { return ''; }
 }
@@ -233,6 +236,9 @@ async function localReferencePath(value: string, kind: 'image' | 'video' | 'audi
     const root = path.resolve((await configuredStorageRoot(kind)) || path.join(dataDir(), 'videos'));
     return resolveStoredVideoFile(root, name);
   }
+  if (parsed.pathname === '/api/storage/audio' && kind === 'audio') {
+    return resolveStoredAudioFile((await configuredStorageRoot(kind)) || getDefaultAudioStoragePath(), name);
+  }
   return null;
 }
 
@@ -344,7 +350,6 @@ async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image
         } catch {}
       }
       break;
-
     }
   }
   throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);

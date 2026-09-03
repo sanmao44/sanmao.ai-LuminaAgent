@@ -13,7 +13,7 @@ export type AssetSource = 'history' | 'video-task' | 'canvas-upload' | 'canvas-o
 
 export type AssetRecord = {
   id: string;
-  kind: 'image' | 'video';
+  kind: 'image' | 'video' | 'audio';
   url: string;
   name: string;
   source: AssetSource;
@@ -85,7 +85,7 @@ function indexAsset(item: AssetIndexItem): AssetRecord | null {
     indexId: item.id,
     kind: item.kind,
     url: item.url,
-    name: item.name || (item.kind === 'video' ? '视频素材' : '图片素材'),
+    name: item.name || (item.kind === 'video' ? '视频素材' : item.kind === 'audio' ? '音频素材' : '图片素材'),
     source: item.source,
     createdAt: item.createdAt,
     favorite: Boolean(item.favorite),

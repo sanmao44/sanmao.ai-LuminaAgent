@@ -3,15 +3,31 @@ import type { PublicState, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale';
-export type CanvasMediaKind = 'image' | 'video';
+export type CanvasMediaKind = 'image' | 'video' | 'audio';
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type CanvasMaskStatus = 'pending' | 'running' | 'used' | 'failed';
+/** Local, non-generative image operations available from an image node. */
+export type CanvasImageOperation = 'outpaint' | 'resize' | 'crop' | 'grid' | 'grid-compose' | 'transform';
+
+export type CanvasImageOperationMeta = {
+  operation: CanvasImageOperation;
+  sourceNodeId?: string;
+  sourceNodeIds?: string[];
+  inputWidth: number;
+  inputHeight: number;
+  outputWidth: number;
+  outputHeight: number;
+  prompt?: string;
+  params?: Record<string, string | number | boolean | number[]>;
+  createdAt?: number;
+};
 export type CanvasInputRole =
   | 'prompt'
   | 'context'
   | 'reference-image'
+  | 'audio'
   | 'mask'
   | 'video'
   | 'first-frame'
@@ -127,6 +143,8 @@ export type CanvasNodeData = {
   videoInputModeAuto?: boolean;
   assetId?: string;
   sourceAssetId?: string;
+  /** MIME type of an imported media asset, kept for reliable audio handling. */
+  mimeType?: string;
   autoFit?: boolean;
   nativeWidth?: number;
   nativeHeight?: number;
@@ -152,6 +170,8 @@ export type CanvasNodeData = {
   /** True when this result was created from a request that included a mask. */
   maskApplied?: boolean;
   maskSourceNodeId?: string;
+  /** Metadata for a locally rendered image transform. */
+  imageOperation?: CanvasImageOperationMeta;
   [key: string]: unknown;
 };
 

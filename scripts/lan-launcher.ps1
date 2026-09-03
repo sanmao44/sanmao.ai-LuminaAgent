@@ -4,6 +4,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $passwordPath = Join-Path $root '.data\lan-password'
 $startScript = Join-Path $PSScriptRoot 'start.ps1'
 $launcherLogPath = Join-Path $root '.data\logs\launcher.log'
+$startStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
+$startStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 $script:FormsReady = $false
 $script:StartingForm = $null
 $script:StartingStatus = $null
@@ -72,12 +74,109 @@ function Use-SanmaoWindowsPowerShellModules {
   if ($modulePaths.Count -gt 0) { $env:PSModulePath = $modulePaths -join ';' }
 }
 
+# Windows PowerShell 5.1 does not auto-load these assemblies. They must be
+# loaded before the typed controls and color palette below are defined.
+Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+
 function Initialize-SanmaoLanForms {
   if ($script:FormsReady) { return }
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
   [System.Windows.Forms.Application]::EnableVisualStyles()
   $script:FormsReady = $true
+}
+
+$script:LanColors = @{
+  Window = [System.Drawing.Color]::FromArgb(246, 249, 252)
+  Header = [System.Drawing.Color]::FromArgb(11, 28, 50)
+  HeaderMuted = [System.Drawing.Color]::FromArgb(164, 190, 211)
+  Accent = [System.Drawing.Color]::FromArgb(14, 165, 183)
+  AccentHover = [System.Drawing.Color]::FromArgb(9, 133, 151)
+  Success = [System.Drawing.Color]::FromArgb(24, 166, 105)
+  SuccessHover = [System.Drawing.Color]::FromArgb(18, 135, 84)
+  Ink = [System.Drawing.Color]::FromArgb(19, 37, 61)
+  Muted = [System.Drawing.Color]::FromArgb(91, 111, 133)
+  Border = [System.Drawing.Color]::FromArgb(210, 221, 232)
+  Track = [System.Drawing.Color]::FromArgb(225, 235, 242)
+}
+
+function Set-SanmaoLanFormStyle([System.Windows.Forms.Form]$form, [int]$width, [int]$height) {
+  $form.StartPosition = 'CenterScreen'
+  $form.FormBorderStyle = 'FixedDialog'
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.ShowIcon = $false
+  $form.ShowInTaskbar = $true
+  $form.BackColor = $script:LanColors.Window
+  $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+  $form.ClientSize = New-Object System.Drawing.Size($width, $height)
+}
+
+function New-SanmaoLanHeader([int]$width, [string]$section, [string]$state, [System.Drawing.Color]$stateColor) {
+  $header = New-Object System.Windows.Forms.Panel
+  $header.Size = New-Object System.Drawing.Size($width, 76)
+  $header.Dock = 'Top'
+  $header.BackColor = $script:LanColors.Header
+
+  $accentLine = New-Object System.Windows.Forms.Panel
+  $accentLine.Dock = 'Bottom'
+  $accentLine.Height = 3
+  $accentLine.BackColor = $script:LanColors.Accent
+
+  $brand = New-Object System.Windows.Forms.Label
+  $brand.Text = 'SANMAO.AI'
+  $brand.ForeColor = [System.Drawing.Color]::White
+  $brand.Font = New-Object System.Drawing.Font('Segoe UI', 17, [System.Drawing.FontStyle]::Bold)
+  $brand.AutoSize = $true
+  $brand.Location = New-Object System.Drawing.Point(28, 12)
+
+  $subtitle = New-Object System.Windows.Forms.Label
+  $subtitle.Text = "LOCAL AI CREATIVE STUDIO  /  $section"
+  $subtitle.ForeColor = $script:LanColors.HeaderMuted
+  $subtitle.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
+  $subtitle.AutoSize = $true
+  $subtitle.Location = New-Object System.Drawing.Point(30, 48)
+
+  $badge = New-Object System.Windows.Forms.Label
+  $badge.Text = $state
+  $badge.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+  $badge.ForeColor = [System.Drawing.Color]::White
+  $badge.BackColor = $stateColor
+  $badge.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+  $badge.Size = New-Object System.Drawing.Size(88, 25)
+  $badge.Location = New-Object System.Drawing.Point(($width - 116), 25)
+
+  $header.Controls.AddRange(@($accentLine, $brand, $subtitle, $badge))
+  return $header
+}
+
+function Set-SanmaoLanButton([System.Windows.Forms.Button]$button, [bool]$primary) {
+  $button.FlatStyle = 'Flat'
+  $button.FlatAppearance.BorderSize = 0
+  $button.UseVisualStyleBackColor = $false
+  $button.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+  $button.Cursor = [System.Windows.Forms.Cursors]::Hand
+  if ($primary) {
+    $button.BackColor = $script:LanColors.Accent
+    $button.ForeColor = [System.Drawing.Color]::White
+    $button.FlatAppearance.MouseOverBackColor = $script:LanColors.AccentHover
+    $button.FlatAppearance.MouseDownBackColor = $script:LanColors.AccentHover
+  } else {
+    $button.BackColor = [System.Drawing.Color]::White
+    $button.ForeColor = $script:LanColors.Ink
+    $button.FlatAppearance.BorderSize = 1
+    $button.FlatAppearance.BorderColor = $script:LanColors.Border
+    $button.FlatAppearance.MouseOverBackColor = $script:LanColors.Track
+    $button.FlatAppearance.MouseDownBackColor = $script:LanColors.Border
+  }
+}
+
+function Set-SanmaoLanTextBox([System.Windows.Forms.TextBox]$box) {
+  $box.BackColor = [System.Drawing.Color]::White
+  $box.ForeColor = $script:LanColors.Ink
+  $box.BorderStyle = 'FixedSingle'
+  $box.Font = New-Object System.Drawing.Font('Segoe UI', 10)
 }
 
 function Test-SanmaoLanPasswordFile {
@@ -124,61 +223,75 @@ function Show-SanmaoLanPasswordDialog {
 
   $form = New-Object System.Windows.Forms.Form
   $form.Text = $ui.WindowTitle
-  $form.StartPosition = 'CenterScreen'
-  $form.FormBorderStyle = 'FixedDialog'
-  $form.MaximizeBox = $false
-  $form.MinimizeBox = $false
-  $form.ShowInTaskbar = $true
-  $form.ClientSize = New-Object System.Drawing.Size(500, 286)
+  Set-SanmaoLanFormStyle $form 560 360
+
+  $header = New-SanmaoLanHeader 560 'SECURE ACCESS' 'SETUP' $script:LanColors.Accent
+
+  $eyebrow = New-Object System.Windows.Forms.Label
+  $eyebrow.Text = 'PRIVATE NETWORK ACCESS'
+  $eyebrow.ForeColor = $script:LanColors.Accent
+  $eyebrow.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+  $eyebrow.AutoSize = $true
+  $eyebrow.Location = New-Object System.Drawing.Point(30, 96)
 
   $title = New-Object System.Windows.Forms.Label
   $title.Text = $ui.PasswordTitle
-  $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 14, [System.Drawing.FontStyle]::Bold)
+  $title.ForeColor = $script:LanColors.Ink
+  $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 15, [System.Drawing.FontStyle]::Bold)
   $title.AutoSize = $true
-  $title.Location = New-Object System.Drawing.Point(24, 20)
+  $title.Location = New-Object System.Drawing.Point(30, 113)
 
   $description = New-Object System.Windows.Forms.Label
   $description.Text = $ui.PasswordDescription
+  $description.ForeColor = $script:LanColors.Muted
   $description.AutoSize = $false
-  $description.Size = New-Object System.Drawing.Size(450, 52)
-  $description.Location = New-Object System.Drawing.Point(24, 56)
+  $description.Size = New-Object System.Drawing.Size(500, 48)
+  $description.Location = New-Object System.Drawing.Point(30, 145)
 
   $passwordLabel = New-Object System.Windows.Forms.Label
   $passwordLabel.Text = $ui.PasswordLabel
+  $passwordLabel.ForeColor = $script:LanColors.Ink
+  $passwordLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
   $passwordLabel.AutoSize = $true
-  $passwordLabel.Location = New-Object System.Drawing.Point(24, 126)
+  $passwordLabel.Location = New-Object System.Drawing.Point(30, 214)
 
   $passwordBox = New-Object System.Windows.Forms.TextBox
   $passwordBox.UseSystemPasswordChar = $true
-  $passwordBox.Size = New-Object System.Drawing.Size(324, 24)
-  $passwordBox.Location = New-Object System.Drawing.Point(130, 121)
+  $passwordBox.Size = New-Object System.Drawing.Size(390, 26)
+  $passwordBox.Location = New-Object System.Drawing.Point(140, 208)
+  Set-SanmaoLanTextBox $passwordBox
 
   $confirmLabel = New-Object System.Windows.Forms.Label
   $confirmLabel.Text = $ui.ConfirmLabel
+  $confirmLabel.ForeColor = $script:LanColors.Ink
+  $confirmLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
   $confirmLabel.AutoSize = $true
-  $confirmLabel.Location = New-Object System.Drawing.Point(24, 164)
+  $confirmLabel.Location = New-Object System.Drawing.Point(30, 253)
 
   $confirmBox = New-Object System.Windows.Forms.TextBox
   $confirmBox.UseSystemPasswordChar = $true
-  $confirmBox.Size = New-Object System.Drawing.Size(324, 24)
-  $confirmBox.Location = New-Object System.Drawing.Point(130, 159)
+  $confirmBox.Size = New-Object System.Drawing.Size(390, 26)
+  $confirmBox.Location = New-Object System.Drawing.Point(140, 247)
+  Set-SanmaoLanTextBox $confirmBox
 
   $startButton = New-Object System.Windows.Forms.Button
   $startButton.Text = $ui.StartButton
-  $startButton.Size = New-Object System.Drawing.Size(100, 30)
-  $startButton.Location = New-Object System.Drawing.Point(270, 216)
+  $startButton.Size = New-Object System.Drawing.Size(120, 34)
+  $startButton.Location = New-Object System.Drawing.Point(290, 304)
   $startButton.DialogResult = [System.Windows.Forms.DialogResult]::None
+  Set-SanmaoLanButton $startButton $true
 
   $cancelButton = New-Object System.Windows.Forms.Button
   $cancelButton.Text = $ui.CancelButton
-  $cancelButton.Size = New-Object System.Drawing.Size(100, 30)
-  $cancelButton.Location = New-Object System.Drawing.Point(380, 216)
+  $cancelButton.Size = New-Object System.Drawing.Size(100, 34)
+  $cancelButton.Location = New-Object System.Drawing.Point(420, 304)
   $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  Set-SanmaoLanButton $cancelButton $false
 
   $form.AcceptButton = $startButton
   $form.CancelButton = $cancelButton
   $form.Controls.AddRange(@(
-    $title, $description, $passwordLabel, $passwordBox,
+    $header, $eyebrow, $title, $description, $passwordLabel, $passwordBox,
     $confirmLabel, $confirmBox, $startButton, $cancelButton
   ))
 
@@ -288,58 +401,70 @@ function Show-SanmaoLanAccessDialog([int]$port) {
 
   $form = New-Object System.Windows.Forms.Form
   $form.Text = $ui.WindowTitle
-  $form.StartPosition = 'CenterScreen'
-  $form.FormBorderStyle = 'FixedDialog'
-  $form.MaximizeBox = $false
-  $form.MinimizeBox = $false
-  $form.ShowInTaskbar = $true
-  $form.ClientSize = New-Object System.Drawing.Size(560, 310)
+  Set-SanmaoLanFormStyle $form 600 380
+
+  $header = New-SanmaoLanHeader 600 'SECURE ACCESS' 'READY' $script:LanColors.Success
+
+  $eyebrow = New-Object System.Windows.Forms.Label
+  $eyebrow.Text = 'SHARE WITH YOUR LOCAL NETWORK'
+  $eyebrow.ForeColor = $script:LanColors.Success
+  $eyebrow.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+  $eyebrow.AutoSize = $true
+  $eyebrow.Location = New-Object System.Drawing.Point(30, 96)
 
   $title = New-Object System.Windows.Forms.Label
   $title.Text = $ui.ReadyTitle
-  $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 14, [System.Drawing.FontStyle]::Bold)
+  $title.ForeColor = $script:LanColors.Ink
+  $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 15, [System.Drawing.FontStyle]::Bold)
   $title.AutoSize = $true
-  $title.Location = New-Object System.Drawing.Point(24, 20)
+  $title.Location = New-Object System.Drawing.Point(30, 113)
 
   $description = New-Object System.Windows.Forms.Label
   $description.Text = $ui.ReadyDescription
+  $description.ForeColor = $script:LanColors.Muted
   $description.AutoSize = $false
-  $description.Size = New-Object System.Drawing.Size(510, 52)
-  $description.Location = New-Object System.Drawing.Point(24, 56)
+  $description.Size = New-Object System.Drawing.Size(540, 60)
+  $description.Location = New-Object System.Drawing.Point(30, 145)
 
   $addressLabel = New-Object System.Windows.Forms.Label
   $addressLabel.Text = $ui.AddressLabel
+  $addressLabel.ForeColor = $script:LanColors.Ink
+  $addressLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
   $addressLabel.AutoSize = $true
-  $addressLabel.Location = New-Object System.Drawing.Point(24, 120)
+  $addressLabel.Location = New-Object System.Drawing.Point(30, 216)
 
   $addressBox = New-Object System.Windows.Forms.TextBox
   $addressBox.Multiline = $true
   $addressBox.ReadOnly = $true
   $addressBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
   $addressBox.Text = $urlText
-  $addressBox.Size = New-Object System.Drawing.Size(510, 62)
-  $addressBox.Location = New-Object System.Drawing.Point(24, 142)
+  $addressBox.Size = New-Object System.Drawing.Size(540, 62)
+  $addressBox.Location = New-Object System.Drawing.Point(30, 239)
+  Set-SanmaoLanTextBox $addressBox
 
   $copyButton = New-Object System.Windows.Forms.Button
   $copyButton.Text = $ui.CopyButton
-  $copyButton.Size = New-Object System.Drawing.Size(100, 30)
-  $copyButton.Location = New-Object System.Drawing.Point(214, 230)
+  $copyButton.Size = New-Object System.Drawing.Size(110, 34)
+  $copyButton.Location = New-Object System.Drawing.Point(240, 326)
   $copyButton.Enabled = $urls.Count -gt 0
+  Set-SanmaoLanButton $copyButton $false
 
   $openButton = New-Object System.Windows.Forms.Button
   $openButton.Text = $ui.OpenButton
-  $openButton.Size = New-Object System.Drawing.Size(120, 30)
-  $openButton.Location = New-Object System.Drawing.Point(324, 230)
+  $openButton.Size = New-Object System.Drawing.Size(130, 34)
+  $openButton.Location = New-Object System.Drawing.Point(360, 326)
+  Set-SanmaoLanButton $openButton $true
 
   $closeButton = New-Object System.Windows.Forms.Button
   $closeButton.Text = $ui.CloseButton
-  $closeButton.Size = New-Object System.Drawing.Size(100, 30)
-  $closeButton.Location = New-Object System.Drawing.Point(454, 230)
+  $closeButton.Size = New-Object System.Drawing.Size(100, 34)
+  $closeButton.Location = New-Object System.Drawing.Point(500, 326)
   $closeButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  Set-SanmaoLanButton $closeButton $false
 
   $form.CancelButton = $closeButton
   $form.Controls.AddRange(@(
-    $title, $description, $addressLabel, $addressBox,
+    $header, $eyebrow, $title, $description, $addressLabel, $addressBox,
     $copyButton, $openButton, $closeButton
   ))
 
@@ -364,40 +489,69 @@ function Show-SanmaoLanStartingForm([string]$message) {
 
   $form = New-Object System.Windows.Forms.Form
   $form.Text = $ui.WindowTitle
-  $form.StartPosition = 'CenterScreen'
-  $form.FormBorderStyle = 'FixedDialog'
+  Set-SanmaoLanFormStyle $form 560 260
   $form.MaximizeBox = $false
   $form.MinimizeBox = $false
   $form.ControlBox = $false
-  $form.ShowInTaskbar = $true
-  $form.ClientSize = New-Object System.Drawing.Size(500, 190)
+
+  $header = New-SanmaoLanHeader 560 'LOCAL SERVICE' 'STARTING' $script:LanColors.Accent
+
+  $eyebrow = New-Object System.Windows.Forms.Label
+  $eyebrow.Text = 'LOCAL NETWORK SERVICE'
+  $eyebrow.ForeColor = $script:LanColors.Accent
+  $eyebrow.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+  $eyebrow.AutoSize = $true
+  $eyebrow.Location = New-Object System.Drawing.Point(30, 96)
 
   $title = New-Object System.Windows.Forms.Label
   $title.Text = $ui.StartingTitle
-  $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 14, [System.Drawing.FontStyle]::Bold)
+  $title.ForeColor = $script:LanColors.Ink
+  $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 16, [System.Drawing.FontStyle]::Bold)
   $title.AutoSize = $true
-  $title.Location = New-Object System.Drawing.Point(24, 22)
+  $title.Location = New-Object System.Drawing.Point(30, 113)
 
   $status = New-Object System.Windows.Forms.Label
   $status.Text = $message
+  $status.ForeColor = $script:LanColors.Muted
+  $status.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
   $status.AutoSize = $false
-  $status.Size = New-Object System.Drawing.Size(450, 30)
-  $status.Location = New-Object System.Drawing.Point(24, 64)
+  $status.Size = New-Object System.Drawing.Size(500, 28)
+  $status.Location = New-Object System.Drawing.Point(30, 148)
 
-  $progress = New-Object System.Windows.Forms.ProgressBar
-  $progress.Style = [System.Windows.Forms.ProgressBarStyle]::Marquee
-  $progress.MarqueeAnimationSpeed = 30
-  $progress.Size = New-Object System.Drawing.Size(450, 20)
-  $progress.Location = New-Object System.Drawing.Point(24, 101)
+  $progressTrack = New-Object System.Windows.Forms.Panel
+  $progressTrack.BackColor = $script:LanColors.Track
+  $progressTrack.Size = New-Object System.Drawing.Size(500, 10)
+  $progressTrack.Location = New-Object System.Drawing.Point(30, 185)
+
+  $progressFill = New-Object System.Windows.Forms.Panel
+  $progressFill.BackColor = $script:LanColors.Accent
+  $progressFill.Size = New-Object System.Drawing.Size(150, 10)
+  $progressFill.Location = New-Object System.Drawing.Point(-150, 0)
+  $progressTrack.Controls.Add($progressFill)
 
   $note = New-Object System.Windows.Forms.Label
   $note.Text = $ui.StartingNote
-  $note.ForeColor = [System.Drawing.Color]::DimGray
+  $note.ForeColor = $script:LanColors.Muted
+  $note.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 8.5)
   $note.AutoSize = $false
-  $note.Size = New-Object System.Drawing.Size(450, 30)
-  $note.Location = New-Object System.Drawing.Point(24, 137)
+  $note.Size = New-Object System.Drawing.Size(500, 24)
+  $note.Location = New-Object System.Drawing.Point(30, 211)
 
-  $form.Controls.AddRange(@($title, $status, $progress, $note))
+  $form.Controls.AddRange(@($header, $eyebrow, $title, $status, $progressTrack, $note))
+  $script:StartingProgressTrack = $progressTrack
+  $script:StartingProgressFill = $progressFill
+  $script:StartingProgressOffset = -150
+  $script:StartingProgressTimer = New-Object System.Windows.Forms.Timer
+  $script:StartingProgressTimer.Interval = 18
+  $script:StartingProgressTimer.Add_Tick({
+    if (-not $script:StartingProgressFill -or -not $script:StartingProgressTrack) { return }
+    $script:StartingProgressOffset += 7
+    if ($script:StartingProgressOffset -gt $script:StartingProgressTrack.Width) {
+      $script:StartingProgressOffset = -$script:StartingProgressFill.Width
+    }
+    $script:StartingProgressFill.Left = $script:StartingProgressOffset
+  })
+  $script:StartingProgressTimer.Start()
   $script:StartingForm = $form
   $script:StartingStatus = $status
   $form.Show()
@@ -406,16 +560,31 @@ function Show-SanmaoLanStartingForm([string]$message) {
 
 function Update-SanmaoLanStartingForm([string]$message) {
   if ($script:StartingStatus) { $script:StartingStatus.Text = $message }
+  if ($message -eq $ui.StartingReady -and $script:StartingProgressTimer) {
+    $script:StartingProgressTimer.Stop()
+    if ($script:StartingProgressFill -and $script:StartingProgressTrack) {
+      $script:StartingProgressFill.Left = 0
+      $script:StartingProgressFill.Width = $script:StartingProgressTrack.Width
+      $script:StartingProgressFill.BackColor = $script:LanColors.Success
+    }
+  }
   if ($script:StartingForm) { [System.Windows.Forms.Application]::DoEvents() }
 }
 
 function Close-SanmaoLanStartingForm {
+  if ($script:StartingProgressTimer) {
+    try { $script:StartingProgressTimer.Stop() } catch {}
+    try { $script:StartingProgressTimer.Dispose() } catch {}
+    $script:StartingProgressTimer = $null
+  }
   if ($script:StartingForm) {
     try { $script:StartingForm.Close() } catch {}
     try { $script:StartingForm.Dispose() } catch {}
     $script:StartingForm = $null
     $script:StartingStatus = $null
   }
+  $script:StartingProgressTrack = $null
+  $script:StartingProgressFill = $null
 }
 
 function Show-SanmaoLanError([string]$message) {
@@ -430,6 +599,25 @@ function Show-SanmaoLanError([string]$message) {
   } catch {
     Write-Error $message
   }
+}
+
+function Get-SanmaoLanStartFailureMessage([int]$exitCode) {
+  $message = $ui.StartFailed -f $exitCode
+  $details = @()
+  foreach ($path in @($startStderrPath, $startStdoutPath)) {
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+    try {
+      $lines = @(Get-Content -LiteralPath $path -Tail 12 -ErrorAction Stop |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+      if ($lines.Count -gt 0) {
+        $details += ("{0}:{1}" -f (Split-Path -Leaf $path), ([Environment]::NewLine + ($lines -join [Environment]::NewLine)))
+      }
+    } catch {}
+  }
+  if ($details.Count -gt 0) {
+    return $message + [Environment]::NewLine + [Environment]::NewLine + ($details -join ([Environment]::NewLine + [Environment]::NewLine))
+  }
+  return $message
 }
 
 try {
@@ -467,9 +655,19 @@ try {
   $server = $null
   while (-not $server -and [DateTime]::UtcNow -lt $startDeadline) {
     Start-Sleep -Milliseconds 250
-    $startProcess.Refresh()
+    # Check the health endpoint before checking the helper process. When the
+    # service was already running, start.ps1 can exit successfully in the same
+    # interval after deciding to reuse it.
     $server = Get-SanmaoLanServerInfo
-    if (-not $server) { Update-SanmaoLanStartingForm $ui.StartingService }
+    if ($server) { break }
+    $startProcess.Refresh()
+    if ($startProcess.HasExited) {
+      if ($startProcess.ExitCode -ne 0) {
+        throw (Get-SanmaoLanStartFailureMessage $startProcess.ExitCode)
+      }
+      break
+    }
+    Update-SanmaoLanStartingForm $ui.StartingService
   }
   # Open the canvas as soon as the health endpoint responds. The launcher
   # script may still be finishing cleanup, but the service is already usable.

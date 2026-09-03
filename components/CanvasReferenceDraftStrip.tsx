@@ -18,7 +18,7 @@ export default function CanvasReferenceDraftStrip({
   onNodeDrop,
   max = 16,
   disabled = false,
-  emptyLabel = "添加参考图",
+  emptyLabel = "添加参考素材",
   trailing,
 }: {
   references: CanvasReferenceDraft[];
@@ -39,7 +39,7 @@ export default function CanvasReferenceDraftStrip({
 
   const acceptFiles = (files: File[]) => {
     const valid = files.filter(
-      (file) => file.type.startsWith("image/") || file.type.startsWith("video/") ||
+      (file) => file.type.startsWith("image/") || file.type.startsWith("video/") || file.type.startsWith("audio/") ||
         file.type.startsWith("text/") || /\.(txt|md|markdown|json|csv|tsv|html?|css|js|jsx|ts|tsx|py|java|sql|xml|svg|ya?ml|sh|ps1)$/i.test(file.name),
     );
     if (valid.length) onFiles(valid);
@@ -76,7 +76,7 @@ export default function CanvasReferenceDraftStrip({
     >
       <div className="canvas-reference-draft-head">
         <span>
-          <b>参考图</b>
+          <b>参考素材</b>
           <small>{references.length}/{max}</small>
         </span>
         <div>
@@ -124,6 +124,8 @@ export default function CanvasReferenceDraftStrip({
                 <span className="canvas-reference-draft-text-thumb"><b>▤</b><small>{textPreview(reference.text || "")}</small></span>
               ) : reference.kind === "video" ? (
                 <video src={reference.url} muted playsInline />
+              ) : reference.kind === "audio" ? (
+                <span className="canvas-reference-draft-audio-thumb" aria-label="音频引用">♫</span>
               ) : (
                 <img src={reference.url} alt={reference.name} />
               )}
@@ -158,7 +160,7 @@ export default function CanvasReferenceDraftStrip({
         hidden
         type="file"
         multiple
-        accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"
+        accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"
         onChange={(event) => {
           if (event.target.files) acceptFiles([...event.target.files]);
           event.currentTarget.value = "";

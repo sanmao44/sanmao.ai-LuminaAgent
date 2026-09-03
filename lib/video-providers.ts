@@ -48,7 +48,7 @@ function isLocalMediaUrl(value: string) {
   try {
     const parsed = new URL(value);
     const host = parsed.hostname.toLowerCase();
-    return parsed.pathname === '/api/storage/file' || parsed.pathname === '/api/storage/video'
+    return parsed.pathname === '/api/storage/file' || parsed.pathname === '/api/storage/video' || parsed.pathname === '/api/storage/audio'
       || host === 'localhost' || host === '::1' || host === '0.0.0.0'
       || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
       || (host.startsWith('172.') && Number(host.split('.')[1]) >= 16 && Number(host.split('.')[1]) <= 31)

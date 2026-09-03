@@ -70,7 +70,7 @@ function nodeType(value: unknown): CanvasNode["type"] {
 }
 
 function mediaKind(value: unknown): CanvasMediaKind {
-  return value === "video" ? "video" : "image";
+  return value === "video" ? "video" : value === "audio" ? "audio" : "image";
 }
 
 /** Nodes that currently expose a usable image/video URL to other nodes. */
@@ -176,6 +176,27 @@ function normalizeNode(value: unknown): CanvasNode | null {
   const type = nodeType(raw.type);
   if (type === "media" || type === "generator")
     data.kind = mediaKind(data.kind);
+  if (type === "media" && data.kind === "audio") {
+    const legacyParams =
+      data.params && typeof data.params === "object"
+        ? data.params as Record<string, unknown>
+        : undefined;
+    if (legacyParams?.kind === "video" || "inputMode" in (legacyParams || {}))
+      delete data.params;
+    const legacyGenerationParams =
+      data.generation?.params && typeof data.generation.params === "object"
+        ? data.generation.params as Record<string, unknown>
+        : undefined;
+    if (
+      legacyGenerationParams?.kind === "video" ||
+      "inputMode" in (legacyGenerationParams || {})
+    )
+      delete data.generation;
+    if (!data.url && data.status === "draft") {
+      data.statusLabel = "等待导入音频";
+      data.role = "待导入";
+    }
+  }
   if (type === "media" && data.kind === "video")
     data.params = normalizeVideoNodeParams(data);
   if (type === "prompt")
@@ -252,16 +273,18 @@ function normalizeNode(value: unknown): CanvasNode | null {
     data.videoInputModeAuto = true;
   if (type === "media" && data.generation) {
     const kind = mediaKind(data.generation.kind || data.kind);
-    data.generation = {
-      ...data.generation,
-      kind,
-      params:
-        data.generation.operation === "upscale"
-          ? normalizeUpscaleParams(data.generation.params)
-          : kind === "image"
-          ? normalizeCreationSettings("image", data.generation.params)
-          : normalizeCreationSettings("video", data.generation.params),
-    };
+    data.generation = kind === "audio"
+      ? { ...data.generation, kind }
+      : {
+          ...data.generation,
+          kind,
+          params:
+            data.generation.operation === "upscale"
+              ? normalizeUpscaleParams(data.generation.params)
+              : kind === "image"
+              ? normalizeCreationSettings("image", data.generation.params)
+              : normalizeCreationSettings("video", data.generation.params),
+        };
   }
   if (type === "media" && data.kind === "image") {
     const generationParams = data.generation?.params;
@@ -345,6 +368,7 @@ function normalizeInputRole(value: unknown): CanvasInputRole | undefined {
   return value === "prompt" ||
     value === "context" ||
     value === "reference-image" ||
+    value === "audio" ||
     value === "mask" ||
     value === "video" ||
     value === "first-frame" ||
@@ -364,6 +388,7 @@ function inferInputRoleFromNodes(
   const sourceKind = source.type === "media" || source.type === "upscale" ? source.data.kind : undefined;
   const targetKind = target.type === "media" || target.type === "generator" ? target.data.kind : undefined;
   if (!sourceKind || !targetKind) return undefined;
+  if (sourceKind === "audio") return targetKind === "video" ? "audio" : undefined;
   if (targetKind === "image") return sourceKind === "video" ? "video" : "reference-image";
   if (sourceKind === "video") return "video";
   if (inputMode === "frames") return position === 0 ? "first-frame" : position === 1 ? "last-frame" : "reference-image";
@@ -397,10 +422,15 @@ export function canConnect(
   if (!nodeById(document, target) && !groupById(document, target)) return { ok: false, reason: "目标节点不存在" };
   if (hasPath(document, source, target)) return { ok: false, reason: "这条连接会形成循环" };
   const sourceNode = nodeById(document, source);
+  const sourceGroup = groupById(document, source);
   const targetNode = nodeById(document, target);
   const targetKind = targetNode && (targetNode.type === "media" || targetNode.type === "generator")
     ? targetNode.data.kind
     : undefined;
+  const sourceHasAudio = Boolean(
+    (sourceNode && sourceNode.data.kind === "audio") ||
+    sourceGroup?.nodeIds.some((nodeId) => nodeById(document, nodeId)?.data.kind === "audio"),
+  );
   if (
     targetKind === "image" &&
     sourceNode &&
@@ -408,6 +438,15 @@ export function canConnect(
     sourceNode.data.kind === "video"
   )
     return { ok: false, reason: "图片节点不能接收视频作为图片参考。" };
+  if (targetKind === "audio")
+    return { ok: false, reason: "音频节点目前是独立素材输入，不能接收其他节点。" };
+  if (
+    sourceHasAudio &&
+    targetKind !== "video"
+  )
+    return { ok: false, reason: "参考音频只能连接到视频节点。" };
+  if (inputRole === "audio" && targetKind !== "video")
+    return { ok: false, reason: "参考音频只能连接到视频节点。" };
   if (targetNode?.type === "upscale") {
     if (!isCanvasReadyImageSource(sourceNode))
       return { ok: false, reason: "超分节点只接受一张已完成的图片" };
@@ -828,6 +867,38 @@ export function entityBounds(document: CanvasDocument, id: string) {
   if (!node) return { x: 0, y: 0, w: 0, h: 0 };
   const size = nodeSize(node);
   return { x: node.x, y: node.y, w: size.w, h: size.h };
+}
+
+/** Resolve a persisted edge to the entities it should touch visually. */
+export function canvasEdgeEndpoints(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  const projectEntity = (id: string) => {
+    const node = nodeById(document, id);
+    const group = document.groups.find(
+      (candidate) =>
+        candidate.id === node?.groupId || candidate.nodeIds.includes(id),
+    );
+    return group?.id || id;
+  };
+  return {
+    source: projectEntity(edge.source),
+    target: projectEntity(edge.target),
+  };
+}
+
+/** Internal member edges collapse into the group and should not be painted. */
+export function isCanvasEdgeVisible(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  const endpoints = canvasEdgeEndpoints(document, edge);
+  if (endpoints.source === endpoints.target) return false;
+  return Boolean(
+    (nodeById(document, endpoints.source) || groupById(document, endpoints.source)) &&
+      (nodeById(document, endpoints.target) || groupById(document, endpoints.target)),
+  );
 }
 
 export type CanvasAlignment =
@@ -1312,6 +1383,44 @@ export function arrangeCanvasGroup(
   return arrangeCanvasSelection(document, selected, false);
 }
 
+function canvasRectanglesOverlap(
+  left: { x: number; y: number; w: number; h: number },
+  right: { x: number; y: number; w: number; h: number },
+  gap = 0,
+) {
+  return (
+    left.x < right.x + right.w + gap &&
+    left.x + left.w + gap > right.x &&
+    left.y < right.y + right.h + gap &&
+    left.y + left.h + gap > right.y
+  );
+}
+
+export function canvasGroupHasOverlaps(
+  document: CanvasDocument,
+  groupId: string,
+  gap = 0,
+) {
+  const nodes = groupNodes(document, groupId);
+  for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+    const left = entityBounds(document, nodes[leftIndex].id);
+    for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+      if (canvasRectanglesOverlap(left, entityBounds(document, nodes[rightIndex].id), gap))
+        return true;
+    }
+  }
+  return false;
+}
+
+/** Pack a group only when its members currently collide. */
+export function ensureCanvasGroupLayout(
+  document: CanvasDocument,
+  groupId: string,
+) {
+  if (!canvasGroupHasOverlaps(document, groupId)) return document;
+  return arrangeCanvasGroup(document, groupId).document;
+}
+
 export function entityPortPoint(
   document: CanvasDocument,
   id: string,
@@ -1375,9 +1484,10 @@ export function edgePath(
 ) {
   const sourcePort = edge.sourcePort || "right";
   const targetPort = edge.targetPort || "left";
+  const endpoints = canvasEdgeEndpoints(document, edge);
   return connectionPath(
-    entityPortPoint(document, edge.source, sourcePort),
-    entityPortPoint(document, edge.target, targetPort),
+    entityPortPoint(document, endpoints.source, sourcePort),
+    entityPortPoint(document, endpoints.target, targetPort),
     style,
     sourcePort,
     targetPort,
@@ -1409,6 +1519,7 @@ export function mediaCardSizeForRatio(
   ratio?: number,
   kind: CanvasMediaKind = "image",
 ) {
+  if (kind === "audio") return { w: 380, h: 176 };
   const safeRatio =
     positiveRatio(ratio) ||
     (kind === "video" ? DEFAULT_VIDEO_ASPECT_RATIO : 1);
@@ -1473,7 +1584,9 @@ export function createMedia(
           nativeMediaRatio(data) || videoAspectRatio(normalizedVideoParams),
           kind,
         )
-      : { w: 380, h: 270 };
+      : kind === "audio"
+        ? mediaCardSizeForRatio(1, kind)
+        : { w: 380, h: 270 };
   return {
     id: uid("node"),
     type: "media",
@@ -1483,7 +1596,7 @@ export function createMedia(
     data: {
       kind,
       url,
-      name: name || (kind === "video" ? "视频素材" : "图片素材"),
+      name: name || (kind === "video" ? "视频素材" : kind === "audio" ? "音频素材" : "图片素材"),
       role: "参考",
       autoFit: true,
       ...(kind === "video" && typeof data.videoInputModeAuto !== "boolean"
@@ -1516,7 +1629,7 @@ export function createPrompt(
 }
 
 export function createGenerator(
-  kind: CanvasMediaKind,
+  kind: Exclude<CanvasMediaKind, "audio">,
   position: { x: number; y: number },
   params?: CanvasGenerationParams,
 ): CanvasNode {
@@ -1552,6 +1665,20 @@ export function createEmptyMedia(
   position: { x: number; y: number },
   params?: CanvasGenerationParams,
 ): CanvasNode {
+  if (kind === "audio") {
+    return createMedia(
+      "audio",
+      "",
+      "空音频节点",
+      position,
+      {
+        role: "待导入",
+        status: "draft",
+        statusLabel: "等待导入音频",
+        referenceOrder: [],
+      },
+    );
+  }
   const normalizedParams =
     kind === "image"
       ? normalizeCreationSettings("image", params)
@@ -1847,7 +1974,7 @@ export function createGroup(
     name: name?.trim() || `对象组 ${document.groups.length + 1}`,
     nodeIds: valid,
   });
-  return { ...document, nodes, groups };
+  return ensureCanvasGroupLayout({ ...document, nodes, groups }, groupId);
 }
 
 export function moveNodesToGroup(
@@ -1884,7 +2011,7 @@ export function moveNodesToGroup(
     ...document.nodes.map((node) => node.id),
     ...groups.map((group) => group.id),
   ]);
-  return {
+  const next = {
     ...document,
     nodes: document.nodes.map((node) =>
       membership.has(node.id)
@@ -1896,6 +2023,7 @@ export function moveNodesToGroup(
       (edge) => entityIds.has(edge.source) && entityIds.has(edge.target),
     ),
   };
+  return ensureCanvasGroupLayout(next, groupId);
 }
 
 export function detachNodesFromGroups(

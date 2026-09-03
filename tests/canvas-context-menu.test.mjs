@@ -16,6 +16,11 @@ test("card context menus select the target and preserve selected multi-actions",
   const contextMenuEnd = component.indexOf("function CanvasNodeContextMenu", contextMenuStart);
   assert.ok(contextMenuStart >= 0 && contextMenuEnd > contextMenuStart, "node context menu builder should exist");
   const contextMenu = component.slice(contextMenuStart, contextMenuEnd);
+  const audioMenuStart = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "audio")');
+  const audioMenuEnd = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "image")', audioMenuStart);
+  assert.ok(audioMenuStart >= 0 && audioMenuEnd > audioMenuStart, "audio context menu should have its own branch");
+  const audioContextMenu = contextMenu.slice(audioMenuStart, audioMenuEnd);
+  const ordinaryContextMenu = `${contextMenu.slice(0, audioMenuStart)}${contextMenu.slice(audioMenuEnd)}`;
   const quickActionsStart = component.indexOf("const quickActions = useMemo");
   const quickActionsEnd = component.indexOf("const contextNode =", quickActionsStart);
   assert.ok(quickActionsStart >= 0 && quickActionsEnd > quickActionsStart, "node quick toolbar builder should exist");
@@ -32,7 +37,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /label: "创建副本"/);
   assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*\)/);
   assert.match(contextMenu, /label: "复制图片"/);
-  assert.match(contextMenu, /label: "超分"/);
+  assert.match(contextMenu, /label: "图片编辑"/);
   assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
   assert.match(contextMenu, /label: "下载"/);
   assert.match(contextMenu, /label: "加入资产"/);
@@ -42,21 +47,26 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.doesNotMatch(contextMenu, /label: "调整参数"/);
   assert.doesNotMatch(contextMenu, /局部编辑/);
   assert.doesNotMatch(contextMenu, /label: "作为参考"/);
-  assert.doesNotMatch(contextMenu, /id: "delete"/);
-  assert.doesNotMatch(contextMenu, /label: "删除"/);
-  assert.doesNotMatch(contextMenu, /label: selectedIds\.size > 1 \? `删除/);
+  assert.doesNotMatch(ordinaryContextMenu, /id: "delete"/);
+  assert.doesNotMatch(ordinaryContextMenu, /label: "删除"/);
+  assert.doesNotMatch(ordinaryContextMenu, /label: selectedIds\.size > 1 \? `删除/);
+  assert.match(audioContextMenu, /label: hasMedia \? "编辑 \/ 替换" : "添加音频"/);
+  assert.match(audioContextMenu, /label: "播放"/);
+  assert.match(audioContextMenu, /label: "下载"/);
+  assert.match(audioContextMenu, /label: "加入资产"/);
+  assert.match(audioContextMenu, /label: "删除"/);
   assert.match(quickActions, /useMemo<CanvasQuickToolbarActions>/);
   assert.match(quickActions, /id: "mask"/);
   assert.match(quickActions, /局部编辑/);
-  assert.match(quickActions, /label: "超分"/);
+  assert.match(quickActions, /label: "图片编辑"/);
   assert.match(quickActions, /label: "作为参考"/);
   assert.match(quickActions, /label: "下载"/);
   assert.match(quickActions, /label: "加入资产"/);
   assert.match(quickActions, /label: "删除"/);
   assert.doesNotMatch(quickActions, /id: "edit"/);
   assert.doesNotMatch(quickActions, /label: "编辑"/);
-  assert.doesNotMatch(quickActions, /id: "image-operations"/);
-  assert.doesNotMatch(quickActions, /label: "图像操作"/);
+  assert.match(quickActions, /id: "image-operations"/);
+  assert.match(quickActions, /icon: "image-operations"/);
   assert.doesNotMatch(quickActions, /id: "more"/);
   assert.doesNotMatch(quickActions, /label: "更多"/);
   assert.doesNotMatch(quickActions, /label: "预览"/);
@@ -118,16 +128,39 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
 });
 
-test("blank canvas separates creation from compact canvas operations", () => {
+test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.match(component, /menu: "create"/);
   assert.match(component, /menu: "tools"/);
   assert.match(component, /ariaLabel="创建节点菜单"/);
   assert.match(component, /ariaLabel="画布操作菜单"/);
   assert.match(component, /className="canvas-tools-context-menu"/);
   assert.match(component, /pasteFromClipboard\(position\)/);
-  assert.match(component, /支持多选，放置到右键位置/);
   assert.match(component, /<b>适应视图<\/b>/);
-  const toolsMenu = component.slice(component.indexOf('ariaLabel="画布操作菜单"'));
+  const toolsMenuStart = component.indexOf('ariaLabel="画布操作菜单"');
+  const toolsMenuEnd = component.indexOf("</CanvasContextMenuFrame>", toolsMenuStart);
+  const toolsMenu = component.slice(toolsMenuStart, toolsMenuEnd);
+  assert.match(toolsMenu, /className="canvas-menu-item canvas-menu-item-create"/);
+  assert.match(toolsMenu, /<b>添加节点<\/b>/);
+  assert.match(toolsMenu, /menu: "create"/);
+  assert.match(toolsMenu, /<b>撤销<\/b>/);
+  assert.match(toolsMenu, /<b>重做<\/b>/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ Z/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ Shift \+ Z/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ V/);
+  assert.doesNotMatch(toolsMenu, /canvas-menu-group-title/);
+  assert.doesNotMatch(toolsMenu, /canvas-menu-group-mark/);
+  assert.doesNotMatch(toolsMenu, /<small>[^<]+<\/small>/);
+  assert.equal((toolsMenu.match(/className="canvas-menu-divider"/g) || []).length, 2);
+  assert.match(toolsMenu, /<b>上传<\/b>/);
+  assert.doesNotMatch(toolsMenu, /导入图片 \/ 视频 \/ 音频/);
+  const actionOrder = ["上传", "添加节点", "粘贴", "撤销", "重做", "一键整理", "适应视图"];
+  const actionPositions = actionOrder.map((label) => toolsMenu.indexOf(`<b>${label}</b>`));
+  assert.deepEqual(
+    actionPositions,
+    [...actionPositions].sort((a, b) => a - b),
+  );
+  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-shortcut\{/);
+  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item:disabled\{/);
   const arrangeIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>一键整理<\/b>/)?.[1];
   const fitIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>适应视图<\/b>/)?.[1];
   assert.equal(arrangeIcon, "⌗");

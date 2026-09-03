@@ -87,7 +87,7 @@ export type ChatSession = {
 
 export type AssetIndexItem = {
   id: string;
-  kind: 'image' | 'video';
+  kind: 'image' | 'video' | 'audio';
   url: string;
   name: string;
   source: 'canvas-upload' | 'canvas-output' | 'metadata';
@@ -328,6 +328,7 @@ export const DEFAULT_ASSET_COLLECTIONS: AssetCollection[] = [
   { id: 'reference', name: '参考素材', createdAt: 0, updatedAt: 0, builtin: true },
   { id: 'image', name: '图片', createdAt: 0, updatedAt: 0, builtin: true },
   { id: 'video', name: '视频', createdAt: 0, updatedAt: 0, builtin: true },
+  { id: 'audio', name: '音频', createdAt: 0, updatedAt: 0, builtin: true },
   { id: 'uncategorized', name: '未分类', createdAt: 0, updatedAt: 0, builtin: true },
 ];
 

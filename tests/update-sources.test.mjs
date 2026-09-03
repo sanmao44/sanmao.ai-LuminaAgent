@@ -58,6 +58,7 @@ test('update archives remain the single source of installed updater code', async
   assert.equal(launcher.charCodeAt(0), 0xFEFF, 'Windows launcher must keep a UTF-8 BOM for Windows PowerShell');
   assert.match(launcher, /apply-update-bootstrap\.ps1/);
   assert.match(progressRoute, /getLatestUpdateProgress\(jobId, currentVersion\)/);
+  assert.match(progressRoute, /currentVersion,?\s*\}/);
 });
 
 const originalFetch = globalThis.fetch;

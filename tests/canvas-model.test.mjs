@@ -895,6 +895,91 @@ test('uses group boundary ports for shared edge geometry', () => {
   );
 });
 
+test('projects member edges to group boundaries without changing persisted edges', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createMedia('image', '/projection-first.png', '组一', { x: 0, y: 0 });
+  const second = model.createMedia('image', '/projection-second.png', '组一', { x: 400, y: 0 });
+  const third = model.createMedia('image', '/projection-third.png', '组二', { x: 0, y: 600 });
+  const fourth = model.createMedia('image', '/projection-fourth.png', '组二', { x: 400, y: 600 });
+  const outside = model.createPrompt({ x: 900, y: 0 }, '组外');
+  let document = { ...empty, nodes: [first, second, third, fourth, outside] };
+  document = model.createGroup(document, [first.id, second.id], '组一');
+  document = model.createGroup(document, [third.id, fourth.id], '组二');
+  const firstGroup = document.groups.find((group) => group.nodeIds.includes(first.id));
+  const secondGroup = document.groups.find((group) => group.nodeIds.includes(third.id));
+  assert.ok(firstGroup);
+  assert.ok(secondGroup);
+
+  const internal = { id: 'projection-internal', source: first.id, target: second.id };
+  const outbound = { id: 'projection-outbound', source: first.id, target: outside.id };
+  const betweenGroups = { id: 'projection-between', source: second.id, target: third.id };
+  const explicitGroupEdge = { id: 'projection-explicit-group', source: firstGroup.id, target: outside.id };
+  document = { ...document, edges: [internal, outbound, betweenGroups, explicitGroupEdge] };
+
+  assert.deepEqual(model.canvasEdgeEndpoints(document, internal), {
+    source: firstGroup.id,
+    target: firstGroup.id,
+  });
+  assert.equal(model.isCanvasEdgeVisible(document, internal), false);
+  assert.deepEqual(model.canvasEdgeEndpoints(document, outbound), {
+    source: firstGroup.id,
+    target: outside.id,
+  });
+  assert.deepEqual(model.canvasEdgeEndpoints(document, betweenGroups), {
+    source: firstGroup.id,
+    target: secondGroup.id,
+  });
+  assert.equal(model.isCanvasEdgeVisible(document, outbound), true);
+  assert.equal(model.isCanvasEdgeVisible(document, betweenGroups), true);
+  assert.equal(model.isCanvasEdgeVisible(document, explicitGroupEdge), true);
+
+  const projectedPath = model.edgePath(document, outbound, 'straight');
+  const groupPoint = model.entityPortPoint(document, firstGroup.id, 'right');
+  const outsidePoint = model.entityPortPoint(document, outside.id, 'left');
+  assert.equal(projectedPath, `M ${groupPoint.x} ${groupPoint.y} L ${outsidePoint.x} ${outsidePoint.y}`);
+  assert.equal(document.edges[1].source, first.id);
+  assert.equal(document.edges[1].target, outside.id);
+
+  const ungrouped = model.ungroup(document, firstGroup.id);
+  assert.equal(ungrouped.nodes.find((node) => node.id === first.id)?.groupId, undefined);
+  assert.deepEqual(ungrouped.edges, [internal, outbound, betweenGroups]);
+  assert.equal(model.isCanvasEdgeVisible(ungrouped, internal), true);
+  assert.deepEqual(model.canvasEdgeEndpoints(ungrouped, outbound), {
+    source: first.id,
+    target: outside.id,
+  });
+});
+
+test('only arranges a group when members overlap during creation or move-in', () => {
+  const empty = model.normalizeDocument(null);
+  const overlappingFirst = model.createMedia('image', '/overlap-first.png', '重叠一', { x: 0, y: 0 });
+  const overlappingSecond = model.createMedia('image', '/overlap-second.png', '重叠二', { x: 30, y: 30 });
+  let document = { ...empty, nodes: [overlappingFirst, overlappingSecond] };
+  document = model.createGroup(document, [overlappingFirst.id, overlappingSecond.id]);
+  const createdGroup = document.groups[0];
+  assert.equal(model.canvasGroupHasOverlaps(document, createdGroup.id), false);
+
+  const stableFirst = model.createMedia('image', '/stable-first.png', '稳定一', { x: 0, y: 700 });
+  const stableSecond = model.createMedia('image', '/stable-second.png', '稳定二', { x: 400, y: 700 });
+  const stableBefore = [{ x: stableFirst.x, y: stableFirst.y }, { x: stableSecond.x, y: stableSecond.y }];
+  document = { ...document, nodes: [...document.nodes, stableFirst, stableSecond] };
+  document = model.createGroup(document, [stableFirst.id, stableSecond.id]);
+  assert.deepEqual(
+    [stableFirst.id, stableSecond.id].map((id) => {
+      const node = document.nodes.find((item) => item.id === id);
+      return { x: node.x, y: node.y };
+    }),
+    stableBefore,
+  );
+
+  const dropped = model.createMedia('image', '/move-overlap.png', '拖入', { x: 10, y: 710 });
+  document = { ...document, nodes: [...document.nodes, dropped] };
+  document = model.moveNodesToGroup(document, [dropped.id], document.groups.find((group) => group.nodeIds.includes(stableFirst.id)).id);
+  const movedGroup = document.groups.find((group) => group.nodeIds.includes(dropped.id));
+  assert.ok(movedGroup);
+  assert.equal(model.canvasGroupHasOverlaps(document, movedGroup.id), false);
+});
+
 test('expands an explicit group source into all media references and preserves manual order', () => {
   const empty = model.normalizeDocument(null);
   const first = model.createMedia('image', '/first.png', '第一张', { x: 0, y: 0 });

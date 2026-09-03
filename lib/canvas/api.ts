@@ -9,7 +9,7 @@ import {
 
 export type CanvasAsset = {
   id: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   name: string;
   url: string;
   mime: string;
@@ -456,6 +456,8 @@ export async function generateCanvasVideo(input: {
   lastFrame?: string;
   referenceVideo?: string;
   audio?: boolean;
+  /** Reference audio files supplied by the canvas connection resolver. */
+  audios?: Array<{ url: string; name?: string }>;
 }) {
   const referenceData = await Promise.all(
     (input.references || [])
@@ -474,6 +476,12 @@ export async function generateCanvasVideo(input: {
         ? await compressReferenceDataUrl(await asDataUrl(input.lastFrame))
         : referenceData[1]
       : undefined;
+  const audioData = await Promise.all(
+    (input.audios || []).slice(0, 10).map(async (item) => ({
+      ...item,
+      url: await asDataUrl(item.url),
+    })),
+  );
   if (input.inputMode === "first-frame" && !firstFrame) {
     throw new Error("首帧模式请先添加首帧图片。");
   }
@@ -532,6 +540,9 @@ export async function generateCanvasVideo(input: {
               referenceVideos: input.referenceVideos.slice(0, 10).map((item) => item.url),
               referenceVideo: referenceVideo || input.referenceVideos[0]?.url,
             }
+          : {}),
+        ...(audioData.length
+          ? { audios: audioData.map((item) => item.url), audio: audioData[0].url }
           : {}),
       },
     }),

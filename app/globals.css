@@ -1779,7 +1779,10 @@ html[data-theme="light"] .sidebar.expanded{
 .app-shell.sidebar-is-open .version-card-head{gap:7px}
 .app-shell.sidebar-is-open .version-card-head strong{font-size:9px}
 .app-shell.sidebar-is-open .version-card-head small{font-size:7px}
-.app-shell.sidebar-is-open .version-card-actions button{height:22px;font-size:7px}
+ .app-shell.sidebar-is-open .version-card-actions button{height:22px;font-size:7px}
+ .update-progress-tray.refresh-required{border-color:color-mix(in srgb,var(--success) 48%,var(--line));background:color-mix(in srgb,var(--panel) 94%,var(--success));}
+ .update-progress-tray.refresh-required .update-progress-tray-orb{background:var(--success);}
+ .update-progress-tray.refresh-required .update-progress-tray-value{color:var(--success);}
 
 /* The release control lives in the top bar as a small GitHub/version pill. */
 .app-shell .topbar-brand{display:none}
@@ -3462,7 +3465,7 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
  .local-edit-annotation-summary button{display:flex;align-items:center;gap:5px;max-width:100%;min-width:0;min-height:36px;height:auto;padding:3px 7px 3px 3px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text-2);font:inherit;font-size:8px;text-align:left}
  .local-edit-annotation-summary button>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .local-edit-annotation-summary button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
-.local-edit-smart-note{padding:6px 8px;border-radius:8px;background:var(--panel-2);color:var(--muted);font-size:8px;line-height:1.4}
+.local-edit-smart-note{padding:6px 8px;border-radius:8px;background:var(--panel-2);color:var(--muted);font-size:8px;line-height:1.4}.local-edit-segmentation-card{display:grid;gap:6px;padding:9px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:10px;background:linear-gradient(135deg,var(--accent-soft),var(--panel-2));flex:none}.local-edit-segmentation-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text-2);font-size:9px}.local-edit-segmentation-head span{font-weight:850}.local-edit-segmentation-head b{color:var(--accent-text);font-size:8px}.local-edit-segmentation-card p{margin:0;color:var(--muted);font-size:8px;line-height:1.45}.local-edit-segmentation-progress{display:flex;align-items:center;gap:7px;color:var(--accent-text);font-size:8px}.local-edit-segmentation-progress progress{width:100%;height:6px;accent-color:var(--accent)}.local-edit-segmentation-error{padding:5px 6px;border-radius:7px;background:color-mix(in srgb,#ef4444 12%,transparent);color:#b91c1c;font-size:8px;line-height:1.35;word-break:break-word}.local-edit-segmentation-actions{display:flex;gap:6px;flex-wrap:wrap}.local-edit-segmentation-actions button{min-height:27px;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text-2);font:inherit;font-size:8px}.local-edit-segmentation-actions button:first-child{border-color:var(--accent);color:var(--accent-text);font-weight:800}.local-edit-segmentation-actions button:hover,.local-edit-segmentation-actions button:focus-visible{border-color:var(--accent);background:var(--accent-soft);outline:0}.local-edit-segmentation-actions button:disabled{opacity:.6;cursor:not-allowed}.local-edit-segmentation-actions button.danger{color:#b91c1c}
 .local-edit-canvas-stage[data-preview="original"] .mask-canvas.overlay{opacity:0}
 .local-edit-canvas-stage[data-preview="range"] .mask-canvas.base{filter:brightness(.64) saturate(.45)}
 .local-edit-workbench-sidebar{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;overflow:hidden}
