@@ -143,11 +143,13 @@ export function fitCanvasNodeEditorBelow(
 }
 
 /**
- * Places a compact editor dock below its node. Unlike the full editor this
- * never constrains the vertical height: the dock is allowed to extend past the
- * bottom of the viewport (it intentionally does not scroll). Only the
- * horizontal position is clamped to the stage margins so the box stays reachable
- * on narrow screens.
+ * Places a compact editor dock just below its node. The dock follows the node
+ * vertically so it never changes side, and it is never height-clamped (so its
+ * body does not scroll). It may therefore extend past the bottom of the
+ * viewport just as the node that owns it does, which keeps the dock out of the
+ * way of the toolbar and other overlays. Only the horizontal position is
+ * clamped to the stage margins on both sides so the box stays reachable on
+ * narrow screens.
  */
 export function placeCanvasNodeEditorDock(
   anchor: CanvasOverlayAnchor,
@@ -158,6 +160,7 @@ export function placeCanvasNodeEditorDock(
 ): CanvasOverlayPosition {
   const position = placeCanvasNodeEditor(anchor, stage, overlay, gap);
   const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
+
   return {
     left: Math.min(Math.max(position.left, margin), rightmostLeft),
     top: position.top,

@@ -14232,7 +14232,9 @@ function CanvasNodeEditorPopover({
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
+  const [dockPopoverPos, setDockPopoverPos] = useState<{ left: number; top: number } | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
+  const dockPopoverRef = useRef<HTMLDivElement | null>(null);
   const data = node.data;
   const audioNode = node.type === "media" && data.kind === "audio";
   const isImageNode = !audioNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
@@ -14301,6 +14303,55 @@ function CanvasNodeEditorPopover({
     return () => window.removeEventListener("keydown", handleEscape, true);
   }, [promptExpanded]);
 
+  useLayoutEffect(() => {
+    if (!imageDockPanel) {
+      setDockPopoverPos(null);
+      return;
+    }
+    let frame = 0;
+    const place = () => {
+      const dockEl = popoverRef.current;
+      const popEl = dockPopoverRef.current;
+      if (!dockEl || !popEl) return;
+      const dockRect = dockEl.getBoundingClientRect();
+      const popRect = popEl.getBoundingClientRect();
+      const gap = 8;
+      const margin = 12;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let left = dockRect.left + dockRect.width / 2 - popRect.width / 2;
+      left = Math.min(Math.max(left, margin), Math.max(margin, vw - popRect.width - margin));
+      let top = dockRect.bottom + gap;
+      const fitsBelow = top + popRect.height <= vh - margin;
+      const fitsAbove = dockRect.top - popRect.height - gap >= margin;
+      if (!fitsBelow) {
+        const above = dockRect.top - popRect.height - gap;
+        if (fitsAbove) {
+          top = above;
+        } else if (popRect.height <= vh - margin * 2) {
+          // Neither side has room and the popover itself fits: clamp to the
+          // viewport so it never spills below the window edge.
+          top = Math.max(margin, vh - popRect.height - margin);
+        } else {
+          top = margin;
+        }
+      }
+      setDockPopoverPos((current) =>
+        current && current.left === left && current.top === top ? current : { left, top },
+      );
+    };
+    frame = window.requestAnimationFrame(place);
+    const handleResize = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(place);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [imageDockPanel, document.camera.x, document.camera.y, document.camera.zoom, position.left, position.top, promptExpanded]);
+
   const reposition = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -14314,7 +14365,7 @@ function CanvasNodeEditorPopover({
     // Use the density's preferred height instead of the currently rendered
     // height. A previously constrained panel can then grow again after the
     // node is panned upward or the viewport becomes taller.
-     const popoverHeight = audioNode ? 330 : isImageNode ? 320 : microEditor ? 400 : nextCompact ? 520 : 580;
+    const popoverHeight = audioNode ? 330 : isImageNode ? 320 : microEditor ? 400 : nextCompact ? 520 : 580;
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -14422,6 +14473,7 @@ function CanvasNodeEditorPopover({
             type="button"
             className="canvas-node-editor-expand"
             title={promptExpanded ? "收回编辑" : "放大编辑"}
+            {...(isImageNode ? { "data-tooltip": promptExpanded ? "收回编辑" : "放大编辑" } : {})}
             aria-label={promptExpanded ? "收回编辑" : "放大编辑"}
             aria-expanded={promptExpanded}
             onClick={(event) => {
@@ -14434,7 +14486,7 @@ function CanvasNodeEditorPopover({
           <button
             type="button"
             className={node.type === "upscale" && pending ? "canvas-node-editor-collapse" : undefined}
-            title={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
+            {...(isImageNode ? { "data-tooltip": node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数" } : { title: node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数" })}
             onClick={() => onToggleEditor(node)}
             aria-label={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
           >×</button>
@@ -14450,16 +14502,16 @@ function CanvasNodeEditorPopover({
          ) : isImageNode ? (
            <div className="canvas-node-editor-image-dock">
             <div className="canvas-node-editor-dock-chips">
-              <button type="button" className="canvas-node-editor-dock-chip" onClick={() => imageDockFileRef.current?.click()} aria-label="添加参考素材" title="添加参考素材">
+              <button type="button" className="canvas-node-editor-dock-chip" onClick={() => imageDockFileRef.current?.click()} aria-label="添加参考素材" data-tooltip="添加参考素材">
                 <span aria-hidden="true">＋</span> 参考
               </button>
               {node.type === "media" && node.data.kind === "image" && node.data.url && onLocalEdit && maskState && (
-                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => onLocalEdit()} aria-label="局部编辑" title="局部编辑">
+                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => onLocalEdit()} aria-label="局部编辑" data-tooltip="局部编辑">
                   <span aria-hidden="true">✎</span> 局部编辑
                 </button>
               )}
               {node.type === "generator" && (
-                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => setImageDockPanel((value) => value === "variant" ? null : "variant")} aria-label="变体要求" aria-expanded={imageDockPanel === "variant"} title="变体要求">
+                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => setImageDockPanel((value) => value === "variant" ? null : "variant")} aria-label="变体要求" aria-expanded={imageDockPanel === "variant"} data-tooltip="变体要求">
                   <span aria-hidden="true">⧉</span> 变体
                 </button>
               )}
@@ -14550,11 +14602,11 @@ function CanvasNodeEditorPopover({
                 <b>生成参数</b>
                 <small>{imageParameterSummary || "参数"}</small>
               </button>
-              <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : undefined} disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
+              <button type="button" className="canvas-node-editor-generate" data-tooltip={upscaleMissingInput ? "请连接一张已完成的图片" : undefined} disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
             </div>
             <input ref={imageDockFileRef} hidden type="file" multiple accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1" onChange={(event) => { if (event.target.files) onAddReferenceFiles(node.id, [...event.target.files]); event.currentTarget.value = ""; }} />
             {imageDockPanel === "params" && createPortal(
-              <div className="canvas-node-editor-dock-popover" role="dialog" aria-label="生成参数" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+              <div ref={dockPopoverRef} className="canvas-node-editor-dock-popover is-params" role="dialog" aria-label="生成参数" style={{ left: dockPopoverPos?.left ?? -10000, top: dockPopoverPos?.top ?? -10000, visibility: dockPopoverPos ? "visible" : "hidden" }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
                 <div className="canvas-node-editor-dock-popover-head">
                   <b>生成参数</b>
                   <button type="button" aria-label="关闭参数" onClick={() => setImageDockPanel(null)}>×</button>
@@ -14565,7 +14617,7 @@ function CanvasNodeEditorPopover({
                     settings={imageParams}
                     runtime={runtime}
                     referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
-                    variant="canvas-flat"
+                    variant="dock"
                     portalZIndex={CANVAS_Z_INDEX.modalPopover}
                     dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
                     onChange={(settings) => onEditorParamsChange(node, settings)}
@@ -14576,7 +14628,7 @@ function CanvasNodeEditorPopover({
               globalThis.document.body,
             )}
             {imageDockPanel === "variant" && createPortal(
-              <div className="canvas-node-editor-dock-popover" role="dialog" aria-label="变体要求" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+              <div ref={dockPopoverRef} className="canvas-node-editor-dock-popover" role="dialog" aria-label="变体要求" style={{ left: dockPopoverPos?.left ?? -10000, top: dockPopoverPos?.top ?? -10000, visibility: dockPopoverPos ? "visible" : "hidden" }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
                 <div className="canvas-node-editor-dock-popover-head">
                   <b>变体要求</b>
                   <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
