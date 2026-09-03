@@ -359,6 +359,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
 
 export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onOpenProviders, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const [modelId, setModelId] = useState(defaultModelId || 'auto');
   const [operation, setOperation] = useState<VideoOperation>('generate');
   const [inputMode, setInputMode] = useState<VideoInputMode>('text');
@@ -388,6 +389,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [jimengAccountBusy, setJimengAccountBusy] = useState(false);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const promptRef = useRef<HTMLDivElement | null>(null);
+  const promptExpandedRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!previewImage) return;
@@ -397,6 +399,26 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [previewImage]);
+
+  useEffect(() => {
+    if (!promptExpanded) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPromptExpanded(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    window.setTimeout(() => promptExpandedRef.current?.focus(), 0);
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [promptExpanded]);
+
+  function closePromptEditor() {
+    setPromptExpanded(false);
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  }
 
   useEffect(() => {
     const next = promptPrefill?.trim();
@@ -843,13 +865,14 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
          <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
            <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className={`video-live-pill ${usesAgnes && !selectedProvider?.credentialVerifiedAt ? 'needs-verification' : ''}`}>{usesAgnes ? selectedProvider?.credentialVerifiedAt ? '● Agnes Key 已验证' : '● Agnes Key 待验证' : '● 已连接'}</span></div>
-          <div className="video-field video-prompt-field"><div className="video-prompt-heading"><span>提示词</span>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); window.setTimeout(() => promptRef.current?.focus(), 0); }}>清空文本</button>}</div><ReferenceMentionEditor
+          <div className="video-field video-prompt-field"><div className="video-prompt-heading"><span>提示词</span><div className="video-prompt-heading-actions"><button type="button" className="video-prompt-expand" title="放大编辑提示词" aria-label="放大编辑提示词" aria-expanded={promptExpanded} onClick={() => setPromptExpanded(true)}><span aria-hidden="true">⛶</span><span>放大编辑</span></button>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); window.setTimeout(() => promptRef.current?.focus(), 0); }}>清空文本</button>}</div></div><ReferenceMentionEditor
             ref={promptRef}
             value={prompt}
             references={supportsReferenceMentions ? referenceCandidates : []}
             className="video-prompt-mention-editor"
             menuClassName="video-reference-mention-menu"
             ariaLabel="视频提示词"
+            readOnly={promptExpanded}
             placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
             onChange={(value) => setPrompt(value.slice(0, 6000))}
             transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
@@ -930,6 +953,17 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         </div>
       </aside>
       </div></>}
+    {promptExpanded && <div className="video-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="video-prompt-dialog-title" onMouseDown={(event) => { if (event.target === event.currentTarget) closePromptEditor(); }}><div className="video-prompt-dialog-inner"><div className="video-prompt-dialog-head"><div><span>提示词编辑</span><strong id="video-prompt-dialog-title">最大化编辑</strong></div><div className="video-prompt-heading-actions"><span className="video-prompt-dialog-count">{prompt.length}/6000</span>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); window.setTimeout(() => promptExpandedRef.current?.focus(), 0); }}>清空文本</button>}<button type="button" className="video-media-dialog-close" aria-label="关闭提示词编辑" onClick={closePromptEditor}>×</button></div></div><ReferenceMentionEditor
+      ref={promptExpandedRef}
+      value={prompt}
+      references={supportsReferenceMentions ? referenceCandidates : []}
+      className="video-prompt-dialog-editor"
+      menuClassName="video-reference-mention-menu"
+      ariaLabel="最大化编辑视频提示词"
+      placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
+      onChange={(value) => setPrompt(value.slice(0, 6000))}
+      transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
+    /><div className="video-prompt-dialog-foot"><small>支持换行和 @ 引用素材，关闭后内容会保留在原提示词框中。</small><button type="button" className="video-primary-button" onClick={closePromptEditor}>完成编辑</button></div></div></div>}
     {previewImage && <div className="video-media-dialog" role="dialog" aria-modal="true" aria-label={previewImage.kind === 'video' ? '查看参考视频' : '查看参考图'} onClick={() => setPreviewImage(null)}><div className="video-media-dialog-inner" onClick={(event) => event.stopPropagation()}><button type="button" className="video-media-dialog-close" aria-label="关闭预览" onClick={() => setPreviewImage(null)}>×</button>{previewImage.kind === 'video' ? <video src={previewImage.url} controls playsInline autoPlay /> : <img src={previewImage.url} alt={previewImage.name} />}<span>{previewImage.name}</span></div></div>}
     {taskDetail && <div className="video-task-dialog" role="dialog" aria-modal="true" aria-label="任务详情" onClick={() => setTaskDetail(null)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>任务详情</span><strong>{statusLabel(taskDetail.status)}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭任务详情" onClick={() => setTaskDetail(null)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{taskDetail.input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta"><span>模型<b>{taskDetail.modelName || '自动模型'}</b></span><span>操作<b>{operationLabel(taskDetail.operation)}</b></span><span>参数<b>{taskParameterSummary(taskDetail)}</b></span></div>{taskDetail.error && <p className="video-task-error">{taskDetail.error}</p>}</div></div></div>}
   </section>;

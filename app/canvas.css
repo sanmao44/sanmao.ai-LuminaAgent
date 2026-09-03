@@ -425,17 +425,95 @@ html[data-theme="dark"] .canvas-workspace{
   html:not([data-motion="on"]) .canvas-media-state.pending span{animation:none!important}
 }
 
-/* Keep connection ports from visually leaking through overlapping cards. */
+/* Magnetic connection ports sit just outside the card, then glide inward when
+   the pointer approaches. The button owns a generous invisible hit area while
+   its pseudo element stays visually compact. */
 .canvas-node .canvas-port{
-  opacity:0;
-  pointer-events:none;
-  transition:opacity .14s,background .14s,border-color .14s,box-shadow .14s,width .14s;
+  width:72px;
+  height:64px;
+  border:0;
+  border-radius:14px;
+  background:transparent;
+  opacity:1;
+  pointer-events:auto;
+  isolation:isolate;
+  transition:opacity .2s ease,transform .24s cubic-bezier(.2,.8,.2,1),filter .2s ease;
 }
-.canvas-node:hover .canvas-port,
+.canvas-node .canvas-port.left{left:-66px}
+.canvas-node .canvas-port.right{right:-66px}
+.canvas-node .canvas-port::before{
+  content:"";
+  position:absolute;
+  z-index:var(--canvas-z-local-content);
+  left:50%;
+  top:50%;
+  width:12px;
+  height:24px;
+  border:1px solid color-mix(in srgb,var(--node-effective) 58%,var(--line-strong));
+  border-radius:999px;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel-3));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 16%,transparent),0 3px 9px color-mix(in srgb,#000 20%,transparent),0 0 0 2px color-mix(in srgb,var(--node-effective) 7%,transparent);
+  opacity:.56;
+  transform:translate(-50%,-50%);
+  transition:width .22s ease,height .22s ease,border-color .2s ease,background .2s ease,box-shadow .22s ease,transform .24s cubic-bezier(.2,.8,.2,1);
+}
+.canvas-node .canvas-port.left::before{left:calc(100% - 9px)}
+.canvas-node .canvas-port.right::before{left:9px}
+.canvas-node .canvas-port::after{
+  content:"";
+  position:absolute;
+  z-index:var(--canvas-z-local-base);
+  left:50%;
+  top:50%;
+  width:28px;
+  height:42px;
+  border-radius:999px;
+  background:radial-gradient(ellipse,color-mix(in srgb,var(--node-effective) 18%,transparent),transparent 68%);
+  opacity:0;
+  transform:translate(-50%,-50%) scale(.7);
+  transition:opacity .2s ease,transform .26s cubic-bezier(.2,.8,.2,1);
+}
+.canvas-node .canvas-port.left::after{left:calc(100% - 9px)}
+.canvas-node .canvas-port.right::after{left:9px}
 .canvas-node.selected .canvas-port,
 .canvas-node .canvas-port:focus-visible{
   opacity:1;
-  pointer-events:auto;
+}
+.canvas-node .canvas-port:hover,
+.canvas-node .canvas-port:focus-visible{
+  border:0;
+  background:transparent;
+  box-shadow:none;
+  filter:brightness(1.06);
+  outline:0;
+}
+.canvas-node.selected .canvas-port::before,
+.canvas-node .canvas-port:hover::before,
+.canvas-node .canvas-port:focus-visible::before{opacity:1}
+.canvas-node .canvas-port.left:hover::before,
+.canvas-node .canvas-port.left:focus-visible::before,
+.canvas-node .canvas-port.left:hover::after,
+.canvas-node .canvas-port.left:focus-visible::after{transform:translate(calc(-50% - 14px),-50%)}
+.canvas-node .canvas-port.right:hover::before,
+.canvas-node .canvas-port.right:focus-visible::before,
+.canvas-node .canvas-port.right:hover::after,
+.canvas-node .canvas-port.right:focus-visible::after{transform:translate(calc(-50% + 14px),-50%)}
+.canvas-node .canvas-port:hover::before,
+.canvas-node .canvas-port:focus-visible::before{
+  width:14px;
+  height:28px;
+  border-color:color-mix(in srgb,var(--node-effective) 92%,#fff 8%);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--node-effective) 22%,var(--panel-2)),color-mix(in srgb,var(--node-effective) 12%,var(--panel-3)));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 25%,transparent),0 5px 16px color-mix(in srgb,#000 28%,transparent),0 0 0 4px color-mix(in srgb,var(--node-effective) 14%,transparent),0 0 18px color-mix(in srgb,var(--node-effective) 28%,transparent);
+}
+.canvas-node .canvas-port:hover::after,
+.canvas-node .canvas-port:focus-visible::after{
+  opacity:1;
+}
+@media(prefers-reduced-motion:reduce){
+  html:not([data-motion="on"]) .canvas-node .canvas-port,
+  html:not([data-motion="on"]) .canvas-node .canvas-port::before,
+  html:not([data-motion="on"]) .canvas-node .canvas-port::after{transition:none!important}
 }
 
 .canvas-agent-response-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:8px}
