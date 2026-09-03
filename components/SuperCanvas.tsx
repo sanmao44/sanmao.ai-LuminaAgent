@@ -24,6 +24,7 @@ import {
   arrangeCanvas,
   arrangeCanvasGroup,
   canvasEdgeEndpoints,
+  canConnect,
   clone,
   connectionPath,
   createEmptyMedia,
@@ -1042,7 +1043,26 @@ function connectCanvasNodesInDocument(
   const existingInputs = incomingReferences(next, targetId).length;
   const hasReferenceInput = inputRole === "reference-image" || inputRole === "first-frame" || inputRole === "last-frame" || inputRole === "audio" || sourceHasImage || sourceHasVideo || sourceHasAudio;
   next = addEdge(next, sourceId, targetId, sourcePort, targetPort, hasReferenceInput ? "reference" : "manual", inputRole, existingInputs);
-  if (next.edges.length === beforeEdges) return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
+  if (next.edges.length === beforeEdges) {
+    // Re-mentioning or re-dropping an input that is already wired should be a
+    // no-op success rather than a confusing "already exists" error. Keep the
+    // existing edge role so video slot semantics stay stable.
+    const existingEdge = next.edges.find(
+      (edge) =>
+        edge.source === sourceId &&
+        edge.target === targetId &&
+        edge.sourcePort === sourcePort &&
+        edge.targetPort === targetPort,
+    );
+    if (
+      existingEdge &&
+      !["generated", "variant", "lineage"].includes(existingEdge.kind || "") &&
+      canConnect(next, sourceId, targetId, inputRole).ok
+    ) {
+      return { ok: true, document: next, inputRole: existingEdge.inputRole || inputRole, videoMode };
+    }
+    return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
+  }
   const synchronized = targetKind === "video"
     ? syncCanvasVideoReferences(next, runtime)
     : next;
