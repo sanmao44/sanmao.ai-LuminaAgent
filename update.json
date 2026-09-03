@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "62ecf445649114c11d8d83497dc7a752c7877b53c0aa56278411b95a65f781f2",
   "publishedAt": "2026-09-03T00:00:00+08:00",
   "notes": [
     "Unify the video model picker and improve canvas/video studio interactions.",
