@@ -10572,7 +10572,7 @@ export default function SuperCanvas() {
         }}
         onContextMenu={handleContextMenu}
         onWheel={(event) => {
-          if (isCanvasWheelIsolatedTarget(event.target)) {
+          if (isCanvasWheelIsolatedTarget(event.target, true)) {
             // Do not preventDefault: the nested textarea/list should keep its
             // native scroll. Stopping here only prevents stage zoom.
             event.stopPropagation();
