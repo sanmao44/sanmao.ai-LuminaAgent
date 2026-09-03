@@ -14635,7 +14635,6 @@ function CanvasNodeCard({
         event.dataTransfer.setData("application/x-sanmao-canvas-node", node.id);
       }}
       onPointerDown={(event) => onPointerDown(event, node)}
-      onWheel={(event) => event.stopPropagation()}
       onDoubleClick={(event) => {
         event.stopPropagation();
         if (node.type === "prompt") onEdit(true);
@@ -14659,12 +14658,14 @@ function CanvasNodeCard({
           出组
         </button>
       )}
-      <button
-        type="button"
-        className="canvas-port left"
-        aria-label="左侧连接端口"
-        onPointerDown={(event) => onConnect(event, node.id, "left")}
-      />
+      {!node.groupId && (
+        <button
+          type="button"
+          className="canvas-port left"
+          aria-label="左侧连接端口"
+          onPointerDown={(event) => onConnect(event, node.id, "left")}
+        />
+      )}
       {node.type === "media" && (
         <div className={`canvas-media-card${data.kind === "video" ? " video" : data.kind === "audio" ? " audio" : ""}`}>
           <div className="canvas-media-stage">
@@ -15217,12 +15218,14 @@ function CanvasNodeCard({
           </div>
         </div>
       )}
-      <button
-        type="button"
-        className="canvas-port right"
-        aria-label="右侧连接端口"
-        onPointerDown={(event) => onConnect(event, node.id, "right")}
-      />
+      {!node.groupId && (
+        <button
+          type="button"
+          className="canvas-port right"
+          aria-label="右侧连接端口"
+          onPointerDown={(event) => onConnect(event, node.id, "right")}
+        />
+      )}
       <span
         className="canvas-node-resize"
         onPointerDown={(event) => onResize(event, node)}
