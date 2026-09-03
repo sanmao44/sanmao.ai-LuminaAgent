@@ -1427,10 +1427,9 @@ export function entityPortPoint(
   port: "left" | "right",
 ) {
   const bounds = entityBounds(document, id);
-  // Node ports are rendered outside the card. Terminate the SVG at the
-  // capsule's outer face so lines never run through the control. Group ports
-  // remain centred on their dashed group boundary.
-  const offset = nodeById(document, id) ? 14 : 0;
+  // Node and group ports are rendered outside their card. Terminate the SVG
+  // at the capsule's outer face so lines never run through the control.
+  const offset = 14;
   return {
     x:
       bounds.x +

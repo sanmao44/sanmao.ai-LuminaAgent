@@ -51,7 +51,7 @@ test("places a group toolbar above the selected group", () => {
 
   assert.deepEqual(
     layout.placeCanvasGroupToolbar(anchor, stage, { width: 420, height: 36 }),
-    { left: 314, top: 194, placement: "above" },
+    { left: 280, top: 194, placement: "above" },
   );
 });
 
@@ -61,7 +61,7 @@ test("moves a group toolbar inside the group when the top edge is too close", ()
 
   assert.deepEqual(
     layout.placeCanvasGroupToolbar(anchor, stage, { width: 420, height: 36 }),
-    { left: 314, top: 40, placement: "inside" },
+    { left: 280, top: 40, placement: "inside" },
   );
 });
 

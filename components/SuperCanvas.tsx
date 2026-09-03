@@ -1184,10 +1184,25 @@ const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
 // Wheel gestures inside a node or an overlay belong to that control. Keep
 // them out of the stage zoom handler so native text/list scrolling can work
 // without moving the whole canvas underneath it.
-function isCanvasWheelIsolatedTarget(target: EventTarget | null) {
+function isCanvasWheelIsolatedTarget(
+  target: EventTarget | null,
+  allowNodeSurface = false,
+) {
   if (!(target instanceof Element)) return false;
-  const selector =
-    ".canvas-node, .canvas-node-editor-popover, .canvas-node-quick-toolbar, .canvas-minimap, .canvas-workbench, .canvas-context-menu, .canvas-modal-backdrop, [data-canvas-wheel-isolate]";
+  const selector = [
+    "textarea",
+    "input",
+    "select",
+    "[contenteditable=\"true\"]",
+    !allowNodeSurface ? ".canvas-node" : "",
+    ".canvas-node-editor-popover",
+    ".canvas-node-quick-toolbar",
+    ".canvas-minimap",
+    ".canvas-workbench",
+    ".canvas-context-menu",
+    ".canvas-modal-backdrop",
+    "[data-canvas-wheel-isolate]",
+  ].filter(Boolean).join(", ");
   if (target.closest(selector)) return true;
 
   // Keep future native scroll containers safe without requiring every new
@@ -3843,7 +3858,7 @@ export default function SuperCanvas() {
       // gesture consistently controls the canvas camera instead.
       event.preventDefault();
       event.stopPropagation();
-      if (isCanvasWheelIsolatedTarget(event.target)) return;
+      if (isCanvasWheelIsolatedTarget(event.target, true)) return;
       zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0014));
     };
     stage.addEventListener("wheel", handleModifiedWheel, {
