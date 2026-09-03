@@ -9783,20 +9783,12 @@ export default function SuperCanvas() {
     [updateDeckPrompt],
   );
   const applyDeckVariantMention = useCallback(
-    (index: number, value: string) => {
+    (_index: number, value: string) => {
       if (selectedSingle?.type !== "generator") return;
       updateVariantRequirements(value);
-      const node = mentionCandidates[index];
-      if (!node) return;
-      const role: CanvasInputRole = node.type === "prompt" || node.type === "generator"
-        ? "context"
-        : node.data.kind === "video"
-          ? selectedSingle.data.kind === "video" ? "video" : "reference-image"
-          : "reference-image";
-      addNodeReference(selectedSingle.id, node.id, role);
       setVariantMentionState(null);
     },
-    [addNodeReference, mentionCandidates, selectedSingle, updateVariantRequirements],
+    [selectedSingle, updateVariantRequirements],
   );
   const reorderReference = useCallback(
     (ownerId: string, draggedId: string, targetId: string) => {
@@ -11058,7 +11050,7 @@ export default function SuperCanvas() {
                   onReferenceDrop={addNodeReference}
                   onAddReferenceFiles={addEditorReferenceFiles}
                   editorContexts={incomingContext(document, node.id).filter((item) => item.type === "prompt" || item.type === "generator")}
-                   mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
+                   mentionCandidates={incomingContext(document, node.id).filter(isCanvasMentionableNode)}
                 />
               ))}
            </div>
@@ -14550,17 +14542,7 @@ function CanvasNodeEditorPopover({
                 className="canvas-node-prompt-editor"
                 menuClassName="canvas-node-mention-menu"
                 onChange={(value) => onEditorPromptChange(node, value)}
-                onMentionSelect={(candidateIndex, value) => {
-                  const candidate = mentionCandidates[candidateIndex];
-                  if (!candidate) return;
-                  onEditorPromptChange(node, value);
-                  const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                    ? "context"
-                    : candidate.data.kind === "video"
-                      ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
-                      : "reference-image";
-                  onReferenceDrop(node.id, candidate.id, role);
-                }}
+                onMentionSelect={(_candidateIndex, value) => onEditorPromptChange(node, value)}
                 placeholder="描述想生成的画面… 输入 @ 引用节点"
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -14667,17 +14649,7 @@ function CanvasNodeEditorPopover({
                     className="canvas-node-variant-requirements-editor"
                     menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
                     onChange={(value) => onVariantRequirementsChange(node, value)}
-                    onMentionSelect={(candidateIndex, value) => {
-                      const candidate = mentionCandidates[candidateIndex];
-                      if (!candidate) return;
-                      onVariantRequirementsChange(node, value);
-                      const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                        ? "context"
-                        : candidate.data.kind === "video"
-                          ? data.kind === "video" ? "video" : "reference-image"
-                          : "reference-image";
-                      onReferenceDrop(node.id, candidate.id, role);
-                    }}
+                    onMentionSelect={(_candidateIndex, value) => onVariantRequirementsChange(node, value)}
                     placeholder="改成夜景\n改为俯拍视角"
                     transformPastedText={(text) => replaceNaturalReferenceLabels(
                       text,
@@ -14704,17 +14676,7 @@ function CanvasNodeEditorPopover({
                 className="canvas-node-prompt-editor"
                 menuClassName="canvas-node-mention-menu"
                 onChange={(value) => onEditorPromptChange(node, value)}
-                onMentionSelect={(candidateIndex, value) => {
-                  const candidate = mentionCandidates[candidateIndex];
-                  if (!candidate) return;
-                  onEditorPromptChange(node, value);
-                  const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                    ? "context"
-                    : candidate.data.kind === "video"
-                      ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
-                      : "reference-image";
-                  onReferenceDrop(node.id, candidate.id, role);
-                }}
+                onMentionSelect={(_candidateIndex, value) => onEditorPromptChange(node, value)}
                 placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
@@ -14779,17 +14741,7 @@ function CanvasNodeEditorPopover({
                   className="canvas-node-variant-requirements-editor"
                   menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
                   onChange={(value) => onVariantRequirementsChange(node, value)}
-                  onMentionSelect={(candidateIndex, value) => {
-                    const candidate = mentionCandidates[candidateIndex];
-                    if (!candidate) return;
-                    onVariantRequirementsChange(node, value);
-                    const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                      ? "context"
-                      : candidate.data.kind === "video"
-                        ? data.kind === "video" ? "video" : "reference-image"
-                        : "reference-image";
-                    onReferenceDrop(node.id, candidate.id, role);
-                  }}
+                  onMentionSelect={(_candidateIndex, value) => onVariantRequirementsChange(node, value)}
                   placeholder="改成夜景\n改为俯拍视角"
                   transformPastedText={(text) => replaceNaturalReferenceLabels(
                     text,
