@@ -4,6 +4,18 @@
 
 ---
 
+## 💡 给 Codex 的操作提示（每次先读这里）
+
+> **本项目的铁律：平时所有修改一律【只同步、不发布】。只有当我明确说“发布”时，才允许打包并发布。**
+
+| 你说的话 | Codex 会做 |
+|---------|-----------|
+| “同步 / 备份 / 推到 GitHub” | 只 `commit + push`，**不**升级版本号、不打 tag、不出 Release |
+| “发布 / 出个版本 / 通知用户更新” | 才升级版本号、打 tag、出 Release、上传 zip、更新 update.json |
+
+**平时修改 = 不打包、不发布；给出明确发布指令 = 才打包 + 发布。**
+
+---
 ## 0. 一句话心法
 
 > **`git push` 只是备份代码；`git release`（打 tag + 出 Release）才是发布给用户。**
@@ -119,3 +131,4 @@ gh release create v0.7.25 "C:\path\to\SANMAO.AI-0.7.25.zip" --repo sanmao44/sanm
 - 想隔离开发：分支 → **合并回 main** → push（不发布）
 - 想发一版：升级版本号 → `git tag` → `gh release create`（发布）
 - 用户更新：`git pull` 或 下载 Release zip
+
