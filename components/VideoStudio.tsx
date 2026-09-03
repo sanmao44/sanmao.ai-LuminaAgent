@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
 import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
+import ModelPicker from '@/components/ModelPicker';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
@@ -433,6 +434,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   const selectedModel = models.find((model) => model.id === modelId) || models.find((model) => model.id === defaultModelId) || models[0];
   const selectedProvider = providers.find((provider) => provider.id === selectedModel?.providerId);
+  const defaultModel = models.find((model) => model.id === defaultModelId);
+  const defaultProvider = providers.find((provider) => provider.id === defaultModel?.providerId);
   const jimengProvider = useMemo(() => providers.find((provider) => provider.platform === 'jimeng-cli' || provider.videoTransport === 'jimeng-cli'), [providers]);
 
   async function refreshJimengAccount() {
@@ -526,7 +529,6 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   // Only expose audio there when the model metadata explicitly advertises it;
   // other compatible providers keep the existing flexible control.
   const supportsAudio = !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
-  const modelOptions = [{ value: 'auto', label: '自动选择', description: '使用当前默认视频模型' }, ...models.map((model) => ({ value: model.id, label: model.displayName, description: model.providerName }))];
   const operationOptions = [{ value: 'generate' as const, label: '生成视频', description: '根据提示词和画面输入生成视频' }, ...(supportsEdit ? [{ value: 'edit' as const, label: '视频编辑', description: '参考已有视频进行修改' }] : []), ...(supportsExtend ? [{ value: 'extend' as const, label: '视频扩展', description: '延续已有视频的镜头' }] : [])];
   const showOperationField = operationOptions.length > 1;
   const inputModeOptions = useMemo(() => [{ value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' }, ...(supportsFirst ? [{ value: 'first-frame' as const, label: '首帧 · 控制开场画面', description: '上传一张开场参考图' }, { value: 'frames' as const, label: uses65535Policy ? '双参考图 · 控制起止' : '首尾帧 · 约束镜头起止', description: uses65535Policy ? '65535 将首帧和尾帧按两张参考图提交' : '上传首帧和尾帧' }] : []), ...(supportsReference ? [{ value: 'reference' as const, label: '参考图 · 保持主体风格', description: `最多添加 ${modelLimits.maxReferenceImages} 张参考图` }] : [])], [modelLimits.maxReferenceImages, supportsFirst, supportsReference, uses65535Policy]);
@@ -878,7 +880,19 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
             transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
           /><small>{prompt.length}/6000</small></div>
           <div className={`video-creation-selects ${showOperationField ? '' : 'without-operation'}`}>
-            <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
+            <label className="video-field video-model-field">
+              <span>视频模型</span>
+              <ModelPicker
+                models={models}
+                value={modelId}
+                onChange={setModelId}
+                capability="video-generate"
+                defaultProviderId={defaultProvider?.id}
+                defaultProviderName={defaultProvider?.name}
+                defaultModelId={defaultModelId}
+                placeholder="选择视频模型"
+              />
+            </label>
             {showOperationField && <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>}
             {inputModeOptions.length > 1 && <label className="video-field video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : '参考图生视频' }))} ariaLabel="生成方式" /></label>}
           </div>
