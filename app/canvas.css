@@ -818,6 +818,12 @@ html[data-theme="dark"] .canvas-workspace{
 .reference-mention-menu.canvas-mention-menu button>.reference-mention-index,.reference-mention-menu.canvas-node-mention-menu button>.reference-mention-index{display:inline-flex;align-items:center;min-width:0;color:var(--accent-text);font-size:11px;font-weight:900;line-height:1}
 .reference-mention-text-thumbnail{display:grid;align-content:center;gap:2px;width:100%;height:100%;padding:4px;color:var(--accent-text);background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 18%,var(--panel-3)),var(--panel-3));font-size:8px}
 .reference-mention-text-thumbnail>b{font-size:7px;letter-spacing:.08em}.reference-mention-text-thumbnail>small{overflow:hidden;display:block;color:var(--text-2);font-size:6px;line-height:1.25;word-break:break-word}.reference-mention-fallback-thumbnail{font-size:16px}
+/* Portaled mention menu: the canvas node editors render the mention picker
+   into document.body so it escapes the dock/expanded-modal overflow clipping.
+   The wrapper is fixed-positioned at the caret; the menu itself re-flows to a
+   static box inside so it never inherits the inline popover offsets. */
+.reference-mention-menu-anchor{position:fixed;z-index:var(--canvas-z-toast);pointer-events:auto;min-width:0}
+.reference-mention-menu.is-portaled{position:static;left:auto;right:auto;bottom:auto;top:auto;transform:none;width:min(320px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:260px}
  .canvas-node-editor-popover:has(.reference-mention-menu){overflow:visible}
  .canvas-node-editor-popover:has(.reference-mention-menu) .canvas-node-editor-body{overflow:visible}
  .canvas-node-editor-popover:has(.reference-mention-menu) .reference-mention-menu{z-index:var(--canvas-z-local-menu)}
@@ -1902,6 +1908,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover.is-image-dock.is-prompt-expanded .canvas-node-editor-prompt-wrap{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;padding:18px;border-radius:19px}
 .canvas-node-editor-popover.is-image-dock.is-prompt-expanded .canvas-node-editor-prompt-wrap>.reference-mention-editor{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 .canvas-node-editor-popover.is-image-dock.is-prompt-expanded .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{flex:1 1 auto;min-height:220px;max-height:460px;font-size:13px;line-height:1.75}
+.canvas-node-editor-popover.is-prompt-expanded .reference-mention-editor-content{flex:1 1 auto;min-height:0}
 
 .canvas-node-editor-dock-popover{position:fixed;z-index:var(--canvas-z-modal-popover);width:min(680px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:min(620px,calc(100vh - 32px));display:flex;flex-direction:column;min-height:0;overflow:auto;padding:12px;box-sizing:border-box;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line-strong));border-radius:16px;background:color-mix(in srgb,var(--panel) 97%,transparent);box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);backdrop-filter:blur(20px)}
 .canvas-node-editor-dock-popover-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}

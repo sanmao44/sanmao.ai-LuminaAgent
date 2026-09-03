@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   insertReferenceMention,
   referenceMentionRange,
@@ -226,6 +227,9 @@ type ReferenceMentionEditorProps = {
   menuTitle?: ReactNode;
   transformPastedText?: (value: string) => string;
   readOnly?: boolean;
+  /** Render the mention menu in a fixed-position portal anchored to the caret.
+   * Used by canvas node editors so the menu escapes overflow clipping. */
+  menuPortal?: boolean;
 };
 
 const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditorProps>(function ReferenceMentionEditor({
@@ -248,6 +252,7 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
   menuTitle,
   transformPastedText,
   readOnly = false,
+  menuPortal = false,
 }, forwardedRef) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const pendingCursor = useRef<number | null>(null);
@@ -260,6 +265,35 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
   const latestCursorRef = useRef(value.length);
   const mentionUpdateFrameRef = useRef<number | null>(null);
   const [mentionState, setMentionState] = useState<ReferenceMentionRange | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<{ left: number; top: number } | null>(null);
+
+  const computeMenuAnchor = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode)) return null;
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = 8;
+    const menuWidth = Math.min(320, vw - margin * 2);
+    const menuHeight = 260;
+    const gap = 6;
+    const maxLeft = Math.max(margin, vw - menuWidth - margin);
+    const maxTop = Math.max(margin, vh - menuHeight - margin);
+    const left = Math.min(Math.max(rect.left, margin), maxLeft);
+    let top = rect.bottom + gap;
+    if (top + menuHeight > vh - margin) {
+      const above = rect.top - menuHeight - gap;
+      top = above >= margin ? above : maxTop;
+    }
+    return { left, top: Math.min(Math.max(top, margin), maxTop) };
+  };
+
+  const syncMenuAnchor = (next: ReferenceMentionRange | null) => {
+    if (!menuPortal) return;
+    setMenuAnchor(next ? computeMenuAnchor() : null);
+  };
 
   useImperativeHandle(forwardedRef, () => editorRef.current as HTMLDivElement);
 
@@ -340,11 +374,11 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     const cursor = caretOffset(editor, range.startContainer, range.startOffset);
     latestValueRef.current = serialized;
     latestCursorRef.current = cursor;
-    setMentionState(
-      !readOnly && references.length && isMentionTriggerAtCaret(editor, range.startContainer, range.startOffset)
-        ? referenceMentionRange(serialized, cursor)
-        : null,
-    );
+    const nextMention = !readOnly && references.length && isMentionTriggerAtCaret(editor, range.startContainer, range.startOffset)
+      ? referenceMentionRange(serialized, cursor)
+      : null;
+    setMentionState(nextMention);
+    syncMenuAnchor(nextMention);
   };
 
   const scheduleMentionStateUpdate = () => {
@@ -370,13 +404,13 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     latestCursorRef.current = cursor;
     skipRenderRef.current = true;
     onChange(serialized, cursor);
-    setMentionState(
-      !readOnly && references.length && selection?.rangeCount && anchorNode
-        ? isMentionTriggerAtCaret(editor, anchorNode, selection.anchorOffset)
-          ? referenceMentionRange(serialized, cursor)
-          : null
-        : null,
-    );
+    const nextMention = !readOnly && references.length && selection?.rangeCount && anchorNode
+      ? isMentionTriggerAtCaret(editor, anchorNode, selection.anchorOffset)
+        ? referenceMentionRange(serialized, cursor)
+        : null
+      : null;
+    setMentionState(nextMention);
+    syncMenuAnchor(nextMention);
   };
 
   const handleMentionSelect = (index: number) => {
@@ -389,6 +423,7 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     forceRenderRef.current = true;
     pendingCursor.current = inserted.cursor;
     setMentionState(null);
+    syncMenuAnchor(null);
     if (onMentionSelect) onMentionSelect(index, inserted.value, inserted.cursor);
     else onChange(inserted.value, inserted.cursor);
   };
@@ -416,13 +451,13 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     onChange(next, pendingCursor.current);
     const pastedMention = referenceMentionRange(next, pendingCursor.current);
     const mentionContinuesFromCaret = isMentionTriggerAtCaret(editor, range.startContainer, range.startOffset);
-    setMentionState(
-      !readOnly && references.length && pastedMention && (
-        mentionContinuesFromCaret || (pastedMention.start >= from && normalizedText.includes("@"))
-      )
-        ? pastedMention
-        : null,
-    );
+    const nextMention = !readOnly && references.length && pastedMention && (
+      mentionContinuesFromCaret || (pastedMention.start >= from && normalizedText.includes("@"))
+    )
+      ? pastedMention
+      : null;
+    setMentionState(nextMention);
+    syncMenuAnchor(nextMention);
   };
 
   return (
@@ -444,6 +479,7 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
           const next = event.relatedTarget;
           if (!(next instanceof Element && next.closest(".reference-mention-menu"))) {
             setMentionState(null);
+            syncMenuAnchor(null);
           }
           onBlur?.(event);
         }}
@@ -453,20 +489,44 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
           if (event.key === "Escape" && mentionState) {
             event.preventDefault();
             setMentionState(null);
+            syncMenuAnchor(null);
           }
           if (event.key === "@") scheduleMentionStateUpdate();
           onKeyDown?.(event);
         }}
         onPaste={handlePaste}
       />
-      <ReferenceMentionMenu
-        references={references}
-        open={Boolean(mentionState) && !readOnly && references.length > 0}
-        query={mentionState?.query}
-        onSelect={handleMentionSelect}
-        className={menuClassName}
-        title={menuTitle}
-      />
+      {menuPortal ? (
+        createPortal(
+          <div
+            className="reference-mention-menu-anchor"
+            style={{
+              left: menuAnchor?.left ?? -10000,
+              top: menuAnchor?.top ?? -10000,
+              visibility: menuAnchor ? "visible" : "hidden",
+            }}
+          >
+            <ReferenceMentionMenu
+              references={references}
+              open={Boolean(mentionState) && !readOnly && references.length > 0}
+              query={mentionState?.query}
+              onSelect={handleMentionSelect}
+              className={`${menuClassName}${menuClassName ? " " : ""}is-portaled`}
+              title={menuTitle}
+            />
+          </div>,
+          document.body,
+        )
+      ) : (
+        <ReferenceMentionMenu
+          references={references}
+          open={Boolean(mentionState) && !readOnly && references.length > 0}
+          query={mentionState?.query}
+          onSelect={handleMentionSelect}
+          className={menuClassName}
+          title={menuTitle}
+        />
+      )}
     </div>
   );
 });
