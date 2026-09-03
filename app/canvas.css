@@ -1935,6 +1935,62 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-dock-popover .creation-pixel-fields.canvas-parameter-pixels{gap:5px}
 .canvas-node-editor-dock-popover .creation-custom-ratio.canvas-parameter-custom-ratio{margin:0}
 
+/* Bottom drawer for image node generation params. Pulls up from the bottom edge,
+   scrolls its body content, and keeps a compact summary footer (the reference
+   "16:9 · 标准画质 · 2K · 1张" row). Only used for the image dock params panel. */
+.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer{
+  position:fixed;
+  left:50%;
+  top:auto;
+  bottom:0;
+  transform:translateX(-50%);
+  width:min(680px,calc(100vw - 24px));
+  max-width:calc(100vw - 24px);
+  max-height:min(72vh,calc(100vh - 40px));
+  min-height:0;
+  padding:12px 14px 12px;
+  border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
+  border-bottom:0;
+  border-radius:18px 18px 0 0;
+  box-shadow:0 -18px 50px rgba(15,23,42,.34),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
+}
+.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-popover-head{margin-bottom:8px}
+.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-drawer-grip{
+  flex:none;
+  width:44px;
+  height:4px;
+  margin:0 auto 10px;
+  border-radius:999px;
+  background:color-mix(in srgb,var(--text) 22%,transparent);
+}
+.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-drawer-body{
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+  flex:1 1 auto;
+  overflow:auto;
+}
+.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-drawer-summary{
+  flex:none;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-top:10px;
+  padding-top:10px;
+  border-top:1px solid color-mix(in srgb,var(--line) 70%,transparent);
+}
+.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-drawer-summary span{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  min-width:0;
+  font-size:10px;
+  font-weight:850;
+  color:var(--text);
+  white-space:nowrap;
+}
+
+
 /* Project-styled tooltips for the compact image dock. Replaces the browser's
    native title bubbles with the app accent tooltip, so dock controls read like
    the rest of the canvas. Scoped to .is-image-dock because that panel alone is

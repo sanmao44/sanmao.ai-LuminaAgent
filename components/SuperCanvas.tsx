@@ -14606,11 +14606,13 @@ function CanvasNodeEditorPopover({
             </div>
             <input ref={imageDockFileRef} hidden type="file" multiple accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1" onChange={(event) => { if (event.target.files) onAddReferenceFiles(node.id, [...event.target.files]); event.currentTarget.value = ""; }} />
             {imageDockPanel === "params" && createPortal(
-              <div ref={dockPopoverRef} className="canvas-node-editor-dock-popover is-params" role="dialog" aria-label="生成参数" style={{ left: dockPopoverPos?.left ?? -10000, top: dockPopoverPos?.top ?? -10000, visibility: dockPopoverPos ? "visible" : "hidden" }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+              <div className="canvas-node-editor-dock-popover canvas-node-editor-dock-drawer is-params" role="dialog" aria-label="生成参数" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+                <div className="canvas-node-editor-dock-drawer-grip" aria-hidden="true" />
                 <div className="canvas-node-editor-dock-popover-head">
                   <b>生成参数</b>
                   <button type="button" aria-label="关闭参数" onClick={() => setImageDockPanel(null)}>×</button>
                 </div>
+                <div className="canvas-node-editor-dock-drawer-body">
                 {imageParams && (
                   <CreationParameterEditor
                     key={node.id}
@@ -14624,10 +14626,11 @@ function CanvasNodeEditorPopover({
                     onVideoInputModeChange={() => onVideoInputModeChange(node)}
                   />
                 )}
+                </div>
+                <div className="canvas-node-editor-dock-drawer-summary"><span>{imageParameterSummary || "参数"}</span></div>
               </div>,
               globalThis.document.body,
-            )}
-            {imageDockPanel === "variant" && createPortal(
+            )}{imageDockPanel === "variant" && createPortal(
               <div ref={dockPopoverRef} className="canvas-node-editor-dock-popover" role="dialog" aria-label="变体要求" style={{ left: dockPopoverPos?.left ?? -10000, top: dockPopoverPos?.top ?? -10000, visibility: dockPopoverPos ? "visible" : "hidden" }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
                 <div className="canvas-node-editor-dock-popover-head">
                   <b>变体要求</b>
