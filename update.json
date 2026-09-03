@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.23",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.23",
+  "latestVersion": "0.7.24",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.24",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip"
   ],
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "publishedAt": "2026-09-03T00:00:00+08:00",
   "notes": [
-    "Replace the image-node super-resolution shortcut with an in-node image editing workbench for super resolution, outpainting, resizing, cropping, grid splitting, and mirror/rotation.",
+    "Unify the video model picker and improve canvas/video studio interactions.",
     "Keep super resolution on the existing dedicated settings panel while enabling local preview, drag handles, presets, and save-to-new-node or overwrite workflows for the other operations.",
     "Render local image transformations to PNG, upload only after processing succeeds, preserve lineage and undo behavior, and automatically group grid-split results."
   ]
