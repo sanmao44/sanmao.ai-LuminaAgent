@@ -1184,9 +1184,13 @@ const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
 // Wheel gestures inside a node or an overlay belong to that control. Keep
 // them out of the stage zoom handler so native text/list scrolling can work
 // without moving the whole canvas underneath it.
-function isCanvasWheelIsolatedTarget(
+function isCanvasWheelIsolatedTarget(target: EventTarget | null) {
+  return isCanvasWheelIsolatedTargetWithOptions(target, false);
+}
+
+function isCanvasWheelIsolatedTargetWithOptions(
   target: EventTarget | null,
-  allowNodeSurface = false,
+  allowNodeSurface: boolean,
 ) {
   if (!(target instanceof Element)) return false;
   const selector = [
@@ -3858,7 +3862,7 @@ export default function SuperCanvas() {
       // gesture consistently controls the canvas camera instead.
       event.preventDefault();
       event.stopPropagation();
-      if (isCanvasWheelIsolatedTarget(event.target, true)) return;
+      if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) return;
       zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0014));
     };
     stage.addEventListener("wheel", handleModifiedWheel, {
@@ -10572,7 +10576,7 @@ export default function SuperCanvas() {
         }}
         onContextMenu={handleContextMenu}
         onWheel={(event) => {
-          if (isCanvasWheelIsolatedTarget(event.target, true)) {
+          if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) {
             // Do not preventDefault: the nested textarea/list should keep its
             // native scroll. Stopping here only prevents stage zoom.
             event.stopPropagation();

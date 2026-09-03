@@ -17,12 +17,15 @@ async function importTypeScript(sourceUrl, source, fileName = sourceUrl.pathname
 const providersUrl = new URL('../lib/providers.ts', import.meta.url);
 const providersSource = await readFile(providersUrl, 'utf8');
 const detectionSource = await readFile(new URL('../lib/native-search-detection.ts', import.meta.url), 'utf8');
+const modelKindSource = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const agnesSource = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8');
 const providers = await importTypeScript(providersUrl, [
   detectionSource.replace('export function inferNativeSearch', 'function inferNativeSearch'),
+  modelKindSource,
   agnesSource.replace(/^import .+;\r?\n/gm, ''),
   providersSource
     .replace("import { inferNativeSearch } from './native-search-detection';", '')
+    .replace("import { inferModelKind } from './model-kind';", '')
     .replace("import { agnesModelCatalog } from './agnes';", ''),
 ].join('\n'));
 

@@ -261,7 +261,7 @@ test("nested node scrolling does not trigger canvas zoom", () => {
   assert.match(component, /function isCanvasWheelIsolatedTarget\(target: EventTarget \| null\)/);
   assert.match(component, /target\.closest\(selector\)/);
   assert.match(component, /onWheel=\{\(event\) => event\.stopPropagation\(\)\}/);
-  assert.match(component, /if \(isCanvasWheelIsolatedTarget\(event\.target\)\)/);
+  assert.match(component, /if \(isCanvasWheelIsolatedTargetWithOptions\(event\.target, true\)\)/);
   assert.match(component, /Do not preventDefault/);
   assert.match(styles, /\.canvas-node,\.canvas-node-editor-popover,\.canvas-node-quick-toolbar/);
   assert.match(styles, /\.canvas-prompt-preview,\.canvas-node-editor-body/);
