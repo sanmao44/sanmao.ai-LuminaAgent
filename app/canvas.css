@@ -328,6 +328,14 @@
 .canvas-group.asset-drop-target{border-color:var(--accent-2);background:color-mix(in srgb,var(--accent-soft) 62%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent-2) 18%,transparent),0 0 24px color-mix(in srgb,var(--accent-2) 26%,transparent)}
 .canvas-group:hover .canvas-group-port,.canvas-group.selected .canvas-group-port,.canvas-group.connection-source .canvas-group-port,.canvas-group.connection-target .canvas-group-port{opacity:.96;background:var(--accent-soft);border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 3px 12px color-mix(in srgb,var(--accent) 28%,transparent)}
 .canvas-group-port:hover,.canvas-group-port:focus-visible{opacity:1;background:var(--accent);border-color:var(--accent-2);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent),0 4px 14px color-mix(in srgb,var(--accent) 38%,transparent);transform:translateY(-50%) scale(1.12)}
+
+/* The group resize control owns an invisible corner hit target. Keep its
+   resize cursor above the generic canvas-button cursor before pointer-down. */
+.canvas-group-resize{right:-18px;bottom:-18px;width:36px;height:36px;padding:0;border:0;background:transparent;box-shadow:none;appearance:none;-webkit-appearance:none;opacity:1}
+.canvas-group-resize::before{content:"";position:absolute;left:50%;top:50%;width:14px;height:14px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line-strong));border-radius:5px;background:var(--panel-3);opacity:.7;transform:translate(-50%,-50%);transition:opacity .14s,background .14s,border-color .14s,box-shadow .14s,transform .14s}
+.canvas-group:hover .canvas-group-resize::before,.canvas-group.selected .canvas-group-resize::before{opacity:1;background:var(--accent-soft);border-color:var(--accent)}
+.canvas-stage .canvas-group-resize,.canvas-stage .canvas-group-resize:hover,.canvas-stage .canvas-group-resize:focus-visible{cursor:nwse-resize}
+.canvas-group-resize:hover::before,.canvas-group-resize:focus-visible::before{background:color-mix(in srgb,var(--accent) 18%,var(--panel-3));border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent);transform:translate(-50%,-50%) scale(1.08)}
 @media(max-width:720px){.canvas-run-button{width:68px;min-width:68px}}
 @media(max-width:420px){.canvas-run-button{width:62px;min-width:62px}}
 
@@ -434,6 +442,10 @@ html[data-theme="dark"] .canvas-workspace{
   border:0;
   border-radius:14px;
   background:transparent;
+  box-shadow:none;
+  appearance:none;
+  -webkit-appearance:none;
+  outline:0;
   opacity:1;
   pointer-events:auto;
   isolation:isolate;
@@ -453,12 +465,12 @@ html[data-theme="dark"] .canvas-workspace{
   border-radius:999px;
   background:linear-gradient(180deg,var(--panel-2),var(--panel-3));
   box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 16%,transparent),0 3px 9px color-mix(in srgb,#000 20%,transparent),0 0 0 2px color-mix(in srgb,var(--node-effective) 7%,transparent);
-  opacity:.56;
+  opacity:1;
   transform:translate(-50%,-50%);
   transition:width .22s ease,height .22s ease,border-color .2s ease,background .2s ease,box-shadow .22s ease,transform .24s cubic-bezier(.2,.8,.2,1);
 }
-.canvas-node .canvas-port.left::before{left:calc(100% - 9px)}
-.canvas-node .canvas-port.right::before{left:9px}
+.canvas-node .canvas-port.left::before{left:calc(100% - 7px)}
+.canvas-node .canvas-port.right::before{left:7px}
 .canvas-node .canvas-port::after{
   content:"";
   position:absolute;
@@ -469,12 +481,13 @@ html[data-theme="dark"] .canvas-workspace{
   height:42px;
   border-radius:999px;
   background:radial-gradient(ellipse,color-mix(in srgb,var(--node-effective) 18%,transparent),transparent 68%);
+  display:none;
   opacity:0;
   transform:translate(-50%,-50%) scale(.7);
   transition:opacity .2s ease,transform .26s cubic-bezier(.2,.8,.2,1);
 }
-.canvas-node .canvas-port.left::after{left:calc(100% - 9px)}
-.canvas-node .canvas-port.right::after{left:9px}
+.canvas-node .canvas-port.left::after{left:calc(100% - 7px)}
+.canvas-node .canvas-port.right::after{left:7px}
 .canvas-node.selected .canvas-port,
 .canvas-node .canvas-port:focus-visible{
   opacity:1;
@@ -493,11 +506,11 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node .canvas-port.left:hover::before,
 .canvas-node .canvas-port.left:focus-visible::before,
 .canvas-node .canvas-port.left:hover::after,
-.canvas-node .canvas-port.left:focus-visible::after{transform:translate(calc(-50% - 14px),-50%)}
+.canvas-node .canvas-port.left:focus-visible::after{transform:translate(calc(-50% - 8px),-50%)}
 .canvas-node .canvas-port.right:hover::before,
 .canvas-node .canvas-port.right:focus-visible::before,
 .canvas-node .canvas-port.right:hover::after,
-.canvas-node .canvas-port.right:focus-visible::after{transform:translate(calc(-50% + 14px),-50%)}
+.canvas-node .canvas-port.right:focus-visible::after{transform:translate(calc(-50% + 8px),-50%)}
 .canvas-node .canvas-port:hover::before,
 .canvas-node .canvas-port:focus-visible::before{
   width:14px;
@@ -1761,7 +1774,9 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 /* Group actions stay attached to the selected group instead of floating at
    the top of the viewport. The inside fallback is used when there is no room
    above the group. */
-.canvas-group-selection-toolbar{max-width:calc(100% - 20px);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;white-space:nowrap;transform:none}
+.canvas-group-selection-toolbar{max-width:min(680px,calc(100% - 20px));overflow-x:auto;overflow-y:hidden;gap:4px;padding:5px 7px;border-radius:12px;scrollbar-width:thin;white-space:nowrap;transform:none}
+.canvas-group-selection-toolbar>button{padding:5px 6px}
+.canvas-group-selection-toolbar[data-placement="above"]::after{content:"";position:absolute;left:18px;top:100%;width:1px;height:10px;background:linear-gradient(var(--accent),color-mix(in srgb,var(--accent) 18%,transparent));pointer-events:none}
 .canvas-group-selection-toolbar[data-placement="inside"]{border-color:color-mix(in srgb,var(--accent) 46%,var(--line));background:color-mix(in srgb,var(--panel) 98%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent),var(--shadow-soft)}
 
 /* Keep the middle-button affordance visible without becoming another canvas

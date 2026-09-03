@@ -88,7 +88,9 @@ export function placeCanvasGroupToolbar(
   gap = 10,
   margin = 10,
 ): CanvasGroupToolbarPlacement {
-  const centered = centeredLeft(anchor, stage, overlay);
+  // A group toolbar reads more clearly as part of the group when it follows
+  // the group's leading edge instead of floating like a centred modal.
+  const attachedLeft = anchor.left + 14;
   const maxLeft = Math.max(margin, stage.width - overlay.width - margin);
   const aboveTop = anchor.top - overlay.height - gap;
   const placement = aboveTop >= margin ? "above" : "inside";
@@ -96,7 +98,7 @@ export function placeCanvasGroupToolbar(
   const maxTop = Math.max(margin, stage.height - overlay.height - margin);
 
   return {
-    left: Math.min(Math.max(centered, margin), maxLeft),
+    left: Math.min(Math.max(attachedLeft, margin), maxLeft),
     top: placement === "above"
       ? aboveTop
       : Math.min(Math.max(insideTop, margin), maxTop),

@@ -3834,6 +3834,26 @@ export default function SuperCanvas() {
     [stagePoint, updateDoc],
   );
   useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const handleModifiedWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      // Ctrl+wheel is reserved by browsers for page zoom. Capture it with a
+      // non-passive listener while the pointer is over the canvas so the same
+      // gesture consistently controls the canvas camera instead.
+      event.preventDefault();
+      event.stopPropagation();
+      if (isCanvasWheelIsolatedTarget(event.target)) return;
+      zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0014));
+    };
+    stage.addEventListener("wheel", handleModifiedWheel, {
+      capture: true,
+      passive: false,
+    });
+    return () =>
+      stage.removeEventListener("wheel", handleModifiedWheel, true);
+  }, [zoomAt]);
+  useEffect(() => {
     return () => {
       if (zoomFrameRef.current !== null)
         window.cancelAnimationFrame(zoomFrameRef.current);
