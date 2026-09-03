@@ -109,6 +109,7 @@ import {
   resolveAvailableCreationModel,
   subscribeSharedCreationSettings,
   videoModelOptions,
+  IMAGE_QUALITY_OPTIONS,
   writeSharedCreationSettings,
   type CreationSettings,
   type AgentCreationSettings,
@@ -130,6 +131,7 @@ import { getVideoModelLimits } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
 import {
   fitCanvasNodeEditorBelow,
+  placeCanvasNodeEditorDock,
   placeCanvasGroupToolbar,
   placeCanvasContextMenu,
   placeCanvasNodeToolbar,
@@ -163,6 +165,7 @@ import {
 } from "@/lib/client-history";
 import { bootstrapWorkspace, startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
+import ModelPicker from "@/components/ModelPicker";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
 import CanvasProcessingIndicator, {
   type CanvasProcessingKind,
@@ -3077,12 +3080,22 @@ export default function SuperCanvas() {
       if (event.button !== 0 && event.button !== 1) return;
       const target = event.target as HTMLElement;
       setContextMenu(null);
-      if (
-        target.closest(
-          ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
-        )
-      )
-        return;
+      const panIntent = event.button === 1 || spaceHeldRef.current;
+      const overCanvasContent = target.closest(
+        ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
+      );
+      const overUiOverlay = target.closest(
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+      );
+      // A normal left-button press on canvas content is handled by that
+      // content's own pointer handlers (node/group drag, resize, connect).
+      // Don't hijack it into a canvas pan here.
+      if (!panIntent && (overCanvasContent || overUiOverlay)) return;
+      // While explicitly panning (middle mouse button or holding Space), avoid
+      // starting a pan from a UI overlay that manages its own drag (menus,
+      // pickers, minimap). Panning must work across nodes/groups/canvas content
+      // even when the pointer starts on top of a node.
+      if (panIntent && overUiOverlay) return;
       setConnectionNodePicker(null);
       setDraggingNodeIds(new Set());
       setQuickToolbarNodeId(null);
@@ -3125,6 +3138,9 @@ export default function SuperCanvas() {
         )
       )
         return;
+      // Holding Space switches to canvas pan mode, so let the pointer event
+      // bubble to the stage pan handler instead of starting a node drag.
+      if (spaceHeldRef.current) return;
       focusCanvasStage();
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       event.preventDefault();
@@ -3206,6 +3222,9 @@ export default function SuperCanvas() {
   const startGroupDrag = useCallback(
     (event: ReactPointerEvent, group: CanvasGroup) => {
       if (event.button !== 0) return;
+      // Holding Space switches to canvas pan mode, so let the pointer event
+      // bubble to the stage pan handler instead of starting a group drag.
+      if (spaceHeldRef.current) return;
       focusCanvasStage();
       event.preventDefault();
       event.stopPropagation();
@@ -14212,8 +14231,11 @@ function CanvasNodeEditorPopover({
   const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
+  const imageDockFileRef = useRef<HTMLInputElement | null>(null);
   const data = node.data;
   const audioNode = node.type === "media" && data.kind === "audio";
+  const isImageNode = !audioNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
@@ -14221,6 +14243,18 @@ function CanvasNodeEditorPopover({
   const inPlaceVideo = canvasVideoTargetHasImageReference(document, node);
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
+  const imageParams = isImageNode && editorParams && editorParams.kind === "image" ? editorParams : null;
+  const imageQualityLabel = imageParams
+    ? (IMAGE_QUALITY_OPTIONS.find((option) => option.value === imageParams.quality)?.label.replace("质量", "") || imageParams.quality)
+    : "";
+  const imageSizeLabel = imageParams
+    ? imageParams.sizeMode === "system"
+      ? imageParams.resolution
+      : `${imageParams.width}×${imageParams.height}`
+    : "";
+  const imageParameterSummary = imageParams
+    ? `${imageParams.aspect} · ${imageQualityLabel} · ${imageSizeLabel} · ${imageParams.count}张`
+    : "";
 
   useEffect(() => {
     setPromptExpanded(false);
@@ -14231,8 +14265,10 @@ function CanvasNodeEditorPopover({
     if (!textarea) return;
     const syncPromptHeight = () => {
       const mobile = window.matchMedia("(max-width: 720px)").matches;
-      const minHeight = promptExpanded ? (mobile ? 180 : 220) : (mobile ? 104 : 120);
-      const maxHeight = promptExpanded ? (mobile ? 360 : 460) : (mobile ? 220 : 260);
+      const baseMinHeight = promptExpanded ? (mobile ? 180 : 220) : (mobile ? 104 : 120);
+      const baseMaxHeight = promptExpanded ? (mobile ? 360 : 460) : (mobile ? 220 : 260);
+      const minHeight = isImageNode && !promptExpanded ? (mobile ? 56 : 64) : baseMinHeight;
+      const maxHeight = isImageNode && !promptExpanded ? (mobile ? 132 : 152) : baseMaxHeight;
       textarea.style.height = "auto";
       const contentHeight = textarea.scrollHeight;
       textarea.style.height = `${Math.min(maxHeight, Math.max(minHeight, contentHeight))}px`;
@@ -14250,7 +14286,7 @@ function CanvasNodeEditorPopover({
       observer?.disconnect();
       window.removeEventListener("resize", syncPromptHeight);
     };
-  }, [editorPrompt, isCompact, node.id, promptExpanded]);
+  }, [editorPrompt, isCompact, isImageNode, node.id, promptExpanded]);
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -14278,7 +14314,7 @@ function CanvasNodeEditorPopover({
     // Use the density's preferred height instead of the currently rendered
     // height. A previously constrained panel can then grow again after the
     // node is panned upward or the viewport becomes taller.
-     const popoverHeight = audioNode ? 330 : microEditor ? 400 : nextCompact ? 520 : 580;
+     const popoverHeight = audioNode ? 330 : isImageNode ? 320 : microEditor ? 400 : nextCompact ? 520 : 580;
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -14297,13 +14333,26 @@ function CanvasNodeEditorPopover({
           width: size.w * zoom,
           height: size.h * zoom,
         };
-    const position = fitCanvasNodeEditorBelow(
-      anchor,
-      { width: stageWidth, height: stageHeight },
-      { width: popoverWidth, height: popoverHeight },
-      14,
-      12,
-    );
+    const position = isImageNode
+      ? {
+          ...placeCanvasNodeEditorDock(
+            anchor,
+            { width: stageWidth, height: stageHeight },
+            { width: popoverWidth, height: popoverHeight },
+            14,
+            12,
+          ),
+          // The dock is intentionally never height-clamped: keep the three-field
+          // position shape while letting CSS (`max-height:none`) remove the cap.
+          maxHeight: Number.MAX_SAFE_INTEGER,
+        }
+      : fitCanvasNodeEditorBelow(
+          anchor,
+          { width: stageWidth, height: stageHeight },
+          { width: popoverWidth, height: popoverHeight },
+          14,
+          12,
+        );
     setPosition((current) =>
       current.left === position.left &&
       current.top === position.top &&
@@ -14311,7 +14360,7 @@ function CanvasNodeEditorPopover({
         ? current
         : position,
     );
-  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
+  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isImageNode, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
 
   useLayoutEffect(() => {
     reposition();
@@ -14342,7 +14391,7 @@ function CanvasNodeEditorPopover({
   return (
     <div
       ref={popoverRef}
-      className={`canvas-node-editor-popover canvas-node-editor-dock${promptExpanded ? " is-prompt-expanded" : ""}`}
+      className={`canvas-node-editor-popover canvas-node-editor-dock${isImageNode ? " is-image-dock" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement="bottom"
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
@@ -14364,7 +14413,7 @@ function CanvasNodeEditorPopover({
           <span className="canvas-node-editor-status-dot" aria-hidden="true" />
           <div>
             <b>{nodeLabel(node)}</b>
-             <small>{promptExpanded ? "文本编辑 · 专注输入" : node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : audioNode ? "音频素材" : "图片节点"} · 节点内编辑</small>
+             <small>{promptExpanded ? "文本编辑 · 专注输入" : node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : audioNode ? "音频素材" : isImageNode && node.type === "media" && node.data.kind === "image" && node.data.url ? "当前图片作参考 · 右侧生成新图" : isImageNode && node.type === "generator" ? "变体 · 生成新图" : "图片节点"} · 节点内编辑</small>
           </div>
         </div>
         <div className="canvas-node-editor-head-actions">
@@ -14398,6 +14447,173 @@ function CanvasNodeEditorPopover({
              onReplaceAudio={onReplaceAudio}
              onDurationChange={onAudioDurationChange}
            />
+         ) : isImageNode ? (
+           <div className="canvas-node-editor-image-dock">
+            <div className="canvas-node-editor-dock-chips">
+              <button type="button" className="canvas-node-editor-dock-chip" onClick={() => imageDockFileRef.current?.click()} aria-label="添加参考素材" title="添加参考素材">
+                <span aria-hidden="true">＋</span> 参考
+              </button>
+              {node.type === "media" && node.data.kind === "image" && node.data.url && onLocalEdit && maskState && (
+                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => onLocalEdit()} aria-label="局部编辑" title="局部编辑">
+                  <span aria-hidden="true">✎</span> 局部编辑
+                </button>
+              )}
+              {node.type === "generator" && (
+                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => setImageDockPanel((value) => value === "variant" ? null : "variant")} aria-label="变体要求" aria-expanded={imageDockPanel === "variant"} title="变体要求">
+                  <span aria-hidden="true">⧉</span> 变体
+                </button>
+              )}
+              <span className="canvas-node-editor-dock-hint">{node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
+            </div>
+            <div className="canvas-node-editor-prompt-wrap">
+              <div className="canvas-node-editor-prompt-label">
+                <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
+                <small>@ 引用节点 · Ctrl/Cmd + Enter 生成</small>
+              </div>
+              <ReferenceMentionEditor
+                ref={promptRef}
+                value={editorPrompt}
+                references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+                ariaLabel={`${nodeLabel(node)}提示词`}
+                className="canvas-node-prompt-editor"
+                menuClassName="canvas-node-mention-menu"
+                onChange={(value) => onEditorPromptChange(node, value)}
+                onMentionSelect={(candidateIndex, value) => {
+                  const candidate = mentionCandidates[candidateIndex];
+                  if (!candidate) return;
+                  onEditorPromptChange(node, value);
+                  const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+                    ? "context"
+                    : candidate.data.kind === "video"
+                      ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
+                      : "reference-image";
+                  onReferenceDrop(node.id, candidate.id, role);
+                }}
+                placeholder="描述想生成的画面… 输入 @ 引用节点"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault();
+                    onGenerate(node);
+                  }
+                }}
+                transformPastedText={(text) => replaceNaturalReferenceLabels(
+                  text,
+                  mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
+                ).value}
+              />
+            </div>
+            {branchDraft ? (
+              <CanvasReferenceDraftStrip
+                references={branchReferences}
+                onFiles={onDraftReferenceFiles || (() => undefined)}
+                onRemove={onDraftReferenceRemove || (() => undefined)}
+                onReorder={onDraftReferenceReorder || (() => undefined)}
+                onNodeDrop={onDraftReferenceNodeDrop}
+                onPaste={onDraftReferencePaste}
+                onPreview={onDraftReferencePreview}
+                emptyLabel="添加画布参考"
+              />
+            ) : (
+              <CanvasNodeReferenceStrip
+                target={node}
+                document={document}
+                runtime={runtime}
+                references={editorReferences}
+                contexts={editorContexts}
+                onReorder={onReferenceReorder}
+                onRemove={onReferenceRemove}
+                onDrop={onReferenceDrop}
+                onAddFiles={onAddReferenceFiles}
+                onPreview={onOutputPreview}
+                onTextPreview={onTextPreview}
+                onRestoreAutomatic={onRestoreAutomatic}
+              />
+            )}
+            <div className="canvas-node-editor-dock-toolbar">
+              <div className="canvas-node-editor-dock-tool model">
+                {imageParams && (
+                  <ModelPicker
+                    models={runtime?.models || []}
+                    value={imageParams.model}
+                    capability={imageParams.mask ? "edit" : "generate"}
+                    portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                    dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                    defaultProviderId={runtime?.settings.defaultProviderId}
+                    defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+                    defaultModelId={runtime?.settings.defaultImageModelId}
+                    onChange={(value) => onEditorParamsChange(node, { ...imageParams, model: value })}
+                    className="canvas-node-editor-dock-model-picker"
+                  />
+                )}
+              </div>
+              <button type="button" className="canvas-node-editor-dock-tool params" onClick={() => setImageDockPanel((value) => value === "params" ? null : "params")} aria-expanded={imageDockPanel === "params"} aria-controls="canvas-image-dock-params">
+                <b>生成参数</b>
+                <small>{imageParameterSummary || "参数"}</small>
+              </button>
+              <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : undefined} disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
+            </div>
+            <input ref={imageDockFileRef} hidden type="file" multiple accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1" onChange={(event) => { if (event.target.files) onAddReferenceFiles(node.id, [...event.target.files]); event.currentTarget.value = ""; }} />
+            {imageDockPanel === "params" && createPortal(
+              <div className="canvas-node-editor-dock-popover" role="dialog" aria-label="生成参数" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+                <div className="canvas-node-editor-dock-popover-head">
+                  <b>生成参数</b>
+                  <button type="button" aria-label="关闭参数" onClick={() => setImageDockPanel(null)}>×</button>
+                </div>
+                {imageParams && (
+                  <CreationParameterEditor
+                    key={node.id}
+                    settings={imageParams}
+                    runtime={runtime}
+                    referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
+                    variant="canvas-flat"
+                    portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                    dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                    onChange={(settings) => onEditorParamsChange(node, settings)}
+                    onVideoInputModeChange={() => onVideoInputModeChange(node)}
+                  />
+                )}
+              </div>,
+              globalThis.document.body,
+            )}
+            {imageDockPanel === "variant" && createPortal(
+              <div className="canvas-node-editor-dock-popover" role="dialog" aria-label="变体要求" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+                <div className="canvas-node-editor-dock-popover-head">
+                  <b>变体要求</b>
+                  <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
+                </div>
+                <div className="canvas-node-variant-editor">
+                  <div className="canvas-node-variant-editor-head">
+                    <label>变体要求 <small>每行一条，最多 8 条</small></label>
+                  </div>
+                  <ReferenceMentionEditor
+                    value={data.variantRequirementsText ?? variantRequirements.join("\n")}
+                    references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+                    ariaLabel={`${nodeLabel(node)}变体要求`}
+                    className="canvas-node-variant-requirements-editor"
+                    menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
+                    onChange={(value) => onVariantRequirementsChange(node, value)}
+                    onMentionSelect={(candidateIndex, value) => {
+                      const candidate = mentionCandidates[candidateIndex];
+                      if (!candidate) return;
+                      onVariantRequirementsChange(node, value);
+                      const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
+                        ? "context"
+                        : candidate.data.kind === "video"
+                          ? data.kind === "video" ? "video" : "reference-image"
+                          : "reference-image";
+                      onReferenceDrop(node.id, candidate.id, role);
+                    }}
+                    placeholder="改成夜景\n改为俯拍视角"
+                    transformPastedText={(text) => replaceNaturalReferenceLabels(
+                      text,
+                      mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
+                    ).value}
+                  />
+                </div>
+              </div>,
+              globalThis.document.body,
+            )}
+           </div>
          ) : <div className="canvas-node-editor-columns">
           <div className="canvas-node-editor-copy">
             <div className="canvas-node-editor-prompt-wrap">
@@ -14525,7 +14741,7 @@ function CanvasNodeEditorPopover({
           </div>
          </div>}
        </div>
-       {!audioNode && <div className="canvas-node-editor-actions">
+       {!audioNode && !isImageNode && <div className="canvas-node-editor-actions">
         <span>{node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
         <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={pending || upscaleMissingInput} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "upscale" ? "提交超分" : node.type === "prompt" ? "发送" : inPlaceVideo ? "生成到当前节点" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
        </div>}
