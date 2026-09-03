@@ -128,16 +128,39 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
 });
 
-test("blank canvas separates creation from compact canvas operations", () => {
+test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.match(component, /menu: "create"/);
   assert.match(component, /menu: "tools"/);
   assert.match(component, /ariaLabel="创建节点菜单"/);
   assert.match(component, /ariaLabel="画布操作菜单"/);
   assert.match(component, /className="canvas-tools-context-menu"/);
   assert.match(component, /pasteFromClipboard\(position\)/);
-  assert.match(component, /支持多选，放置到右键位置/);
   assert.match(component, /<b>适应视图<\/b>/);
-  const toolsMenu = component.slice(component.indexOf('ariaLabel="画布操作菜单"'));
+  const toolsMenuStart = component.indexOf('ariaLabel="画布操作菜单"');
+  const toolsMenuEnd = component.indexOf("</CanvasContextMenuFrame>", toolsMenuStart);
+  const toolsMenu = component.slice(toolsMenuStart, toolsMenuEnd);
+  assert.match(toolsMenu, /className="canvas-menu-item canvas-menu-item-create"/);
+  assert.match(toolsMenu, /<b>添加节点<\/b>/);
+  assert.match(toolsMenu, /menu: "create"/);
+  assert.match(toolsMenu, /<b>撤销<\/b>/);
+  assert.match(toolsMenu, /<b>重做<\/b>/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ Z/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ Shift \+ Z/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ V/);
+  assert.doesNotMatch(toolsMenu, /canvas-menu-group-title/);
+  assert.doesNotMatch(toolsMenu, /canvas-menu-group-mark/);
+  assert.doesNotMatch(toolsMenu, /<small>[^<]+<\/small>/);
+  assert.equal((toolsMenu.match(/className="canvas-menu-divider"/g) || []).length, 2);
+  assert.match(toolsMenu, /<b>上传<\/b>/);
+  assert.doesNotMatch(toolsMenu, /导入图片 \/ 视频 \/ 音频/);
+  const actionOrder = ["上传", "添加节点", "粘贴", "撤销", "重做", "一键整理", "适应视图"];
+  const actionPositions = actionOrder.map((label) => toolsMenu.indexOf(`<b>${label}</b>`));
+  assert.deepEqual(
+    actionPositions,
+    [...actionPositions].sort((a, b) => a - b),
+  );
+  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-shortcut\{/);
+  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item:disabled\{/);
   const arrangeIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>一键整理<\/b>/)?.[1];
   const fitIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>适应视图<\/b>/)?.[1];
   assert.equal(arrangeIcon, "⌗");

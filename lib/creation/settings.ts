@@ -463,6 +463,16 @@ function readLegacyImageDefaults() {
   }
 }
 
+/**
+ * A local-edit mask belongs to one image/node, never to the shared image
+ * defaults. Keep this boundary in one place so a completed local edit cannot
+ * become the selection for every subsequently imported image.
+ */
+function imageDefaultsWithoutMask(value: unknown) {
+  const { mask: _mask, ...defaults } = objectValue(value);
+  return defaults;
+}
+
 export function readSharedCreationSettings(
   kind: "image",
   runtime?: PublicState | null,
@@ -488,11 +498,11 @@ export function readSharedCreationSettings(
     const lastCall = getLastModelCall("generate");
     const merged = {
       ...readLegacyImageDefaults(),
-      ...(lastCall?.params || {}),
+      ...imageDefaultsWithoutMask(lastCall?.params),
       // Explicit edits in the shared creation dock are the current source of
       // truth. The last-call snapshot is only a fallback for fields that have
       // not been saved in the new defaults yet (notably image count).
-      ...objectValue(stored.image),
+      ...imageDefaultsWithoutMask(stored.image),
       model:
         lastCall?.mode === "manual"
           ? objectValue(stored.image).model || lastCall.modelId
@@ -509,9 +519,12 @@ export function writeSharedCreationSettings(settings: CreationSettings) {
   if (typeof window === "undefined") return;
   const current = readStoredDefaults();
   try {
+    const persistedSettings = settings.kind === "image"
+      ? imageDefaultsWithoutMask(settings)
+      : settings;
     window.localStorage.setItem(
       SHARED_CREATION_SETTINGS_KEY,
-      JSON.stringify({ ...current, [settings.kind]: settings }),
+      JSON.stringify({ ...current, [settings.kind]: persistedSettings }),
     );
     if (settings.kind === "image") {
       window.localStorage.setItem(

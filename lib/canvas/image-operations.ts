@@ -8,6 +8,20 @@ export type ImageRect = { x: number; y: number; width: number; height: number };
 export type OutpaintMargins = { top: number; right: number; bottom: number; left: number };
 export type CropAspect = 'original' | '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | 'free';
 export type GridLines = { vertical: number[]; horizontal: number[] };
+export type CanvasImageGridCompositeOptions = {
+  cellSize?: number;
+  gap?: number;
+  maxEdge?: number;
+};
+export type CanvasImageGridCompositeLayout = {
+  columns: number;
+  rows: number;
+  cellSize: number;
+  gap: number;
+  scale: number;
+  width: number;
+  height: number;
+};
 
 export type CanvasImageRenderRequest =
   | { operation: 'outpaint'; margins: OutpaintMargins }
@@ -201,6 +215,36 @@ export function gridRects(sourceValue: ImageSize, lines: GridLines): ImageRect[]
   return result;
 }
 
+export function gridCompositeLayout(
+  count: number,
+  options: CanvasImageGridCompositeOptions = {},
+): CanvasImageGridCompositeLayout {
+  const safeCount = Math.max(1, Math.round(Number(count) || 1));
+  const columns = Math.max(1, Math.ceil(Math.sqrt(safeCount)));
+  const rows = Math.ceil(safeCount / columns);
+  const cellSize = Math.max(64, Math.round(Number(options.cellSize) || 1024));
+  const gap = Math.max(0, Math.round(Number(options.gap) || 16));
+  const maxEdge = Math.max(
+    1,
+    Math.min(
+      CANVAS_IMAGE_OPERATION_MAX_EDGE,
+      Math.round(Number(options.maxEdge) || CANVAS_IMAGE_OPERATION_MAX_EDGE),
+    ),
+  );
+  const rawWidth = columns * cellSize + Math.max(0, columns - 1) * gap;
+  const rawHeight = rows * cellSize + Math.max(0, rows - 1) * gap;
+  const scale = Math.min(1, maxEdge / rawWidth, maxEdge / rawHeight);
+  return {
+    columns,
+    rows,
+    cellSize,
+    gap,
+    scale,
+    width: Math.max(1, Math.round(rawWidth * scale)),
+    height: Math.max(1, Math.round(rawHeight * scale)),
+  };
+}
+
 function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -280,6 +324,48 @@ export async function renderCanvasImageGrid(sourceUrl: string, sourceValue: Imag
   return outputs;
 }
 
+/** Stitch multiple images into a square-ish, non-cropping white grid. */
+export async function renderCanvasImageGridComposite(
+  sourceUrls: string[],
+  options: CanvasImageGridCompositeOptions = {},
+) {
+  const urls = sourceUrls.map((url) => String(url || '').trim()).filter(Boolean);
+  if (!urls.length) throw new Error('至少需要一张图片才能进行宫格拼接');
+  const images = await Promise.all(urls.map((url) => loadImage(url)));
+  const layout = gridCompositeLayout(images.length, options);
+  const { canvas, context } = prepareCanvas(layout.width, layout.height);
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const cellSize = layout.cellSize * layout.scale;
+  const gap = layout.gap * layout.scale;
+  images.forEach((image, index) => {
+    const column = index % layout.columns;
+    const row = Math.floor(index / layout.columns);
+    const cellX = column * (cellSize + gap);
+    const cellY = row * (cellSize + gap);
+    const imageWidth = image.naturalWidth || image.width || 1;
+    const imageHeight = image.naturalHeight || image.height || 1;
+    const imageScale = Math.min(cellSize / imageWidth, cellSize / imageHeight);
+    const width = imageWidth * imageScale;
+    const height = imageHeight * imageScale;
+    context.drawImage(
+      image,
+      cellX + (cellSize - width) / 2,
+      cellY + (cellSize - height) / 2,
+      width,
+      height,
+    );
+  });
+
+  return {
+    blob: await canvasToPng(canvas),
+    size: { width: canvas.width, height: canvas.height },
+    layout,
+  };
+}
+
 export function operationLabel(operation: CanvasImageOperation) {
+  if (operation === 'grid-compose') return '宫格拼接';
   return operation === 'outpaint' ? '扩图' : operation === 'resize' ? '缩放' : operation === 'crop' ? '裁切' : operation === 'grid' ? '宫格切分' : '镜像-旋转';
 }

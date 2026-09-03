@@ -1,5 +1,6 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType } from './types';
 import { inferNativeSearch } from './native-search-detection';
+import { inferModelKind } from './model-kind';
 import { agnesModelCatalog } from './agnes';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -101,6 +102,13 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
     if (/first[_ -]?frame|image2video|first_frame/.test(text)) capabilities.push('video-first-frame');
     if (/reference|multiframe|images/.test(text)) capabilities.push('video-reference');
     if (/audio|sound/.test(text)) capabilities.push('video-audio');
+  }
+  // Some OpenAI-compatible model registries return only an id and omit
+  // endpoint metadata. Keep discovery consistent with the shared model-kind
+  // classifier so common third-party video families still enter the video
+  // model library without a provider-specific hard-coded catalog.
+  if (inferModelKind({ rawId: id, displayName: item?.name || item?.display_name || '', capabilities }) === 'video' && !capabilities.includes('video-generate')) {
+    capabilities.push('video-generate');
   }
   // A chat model must advertise video understanding separately.  Merely
   // mentioning video generation in provider metadata is not enough: sending

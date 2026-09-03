@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
 import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
+import ModelPicker from '@/components/ModelPicker';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
@@ -41,6 +42,7 @@ type Props = {
 type UploadSlot = { id?: string; name: string; url: string; kind: 'image' | 'video' | 'audio' };
 type VideoOperation = 'generate' | 'edit' | 'extend';
 type VideoInputMode = 'text' | 'first-frame' | 'frames' | 'reference';
+type VideoMobilePanel = 'compose' | 'preview' | 'tasks';
 type MediaTransportStatus = { mode: 'relay' | 'self-hosted' | 'unavailable'; relayConfigured: boolean; publicBaseConfigured: boolean; reachable?: boolean; publicUrl?: string };
 const MAX_65535_INLINE_BYTES = 64 * 1024 * 1024;
 const MAX_VIDEO_IMAGE_EDGE = 2048;
@@ -358,6 +360,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
 
 export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onOpenProviders, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const [modelId, setModelId] = useState(defaultModelId || 'auto');
   const [operation, setOperation] = useState<VideoOperation>('generate');
   const [inputMode, setInputMode] = useState<VideoInputMode>('text');
@@ -376,6 +379,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [previewImage, setPreviewImage] = useState<UploadSlot | null>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [taskDetail, setTaskDetail] = useState<VideoTask | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<VideoMobilePanel>('compose');
   const [busy, setBusy] = useState(false);
   const [mediaStatus, setMediaStatus] = useState<MediaTransportStatus | null>(null);
   const [mediaStatusBusy, setMediaStatusBusy] = useState(false);
@@ -385,6 +390,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [jimengAccountBusy, setJimengAccountBusy] = useState(false);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const promptRef = useRef<HTMLDivElement | null>(null);
+  const promptExpandedRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!previewImage) return;
@@ -394,6 +400,26 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [previewImage]);
+
+  useEffect(() => {
+    if (!promptExpanded) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPromptExpanded(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    window.setTimeout(() => promptExpandedRef.current?.focus(), 0);
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [promptExpanded]);
+
+  function closePromptEditor() {
+    setPromptExpanded(false);
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  }
 
   useEffect(() => {
     const next = promptPrefill?.trim();
@@ -408,6 +434,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   const selectedModel = models.find((model) => model.id === modelId) || models.find((model) => model.id === defaultModelId) || models[0];
   const selectedProvider = providers.find((provider) => provider.id === selectedModel?.providerId);
+  const defaultModel = models.find((model) => model.id === defaultModelId);
+  const defaultProvider = providers.find((provider) => provider.id === defaultModel?.providerId);
   const jimengProvider = useMemo(() => providers.find((provider) => provider.platform === 'jimeng-cli' || provider.videoTransport === 'jimeng-cli'), [providers]);
 
   async function refreshJimengAccount() {
@@ -501,7 +529,6 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   // Only expose audio there when the model metadata explicitly advertises it;
   // other compatible providers keep the existing flexible control.
   const supportsAudio = !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
-  const modelOptions = [{ value: 'auto', label: '自动选择', description: '使用当前默认视频模型' }, ...models.map((model) => ({ value: model.id, label: model.displayName, description: model.providerName }))];
   const operationOptions = [{ value: 'generate' as const, label: '生成视频', description: '根据提示词和画面输入生成视频' }, ...(supportsEdit ? [{ value: 'edit' as const, label: '视频编辑', description: '参考已有视频进行修改' }] : []), ...(supportsExtend ? [{ value: 'extend' as const, label: '视频扩展', description: '延续已有视频的镜头' }] : [])];
   const showOperationField = operationOptions.length > 1;
   const inputModeOptions = useMemo(() => [{ value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' }, ...(supportsFirst ? [{ value: 'first-frame' as const, label: '首帧 · 控制开场画面', description: '上传一张开场参考图' }, { value: 'frames' as const, label: uses65535Policy ? '双参考图 · 控制起止' : '首尾帧 · 约束镜头起止', description: uses65535Policy ? '65535 将首帧和尾帧按两张参考图提交' : '上传首帧和尾帧' }] : []), ...(supportsReference ? [{ value: 'reference' as const, label: '参考图 · 保持主体风格', description: `最多添加 ${modelLimits.maxReferenceImages} 张参考图` }] : [])], [modelLimits.maxReferenceImages, supportsFirst, supportsReference, uses65535Policy]);
@@ -827,29 +854,51 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         <p>先在模型库启用并发布视频模型，图片模型不会出现在这里。</p>
         <button className="video-primary-button" type="button" onClick={onOpenModels}>去模型库选择</button>
       </div>
-    </> : <div className="video-studio-grid">
-      <div className="video-compose-column">
-         {hero}
-         {jimengProvider && <JimengAccountSummary account={jimengAccount} checkedAt={jimengAccountCheckedAt} error={jimengAccountError} loading={jimengAccountBusy} onRefresh={() => void refreshJimengAccount()} />}
+    </> : <>
+      <div className="video-mobile-tabs" role="tablist" aria-label="视频工作台视图">
+        {([['compose', '创建'], ['preview', '预览'], ['tasks', '任务']] as const).map(([panel, label]) => <button key={panel} type="button" role="tab" aria-selected={mobilePanel === panel} className={mobilePanel === panel ? 'active' : ''} onClick={() => setMobilePanel(panel)}>{label}{panel === 'tasks' && tasks.length > 0 ? <small>{tasks.length}</small> : null}</button>)}
+      </div>
+      <div className="video-studio-grid">
+      <div className={`video-compose-column ${mobilePanel === 'compose' ? 'is-active' : ''}`}>
+        <div className="video-compose-context">
+          {hero}
+          {jimengProvider && <JimengAccountSummary account={jimengAccount} checkedAt={jimengAccountCheckedAt} error={jimengAccountError} loading={jimengAccountBusy} onRefresh={() => void refreshJimengAccount()} />}
+        </div>
          <form className="video-compose-card" onSubmit={submit}>
         <div className="video-compose-scroll">
            <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className={`video-live-pill ${usesAgnes && !selectedProvider?.credentialVerifiedAt ? 'needs-verification' : ''}`}>{usesAgnes ? selectedProvider?.credentialVerifiedAt ? '● Agnes Key 已验证' : '● Agnes Key 待验证' : '● 已连接'}</span></div>
-          <div className="video-field video-prompt-field"><div className="video-prompt-heading"><span>提示词</span>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); window.setTimeout(() => promptRef.current?.focus(), 0); }}>清空文本</button>}</div><ReferenceMentionEditor
+          <div className="video-field video-prompt-field"><div className="video-prompt-heading"><span>提示词</span><div className="video-prompt-heading-actions"><button type="button" className="video-prompt-expand" title="放大编辑提示词" aria-label="放大编辑提示词" aria-expanded={promptExpanded} onClick={() => setPromptExpanded(true)}><span aria-hidden="true">⛶</span><span>放大编辑</span></button>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); window.setTimeout(() => promptRef.current?.focus(), 0); }}>清空文本</button>}</div></div><ReferenceMentionEditor
             ref={promptRef}
             value={prompt}
             references={supportsReferenceMentions ? referenceCandidates : []}
             className="video-prompt-mention-editor"
             menuClassName="video-reference-mention-menu"
             ariaLabel="视频提示词"
+            readOnly={promptExpanded}
             placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
             onChange={(value) => setPrompt(value.slice(0, 6000))}
             transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
           /><small>{prompt.length}/6000</small></div>
-         <div className={`video-fields-two ${showOperationField ? '' : 'video-fields-single'}`}>
-          <label className="video-field"><span>视频模型</span><SelectMenu value={modelId} onChange={setModelId} options={modelOptions} ariaLabel="视频模型" /></label>
-          {showOperationField && <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>}
-         </div>
-         {inputModeOptions.length > 1 && <div className="video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : '参考图生视频' }))} ariaLabel="生成方式" /></div>}
+          <div className={`video-creation-selects ${showOperationField ? '' : 'without-operation'}`}>
+            <label className="video-field video-model-field">
+              <span>视频模型</span>
+              <ModelPicker
+                models={models}
+                value={modelId}
+                onChange={setModelId}
+                capability="video-generate"
+                defaultProviderId={defaultProvider?.id}
+                defaultProviderName={defaultProvider?.name}
+                defaultModelId={defaultModelId}
+                placeholder="选择视频模型"
+              />
+            </label>
+            {showOperationField && <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>}
+            {inputModeOptions.length > 1 && <label className="video-field video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : '参考图生视频' }))} ariaLabel="生成方式" /></label>}
+          </div>
+          <details className="video-advanced-details">
+            <summary><span>模型提示与高级参数</span><small>限制说明、媒体处理和特殊模型参数</small></summary>
+            <div className="video-advanced-body">
          {modelLimits.notes.length > 0 && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
          {usesMediaRelay && inputMode !== 'text' && <div className={`video-model-notice video-media-relay-notice ${mediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
            <div><strong>{mediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : mediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : mediaStatus?.relayConfigured ? '自动图片中转暂不可达' : '正在检查图片处理服务'}</strong>
@@ -883,6 +932,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
           </div>
           <small className="video-model-parameter-help">预计时长约 {((Math.max(1, agnesNumFrames)) / Math.max(1, agnesFrameRate)).toFixed(1)} 秒（按官方 num_frames ÷ frame_rate 估算）</small>
          </div>}
+            </div>
+          </details>
         <div className="video-input-heading"><span>画面与素材</span><small>模型不支持的输入会自动收起</small></div>
           <div className="video-upload-grid">
           {(inputMode === 'first-frame' || inputMode === 'frames') && <UploadSlot label="首帧" value={firstFrame} onClick={() => inputRefs.current.first?.click()} onRemove={() => setFirstFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.first = node; }} accept="image/*" onChange={() => void selectFile('first', setFirstFrame, 'image')} />}
@@ -895,12 +946,12 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         <button className="video-primary-button video-submit" type="submit" disabled={busy}><span>{busy ? '提交中…' : '开始生成视频'}</span><b>↗</b></button>
         </form>
       </div>
-      <aside className="video-preview-column">
-        <div className="video-preview-card">
+      <aside className={`video-preview-column ${mobilePanel === 'preview' || mobilePanel === 'tasks' ? 'is-active' : ''}`}>
+        <div className={`video-preview-card ${mobilePanel === 'preview' ? 'mobile-panel-visible' : ''}`}>
           <div className="video-card-heading"><div><span>预览与任务</span><small>{selectedTask ? `${selectedTask.modelName || '自动模型'} · ${statusLabel(selectedTask.status)}` : tasks.length ? `${tasks.length} 个本地任务` : '生成后会显示在这里'}</small></div><button className="video-quiet-button" type="button" onClick={() => void refreshTasks()}>刷新</button></div>
           {previewTask ? <video className="video-preview-player" src={previewTask.videoUrls?.[0]} controls playsInline /> : <div className={`video-preview-empty ${selectedTask ? `video-preview-${selectedTask.status}` : ''}`}><div className="video-play-orb">{selectedTask?.status === 'failed' ? '!' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '…' : '▶'}</div><span>{selectedTask?.status === 'failed' ? '视频任务失败' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '正在等待服务商完成…' : selectedTask ? '任务已完成，但没有可预览的视频' : '完成的视频会自动出现在这里'}</span><small>{selectedTask?.error || (selectedTask ? '可点击“恢复参数”继续创作' : '支持下载、复制地址与再次生成')}</small></div>}
         </div>
-        <div className="video-task-list">
+        <div className={`video-task-list ${mobilePanel === 'tasks' ? 'mobile-panel-visible' : ''}`}>
           <div className="video-task-list-heading"><span>最近任务</span><small>点击任务切换预览 · 列表可滚动</small></div>
           <div className="video-task-list-scroll">
             {tasks.length ? tasks.slice(0, 8).map((task) => {
@@ -908,15 +959,27 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
               return <article className={`video-task-card ${task.status} ${selected ? 'selected' : ''}`} key={task.id} role="button" tabIndex={0} aria-pressed={selected} onClick={() => setSelectedTaskId(task.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedTaskId(task.id); } }}>
                 {task.status !== 'done' && <span className="video-task-scan" aria-hidden="true" />}
                 <div className="video-task-meta"><span className="video-status-pill">{statusLabel(task.status)}</span><time>{formatTime(task.createdAt)}</time></div>
-                <div className="video-task-copy"><strong>{task.input?.prompt || '未命名视频任务'}</strong><div className="video-task-details"><small>{task.modelName || '自动模型'} · {operationLabel(task.operation)}</small><small className="video-task-param-summary">{taskParameterSummary(task)}</small></div></div>
+                <div className="video-task-copy"><div className="video-task-title-row"><strong>{task.input?.prompt || '未命名视频任务'}</strong><button type="button" className="video-task-detail" onClick={(event) => { event.stopPropagation(); setTaskDetail(task); }}>详情</button></div><div className="video-task-details"><small>{task.modelName || '自动模型'} · {operationLabel(task.operation)}</small><small className="video-task-param-summary">{taskParameterSummary(task)}</small></div></div>
                 {task.status === 'done' && task.videoUrls?.length ? <>{task.error && <p className="video-task-error">远程完成，但本地保存失败：{task.error}</p>}<div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button><a href={task.videoUrls[0]} download target="_blank" rel="noreferrer" title="下载生成的视频" aria-label="下载生成的视频"><span className="video-action-icon" aria-hidden="true">↓</span><span>下载</span></a><button type="button" title="复制视频地址" aria-label="复制视频地址" onClick={() => void navigator.clipboard?.writeText(task.remoteVideoUrls?.[0] || task.videoUrls?.[0] || '').then(() => onNotify('视频地址已复制'))}><span className="video-action-icon" aria-hidden="true">⧉</span><span>复制</span></button>{task.error && <button type="button" title="再次保存本地视频" aria-label="再次保存本地视频" onClick={async () => { const response = await fetch(`/api/video/tasks/${task.id}`, { method: 'POST' }); const data = await response.json().catch(() => ({})); if (!response.ok) onNotify(data.error || '再次保存失败'); else { onNotify('已再次保存视频'); void refreshTasks(); } }}><span className="video-action-icon" aria-hidden="true">↻</span><span>再次保存</span></button>}</div></> : task.status === 'failed' ? <><p className="video-task-error">{task.error || '视频任务失败'}</p><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条失败任务的生成参数" aria-label="恢复这条失败任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></> : <><small className="video-task-waiting">正在等待服务商完成…</small><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></>}
               </article>;
             }) : <div className="video-task-list-empty">暂无任务，提交第一段视频吧。</div>}
           </div>
         </div>
       </aside>
-    </div>}
+      </div></>}
+    {promptExpanded && <div className="video-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="video-prompt-dialog-title" onMouseDown={(event) => { if (event.target === event.currentTarget) closePromptEditor(); }}><div className="video-prompt-dialog-inner"><div className="video-prompt-dialog-head"><div><span>提示词编辑</span><strong id="video-prompt-dialog-title">最大化编辑</strong></div><div className="video-prompt-heading-actions"><span className="video-prompt-dialog-count">{prompt.length}/6000</span>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); window.setTimeout(() => promptExpandedRef.current?.focus(), 0); }}>清空文本</button>}<button type="button" className="video-media-dialog-close" aria-label="关闭提示词编辑" onClick={closePromptEditor}>×</button></div></div><ReferenceMentionEditor
+      ref={promptExpandedRef}
+      value={prompt}
+      references={supportsReferenceMentions ? referenceCandidates : []}
+      className="video-prompt-dialog-editor"
+      menuClassName="video-reference-mention-menu"
+      ariaLabel="最大化编辑视频提示词"
+      placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
+      onChange={(value) => setPrompt(value.slice(0, 6000))}
+      transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
+    /><div className="video-prompt-dialog-foot"><small>支持换行和 @ 引用素材，关闭后内容会保留在原提示词框中。</small><button type="button" className="video-primary-button" onClick={closePromptEditor}>完成编辑</button></div></div></div>}
     {previewImage && <div className="video-media-dialog" role="dialog" aria-modal="true" aria-label={previewImage.kind === 'video' ? '查看参考视频' : '查看参考图'} onClick={() => setPreviewImage(null)}><div className="video-media-dialog-inner" onClick={(event) => event.stopPropagation()}><button type="button" className="video-media-dialog-close" aria-label="关闭预览" onClick={() => setPreviewImage(null)}>×</button>{previewImage.kind === 'video' ? <video src={previewImage.url} controls playsInline autoPlay /> : <img src={previewImage.url} alt={previewImage.name} />}<span>{previewImage.name}</span></div></div>}
+    {taskDetail && <div className="video-task-dialog" role="dialog" aria-modal="true" aria-label="任务详情" onClick={() => setTaskDetail(null)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>任务详情</span><strong>{statusLabel(taskDetail.status)}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭任务详情" onClick={() => setTaskDetail(null)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{taskDetail.input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta"><span>模型<b>{taskDetail.modelName || '自动模型'}</b></span><span>操作<b>{operationLabel(taskDetail.operation)}</b></span><span>参数<b>{taskParameterSummary(taskDetail)}</b></span></div>{taskDetail.error && <p className="video-task-error">{taskDetail.error}</p>}</div></div></div>}
   </section>;
 }
 

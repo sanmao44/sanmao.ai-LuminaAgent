@@ -869,6 +869,38 @@ export function entityBounds(document: CanvasDocument, id: string) {
   return { x: node.x, y: node.y, w: size.w, h: size.h };
 }
 
+/** Resolve a persisted edge to the entities it should touch visually. */
+export function canvasEdgeEndpoints(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  const projectEntity = (id: string) => {
+    const node = nodeById(document, id);
+    const group = document.groups.find(
+      (candidate) =>
+        candidate.id === node?.groupId || candidate.nodeIds.includes(id),
+    );
+    return group?.id || id;
+  };
+  return {
+    source: projectEntity(edge.source),
+    target: projectEntity(edge.target),
+  };
+}
+
+/** Internal member edges collapse into the group and should not be painted. */
+export function isCanvasEdgeVisible(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  const endpoints = canvasEdgeEndpoints(document, edge);
+  if (endpoints.source === endpoints.target) return false;
+  return Boolean(
+    (nodeById(document, endpoints.source) || groupById(document, endpoints.source)) &&
+      (nodeById(document, endpoints.target) || groupById(document, endpoints.target)),
+  );
+}
+
 export type CanvasAlignment =
   | "left"
   | "center-x"
@@ -1351,14 +1383,57 @@ export function arrangeCanvasGroup(
   return arrangeCanvasSelection(document, selected, false);
 }
 
+function canvasRectanglesOverlap(
+  left: { x: number; y: number; w: number; h: number },
+  right: { x: number; y: number; w: number; h: number },
+  gap = 0,
+) {
+  return (
+    left.x < right.x + right.w + gap &&
+    left.x + left.w + gap > right.x &&
+    left.y < right.y + right.h + gap &&
+    left.y + left.h + gap > right.y
+  );
+}
+
+export function canvasGroupHasOverlaps(
+  document: CanvasDocument,
+  groupId: string,
+  gap = 0,
+) {
+  const nodes = groupNodes(document, groupId);
+  for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+    const left = entityBounds(document, nodes[leftIndex].id);
+    for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+      if (canvasRectanglesOverlap(left, entityBounds(document, nodes[rightIndex].id), gap))
+        return true;
+    }
+  }
+  return false;
+}
+
+/** Pack a group only when its members currently collide. */
+export function ensureCanvasGroupLayout(
+  document: CanvasDocument,
+  groupId: string,
+) {
+  if (!canvasGroupHasOverlaps(document, groupId)) return document;
+  return arrangeCanvasGroup(document, groupId).document;
+}
+
 export function entityPortPoint(
   document: CanvasDocument,
   id: string,
   port: "left" | "right",
 ) {
   const bounds = entityBounds(document, id);
+  // Node and group ports are rendered outside their card. Terminate the SVG
+  // at the capsule's outer face so lines never run through the control.
+  const offset = 14;
   return {
-    x: bounds.x + (port === "right" ? bounds.w : 0),
+    x:
+      bounds.x +
+      (port === "right" ? bounds.w + offset : -offset),
     y: bounds.y + bounds.h / 2,
   };
 }
@@ -1414,9 +1489,10 @@ export function edgePath(
 ) {
   const sourcePort = edge.sourcePort || "right";
   const targetPort = edge.targetPort || "left";
+  const endpoints = canvasEdgeEndpoints(document, edge);
   return connectionPath(
-    entityPortPoint(document, edge.source, sourcePort),
-    entityPortPoint(document, edge.target, targetPort),
+    entityPortPoint(document, endpoints.source, sourcePort),
+    entityPortPoint(document, endpoints.target, targetPort),
     style,
     sourcePort,
     targetPort,
@@ -1903,7 +1979,7 @@ export function createGroup(
     name: name?.trim() || `对象组 ${document.groups.length + 1}`,
     nodeIds: valid,
   });
-  return { ...document, nodes, groups };
+  return ensureCanvasGroupLayout({ ...document, nodes, groups }, groupId);
 }
 
 export function moveNodesToGroup(
@@ -1940,7 +2016,7 @@ export function moveNodesToGroup(
     ...document.nodes.map((node) => node.id),
     ...groups.map((group) => group.id),
   ]);
-  return {
+  const next = {
     ...document,
     nodes: document.nodes.map((node) =>
       membership.has(node.id)
@@ -1952,6 +2028,7 @@ export function moveNodesToGroup(
       (edge) => entityIds.has(edge.source) && entityIds.has(edge.target),
     ),
   };
+  return ensureCanvasGroupLayout(next, groupId);
 }
 
 export function detachNodesFromGroups(

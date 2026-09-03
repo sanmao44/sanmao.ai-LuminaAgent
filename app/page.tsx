@@ -9699,7 +9699,7 @@ export default function Page() {
     }
     const imageModeActive = section === 'generate' || section === 'angle' || section === 'history' || section === 'logs';
     return /*#__PURE__*/ _jsxs("main", {
-        className: `app-shell ${section === 'angle' ? 'angle-app-shell' : ''} ${sidebarOpen ? 'sidebar-is-open' : ''}`,
+        className: `app-shell ${section === 'angle' ? 'angle-app-shell' : ''} ${section === 'video' ? 'video-app-shell' : ''} ${sidebarOpen ? 'sidebar-is-open' : ''}`,
         children: [
             /*#__PURE__*/ _jsx(UpdateNotice, {}),
             /*#__PURE__*/ _jsxs("aside", {

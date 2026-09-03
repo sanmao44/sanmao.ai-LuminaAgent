@@ -67,3 +67,36 @@ test("grid line dragging keeps neighbouring lines separated", () => {
   assert.equal(operations.clampGridLine(0.99, 1, lines), 0.72);
   assert.equal(operations.clampGridLine(0.01, 1, lines), 0.28);
 });
+
+test("grid composite layout uses a square-ish 1024px grid for common counts", () => {
+  const expected = new Map([
+    [2, { columns: 2, rows: 1, width: 2064, height: 1024 }],
+    [3, { columns: 2, rows: 2, width: 2064, height: 2064 }],
+    [4, { columns: 2, rows: 2, width: 2064, height: 2064 }],
+    [5, { columns: 3, rows: 2, width: 3104, height: 2064 }],
+  ]);
+  for (const [count, dimensions] of expected) {
+    const layout = operations.gridCompositeLayout(count);
+    assert.deepEqual(
+      {
+        columns: layout.columns,
+        rows: layout.rows,
+        width: layout.width,
+        height: layout.height,
+      },
+      dimensions,
+    );
+    assert.equal(layout.cellSize, 1024);
+    assert.equal(layout.gap, 16);
+    assert.equal(layout.scale, 1);
+  }
+});
+
+test("grid composite layout respects the existing 6144px edge limit", () => {
+  const layout = operations.gridCompositeLayout(36);
+  assert.equal(layout.columns, 6);
+  assert.equal(layout.rows, 6);
+  assert.ok(layout.width <= operations.CANVAS_IMAGE_OPERATION_MAX_EDGE);
+  assert.ok(layout.height <= operations.CANVAS_IMAGE_OPERATION_MAX_EDGE);
+  assert.ok(layout.scale < 1);
+});

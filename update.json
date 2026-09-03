@@ -1,19 +1,17 @@
 {
-  "schemaVersion": 1,
-  "latestVersion": "0.7.23",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.23",
-  "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
-  "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.23/SANMAO.AI-0.7.23.zip"
-  ],
-  "sha256": "6e6108b7a8035637b11b0f5507e11938ca7b7b8d23ac20d6400e7002b86fdf98",
-  "publishedAt": "2026-09-03T00:00:00+08:00",
-  "notes": [
-    "Replace the image-node super-resolution shortcut with an in-node image editing workbench for super resolution, outpainting, resizing, cropping, grid splitting, and mirror/rotation.",
-    "Keep super resolution on the existing dedicated settings panel while enabling local preview, drag handles, presets, and save-to-new-node or overwrite workflows for the other operations.",
-    "Render local image transformations to PNG, upload only after processing succeeds, preserve lineage and undo behavior, and automatically group grid-split results."
-  ]
+    "schemaVersion":  1,
+    "latestVersion":  "0.7.24",
+    "releaseUrl":  "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.24",
+    "projectUrl":  "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
+    "packageUrl":  "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip",
+    "mirrorUrls":  [
+                       "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip",
+                       "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip",
+                       "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip"
+                   ],
+    "sha256":  "DCE579BDD49542F638774E4BD247C0A14618C375FDEAED449B6C293389139619",
+    "publishedAt":  "2026-09-03T00:00:00+08:00",
+    "notes":  [
+                  "合并 codex/video-studio-local-sync 等分支改动：视频模型选择器统一、画布分组交互与轮盘缩放优化、宫格拼接、视频工作台视口锁定、撤销/重做等。"
+              ]
 }

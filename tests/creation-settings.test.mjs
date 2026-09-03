@@ -96,3 +96,35 @@ test('image settings retain local-edit annotations in the persisted mask', () =>
 
   assert.equal(result.mask?.annotations?.[0].description, '替换背景文字');
 });
+
+test('shared image defaults never retain a local-edit mask', () => {
+  const values = new Map();
+  const previousWindow = globalThis.window;
+  globalThis.window = {
+    localStorage: {
+      getItem: (key) => values.get(key) || null,
+      setItem: (key, value) => values.set(key, value),
+    },
+    dispatchEvent: () => true,
+  };
+
+  try {
+    values.set(settings.SHARED_CREATION_SETTINGS_KEY, JSON.stringify({
+      image: {
+        aspect: '16:9',
+        mask: { url: '/stale-mask.png', annotations: [{ id: 'stale' }] },
+      },
+    }));
+    assert.equal(settings.readSharedCreationSettings('image', runtime).mask, undefined);
+
+    settings.writeSharedCreationSettings({
+      ...settings.defaultImageCreationSettings(runtime),
+      mask: { url: '/new-mask.png', annotations: [{ id: 'new' }] },
+    });
+    const stored = JSON.parse(values.get(settings.SHARED_CREATION_SETTINGS_KEY));
+    assert.equal(stored.image.mask, undefined);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});

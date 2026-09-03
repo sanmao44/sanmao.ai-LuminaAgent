@@ -45,6 +45,21 @@ test('infers video before image for an unclassified video-capable model', () => 
   assert.equal(modelKind.resolveModelKind('unknown', 'image', ['generate', 'video-generate']), 'video');
 });
 
+test('recognizes common external video families from model ids alone', () => {
+  for (const rawId of [
+    'wan2.1-i2v-plus',
+    'hunyuan-video',
+    'cogvideo-x',
+    'ltx-video-13b',
+    'pixverse-v4',
+    'vidu-2',
+    'lumalabs-ray-2',
+    'pika-2.2',
+  ]) {
+    assert.equal(modelKind.inferModelKind({ rawId }), 'video', rawId);
+  }
+});
+
 test('infers image and chat for unclassified models from their capabilities', () => {
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['generate']), 'image');
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['chat', 'vision']), 'chat');

@@ -23,6 +23,7 @@ import {
   alignCanvasNodes,
   arrangeCanvas,
   arrangeCanvasGroup,
+  canvasEdgeEndpoints,
   clone,
   connectionPath,
   createEmptyMedia,
@@ -45,6 +46,7 @@ import {
   isCanvasReferenceableNode,
   incomingContext,
   incomingReferences,
+  isCanvasEdgeVisible,
   normalizeVariantRequirements,
   mediaCardSizeForRatio,
   upscaleCardSizeForRatio,
@@ -96,6 +98,7 @@ import {
   CANVAS_NODE_COLOR_KEYS,
   canvasNodeColorKey,
   canvasSourceColorKey,
+  type CanvasNodeColorKey,
 } from "@/lib/canvas/appearance";
 import { formatCanvasVideoDuration } from "@/lib/canvas/media";
 import { downloadCanvasShareImage } from "@/lib/canvas/share";
@@ -193,6 +196,7 @@ import type {
 } from "@/lib/canvas/types";
 import {
   renderCanvasImageGrid,
+  renderCanvasImageGridComposite,
   renderCanvasImageOperation,
   type ImageSize,
 } from "@/lib/canvas/image-operations";
@@ -239,8 +243,9 @@ type Point = { x: number; y: number };
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
 
 function canvasEdgeMidpoint(document: CanvasDocument, edge: CanvasEdge): Point {
-  const start = entityPortPoint(document, edge.source, edge.sourcePort || "right");
-  const end = entityPortPoint(document, edge.target, edge.targetPort || "left");
+  const endpoints = canvasEdgeEndpoints(document, edge);
+  const start = entityPortPoint(document, endpoints.source, edge.sourcePort || "right");
+  const end = entityPortPoint(document, endpoints.target, edge.targetPort || "left");
   const sourceDirection = (edge.sourcePort || "right") === "right" ? 1 : -1;
   const targetDirection = (edge.targetPort || "left") === "left" ? -1 : 1;
   const dx = Math.max(72, Math.abs(end.x - start.x) * 0.42);
@@ -1181,9 +1186,28 @@ const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
 // them out of the stage zoom handler so native text/list scrolling can work
 // without moving the whole canvas underneath it.
 function isCanvasWheelIsolatedTarget(target: EventTarget | null) {
+  return isCanvasWheelIsolatedTargetWithOptions(target, false);
+}
+
+function isCanvasWheelIsolatedTargetWithOptions(
+  target: EventTarget | null,
+  allowNodeSurface: boolean,
+) {
   if (!(target instanceof Element)) return false;
-  const selector =
-    ".canvas-node, .canvas-node-editor-popover, .canvas-node-quick-toolbar, .canvas-minimap, .canvas-workbench, .canvas-context-menu, .canvas-modal-backdrop, [data-canvas-wheel-isolate]";
+  const selector = [
+    "textarea",
+    "input",
+    "select",
+    "[contenteditable=\"true\"]",
+    !allowNodeSurface ? ".canvas-node" : "",
+    ".canvas-node-editor-popover",
+    ".canvas-node-quick-toolbar",
+    ".canvas-minimap",
+    ".canvas-workbench",
+    ".canvas-context-menu",
+    ".canvas-modal-backdrop",
+    "[data-canvas-wheel-isolate]",
+  ].filter(Boolean).join(", ");
   if (target.closest(selector)) return true;
 
   // Keep future native scroll containers safe without requiring every new
@@ -1487,6 +1511,31 @@ function defaultCanvasVideoInputRole(
   if (inputMode === "frames") return imagePosition === 0 ? "first-frame" : imagePosition === 1 ? "last-frame" : "reference-image";
   if (inputMode === "first-frame") return imagePosition === 0 ? "first-frame" : "reference-image";
   return "reference-image";
+}
+
+// A drag/resize update only rewrites x/y (and possibly w/h) on a subset of
+// nodes while keeping every node's identity, data and group membership intact.
+// Detecting this lets the hot setDoc path skip the video-reference sync and
+// editor-draft reconcile that would otherwise run on every pointermove frame.
+function canvasNodesPositionOnly(
+  previous: CanvasDocument,
+  next: CanvasDocument,
+) {
+  if (next.nodes.length !== previous.nodes.length) return false;
+  for (let index = 0; index < next.nodes.length; index++) {
+    const before = previous.nodes[index];
+    const after = next.nodes[index];
+    if (before === after) continue;
+    if (
+      before.id !== after.id ||
+      before.type !== after.type ||
+      before.groupId !== after.groupId ||
+      before.data !== after.data
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sameCanvasIdOrder(value: unknown, expected: readonly string[]) {
@@ -1883,8 +1932,12 @@ function CanvasEdgeVisual({
   document,
   edge,
   related,
+  animateRelated,
   style,
   selected,
+  colorKey,
+  sourceKey,
+  targetKey,
   onSelect,
   onHover,
   onLeave,
@@ -1892,14 +1945,17 @@ function CanvasEdgeVisual({
   document: CanvasDocument;
   edge: CanvasEdge;
   related: boolean;
+  animateRelated: boolean;
   style: ConnectionStyle;
   selected: boolean;
+  colorKey: CanvasNodeColorKey;
+  sourceKey: string;
+  targetKey: string;
   onSelect: () => void;
   onHover: () => void;
   onLeave: () => void;
 }) {
   const path = edgePath(document, edge, style);
-  const colorKey = canvasSourceColorKey(document, edge.source);
   const handlePointerDown = (event: ReactPointerEvent<SVGPathElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1923,14 +1979,14 @@ function CanvasEdgeVisual({
         onPointerDown={handlePointerDown}
       />
       <path
-        className={`canvas-edge ${related ? "related" : ""} ${selected ? "selected" : ""}`}
+        className={`canvas-edge ${related ? "related" : ""} ${selected ? "selected" : ""} ${related && !animateRelated ? "related-static" : ""}`}
         d={path}
         markerEnd={`url(#canvas-arrow-${colorKey})`}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
-      {related && (
+      {related && animateRelated && (
         <path
           className="canvas-edge-related-flow"
           d={path}
@@ -1941,6 +1997,24 @@ function CanvasEdgeVisual({
     </g>
   );
 }
+
+// Edge geometry depends only on the edge's own identity plus the source/target
+// entity geometry (node/group positions and sizes). Camera-only updates replace
+// the document wrapper but preserve node/group identities, so memoizing on the
+// endpoint geometry keys keeps the edge layer out of the per-frame zoom/pan
+// render path while still updating edges whose endpoints actually move.
+const MemoizedCanvasEdgeVisual = memo(
+  CanvasEdgeVisual,
+  (previous, next) =>
+    previous.edge === next.edge &&
+    previous.related === next.related &&
+    previous.animateRelated === next.animateRelated &&
+    previous.selected === next.selected &&
+    previous.style === next.style &&
+    previous.colorKey === next.colorKey &&
+    previous.sourceKey === next.sourceKey &&
+    previous.targetKey === next.targetKey,
+);
 
 export default function SuperCanvas() {
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -1961,6 +2035,7 @@ export default function SuperCanvas() {
   const saveTimerRef = useRef<number | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomCameraRef = useRef<CanvasCamera | null>(null);
+  const zoomBusyTimerRef = useRef<number | null>(null);
   const pollTimersRef = useRef<Set<number>>(new Set());
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
   const pollStartedAtRef = useRef<Map<string, number>>(new Map());
@@ -1999,6 +2074,7 @@ export default function SuperCanvas() {
   });
   const [saving, setSaving] = useState(false);
   const [batchDownloading, setBatchDownloading] = useState(false);
+  const [composingGroupId, setComposingGroupId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState(false);
   const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>("idle");
   const [generationKeys, setGenerationKeys] = useState<Set<string>>(new Set());
@@ -2077,6 +2153,7 @@ export default function SuperCanvas() {
   const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
   const [panReady, setPanReady] = useState(false);
   const [panActive, setPanActive] = useState(false);
+  const [zoomBusy, setZoomBusy] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [cursorTask, setCursorTask] = useState<CanvasCursorTask>("idle");
   const [assetRefresh, setAssetRefresh] = useState(0);
@@ -2225,15 +2302,27 @@ export default function SuperCanvas() {
           )
           .map((edge) => edge.id),
       ),
-    [document, selectedGroupId, selectedIds],
+    // edgeTouchesSelection only inspects the edge set, group membership and
+    // the selection; node positions/camera never change which edges are
+    // related, so avoid recomputing this on every drag/zoom frame.
+    [document.edges, document.groups, selectedGroupId, selectedIds],
   );
   const visibleCanvasNodes = useMemo(
     () => sortCanvasNodesByLayer(document.nodes),
     [document.nodes],
   );
-  const visibleCanvasNodeIds = useMemo(
-    () => new Set(visibleCanvasNodes.map((node) => node.id)),
+  // Node ids and their paint order never change when a drag/resize only rewrites
+  // x/y/w/h, so derive the id set from a value-stable signature. The signature
+  // string recomputes cheaply each frame but compares equal across position-only
+  // updates, keeping the edge-visibility Set (and thus the whole edge filter)
+  // out of the per-pointermove path while still updating on add/remove/reorder.
+  const visibleCanvasNodeIdKey = useMemo(
+    () => JSON.stringify(visibleCanvasNodes.map((node) => node.id)),
     [visibleCanvasNodes],
+  );
+  const visibleCanvasNodeIds = useMemo(
+    () => new Set(JSON.parse(visibleCanvasNodeIdKey) as string[]),
+    [visibleCanvasNodeIdKey],
   );
   const selectedGroup = selectedGroupId
     ? groupById(document, selectedGroupId)
@@ -2280,8 +2369,36 @@ export default function SuperCanvas() {
   );
 
   const setDoc = useCallback((next: CanvasDocument) => {
+    const previous = docRef.current;
+    // Pan/zoom only replace the camera; the node/edge/group collections keep
+    // their identities. Skip the video-reference sync and editor-draft
+    // reconcile so zooming/panning stays smooth on large boards.
+    if (
+      next.camera !== previous.camera &&
+      next.nodes === previous.nodes &&
+      next.edges === previous.edges &&
+      next.groups === previous.groups
+    ) {
+      docRef.current = next;
+      setDocument(next);
+      return;
+    }
+    // Dragging/resizing rewrites node positions while preserving node identity,
+    // data and group membership. Those fields never affect video references,
+    // so skip the same heavy reconcile here too.
+    if (
+      next.camera === previous.camera &&
+      next.edges === previous.edges &&
+      next.groups === previous.groups &&
+      next.nodes !== previous.nodes &&
+      canvasNodesPositionOnly(previous, next)
+    ) {
+      docRef.current = next;
+      setDocument(next);
+      return;
+    }
     const normalized = normalizeCanvasDocumentLayers(
-      docRef.current,
+      previous,
       syncCanvasVideoReferences(next, runtime),
     );
     setEditorDrafts((current) => syncCanvasEditorDraftInputModes(current, normalized, runtime));
@@ -2839,15 +2956,23 @@ export default function SuperCanvas() {
   const openNodePosition = useCallback((position: Point, node: CanvasNode, extraOccupied: CanvasNode[] = []) => {
     const size = nodeSize(node);
     const candidates: Point[] = [{ x: position.x, y: position.y }];
-    for (let ring = 1; ring <= 8; ring += 1) {
+    const directions = [
+      { x: 1, y: 0 },
+      { x: -1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 0, y: -1 },
+      { x: 1, y: 1 },
+      { x: -1, y: 1 },
+      { x: 1, y: -1 },
+      { x: -1, y: -1 },
+    ];
+    for (let ring = 1; ring <= 32; ring += 1) {
       const distance = 70 + ring * 30;
-      candidates.push(
-        { x: position.x + distance, y: position.y },
-        { x: position.x - distance, y: position.y },
-        { x: position.x, y: position.y + distance },
-        { x: position.x, y: position.y - distance },
-        { x: position.x + distance, y: position.y + distance },
-        { x: position.x - distance, y: position.y + distance },
+      directions.forEach((direction) =>
+        candidates.push({
+          x: position.x + direction.x * distance,
+          y: position.y + direction.y * distance,
+        }),
       );
     }
     const occupied = [...docRef.current.nodes, ...extraOccupied].map((item) => {
@@ -3794,6 +3919,15 @@ export default function SuperCanvas() {
   const zoomAt = useCallback(
     (clientX: number, clientY: number, factor: number) => {
       const point = stagePoint(clientX, clientY);
+      // Disable the related-edge flow animation for the whole zoom gesture
+      // (debounced) rather than toggling it every frame, which would flicker.
+      setZoomBusy(true);
+      if (zoomBusyTimerRef.current !== null)
+        window.clearTimeout(zoomBusyTimerRef.current);
+      zoomBusyTimerRef.current = window.setTimeout(
+        () => setZoomBusy(false),
+        180,
+      );
       // Wheel events can arrive faster than React can commit a render. Build
       // on the latest effective camera (including an update waiting for the
       // next frame) instead of a stale render closure, then commit once per
@@ -3821,11 +3955,34 @@ export default function SuperCanvas() {
     [stagePoint, updateDoc],
   );
   useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const handleModifiedWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      // Ctrl+wheel is reserved by browsers for page zoom. Capture it with a
+      // non-passive listener while the pointer is over the canvas so the same
+      // gesture consistently controls the canvas camera instead.
+      event.preventDefault();
+      event.stopPropagation();
+      if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) return;
+      zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0014));
+    };
+    stage.addEventListener("wheel", handleModifiedWheel, {
+      capture: true,
+      passive: false,
+    });
+    return () =>
+      stage.removeEventListener("wheel", handleModifiedWheel, true);
+  }, [zoomAt]);
+  useEffect(() => {
     return () => {
       if (zoomFrameRef.current !== null)
         window.cancelAnimationFrame(zoomFrameRef.current);
       zoomFrameRef.current = null;
       pendingZoomCameraRef.current = null;
+      if (zoomBusyTimerRef.current !== null)
+        window.clearTimeout(zoomBusyTimerRef.current);
+      zoomBusyTimerRef.current = null;
     };
   }, []);
   const panToWorld = useCallback(
@@ -8257,6 +8414,150 @@ export default function SuperCanvas() {
     setLightbox(null);
   }, [notify]);
 
+  const composeCanvasGroup = useCallback(async (groupId: string) => {
+    if (composingGroupId) return;
+    const group = groupById(docRef.current, groupId);
+    if (!group) return;
+    const memberOrder = new Map(group.nodeIds.map((id, index) => [id, index]));
+    const sources = group.nodeIds
+      .map((id) => nodeById(docRef.current, id))
+      .filter(
+        (node): node is CanvasNode =>
+          Boolean(
+            node &&
+              isCanvasReferenceableNode(node) &&
+              node.data.kind === "image" &&
+              node.data.url,
+          ),
+      )
+      .sort(
+        (left, right) =>
+          left.y - right.y ||
+          left.x - right.x ||
+          (memberOrder.get(left.id) || 0) - (memberOrder.get(right.id) || 0),
+      );
+    if (sources.length < 2) {
+      notify("组内至少需要 2 张可用图片才能宫格拼接", "error");
+      return;
+    }
+
+    const sourceIds = sources.map((node) => node.id);
+    const sourceUrls = sources.map((node) => String(node.data.url));
+    const groupNodeIds = [...group.nodeIds];
+    const sourceSnapshot = new Map(sourceIds.map((id, index) => [id, sourceUrls[index]]));
+    const stillMatchesGroup = () => {
+      const currentGroup = groupById(docRef.current, groupId);
+      return Boolean(
+        currentGroup &&
+          currentGroup.nodeIds.length === groupNodeIds.length &&
+          currentGroup.nodeIds.every((id, index) => id === groupNodeIds[index]) &&
+          sourceIds.every(
+            (id) =>
+              currentGroup.nodeIds.includes(id) &&
+              String(nodeById(docRef.current, id)?.data.url || "") === sourceSnapshot.get(id),
+          ),
+      );
+    };
+
+    setComposingGroupId(groupId);
+    try {
+      const rendered = await renderCanvasImageGridComposite(sourceUrls);
+      if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
+      const groupBoundsValue = groupBounds(docRef.current, groupId);
+      const asset = await uploadCanvasAsset(
+        new File([rendered.blob], `${group.name}-宫格拼接.png`, { type: "image/png" }),
+      );
+      if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
+
+      const sourceWithImageParams = sources.find(
+        (node) => node.type === "media" && node.data.kind === "image",
+      );
+      const sourceParams =
+        sourceWithImageParams?.data.generation?.params ||
+        sourceWithImageParams?.data.params ||
+        defaultParams("image", runtime);
+      const resultName = `${group.name} · 宫格拼接`;
+      const imageOperation: CanvasImageOperationMeta = {
+        operation: "grid-compose",
+        sourceNodeIds: sourceIds,
+        inputWidth: rendered.size.width,
+        inputHeight: rendered.size.height,
+        outputWidth: rendered.size.width,
+        outputHeight: rendered.size.height,
+        params: {
+          columns: rendered.layout.columns,
+          rows: rendered.layout.rows,
+          cellSize: rendered.layout.cellSize,
+          gap: rendered.layout.gap,
+          scale: rendered.layout.scale,
+        },
+        createdAt: Date.now(),
+      };
+      const result = {
+        ...createMedia(
+          "image",
+          asset.url,
+          resultName,
+          { x: groupBoundsValue.x + groupBoundsValue.w + 90, y: groupBoundsValue.y },
+          {
+            kind: "image",
+            role: "宫格拼接结果",
+            status: "completed",
+            statusLabel: "本地宫格拼接结果",
+            assetId: asset.id,
+            sourceAssetId: asset.id,
+            mimeType: asset.mime,
+            autoFit: true,
+            nativeWidth: rendered.size.width,
+            nativeHeight: rendered.size.height,
+            imageOperation,
+            params: clone(sourceParams),
+            generation: {
+              kind: "image",
+              prompt: "宫格拼接",
+              params: clone(sourceParams),
+              operation: "edit",
+              referenceIds: sourceIds,
+              createdAt: Date.now(),
+            },
+          },
+        ),
+        ...mediaCardSizeForRatio(
+          rendered.size.width / Math.max(1, rendered.size.height),
+          "image",
+        ),
+      };
+      const positioned = {
+        ...result,
+        ...openNodePosition({ x: result.x, y: result.y }, result),
+      };
+      const lineageEdges: CanvasEdge[] = sourceIds.map((sourceId) => ({
+        id: uid("edge"),
+        source: sourceId,
+        target: positioned.id,
+        sourcePort: "right",
+        targetPort: "left",
+        kind: "lineage",
+      }));
+      commit((value) => ({
+        ...value,
+        nodes: [...value.nodes, positioned],
+        edges: [...value.edges, ...lineageEdges],
+      }));
+      setSelectedIds(new Set([positioned.id]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      setExpandedEditorId(null);
+      setLightbox(null);
+      notify(`已将 ${sources.length} 张图片拼接为宫格图片`);
+      addLog(`宫格拼接完成：${group.name} · ${sources.length} 张`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "宫格拼接失败", "error");
+    } finally {
+      setComposingGroupId((current) => (current === groupId ? null : current));
+    }
+  }, [addLog, commit, composingGroupId, notify, openNodePosition, runtime]);
+
   const saveImageOperation = useCallback(async (request: CanvasImageEditorSaveRequest) => {
     const source = imageEditorNodeId
       ? nodeById(docRef.current, imageEditorNodeId)
@@ -9535,15 +9836,92 @@ export default function SuperCanvas() {
   const connectionTargetScreen = connectionTargetBounds
     ? worldToScreen(connectionTargetBounds.x, connectionTargetBounds.y)
     : null;
-  const visibleCanvasEdges = document.edges.filter((edge) => {
-    const sourceVisible =
-      visibleCanvasNodeIds.has(edge.source) || Boolean(groupById(document, edge.source));
-    const targetVisible =
-      visibleCanvasNodeIds.has(edge.target) || Boolean(groupById(document, edge.target));
-    return sourceVisible && targetVisible;
-  });
+  // O(1) lookup maps built only when the node/group collections change. The
+  // memoized edge visuals use these instead of re-scanning the whole document
+  // for source/target geometry and color on every render/frame.
+  const canvasColorKeyById = useMemo(() => {
+    const nodeByIdMap = new Map(
+      document.nodes.map((node) => [node.id, node]),
+    );
+    const keyById = new Map<string, CanvasNodeColorKey>();
+    for (const node of document.nodes) {
+      keyById.set(node.id, canvasNodeColorKey(node));
+    }
+    for (const group of document.groups) {
+      const firstMember = group.nodeIds
+        .map((id) => nodeByIdMap.get(id))
+        .find((node): node is CanvasNode => Boolean(node));
+      keyById.set(
+        group.id,
+        firstMember ? canvasNodeColorKey(firstMember) : "image",
+      );
+    }
+    return keyById;
+  }, [document.nodes, document.groups]);
+
+  // Geometry signatures for edge endpoints. Node keys encode the node's current
+  // position/size so a moved node invalidates only the edges touching it. Group
+  // keys encode member positions so group port points track their members.
+  const canvasEntityGeometryKeyById = useMemo(() => {
+    const nodeByIdMap = new Map(
+      document.nodes.map((node) => [node.id, node]),
+    );
+    const keyById = new Map<string, string>();
+    for (const node of document.nodes) {
+      const size = nodeSize(node);
+      keyById.set(
+        node.id,
+        `n:${node.id}:${node.x}:${node.y}:${size.w}x${size.h}`,
+      );
+    }
+    for (const group of document.groups) {
+      const members = group.nodeIds
+        .map((id) => nodeByIdMap.get(id))
+        .filter((node): node is CanvasNode => Boolean(node));
+      keyById.set(
+        group.id,
+        `g:${group.id}:${members
+          .map((node) => {
+            const size = nodeSize(node);
+            return `${node.id}:${node.x}:${node.y}:${size.w}x${size.h}`;
+          })
+          .join("|")}`,
+      );
+    }
+    return keyById;
+  }, [document.nodes, document.groups]);
+
+  // Group visibility is a pure id set, so build it once per group collection
+  // change instead of scanning document.groups for every edge on every filter
+  // pass (O(E*G) -> O(E)).
+  const canvasGroupIdSet = useMemo(
+    () => new Set(document.groups.map((group) => group.id)),
+    [document.groups],
+  );
+  const visibleCanvasEdges = useMemo(
+    () =>
+      document.edges.filter((edge) => {
+        const sourceVisible =
+          visibleCanvasNodeIds.has(edge.source) ||
+          canvasGroupIdSet.has(edge.source);
+        const targetVisible =
+          visibleCanvasNodeIds.has(edge.target) ||
+          canvasGroupIdSet.has(edge.target);
+        return sourceVisible && targetVisible;
+      }),
+    [document.edges, canvasGroupIdSet, visibleCanvasNodeIds],
+  );
+  // The flow/dash animation is the main paint cost at scale. Keep it only when
+  // the user is at rest (no drag/pan/marquee/resize/connect and not zooming);
+  // during an active interaction related edges fall back to static dashes so the
+  // canvas stays smooth. The animation returns the moment the gesture ends, so a
+  // single-node click still plays the related-edge flow after selection.
+  const canvasEdgesAnimateRelated =
+    !selectedGroupId && cursorTask === "idle" && !zoomBusy;
   const connectionCancelEdge = connectionCancelEdgeId
-    ? document.edges.find((edge) => edge.id === connectionCancelEdgeId)
+    ? document.edges.find(
+        (edge) => edge.id === connectionCancelEdgeId && isCanvasEdgeVisible(document, edge),
+      )
     : undefined;
   const connectionCancelEdgeMidpoint = connectionCancelEdge
     ? canvasEdgeMidpoint(document, connectionCancelEdge)
@@ -10379,7 +10757,7 @@ export default function SuperCanvas() {
         }}
         onContextMenu={handleContextMenu}
         onWheel={(event) => {
-          if (isCanvasWheelIsolatedTarget(event.target)) {
+          if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) {
             // Do not preventDefault: the nested textarea/list should keep its
             // native scroll. Stopping here only prevents stage zoom.
             event.stopPropagation();
@@ -10452,27 +10830,31 @@ export default function SuperCanvas() {
                   <marker
                     key={colorKey}
                     id={`canvas-arrow-${colorKey}`}
-                    markerWidth="8"
-                    markerHeight="8"
-                    refX="7"
-                    refY="4"
+                    markerWidth="6"
+                    markerHeight="6"
+                    refX="5.5"
+                    refY="3"
                     orient="auto"
                   >
                     <path
-                      d="M0,0 L8,4 L0,8 z"
+                      d="M0,0.35 L5.7,3 L0,5.65 z"
                       fill={`var(--canvas-node-${colorKey})`}
                     />
                   </marker>
                 ))}
               </defs>
               {visibleCanvasEdges.map((edge) => (
-                <CanvasEdgeVisual
+                <MemoizedCanvasEdgeVisual
                   key={edge.id}
                   document={document}
                   edge={edge}
                   related={relatedConnectionEdgeIds.has(edge.id)}
+                  animateRelated={canvasEdgesAnimateRelated}
                   style={connectionStyle}
                   selected={selectedEdgeId === edge.id}
+                  colorKey={canvasColorKeyById.get(edge.source) ?? "image"}
+                  sourceKey={canvasEntityGeometryKeyById.get(edge.source) ?? edge.source}
+                  targetKey={canvasEntityGeometryKeyById.get(edge.target) ?? edge.target}
                   onSelect={() => {
                     hideConnectionCancel();
                     setSelectedEdgeId(edge.id);
@@ -10485,8 +10867,8 @@ export default function SuperCanvas() {
               ))}
               {draftConnection && (
                 <path
-                  className={`canvas-edge canvas-edge-draft node-color-${canvasSourceColorKey(document, draftConnection.sourceId)}`}
-                  markerEnd={`url(#canvas-arrow-${canvasSourceColorKey(document, draftConnection.sourceId)})`}
+                  className={`canvas-edge canvas-edge-draft node-color-${canvasColorKeyById.get(draftConnection.sourceId) ?? "image"}`}
+                  markerEnd={`url(#canvas-arrow-${canvasColorKeyById.get(draftConnection.sourceId) ?? "image"})`}
                   d={connectionPath(
                     draftConnection.start,
                     draftConnection.end,
@@ -10500,6 +10882,16 @@ export default function SuperCanvas() {
             <div className="canvas-group-layer">
               {document.groups.map((group) => {
                 const bounds = groupBounds(document, group.id);
+                const availableImageCount = group.nodeIds.filter((id) => {
+                  const node = nodeById(document, id);
+                  return Boolean(
+                    node &&
+                      isCanvasReferenceableNode(node) &&
+                      node.data.kind === "image" &&
+                      node.data.url,
+                  );
+                }).length;
+                const composing = composingGroupId === group.id;
                 return (
                   <div
                     key={group.id}
@@ -10539,6 +10931,28 @@ export default function SuperCanvas() {
                       onPointerDown={(event) => startGroupResize(event, group)}
                     />
                     <div className="canvas-group-label">
+                      <button
+                        type="button"
+                        className={`canvas-group-compose ${composing ? "composing" : ""}`}
+                        disabled={availableImageCount < 2 || Boolean(composingGroupId)}
+                        title={
+                          availableImageCount >= 2
+                            ? `宫格拼接组内 ${availableImageCount} 张图片`
+                            : "组内至少需要 2 张可用图片才能宫格拼接"
+                        }
+                        aria-label={
+                          availableImageCount >= 2
+                            ? `宫格拼接组内 ${availableImageCount} 张图片`
+                            : "组内至少需要 2 张可用图片才能宫格拼接"
+                        }
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void composeCanvasGroup(group.id);
+                        }}
+                      >
+                        {composing ? "…" : "▦"}
+                      </button>
                       <span>⌘</span>
                       <b>{group.name}</b>
                       <small>{group.nodeIds.length} 个对象</small>
@@ -11170,6 +11584,7 @@ export default function SuperCanvas() {
           />
         ) : contextMenu?.menu === "create" ? (
           <CanvasContextMenuFrame
+            key="create"
             className="canvas-create-context-menu"
             position={contextMenu}
             ariaLabel="创建节点菜单"
@@ -11282,15 +11697,41 @@ export default function SuperCanvas() {
           </CanvasContextMenuFrame>
         ) : contextMenu?.menu === "tools" ? (
           <CanvasContextMenuFrame
+            key="tools"
             className="canvas-tools-context-menu"
             position={contextMenu}
             ariaLabel="画布操作菜单"
           >
             <div className="canvas-menu-title">
               <span>画布操作</span>
-              <small>粘贴、导入与视图工具</small>
             </div>
             <div className="canvas-context-menu-body">
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  const position = contextMenu.world;
+                  setContextMenu(null);
+                  openFilePicker(position);
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
+                <span className="canvas-menu-copy">
+                  <b>上传</b>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-create"
+                onClick={() => setContextMenu((current) => current ? { ...current, menu: "create" } : current)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">＋</span>
+                <span className="canvas-menu-copy">
+                  <b>添加节点</b>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-tool"
@@ -11303,26 +11744,41 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-icon" aria-hidden="true">⌘</span>
                 <span className="canvas-menu-copy">
                   <b>粘贴</b>
-                  <small>粘贴节点或剪贴板图片</small>
                 </span>
-                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+                <small className="canvas-menu-shortcut">Ctrl/Cmd + V</small>
+              </button>
+              <div className="canvas-menu-divider" role="separator" aria-hidden="true" />
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  setContextMenu(null);
+                  undo();
+                }}
+                disabled={!undoStack.length}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">↶</span>
+                <span className="canvas-menu-copy">
+                  <b>撤销</b>
+                </span>
+                <small className="canvas-menu-shortcut">Ctrl/Cmd + Z</small>
               </button>
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-tool"
                 onClick={() => {
-                  const position = contextMenu.world;
                   setContextMenu(null);
-                  openFilePicker(position);
+                  redo();
                 }}
+                disabled={!redoStack.length}
               >
-                <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
+                <span className="canvas-menu-icon" aria-hidden="true">↷</span>
                 <span className="canvas-menu-copy">
-                  <b>导入图片 / 视频 / 音频</b>
-                  <small>支持多选，放置到右键位置</small>
+                  <b>重做</b>
                 </span>
-                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+                <small className="canvas-menu-shortcut">Ctrl/Cmd + Shift + Z</small>
               </button>
+              <div className="canvas-menu-divider" role="separator" aria-hidden="true" />
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-tool"
@@ -11334,7 +11790,6 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-icon" aria-hidden="true">⌗</span>
                 <span className="canvas-menu-copy">
                   <b>一键整理</b>
-                  <small>自动对齐并排列节点</small>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
@@ -11349,9 +11804,8 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-icon" aria-hidden="true">⛶</span>
                 <span className="canvas-menu-copy">
                   <b>适应视图</b>
-                  <small>缩放至完整显示画布</small>
                 </span>
-                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+                <small className="canvas-menu-shortcut">Z</small>
               </button>
             </div>
           </CanvasContextMenuFrame>
@@ -12588,7 +13042,9 @@ function CanvasNodeReferenceStrip({
           </span>
         ) : <img src={reference.data.url} alt={reference.data.name || `引用 ${index + 1}`} />}
       </button>
-      <b className="canvas-editor-reference-name">{reference.data.name || (reference.data.kind === "video" ? "视频素材" : reference.data.kind === "audio" ? "音频素材" : "图片素材")}</b>
+      {role && (
+        <b className="canvas-editor-reference-name">{reference.data.name || (reference.data.kind === "video" ? "视频素材" : reference.data.kind === "audio" ? "音频素材" : "图片素材")}</b>
+      )}
       <button type="button" className="canvas-editor-reference-remove" aria-label={`移除引用 ${index + 1}`} onClick={() => onRemove(target.id, reference.id)}>×</button>
     </div>
   );
@@ -14364,7 +14820,6 @@ function CanvasNodeCard({
         event.dataTransfer.setData("application/x-sanmao-canvas-node", node.id);
       }}
       onPointerDown={(event) => onPointerDown(event, node)}
-      onWheel={(event) => event.stopPropagation()}
       onDoubleClick={(event) => {
         event.stopPropagation();
         if (node.type === "prompt") onEdit(true);
@@ -14388,12 +14843,14 @@ function CanvasNodeCard({
           出组
         </button>
       )}
-      <button
-        type="button"
-        className="canvas-port left"
-        aria-label="左侧连接端口"
-        onPointerDown={(event) => onConnect(event, node.id, "left")}
-      />
+      {!node.groupId && (
+        <button
+          type="button"
+          className="canvas-port left"
+          aria-label="左侧连接端口"
+          onPointerDown={(event) => onConnect(event, node.id, "left")}
+        />
+      )}
       {node.type === "media" && (
         <div className={`canvas-media-card${data.kind === "video" ? " video" : data.kind === "audio" ? " audio" : ""}`}>
           <div className="canvas-media-stage">
@@ -14946,12 +15403,14 @@ function CanvasNodeCard({
           </div>
         </div>
       )}
-      <button
-        type="button"
-        className="canvas-port right"
-        aria-label="右侧连接端口"
-        onPointerDown={(event) => onConnect(event, node.id, "right")}
-      />
+      {!node.groupId && (
+        <button
+          type="button"
+          className="canvas-port right"
+          aria-label="右侧连接端口"
+          onPointerDown={(event) => onConnect(event, node.id, "right")}
+        />
+      )}
       <span
         className="canvas-node-resize"
         onPointerDown={(event) => onResize(event, node)}
@@ -15357,7 +15816,7 @@ function CanvasMinimap({
           preserveAspectRatio="none"
           aria-hidden="true"
         >
-          {document.edges.map((edge) => {
+          {document.edges.filter((edge) => isCanvasEdgeVisible(document, edge)).map((edge) => {
             const source = nodeById(document, edge.source);
             const target = nodeById(document, edge.target);
             const sourceGroup = groupById(document, edge.source);
@@ -15367,14 +15826,15 @@ function CanvasMinimap({
             const colorKey = canvasSourceColorKey(document, edge.source);
             const sourcePort = edge.sourcePort || "right";
             const targetPort = edge.targetPort || "left";
+            const endpoints = canvasEdgeEndpoints(document, edge);
             const sourcePoint = entityPortPoint(
               document,
-              edge.source,
+              endpoints.source,
               sourcePort,
             );
             const targetPoint = entityPortPoint(
               document,
-              edge.target,
+              endpoints.target,
               targetPort,
             );
             const start = mapPosition(sourcePoint.x, sourcePoint.y);

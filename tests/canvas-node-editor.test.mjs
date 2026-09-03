@@ -182,6 +182,16 @@ test("editor keeps references, variant requirements, parameters, mentions and ge
   assert.match(component, /setPromptExpanded\(false\)/);
 });
 
+test("reference thumbnails keep the strip compact and scroll horizontally only", () => {
+  const start = component.indexOf("const renderItem =");
+  const end = component.indexOf("const renderSlot =", start);
+  assert.ok(start >= 0 && end > start, "reference item renderer should be present");
+  const renderItem = component.slice(start, end);
+  assert.match(renderItem, /role && \(/);
+  assert.match(styles, /\.canvas-editor-reference-items\{[^}]*overflow-x:auto;overflow-y:hidden/);
+  assert.match(styles, /\.canvas-node-editor-popover:not\(\.is-prompt-expanded\) \.canvas-editor-reference-items[^}]*overflow-x:auto;overflow-y:hidden/);
+});
+
 test("Agent generation keeps the node model when image references are present", () => {
   const start = component.indexOf("const effectiveSettings: AgentCreationSettings = {");
   const end = component.indexOf("let inputNode = source.node", start);
@@ -251,11 +261,17 @@ test("nested node scrolling does not trigger canvas zoom", () => {
   assert.match(component, /function isCanvasWheelIsolatedTarget\(target: EventTarget \| null\)/);
   assert.match(component, /target\.closest\(selector\)/);
   assert.match(component, /onWheel=\{\(event\) => event\.stopPropagation\(\)\}/);
-  assert.match(component, /if \(isCanvasWheelIsolatedTarget\(event\.target\)\)/);
+  assert.match(component, /if \(isCanvasWheelIsolatedTargetWithOptions\(event\.target, true\)\)/);
+  assert.doesNotMatch(component, /onWheel=\{\(event\) => event\.stopPropagation\(\)\}\s*onDoubleClick/);
   assert.match(component, /Do not preventDefault/);
   assert.match(styles, /\.canvas-node,\.canvas-node-editor-popover,\.canvas-node-quick-toolbar/);
   assert.match(styles, /\.canvas-prompt-preview,\.canvas-node-editor-body/);
   assert.match(styles, /overscroll-behavior:contain/);
+});
+
+test("grouped cards defer external connections to the group ports", () => {
+  assert.match(component, /!node\.groupId && \(\s*<button\s+type="button"\s+className="canvas-port left"/);
+  assert.match(component, /!node\.groupId && \(\s*<button\s+type="button"\s+className="canvas-port right"/);
 });
 
 test("audio nodes use the branded rounded player instead of browser gray controls", () => {

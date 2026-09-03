@@ -78,13 +78,15 @@ type Props = {
   onSave: (request: CanvasImageEditorSaveRequest) => Promise<void> | void;
 };
 
+type CanvasImageEditorOperation = Exclude<CanvasImageOperation, "grid-compose">;
+
 type Point = { x: number; y: number };
 type OutpaintDrag = { side: keyof OutpaintMargins; startX: number; startY: number; start: OutpaintMargins; scale: number };
 type CropDrag = { handle: string; startX: number; startY: number; start: ImageRect; scale: number };
 type GridDrag = { axis: "vertical" | "horizontal"; index: number };
 
 const DEFAULT_OUTPAINT_PROMPT = "扩展画布，保持原图主体、风格和光影自然连续，补全新增区域";
-const TABS: Array<{ id: CanvasImageOperation | "upscale"; label: string; icon: string }> = [
+const TABS: Array<{ id: CanvasImageEditorOperation | "upscale"; label: string; icon: string }> = [
   { id: "upscale", label: "超分", icon: "↗" },
   { id: "outpaint", label: "扩图", icon: "四" },
   { id: "resize", label: "缩放", icon: "↔" },
@@ -133,7 +135,7 @@ function formatPixels(value: number) {
 export default function CanvasImageEditorWorkbench({ node, document, stageRef, onClose, onUpscale, onSave }: Props) {
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState({ left: 20, top: 100, maxHeight: 600 });
-  const [operation, setOperation] = useState<CanvasImageOperation>("outpaint");
+  const [operation, setOperation] = useState<CanvasImageEditorOperation>("outpaint");
   const [saveMode, setSaveMode] = useState<CanvasImageEditorSaveMode>("new");
   const [sourceSize, setSourceSize] = useState<ImageSize>(() => safeInputSize(node));
   const [sizeError, setSizeError] = useState("");

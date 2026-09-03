@@ -110,6 +110,7 @@
 @keyframes canvas-edge-related-flow{from{stroke-dashoffset:1000}to{stroke-dashoffset:0}}
 .canvas-edge-visual .canvas-edge.related{stroke-dasharray:11 9;stroke-linecap:round;animation:canvas-edge-related-dashes 1.8s linear infinite}
 @keyframes canvas-edge-related-dashes{from{stroke-dashoffset:0}to{stroke-dashoffset:-40}}
+.canvas-edge-visual .canvas-edge.related-static{stroke-dasharray:6 6;stroke-linecap:round;animation:none!important;filter:none}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-edge-related-flow,html:not([data-motion="on"]) .canvas-edge.related{animation:none!important}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-connection-cancel{animation:none!important}}
 @keyframes canvas-connection-remove-attention{0%{opacity:0;box-shadow:0 0 0 0 color-mix(in srgb,var(--danger) 0%,transparent)}45%{opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 24%,transparent)}100%{opacity:.9;box-shadow:0 1px 3px color-mix(in srgb,var(--danger) 14%,transparent)}}
@@ -328,6 +329,29 @@
 .canvas-group.asset-drop-target{border-color:var(--accent-2);background:color-mix(in srgb,var(--accent-soft) 62%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent-2) 18%,transparent),0 0 24px color-mix(in srgb,var(--accent-2) 26%,transparent)}
 .canvas-group:hover .canvas-group-port,.canvas-group.selected .canvas-group-port,.canvas-group.connection-source .canvas-group-port,.canvas-group.connection-target .canvas-group-port{opacity:.96;background:var(--accent-soft);border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 3px 12px color-mix(in srgb,var(--accent) 28%,transparent)}
 .canvas-group-port:hover,.canvas-group-port:focus-visible{opacity:1;background:var(--accent);border-color:var(--accent-2);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent),0 4px 14px color-mix(in srgb,var(--accent) 38%,transparent);transform:translateY(-50%) scale(1.12)}
+
+/* The group resize control owns an invisible corner hit target. Keep its
+   resize cursor above the generic canvas-button cursor before pointer-down. */
+.canvas-group-resize{right:-18px;bottom:-18px;width:36px;height:36px;padding:0;border:0;background:transparent;box-shadow:none;appearance:none;-webkit-appearance:none;opacity:1}
+.canvas-group-resize::before{content:"";position:absolute;left:50%;top:50%;width:14px;height:14px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line-strong));border-radius:5px;background:var(--panel-3);opacity:.7;transform:translate(-50%,-50%);transition:opacity .14s,background .14s,border-color .14s,box-shadow .14s,transform .14s}
+.canvas-group:hover .canvas-group-resize::before,.canvas-group.selected .canvas-group-resize::before{opacity:1;background:var(--accent-soft);border-color:var(--accent)}
+.canvas-stage .canvas-group-resize,.canvas-stage .canvas-group-resize:hover,.canvas-stage .canvas-group-resize:focus-visible{cursor:nwse-resize}
+.canvas-group-resize:hover::before,.canvas-group-resize:focus-visible::before{background:color-mix(in srgb,var(--accent) 18%,var(--panel-3));border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent);transform:translate(-50%,-50%) scale(1.08)}
+
+/* Group ports follow the same magnetic interaction and capsule language as
+   ordinary node ports. The large button remains visually invisible. */
+.canvas-group .canvas-group-port{width:72px;height:64px;padding:0;border:0;border-radius:14px;background:transparent;box-shadow:none;appearance:none;-webkit-appearance:none;outline:0;opacity:1;isolation:isolate;transform:translateY(-50%)}
+.canvas-group .canvas-group-port.left{left:-66px}
+.canvas-group .canvas-group-port.right{right:-66px}
+.canvas-group:hover .canvas-group-port,.canvas-group.selected .canvas-group-port,.canvas-group.connection-source .canvas-group-port,.canvas-group.connection-target .canvas-group-port,.canvas-group .canvas-group-port:hover,.canvas-group .canvas-group-port:focus-visible{border:0!important;background:transparent!important;box-shadow:none!important;filter:none;backdrop-filter:none;opacity:1;transform:translateY(-50%)}
+.canvas-group .canvas-group-port::before{content:"";position:absolute;z-index:var(--canvas-z-local-content);top:50%;width:12px;height:24px;border:1px solid color-mix(in srgb,var(--accent) 58%,var(--line-strong));border-radius:999px;background:linear-gradient(180deg,var(--panel-2),var(--panel-3));box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 16%,transparent),0 3px 9px color-mix(in srgb,#000 20%,transparent),0 0 0 2px color-mix(in srgb,var(--accent) 7%,transparent);transform:translate(-50%,-50%);transition:width .22s ease,height .22s ease,border-color .2s ease,background .2s ease,box-shadow .22s ease,transform .24s cubic-bezier(.2,.8,.2,1)}
+.canvas-group .canvas-group-port.left::before{left:calc(100% - 7px)}
+.canvas-group .canvas-group-port.right::before{left:7px}
+.canvas-stage .canvas-group-port,.canvas-stage .canvas-group-port:hover,.canvas-stage .canvas-group-port:focus-visible{cursor:crosshair}
+.canvas-group .canvas-group-port:hover,.canvas-group .canvas-group-port:focus-visible{border:0;background:transparent;box-shadow:none;outline:0}
+.canvas-group .canvas-group-port:hover::before,.canvas-group .canvas-group-port:focus-visible::before{width:14px;height:28px;border-color:color-mix(in srgb,var(--accent) 92%,#fff 8%);background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 22%,var(--panel-2)),color-mix(in srgb,var(--accent) 12%,var(--panel-3)));box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 25%,transparent),0 5px 16px color-mix(in srgb,#000 28%,transparent),0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}
+.canvas-group .canvas-group-port.left:hover::before,.canvas-group .canvas-group-port.left:focus-visible::before{transform:translate(calc(-50% - 8px),-50%)}
+.canvas-group .canvas-group-port.right:hover::before,.canvas-group .canvas-group-port.right:focus-visible::before{transform:translate(calc(-50% + 8px),-50%)}
 @media(max-width:720px){.canvas-run-button{width:68px;min-width:68px}}
 @media(max-width:420px){.canvas-run-button{width:62px;min-width:62px}}
 
@@ -425,17 +449,100 @@ html[data-theme="dark"] .canvas-workspace{
   html:not([data-motion="on"]) .canvas-media-state.pending span{animation:none!important}
 }
 
-/* Keep connection ports from visually leaking through overlapping cards. */
+/* Magnetic connection ports sit just outside the card, then glide inward when
+   the pointer approaches. The button owns a generous invisible hit area while
+   its pseudo element stays visually compact. */
 .canvas-node .canvas-port{
-  opacity:0;
-  pointer-events:none;
-  transition:opacity .14s,background .14s,border-color .14s,box-shadow .14s,width .14s;
+  width:72px;
+  height:64px;
+  border:0;
+  border-radius:14px;
+  background:transparent;
+  box-shadow:none;
+  appearance:none;
+  -webkit-appearance:none;
+  outline:0;
+  opacity:1;
+  pointer-events:auto;
+  isolation:isolate;
+  transition:opacity .2s ease,transform .24s cubic-bezier(.2,.8,.2,1),filter .2s ease;
 }
-.canvas-node:hover .canvas-port,
+.canvas-node .canvas-port.left{left:-66px}
+.canvas-node .canvas-port.right{right:-66px}
+.canvas-node .canvas-port::before{
+  content:"";
+  position:absolute;
+  z-index:var(--canvas-z-local-content);
+  left:50%;
+  top:50%;
+  width:12px;
+  height:24px;
+  border:1px solid color-mix(in srgb,var(--node-effective) 58%,var(--line-strong));
+  border-radius:999px;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel-3));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 16%,transparent),0 3px 9px color-mix(in srgb,#000 20%,transparent),0 0 0 2px color-mix(in srgb,var(--node-effective) 7%,transparent);
+  opacity:1;
+  transform:translate(-50%,-50%);
+  transition:width .22s ease,height .22s ease,border-color .2s ease,background .2s ease,box-shadow .22s ease,transform .24s cubic-bezier(.2,.8,.2,1);
+}
+.canvas-node .canvas-port.left::before{left:calc(100% - 7px)}
+.canvas-node .canvas-port.right::before{left:7px}
+.canvas-node .canvas-port::after{
+  content:"";
+  position:absolute;
+  z-index:var(--canvas-z-local-base);
+  left:50%;
+  top:50%;
+  width:28px;
+  height:42px;
+  border-radius:999px;
+  background:radial-gradient(ellipse,color-mix(in srgb,var(--node-effective) 18%,transparent),transparent 68%);
+  display:none;
+  opacity:0;
+  transform:translate(-50%,-50%) scale(.7);
+  transition:opacity .2s ease,transform .26s cubic-bezier(.2,.8,.2,1);
+}
+.canvas-node .canvas-port.left::after{left:calc(100% - 7px)}
+.canvas-node .canvas-port.right::after{left:7px}
 .canvas-node.selected .canvas-port,
 .canvas-node .canvas-port:focus-visible{
   opacity:1;
-  pointer-events:auto;
+}
+.canvas-node .canvas-port:hover,
+.canvas-node .canvas-port:focus-visible{
+  border:0;
+  background:transparent;
+  box-shadow:none;
+  filter:brightness(1.06);
+  outline:0;
+}
+.canvas-node.selected .canvas-port::before,
+.canvas-node .canvas-port:hover::before,
+.canvas-node .canvas-port:focus-visible::before{opacity:1}
+.canvas-node .canvas-port.left:hover::before,
+.canvas-node .canvas-port.left:focus-visible::before,
+.canvas-node .canvas-port.left:hover::after,
+.canvas-node .canvas-port.left:focus-visible::after{transform:translate(calc(-50% - 8px),-50%)}
+.canvas-node .canvas-port.right:hover::before,
+.canvas-node .canvas-port.right:focus-visible::before,
+.canvas-node .canvas-port.right:hover::after,
+.canvas-node .canvas-port.right:focus-visible::after{transform:translate(calc(-50% + 8px),-50%)}
+.canvas-node .canvas-port:hover::before,
+.canvas-node .canvas-port:focus-visible::before{
+  width:14px;
+  height:28px;
+  border-color:color-mix(in srgb,var(--node-effective) 92%,#fff 8%);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--node-effective) 22%,var(--panel-2)),color-mix(in srgb,var(--node-effective) 12%,var(--panel-3)));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 25%,transparent),0 5px 16px color-mix(in srgb,#000 28%,transparent),0 0 0 4px color-mix(in srgb,var(--node-effective) 14%,transparent),0 0 18px color-mix(in srgb,var(--node-effective) 28%,transparent);
+}
+.canvas-node .canvas-port:hover::after,
+.canvas-node .canvas-port:focus-visible::after{
+  opacity:1;
+}
+@media(prefers-reduced-motion:reduce){
+  html:not([data-motion="on"]) .canvas-node .canvas-port,
+  html:not([data-motion="on"]) .canvas-node .canvas-port::before,
+  html:not([data-motion="on"]) .canvas-node .canvas-port::after{transition:none!important}
 }
 
 .canvas-agent-response-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:8px}
@@ -642,7 +749,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-editor-references{display:grid;gap:7px;min-width:0}.canvas-editor-section-head>div{display:flex;align-items:center;gap:6px}.canvas-editor-section-head>div>b{color:var(--muted);font-size:8px}.canvas-editor-section-head button{height:25px;padding:0 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text-2);font-size:8px;cursor:pointer}.canvas-editor-section-head button:hover{border-color:var(--accent);color:var(--accent-text)}
 .canvas-editor-reference-slot{display:grid;gap:5px;padding:7px;border:1px dashed var(--line-strong);border-radius:10px;background:color-mix(in srgb,var(--panel-2) 70%,transparent)}.canvas-editor-slot-label{display:flex;align-items:center;justify-content:space-between;color:var(--text-2);font-size:8px;font-weight:800}.canvas-editor-slot-label small{color:var(--muted);font-size:7px;font-weight:500}.canvas-editor-reference-empty{color:var(--muted);font-size:8px;text-align:center;padding:4px}
 .canvas-editor-context-slot{display:grid;gap:5px;padding:7px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent-soft) 42%,var(--panel-2))}.canvas-editor-context-items{display:grid;gap:4px;min-width:0}.canvas-editor-context-item{display:grid;grid-template-columns:19px auto minmax(0,1fr);align-items:center;gap:6px;min-width:0;padding:4px 5px;border-radius:7px;background:color-mix(in srgb,var(--panel) 68%,transparent)}.canvas-editor-context-item>span{width:16px;height:16px;display:grid;place-items:center;border-radius:5px;background:var(--accent);color:#fff;font-size:7px;font-weight:800}.canvas-editor-context-item>b{color:var(--accent-text);font-size:8px}.canvas-editor-context-item>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:7px}
-.canvas-editor-reference-items{display:flex;gap:5px;min-width:0;overflow-x:auto;padding:1px 1px 3px;scrollbar-width:thin}.canvas-editor-reference-item{position:relative;width:43px;height:43px;flex:none;overflow:visible;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:grab}.canvas-editor-reference-item.dragging{opacity:.45;border-color:var(--accent)}.canvas-editor-reference-preview{position:relative;width:100%;height:100%;padding:0;border:0;border-radius:7px;overflow:hidden;background:var(--panel-3);cursor:pointer}.canvas-editor-reference-preview img,.canvas-editor-reference-preview video{width:100%;height:100%;object-fit:cover}.canvas-editor-reference-preview>span{position:absolute;left:3px;top:3px;min-width:15px;height:15px;display:grid;place-items:center;border-radius:5px;background:rgba(0,0,0,.72);color:#fff;font-size:8px}.canvas-editor-reference-preview>b{display:grid;place-items:center;width:100%;height:100%;color:var(--accent-text);font-size:15px}.canvas-editor-reference-remove{position:absolute;right:-5px;top:-6px;width:16px;height:16px;display:grid;place-items:center;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--panel);color:var(--muted);font-size:11px;line-height:1;cursor:pointer}.canvas-editor-reference-remove:hover{color:var(--danger);border-color:var(--danger)}
+.canvas-editor-reference-items{display:flex;gap:5px;min-width:0;overflow-x:auto;overflow-y:hidden;padding:7px 6px 5px;scrollbar-width:thin}.canvas-editor-reference-item{position:relative;width:43px;height:43px;flex:none;overflow:visible;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:grab}.canvas-editor-reference-item.dragging{opacity:.45;border-color:var(--accent)}.canvas-editor-reference-preview{position:relative;width:100%;height:100%;padding:0;border:0;border-radius:7px;overflow:hidden;background:var(--panel-3);cursor:pointer}.canvas-editor-reference-preview img,.canvas-editor-reference-preview video{width:100%;height:100%;object-fit:cover}.canvas-editor-reference-preview>span{position:absolute;left:3px;top:3px;min-width:15px;height:15px;display:grid;place-items:center;border-radius:5px;background:rgba(0,0,0,.72);color:#fff;font-size:8px}.canvas-editor-reference-preview>b{display:grid;place-items:center;width:100%;height:100%;color:var(--accent-text);font-size:15px}.canvas-editor-reference-remove{position:absolute;right:-5px;top:-6px;width:16px;height:16px;display:grid;place-items:center;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--panel);color:var(--muted);font-size:11px;line-height:1;cursor:pointer}.canvas-editor-reference-remove:hover{color:var(--danger);border-color:var(--danger)}
 .canvas-node-variant-editor{display:grid;gap:5px}.canvas-node-variant-editor label{display:flex;justify-content:space-between;color:var(--text-2);font-size:8px;font-weight:800}.canvas-node-variant-editor label small{color:var(--muted);font-weight:500}.canvas-node-variant-editor textarea{width:100%;resize:vertical;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text);padding:7px;font:inherit;font-size:9px;line-height:1.45;outline:0}.canvas-node-parameters{border:1px solid var(--line);border-radius:10px;background:var(--panel-2);overflow:hidden}.canvas-node-parameters summary{padding:8px 9px;color:var(--text-2);font-size:9px;font-weight:800;cursor:pointer;list-style:none}.canvas-node-parameters summary::-webkit-details-marker{display:none}.canvas-node-parameters summary span{margin-left:5px;color:var(--muted);font-size:7px;font-weight:500}.canvas-node-parameters[open] summary{border-bottom:1px solid var(--line);background:var(--accent-soft)}.canvas-node-parameters .creation-parameter-editor{padding:8px}.canvas-node-parameters .creation-parameter-grid.agent-primary{grid-template-columns:minmax(0,1fr);gap:6px}.canvas-node-parameters .creation-agent-note{display:none}.canvas-node-editor-actions{display:flex;align-items:center;justify-content:space-between;gap:7px}.canvas-node-editor-actions>span{color:var(--muted);font-size:7px}.canvas-node-editor-generate{height:31px;padding:0 14px;border:0;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;font-size:9px;font-weight:850;cursor:pointer}.canvas-node-editor-generate:disabled{opacity:.5;cursor:wait}
 .canvas-generator-output-gallery{display:flex;gap:5px;overflow-x:auto;padding:1px 0 3px;scrollbar-width:thin}.canvas-generator-output-thumb{position:relative;width:62px;height:52px;flex:none;overflow:hidden;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--panel-3);cursor:pointer}.canvas-generator-output-thumb:hover{border-color:var(--accent)}.canvas-generator-output-thumb img,.canvas-generator-output-thumb video{width:100%;height:100%;object-fit:cover}.canvas-generator-output-thumb>span{position:absolute;left:3px;right:3px;bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 3px;border-radius:4px;background:rgba(0,0,0,.66);color:#fff;font-size:7px;text-align:left}
 @media(max-width:720px){.canvas-node:has(.canvas-node-editor){max-width:calc(100vw - 24px)}.canvas-node-editor{margin:0 6px 6px;padding:8px}.canvas-node:has(.canvas-node-editor) .canvas-media-stage{height:145px}.canvas-node-editor-prompt-wrap>textarea{min-height:68px}.canvas-editor-reference-items{max-width:calc(100vw - 60px)}}
@@ -873,17 +980,21 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node-context-menu .canvas-menu-item-context:disabled:hover{border-color:transparent;background:transparent;box-shadow:none}
 @media(max-width:420px){.canvas-node-context-menu{width:calc(100vw - 16px);padding:7px}.canvas-node-context-menu .canvas-menu-item-context{min-height:34px}.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:24px;height:24px}}
 
-/* Blank-canvas tools stay compact; creation keeps the richer node picker. */
+/* Blank-canvas tools stay compact and use one flat action list. */
 .canvas-tools-context-menu{width:min(252px,calc(100vw - 16px));padding:7px}
-.canvas-tools-context-menu .canvas-menu-title{padding:3px 5px 7px}
-.canvas-tools-context-menu .canvas-menu-title small{max-width:140px;font-size:8px}
+.canvas-tools-context-menu .canvas-menu-title{padding:3px 5px 6px}
+.canvas-tools-context-menu .canvas-menu-title small{display:none}
 .canvas-tools-context-menu .canvas-menu-item{min-height:39px;gap:8px;padding:5px 6px;border-radius:10px}
 .canvas-tools-context-menu .canvas-menu-item+.canvas-menu-item{margin-top:2px}
 .canvas-tools-context-menu .canvas-menu-icon{width:28px;height:28px;border-radius:8px;font-size:13px}
 .canvas-tools-context-menu .canvas-menu-item-tool .canvas-menu-icon{font-size:15px}
-.canvas-tools-context-menu .canvas-menu-copy{gap:2px}
+.canvas-tools-context-menu .canvas-menu-copy{gap:0}
 .canvas-tools-context-menu .canvas-menu-copy b{font-size:10px}
-.canvas-tools-context-menu .canvas-menu-copy small{font-size:8px}
+.canvas-tools-context-menu .canvas-menu-copy small{display:none}
+.canvas-tools-context-menu .canvas-menu-shortcut{flex:none;max-width:none;margin-left:auto!important;color:var(--muted);font-size:8px!important;font-weight:750;line-height:1;white-space:nowrap}
+.canvas-tools-context-menu .canvas-menu-divider{height:1px;margin:5px 6px;background:color-mix(in srgb,var(--line) 82%,transparent)}
+.canvas-tools-context-menu .canvas-menu-item:disabled{opacity:.42;cursor:not-allowed}
+.canvas-tools-context-menu .canvas-menu-item:disabled:hover{border-color:transparent;background:transparent;box-shadow:none;transform:none}
 .canvas-tools-context-menu .canvas-menu-arrow{font-size:16px}
 @media(max-width:420px){.canvas-tools-context-menu{width:calc(100vw - 16px);padding:6px}.canvas-tools-context-menu .canvas-menu-title{padding-bottom:6px}.canvas-tools-context-menu .canvas-menu-item{min-height:37px}}
 
@@ -1485,7 +1596,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 @media(max-width:720px){.canvas-generator-help-popover{font-size:9px;line-height:1.55;padding:9px}.canvas-generator-help-trigger{width:26px;height:26px}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-generator-help-trigger,html:not([data-motion="on"]) .canvas-generator-help-popover{transition:none;animation:none}}
 @media(max-width:720px){
-  .canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-reference-items,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-reference-draft-items{max-height:116px;overflow-x:auto;overflow-y:auto}
+  .canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-reference-items,.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-reference-draft-items{max-height:116px;overflow-x:auto;overflow-y:hidden}
   .canvas-node-editor-popover .canvas-node-editor-actions{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
 }
 
@@ -1679,7 +1790,9 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 /* Group actions stay attached to the selected group instead of floating at
    the top of the viewport. The inside fallback is used when there is no room
    above the group. */
-.canvas-group-selection-toolbar{max-width:calc(100% - 20px);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;white-space:nowrap;transform:none}
+.canvas-group-selection-toolbar{max-width:min(680px,calc(100% - 20px));overflow-x:auto;overflow-y:hidden;gap:4px;padding:5px 7px;border-radius:12px;scrollbar-width:thin;white-space:nowrap;transform:none}
+.canvas-group-selection-toolbar>button{padding:5px 6px}
+.canvas-group-selection-toolbar[data-placement="above"]::after{content:"";position:absolute;left:50%;top:100%;width:1px;height:10px;background:linear-gradient(var(--accent),color-mix(in srgb,var(--accent) 18%,transparent));pointer-events:none;transform:translateX(-50%)}
 .canvas-group-selection-toolbar[data-placement="inside"]{border-color:color-mix(in srgb,var(--accent) 46%,var(--line));background:color-mix(in srgb,var(--panel) 98%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent),var(--shadow-soft)}
 
 /* Keep the middle-button affordance visible without becoming another canvas
@@ -1737,3 +1850,5 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 @media(max-width:720px){.canvas-image-editor-workbench{width:calc(100% - 16px);max-height:calc(100% - 16px);border-radius:16px}.canvas-image-editor-tabs{grid-template-columns:repeat(6,88px);overflow-x:auto}.canvas-image-editor-margin-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.canvas-image-editor-preset-row.crop-presets{grid-template-columns:repeat(4,minmax(0,1fr))}.canvas-image-editor-footer{align-items:stretch;flex-direction:column}.canvas-image-editor-footer-actions{justify-content:flex-end}.canvas-image-editor-preview-area{max-width:100%}}
 @media(max-width:540px){.canvas-audio-player-volume{display:none}.canvas-audio-panel-actions{align-items:stretch;flex-direction:column}.canvas-audio-panel-actions>span{white-space:normal;line-height:1.35}.canvas-audio-panel-upload{width:100%}}
 .canvas-editor-reference-audio-preview{display:grid;place-items:center;align-content:center;gap:5px;width:100%;height:100%;border-radius:8px;background:radial-gradient(circle at 50% 25%,color-mix(in srgb,#b693ff 28%,transparent),transparent 62%),linear-gradient(145deg,color-mix(in srgb,#8b5cf6 22%,var(--panel-3)),var(--panel-3));color:#cdbdff}.canvas-editor-reference-audio-preview>span{font-size:15px;line-height:1}.canvas-editor-reference-audio-preview>i{display:flex;align-items:center;gap:2px;height:9px;font-style:normal}.canvas-editor-reference-audio-preview>i b{display:block;width:2px;border-radius:99px;background:#b693ff}.canvas-editor-reference-audio-preview>i b:nth-child(1),.canvas-editor-reference-audio-preview>i b:nth-child(7){height:4px}.canvas-editor-reference-audio-preview>i b:nth-child(2),.canvas-editor-reference-audio-preview>i b:nth-child(6){height:7px}.canvas-editor-reference-audio-preview>i b:nth-child(3),.canvas-editor-reference-audio-preview>i b:nth-child(5){height:9px}.canvas-editor-reference-audio-preview>i b:nth-child(4){height:6px}
+.canvas-group-label .canvas-group-compose{pointer-events:auto;display:grid;place-items:center;flex:none;width:22px;height:22px;margin:-3px -3px -3px 2px;padding:0;border:1px solid color-mix(in srgb,var(--accent) 46%,var(--line));border-radius:7px;background:var(--accent-soft);color:var(--accent-text);font-size:13px;font-weight:900;line-height:1;cursor:pointer;box-shadow:0 2px 7px color-mix(in srgb,var(--accent) 16%,transparent)}.canvas-group-label .canvas-group-compose:hover,.canvas-group-label .canvas-group-compose:focus-visible{border-color:var(--accent);background:var(--accent);color:#fff;transform:translateY(-1px)}.canvas-group-label .canvas-group-compose:disabled{opacity:.38;cursor:not-allowed;transform:none}.canvas-group-label .canvas-group-compose.composing{color:var(--accent-2);animation:canvas-pulse 1s ease-in-out infinite}
+.canvas-group{background:color-mix(in srgb,var(--accent-soft) 24%,var(--panel))}.canvas-group.selected{background:color-mix(in srgb,var(--accent-soft) 48%,var(--panel))}

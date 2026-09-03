@@ -6,6 +6,10 @@ const component = await readFile(
   new URL("../components/SuperCanvas.tsx", import.meta.url),
   "utf8",
 );
+const styles = await readFile(
+  new URL("../app/canvas.css", import.meta.url),
+  "utf8",
+);
 
 test("canvas edge resolver expands only an explicit group source", () => {
   const start = component.indexOf("function referenceNodesForCanvasEdge");
@@ -20,4 +24,16 @@ test("canvas edge resolver expands only an explicit group source", () => {
     /source\?\.groupId/,
     "a member edge must not fall back to its containing group",
   );
+});
+
+test("group headers expose an accessible grid compose action", () => {
+  assert.match(component, /className=\{`canvas-group-compose/);
+  assert.match(component, /disabled=\{availableImageCount < 2 \|\| Boolean\(composingGroupId\)\}/);
+  assert.match(component, /void composeCanvasGroup\(group\.id\)/);
+  assert.match(component, /operation: "grid-compose"/);
+  assert.match(component, /sourceNodeIds: sourceIds/);
+  assert.match(component, /kind: "lineage"/);
+  assert.match(styles, /\.canvas-group-label \.canvas-group-compose/);
+  assert.match(styles, /\.canvas-group-label \.canvas-group-compose:disabled/);
+  assert.match(styles, /\.canvas-group-label \.canvas-group-compose:hover/);
 });

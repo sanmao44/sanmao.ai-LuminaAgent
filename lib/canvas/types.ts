@@ -9,11 +9,12 @@ export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | '
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type CanvasMaskStatus = 'pending' | 'running' | 'used' | 'failed';
 /** Local, non-generative image operations available from an image node. */
-export type CanvasImageOperation = 'outpaint' | 'resize' | 'crop' | 'grid' | 'transform';
+export type CanvasImageOperation = 'outpaint' | 'resize' | 'crop' | 'grid' | 'grid-compose' | 'transform';
 
 export type CanvasImageOperationMeta = {
   operation: CanvasImageOperation;
   sourceNodeId?: string;
+  sourceNodeIds?: string[];
   inputWidth: number;
   inputHeight: number;
   outputWidth: number;
