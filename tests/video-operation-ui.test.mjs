@@ -7,6 +7,12 @@ const [videoStudio, parameterEditor] = await Promise.all([
   readFile(new URL('../components/CreationParameterEditor.tsx', import.meta.url), 'utf8'),
 ]);
 
+test('video studio uses the shared model library picker', () => {
+  assert.match(videoStudio, /import ModelPicker from '@\/components\/ModelPicker'/);
+  assert.match(videoStudio, /<ModelPicker\s+models=\{models\}[\s\S]*?capability="video-generate"/);
+  assert.doesNotMatch(videoStudio, /const modelOptions = \[\{ value: 'auto'/);
+});
+
 test('hides the video operation selector when generation is the only supported operation', () => {
   assert.match(videoStudio, /const showOperationField = operationOptions\.length > 1/);
   assert.match(videoStudio, /\{showOperationField && <label className="video-field"><span>操作类型<\/span>/);

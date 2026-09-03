@@ -381,6 +381,9 @@ html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webki
 .video-creation-selects .video-input-mode-field{margin-top:0}
 .video-creation-selects .select-menu-trigger{min-height:35px;padding:7px 9px;border-radius:11px}
 .video-creation-selects .select-menu-trigger-copy{font-size:10px}
+.video-creation-selects .model-picker-trigger{height:35px;min-height:35px;padding:0 9px;border-radius:11px;background:var(--panel-2)}
+.video-creation-selects .model-picker-trigger-copy>span{font-size:10px}
+.video-creation-selects .video-model-field{position:relative;z-index:1}
 .video-advanced-details{margin-top:9px;border:1px solid color-mix(in srgb,var(--line) 86%,transparent);border-radius:11px;background:color-mix(in srgb,var(--panel-2) 62%,transparent);overflow:hidden}
 .video-advanced-details>summary{min-height:30px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 9px;cursor:pointer;list-style:none;color:var(--text-2)}
 .video-advanced-details>summary::-webkit-details-marker{display:none}
@@ -472,6 +475,7 @@ html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webki
   .video-compose-column .video-hero-orb{width:54px;height:54px;border-radius:19px}
   .video-creation-selects{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
   .video-creation-selects .video-field:first-child{grid-column:1/-1}
+  .video-creation-selects.without-operation{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}
   .video-creation-selects.without-operation .video-field:first-child{grid-column:auto}
   .video-advanced-body{max-height:48dvh}
   .video-task-dialog-meta{grid-template-columns:1fr}
