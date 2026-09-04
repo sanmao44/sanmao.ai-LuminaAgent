@@ -931,11 +931,8 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-menu-group{display:grid;gap:4px}
 .canvas-menu-group+.canvas-menu-group{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
 .canvas-menu-media+.canvas-menu-group{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
-.canvas-menu-group-title{display:flex;align-items:center;gap:8px;padding:0 4px 4px;color:var(--text-2)}
-.canvas-menu-group-title>span:last-child{display:grid;gap:2px;min-width:0}
-.canvas-menu-group-title b{font-size:10px;font-weight:900;line-height:1.1}
-.canvas-menu-group-title small{color:var(--muted);font-size:9px;line-height:1.15}
-.canvas-menu-group-mark{width:24px;height:19px;display:grid;place-items:center;flex:none;border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:6px;background:var(--accent-soft);color:var(--accent-text);font-size:8px;font-weight:900;letter-spacing:.04em}
+.canvas-create-context-menu .canvas-menu-item-tool{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
+.canvas-create-context-menu .canvas-menu-item-tool+.canvas-menu-group{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
 .canvas-context-menu button.canvas-menu-item,.canvas-context-menu button.canvas-menu-media{width:100%;min-height:48px;display:flex;align-items:center;gap:10px;margin:0;padding:7px;border:1px solid transparent;border-radius:12px;background:transparent;color:var(--text);text-align:left;font:inherit;cursor:pointer;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
 .canvas-context-menu button.canvas-menu-item:hover{border-color:color-mix(in srgb,var(--accent) 26%,var(--line));background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel));box-shadow:0 5px 14px color-mix(in srgb,var(--accent) 8%,transparent);transform:translateX(2px)}
 .canvas-context-menu button.canvas-menu-item:active,.canvas-context-menu button.canvas-menu-media:active{transform:translateX(1px) scale(.985)}
@@ -960,7 +957,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-menu-media-icons i:first-child{left:0;top:5px;background:color-mix(in srgb,#f59e0b 70%,#7c3aed);font-size:14px}
 .canvas-menu-media-icons i:last-child{right:0;top:0;background:color-mix(in srgb,#3b82f6 75%,#7c3aed);font-size:10px}
 @keyframes canvas-context-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
-@media(max-width:420px){.canvas-context-menu{width:calc(100vw - 16px);padding:10px;border-radius:16px}.canvas-menu-title{padding-bottom:8px}.canvas-menu-title small{max-width:130px}.canvas-menu-group+.canvas-menu-group{margin-top:8px;padding-top:8px}.canvas-menu-group-title{padding-bottom:3px}.canvas-menu-copy b{font-size:11px}.canvas-menu-copy small{font-size:9px}.canvas-menu-media{margin-top:8px!important}}
+@media(max-width:420px){.canvas-context-menu{width:calc(100vw - 16px);padding:10px;border-radius:16px}.canvas-menu-title{padding-bottom:8px}.canvas-menu-title small{max-width:130px}.canvas-menu-group+.canvas-menu-group{margin-top:8px;padding-top:8px}.canvas-menu-copy b{font-size:11px}.canvas-menu-copy small{font-size:9px}.canvas-menu-media{margin-top:8px!important}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-context-menu,html:not([data-motion="on"]) .canvas-menu-item,html:not([data-motion="on"]) .canvas-menu-media,html:not([data-motion="on"]) .canvas-menu-arrow{animation:none;transition:none}}
 
 /* Card context menu: reuse the canvas menu language while keeping node
@@ -970,9 +967,6 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node-context-menu .canvas-menu-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .canvas-node-context-menu .canvas-menu-group{gap:2px}
 .canvas-node-context-menu .canvas-menu-group+.canvas-menu-group{margin-top:5px;padding-top:5px}
-.canvas-node-context-menu .canvas-menu-group-title{padding:0 4px 2px}
-.canvas-node-context-menu .canvas-menu-group-title small{display:none}
-.canvas-node-context-menu .canvas-menu-group-mark{width:20px;height:18px;border-radius:5px;font-size:9px}
 .canvas-node-context-menu button.canvas-menu-item-context{min-height:35px;gap:6px;padding:4px 5px;border-radius:9px}
 .canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:25px;height:25px;border-radius:7px;font-size:11px}
 .canvas-node-context-menu .canvas-menu-item-context .canvas-menu-copy b{font-size:10px}
@@ -1895,8 +1889,8 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
    node. Model, parameters, references and variants open in their own layered
    popovers so the dock itself never grows or scrolls. It is intentionally
    allowed to overflow past the bottom of the stage (no panel-level scroll). */
-.canvas-node-editor-popover.is-image-dock{max-height:none!important;overflow:visible}
-.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded){width:min(940px,calc(100vw - 24px));max-height:none!important;overflow:visible;border-radius:16px}
+.canvas-node-editor-popover.is-image-dock{overflow:visible}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded){width:min(940px,calc(100vw - 24px));overflow:visible;border-radius:16px}
 .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="compact"]{width:min(720px,calc(100vw - 24px))}
 .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="micro"]{width:min(560px,calc(100vw - 24px))}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-head{min-height:44px;padding:7px 10px}
@@ -1975,24 +1969,23 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-dock-popover .creation-pixel-fields.canvas-parameter-pixels{gap:5px}
 .canvas-node-editor-dock-popover .creation-custom-ratio.canvas-parameter-custom-ratio{margin:0}
 
-/* Bottom drawer for image node generation params. Pulls up from the bottom edge,
-   scrolls its body content, and keeps a compact summary footer (the reference
-   "16:9 · 标准画质 · 2K · 1张" row). Only used for the image dock params panel. */
+/* Shared local drawer baseline for dock actions. The params and variant panels
+   are positioned by their button wrappers, never by the viewport. */
 .canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer{
-  position:fixed;
-  left:50%;
+  position:absolute;
+  left:auto;
   top:auto;
-  bottom:0;
-  transform:translateX(-50%);
-  width:min(680px,calc(100vw - 24px));
-  max-width:calc(100vw - 24px);
+  right:0;
+  bottom:calc(100% + 8px);
+  transform:none;
+  width:min(390px,calc(100vw - 24px));
+  max-width:min(390px,calc(100vw - 24px));
   max-height:min(72vh,calc(100vh - 40px));
   min-height:0;
-  padding:12px 14px 12px;
+  padding:10px;
   border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
-  border-bottom:0;
-  border-radius:18px 18px 0 0;
-  box-shadow:0 -18px 50px rgba(15,23,42,.34),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
+  border-radius:14px;
+  box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
 }
 .canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-popover-head{margin-bottom:8px}
 .canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-drawer-grip{
@@ -2106,4 +2099,940 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-toolbar{flex-wrap:wrap;gap:6px}
   .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-tool.params small{max-width:120px}
   .canvas-node-editor-dock-popover{width:calc(100vw - 16px);max-height:calc(100vh - 96px)}
+}
+
+/* Wide composer layout: keep the editing surface aligned with the reference
+   card. The prompt and references get the full row, while node-specific
+   settings follow underneath as one full-width section. This avoids a large
+   empty half-column when a node only has a few generation controls. */
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded),
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded){
+  width:min(1280px,calc(100vw - 48px));
+  max-width:calc(100vw - 48px);
+  max-height:min(680px,calc(100dvh - 32px));
+  border-radius:20px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
+  display:block;
+  overflow:visible;
+  padding:14px 16px 12px;
+}
+
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-columns{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:12px;
+  min-width:0;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-copy,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings{
+  display:contents;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
+  grid-column:1;
+  width:100%;
+  min-width:0;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{
+  padding:14px 16px;
+  border-radius:16px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-label{
+  margin:0 1px 8px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  min-height:142px;
+  max-height:260px;
+  padding:12px 13px;
+  font-size:11px;
+  line-height:1.65;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references{
+  gap:8px;
+  padding:10px 12px;
+  border-radius:15px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references>.canvas-editor-section-head{
+  display:flex;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references>.canvas-editor-reference-slot{
+  padding:8px 10px;
+  border-radius:12px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-reference-items{
+  flex-wrap:nowrap;
+  overflow-x:auto;
+  overflow-y:hidden;
+  padding:3px 2px 4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
+  padding:12px 14px;
+  border-radius:15px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:9px;
+  background:color-mix(in srgb,var(--panel-2) 72%,transparent);
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:8px;
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary>.creation-field.model{
+  grid-column:1/-1;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary{
+  grid-template-columns:minmax(0,1.65fr) minmax(220px,.75fr);
+  gap:8px;
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary>.creation-field.model{
+  grid-column:auto;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.advanced{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:8px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-actions{
+  min-height:58px;
+  padding:10px 16px 12px;
+}
+
+/* The image dock already has the same information order; only widen its
+   desktop rail so it shares the same visual rhythm as video and Agent nodes. */
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="compact"]{
+  width:min(1040px,calc(100vw - 48px));
+}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="micro"]{
+  width:min(820px,calc(100vw - 48px));
+}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded),
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded){
+    width:calc(100vw - 16px);
+    max-width:calc(100vw - 16px);
+    max-height:calc(100dvh - 16px);
+    border-radius:18px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
+    padding:10px 11px 8px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{
+    padding:10px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+    min-height:104px;
+    max-height:220px;
+    font-size:10px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
+    padding:9px 10px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.advanced{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary>.creation-field.model{
+    grid-column:1/-1;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary>.creation-field.model{
+    grid-column:1/-1;
+  }
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="compact"],
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="micro"]{
+    width:calc(100vw - 16px);
+  }
+}
+
+/* Density-safe final pass: the older compact/micro selectors carry a higher
+   specificity than the general wide-composer rule above. Repeat the same
+   layout for each density so the editor really spans the stage on desktop. */
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"],
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"],
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"],
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="comfortable"],
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="compact"],
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="micro"]{
+  /* Wide enough to remove the unused side column, but keep the canvas visible
+     around the editor so it still reads as an attached popover. */
+  width:min(1880px,82vw);
+  max-width:calc(100vw - 96px);
+  max-height:min(640px,calc(100dvh - 40px));
+}
+
+/* Keep wide Agent/video composers compact: prompt and references stay in the
+   left column while model and generation parameters remain visible on the
+   right. The single-column fallback is reserved for narrow screens. */
+@media(min-width:721px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-columns{
+    grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr);
+    gap:12px;
+    align-items:start;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-copy,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-settings{
+    display:grid;
+    align-content:start;
+    gap:9px;
+    min-width:0;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-references,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-variant-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-settings>.creation-parameter-editor{
+    grid-column:auto;
+    width:100%;
+    min-width:0;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-body{
+    overflow:visible;
+    padding:11px 13px 9px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap{
+    padding:10px 11px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+    min-height:118px;
+    max-height:168px;
+    padding:9px 10px;
+    line-height:1.55;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-references{
+    gap:6px;
+    padding:8px 9px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-reference-items{
+    max-height:72px;
+    overflow-x:auto;
+    overflow-y:hidden;
+    padding:2px 1px 3px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-settings>.creation-parameter-editor{
+    padding:10px 11px;
+    gap:8px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-parameter-grid.primary{
+    gap:6px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-parameter-grid.advanced{
+    gap:6px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-actions{
+    min-height:52px;
+    padding:8px 13px 10px;
+  }
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .canvas-node-editor-columns,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-columns,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-columns{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:12px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .canvas-node-editor-body,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-body,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-body{
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .creation-parameter-grid.primary,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .creation-parameter-grid.primary,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .creation-parameter-grid.primary{
+  grid-template-columns:repeat(8,minmax(0,1fr));
+  gap:8px;
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .creation-parameter-grid.primary>.creation-field.model,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .creation-parameter-grid.primary>.creation-field.model,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .creation-parameter-grid.primary>.creation-field.model{
+  grid-column:span 2;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .creation-parameter-grid.agent-primary,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .creation-parameter-grid.agent-primary,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .creation-parameter-grid.agent-primary{
+  grid-template-columns:minmax(280px,1.65fr) minmax(220px,.75fr);
+  gap:8px;
+  overflow:visible;
+}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .creation-parameter-grid.primary,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .creation-parameter-grid.primary,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .creation-parameter-grid.primary,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .creation-parameter-grid.agent-primary,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .creation-parameter-grid.agent-primary,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .creation-parameter-grid.agent-primary{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .canvas-node-editor-body,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .canvas-node-editor-body,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .canvas-node-editor-body{
+    overflow-x:hidden;
+    overflow-y:auto;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .creation-parameter-grid.primary>.creation-field.model,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .creation-parameter-grid.primary>.creation-field.model,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .creation-parameter-grid.primary>.creation-field.model,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"] .creation-parameter-grid.agent-primary>.creation-field.model,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"] .creation-parameter-grid.agent-primary>.creation-field.model,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"] .creation-parameter-grid.agent-primary>.creation-field.model{
+    grid-column:1/-1;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="comfortable"],
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="compact"],
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density="micro"],
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="comfortable"],
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="compact"],
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="micro"]{
+    width:calc(100vw - 16px);
+    max-width:calc(100vw - 16px);
+    max-height:calc(100dvh - 16px);
+  }
+}
+
+/* Final desktop rule: keep the composer in one compact readable column. */
+@media(min-width:721px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-columns{
+    grid-template-columns:minmax(0,1fr);
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-copy,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-settings{
+    display:contents;
+  }
+}
+
+/* Final composer pass: video, Agent and upscale editors are one compact
+   vertical surface. The panel never becomes a scroll container; only the
+   editable prompt/variant text areas may scroll when their text is long. */
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded){
+  width:min(1040px,72vw);
+  max-width:calc(100vw - 64px);
+  max-height:none!important;
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]{
+  width:min(1040px,72vw)!important;
+  max-width:calc(100vw - 64px)!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
+  display:block;
+  min-height:0;
+  overflow:visible!important;
+  padding:6px 10px 5px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-columns{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr)!important;
+  gap:5px;
+  min-width:0;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-copy,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings{
+  display:contents!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{
+  width:100%;
+  min-width:0;
+  padding:6px 8px;
+  border-radius:13px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-label{
+  margin:0 1px 4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor{
+  min-height:78px!important;
+  max-height:128px!important;
+  padding:0;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  min-height:78px!important;
+  max-height:128px!important;
+  padding:6px 8px;
+  overflow-y:auto;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-reference-draft-strip{
+  width:100%;
+  min-width:0;
+  gap:4px;
+  padding:5px 6px;
+  border-radius:13px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references>.canvas-editor-section-head{
+  display:flex;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references>.canvas-editor-reference-slot{
+  padding:4px 6px;
+  border-radius:10px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-reference-items{
+  max-height:44px;
+  padding:2px 1px 3px;
+  overflow-x:auto;
+  overflow-y:hidden;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor{
+  width:100%;
+  min-width:0;
+  gap:4px;
+  padding:5px 6px;
+  border-radius:13px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor>.reference-mention-editor{
+  min-height:56px!important;
+  max-height:84px!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{
+  min-height:56px!important;
+  max-height:84px!important;
+  padding:5px 6px;
+  overflow-y:auto;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
+  width:100%;
+  min-width:0;
+  gap:5px;
+  padding:5px 6px;
+  border-radius:13px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary{
+  grid-template-columns:repeat(8,minmax(0,1fr))!important;
+  gap:5px!important;
+  overflow:visible!important;
+  padding:0!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary>.creation-field.model{
+  grid-column:span 2!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary{
+  /* Keep the current controls readable without consuming the whole row.
+     The unused track is intentional: later Agent actions can be added here. */
+  grid-template-columns:minmax(260px,360px) minmax(140px,180px)!important;
+  width:fit-content;
+  max-width:100%;
+  justify-content:start;
+  gap:6px!important;
+  overflow:visible!important;
+  padding:0!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary>.creation-field.model{
+  grid-column:auto!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-field{
+  gap:3px;
+  min-width:0;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-field .model-picker-trigger,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-field .select-menu-trigger,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-toggle>button{
+  min-height:28px;
+  height:28px;
+  padding:3px 7px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-model-warning,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-model-notes{
+  min-height:24px;
+  padding:4px 7px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-actions{
+  position:static;
+  min-height:42px;
+  padding:5px 10px 6px;
+}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded){
+    width:min(700px,calc(100vw - 32px));
+    max-width:calc(100vw - 32px);
+    max-height:none!important;
+    border-radius:16px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]{
+    width:min(700px,calc(100vw - 32px))!important;
+    max-width:calc(100vw - 32px)!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
+    overflow:visible!important;
+    padding:5px 8px 4px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-columns{
+    gap:4px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{
+    padding:5px 7px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+    min-height:72px!important;
+    max-height:112px!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-reference-draft-strip,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
+    padding:4px 5px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    gap:4px!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary>.creation-field.model,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary>.creation-field.model{
+    grid-column:1/-1!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.agent-primary{
+    grid-template-columns:minmax(0,1fr) minmax(132px,160px)!important;
+    width:100%;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-actions{
+    min-height:40px;
+    padding:4px 8px 6px;
+  }
+}
+
+@media(max-height:620px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+    min-height:68px!important;
+    max-height:104px!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-reference-items{
+    max-height:44px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor>.reference-mention-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{
+    min-height:54px!important;
+    max-height:78px!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-actions{
+    min-height:40px;
+    padding-block:4px 6px;
+  }
+}
+
+/* Image docks use the same compact, node-attached treatment as the other
+   editors. Keep the width useful without letting the dock become a viewport-
+   wide banner, and let it extend below the stage when the node is low. */
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density]{
+  width:min(940px,calc(100vw - 64px))!important;
+  max-width:calc(100vw - 64px)!important;
+  max-height:none!important;
+}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-tool.params{
+  flex:0 1 360px;
+  max-width:360px;
+}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density]{
+    width:calc(100vw - 32px)!important;
+    max-width:calc(100vw - 32px)!important;
+    max-height:none!important;
+  }
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-tool.params{
+    flex:1 1 auto;
+    max-width:none;
+  }
+}
+
+/* Final spacing pass for the regular video/Agent/upscale editor. Keep every
+   control in the document, but remove the oversized empty canvas left by the
+   generic frame-slot and editor defaults. Long text still scrolls inside its
+   own field; the editor itself remains a non-scrolling surface. */
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded){
+  width:min(920px,calc(100vw - 64px));
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]{
+  width:min(920px,calc(100vw - 64px))!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
+  padding:4px 8px 3px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-columns{
+  gap:4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{
+  padding:4px 6px;
+  border-radius:11px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-label{
+  margin:0 1px 2px;
+  line-height:1.2;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  min-height:64px!important;
+  max-height:112px!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  padding:5px 7px;
+  line-height:1.45;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-reference-draft-strip{
+  gap:3px;
+  padding:3px 5px;
+  border-radius:11px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-section-head{
+  gap:4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-section-head button{
+  height:22px;
+  padding:0 6px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-reference-slot{
+  gap:3px;
+  padding:3px 4px;
+  border-radius:9px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-reference-items{
+  max-height:38px;
+  gap:4px;
+  padding:1px 1px 2px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-reference-item{
+  width:36px;
+  height:36px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-frame-slots{
+  gap:4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-frame-slot{
+  min-height:0!important;
+  gap:3px;
+  padding:3px 4px;
+  border-radius:9px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-frame-slot-empty{
+  min-height:40px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-frame-slot .canvas-editor-reference-item.slot-item{
+  height:36px;
+  grid-template-columns:36px minmax(0,1fr);
+  gap:5px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-frame-slot .canvas-editor-reference-item.slot-item .canvas-editor-reference-preview{
+  width:36px;
+  height:36px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
+  gap:4px;
+  padding:3px 5px;
+  border-radius:11px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-field{
+  gap:2px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-field .model-picker-trigger,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-field .select-menu-trigger,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-toggle>button{
+  min-height:26px;
+  height:26px;
+  padding:2px 6px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-model-warning,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-model-notes{
+  min-height:20px;
+  padding:3px 6px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-actions{
+  min-height:38px;
+  padding:3px 8px 4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-generate{
+  height:28px;
+  padding:0 12px;
+}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded),
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]{
+    width:calc(100vw - 32px)!important;
+    max-width:calc(100vw - 32px)!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
+    padding:3px 6px 2px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+    min-height:58px!important;
+    max-height:104px!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-frame-slot-empty{
+    min-height:36px;
+  }
+}
+
+/* Effective compact pass: the density selectors above are intentionally
+   repeated here so the compact layout wins over the older density defaults.
+   Keep the panel attached to the node, while removing empty padding from each
+   section. Only the prompt/reference editors retain internal overflow. */
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]{
+  width:min(880px,calc(100vw - 64px))!important;
+  max-width:calc(100vw - 64px)!important;
+  max-height:none!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-head{
+  min-height:40px;
+  padding:5px 8px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-body{
+  padding:4px 8px 3px;
+  overflow:visible!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-columns{
+  gap:4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap{
+  padding:4px 6px;
+  border-radius:11px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-label{
+  margin:0 1px 2px;
+  line-height:1.2;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  min-height:54px!important;
+  max-height:96px!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  padding:5px 7px;
+  line-height:1.45;
+  overflow-y:auto;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-references,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-reference-draft-strip{
+  gap:2px;
+  padding:3px 5px;
+  border-radius:11px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-section-head{
+  gap:4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-section-head button{
+  height:20px;
+  padding:0 6px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-reference-slot{
+  gap:2px;
+  padding:2px 3px;
+  border-radius:9px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-reference-items{
+  max-height:35px;
+  gap:3px;
+  padding:1px 1px 2px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-reference-item{
+  width:32px;
+  height:32px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-frame-slots{
+  gap:3px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-frame-slot{
+  min-height:0!important;
+  gap:2px;
+  padding:2px 3px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-frame-slot-empty{
+  min-height:34px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-settings>.creation-parameter-editor{
+  gap:4px;
+  padding:3px 5px;
+  border-radius:11px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-parameter-grid.primary,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-parameter-grid.agent-primary{
+  gap:4px!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-field{
+  gap:1px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-field .model-picker-trigger,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-field .select-menu-trigger,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-toggle>button{
+  min-height:25px;
+  height:25px;
+  padding:2px 6px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-model-warning,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .creation-model-notes{
+  min-height:18px;
+  padding:2px 5px;
+  line-height:1.2;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-actions{
+  min-height:38px;
+  padding:3px 8px 4px;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-generate{
+  height:28px;
+  padding:0 12px;
+}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]{
+    width:calc(100vw - 32px)!important;
+    max-width:calc(100vw - 32px)!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-head{
+    min-height:38px;
+    padding:4px 7px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-body{
+    padding:3px 6px 2px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+    min-height:50px!important;
+    max-height:88px!important;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-editor-frame-slot-empty{
+    min-height:32px;
+  }
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density] .canvas-node-editor-actions{
+    min-height:36px;
+    padding:3px 6px 4px;
+  }
+}
+
+/* Generation parameters belong to the image dock action that opens them.
+   Keep the expanded panel in that local stacking context instead of turning
+   it into a viewport-wide bottom drawer. */
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap{
+  position:relative;
+  display:flex;
+  flex:1 1 360px;
+  min-width:0;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-tool.params{
+  width:100%;
+  flex:1 1 auto;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params{
+  position:absolute;
+  z-index:var(--canvas-z-modal-popover);
+  left:auto;
+  top:auto;
+  right:0;
+  bottom:calc(100% + 8px);
+  width:min(378px,calc(100vw - 24px));
+  max-width:min(378px,calc(100vw - 24px));
+  max-height:min(72vh,calc(100vh - 48px));
+  overflow:visible;
+  padding:10px;
+  border-bottom:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
+  border-radius:14px;
+  transform:none;
+  box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
+  animation:canvas-dock-params-in .16s ease-out;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params .canvas-node-editor-dock-drawer-grip{
+  display:none;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params .canvas-node-editor-dock-drawer-body{
+  overflow:auto;
+  scrollbar-width:thin;
+}
+@keyframes canvas-dock-params-in{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:none}}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params{
+    right:0;
+    width:min(378px,calc(100vw - 24px));
+    max-width:calc(100vw - 24px);
+    max-height:min(72vh,calc(100vh - 40px));
+  }
+}
+
+/* Variant requirements use the same anchored interaction as generation params.
+   Keep the button in the dock row and render its editor above that button so
+   the video variant editor follows the node instead of becoming a viewport
+   drawer. Only the requirements field may scroll when its content is long. */
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap{
+  position:relative;
+  display:inline-flex;
+  flex:none;
+  min-width:0;
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant{
+  position:absolute;
+  z-index:var(--canvas-z-modal-popover);
+  left:0;
+  top:auto;
+  right:auto;
+  bottom:calc(100% + 8px);
+  width:min(540px,calc(100vw - 32px),100%);
+  max-width:min(540px,calc(100vw - 32px),100%);
+  max-height:min(380px,calc(100vh - 48px));
+  min-height:0;
+  overflow:visible;
+  padding:12px;
+  border-bottom:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
+  border-radius:14px;
+  transform:none;
+  box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
+  animation:canvas-dock-variant-in .16s ease-out;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-editor-dock-drawer-grip{
+  display:none;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-editor-dock-popover-head{
+  margin-bottom:10px;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor{
+  gap:8px;
+  padding:0;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor-head{
+  margin:0 1px;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor,
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{
+  min-height:112px;
+  max-height:min(240px,calc(100vh - 132px));
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{
+  overflow-y:auto;
+  padding:10px 11px;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant::after{
+  content:"";
+  position:absolute;
+  left:28px;
+  bottom:-7px;
+  width:12px;
+  height:12px;
+  border-right:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
+  border-bottom:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
+  background:color-mix(in srgb,var(--panel) 97%,transparent);
+  transform:rotate(45deg);
+}
+@keyframes canvas-dock-variant-in{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:none}}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant{
+    left:auto;
+    right:0;
+    width:min(360px,calc(100vw - 32px));
+    max-width:calc(100vw - 32px);
+    max-height:min(280px,calc(100vh - 40px));
+  }
+  .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor,
+  .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{
+    min-height:76px;
+    max-height:min(140px,calc(100vh - 112px));
+  }
 }

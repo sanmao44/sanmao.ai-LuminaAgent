@@ -9,7 +9,7 @@
         "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.25/SANMAO.AI-0.7.25.zip",
         "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.25/SANMAO.AI-0.7.25.zip"
     ],
-    "sha256": "71527C38384D88F0780524391FDB0692014213F7869DD91449DFE223E2378E06",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "publishedAt": "2026-09-04T03:00:26+08:00",
     "notes": [
         "图片节点编辑器重构：贴节点下方的紧凑横向宽条，参数朝两侧延伸铺满；模型/生成参数/引用/变体均改为点击弹层，放大编辑改为居中专注态；并修复放大编辑时 @ 引用菜单排版错乱等问题。"

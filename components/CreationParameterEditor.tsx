@@ -626,13 +626,15 @@ function durationValues(
   maximum: number,
   fixed?: number,
   allowed?: number[],
+  current?: number,
 ) {
   if (fixed) return [fixed];
   if (allowed?.length) return allowed;
   return [
     ...new Set(
-      [minimum, 3, 4, 5, 6, 8, 10, 12, 15, 30, maximum].filter(
-        (value) => value >= minimum && value <= maximum,
+      [minimum, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, maximum, current].filter(
+        (value): value is number =>
+          typeof value === "number" && value >= minimum && value <= maximum,
       ),
     ),
   ].sort((left, right) => left - right);
@@ -642,6 +644,7 @@ function VideoEditor({
   settings,
   runtime,
   unavailableModelId,
+  variant,
   onChange,
   onVideoInputModeChange,
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
@@ -650,11 +653,13 @@ function VideoEditor({
   settings: VideoCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  variant?: Props["variant"];
   portalZIndex?: number;
   dialogPortalZIndex?: number;
   onChange: Props["onChange"];
   onVideoInputModeChange?: Props["onVideoInputModeChange"];
 }) {
+  const dock = variant === "dock";
   const update = <K extends keyof VideoCreationSettings>(
     key: K,
     value: VideoCreationSettings[K],
@@ -751,6 +756,7 @@ function VideoEditor({
       limits.maxSeconds,
       limits.fixedSeconds,
       limits.allowedSeconds,
+      settings.duration,
     ),
     [limits],
   );
@@ -785,24 +791,26 @@ function VideoEditor({
         </div>
       )}
       <div className="creation-parameter-grid primary">
-        <label className="creation-field model">
-          <small>视频模型</small>
-          <ModelPicker
-            models={runtime?.models || []}
-            value={settings.model}
-            capability="video-generate"
-            portalZIndex={portalZIndex}
-            dialogPortalZIndex={dialogPortalZIndex}
-            defaultProviderId={runtime?.settings.defaultProviderId}
-            defaultProviderName={
-              runtime?.providers.find(
-                (item) => item.id === runtime.settings.defaultProviderId,
-              )?.name
-            }
-            defaultModelId={runtime?.settings.defaultVideoModelId}
-            onChange={(value) => update("model", value)}
-          />
-        </label>
+        {!dock && (
+          <label className="creation-field model">
+            <small>视频模型</small>
+            <ModelPicker
+              models={runtime?.models || []}
+              value={settings.model}
+              capability="video-generate"
+              portalZIndex={portalZIndex}
+              dialogPortalZIndex={dialogPortalZIndex}
+              defaultProviderId={runtime?.settings.defaultProviderId}
+              defaultProviderName={
+                runtime?.providers.find(
+                  (item) => item.id === runtime.settings.defaultProviderId,
+                )?.name
+              }
+              defaultModelId={runtime?.settings.defaultVideoModelId}
+              onChange={(value) => update("model", value)}
+            />
+          </label>
+        )}
         {showOperationField && (
           <label className="creation-field">
             <small>操作</small>
@@ -1000,6 +1008,7 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      variant={variant}
       portalZIndex={portalZIndex}
       dialogPortalZIndex={dialogPortalZIndex}
       onChange={onChange}

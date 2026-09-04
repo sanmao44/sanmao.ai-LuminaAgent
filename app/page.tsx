@@ -34,7 +34,9 @@ import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
+import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
 import { appendTextReferenceContext, normalizeCreativeReference, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -4891,6 +4893,8 @@ export default function Page() {
     const [selectedChatSessions, setSelectedChatSessions] = useState(new Set());
     const [selectionPush, setSelectionPush] = useState(null);
     const [videoPromptPrefill, setVideoPromptPrefill] = useState(null);
+    const [videoDurationPrefill, setVideoDurationPrefill] = useState(null);
+    const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
     const [videoReferenceQueue, setVideoReferenceQueue] = useState([]);
     const [videoMediaPrefill, setVideoMediaPrefill] = useState(null);
     const [videoMediaPrefillToken, setVideoMediaPrefillToken] = useState(0);
@@ -6727,6 +6731,8 @@ export default function Page() {
                 interrupted: message.interrupted,
                 webSearch: message.webSearch,
                 webSearchDecision: message.webSearchDecision,
+                task: message.task,
+                durationSeconds: message.durationSeconds,
                 createdAt: 0
             }
         ];
@@ -6745,6 +6751,8 @@ export default function Page() {
             interrupted: version.interrupted,
             webSearch: version.webSearch ?? message.webSearch,
             webSearchDecision: version.webSearchDecision ?? message.webSearchDecision,
+            task: version.task ?? message.task,
+            durationSeconds: version.durationSeconds ?? message.durationSeconds,
             versions,
             activeVersion,
             retrying
@@ -8304,6 +8312,8 @@ export default function Page() {
             files: message.files,
             webSearch: message.webSearch,
             webSearchDecision: message.webSearchDecision,
+            task: message.task,
+            durationSeconds: message.durationSeconds,
             createdAt: Date.now()
         };
         const workingVersions = [
@@ -8354,6 +8364,7 @@ export default function Page() {
                     messages: payloadMessages,
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
+                    ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     deliverable: message.deliverable,
@@ -8412,7 +8423,8 @@ export default function Page() {
                         files,
                         webSearch: data.webSearch || undefined,
                         webSearchDecision: data.webSearchDecision || undefined,
-                        deliverable: data.deliverable || 'TEXT'
+                        deliverable: data.deliverable || 'TEXT',
+                        ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
                 return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
             });
@@ -8451,7 +8463,7 @@ export default function Page() {
             }
         }
     }
-    async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride) {
+    async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride, durationSeconds) {
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const rawContent = text.trim();
@@ -8485,6 +8497,9 @@ export default function Page() {
         }
         if (refs.some((reference)=>reference.pending)) return notify('引用素材正在准备，请稍候片刻再发送');
         const files = overrideRefs ? [] : agentFiles.filter((file)=>refs.some((reference)=>reference.id === file.id && reference.kind !== 'text'));
+        const oneTakeDuration = task === 'one_take_video_prompt'
+            ? normalizeOneTakeDuration(durationSeconds)
+            : undefined;
         const followUp = overrideRefs ? null : agentFollowUp;
         const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
         const requestIntent = classifyAgentDeliverable(requestContent, {
@@ -8591,6 +8606,7 @@ export default function Page() {
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     task,
+                    ...(oneTakeDuration !== undefined ? { durationSeconds: oneTakeDuration } : {}),
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     deliverable: selectedDeliverable,
@@ -8661,7 +8677,8 @@ export default function Page() {
                     files,
                     webSearch: data.webSearch || undefined,
                     webSearchDecision: data.webSearchDecision || undefined,
-                    deliverable: data.deliverable || selectedDeliverable
+                    deliverable: data.deliverable || selectedDeliverable,
+                    ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
                 }
             ];
             if (!isCurrentRequest()) return;
@@ -8752,14 +8769,15 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '反推提示词失败');
         }
     }
-    async function reversePromptFromReferences() {
+    async function reversePromptFromReferences(durationSeconds = ONE_TAKE_DEFAULT_DURATION) {
         if (!agentRefs.length) return notify('请先上传一张参考图');
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
         if (agentRefs.length === 1) {
             await sendAgent('请根据我上传的参考图反推提示词', 'reverse_prompt', agentRefs);
             return;
         }
-        await sendAgent('请按我上传参考图的顺序，将 Image 1、Image 2、Image 3……串联成一段 15 秒、一镜到底的 Seedance 2.0 视频生成 Prompt。只输出最终可直接使用的 VIDEO PROMPT。', 'one_take_video_prompt', agentRefs);
+        const duration = normalizeOneTakeDuration(durationSeconds);
+        await sendAgent(buildOneTakeVideoRequest(duration), 'one_take_video_prompt', agentRefs, undefined, duration);
     }
     async function optimizeAgentPrompt() {
         const source = agentInput.trim();
@@ -9419,7 +9437,7 @@ export default function Page() {
             notify('已追加到生图提示词，可继续选择内容');
         }
     }
-    function pushTextToVideo(text, navigate = true) {
+    function pushTextToVideo(text, navigate = true, durationSeconds) {
         const nextText = text.trim();
         if (!nextText) return;
         if (!availableVideoModels.length) {
@@ -9431,6 +9449,7 @@ export default function Page() {
             const existing = current?.trimEnd() || '';
             return existing ? `${existing}\n${nextText}` : nextText;
         });
+        setVideoDurationPrefill(durationSeconds === undefined ? null : normalizeOneTakeDuration(durationSeconds));
         setSelectionPush(null);
         window.getSelection()?.removeAllRanges();
         if (navigate) {
@@ -10591,6 +10610,19 @@ export default function Page() {
                                                                                         }),
                                                                                         "整段推送生图"
                                                                                     ]
+                                                                                }),
+                                                                                message.task === 'one_take_video_prompt' && message.durationSeconds && /*#__PURE__*/ _jsxs("button", {
+                                                                                    type: "button",
+                                                                                    className: "message-video-push",
+                                                                                    title: `按 ${message.durationSeconds} 秒推送到视频面板`,
+                                                                                    onClick: ()=>pushTextToVideo(message.content, true, message.durationSeconds),
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx(Icon, {
+                                                                                            name: "video",
+                                                                                            size: 14
+                                                                                        }),
+                                                                                        "推送到视频"
+                                                                                    ]
                                                                                 })
                                                                             ]
                                                                         }),
@@ -10949,19 +10981,33 @@ export default function Page() {
                                                                 (agentRefs.length > 0 || agentInput.trim()) && /*#__PURE__*/ _jsxs("div", {
                                                                     className: "agent-quick-actions",
                                                                     children: [
-                                                                        agentRefs.length > 0 && /*#__PURE__*/ _jsxs("button", {
-                                                                            type: "button",
-                                                                            className: `agent-quick-button ${agentRefs.length > 1 ? 'one-take' : 'reverse'}`,
-                                                                             disabled: activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
-                                                                            onClick: ()=>void reversePromptFromReferences(),
-                                                                            "data-tooltip": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '按参考图顺序生成 15 秒一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
-                                                                            "aria-label": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '按参考图顺序生成 15 秒一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
+                                                                        agentRefs.length > 0 && /*#__PURE__*/ _jsxs("div", {
+                                                                            className: "one-take-duration-control",
                                                                             children: [
-                                                                                /*#__PURE__*/ _jsx(Icon, {
-                                                                                    name: agentRefs.length > 1 ? "video" : "image",
-                                                                                    size: 14
+                                                                                /*#__PURE__*/ _jsxs("button", {
+                                                                                    type: "button",
+                                                                                    className: `agent-quick-button ${agentRefs.length > 1 ? 'one-take' : 'reverse'}`,
+                                                                                    disabled: activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
+                                                                                    onClick: ()=>agentRefs.length > 1 ? setOneTakeDurationOpen(true) : void reversePromptFromReferences(),
+                                                                                    "data-tooltip": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '设置时长并生成一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
+                                                                                    "aria-label": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '设置时长并生成一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx(Icon, {
+                                                                                            name: agentRefs.length > 1 ? "video" : "image",
+                                                                                            size: 14
+                                                                                        }),
+                                                                                        agentRefs.length > 1 ? "一镜到底" : "反推提示词"
+                                                                                    ]
                                                                                 }),
-                                                                                agentRefs.length > 1 ? "一镜到底" : "反推提示词"
+                                                                                agentRefs.length > 1 && /*#__PURE__*/ _jsx(OneTakeDurationPicker, {
+                                                                                    open: oneTakeDurationOpen,
+                                                                                    busy: activeAgentBusy,
+                                                                                    onConfirm: (duration)=>{
+                                                                                        setOneTakeDurationOpen(false);
+                                                                                        void reversePromptFromReferences(duration);
+                                                                                    },
+                                                                                    onCancel: ()=>setOneTakeDurationOpen(false)
+                                                                                })
                                                                             ]
                                                                         }),
                                                                         agentInput.trim() && /*#__PURE__*/ _jsxs("button", {
@@ -11048,6 +11094,8 @@ export default function Page() {
                                 defaultModelId: state.settings.defaultVideoModelId,
                                 promptPrefill: videoPromptPrefill,
                                 onPromptPrefillConsumed: ()=>setVideoPromptPrefill(null),
+                                durationPrefill: videoDurationPrefill,
+                                onDurationPrefillConsumed: ()=>setVideoDurationPrefill(null),
                                 mediaPrefill: videoMediaPrefill,
                                 mediaPrefillToken: videoMediaPrefillToken,
                                 onMediaPrefillConsumed: ()=>setVideoMediaPrefill(null),

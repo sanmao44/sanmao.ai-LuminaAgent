@@ -5,7 +5,8 @@ import { getProviderPreset } from '@/lib/provider-presets';
 import { appendGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { searchWeb, type SearchResponse } from '@/lib/web-search';
-import { ONE_TAKE_VIDEO_PROMPT_INSTRUCTIONS } from '@/lib/one-take-video-prompt';
+import { buildOneTakeVideoPromptInstructions } from '@/lib/one-take-video-prompt';
+import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { isImageContinuationRequest, likelyFileGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
@@ -199,7 +200,7 @@ function isImageToolCall(call: any) {
   return call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit';
 }
 
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> };
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> };
 
 function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: AgentStreamMetadata, signal?: AbortSignal) {
   const encoder = new TextEncoder();
@@ -266,7 +267,7 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response>)
           }
         }
         if (signal?.aborted) return;
-        send(controller, { type: 'final', message: text || metadata.fallback || '当前对话模型没有返回内容。', images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null });
+        send(controller, { type: 'final', message: text || metadata.fallback || '当前对话模型没有返回内容。', images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null });
         controller.close();
       } catch (error) {
         if (signal?.aborted) return;
@@ -317,6 +318,15 @@ export async function POST(request: Request) {
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
     const isOptimizePromptTask = body.task === 'optimize_prompt';
+    if (isOneTakeVideoPromptTask && body.durationSeconds !== undefined && !isValidOneTakeDuration(body.durationSeconds)) {
+      return Response.json({ error: '一镜到底时长必须是 1–60 之间的整数秒。' }, { status: 400 });
+    }
+    const oneTakeDuration = isOneTakeVideoPromptTask
+      ? normalizeOneTakeDuration(body.durationSeconds, ONE_TAKE_DEFAULT_DURATION)
+      : undefined;
+    const oneTakeResponseFields = oneTakeDuration !== undefined
+      ? { durationSeconds: oneTakeDuration }
+      : {};
     const incoming = Array.isArray(body.messages) ? body.messages : [];
     const messages: ClientMessage[] = incoming
       .filter((m: any) => (m?.role === 'user' || m?.role === 'assistant') && typeof m?.content === 'string')
@@ -353,7 +363,7 @@ export async function POST(request: Request) {
     const streamResult = (
       upstream: Response | null | (() => Promise<Response>),
       metadata: Omit<AgentStreamMetadata, 'deliverable'>,
-    ) => streamAgentResult(upstream, { ...metadata, deliverable: requestedDeliverable }, requestController.signal);
+    ) => streamAgentResult(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable }, requestController.signal);
     const referenceRecords = referenceRecordsForLog(body.referenceImages || latestRefs.filter((reference) => reference.kind === 'image'));
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
@@ -412,7 +422,7 @@ export async function POST(request: Request) {
       ...messages.map((m) => ({ role: m.role, content: toChatContent(m, supportsVideoInput) } as ChatMessage)),
     ];
     if (isReversePromptTask) llmMessages[0] = { role: 'system', content: reversePromptInstructions };
-    if (isOneTakeVideoPromptTask) llmMessages[0] = { role: 'system', content: ONE_TAKE_VIDEO_PROMPT_INSTRUCTIONS };
+    if (isOneTakeVideoPromptTask) llmMessages[0] = { role: 'system', content: buildOneTakeVideoPromptInstructions(oneTakeDuration || ONE_TAKE_DEFAULT_DURATION) };
     if (isOptimizePromptTask) llmMessages[0] = { role: 'system', content: optimizePromptInstructions };
 
     if (needsWebSearch && nativeWebSearch) {
@@ -526,7 +536,7 @@ export async function POST(request: Request) {
           : fallback?.choices?.[0]?.message?.content || '当前对话模型没有返回内容。';
         return wantsStream
           ? streamResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() })
-          : Response.json({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+          : Response.json({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
       }
     }
 
@@ -567,7 +577,7 @@ export async function POST(request: Request) {
         }
       }
       plainMessage = plainMessage || '当前对话模型没有返回内容。';
-      return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+      return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
     }
 
     const generated: Array<{ url: string; revisedPrompt?: string }> = [];
@@ -686,7 +696,7 @@ export async function POST(request: Request) {
     } catch (error) {
       if (requestController.signal.aborted) throw requestController.signal.reason || error;
     }
-    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
   } catch (error) {
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'AGENT_CANCELLED');
     return Response.json({ error: cancelled ? '本轮 Agent 已停止。' : error instanceof Error ? error.message : '智能助手请求失败。', cancelled }, { status: cancelled ? 499 : 502 });

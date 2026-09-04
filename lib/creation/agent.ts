@@ -1,6 +1,11 @@
 "use client";
 
 import { prepareCanvasAgentReferences } from "@/lib/canvas/api";
+import {
+  buildOneTakeVideoRequest,
+  normalizeOneTakeDuration,
+  ONE_TAKE_DEFAULT_DURATION,
+} from "@/lib/one-take-video-duration";
 
 export type AgentReference = { url: string; name?: string };
 export type AgentMessage = { role: "user" | "assistant"; content: string };
@@ -40,7 +45,13 @@ async function readAgentStream(response: Response, onEvent?: (event: AgentEvent)
   return final;
 }
 
-async function runAgentTask(task: string, prompt: string, references: AgentReference[] = [], model?: string) {
+async function runAgentTask(
+  task: string,
+  prompt: string,
+  references: AgentReference[] = [],
+  model?: string,
+  durationSeconds?: number,
+) {
   const preparedReferences = await prepareCanvasAgentReferences(references);
   const response = await fetch("/api/agent", {
     method: "POST",
@@ -59,6 +70,7 @@ async function runAgentTask(task: string, prompt: string, references: AgentRefer
       }],
       model: model || "auto",
       task,
+      ...(durationSeconds !== undefined ? { durationSeconds } : {}),
       stream: true,
     }),
   });
@@ -82,9 +94,14 @@ export function runReversePrompt(referenceImages: AgentReference[], model?: stri
   return runAgentTask("reverse_prompt", referenceImages.length === 1 ? "请根据这张图片反推提示词" : "请根据我上传的参考图反推提示词", referenceImages, model);
 }
 
-export function runOneTakeVideoPrompt(referenceImages: AgentReference[], model?: string) {
+export function runOneTakeVideoPrompt(
+  referenceImages: AgentReference[],
+  model?: string,
+  durationSeconds = ONE_TAKE_DEFAULT_DURATION,
+) {
   if (referenceImages.length < 2) return Promise.reject(new Error("一镜到底至少需要两张参考图片"));
-  return runAgentTask("one_take_video_prompt", "请按我上传参考图的顺序，将 Image 1、Image 2、Image 3……串联成一段 15 秒、一镜到底的 Seedance 2.0 视频生成 Prompt。只输出最终可直接使用的 VIDEO PROMPT。", referenceImages, model);
+  const duration = normalizeOneTakeDuration(durationSeconds);
+  return runAgentTask("one_take_video_prompt", buildOneTakeVideoRequest(duration), referenceImages, model, duration);
 }
 
 export function requestPromptOptimization(prompt: string, references: AgentReference[] = [], model?: string) {
