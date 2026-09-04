@@ -23,6 +23,8 @@ import {
   alignCanvasNodes,
   arrangeCanvas,
   arrangeCanvasGroup,
+  CANVAS_GROUP_INSETS,
+  clampCanvasNodePositionToGroup,
   canvasEdgeEndpoints,
   canConnect,
   clone,
@@ -167,6 +169,7 @@ import {
   listAssetCollections,
   saveAssetCollections,
   type AssetCollection,
+  type GalleryLocalEditMask,
 } from "@/lib/client-history";
 import { bootstrapWorkspace, startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
@@ -1789,6 +1792,18 @@ function canvasReferenceRecordsFromNodes(nodes: CanvasNode[]) {
     .filter((reference): reference is NonNullable<typeof reference> => Boolean(reference));
 }
 
+function canvasLocalEditMaskForHistory(mask: ImageCreationSettings["mask"]): GalleryLocalEditMask | undefined {
+  if (!mask?.url) return undefined;
+  const parsedFeather = Number(mask.feather);
+  return {
+    dataUrl: mask.url,
+    feather: Number.isFinite(parsedFeather)
+      ? Math.max(0, Math.min(48, Math.round(parsedFeather)))
+      : 0,
+    ...(mask.annotations?.length ? { annotations: mask.annotations } : {}),
+  };
+}
+
 function canvasVideoTargetHasImageReference(
   document: CanvasDocument,
   target: CanvasNode | null | undefined,
@@ -3357,7 +3372,10 @@ export default function SuperCanvas() {
       event.stopPropagation();
       setCursorTask("resizing");
       const bounds = groupBounds(docRef.current, group.id);
-      const origin = { x: bounds.x + 30, y: bounds.y + 48 };
+      const origin = {
+        x: bounds.x + CANVAS_GROUP_INSETS.left,
+        y: bounds.y + CANVAS_GROUP_INSETS.top,
+      };
       const nodes = Object.fromEntries(
         group.nodeIds.flatMap((id) => {
           const node = nodeById(docRef.current, id);
@@ -3594,15 +3612,42 @@ export default function SuperCanvas() {
                 },
               )
             : { positions: proposedPositions, guides: [] as CanvasSnapGuide[] };
-          interaction.snapGuides = snapResult.guides;
-          setSnapGuides(snapResult.guides);
+          const constrainedPositions = interaction.originGroupId && interaction.originGroupBounds
+            ? Object.fromEntries(
+                interaction.nodeIds.map((id) => {
+                  const node = nodeById(docRef.current, id);
+                  const position = snapResult.positions[id];
+                  return [
+                    id,
+                    node && position
+                      ? clampCanvasNodePositionToGroup(
+                          position,
+                          nodeSize(node),
+                          interaction.originGroupBounds!,
+                        )
+                      : position,
+                  ];
+                }),
+              )
+            : snapResult.positions;
+          const constrained = interaction.nodeIds.some((id) => {
+            const before = snapResult.positions[id];
+            const after = constrainedPositions[id];
+            return Boolean(
+              before &&
+                after &&
+                (before.x !== after.x || before.y !== after.y),
+            );
+          });
+          interaction.snapGuides = constrained ? [] : snapResult.guides;
+          setSnapGuides(interaction.snapGuides);
           updateDoc((value) => ({
             ...value,
             nodes: value.nodes.map((node) =>
-              snapResult.positions[node.id]
+              constrainedPositions[node.id]
                 ? {
                     ...node,
-                    ...snapResult.positions[node.id],
+                    ...constrainedPositions[node.id],
                   }
                 : node,
             ),
@@ -3643,8 +3688,18 @@ export default function SuperCanvas() {
           setRedoStack([]);
         }
         if (interaction.changed) {
-          const baseWidth = Math.max(1, interaction.bounds.w - 60);
-          const baseHeight = Math.max(1, interaction.bounds.h - 78);
+          const baseWidth = Math.max(
+            1,
+            interaction.bounds.w -
+              CANVAS_GROUP_INSETS.left -
+              CANVAS_GROUP_INSETS.right,
+          );
+          const baseHeight = Math.max(
+            1,
+            interaction.bounds.h -
+              CANVAS_GROUP_INSETS.top -
+              CANVAS_GROUP_INSETS.bottom,
+          );
           const nextWidth = Math.max(240, baseWidth + dx / zoom);
           const nextHeight = Math.max(180, baseHeight + dy / zoom);
           const scaleX = nextWidth / baseWidth;
@@ -3854,46 +3909,12 @@ export default function SuperCanvas() {
               ? (bounds.top + bounds.bottom) / 2
               : point.y,
           };
-          const target = groupAtPoint(docRef.current, dropPoint);
-          const originBounds = interaction.originGroupBounds;
-          const insideOrigin = Boolean(
-            interaction.originGroupId &&
-              originBounds &&
-              dropPoint.x >= originBounds.x &&
-              dropPoint.x <= originBounds.x + originBounds.w &&
-              dropPoint.y >= originBounds.y &&
-              dropPoint.y <= originBounds.y + originBounds.h,
-          );
           const dropTarget = interaction.originGroupId
-            ? insideOrigin
-              ? groupById(docRef.current, interaction.originGroupId)
-              : [...docRef.current.groups]
-                  .reverse()
-                  .find((group) => {
-                    if (group.id === interaction.originGroupId) return false;
-                    const targetBounds = groupBounds(docRef.current, group.id);
-                    return (
-                      dropPoint.x >= targetBounds.x &&
-                      dropPoint.x <= targetBounds.x + targetBounds.w &&
-                      dropPoint.y >= targetBounds.y &&
-                      dropPoint.y <= targetBounds.y + targetBounds.h
-                    );
-                  })
-            : target;
+            ? undefined
+            : groupAtPoint(docRef.current, dropPoint);
           const before = docRef.current;
           let after = before;
-          if (interaction.originGroupId && !insideOrigin) {
-            after = dropTarget
-              ? moveNodesToGroup(
-                  before,
-                  draggedNodes.map((node) => node.id),
-                  dropTarget.id,
-                )
-              : detachNodesFromGroups(
-                  before,
-                  draggedNodes.map((node) => node.id),
-                );
-          } else if (!interaction.originGroupId && dropTarget) {
+          if (!interaction.originGroupId && dropTarget) {
             after = moveNodesToGroup(
               before,
               draggedNodes.map((node) => node.id),
@@ -5997,7 +6018,8 @@ export default function SuperCanvas() {
                  outputFormat: imageParams.outputFormat,
                  parentId: generatorId,
                  references: canvasReferenceRecordsFromNodes(linked),
-                 annotations: imageParams.mask?.annotations,
+                  annotations: imageParams.mask?.annotations,
+                  mask: canvasLocalEditMaskForHistory(imageParams.mask),
               }).catch(() => addLog("图片变体已生成，但写入历史失败"));
             } else {
               const videoParams = effectiveParams as VideoCreationSettings;
@@ -6747,7 +6769,8 @@ export default function SuperCanvas() {
          outputFormat: params.outputFormat,
          parentId: source.id,
          references: canvasReferenceRecordsFromNodes(usedReferenceNodes),
-         annotations: params.mask?.annotations,
+          annotations: params.mask?.annotations,
+          mask: canvasLocalEditMaskForHistory(params.mask),
       }).then(() => setAssetRefresh((value) => value + 1)).catch(() => addLog("图片续生成完成，但写入主界面历史失败"));
       notify(`已生成 ${result.images.length} 张新图片，原图已保留`);
       addLog(`图片续生成完成：${result.images.length} 张`);
@@ -7293,7 +7316,8 @@ export default function SuperCanvas() {
              outputFormat: imageSettings.outputFormat,
              parentId: inputId,
              references: canvasReferenceRecordsFromNodes(referenceNodes),
-             annotations: imageSettings.mask?.annotations,
+              annotations: imageSettings.mask?.annotations,
+              mask: canvasLocalEditMaskForHistory(imageSettings.mask),
           });
         addLog(`Agent 回复完成：${responseModel}`);
         notify(
@@ -7680,6 +7704,7 @@ export default function SuperCanvas() {
           parentId: sourceTarget?.data.url ? sourceTarget.id : undefined,
           references: canvasReferenceRecordsFromNodes(linked),
           annotations: imageParams.mask?.annotations,
+          mask: canvasLocalEditMaskForHistory(imageParams.mask),
         })
           .then(() => setAssetRefresh((value) => value + 1))
           .catch(() => addLog("图片已生成，但写入主界面历史失败"));
@@ -8326,7 +8351,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], sourceImageDataUrl?: string) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0) => {
       const node = maskNodeId
         ? nodeById(docRef.current, maskNodeId)
         : undefined;
@@ -8357,21 +8382,19 @@ export default function SuperCanvas() {
         const uploaded = await uploadCanvasAsset(
           dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
         );
-        const movedSource = sourceImageDataUrl
-          ? await uploadCanvasAsset(dataUrlFile(sourceImageDataUrl, `moved-source-${node.id}.png`))
-          : undefined;
         const settings = copyParams(
           existingDraft.params,
           "image",
           runtime,
         ) as ImageCreationSettings;
+        const maskFeather = Math.max(0, Math.min(48, Math.round(Number(feather) || 0)));
         const params = {
           ...settings,
           mask: {
             assetId: uploaded.id,
             url: uploaded.url,
-            ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
             ...(annotations.length ? { annotations } : {}),
+            feather: maskFeather,
           },
         } satisfies ImageCreationSettings;
         const nextPrompt = prompt?.trim() || existingDraft.prompt;
@@ -8379,10 +8402,10 @@ export default function SuperCanvas() {
         const mask: CanvasMaskState = {
           assetId: uploaded.id,
           url: uploaded.url,
-          ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
           status: "pending",
           coverage: maskCoverage,
           ...(annotations.length ? { annotations } : {}),
+          feather: maskFeather,
           createdAt: node.data.mask?.createdAt || Date.now(),
           updatedAt: Date.now(),
         };
@@ -9245,6 +9268,10 @@ export default function SuperCanvas() {
         clearSelection();
         return;
       }
+      // The local-edit workbench owns its own history. Let its window-level
+      // shortcut handler receive Ctrl/Cmd+Z instead of undoing canvas nodes
+      // and stopping propagation first.
+      if (maskNodeId) return;
       if (isEditableTarget(event.target)) return;
       const modifier = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
@@ -9340,11 +9367,12 @@ export default function SuperCanvas() {
       const nodeElement = element?.closest<HTMLElement>("[data-canvas-node-id]");
       const nodeId = nodeElement?.dataset.canvasNodeId;
       const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+      const groupElement = element?.closest<HTMLElement>("[data-canvas-group-id]");
       const isolatedTarget = element?.closest(
-        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
-      if (isolatedTarget) {
-        if (isolatedTarget.closest(".canvas-context-menu")) event.preventDefault();
+      if (isolatedTarget || (groupElement && !node)) {
+        if (isolatedTarget?.closest(".canvas-context-menu")) event.preventDefault();
         return;
       }
       event.preventDefault();
@@ -12018,7 +12046,8 @@ export default function SuperCanvas() {
           initialMaskDataUrl={maskNode.data.mask?.url || maskSettings?.mask?.url}
           initialPrompt={editorPromptFor(maskNode)}
           initialAnnotations={maskNode.data.mask?.annotations || maskSettings?.mask?.annotations || []}
-          onApply={(value, coverage, prompt, annotations, sourceImageDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, sourceImageDataUrl)}
+          initialFeather={maskNode.data.mask?.feather ?? maskSettings?.mask?.feather ?? 0}
+          onApply={(value, coverage, prompt, annotations, feather) => applyCanvasMask(value, coverage, prompt, annotations, feather)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}
@@ -14671,9 +14700,26 @@ function CanvasNodeEditorPopover({
                 <span aria-hidden="true">＋</span> 参考
               </button>
               {node.type === "media" && node.data.kind === "image" && node.data.url && onLocalEdit && maskState && (
-                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => onLocalEdit()} aria-label="局部编辑" data-tooltip="局部编辑">
-                  <span aria-hidden="true">✎</span> 局部编辑
-                </button>
+                <div className="canvas-node-editor-dock-local-edit" role="group" aria-label="局部编辑操作">
+                  <button type="button" className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-edit" onClick={() => onLocalEdit()} aria-label="局部编辑" data-tooltip="局部编辑">
+                    <span aria-hidden="true">✎</span> 局部编辑
+                  </button>
+                  {onLocalEditRemove && (
+                    <button
+                      type="button"
+                      className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove"
+                      aria-label="删除局部编辑"
+                      title="删除当前局部编辑范围"
+                      data-tooltip="删除局部编辑"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onLocalEditRemove();
+                      }}
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  )}
+                </div>
               )}
               {node.type === "generator" && (
                 <div className="canvas-node-editor-dock-variant-wrap">

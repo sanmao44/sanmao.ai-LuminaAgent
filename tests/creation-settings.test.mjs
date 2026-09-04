@@ -84,17 +84,38 @@ test('image settings retain local-edit annotations in the persisted mask', () =>
     model: 'qwen-edit',
     mask: {
       url: '/mask.png',
+      sourceUrl: '/legacy-source.png',
+      sourceImageDataUrl: 'data:image/png;base64,legacy-source',
+      feather: 99,
       annotations: [{
         id: 'text',
         kind: 'rectangle',
         description: '替换背景文字',
         geometry: { kind: 'rectangle', x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
         createdAt: 456,
+        move: {
+          from: [{ kind: 'rectangle', x: 0.1, y: 0.2, width: 0.3, height: 0.2 }],
+        },
       }],
     },
   }, runtime);
 
   assert.equal(result.mask?.annotations?.[0].description, '替换背景文字');
+  assert.equal(result.mask?.annotations?.[0].move?.from[0].x, 0.1);
+  assert.equal(result.mask?.feather, 48);
+  assert.equal(result.mask?.sourceUrl, '/legacy-source.png');
+  assert.equal(result.mask?.sourceImageDataUrl, 'data:image/png;base64,legacy-source');
+});
+
+test('legacy string masks remain readable while new feather metadata is normalized', () => {
+  const result = settings.normalizeImageCreationSettings({
+    kind: 'image',
+    model: 'qwen-edit',
+    mask: '/legacy-mask.png',
+  }, runtime);
+
+  assert.equal(result.mask?.url, '/legacy-mask.png');
+  assert.equal(result.mask?.feather, undefined);
 });
 
 test('shared image defaults never retain a local-edit mask', () => {

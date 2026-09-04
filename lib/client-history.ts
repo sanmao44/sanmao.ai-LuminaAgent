@@ -6,6 +6,12 @@ import type { LocalEditAnnotation } from './local-edit';
 
 export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas' | 'upscale';
 
+export type GalleryLocalEditMask = {
+  dataUrl: string;
+  feather?: number;
+  annotations?: LocalEditAnnotation[];
+};
+
 export type GalleryItem = {
   id: string;
   url: string;
@@ -34,6 +40,8 @@ export type GalleryItem = {
   compareReferenceName?: string;
   angle?: AngleCameraState;
   annotations?: LocalEditAnnotation[];
+  /** Mask metadata used for the edit, kept so the history editor can reopen it. */
+  mask?: string | GalleryLocalEditMask;
 };
 
 export type ChatFile = {

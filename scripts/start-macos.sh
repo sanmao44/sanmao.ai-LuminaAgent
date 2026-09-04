@@ -30,6 +30,31 @@ esac
 if [ "$PORT_START" -lt 1024 ] || [ "$PORT_START" -gt 65525 ]; then PORT_START=3210; fi
 PORT_END=$((PORT_START + 10))
 
+resolve_provider_config_dir() {
+  CONFIG_DIR="${SANMAO_PROVIDER_CONFIG_DIR:-${SANMAO_DATA_DIR:-}}"
+  if [ -n "$CONFIG_DIR" ]; then
+    case "$CONFIG_DIR" in
+      /*) printf '%s' "$CONFIG_DIR" ;;
+      *) printf '%s/%s' "$ROOT_DIR" "$CONFIG_DIR" ;;
+    esac
+    return 0
+  fi
+  COMMON_DIR=`git -C "$ROOT_DIR" rev-parse --git-common-dir 2>/dev/null || true`
+  if [ -n "$COMMON_DIR" ]; then
+    case "$COMMON_DIR" in
+      /*) ;;
+      *) COMMON_DIR="$ROOT_DIR/$COMMON_DIR" ;;
+    esac
+    COMMON_DIR=`CDPATH= cd -- "$COMMON_DIR" 2>/dev/null && pwd || true`
+    case "$COMMON_DIR" in
+      */.git) printf '%s/.data' "${COMMON_DIR%/.git}"; return 0 ;;
+    esac
+  fi
+  printf '%s/.data' "$ROOT_DIR"
+}
+
+export SANMAO_PROVIDER_CONFIG_DIR=`resolve_provider_config_dir`
+
 LEGACY_MARKER="${TMPDIR:-/tmp}/sanmao-ai-studio-instance.lock"
 LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
 
@@ -39,11 +64,7 @@ sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/log
 sanmao_log "启动器开始运行，根目录：$ROOT_DIR，端口范围：$PORT_START..$PORT_END" INFO
 
 media_relay_required() {
-  DATA_ROOT="${SANMAO_DATA_DIR:-$ROOT_DIR/.data}"
-  case "$DATA_ROOT" in
-    /*) ;;
-    *) DATA_ROOT="$ROOT_DIR/$DATA_ROOT" ;;
-  esac
+  DATA_ROOT="$SANMAO_PROVIDER_CONFIG_DIR"
   STATE_PATH="$DATA_ROOT/state.json"
   [ -f "$STATE_PATH" ] || return 1
   command -v node >/dev/null 2>&1 || return 1

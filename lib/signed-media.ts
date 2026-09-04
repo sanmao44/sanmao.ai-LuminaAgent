@@ -5,6 +5,7 @@ import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
 import { resolveStoredVideoFile } from './video-storage';
 import { getDefaultAudioStoragePath, resolveStoredAudioFile } from './audio-storage';
+import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
 
 export const AGNES_PUBLIC_MEDIA_URL_REQUIRED = 'AGNES_PUBLIC_MEDIA_URL_REQUIRED';
 export const AGNES_PUBLIC_MEDIA_URL_INVALID = 'AGNES_PUBLIC_MEDIA_URL_INVALID';
@@ -47,7 +48,7 @@ export class PublicMediaError extends Error {
 // Compatibility class for callers that imported the old Agnes-specific name.
 export class AgnesMediaError extends PublicMediaError {}
 
-function dataDir() { return process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data'); }
+function dataDir() { return resolveLocalDataDir(); }
 function mediaDir() { return path.join(dataDir(), 'agnes-media'); }
 function manifestPath() { return path.join(mediaDir(), 'manifest.json'); }
 function secretPath() { return path.join(mediaDir(), 'signing.key'); }
@@ -61,7 +62,7 @@ async function configuredStorageRoot(kind: 'image' | 'video' | 'audio') {
   if (environmentRoot?.trim()) return environmentRoot.trim();
   if (kind === 'audio') return getDefaultAudioStoragePath();
   try {
-    const state = JSON.parse(await readFile(path.join(dataDir(), 'state.json'), 'utf8')) as { settings?: Record<string, unknown> };
+    const state = JSON.parse(await readFile(path.join(resolveProviderConfigDir(), 'state.json'), 'utf8')) as { settings?: Record<string, unknown> };
     const configured = state.settings?.[
       kind === 'image' ? 'imageStoragePath' : kind === 'video' ? 'videoStoragePath' : 'audioStoragePath'
     ];

@@ -5630,7 +5630,8 @@ export default function Page() {
                      upscaleModel: data.model?.id,
                      upscaleScale: task.request?.upscaleScale || 2,
                      upscaleTaskId: task.upscaleTaskId,
-                     annotations: task.request?.mask?.annotations
+                      annotations: task.request?.mask?.annotations,
+                      mask: task.request?.mask?.dataUrl ? { dataUrl: task.request.mask.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(task.request.mask.feather) || 0))), annotations: task.request.mask.annotations } : undefined
                 });
                 setResultItems((old)=>[...items, ...old]);
                 patchGenerateTask(task.id, { status: 'success', completedAt: Date.now(), items, itemIds: items.map((item)=>item.id), info: `${data.model?.name || '高清放大'} · 已恢复完成` });
@@ -7354,7 +7355,8 @@ export default function Page() {
                  compareReferenceUrl: meta.references?.[0]?.url || meta.compareReference?.url,
                  compareReferenceName: meta.references?.[0]?.name || meta.compareReference?.name,
                  angle: meta.angle,
-                 annotations: Array.isArray(meta.annotations) && meta.annotations.length ? meta.annotations : undefined
+                  annotations: Array.isArray(meta.annotations) && meta.annotations.length ? meta.annotations : undefined,
+                  ...(meta.mask ? { mask: meta.mask } : {})
              }));
         await saveGalleryItems(items);
         setGallery((old)=>[
@@ -7694,7 +7696,8 @@ export default function Page() {
                     upscaleOutputQuality: taskCloudOutputFormat === 'jpg' ? taskUpscaleOutputQuality : undefined,
                      upscaleTaskId: upscaleData.taskId,
                      references: referenceRecords,
-                     annotations: taskMaskAsset?.annotations
+                     annotations: taskMaskAsset?.annotations,
+                     mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations } : undefined
                 });
                 const info = `${upscaleData.model?.name || '超分模型'} · ${taskUpscaleScale}× · 图片超分 · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
                 setResultItems((old)=>[
@@ -7787,7 +7790,8 @@ export default function Page() {
                                 source: submittedImageRefs.length ? 'edit' : 'generate',
                                  references: referenceRecords,
                                  angle: taskRequest.angle,
-                                 annotations: taskMaskAsset?.annotations
+                  annotations: taskMaskAsset?.annotations,
+                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations } : undefined
                             });
                             completedCount += items.length;
                             resolvedModelName = childData.model?.name || resolvedModelName;
@@ -7881,8 +7885,9 @@ export default function Page() {
                 generationMs: durationMs,
                 source: submittedImageRefs.length ? 'edit' : 'generate',
                  references: referenceRecords,
-                 angle: taskRequest.angle,
-                 annotations: taskMaskAsset?.annotations
+                  angle: taskRequest.angle,
+                  annotations: taskMaskAsset?.annotations,
+                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations } : undefined
             });
             const info = `${data.model?.name || '图片模型'} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
@@ -8997,6 +9002,10 @@ export default function Page() {
         const legacySavedMask = item?.params?.mask || item?.mask;
         const restoredMask = typeof legacySavedMask === 'string' ? legacySavedMask : legacySavedMask?.dataUrl || legacySavedMask?.url || null;
         const restoredAnnotations = Array.isArray(item?.annotations) ? item.annotations : Array.isArray(legacySavedMask?.annotations) ? legacySavedMask.annotations : [];
+        const restoredFeather = Number.isFinite(Number(item?.feather ?? legacySavedMask?.feather)) ? Math.max(0, Math.min(48, Math.round(Number(item?.feather ?? legacySavedMask?.feather)))) : 0;
+        const restoredLegacySource = typeof legacySavedMask === 'object' && legacySavedMask
+            ? legacySavedMask.sourceImageDataUrl || legacySavedMask.sourceUrl
+            : undefined;
         const dimensions = outputDimensions(item.outputSize);
         const ratio = item.aspectRatio || (dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '自动');
         const tier = dimensions ? sizeTierFromDimensions(dimensions.width, dimensions.height) : '1k';
@@ -9022,7 +9031,9 @@ export default function Page() {
             customWidth: typeof saved.customWidth === 'number' && saved.customWidth > 0 ? Math.round(saved.customWidth) : dimensions?.width || preset.width,
             customHeight: typeof saved.customHeight === 'number' && saved.customHeight > 0 ? Math.round(saved.customHeight) : dimensions?.height || preset.height,
             mask: restoredMask,
-            annotations: restoredAnnotations
+            annotations: restoredAnnotations,
+            feather: restoredFeather,
+            ...(typeof restoredLegacySource === 'string' && restoredLegacySource ? { sourceImageDataUrl: restoredLegacySource } : {})
         });
         if (lastCall) notify('已恢复上次图片修改设置');
     }
@@ -9156,7 +9167,7 @@ export default function Page() {
                         customWidth: currentEditor.customWidth,
                         customHeight: currentEditor.customHeight,
                         references: [{ id: currentEditor.item.id, kind: 'image', name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }],
-                         mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [], ...(currentEditor.sourceImageDataUrl ? { sourceImageDataUrl: currentEditor.sourceImageDataUrl } : {}) } : null
+                         mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [], feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))) } : null
                     }
                 },
                 ...old
@@ -9296,7 +9307,8 @@ export default function Page() {
                  upscaleTaskId: currentEditor.mode === 'upscale' ? data.taskId : undefined,
                  generationMs: durationMs,
                  references: [editorReference],
-                 annotations: currentEditor.mode === 'edit' && Array.isArray(currentEditor.annotations) ? currentEditor.annotations : undefined
+                  annotations: currentEditor.mode === 'edit' && Array.isArray(currentEditor.annotations) ? currentEditor.annotations : undefined,
+                  mask: currentEditor.mode === 'edit' && currentEditor.mask ? { dataUrl: currentEditor.mask, feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))), annotations: currentEditor.annotations || [] } : undefined
              });
             const info = `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${data.model?.name || '图片模型'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
@@ -12158,14 +12170,15 @@ export default function Page() {
                                 initialMaskDataUrl: generateMask?.referenceId === generateRefs[0].id ? generateMask.dataUrl : undefined,
                                 initialPrompt: generatePrompt,
                                 initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
+                                initialFeather: generateMask?.referenceId === generateRefs[0].id ? generateMask.feather || 0 : 0,
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl, coverage, prompt, annotations, sourceImageDataUrl)=>{
+                                onApply: (dataUrl, coverage, prompt, annotations, feather)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
                                         dataUrl,
                                         coverage,
                                         annotations,
-                                        ...(sourceImageDataUrl ? { sourceImageDataUrl } : {})
+                                        feather
                                     });
                                     setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
                                     setGeneratePrompt(prompt);
@@ -15158,14 +15171,17 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 initialMaskDataUrl: editor.mask || undefined,
                 initialPrompt: editor.prompt,
                 initialAnnotations: editor.annotations || [],
+                initialFeather: editor.feather || 0,
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl, coverage, prompt, annotations, sourceImageDataUrl)=>{
+                onApply: (dataUrl, coverage, prompt, annotations, feather)=>{
                     setEditor((current)=>current ? {
                             ...current,
                             mask: dataUrl,
                             prompt,
                             annotations,
-                            ...(sourceImageDataUrl ? { sourceImageDataUrl } : {})
+                            feather,
+                            sourceImageDataUrl: undefined,
+                            sourceUrl: undefined
                         } : current);
                     setEditorMaskOpen(false);
                     notify(`局部编辑范围已设置${coverage ? `（覆盖 ${Math.round(coverage * 100)}%）` : ''}，提交修改时会一并发送`);

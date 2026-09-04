@@ -126,6 +126,13 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /disabled=\{!ready \|\| saving \|\| Boolean\(pendingAnnotation\) \|\| Boolean\(movingAnnotation\)/);
 });
 
+test("local edit history shortcuts use physical keys and are not preempted by canvas shortcuts", () => {
+  assert.match(editor, /const isUndoKey = key === 'z' \|\| event\.code === 'KeyZ'/);
+  assert.match(editor, /const isRedoKey = key === 'y' \|\| event\.code === 'KeyY'/);
+  assert.match(editor, /!event\.repeat && \(event\.ctrlKey \|\| event\.metaKey\) && isUndoKey/);
+  assert.match(canvas, /if \(maskNodeId\) return;\s*if \(isEditableTarget\(event\.target\)\) return;/);
+});
+
 test("completed marks stay editable without opening a text dialog", () => {
   assert.match(editor, /function commitAnnotation\(annotation: LocalEditAnnotation, before: HistorySnapshot\)/);
   assert.match(editor, /commitAnnotation\(annotation, gesture\.before\)/);
@@ -150,28 +157,43 @@ test("pixel feathering creates a real alpha transition around an editable region
   assert.equal(alphaAt(10, 10) < alphaAt(4, 10), true);
 });
 
-test("moving a selection changes image pixels and clears its original location", () => {
+test("moving a selection masks both source and target without changing the source image", () => {
   const source = Uint8ClampedArray.from([
     255, 0, 0, 255,
     0, 255, 0, 255,
     0, 0, 255, 255,
     255, 255, 255, 255,
   ]);
-  const selection = raster.createProtectedMask(4, 1);
-  selection[4 + 3] = 0;
-  const moved = raster.moveLocalEditPixels(source, selection, 4, 1, 2, 0);
-  assert.deepEqual([...moved], [
-    255, 0, 0, 255,
-    0, 0, 0, 0,
-    0, 0, 255, 255,
-    0, 255, 0, 255,
-  ]);
-  assert.deepEqual([...source], [
-    255, 0, 0, 255,
-    0, 255, 0, 255,
-    0, 0, 255, 255,
-    255, 255, 255, 255,
-  ]);
+  const originalSource = new Uint8ClampedArray(source);
+  const sourceGeometry = { kind: "rectangle", x: 0.1, y: 0.25, width: 0.2, height: 0.5 };
+  const targetGeometry = { kind: "rectangle", x: 0.6, y: 0.25, width: 0.2, height: 0.5 };
+  const moved = {
+    id: "moved",
+    kind: "rectangle",
+    description: "把物体移到右侧",
+    geometry: targetGeometry,
+    move: { from: [sourceGeometry] },
+    createdAt: 1,
+  };
+  const mask = raster.rasterizeLocalEditAnnotations(10, 4, [moved]);
+  assert.equal(mask[(1 * 10 + 1) * 4 + 3], 0);
+  assert.equal(mask[(1 * 10 + 6) * 4 + 3], 0);
+  assert.equal(mask[(1 * 10 + 4) * 4 + 3], 255);
+  assert.deepEqual([...source], [...originalSource]);
+
+  const repeated = {
+    ...moved,
+    geometry: { kind: "rectangle", x: 0.8, y: 0.25, width: 0.2, height: 0.5 },
+    move: { from: [sourceGeometry, targetGeometry] },
+  };
+  const repeatedMask = raster.rasterizeLocalEditAnnotations(10, 4, [repeated]);
+  assert.equal(repeatedMask[(1 * 10 + 1) * 4 + 3], 0);
+  assert.equal(repeatedMask[(1 * 10 + 6) * 4 + 3], 0);
+  assert.equal(repeatedMask[(1 * 10 + 8) * 4 + 3], 0);
+  const compiled = raster.compileLocalEditPrompt("保持光影自然", [moved]);
+  assert.match(compiled, /将对象从原位置移动到目标位置/);
+  assert.match(compiled, /移动方向：向右/);
+  assert.match(compiled, /补充说明：把物体移到右侧/);
 });
 
 test("local edit exposes reliable pointer tools, free lasso selection, and a fixed no-scroll workbench", () => {
@@ -186,10 +208,15 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /event\.preventDefault\(\);/);
   assert.match(editor, /onLostPointerCapture=\{handleLostPointerCapture\}/);
   assert.match(editor, /context\.clearRect\(0, 0, canvas\.width, canvas\.height\);/);
-  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], sourceImageDataUrl\?: string\)/);
+  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number\)/);
+  assert.match(editor, /initialFeather\?: number/);
+  assert.match(editor, /normalizeFeather\(feather\)/);
   assert.match(editor, /function beginMoveAnnotation/);
-  assert.match(editor, /moveLocalEditPixels\(/);
-  assert.match(editor, /sourceImageChangedRef\.current \? exportSourceImage\(\) : undefined/);
+  assert.match(editor, /local-edit-move-frame target/);
+  assert.match(editor, /move: \{ from:/);
+  assert.match(editor, /取消移动/);
+  assert.doesNotMatch(editor, /moveLocalEditPixels\(/);
+  assert.doesNotMatch(editor, /sourceImageChangedRef/);
   assert.match(editor, /function deleteAnnotation/);
   assert.match(editor, /补充.*说明/);
   assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);
@@ -213,7 +240,7 @@ test("all image entry points use local edit wording while persisted field remain
   assert.match(page, /LocalEditEditor/);
   assert.match(viewer, /onLocalEdit/);
   assert.match(canvas, /onLocalEdit/);
-  assert.match(settings, /maskRaw = objectValue\(raw\.mask\)/);
+  assert.match(settings, /const maskRaw = typeof raw\.mask === "string"[\s\S]*objectValue\(raw\.mask\)/);
   assert.match(editor, /initialMaskDataUrl/);
   assert.match(page, /const legacySavedMask = item\?\.params\?\.mask \|\| item\?\.mask/);
   assert.match(page, /const restoredMask = typeof legacySavedMask === 'string'/);

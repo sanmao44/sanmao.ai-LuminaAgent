@@ -823,6 +823,14 @@ export function groupNodes(document: CanvasDocument, groupId: string) {
     : [];
 }
 
+/** The usable content inset shared by group geometry and grouped-node drag. */
+export const CANVAS_GROUP_INSETS = {
+  left: 30,
+  top: 48,
+  right: 30,
+  bottom: 30,
+} as const;
+
 export function groupContentBounds(document: CanvasDocument, groupId: string) {
   const nodes = groupNodes(document, groupId);
   if (!nodes.length) return { x: 0, y: 0, w: 0, h: 0 };
@@ -836,10 +844,26 @@ export function groupContentBounds(document: CanvasDocument, groupId: string) {
 export function groupBounds(document: CanvasDocument, groupId: string) {
   const content = groupContentBounds(document, groupId);
   return {
-    x: content.x - 30,
-    y: content.y - 48,
-    w: content.w + 60,
-    h: content.h + 78,
+    x: content.x - CANVAS_GROUP_INSETS.left,
+    y: content.y - CANVAS_GROUP_INSETS.top,
+    w: content.w + CANVAS_GROUP_INSETS.left + CANVAS_GROUP_INSETS.right,
+    h: content.h + CANVAS_GROUP_INSETS.top + CANVAS_GROUP_INSETS.bottom,
+  };
+}
+
+/** Keep one node fully inside a group's content area. */
+export function clampCanvasNodePositionToGroup(
+  position: { x: number; y: number },
+  size: { w: number; h: number },
+  bounds: { x: number; y: number; w: number; h: number },
+) {
+  const left = bounds.x + CANVAS_GROUP_INSETS.left;
+  const top = bounds.y + CANVAS_GROUP_INSETS.top;
+  const right = bounds.x + bounds.w - CANVAS_GROUP_INSETS.right;
+  const bottom = bounds.y + bounds.h - CANVAS_GROUP_INSETS.bottom;
+  return {
+    x: Math.min(Math.max(position.x, left), Math.max(left, right - size.w)),
+    y: Math.min(Math.max(position.y, top), Math.max(top, bottom - size.h)),
   };
 }
 
@@ -1101,14 +1125,16 @@ function arrangeGrid(entities: ArrangeEntity[], origin: ArrangePoint) {
         .map((entity) => entity.h),
     ),
   );
-  const columnX = columnWidths.reduce<number[]>((result, width, index) => {
-    result[index] =
-      (index ? result[index - 1] + ARRANGE_GAP_X : origin.x) + width;
+  const columnX = columnWidths.reduce<number[]>((result, _width, index) => {
+    result[index] = index
+      ? result[index - 1] + columnWidths[index - 1] + ARRANGE_GAP_X
+      : origin.x;
     return result;
   }, []);
-  const rowY = rowHeights.reduce<number[]>((result, height, index) => {
-    result[index] =
-      (index ? result[index - 1] + ARRANGE_GAP_Y : origin.y) + height;
+  const rowY = rowHeights.reduce<number[]>((result, _height, index) => {
+    result[index] = index
+      ? result[index - 1] + rowHeights[index - 1] + ARRANGE_GAP_Y
+      : origin.y;
     return result;
   }, []);
   const positions = new Map<string, ArrangePoint>();
@@ -1116,8 +1142,8 @@ function arrangeGrid(entities: ArrangeEntity[], origin: ArrangePoint) {
     const column = index % columns;
     const row = Math.floor(index / columns);
     positions.set(entity.id, {
-      x: column ? columnX[column - 1] : origin.x,
-      y: row ? rowY[row - 1] : origin.y,
+      x: columnX[column],
+      y: rowY[row],
     });
   });
   return {

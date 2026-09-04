@@ -38,7 +38,8 @@ const signedSource = await readFile(signedUrl, 'utf8');
 const signed = await importTypeScript(signedUrl, signedSource
   .replace(/import \{ resolveStoredFileWithFallback \} from '\.\/image-storage';\r?\n/, 'const resolveStoredFileWithFallback = () => null;\n')
   .replace(/import \{ resolveStoredVideoFile \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFile = () => null;\n')
-  .replace(/import \{ getDefaultAudioStoragePath, resolveStoredAudioFile \} from '\.\/audio-storage';\r?\n/, 'const getDefaultAudioStoragePath = () => ""; const resolveStoredAudioFile = () => null;\n'));
+  .replace(/import \{ getDefaultAudioStoragePath, resolveStoredAudioFile \} from '\.\/audio-storage';\r?\n/, 'const getDefaultAudioStoragePath = () => ""; const resolveStoredAudioFile = () => null;\n')
+  .replace(/import \{ resolveLocalDataDir, resolveProviderConfigDir \} from '\.\/data-paths';\r?\n/, 'const resolveLocalDataDir = () => process.env.SANMAO_DATA_DIR || path.join(process.cwd(), ".data"); const resolveProviderConfigDir = resolveLocalDataDir;\n'));
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });

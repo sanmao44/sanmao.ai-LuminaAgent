@@ -4,6 +4,7 @@ import { normalizeLocalEditAnnotations } from '../local-edit';
 const MASK_STATUSES: CanvasMaskStatus[] = ['pending', 'running', 'used', 'failed'];
 
 function objectValue(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string' && value) return { url: value };
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
@@ -26,6 +27,10 @@ export function normalizeCanvasMaskState(value: unknown, fallback?: unknown): Ca
     : 'pending';
   const coverage = finiteNumber(raw.coverage ?? fallbackRaw.coverage);
   const annotations = normalizeLocalEditAnnotations(raw.annotations ?? fallbackRaw.annotations);
+  const featherValue = finiteNumber(raw.feather ?? fallbackRaw.feather);
+  const feather = featherValue === undefined
+    ? undefined
+    : Math.max(0, Math.min(48, Math.round(featherValue)));
   return {
     url,
     ...(typeof (raw.assetId ?? fallbackRaw.assetId) === 'string'
@@ -37,9 +42,13 @@ export function normalizeCanvasMaskState(value: unknown, fallback?: unknown): Ca
     ...(typeof (raw.sourceUrl ?? fallbackRaw.sourceUrl) === 'string'
       ? { sourceUrl: String(raw.sourceUrl ?? fallbackRaw.sourceUrl) }
       : {}),
+    ...(typeof (raw.sourceImageDataUrl ?? fallbackRaw.sourceImageDataUrl) === 'string'
+      ? { sourceImageDataUrl: String(raw.sourceImageDataUrl ?? fallbackRaw.sourceImageDataUrl) }
+      : {}),
     status,
     ...(coverage !== undefined ? { coverage: Math.max(0, Math.min(1, coverage)) } : {}),
     ...(annotations.length ? { annotations } : {}),
+    ...(feather !== undefined ? { feather } : {}),
     ...(typeof raw.taskId === 'string' ? { taskId: raw.taskId } : {}),
     ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
     ...(finiteNumber(raw.createdAt) !== undefined ? { createdAt: finiteNumber(raw.createdAt) } : {}),

@@ -13,11 +13,31 @@ case "$PORT" in
   ''|*[!0-9]*) PORT=3210 ;;
 esac
 if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65525 ]; then PORT=3210; fi
-DATA_ROOT="${SANMAO_DATA_DIR:-$ROOT_DIR/.data}"
-case "$DATA_ROOT" in
-  /*) ;;
-  *) DATA_ROOT="$ROOT_DIR/$DATA_ROOT" ;;
-esac
+resolve_provider_config_dir() {
+  CONFIG_DIR="${SANMAO_PROVIDER_CONFIG_DIR:-${SANMAO_DATA_DIR:-}}"
+  if [ -n "$CONFIG_DIR" ]; then
+    case "$CONFIG_DIR" in
+      /*) printf '%s' "$CONFIG_DIR" ;;
+      *) printf '%s/%s' "$ROOT_DIR" "$CONFIG_DIR" ;;
+    esac
+    return 0
+  fi
+  COMMON_DIR=`git -C "$ROOT_DIR" rev-parse --git-common-dir 2>/dev/null || true`
+  if [ -n "$COMMON_DIR" ]; then
+    case "$COMMON_DIR" in
+      /*) ;;
+      *) COMMON_DIR="$ROOT_DIR/$COMMON_DIR" ;;
+    esac
+    COMMON_DIR=`CDPATH= cd -- "$COMMON_DIR" 2>/dev/null && pwd || true`
+    case "$COMMON_DIR" in
+      */.git) printf '%s/.data' "${COMMON_DIR%/.git}"; return 0 ;;
+    esac
+  fi
+  printf '%s/.data' "$ROOT_DIR"
+}
+
+export SANMAO_PROVIDER_CONFIG_DIR=`resolve_provider_config_dir`
+DATA_ROOT="$SANMAO_PROVIDER_CONFIG_DIR"
 MEDIA_RELAY_REQUIRED=0
 if [ -f "$DATA_ROOT/state.json" ] && node -e 'const fs=require("fs");let s;try{s=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch{process.exit(1)};const cloud=(s.upscaleConnections||[]).some(c=>c.status==="healthy"&&((c.encryptedSecretId&&c.encryptedSecretKey)||(c.encryptedAccessKeyId&&c.encryptedAccessKeySecret)));if(cloud)process.exit(0);const models=s.models||[];const hasVideoModel=p=>models.some(m=>m.providerId===p.id&&(m.kind==="video"||(m.capabilities||[]).includes("video-generate")));const ok=(s.providers||[]).some(p=>{const t=String(p.videoTransport||"").toLowerCase();const credential=Boolean(String(p.encryptedApiKey||p.encryptedVideoApiKey||p.apiKey||"").trim());if(!credential)return false;if(t==="agnes-videos"||t==="openai-videos")return true;if(t==="native-task"||t==="jimeng-cli")return false;return (t==="auto"||!t)&&hasVideoModel(p)});process.exit(ok?0:1)' "$DATA_ROOT/state.json"; then
   MEDIA_RELAY_REQUIRED=1

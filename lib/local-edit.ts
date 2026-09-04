@@ -18,12 +18,18 @@ export type LocalEditAnnotationGeometry =
   /** A smart-selection mask can be supplied by an optional local provider. */
   | { kind: "smart"; x: number; y: number; width: number; height: number; maskDataUrl?: string };
 
+export type LocalEditAnnotationMove = {
+  /** One or more original positions. The annotation geometry is the target. */
+  from: LocalEditAnnotationGeometry[];
+};
+
 /** Serializable, source-image-normalized region metadata shown in the editor. */
 export type LocalEditAnnotation = {
   id: string;
   kind: LocalEditAnnotationKind;
   description: string;
   geometry: LocalEditAnnotationGeometry;
+  move?: LocalEditAnnotationMove;
   createdAt: number;
 };
 
@@ -37,54 +43,65 @@ function normalizePoint(value: unknown): LocalEditPoint | null {
   return { x: clampUnit(Number(raw.x)), y: clampUnit(Number(raw.y)) };
 }
 
+function normalizeGeometry(value: unknown): LocalEditAnnotationGeometry | null {
+  if (!value || typeof value !== "object") return null;
+  const geometry = value as Record<string, unknown>;
+  const kind = String(geometry.kind || "");
+  if (kind === "point") {
+    return {
+      kind: "point",
+      x: clampUnit(Number(geometry.x)),
+      y: clampUnit(Number(geometry.y)),
+      radius: Math.max(0.001, Math.min(1, Number(geometry.radius) || 0.03)),
+    };
+  }
+  if (kind === "brush") {
+    const points = Array.isArray(geometry.points)
+      ? geometry.points.map(normalizePoint).filter((point): point is LocalEditPoint => Boolean(point))
+      : [];
+    return points.length
+      ? { kind: "brush", points, radius: Math.max(0.001, Math.min(1, Number(geometry.radius) || 0.03)) }
+      : null;
+  }
+  if (kind === "lasso") {
+    const points = Array.isArray(geometry.points)
+      ? geometry.points.map(normalizePoint).filter((point): point is LocalEditPoint => Boolean(point))
+      : [];
+    return points.length >= 3 ? { kind: "lasso", points } : null;
+  }
+  if (kind !== "rectangle" && kind !== "ellipse" && kind !== "smart") return null;
+  const x = Math.min(0.999, clampUnit(Number(geometry.x)));
+  const y = Math.min(0.999, clampUnit(Number(geometry.y)));
+  const width = Math.min(1 - x, Math.max(0.001, Math.min(1, Number(geometry.width) || 0.001)));
+  const height = Math.min(1 - y, Math.max(0.001, Math.min(1, Number(geometry.height) || 0.001)));
+  return {
+    kind,
+    x,
+    y,
+    width,
+    height,
+    ...(typeof geometry.maskDataUrl === "string" && geometry.maskDataUrl ? { maskDataUrl: geometry.maskDataUrl } : {}),
+  } as LocalEditAnnotationGeometry;
+}
+
 /** Normalize persisted annotations defensively so old/partial backups remain usable. */
 export function normalizeLocalEditAnnotations(value: unknown, limit = 16): LocalEditAnnotation[] {
   if (!Array.isArray(value)) return [];
   return value.slice(0, Math.max(1, limit)).flatMap((item, index) => {
     if (!item || typeof item !== "object") return [];
     const raw = item as Record<string, unknown>;
-    const rawGeometry = raw.geometry;
-    if (!rawGeometry || typeof rawGeometry !== "object") return [];
-    const geometry = rawGeometry as Record<string, unknown>;
-    const kind = String(geometry.kind || raw.kind || "");
-    let normalized: LocalEditAnnotationGeometry | null = null;
-    if (kind === "point") {
-      normalized = {
-        kind: "point",
-        x: clampUnit(Number(geometry.x)),
-        y: clampUnit(Number(geometry.y)),
-        radius: Math.max(0.001, Math.min(1, Number(geometry.radius) || 0.03)),
-      };
-    } else if (kind === "brush") {
-      const points = Array.isArray(geometry.points)
-        ? geometry.points.map(normalizePoint).filter((point): point is LocalEditPoint => Boolean(point))
-        : [];
-      if (points.length) normalized = { kind: "brush", points, radius: Math.max(0.001, Math.min(1, Number(geometry.radius) || 0.03)) };
-    } else if (kind === "lasso") {
-      const points = Array.isArray(geometry.points)
-        ? geometry.points.map(normalizePoint).filter((point): point is LocalEditPoint => Boolean(point))
-        : [];
-      if (points.length >= 3) normalized = { kind: "lasso", points };
-    } else if (kind === "rectangle" || kind === "ellipse" || kind === "smart") {
-      const x = Math.min(0.999, clampUnit(Number(geometry.x)));
-      const y = Math.min(0.999, clampUnit(Number(geometry.y)));
-      const width = Math.min(1 - x, Math.max(0.001, Math.min(1, Number(geometry.width) || 0.001)));
-      const height = Math.min(1 - y, Math.max(0.001, Math.min(1, Number(geometry.height) || 0.001)));
-      normalized = {
-        kind,
-        x,
-        y,
-        width,
-        height,
-        ...(typeof geometry.maskDataUrl === "string" && geometry.maskDataUrl ? { maskDataUrl: geometry.maskDataUrl } : {}),
-      } as LocalEditAnnotationGeometry;
-    }
+    const normalized = normalizeGeometry(raw.geometry || (raw.kind ? raw : null));
     if (!normalized) return [];
+    const rawMove = raw.move && typeof raw.move === "object" ? raw.move as Record<string, unknown> : null;
+    const moveFrom = Array.isArray(rawMove?.from)
+      ? rawMove.from.map(normalizeGeometry).filter((geometry): geometry is LocalEditAnnotationGeometry => Boolean(geometry))
+      : [];
     return [{
       id: typeof raw.id === "string" && raw.id ? raw.id : `annotation-${index + 1}`,
       kind: normalized.kind,
       description: typeof raw.description === "string" ? raw.description : "",
       geometry: normalized,
+      ...(moveFrom.length ? { move: { from: moveFrom } } : {}),
       createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : Date.now(),
     }];
   });
@@ -98,16 +115,15 @@ function sourceRadius(radius: number, width: number, height: number) {
   return Math.max(1, Math.max(width, height) * Math.max(0.001, Math.min(1, radius)));
 }
 
-/** Rasterize one normalized annotation into the shared editable mask. */
-export function applyLocalEditAnnotationMask(
+/** Rasterize one geometry into the shared editable mask. */
+export function applyLocalEditGeometryMask(
   pixels: Uint8ClampedArray,
   width: number,
   height: number,
-  annotation: LocalEditAnnotation,
+  geometry: LocalEditAnnotationGeometry,
   mode: LocalEditRasterMode = "edit",
   smartMaskPixels?: Uint8ClampedArray,
 ) {
-  const geometry = annotation.geometry;
   if (geometry.kind === "smart" && smartMaskPixels) {
     const pixelCount = Math.min(pixels.length, smartMaskPixels.length);
     for (let index = 3; index < pixelCount; index += 4) {
@@ -172,6 +188,29 @@ export function applyLocalEditAnnotationMask(
   return applyRectangleMask(pixels, width, height, left, top, right, bottom, mode);
 }
 
+/** Rasterize a normalized annotation, including every saved move source and its target. */
+export function applyLocalEditAnnotationMask(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  annotation: LocalEditAnnotation,
+  mode: LocalEditRasterMode = "edit",
+  smartMaskPixels?: Uint8ClampedArray,
+  moveSmartMaskPixels?: ReadonlyArray<Uint8ClampedArray | undefined>,
+) {
+  annotation.move?.from.forEach((geometry, index) => {
+    applyLocalEditGeometryMask(
+      pixels,
+      width,
+      height,
+      geometry,
+      mode,
+      moveSmartMaskPixels?.[index],
+    );
+  });
+  return applyLocalEditGeometryMask(pixels, width, height, annotation.geometry, mode, smartMaskPixels);
+}
+
 /** Rasterize and merge a collection of normalized annotations into one mask. */
 export function rasterizeLocalEditAnnotations(
   width: number,
@@ -181,23 +220,58 @@ export function rasterizeLocalEditAnnotations(
 ) {
   const pixels = createProtectedMask(width, height);
   normalizeLocalEditAnnotations(annotations).forEach((annotation) => {
-    applyLocalEditAnnotationMask(
-      pixels,
-      width,
-      height,
-      annotation,
-      "edit",
-      smartMasks?.get(annotation.id),
-    );
+    const sourceMasks = annotation.move?.from.map((_, index) => smartMasks?.get(`${annotation.id}:from:${index}`));
+    applyLocalEditAnnotationMask(pixels, width, height, annotation, "edit", smartMasks?.get(annotation.id), sourceMasks);
   });
   return pixels;
+}
+
+function geometryBounds(geometry: LocalEditAnnotationGeometry) {
+  if (geometry.kind === "point") {
+    return { x: geometry.x - geometry.radius, y: geometry.y - geometry.radius, width: geometry.radius * 2, height: geometry.radius * 2 };
+  }
+  if (geometry.kind === "rectangle" || geometry.kind === "ellipse" || geometry.kind === "smart") {
+    return { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height };
+  }
+  if (geometry.kind !== "brush" && geometry.kind !== "lasso") {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+  if (!geometry.points.length) return { x: 0, y: 0, width: 0, height: 0 };
+  const xs = geometry.points.map((point) => point.x);
+  const ys = geometry.points.map((point) => point.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(0, Math.max(...xs) - x), height: Math.max(0, Math.max(...ys) - y) };
+}
+
+function movementDirection(annotation: LocalEditAnnotation) {
+  const source = annotation.move?.from[annotation.move.from.length - 1];
+  if (!source) return "";
+  const sourceBounds = geometryBounds(source);
+  const targetBounds = geometryBounds(annotation.geometry);
+  const dx = targetBounds.x + targetBounds.width / 2 - (sourceBounds.x + sourceBounds.width / 2);
+  const dy = targetBounds.y + targetBounds.height / 2 - (sourceBounds.y + sourceBounds.height / 2);
+  const horizontal = Math.abs(dx) >= 0.005 ? (dx > 0 ? "右" : "左") : "";
+  const vertical = Math.abs(dy) >= 0.005 ? (dy > 0 ? "下" : "上") : "";
+  return horizontal || vertical ? `向${vertical}${horizontal}` : "位置微调";
 }
 
 /** Compile the region descriptions into a provider-compatible prompt. */
 export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnnotation[] = []) {
   const base = String(prompt || "").trim().replace(/\n\n局部区域说明：[\s\S]*$/u, "").trim();
   const descriptions = normalizeLocalEditAnnotations(annotations)
-    .map((annotation, index) => ({ index: index + 1, text: annotation.description.trim() }))
+    .map((annotation, index) => {
+      const description = annotation.description.trim();
+      if (annotation.move?.from.length) {
+        const direction = movementDirection(annotation);
+        const history = annotation.move.from.length > 1 ? `（含之前的 ${annotation.move.from.length} 个原位置）` : "";
+        return {
+          index: index + 1,
+          text: `将对象从原位置${history}移动到目标位置（移动方向：${direction}）；清除原位置并自然补全背景；在目标位置重建主体。${description ? `补充说明：${description}` : ""}`,
+        };
+      }
+      return { index: index + 1, text: description };
+    })
     .filter((item) => item.text);
   if (!descriptions.length) return base;
   const context = descriptions.map((item) => `区域 ${item.index}：${item.text}`).join("\n");
@@ -214,70 +288,6 @@ export function calculateEditableCoverage(pixels: Uint8ClampedArray): number {
     if (pixels[index] < 128) editable += 1;
   }
   return editable / (pixels.length / 4);
-}
-
-/**
- * Move the selected pixels to a new location while keeping the source image
- * immutable. The selection follows the mask contract: alpha 0 is selected
- * and alpha 255 is protected. The caller can therefore use the returned
- * pixels for both the live editor preview and the submitted edit reference.
- */
-export function moveLocalEditPixels(
-  source: Uint8ClampedArray,
-  selectionMask: Uint8ClampedArray,
-  width: number,
-  height: number,
-  dx: number,
-  dy: number,
-) {
-  const pixelCount = Math.max(0, Math.min(source.length, selectionMask.length) - (Math.min(source.length, selectionMask.length) % 4));
-  if (width < 1 || height < 1 || source.length !== width * height * 4 || selectionMask.length !== source.length) {
-    throw new Error("Local-edit move buffers must match the canvas dimensions");
-  }
-  const output = new Uint8ClampedArray(source);
-  const offsetX = Math.round(dx);
-  const offsetY = Math.round(dy);
-  const original = new Uint8ClampedArray(source);
-
-  // Clear the selected source pixels first. Reading from `original` below
-  // makes overlapping moves deterministic and prevents dragging from leaving
-  // trails when the pointer moves repeatedly.
-  for (let index = 3; index < pixelCount; index += 4) {
-    const weight = 1 - selectionMask[index] / 255;
-    if (weight <= 0) continue;
-    const sourceIndex = index - 3;
-    const keep = 1 - weight;
-    output[sourceIndex] = Math.round(original[sourceIndex] * keep);
-    output[sourceIndex + 1] = Math.round(original[sourceIndex + 1] * keep);
-    output[sourceIndex + 2] = Math.round(original[sourceIndex + 2] * keep);
-    output[sourceIndex + 3] = Math.round(original[sourceIndex + 3] * keep);
-  }
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const sourceIndex = (y * width + x) * 4;
-      const weight = 1 - selectionMask[sourceIndex + 3] / 255;
-      if (weight <= 0) continue;
-      const targetX = x + offsetX;
-      const targetY = y + offsetY;
-      if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height) continue;
-      const targetIndex = (targetY * width + targetX) * 4;
-      if (weight >= 0.999) {
-        output[targetIndex] = original[sourceIndex];
-        output[targetIndex + 1] = original[sourceIndex + 1];
-        output[targetIndex + 2] = original[sourceIndex + 2];
-        output[targetIndex + 3] = original[sourceIndex + 3];
-        continue;
-      }
-      const keep = 1 - weight;
-      for (let channel = 0; channel < 4; channel += 1) {
-        output[targetIndex + channel] = Math.round(
-          output[targetIndex + channel] * keep + original[sourceIndex + channel] * weight,
-        );
-      }
-    }
-  }
-  return output;
 }
 
 /**

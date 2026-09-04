@@ -125,7 +125,7 @@ npm start
 
 ## 本地数据
 
-服务商/API Key：服务端 `.data/` 目录保存，API Key 使用 AES-256-GCM 加密。
+服务商/API Key：服务端 `.data/` 目录保存，API Key 使用 AES-256-GCM 加密。源码运行在 Git 工作树时，服务商配置会自动跟随主工作树的 `.data/state.json` 和 `.data/master.key`，因此不同工作树可以直接共用已保存的服务商与模型；画布、图库、图片、日志和任务等其他本地数据仍按各自工作树隔离。需要自定义位置时可设置 `SANMAO_PROVIDER_CONFIG_DIR`，它优先于自动判断。
 
 生成历史：浏览器 IndexedDB 保存。这样图片不会因为刷新页面立即丢失，也无需第一版就搭数据库。
 

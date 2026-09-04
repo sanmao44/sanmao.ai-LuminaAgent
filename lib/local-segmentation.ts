@@ -59,7 +59,7 @@ export function localSegmentationStatus(): LocalSegmentationStatus {
 }
 
 export function localSegmentationUnavailableMessage() {
-  return "本地主体识别模型尚未安装；可继续使用点选或手动画区。";
+  return "本地智能点选模型尚未安装；可继续使用点选或手动画区。";
 }
 
 export async function segmentLocalSubject(
@@ -69,6 +69,6 @@ export async function segmentLocalSubject(
   const provider = getLocalSegmentationProvider();
   if (!provider) throw new Error(localSegmentationUnavailableMessage());
   if (provider.status() !== "ready" && provider.load) await provider.load();
-  if (provider.status() !== "ready") throw new Error("本地主体识别模型暂时不可用，请改用手动标记。 ");
+  if (provider.status() !== "ready") throw new Error("本地智能点选模型暂时不可用，请改用框选或画笔标记。");
   return provider.segment(imageDataUrl, point);
 }

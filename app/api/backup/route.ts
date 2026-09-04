@@ -1,12 +1,14 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isAdminRequest } from '@/lib/auth';
+import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
 
 export const runtime = 'nodejs';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
-const statePath = path.join(dataDir, 'state.json');
-const keyPath = path.join(dataDir, 'master.key');
+const dataDir = resolveLocalDataDir();
+const providerConfigDir = resolveProviderConfigDir();
+const statePath = path.join(providerConfigDir, 'state.json');
+const keyPath = path.join(providerConfigDir, 'master.key');
 const logPath = path.join(dataDir, 'generation-logs.jsonl');
 
 async function readOptional(file: string) {

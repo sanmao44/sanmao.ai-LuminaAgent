@@ -6,12 +6,14 @@ import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validate
 import { getDefaultStoragePath, getStorageRoots } from '@/lib/image-storage';
 import { createLocalSnapshot } from '@/lib/local-snapshots';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
 
 export const runtime = 'nodejs';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
-const statePath = path.join(dataDir, 'state.json');
-const keyPath = path.join(dataDir, 'master.key');
+const dataDir = resolveLocalDataDir();
+const providerConfigDir = resolveProviderConfigDir();
+const statePath = path.join(providerConfigDir, 'state.json');
+const keyPath = path.join(providerConfigDir, 'master.key');
 const maxClientBytes = 80 * 1024 * 1024;
 const maxArchiveBytes = 2 * 1024 * 1024 * 1024;
 

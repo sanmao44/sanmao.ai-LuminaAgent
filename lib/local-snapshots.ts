@@ -6,12 +6,14 @@ import { createBackupArchive, extractBackupArchive, type BackupArchiveEntry } fr
 import { decryptBackupPayload, encryptBackupPayload } from './backup-crypto';
 import { getDefaultStoragePath, getStorageRoots } from './image-storage';
 import { encryptSecret } from './store';
+import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
+const providerConfigDir = resolveProviderConfigDir();
 const snapshotDir = path.join(dataDir, 'backups', 'auto');
-const statePath = path.join(dataDir, 'state.json');
+const statePath = path.join(providerConfigDir, 'state.json');
 const workspacePath = path.join(dataDir, 'workspace.json');
-const keyPath = path.join(dataDir, 'master.key');
+const keyPath = path.join(providerConfigDir, 'master.key');
 const SNAPSHOT_FORMAT = 'sanmao-ai-auto-snapshot';
 const KEEP_SNAPSHOTS = 7;
 let snapshotInFlight: Promise<{ path: string; createdAt: string; bytes: number; imageCount: number; reason: string }> | null = null;
@@ -135,6 +137,7 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
   const { byName, state } = validateEntries(entries);
   state.settings = { ...state.settings, imageStoragePath: configuredStoragePath };
   await mkdir(dataDir, { recursive: true });
+  await mkdir(providerConfigDir, { recursive: true });
   await writeFile(`${statePath}.snapshot.tmp`, `${JSON.stringify(state, null, 2)}\n`, { flush: true });
   const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
   for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await rm(path.join(dataDir, name), { force: true });

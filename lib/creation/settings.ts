@@ -20,8 +20,12 @@ export type CanvasMaskAsset = {
   /** A locally moved source image that must replace the original first reference. */
   sourceAssetId?: string;
   sourceUrl?: string;
+  /** Legacy editor output kept readable for old saved requests. */
+  sourceImageDataUrl?: string;
   referenceId?: string;
   annotations?: LocalEditAnnotation[];
+  /** Feather radius in source-image pixels, persisted with the local edit. */
+  feather?: number;
 };
 
 export type ImageCreationSettings = {
@@ -272,8 +276,14 @@ export function normalizeImageCreationSettings(
     raw.quality === "low" || raw.quality === "medium" || raw.quality === "high"
       ? raw.quality
       : "自动";
-  const maskRaw = objectValue(raw.mask);
+  const maskRaw = typeof raw.mask === "string"
+    ? { url: raw.mask }
+    : objectValue(raw.mask);
   const maskAnnotations = normalizeLocalEditAnnotations(maskRaw.annotations);
+  const maskFeatherValue = Number(maskRaw.feather);
+  const maskFeather = Number.isFinite(maskFeatherValue)
+    ? clampInteger(maskFeatherValue, 0, 48, 0)
+    : undefined;
   const mask =
     typeof maskRaw.url === "string" && maskRaw.url
       ? {
@@ -287,12 +297,16 @@ export function normalizeImageCreationSettings(
           ...(typeof maskRaw.sourceUrl === "string"
             ? { sourceUrl: maskRaw.sourceUrl }
             : {}),
+          ...(typeof maskRaw.sourceImageDataUrl === "string"
+            ? { sourceImageDataUrl: maskRaw.sourceImageDataUrl }
+            : {}),
           ...(typeof maskRaw.referenceId === "string"
             ? { referenceId: maskRaw.referenceId }
             : {}),
           ...(maskAnnotations.length
             ? { annotations: maskAnnotations }
             : {}),
+          ...(maskFeather !== undefined ? { feather: maskFeather } : {}),
         }
       : undefined;
   return {

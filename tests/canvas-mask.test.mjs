@@ -138,11 +138,15 @@ test("canvasMaskStateFromParams keeps legacy request data compatible", () => {
 test("canvas mask state preserves normalized local-edit annotations", () => {
   const result = mask.normalizeCanvasMaskState({
     url: "/mask-annotated.png",
+    feather: 72,
     annotations: [{
       id: "shoe",
       kind: "point",
       description: "修改鞋子",
       geometry: { kind: "point", x: 0.5, y: 0.5, radius: 0.04 },
+      move: {
+        from: [{ kind: "point", x: 0.25, y: 0.5, radius: 0.04 }],
+      },
       createdAt: 123,
     }],
   });
@@ -150,4 +154,31 @@ test("canvas mask state preserves normalized local-edit annotations", () => {
   assert.equal(result.annotations?.length, 1);
   assert.equal(result.annotations?.[0].geometry.kind, "point");
   assert.equal(result.annotations?.[0].description, "修改鞋子");
+  assert.equal(result.annotations?.[0].move?.from[0].x, 0.25);
+  assert.equal(result.feather, 48);
+});
+
+test("canvas mask normalization restores legacy string and fallback metadata", () => {
+  const result = mask.normalizeCanvasMaskState(undefined, {
+    url: "/mask-fallback.png",
+    feather: -4,
+    sourceUrl: "/legacy-source.png",
+    sourceImageDataUrl: "data:image/png;base64,legacy-source",
+    annotations: [{
+      id: "legacy",
+      kind: "rectangle",
+      description: "兼容旧数据",
+      geometry: { kind: "rectangle", x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      createdAt: 1,
+    }],
+  });
+
+  assert.equal(result?.url, "/mask-fallback.png");
+  assert.equal(result?.feather, 0);
+  assert.equal(result?.sourceUrl, "/legacy-source.png");
+  assert.equal(result?.sourceImageDataUrl, "data:image/png;base64,legacy-source");
+  assert.equal(result?.annotations?.[0].description, "兼容旧数据");
+
+  const legacyString = mask.normalizeCanvasMaskState("/mask-string.png");
+  assert.equal(legacyString?.url, "/mask-string.png");
 });

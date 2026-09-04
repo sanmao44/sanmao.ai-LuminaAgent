@@ -65,3 +65,38 @@ test("shift-click keeps multi-selection without opening the node editor", () => 
     /else if \(!interaction\.shiftKey\)[\s\S]*?setQuickToolbarNodeId\(node\.id\)[\s\S]*?setPendingClickNodeId\(node\.id\)/,
   );
 });
+
+test("grouped card drag is constrained and never auto-detaches", () => {
+  const moveInteraction = component.slice(
+    component.indexOf("const moveInteraction = useCallback"),
+    component.indexOf("const finishInteraction = useCallback"),
+  );
+  assert.match(moveInteraction, /clampCanvasNodePositionToGroup/);
+  assert.match(moveInteraction, /interaction\.originGroupId && interaction\.originGroupBounds/);
+
+  const finishInteraction = component.slice(
+    component.indexOf("const finishInteraction = useCallback"),
+    component.indexOf("const cancelPointerInteraction = useCallback"),
+  );
+  assert.doesNotMatch(finishInteraction, /detachNodesFromGroups/);
+  assert.match(finishInteraction, /if \(!interaction\.originGroupId && dropTarget\)/);
+});
+
+test("grouped cards keep the existing card context menu entry point", () => {
+  const contextHandler = component.slice(
+    component.indexOf("const handleContextMenu = useCallback"),
+    component.indexOf("const deck = deckSource()"),
+  );
+  assert.match(contextHandler, /data-canvas-group-id/);
+  assert.match(contextHandler, /if \(isolatedTarget \|\| \(groupElement && !node\)\)/);
+  assert.doesNotMatch(contextHandler, /\.canvas-group,/);
+
+  assert.match(component, /label: "下载"/);
+  assert.match(component, /label: "加入资产"/);
+  assert.match(component, /label: "复制节点"/);
+  assert.match(component, /label: "创建副本"/);
+  assert.match(component, /label: "置于顶层"/);
+  assert.match(component, /label: "置于底层"/);
+  assert.match(component, /label: "上移一层"/);
+  assert.match(component, /label: "下移一层"/);
+});

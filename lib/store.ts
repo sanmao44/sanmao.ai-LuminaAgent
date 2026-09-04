@@ -7,6 +7,7 @@ import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
 import { inferModelKind, isImageEditOnlyModel, resolveModelKind } from './model-kind';
 import { buildPublicUpscaleModels } from './upscale-catalog';
+import { resolveProviderConfigDir } from './data-paths';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -36,7 +37,7 @@ type StoredUpscaleConnection = {
   updatedAt: string;
 };
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveProviderConfigDir();
 const statePath = path.join(dataDir, 'state.json');
 const keyPath = path.join(dataDir, 'master.key');
 const CURRENT_SCHEMA_VERSION = 3;

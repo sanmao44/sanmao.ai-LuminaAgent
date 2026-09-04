@@ -362,8 +362,9 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, sourceImageDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, sourceImageDataUrl\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather\) => applyCanvasMask\(value, coverage, prompt, annotations, feather\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
+  assert.match(component, /initialFeather=\{maskNode\.data\.mask\?\.feather \?\? maskSettings\?\.mask\?\.feather \?\? 0\}/);
   assert.match(component, /status: "pending"/);
   assert.match(component, /coverage: maskCoverage/);
   assert.match(styles, /\.canvas-node-mask-badge/);
@@ -379,6 +380,18 @@ test("local edit summary only occupies editor space when a mask exists", () => {
   assert.doesNotMatch(editor, /尚未设置，绘制后只重新生成指定区域/);
   assert.doesNotMatch(styles, /\.canvas-mask-summary\.empty/);
   assert.match(component, /label: node\.data\.mask \? "查看局部编辑" : "局部编辑"/);
+});
+
+test("dock local edit control keeps the remove action inside the same chip", () => {
+  assert.match(component, /className="canvas-node-editor-dock-local-edit"/);
+  assert.match(component, /className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-edit"/);
+  assert.match(component, /className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove"/);
+  assert.match(component, /aria-label="删除局部编辑"/);
+  assert.match(component, /title="删除当前局部编辑范围"/);
+  assert.match(component, /event\.stopPropagation\(\);\s*onLocalEditRemove\(\)/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*position:relative[^}]*border-radius:999px/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-edit\{[^}]*padding:0 31px 0 9px/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute[^}]*border-radius:50%/);
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {

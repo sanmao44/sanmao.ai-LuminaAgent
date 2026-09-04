@@ -1,6 +1,6 @@
 'use client';
 
-import { saveGalleryItems, type GalleryItem, type GallerySource } from '../client-history';
+import { saveGalleryItems, type GalleryItem, type GalleryLocalEditMask, type GallerySource } from '../client-history';
 import type { ReferenceImageRecord, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
 
@@ -26,6 +26,7 @@ export async function recordCanvasImages(
     upscaleOutputFormat?: UpscaleOutputFormat;
     upscaleOutputQuality?: number;
     annotations?: LocalEditAnnotation[];
+    mask?: GalleryLocalEditMask;
   },
 ) {
   const createdAt = Date.now();
@@ -54,6 +55,7 @@ export async function recordCanvasImages(
     upscaleOutputQuality: meta.upscaleOutputQuality,
     references: meta.references,
     annotations: meta.annotations,
+    mask: meta.mask,
   }));
   await saveGalleryItems(items);
   return items;

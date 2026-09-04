@@ -26,6 +26,32 @@ function Initialize-SanmaoLauncher {
   }
 }
 
+function Resolve-SanmaoProviderConfigDir {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $configured = [string]$env:SANMAO_PROVIDER_CONFIG_DIR
+  if ([string]::IsNullOrWhiteSpace($configured)) { $configured = [string]$env:SANMAO_DATA_DIR }
+  if (-not [string]::IsNullOrWhiteSpace($configured)) {
+    if ([System.IO.Path]::IsPathRooted($configured)) { return [System.IO.Path]::GetFullPath($configured) }
+    return [System.IO.Path]::GetFullPath((Join-Path $Root $configured))
+  }
+
+  try {
+    $commonDir = & git -C $Root rev-parse --git-common-dir 2>$null
+    $gitExitCode = $LASTEXITCODE
+    $commonDir = [string](@($commonDir | Select-Object -First 1))
+    if ($gitExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($commonDir)) {
+      if (-not [System.IO.Path]::IsPathRooted($commonDir)) { $commonDir = Join-Path $Root $commonDir }
+      $commonDir = [System.IO.Path]::GetFullPath($commonDir.Trim())
+      if ([System.IO.Path]::GetFileName($commonDir).TrimEnd('\', '/') -ieq '.git') {
+        return Join-Path (Split-Path -Parent $commonDir) '.data'
+      }
+    }
+  } catch {}
+
+  return Join-Path $Root '.data'
+}
+
 function Test-SanmaoOperationLockStale {
   param(
     [Parameter(Mandatory = $true)][string]$Path,

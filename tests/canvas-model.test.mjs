@@ -1234,6 +1234,40 @@ test('arranges cards inside a selected group without moving the group or externa
   );
 });
 
+test('keeps a grouped card inside the group content inset', () => {
+  const bounds = { x: 100, y: 80, w: 700, h: 520 };
+  const size = { w: 380, h: 270 };
+
+  assert.deepEqual(
+    model.clampCanvasNodePositionToGroup({ x: -100, y: -100 }, size, bounds),
+    { x: 130, y: 128 },
+  );
+  assert.deepEqual(
+    model.clampCanvasNodePositionToGroup({ x: 999, y: 999 }, size, bounds),
+    { x: 390, y: 300 },
+  );
+});
+
+test('arranges isolated group cards with horizontal and vertical gaps', () => {
+  const empty = model.normalizeDocument(null);
+  const nodes = [
+    model.createMedia('image', '/grid-one.png', '网格一', { x: 900, y: 900 }),
+    model.createMedia('image', '/grid-two.png', '网格二', { x: 80, y: 80 }),
+    model.createMedia('image', '/grid-three.png', '网格三', { x: 500, y: 80 }),
+    model.createMedia('image', '/grid-four.png', '网格四', { x: 80, y: 500 }),
+  ];
+  const document = model.createGroup({ ...empty, nodes }, nodes.map((node) => node.id), '网格组');
+  const arranged = model.arrangeCanvasGroup(document, document.groups[0].id).document;
+  const members = document.groups[0].nodeIds.map((id) => arranged.nodes.find((node) => node.id === id));
+  const rows = [...new Set(members.map((node) => node.y))].sort((left, right) => left - right);
+  const columns = [...new Set(members.map((node) => node.x))].sort((left, right) => left - right);
+
+  assert.equal(rows.length, 2);
+  assert.equal(columns.length, 2);
+  assert.ok(columns[1] - columns[0] - members[0].w >= 120);
+  assert.ok(rows[1] - rows[0] - members[0].h >= 72);
+});
+
 test('handles cycles, empty selections, and deterministic output', () => {
   const first = model.createPrompt({ x: 1000, y: 20 }, 'A');
   const second = model.createGenerator('image', { x: -1000, y: 20 });

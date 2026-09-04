@@ -47,6 +47,9 @@ $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 
 . (Join-Path $PSScriptRoot 'launcher-common.ps1')
 . (Join-Path $PSScriptRoot 'free-relay-common.ps1')
+# SANMAO_DATA_DIR remains the explicit all-data override; otherwise only the
+# provider configuration follows a linked worktree back to the primary checkout.
+$env:SANMAO_PROVIDER_CONFIG_DIR = Resolve-SanmaoProviderConfigDir -Root $root
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
 
 $operationLockPath = Join-Path $root '.data\update-staging\update.lock'
@@ -148,12 +151,7 @@ function Test-SanmaoServerAtPort([int]$port) {
 }
 
 function Test-SanmaoMediaRelayRequired {
-  $dataRoot = [string]$env:SANMAO_DATA_DIR
-  if ([string]::IsNullOrWhiteSpace($dataRoot)) {
-    $dataRoot = Join-Path $root '.data'
-  } elseif (-not [System.IO.Path]::IsPathRooted($dataRoot)) {
-    $dataRoot = Join-Path $root $dataRoot
-  }
+  $dataRoot = Resolve-SanmaoProviderConfigDir -Root $root
   $statePath = Join-Path $dataRoot 'state.json'
   if (-not (Test-Path -LiteralPath $statePath)) { return $false }
   try {

@@ -111,9 +111,13 @@ export type CanvasMaskState = {
   /** A locally moved source image that must replace the original first reference. */
   sourceAssetId?: string;
   sourceUrl?: string;
+  /** Legacy editor output kept readable for old saved canvas documents. */
+  sourceImageDataUrl?: string;
   status: CanvasMaskStatus;
   coverage?: number;
   annotations?: LocalEditAnnotation[];
+  /** Feather radius in source-image pixels, clamped to 0–48 on restore. */
+  feather?: number;
   taskId?: string;
   error?: string;
   createdAt?: number;

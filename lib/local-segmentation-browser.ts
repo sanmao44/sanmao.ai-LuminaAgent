@@ -163,7 +163,7 @@ async function load() {
 
 async function segment(imageDataUrl: string, point: LocalEditPoint): Promise<LocalSegmentationResult> {
   await load();
-  if (!runtime) throw new Error('本地主体识别模型暂时不可用，请改用手动标记。');
+  if (!runtime) throw new Error('本地智能点选模型暂时不可用，请改用框选或画笔标记。');
 
   let image = await runtime.RawImage.read(imageDataUrl);
   if (Math.max(image.width, image.height) > MAX_INFERENCE_DIMENSION) {
@@ -186,7 +186,7 @@ async function segment(imageDataUrl: string, point: LocalEditPoint): Promise<Loc
   const maskBatch = masks[0];
   const mask = maskBatch?.[0]?.[bestIndex];
   if (!mask?.dims || mask.dims.length !== 2 || !mask.data) {
-    throw new Error('智能识别没有返回有效主体遮罩，请改用手动标记。');
+    throw new Error('智能点选没有返回有效主体遮罩，请改用框选或画笔标记。');
   }
 
   const [height, width] = mask.dims as [number, number];
@@ -215,14 +215,14 @@ async function segment(imageDataUrl: string, point: LocalEditPoint): Promise<Loc
     }
   }
   if (maxX < minX || maxY < minY) {
-    throw new Error('没有识别到主体，请换一个更靠近主体的位置，或改用手动标记。');
+    throw new Error('没有识别到主体，请换一个更靠近主体的位置，或改用框选或画笔标记。');
   }
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext('2d');
-  if (!context) throw new Error('无法生成主体遮罩，请改用手动标记。');
+  if (!context) throw new Error('无法生成主体遮罩，请改用框选或画笔标记。');
   context.putImageData(new ImageData(rgba, width, height), 0, 0);
   return {
     maskDataUrl: canvas.toDataURL('image/png'),

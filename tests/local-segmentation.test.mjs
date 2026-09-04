@@ -29,8 +29,9 @@ test("the free browser provider is cached, loaded on demand, and keeps model fil
 
 test("the shared local editor exposes smart selection at every image entry point", () => {
   assert.match(editorSource, /from '@\/lib\/local-segmentation-browser'/);
-  assert.match(editorSource, /本地主体识别模型/);
-  assert.match(editorSource, /安装免费主体识别模型/);
+  assert.match(editorSource, /本地智能点选（SAM）/);
+  assert.match(editorSource, /安装免费智能点选模型/);
+  assert.match(editorSource, /请改用框选或画笔标记/);
   assert.match(pageSource, /LocalEditEditor/);
   assert.match(viewerSource, /onLocalEdit/);
   assert.match(canvasSource, /onLocalEdit/);
