@@ -9,7 +9,7 @@
         "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip",
         "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip"
     ],
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sha256": "44e42e20c742a7e666bd45623c2b5fda54fdb04ef9b0b303f2659d620e3ec671",
     "publishedAt": "2026-09-05T02:36:24+08:00",
     "notes": [
         "组内卡片拖拽限制在当前组的有效区域内，只有点击“出组”才会解除当前卡片的组关系。",
