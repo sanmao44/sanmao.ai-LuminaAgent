@@ -103,11 +103,16 @@ function Get-SanmaoSourceFingerprint {
   $files += Get-ChildItem -LiteralPath $root -Filter '.env*' -File -Force -ErrorAction SilentlyContinue
   $hash = [System.Security.Cryptography.SHA256]::Create()
   try {
-    foreach ($file in @($files | Sort-Object FullName -Unique)) {
-      $relative = $file.FullName.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
+    # Sort by full path using an ordinal (case-sensitive) comparer so the ordering
+    # exactly matches the Node runtime's default Array.prototype.sort() ordering.
+    $fullPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($file in $files) { [void]$fullPaths.Add($file.FullName) }
+    $fullPaths.Sort([System.Collections.Generic.Comparer[string]]::Create([System.Comparison[string]]{ param($a,$b) [string]::CompareOrdinal($a,$b) }))
+    foreach ($fullPath in $fullPaths) {
+      $relative = $fullPath.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
       $pathBytes = [System.Text.Encoding]::UTF8.GetBytes($relative)
       $nullBytes = [byte[]](0)
-      $contentBytes = [System.IO.File]::ReadAllBytes($file.FullName)
+      $contentBytes = [System.IO.File]::ReadAllBytes($fullPath)
       [void]$hash.TransformBlock($pathBytes, 0, $pathBytes.Length, $pathBytes, 0)
       [void]$hash.TransformBlock($nullBytes, 0, 1, $nullBytes, 0)
       if ($contentBytes.Length -gt 0) { [void]$hash.TransformBlock($contentBytes, 0, $contentBytes.Length, $contentBytes, 0) }
@@ -817,10 +822,19 @@ if ($freeRelayRequested) {
   }
   try {
     $watchScript = Join-Path $PSScriptRoot 'free-relay-watch.ps1'
+    # The long-lived relay watchdog must not inherit this process's stdout/stderr
+    # handles, otherwise a parent that pipes this script's output (e.g. restart.ps1's
+    # Invoke-SanmaoScript) can block forever waiting for EOF. Redirect it to its own
+    # dedicated log files instead.
+    $watchOutPath = Join-Path $root ('.data\logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.out.log')
+    $watchErrPath = Join-Path $root ('.data\logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.err.log')
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $watchOutPath) | Out-Null
     Start-Process -FilePath 'powershell.exe' `
       -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id, '-OriginPort', [string]$port) `
       -WorkingDirectory $root `
-      -WindowStyle Hidden | Out-Null
+      -WindowStyle Hidden `
+      -RedirectStandardOutput $watchOutPath `
+      -RedirectStandardError $watchErrPath | Out-Null
   } catch {
     Write-SanmaoLauncherLog "免费临时通道自动清理监视器启动失败：$($_.Exception.Message)" 'WARN'
   }

@@ -20,6 +20,23 @@ function Stop-SanmaoFreeRelayTunnel {
   Remove-Item -LiteralPath (Join-Path $stateRoot 'cloudflared.pid'), (Join-Path $stateRoot 'public-url.txt') -Force -ErrorAction SilentlyContinue
 }
 
+function Stop-SanmaoFreeRelayWatch {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $escapedRoot = [regex]::Escape($Root)
+  $watchers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    $_.ProcessId -ne $PID -and
+    $_.CommandLine -and
+    $_.CommandLine -match 'free-relay-watch\.ps1' -and
+    $_.CommandLine -match $escapedRoot
+  })
+  foreach ($watcher in $watchers) {
+    try { Stop-Process -Id $watcher.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+    try { & taskkill.exe /PID $watcher.ProcessId /T /F 2>$null | Out-Null } catch {}
+  }
+  return $watchers.Count
+}
+
 function Get-SanmaoFreeRelayPublicUrl {
   param([Parameter(Mandatory = $true)][string]$Root)
 

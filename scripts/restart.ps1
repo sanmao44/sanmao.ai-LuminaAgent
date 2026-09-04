@@ -65,8 +65,17 @@ function Remove-OwnedMarkers {
 }
 
 function Invoke-SanmaoScript([string]$Script, [string[]]$Arguments) {
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments
-  return [int]$LASTEXITCODE
+  # 丢弃子进程的 stdout，只返回退出码，否则 Write-Host 输出会污染返回值，
+  # 导致 restart 误判“旧服务未能安全停止”（停止其实已成功）。
+  # 用 Start-Process 独立句柄启动，避免子进程派生的常驻看门狗（free-relay-watch / node）
+  # 继承重定向句柄导致重定向永远等不到 EOF 而卡死。WaitForExit 只等待子进程自身退出码，
+  # 不受孙进程持有句柄影响。
+  # 重要：不能用 -RedirectStandardOutput/-RedirectStandardError，否则这里的 ExitCode 会被
+  # Start-Process 错误地返回 0（子进程真实退出码为 4 时），导致 restart 把失败当成成功。
+  $argumentList = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$Script) + $Arguments
+  $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argumentList -WorkingDirectory $root -WindowStyle Hidden -PassThru
+  $proc.WaitForExit()
+  return [int]$proc.ExitCode
 }
 
 try {
@@ -74,7 +83,15 @@ try {
   Write-RestartStatus 'stopping'
   $stopScript = Join-Path $PSScriptRoot 'stop.ps1'
   $stopArguments = @('-Port', [string]$Port, '-OperationToken', $OperationToken)
-  if ((Invoke-SanmaoScript $stopScript $stopArguments) -ne 0) { throw '旧服务未能安全停止' }
+  $stopOk = $false
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    if ((Invoke-SanmaoScript $stopScript $stopArguments) -eq 0) { $stopOk = $true; break }
+    if ($attempt -lt 3) {
+      Write-RestartStatus 'stopping'
+      Start-Sleep -Seconds 3
+    }
+  }
+  if (-not $stopOk) { throw '旧服务未能安全停止' }
 
   if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force }
   $buildDir = Join-Path $root '.next'

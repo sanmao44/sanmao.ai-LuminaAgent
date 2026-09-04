@@ -257,6 +257,19 @@ function Wait-SanmaoPortsReleased {
   return $false
 }
 
+function Stop-SanmaoPortOwners {
+  param([Parameter(Mandatory = $true)][int[]]$Ports)
+
+  $pids = @()
+  foreach ($port in @($Ports | Sort-Object -Unique)) {
+    $pids += @(Get-SanmaoOwningPidsByPort -Port $port)
+  }
+  foreach ($pidValue in @($pids | Sort-Object -Unique | Where-Object { $_ -gt 0 })) {
+    Write-SanmaoLauncherLog ("强制回收占用端口进程 PID $pidValue") 'WARN'
+    try { & taskkill.exe /PID $pidValue /T /F 2>$null | Out-Null } catch {}
+  }
+}
+
 function Clear-SanmaoOwnedServers {
   param([int[]]$Ports)
 

@@ -56,7 +56,12 @@ if (Test-Path -LiteralPath $operationLockPath) {
   }
 }
 
+if (-not $DryRun) { Stop-SanmaoFreeRelayWatch -Root $root | Out-Null }
 if (-not $DryRun) { Stop-SanmaoFreeRelayTunnel -Root $root }
+if (-not $DryRun) {
+  # 清理旧的免费中继看门狗日志文件。
+  Get-ChildItem -LiteralPath (Join-Path $root '.data\logs') -Filter 'free-relay-watch-*.log' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+}
 
 function Stop-SanmaoLanLauncherProcesses {
   $rootPattern = [regex]::Escape($root)
@@ -103,7 +108,16 @@ if ($DryRun) {
   exit 0
 }
 
-if ($portsToVerify.Count -gt 0 -and -not (Wait-SanmaoPortsReleased -Ports $portsToVerify -TimeoutMs 10000)) {
+$released = $true
+if ($portsToVerify.Count -gt 0) { $released = Wait-SanmaoPortsReleased -Ports $portsToVerify -TimeoutMs 8000 }
+if (-not $released) {
+  # 旧服务进程没有在期限内释放端口。再次停止看门狗，并强制回收仍占用目标端口的进程。
+  Write-SanmaoLauncherLog '端口未及时释放，强制回收占用端口 3210 的进程。' 'WARN'
+  Stop-SanmaoFreeRelayWatch -Root $root | Out-Null
+  Stop-SanmaoPortOwners -Ports $portsToVerify | Out-Null
+  $released = Wait-SanmaoPortsReleased -Ports $portsToVerify -TimeoutMs 8000
+}
+if (-not $released) {
   Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
   $remaining = @($portsToVerify | Where-Object { @(Get-SanmaoOwningPidsByPort -Port $_).Count -gt 0 })
   Write-SanmaoLauncherLog ("停止失败，端口仍被占用：" + ($remaining -join ', ')) 'ERROR'

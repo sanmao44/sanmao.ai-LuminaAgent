@@ -29,7 +29,10 @@ async function collectFiles(directory: string): Promise<string[]> {
 async function sourceFiles() {
   const files: string[] = [];
   for (const directory of trackedDirectories) files.push(...await collectFiles(path.join(root, directory)));
-  for (const file of trackedFiles) files.push(path.join(root, file));
+  for (const file of trackedFiles) {
+    const fullPath = path.join(root, file);
+    try { await stat(fullPath); files.push(fullPath); } catch { /* skip missing tracked file */ }
+  }
   const envFiles = await readdir(root, { withFileTypes: true }).catch(() => []);
   for (const entry of envFiles) if (entry.isFile() && entry.name.startsWith('.env')) files.push(path.join(root, entry.name));
   return files.filter((file) => !file.includes(`${path.sep}.next${path.sep}`) && !file.includes(`${path.sep}node_modules${path.sep}`)).sort();
