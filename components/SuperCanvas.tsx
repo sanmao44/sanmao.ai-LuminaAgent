@@ -8457,13 +8457,14 @@ export default function SuperCanvas() {
         }));
         if (reuseDraft?.sourceNodeId === node.id) {
           setReuseDraft({ ...existingDraft, prompt: nextPrompt, params, dirty: true });
-          setExpandedEditorId(node.id);
-          setSelectedIds(new Set([node.id]));
-          setSelectedGroupId(null);
-          setLightbox(null);
-        } else {
-          openImageEditor(node, { params, prompt: nextPrompt });
         }
+        // Applying a local edit completes the mask dialog. Do not reopen the
+        // generic image prompt editor here: the local-edit chip is the single
+        // entry point for reviewing or changing this mask again.
+        setExpandedEditorId(null);
+        setSelectedIds(new Set([node.id]));
+        setSelectedGroupId(null);
+        setLightbox(null);
         setMaskNodeId(null);
         notify(
           `局部编辑范围已保存（覆盖 ${Math.round(maskCoverage * 100)}%），点击生成即可创建右侧新图；原图保持不变`,
@@ -8476,7 +8477,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [maskNodeId, notify, openImageEditor, reuseDraft, runtime, updateDoc],
+    [maskNodeId, notify, reuseDraft, runtime, updateDoc],
   );
 
   const removeCanvasMask = useCallback(

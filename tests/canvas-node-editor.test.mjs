@@ -371,6 +371,16 @@ test("local edit editor reports saving state and passes coverage into the attach
   assert.match(styles, /\.canvas-mask-summary/);
 });
 
+test("applying a local edit closes both editors instead of reopening the node prompt", () => {
+  const applyStart = component.indexOf("const applyCanvasMask = useCallback");
+  const applyEnd = component.indexOf("const removeCanvasMask = useCallback", applyStart);
+  const apply = component.slice(applyStart, applyEnd);
+  assert.ok(applyStart >= 0 && applyEnd > applyStart, "canvas mask apply handler should be present");
+  assert.match(apply, /setExpandedEditorId\(null\)/);
+  assert.match(apply, /setMaskNodeId\(null\)/);
+  assert.doesNotMatch(apply, /openImageEditor\(node, \{ params, prompt: nextPrompt \}\)/);
+});
+
 test("local edit summary only occupies editor space when a mask exists", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   const summaryStart = component.indexOf("function CanvasMaskSummary");
