@@ -96,6 +96,15 @@ gh release create v0.7.25 "C:\path\to\SANMAO.AI-0.7.25.zip" --repo sanmao44/sanm
 ```
 
 > 如果想**全自动**：配好 `.github/workflows` 里的 CI，之后**只要打 tag / 推分支**，GitHub 就会自动打包并出 Release，不用手动 `gh release create`。
+> **发布前必做校验（避免“SHA-256 校验失败”）：**
+> 上传 zip 后，在仓库根目录运行：
+> ```powershell
+> node scripts/verify-release.mjs --file "<SANMAO.AI-x.y.z.zip 的完整路径>" --repo sanmao44/sanmao.ai-LuminaAgent --tag "v0.7.26"
+> ```
+> 脚本会用**实际压缩包**计算 SHA-256，并与 `update.json` 及 GitHub Release 资产 digest 交叉比对。
+> 只要出现“✗ 校验不通过”，就说明 `update.json` 的 `sha256` 与 zip 不一致，**必须用 `--write` 修正后再提交**，
+> 否则用户端会一直提示“更新包 SHA-256 校验失败，已拒绝执行”（正是本次 v0.7.26 出现的问题）。
+
 
 ---
 
@@ -122,6 +131,7 @@ gh release create v0.7.25 "C:\path\to\SANMAO.AI-0.7.25.zip" --repo sanmao44/sanm
 | `push` 了但没升级版本号 / 没出 Release | 代码更新了，但用户不知道、不更新 | 想发布时**打 tag + 出 Release** |
 | zip 不是从 `main` 全量打的 | 用户更新后**漏改动** | 发布前确认 `main` 就是最新 |
 | 版本号与 GitHub 不一致 | 用户端检测不到新版本 | 发布时同步升级 `package.json` / `update.json` |
+| `update.json` 的 sha256 与实际 zip 不一致 | 用户端一直提示“SHA-256 校验失败”无法更新 | 用 `scripts/verify-release.mjs` 校验后再提交 |
 
 ---
 
