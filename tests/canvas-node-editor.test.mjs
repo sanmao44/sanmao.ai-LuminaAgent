@@ -203,11 +203,19 @@ test("video variant generators reuse the compact image-variant dock", () => {
   assert.match(editor, /className="canvas-node-editor-dock-variant-wrap"/);
   assert.match(editor, /aria-controls="canvas-node-dock-variant"/);
   assert.match(editor, /id="canvas-node-dock-variant"/);
+  assert.match(editor, /canvas-node-editor-dock-variant-title/);
+  assert.match(editor, /canvas-node-editor-dock-variant-actions/);
+  const dockVariantStart = editor.indexOf('id="canvas-node-dock-variant"');
+  const dockVariantInput = editor.indexOf("<ReferenceMentionEditor", dockVariantStart);
+  assert.ok(dockVariantStart >= 0 && dockVariantInput > dockVariantStart, "compact variant drawer should contain an input");
+  assert.doesNotMatch(editor.slice(dockVariantStart, dockVariantInput), /canvas-node-variant-editor-head/);
   assert.doesNotMatch(editor, /imageDockPanel === "variant" && createPortal/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*position:absolute[\s\S]*left:0[\s\S]*bottom:calc\(100% \+ 8px\)/);
-  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*width:min\(540px,calc\(100vw - 32px\),100%\)/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*width:min\(540px,calc\(100vw - 32px\)\)/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{[\s\S]*position:relative/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-actions\{[\s\S]*position:relative/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-actions>\.canvas-generator-help-popover\{[\s\S]*position:absolute[\s\S]*bottom:calc\(100% \+ 10px\)/);
 });
 
 test("reference thumbnails keep the strip compact and scroll horizontally only", () => {

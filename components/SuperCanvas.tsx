@@ -14684,14 +14684,16 @@ function CanvasNodeEditorPopover({
                     <div id="canvas-node-dock-variant" className="canvas-node-editor-dock-popover canvas-node-editor-dock-drawer is-variant" role="dialog" aria-label="变体要求" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
                       <div className="canvas-node-editor-dock-drawer-grip" aria-hidden="true" />
                       <div className="canvas-node-editor-dock-popover-head">
-                        <b>变体要求</b>
-                        <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
+                        <div className="canvas-node-editor-dock-variant-title">
+                          <b>变体要求</b>
+                          <small>每行一条，最多 8 条</small>
+                        </div>
+                        <div className="canvas-node-editor-dock-variant-actions">
+                          <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
+                          <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
+                        </div>
                       </div>
                       <div className="canvas-node-variant-editor">
-                        <div className="canvas-node-variant-editor-head">
-                          <label>变体要求 <small>每行一条，最多 8 条</small></label>
-                          <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
-                        </div>
                         <ReferenceMentionEditor
                           value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                           references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}

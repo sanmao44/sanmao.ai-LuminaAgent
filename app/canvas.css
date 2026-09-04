@@ -2975,8 +2975,8 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   top:auto;
   right:auto;
   bottom:calc(100% + 8px);
-  width:min(540px,calc(100vw - 32px),100%);
-  max-width:min(540px,calc(100vw - 32px),100%);
+  width:min(540px,calc(100vw - 32px));
+  max-width:min(540px,calc(100vw - 32px));
   max-height:min(380px,calc(100vh - 48px));
   min-height:0;
   overflow:visible;
@@ -2993,12 +2993,54 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-editor-dock-popover-head{
   margin-bottom:10px;
 }
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-title{
+  display:flex;
+  align-items:baseline;
+  gap:8px;
+  min-width:0;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-title b{
+  flex:none;
+  white-space:nowrap;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-title small{
+  min-width:0;
+  overflow:hidden;
+  color:var(--muted);
+  font-size:9px;
+  line-height:1.2;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-actions{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex:none;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-actions .canvas-generator-help-trigger{
+  width:26px;
+  height:26px;
+  margin:0;
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-actions>.canvas-generator-help-popover{
+  position:absolute;
+  z-index:var(--canvas-z-modal-popover);
+  right:0;
+  bottom:calc(100% + 10px);
+  width:min(460px,calc(100vw - 32px));
+  max-width:min(460px,calc(100vw - 32px));
+  max-height:min(360px,calc(100vh - 48px));
+  display:block;
+  overflow:auto;
+  box-sizing:border-box;
+  margin:0;
+  scrollbar-width:thin;
+}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor{
   gap:8px;
   padding:0;
-}
-.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor-head{
-  margin:0 1px;
 }
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor,
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{
@@ -3034,5 +3076,10 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-variant-editor>.reference-mention-editor .reference-mention-editor-content{
     min-height:76px;
     max-height:min(140px,calc(100vh - 112px));
+  }
+  .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-actions>.canvas-generator-help-popover{
+    width:min(360px,calc(100vw - 32px));
+    max-width:calc(100vw - 32px);
+    max-height:min(300px,calc(100vh - 40px));
   }
 }
