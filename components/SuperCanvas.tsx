@@ -44,6 +44,7 @@ import {
   groupAtPoint,
   groupBounds,
   groupById,
+  groupForNode,
   groupNodes,
   isCanvasReadyImageSource,
   isCanvasReferenceableNode,
@@ -3251,9 +3252,8 @@ export default function SuperCanvas() {
       );
       lastNodePressRef.current = { nodeId: node.id, at: now };
       selectNode(node, event.shiftKey);
-      const group = node.groupId
-        ? groupById(docRef.current, node.groupId)
-        : undefined;
+      const group = groupForNode(docRef.current, node.id);
+      const groupId = group?.id;
       const ids =
         event.shiftKey && group
           ? (() => {
@@ -3268,14 +3268,14 @@ export default function SuperCanvas() {
             ? selectedIds.has(node.id)
               ? [...selectedIds].filter((id) => id !== node.id)
               : [...new Set([...selectedIds, node.id])]
-            : node.groupId && selectedGroupId === node.groupId
-              ? groupNodes(docRef.current, node.groupId).map((item) => item.id)
+            : groupId && selectedGroupId === groupId
+              ? groupNodes(docRef.current, groupId).map((item) => item.id)
               : selectedIds.has(node.id) && selectedIds.size > 1
                 ? [...selectedIds]
                 : [node.id];
-      const dragIds = node.groupId ? [node.id] : ids;
-      const originGroupBounds = node.groupId
-        ? groupBounds(docRef.current, node.groupId)
+      const dragIds = groupId ? [node.id] : ids;
+      const originGroupBounds = groupId
+        ? groupBounds(docRef.current, groupId)
         : undefined;
       const positions = Object.fromEntries(
         dragIds.map((id) => {
@@ -3294,7 +3294,7 @@ export default function SuperCanvas() {
         positions,
         shiftKey: event.shiftKey,
         doubleClick,
-        originGroupId: node.groupId,
+        originGroupId: groupId,
         originGroupBounds,
         copyOnMove: event.altKey,
         preserveInputConnections: event.altKey && event.shiftKey,
@@ -3914,6 +3914,21 @@ export default function SuperCanvas() {
             : groupAtPoint(docRef.current, dropPoint);
           const before = docRef.current;
           let after = before;
+          if (interaction.originGroupId) {
+            const originGroup = groupById(before, interaction.originGroupId);
+            const missingIds = originGroup
+              ? draggedNodes
+                  .filter((node) => !originGroup.nodeIds.includes(node.id))
+                  .map((node) => node.id)
+              : [];
+            if (originGroup && missingIds.length) {
+              after = moveNodesToGroup(
+                before,
+                missingIds,
+                originGroup.id,
+              );
+            }
+          }
           if (!interaction.originGroupId && dropTarget) {
             after = moveNodesToGroup(
               before,
@@ -3923,7 +3938,7 @@ export default function SuperCanvas() {
           }
           if (after !== before) {
             updateDoc(() => after);
-            if (dropTarget) {
+            if (!interaction.originGroupId && dropTarget) {
               setSelectedGroupId(dropTarget.id);
               setSelectedIds(
                 new Set(
@@ -3933,6 +3948,14 @@ export default function SuperCanvas() {
               );
               addLog(`已将 ${draggedNodes.length} 个节点加入${dropTarget.name}`);
               notify(`已将 ${draggedNodes.length} 个节点加入${dropTarget.name}`);
+            } else if (interaction.originGroupId) {
+              const originGroup = after.groups.find(
+                (group) => group.id === interaction.originGroupId,
+              );
+              setSelectedGroupId(interaction.originGroupId);
+              setSelectedIds(
+                new Set(originGroup?.nodeIds || draggedNodes.map((node) => node.id)),
+              );
             } else {
               setSelectedGroupId(null);
               setSelectedIds(new Set(draggedNodes.map((node) => node.id)));
@@ -4499,8 +4522,8 @@ export default function SuperCanvas() {
   const removeNodeFromGroup = useCallback(
     (nodeId: string) => {
       const node = nodeById(docRef.current, nodeId);
-      if (!node?.groupId) return;
-      const group = groupById(docRef.current, node.groupId);
+      const group = groupForNode(docRef.current, nodeId);
+      if (!node || !group) return;
       const next = detachNodesFromGroups(docRef.current, [nodeId]);
       if (next === docRef.current) return;
       commit(() => next);

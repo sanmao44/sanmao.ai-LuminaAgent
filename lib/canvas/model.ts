@@ -814,6 +814,14 @@ export function groupById(document: CanvasDocument, id: string | undefined) {
   return document.groups.find((group) => group.id === id);
 }
 
+/** Resolve a node's group from both persisted membership representations. */
+export function groupForNode(document: CanvasDocument, nodeId: string) {
+  const node = nodeById(document, nodeId);
+  return document.groups.find(
+    (group) => group.id === node?.groupId || group.nodeIds.includes(nodeId),
+  );
+}
+
 export function groupNodes(document: CanvasDocument, groupId: string) {
   const group = groupById(document, groupId);
   return group
