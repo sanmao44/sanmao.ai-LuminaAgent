@@ -1,17 +1,17 @@
 {
     "schemaVersion": 1,
-    "latestVersion": "0.7.25",
-    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.25",
+    "latestVersion": "0.7.26",
+    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.26",
     "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.25/SANMAO.AI-0.7.25.zip",
+    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip",
     "mirrorUrls": [
-        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.25/SANMAO.AI-0.7.25.zip",
-        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.25/SANMAO.AI-0.7.25.zip",
-        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.25/SANMAO.AI-0.7.25.zip"
+        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip",
+        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip",
+        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip"
     ],
     "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "publishedAt": "2026-09-04T03:00:26+08:00",
     "notes": [
-        "图片节点编辑器重构：贴节点下方的紧凑横向宽条，参数朝两侧延伸铺满；模型/生成参数/引用/变体均改为点击弹层，放大编辑改为居中专注态；并修复放大编辑时 @ 引用菜单排版错乱等问题。"
+      "服务生命周期与安全重启：关闭网页不再关闭后台服务；设置页可重启并自动重建；更新与重启增加任务排空、并发锁和失败回滚；局域网模式避免网页重启影响其他设备。"
     ]
 }
