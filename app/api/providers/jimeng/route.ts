@@ -3,6 +3,7 @@ import { extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutp
 import { jimengImageModels } from '@/lib/jimeng-image';
 import { jimengVideoModels } from '@/lib/jimeng-video';
 import { addProvider, enableProviderModels, getProviderWithKey, getPublicState, replaceProviderModels, setProviderStatus } from '@/lib/store';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 
@@ -50,7 +51,9 @@ function statusFrom(output: string, parsed: any[]) {
 
 export async function POST(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('jimeng-provider');
     const body = await request.json().catch(() => ({}));
     const action = String(body.action || 'ensure').trim();
     if (action === 'install') return Response.json({ ok: true, officialUrl: OFFICIAL_GUIDE_URL, command: INSTALL_COMMAND });
@@ -118,6 +121,9 @@ export async function POST(request: Request) {
     }
     return Response.json({ error: '不支持的即梦操作。' }, { status: 400 });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '即梦 CLI 操作失败。' }, { status: 500 });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }

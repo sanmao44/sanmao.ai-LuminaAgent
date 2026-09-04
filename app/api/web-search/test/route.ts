@@ -2,12 +2,15 @@ import { isAdminRequest } from '@/lib/auth';
 import { testWebSearchApi } from '@/lib/web-search';
 import { getWebSearchApiConfig } from '@/lib/store';
 import type { WebSearchApiProvider } from '@/lib/types';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('web-search-test');
     const body = await request.json();
     const provider = String(body.provider || 'baidu-qianfan') as WebSearchApiProvider;
     const apiKey = String(body.apiKey || '').trim();
@@ -23,6 +26,9 @@ export async function POST(request: Request) {
     if (!config || config.provider !== provider || (provider !== 'anysearch' && !config.apiKey)) return Response.json({ error: provider === 'anysearch' ? 'AnySearch 可直接使用匿名免费额度；如需更高额度，可设置 ANYSEARCH_API_KEY。' : '请先填写、保存或设置 QIANFAN_API_KEY。' }, { status: 400 });
     return Response.json({ ok: true, ...(await testWebSearchApi(config)) });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '搜索 API 测试失败。' }, { status: 502 });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }

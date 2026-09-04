@@ -21,6 +21,7 @@ const update = await loadTs(new URL('../lib/update.ts', import.meta.url), [
 ]);
 const local = await loadTs(new URL('../lib/local-update.ts', import.meta.url), [
   ["import type { UpdateStatus } from '@/lib/update';", ''],
+  ["import {\n  acquireRuntimeOperationLock,\n  beginRuntimeDrain,\n  cancelRuntimeDrain,\n  operationLockMatches,\n  removeOwnedRuntimeOperationLock,\n} from '@/lib/runtime-operation';", "const acquireRuntimeOperationLock = async () => ({ token: 'test' }); const beginRuntimeDrain = async () => ({ activeRequests: 0 }); const cancelRuntimeDrain = async () => {}; const operationLockMatches = async () => true; const removeOwnedRuntimeOperationLock = async () => true;"],
 ]);
 
 test('completed progress is stale after the app reaches the recorded version', () => {
@@ -51,7 +52,10 @@ test('update archives remain the single source of installed updater code', async
   assert.doesNotMatch(windowsUpdater, /local-update-runtime\.ts/);
   assert.doesNotMatch(windowsUpdaterCore, /local-update-runtime\.ts/);
   assert.doesNotMatch(windowsUpdaterCore, /Copy-Item\s+-LiteralPath\s+\$PSCommandPath/);
-  assert.match(windowsUpdaterCore, /\$_\.FullName -ne \$PSCommandPath/);
+  assert.match(windowsUpdaterCore, /function Backup-CurrentProgram/);
+  assert.match(windowsUpdaterCore, /function Restore-PreviousProgram/);
+  assert.match(windowsUpdaterCore, /Move-Item -LiteralPath \$_.FullName -Destination \$backupPath -Force/);
+  assert.match(windowsUpdaterCore, /programBackupComplete/);
   assert.match(windowsUpdaterCore, /if \(\$destination -eq \$PSCommandPath\) \{ return \}/);
   assert.match(windowsUpdater, /apply-update-core\.ps1/);
   assert.match(windowsUpdaterBootstrap, /apply-update-core\.ps1/);

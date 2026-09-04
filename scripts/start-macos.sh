@@ -7,6 +7,22 @@ SCRIPT_DIR=`dirname $0`
 ROOT_DIR=`CDPATH= cd -- $SCRIPT_DIR/.. && pwd`
 cd $ROOT_DIR
 
+NON_INTERACTIVE=${SANMAO_NONINTERACTIVE:-0}
+DETACH_SERVER=${SANMAO_DETACH_SERVER:-0}
+OPERATION_TOKEN=${SANMAO_OPERATION_TOKEN:-}
+SKIP_BUILD=${SANMAO_SKIP_BUILD:-0}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --non-interactive) NON_INTERACTIVE=1 ;;
+    --detach) DETACH_SERVER=1 ;;
+    --skip-build) SKIP_BUILD=1 ;;
+    --operation-token) shift; OPERATION_TOKEN=${1:-} ;;
+    *) printf '%s\n' "未知启动参数：$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
 PORT_START="${SANMAO_PORT:-3210}"
 case "$PORT_START" in
   ''|*[!0-9]*) PORT_START=3210 ;;
@@ -39,6 +55,26 @@ if media_relay_required; then MEDIA_RELAY_REQUIRED=1; fi
 
 BUILD_ID="$ROOT_DIR/.next/BUILD_ID"
 RUNNING_BUILD_MARKER="$ROOT_DIR/.next/.sanmao-running-build-id"
+BUILT_SOURCE_MARKER="$ROOT_DIR/.next/.sanmao-source-fingerprint"
+RUNNING_SOURCE_MARKER="$ROOT_DIR/.next/.sanmao-running-source-fingerprint"
+
+operation_lock_allows() {
+  LOCK_PATH="$ROOT_DIR/.data/update-staging/update.lock"
+  [ -f "$LOCK_PATH" ] || return 0
+  LOCK_TOKEN=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$LOCK_PATH" 2>/dev/null | head -n 1 || true)
+  if [ -n "$OPERATION_TOKEN" ] && [ -n "$LOCK_TOKEN" ] && [ "$OPERATION_TOKEN" = "$LOCK_TOKEN" ]; then return 0; fi
+  LOCK_PID=$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$LOCK_PATH" 2>/dev/null | head -n 1 || true)
+  if [ -n "$LOCK_PID" ] && ! kill -0 "$LOCK_PID" 2>/dev/null && sanmao_operation_lock_stale "$LOCK_PATH"; then
+    rm -f "$LOCK_PATH"
+    return 0
+  fi
+  if [ -z "$LOCK_PID" ] && sanmao_operation_lock_stale "$LOCK_PATH"; then
+    rm -f "$LOCK_PATH"
+    return 0
+  fi
+  printf '%s\n' '已有更新或重启任务正在进行，请稍候再试。' >&2
+  return 1
+}
 
 build_served_stale() {
   [ -f "$BUILD_ID" ] || return 0
@@ -46,7 +82,36 @@ build_served_stale() {
   CURRENT_BUILD_ID=`tr -d '\r\n' < "$BUILD_ID" 2>/dev/null || true`
   SERVED_BUILD_ID=`tr -d '\r\n' < "$RUNNING_BUILD_MARKER" 2>/dev/null || true`
   [ -n "$CURRENT_BUILD_ID" ] && [ "$CURRENT_BUILD_ID" = "$SERVED_BUILD_ID" ] || return 0
+  [ -f "$BUILT_SOURCE_MARKER" ] && [ -f "$RUNNING_SOURCE_MARKER" ] || return 0
+  BUILT_SOURCE=$(tr -d '\r\n' < "$BUILT_SOURCE_MARKER" 2>/dev/null || true)
+  RUNNING_SOURCE=$(tr -d '\r\n' < "$RUNNING_SOURCE_MARKER" 2>/dev/null || true)
+  [ -n "$BUILT_SOURCE" ] && [ "$BUILT_SOURCE" = "$RUNNING_SOURCE" ] || return 0
   return 1
+}
+
+source_fingerprint() {
+  node - "$ROOT_DIR" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const root = path.resolve(process.argv[2]);
+const files = [];
+function visit(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) visit(full);
+    else if (entry.isFile()) files.push(full);
+  }
+}
+for (const name of ['app', 'components', 'lib', 'public']) visit(path.join(root, name));
+for (const name of ['next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json']) if (fs.existsSync(path.join(root, name))) files.push(path.join(root, name));
+for (const name of fs.readdirSync(root)) if (name.startsWith('.env') && fs.statSync(path.join(root, name)).isFile()) files.push(path.join(root, name));
+files.sort();
+const hash = crypto.createHash('sha256');
+for (const file of files) { hash.update(path.relative(root, file).split(path.sep).join('/')); hash.update('\0'); hash.update(fs.readFileSync(file)); hash.update('\0'); }
+process.stdout.write(hash.digest('hex'));
+NODE
 }
 
 server_is_ready() {
@@ -101,12 +166,14 @@ fail() {
     tail -n 12 "$SERVER_STDERR" || true
     printf '\n'
   fi
-  if [ -t 0 ]; then
+  if [ "$NON_INTERACTIVE" != 1 ] && [ -t 0 ]; then
     printf '按回车键关闭窗口...'
     read -r _ || true
   fi
   exit 1
 }
+
+if ! operation_lock_allows; then exit 1; fi
 
 acquire_lock() {
   TRIES=0
@@ -201,7 +268,9 @@ printf 'npm：%s\n' `npm --version`
 
 printf '\n==> 检查并安装程序依赖\n'
 NEED_INSTALL=0
-if [ ! -x node_modules/.bin/next ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
+if [ "$SKIP_BUILD" = 1 ]; then
+  printf '%s\n' '回滚模式：保留当前依赖，不执行 npm install。'
+elif [ ! -x node_modules/.bin/next ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
   NEED_INSTALL=1
 fi
 if [ "$NEED_INSTALL" -eq 1 ]; then
@@ -215,12 +284,18 @@ if [ ! -x node_modules/.bin/next ]; then
   fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
 fi
 
+if [ "$SKIP_BUILD" = 1 ] && [ ! -f "$BUILD_ID" ]; then
+  fail '回滚构建产物不存在，无法安全启动旧服务。'
+fi
+
 printf '\n==> 检查构建产物是否最新\n'
 
 NEXT_BIN="$ROOT_DIR/node_modules/.bin/next"
 
 NEED_BUILD=0
-if [ "${SANMAO_FORCE_BUILD:-0}" = "1" ]; then
+if [ "$SKIP_BUILD" = 1 ]; then
+  NEED_BUILD=0
+elif [ "${SANMAO_FORCE_BUILD:-0}" = "1" ]; then
   NEED_BUILD=1
 elif [ ! -f "$BUILD_ID" ]; then
   NEED_BUILD=1
@@ -232,6 +307,13 @@ else
     NEED_BUILD=1
   fi
   if [ "$NEED_BUILD" -eq 0 ] && [ -n "$ENV_MTIME" ] && [ "$ENV_MTIME" -ge "$BUILD_MTIME" ]; then
+    NEED_BUILD=1
+  fi
+  if [ "$NEED_BUILD" -eq 0 ] && [ -f "$BUILT_SOURCE_MARKER" ]; then
+    CURRENT_SOURCE=$(source_fingerprint)
+    BUILT_SOURCE=$(tr -d '\r\n' < "$BUILT_SOURCE_MARKER" 2>/dev/null || true)
+    if [ -z "$BUILT_SOURCE" ] || [ "$CURRENT_SOURCE" != "$BUILT_SOURCE" ]; then NEED_BUILD=1; fi
+  elif [ "$NEED_BUILD" -eq 0 ]; then
     NEED_BUILD=1
   fi
   if [ "$NEED_BUILD" -eq 0 ]; then
@@ -248,6 +330,7 @@ if [ "$NEED_BUILD" -eq 1 ]; then
   printf '%s\n' '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。'
   printf '%s\n' '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。'
   "$NEXT_BIN" build --webpack || fail '网页构建失败。请查看终端中构建失败上方的报错。'
+  source_fingerprint > "$BUILT_SOURCE_MARKER"
   printf '构建完成。\n'
 else
   printf '%s\n' '构建产物已是最新，跳过构建，直接启动。'
@@ -288,8 +371,14 @@ SERVER_STDOUT="${TMPDIR:-/tmp}/sanmao-ai-server.out.log"
 SERVER_STDERR="${TMPDIR:-/tmp}/sanmao-ai-server.err.log"
 rm -f "$SERVER_STDOUT" "$SERVER_STDERR"
 NEXT_CLI="$ROOT_DIR/node_modules/next/dist/bin/next"
+SANMAO_RUNTIME_INSTANCE_ID=$(node -e "process.stdout.write(require('node:crypto').randomUUID())")
+export SANMAO_RUNTIME_INSTANCE_ID
 export SANMAO_LIFECYCLE=1
-node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" &
+if [ "$DETACH_SERVER" = 1 ]; then
+  nohup node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" </dev/null &
+else
+  node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" &
+fi
 SERVER_PID=$!
 
 RELAY_WATCH_PID=''
@@ -321,6 +410,9 @@ fi
 if [ -f "$BUILD_ID" ]; then
   tr -d '\r\n' < "$BUILD_ID" > "$RUNNING_BUILD_MARKER"
 fi
+if [ -f "$BUILT_SOURCE_MARKER" ]; then
+  cp "$BUILT_SOURCE_MARKER" "$RUNNING_SOURCE_MARKER"
+fi
 
 if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
@@ -339,7 +431,10 @@ fi
 printf 'SANMAO.AI 已启动：%s\n' $URL
 printf '%s\n' '本地服务会保持运行，下一次启动会直接打开已有服务。'
 sanmao_log "服务已就绪：$URL" INFO
-open $URL
+if [ "$NON_INTERACTIVE" != 1 ]; then open $URL; fi
+if [ "$DETACH_SERVER" = 1 ]; then
+  exit 0
+fi
 wait $SERVER_PID
 if [ -n "${RELAY_WATCH_PID:-}" ]; then kill "$RELAY_WATCH_PID" 2>/dev/null || true; wait "$RELAY_WATCH_PID" 2>/dev/null || true; fi
 free_relay_stop "$ROOT_DIR"

@@ -3,7 +3,10 @@
   [switch]$NonInteractive = $false,
   [switch]$Lan = $false,
   [switch]$ForceRestart = $false,
-  [switch]$FreeRelay = $false
+  [switch]$FreeRelay = $false,
+  [switch]$ForceBuild = $false,
+  [switch]$SkipBuild = $false,
+  [string]$OperationToken = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +49,33 @@ $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 . (Join-Path $PSScriptRoot 'free-relay-common.ps1')
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
 
+$operationLockPath = Join-Path $root '.data\update-staging\update.lock'
+function Assert-SanmaoOperationLock {
+  if (-not (Test-Path -LiteralPath $operationLockPath)) { return }
+  try {
+    $lock = Get-Content -LiteralPath $operationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    $lockToken = [string]$lock.token
+    if ($OperationToken -and $lockToken -and $OperationToken -eq $lockToken) { return }
+    $ownerPid = [int]$lock.pid
+    $ownerAlive = $ownerPid -gt 0 -and (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
+    $ageMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - ([DateTimeOffset]$lock.startedAt).ToUnixTimeMilliseconds()
+    if (-not $ownerAlive -and $ageMs -gt 10 * 60 * 1000) {
+      Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+      return
+    }
+  } catch {
+    if (Test-SanmaoOperationLockStale -Path $operationLockPath) {
+      Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+      return
+    }
+  }
+  if (Test-SanmaoOperationLockStale -Path $operationLockPath) {
+    Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+    return
+  }
+  Fail '已有更新或重启任务正在进行，请稍候再试。'
+}
+
 function Get-SanmaoSha256([string]$Path) {
   $sha256 = [System.Security.Cryptography.SHA256]::Create()
   try {
@@ -58,6 +88,34 @@ function Get-SanmaoSha256([string]$Path) {
   } finally {
     $sha256.Dispose()
   }
+}
+
+function Get-SanmaoSourceFingerprint {
+  $files = @()
+  foreach ($directory in @('app', 'components', 'lib', 'public')) {
+    $path = Join-Path $root $directory
+    if (Test-Path -LiteralPath $path) { $files += Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue }
+  }
+  foreach ($fileName in @('next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json')) {
+    $path = Join-Path $root $fileName
+    if (Test-Path -LiteralPath $path -PathType Leaf) { $files += Get-Item -LiteralPath $path }
+  }
+  $files += Get-ChildItem -LiteralPath $root -Filter '.env*' -File -Force -ErrorAction SilentlyContinue
+  $hash = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    foreach ($file in @($files | Sort-Object FullName -Unique)) {
+      $relative = $file.FullName.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
+      $pathBytes = [System.Text.Encoding]::UTF8.GetBytes($relative)
+      $nullBytes = [byte[]](0)
+      $contentBytes = [System.IO.File]::ReadAllBytes($file.FullName)
+      [void]$hash.TransformBlock($pathBytes, 0, $pathBytes.Length, $pathBytes, 0)
+      [void]$hash.TransformBlock($nullBytes, 0, 1, $nullBytes, 0)
+      if ($contentBytes.Length -gt 0) { [void]$hash.TransformBlock($contentBytes, 0, $contentBytes.Length, $contentBytes, 0) }
+      [void]$hash.TransformBlock($nullBytes, 0, 1, $nullBytes, 0)
+    }
+    [void]$hash.TransformFinalBlock([byte[]]@(), 0, 0)
+    return ([System.BitConverter]::ToString($hash.Hash)).Replace('-', '').ToLowerInvariant()
+  } finally { $hash.Dispose() }
 }
 
 # Releases before 0.7.5 overwrote apply-update.ps1 with their running updater
@@ -245,20 +303,13 @@ function Test-SanmaoBuildStale {
   if ($env:SANMAO_FORCE_BUILD -eq '1') { return $true }
   $buildIdPath = Join-Path $root '.next\BUILD_ID'
   if (-not (Test-Path -LiteralPath $buildIdPath)) { return $true }
-  $buildTime = (Get-Item -LiteralPath $buildIdPath).LastWriteTimeUtc
-  $files = @()
-  foreach ($directory in @('app', 'components', 'lib', 'public')) {
-    $path = Join-Path $root $directory
-    if (Test-Path -LiteralPath $path) {
-      $files += Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue
-    }
-  }
-  foreach ($fileName in @('next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json')) {
-    $path = Join-Path $root $fileName
-    if (Test-Path -LiteralPath $path) { $files += Get-Item -LiteralPath $path }
-  }
-  $newest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-  return $null -ne $newest -and $newest.LastWriteTimeUtc -gt $buildTime
+  $fingerprintPath = Join-Path $root '.next\.sanmao-source-fingerprint'
+  if (-not (Test-Path -LiteralPath $fingerprintPath -PathType Leaf)) { return $true }
+  try {
+    $builtFingerprint = (Get-Content -LiteralPath $fingerprintPath -Raw -ErrorAction Stop).Trim().ToLowerInvariant()
+    if (-not $builtFingerprint -or $builtFingerprint -ne (Get-SanmaoSourceFingerprint)) { return $true }
+    return $false
+  } catch { return $true }
 }
 
 function Get-SanmaoBuildId {
@@ -273,7 +324,11 @@ function Test-SanmaoServedBuildStale {
   if ([string]::IsNullOrWhiteSpace($buildId) -or -not (Test-Path -LiteralPath $servedBuildIdPath -PathType Leaf)) { return $true }
   try {
     $servedBuildId = (Get-Content -LiteralPath $servedBuildIdPath -Raw -ErrorAction Stop).Trim()
-    return $servedBuildId -ne $buildId
+    if ($servedBuildId -ne $buildId) { return $true }
+    $servedSourcePath = Join-Path $root '.next\.sanmao-running-source-fingerprint'
+    $builtSourcePath = Join-Path $root '.next\.sanmao-source-fingerprint'
+    if (-not (Test-Path -LiteralPath $servedSourcePath -PathType Leaf) -or -not (Test-Path -LiteralPath $builtSourcePath -PathType Leaf)) { return $true }
+    return (Get-Content -LiteralPath $servedSourcePath -Raw -ErrorAction Stop).Trim() -ne (Get-Content -LiteralPath $builtSourcePath -Raw -ErrorAction Stop).Trim()
   } catch { return $true }
 }
 
@@ -358,6 +413,8 @@ function Fail([string]$text) {
   }
   exit 1
 }
+
+Assert-SanmaoOperationLock
 
 function Read-SanmaoSecret {
   $secure = Read-Host -AsSecureString
@@ -554,53 +611,60 @@ Write-Host "npm：$npmVersion" -ForegroundColor Green
 
 # 2. Install/repair dependencies
 Write-Step '检查并安装程序依赖'
-$requiredNext = '16.2.12'
-$installedNext = ''
-if (Test-Path '.\node_modules\next\package.json') {
-  try { $installedNext = (& node -p "require('./node_modules/next/package.json').version").Trim() } catch { $installedNext = '' }
-}
-$nextCmdExists = Test-Path '.\node_modules\.bin\next.cmd'
-$typescriptExists = Test-Path '.\node_modules\typescript\package.json'
-$nodeTypesExists = Test-Path '.\node_modules\@types\node\package.json'
-$reactTypesExists = Test-Path '.\node_modules\@types\react\package.json'
-$reactDomTypesExists = Test-Path '.\node_modules\@types\react-dom\package.json'
-$packageLockHashPath = '.\node_modules\.sanmao-package-lock.sha256'
-$packageLockChanged = $false
-if (Test-Path '.\package-lock.json') {
-  if (-not (Test-Path $packageLockHashPath)) {
-    $packageLockChanged = $true
-  } else {
-    try {
-      $expectedLockHash = Get-SanmaoSha256 '.\package-lock.json'
-      $installedLockHash = (Get-Content -LiteralPath $packageLockHashPath -Raw -ErrorAction Stop).Trim()
-      $packageLockChanged = $expectedLockHash -ne $installedLockHash
-    } catch {
+if ($SkipBuild.IsPresent) {
+  if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
+    Fail '回滚启动需要已有的 Next.js 依赖，但当前依赖不完整。请重新运行普通启动器。'
+  }
+  Write-Host '回滚模式：保留当前依赖，不执行 npm install。' -ForegroundColor Yellow
+} else {
+  $requiredNext = '16.2.12'
+  $installedNext = ''
+  if (Test-Path '.\node_modules\next\package.json') {
+    try { $installedNext = (& node -p "require('./node_modules/next/package.json').version").Trim() } catch { $installedNext = '' }
+  }
+  $nextCmdExists = Test-Path '.\node_modules\.bin\next.cmd'
+  $typescriptExists = Test-Path '.\node_modules\typescript\package.json'
+  $nodeTypesExists = Test-Path '.\node_modules\@types\node\package.json'
+  $reactTypesExists = Test-Path '.\node_modules\@types\react\package.json'
+  $reactDomTypesExists = Test-Path '.\node_modules\@types\react-dom\package.json'
+  $packageLockHashPath = '.\node_modules\.sanmao-package-lock.sha256'
+  $packageLockChanged = $false
+  if (Test-Path '.\package-lock.json') {
+    if (-not (Test-Path $packageLockHashPath)) {
       $packageLockChanged = $true
+    } else {
+      try {
+        $expectedLockHash = Get-SanmaoSha256 '.\package-lock.json'
+        $installedLockHash = (Get-Content -LiteralPath $packageLockHashPath -Raw -ErrorAction Stop).Trim()
+        $packageLockChanged = $expectedLockHash -ne $installedLockHash
+      } catch {
+        $packageLockChanged = $true
+      }
     }
   }
-}
-if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or $packageLockChanged) {
-  Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
-  foreach ($repairPort in $portRange) {
-    if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
+  if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or $packageLockChanged) {
+    Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
+    foreach ($repairPort in $portRange) {
+      if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
+    }
+    Start-Sleep -Milliseconds 500
+    if (Test-Path '.\package-lock.json') { & npm ci --include=dev --no-audit --no-fund } else { & npm install --include=dev --no-audit --no-fund }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host ''
+      Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow
+      Write-Host '你可以先在命令行运行：npm config get registry' -ForegroundColor Yellow
+      Fail '依赖安装失败，请检查网络后再次运行启动器。'
+    }
+    if (Test-Path '.\package-lock.json') {
+      (Get-SanmaoSha256 '.\package-lock.json') | Set-Content -LiteralPath $packageLockHashPath -Encoding ASCII
+    }
+  } else {
+    Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
   }
-  Start-Sleep -Milliseconds 500
-  if (Test-Path '.\package-lock.json') { & npm ci --include=dev --no-audit --no-fund } else { & npm install --include=dev --no-audit --no-fund }
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host ''
-    Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow
-    Write-Host '你可以先在命令行运行：npm config get registry' -ForegroundColor Yellow
-    Fail '依赖安装失败，请检查网络后再次运行启动器。'
-  }
-  if (Test-Path '.\package-lock.json') {
-    (Get-SanmaoSha256 '.\package-lock.json') | Set-Content -LiteralPath $packageLockHashPath -Encoding ASCII
-  }
-} else {
-  Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
-}
 
-if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
-  Fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
+  if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
+    Fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
+  }
 }
 
 # 3. Build production bundle（智能构建：代码没变就跳过，固定使用 webpack）
@@ -609,7 +673,7 @@ Write-Step '检查构建产物是否最新'
 $nextCmd = Join-Path $root 'node_modules\.bin\next.cmd'
 $buildIdPath = Join-Path $root '.next\BUILD_ID'
 
-$needBuild = ($env:SANMAO_FORCE_BUILD -eq '1') -or (-not (Test-SanmaoBuildArtifacts))
+$needBuild = (-not $SkipBuild.IsPresent) -and (($ForceBuild.IsPresent) -or ($env:SANMAO_FORCE_BUILD -eq '1') -or (-not (Test-SanmaoBuildArtifacts)))
 if (-not $needBuild) {
   $buildTime = (Get-Item -LiteralPath $buildIdPath).LastWriteTimeUtc
   $files = @()
@@ -627,9 +691,13 @@ if (-not $needBuild) {
   if ($newest -and $newest.LastWriteTimeUtc -lt $buildTime) { $needBuild = $false }
 }
 
-if ($needBuild) {
+if ($SkipBuild.IsPresent) {
+  if (-not (Test-SanmaoBuildArtifacts)) { Fail '回滚构建产物不完整，无法安全启动旧服务。' }
+  Write-Host '回滚模式：使用上一个已验证的构建产物。' -ForegroundColor Yellow
+} elseif ($needBuild) {
   Write-Host '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。' -ForegroundColor Yellow
   Write-Host '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。' -ForegroundColor Yellow
+  $buildSourceFingerprint = Get-SanmaoSourceFingerprint
   & $nextCmd build --webpack
   if ($LASTEXITCODE -ne 0) {
     Fail '网页构建失败。请把本窗口中“构建失败”上方的报错截图发给我。'
@@ -637,6 +705,7 @@ if ($needBuild) {
   if (-not (Wait-SanmaoBuildArtifacts)) {
     Fail '网页构建完成但构建产物不完整，请再次运行启动器。'
   }
+  Set-Content -LiteralPath (Join-Path $root '.next\.sanmao-source-fingerprint') -Value $buildSourceFingerprint -Encoding ASCII
   Write-Host '构建完成。' -ForegroundColor Green
 } else {
   if (-not (Wait-SanmaoBuildArtifacts)) {
@@ -695,6 +764,7 @@ if ($Lan.IsPresent) {
   $env:SANMAO_LIFECYCLE = '1'
 }
 $env:SANMAO_NETWORK_MODE = $networkMode
+$env:SANMAO_RUNTIME_INSTANCE_ID = [guid]::NewGuid().ToString()
 Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 $nextCliPath = Join-Path $root 'node_modules\next\dist\bin\next'
@@ -725,6 +795,11 @@ if (-not $ready) {
 $runningBuildId = Get-SanmaoBuildId
 if ($runningBuildId) {
   Set-Content -LiteralPath (Join-Path $root '.next\.sanmao-running-build-id') -Value $runningBuildId -Encoding ASCII
+}
+$runningSourceFingerprintPath = Join-Path $root '.next\.sanmao-running-source-fingerprint'
+$builtSourceFingerprintPath = Join-Path $root '.next\.sanmao-source-fingerprint'
+if (Test-Path -LiteralPath $builtSourceFingerprintPath -PathType Leaf) {
+  Copy-Item -LiteralPath $builtSourceFingerprintPath -Destination $runningSourceFingerprintPath -Force
 }
 
 if ($freeRelayRequested) {

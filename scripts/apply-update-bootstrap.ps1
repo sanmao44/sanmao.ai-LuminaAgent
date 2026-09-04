@@ -5,7 +5,8 @@ param(
   [Parameter(Mandatory = $true)][string]$Version,
   [Parameter(Mandatory = $false)][string]$LogPath,
   [Parameter(Mandatory = $false)][int]$Port = 0,
-  [Parameter(Mandatory = $false)][string]$ProgressPath
+  [Parameter(Mandatory = $false)][string]$ProgressPath,
+  [Parameter(Mandatory = $false)][string]$OperationToken = ''
 )
 
 $ErrorActionPreference = 'Stop'

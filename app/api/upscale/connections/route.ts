@@ -2,6 +2,7 @@ import { isAdminRequest } from '@/lib/auth';
 import { getPublicState, getUpscaleConnectionWithCredentials, saveUpscaleConnection, type UpscaleConnectionCredentials } from '@/lib/store';
 import { createUpscaleProvider, isUpscaleProviderError, UpscaleProviderError } from '@/lib/upscale-providers';
 import type { UpscaleProviderId } from '@/lib/types';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 
@@ -23,7 +24,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('upscale-connection-test');
     const body = await request.json() as Record<string, unknown>;
     const providerIdValue = providerId(body.provider);
     if (!providerIdValue) return Response.json({ error: '不支持的高清服务商。' }, { status: 400 });
@@ -40,9 +43,12 @@ export async function POST(request: Request) {
     const savedConnection = await saveUpscaleConnection({ ...credentials, ...(selectedBucket ? { bucket: selectedBucket } : {}), ...(selectedRegion ? { region: selectedRegion } : {}) }, 'healthy');
     return Response.json({ ok: true, connection: { provider: savedConnection.provider }, state: await getPublicState() }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     const providerError = isUpscaleProviderError(error) ? error : null;
     const errorMessage = error instanceof Error ? error.message : '高清服务连接失败。';
     const requiresBucketSetup = errorMessage.includes('存储桶') || errorMessage.includes('COS');
     return Response.json({ error: errorMessage, code: providerError?.code, ...(requiresBucketSetup ? { requiresBucketSetup: true } : {}) }, { status: providerError?.status && providerError.status >= 400 ? providerError.status : 502, headers: { 'Cache-Control': 'no-store' } });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }

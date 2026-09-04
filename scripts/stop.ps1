@@ -1,13 +1,13 @@
 ﻿param(
   [switch]$DryRun,
-  [int]$Port = 0
+  [int]$Port = 0,
+  [string]$OperationToken = ''
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $PSScriptRoot
 $legacyMarkerPath = Join-Path $env:TEMP 'sanmao-ai-studio-instance.lock'
 . (Join-Path $PSScriptRoot 'free-relay-common.ps1')
-if (-not $DryRun) { Stop-SanmaoFreeRelayTunnel -Root $root }
 
 $requestedPort = 0
 if ($Port -ge 1024 -and $Port -le 65525) {
@@ -23,6 +23,40 @@ $legacyPortRange = 3000..3010
 . (Join-Path $PSScriptRoot 'launcher-common.ps1')
 Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
 Write-SanmaoLauncherLog "停止器开始运行，端口范围：$portStart..$portEnd" 'INFO'
+
+$operationLockPath = Join-Path $root '.data\update-staging\update.lock'
+if (Test-Path -LiteralPath $operationLockPath) {
+  $allow = $false
+  try {
+    $lock = Get-Content -LiteralPath $operationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    $allow = $OperationToken -and [string]$lock.token -eq $OperationToken
+    if (-not $allow) {
+      $ownerPid = [int]$lock.pid
+      $ownerAlive = $ownerPid -gt 0 -and (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
+      $ageMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - ([DateTimeOffset]$lock.startedAt).ToUnixTimeMilliseconds()
+      if (-not $ownerAlive -and $ageMs -gt 10 * 60 * 1000) {
+        Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+        $allow = $true
+      }
+    }
+  } catch {
+    if (Test-SanmaoOperationLockStale -Path $operationLockPath) {
+      Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+      $allow = $true
+    }
+  }
+  if (-not $allow -and (Test-SanmaoOperationLockStale -Path $operationLockPath)) {
+    Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+    $allow = $true
+  }
+  if (-not $allow) {
+    Write-SanmaoLauncherLog '已有更新或重启任务，拒绝并发停止服务。' 'WARN'
+    Write-Host '已有更新或重启任务正在进行，请稍候再试。' -ForegroundColor Yellow
+    exit 1
+  }
+}
+
+if (-not $DryRun) { Stop-SanmaoFreeRelayTunnel -Root $root }
 
 function Stop-SanmaoLanLauncherProcesses {
   $rootPattern = [regex]::Escape($root)

@@ -8,6 +8,7 @@ import { searchWeb, type SearchResponse } from '@/lib/web-search';
 import { buildOneTakeVideoPromptInstructions } from '@/lib/one-take-video-prompt';
 import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { isImageContinuationRequest, likelyFileGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
@@ -202,10 +203,16 @@ function isImageToolCall(call: any) {
 
 type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> };
 
-function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: AgentStreamMetadata, signal?: AbortSignal) {
+function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: AgentStreamMetadata, signal?: AbortSignal, onSettled?: () => Promise<void> | void) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const send = (controller: ReadableStreamDefaultController<Uint8Array>, event: Record<string, unknown>) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  let settled = false;
+  const settle = async () => {
+    if (settled) return;
+    settled = true;
+    await onSettled?.();
+  };
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let text = '';
@@ -275,7 +282,11 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response>)
         controller.close();
       } finally {
         signal?.removeEventListener('abort', cancel);
+        await settle();
       }
+    },
+    cancel() {
+      void settle();
     },
   });
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' } });
@@ -308,10 +319,13 @@ export async function POST(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const requestController = new AbortController();
   let wantsStream = false;
+  let streamOwnsRuntimeRequest = false;
+  let releaseRuntimeRequest = async () => {};
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
   if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
   else request.signal.addEventListener('abort', abortFromClient, { once: true });
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('agent');
     const body = await request.json();
     const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
     wantsStream = body.stream === true;
@@ -363,7 +377,12 @@ export async function POST(request: Request) {
     const streamResult = (
       upstream: Response | null | (() => Promise<Response>),
       metadata: Omit<AgentStreamMetadata, 'deliverable'>,
-    ) => streamAgentResult(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable }, requestController.signal);
+    ) => {
+      const response = streamAgentResult(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable }, requestController.signal, releaseRuntimeRequest);
+      streamOwnsRuntimeRequest = true;
+      releaseRuntimeRequest = async () => {};
+      return response;
+    };
     const referenceRecords = referenceRecordsForLog(body.referenceImages || latestRefs.filter((reference) => reference.kind === 'image'));
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
@@ -698,9 +717,11 @@ export async function POST(request: Request) {
     }
     return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'AGENT_CANCELLED');
     return Response.json({ error: cancelled ? '本轮 Agent 已停止。' : error instanceof Error ? error.message : '智能助手请求失败。', cancelled }, { status: cancelled ? 499 : 502 });
   } finally {
+    if (!streamOwnsRuntimeRequest) await releaseRuntimeRequest();
     // A streaming response may still be consuming the upstream model after
     // POST returns. Keep this bridge listener alive until the client aborts;
     // removing it here would leave the upstream request running in the

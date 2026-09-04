@@ -8,6 +8,7 @@ import { referenceRecordsForLog } from '@/lib/reference-images';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { startCloudUpscale } from '@/lib/upscale-service';
 import { isUpscaleModelId } from '@/lib/upscale-catalog';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -21,9 +22,11 @@ export async function POST(request: Request) {
   let logId: string | undefined;
   const requestController = new AbortController();
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
+  let releaseRuntimeRequest = async () => {};
   if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
   else request.signal.addEventListener('abort', abortFromClient, { once: true });
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('image-upscale');
     const body = await request.json();
     sourceForLog = normalizeGenerationSource(body.source, 'workspace');
     promptForLog = String(body.prompt || '').trim() || 'Upscale this image';
@@ -72,12 +75,16 @@ export async function POST(request: Request) {
     const stored = await persistGenerationResult({ images, storagePath: publicState.settings.imageStoragePath, startedAt, providerFinishedAt, logId });
     return Response.json({ ok: true, images: stored.images, storagePath: stored.path, size, seed, colorCorrection, resizeMethod, model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name } });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) {
+      return Response.json({ error: error.message, retryable: true }, { status: 409 });
+    }
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
     const message = cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '图片超分失败。';
     const failure = { status: 'error' as const, mode: 'upscale' as const, source: sourceForLog, prompt: promptForLog, durationMs: Date.now() - startedAt, error: message };
     if (logId) await finishGenerationLog(logId, failure).catch(() => undefined); else await appendGenerationLog(failure).catch(() => undefined);
     return Response.json({ error: message }, { status: cancelled ? 499 : errorStatus });
   } finally {
+    await releaseRuntimeRequest();
     request.signal.removeEventListener('abort', abortFromClient);
   }
 }

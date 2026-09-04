@@ -3,6 +3,7 @@ import { jimengImageModels } from '@/lib/jimeng-image';
 import { jimengVideoModels } from '@/lib/jimeng-video';
 import { discoverModels } from '@/lib/providers';
 import { enableProviderModels, getProviderWithKey, getPublicState, replaceProviderModels, setProviderStatus, updateProvider } from '@/lib/store';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 
@@ -11,7 +12,9 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   const provider = await getProviderWithKey(id);
   if (!provider) return Response.json({ error: '服务商不存在。' }, { status: 404 });
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('provider-sync');
     const originalBaseUrl = provider.baseUrl;
     const originalVideoTransport = provider.videoTransport;
     const models = provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli'
@@ -49,7 +52,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     await setProviderStatus(provider.id, 'healthy', new Date().toLocaleString('zh-CN', { hour12: false }));
     return Response.json({ ok: true, count: models.length, state: await getPublicState() });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     await setProviderStatus(provider.id, 'error');
     return Response.json({ error: error instanceof Error ? error.message : '模型同步失败。' }, { status: 502 });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }

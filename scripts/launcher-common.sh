@@ -15,6 +15,21 @@ sanmao_init() {
   fi
 }
 
+sanmao_operation_lock_stale() {
+  LOCK_PATH_TO_CHECK=$1
+  [ -f "$LOCK_PATH_TO_CHECK" ] || return 1
+  LOCK_MTIME=$(stat -f %m "$LOCK_PATH_TO_CHECK" 2>/dev/null || stat -c %Y "$LOCK_PATH_TO_CHECK" 2>/dev/null || printf '0')
+  NOW_SECONDS=$(date +%s)
+  case "$LOCK_MTIME" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$LOCK_MTIME" -gt 0 ] || return 1
+  [ $((NOW_SECONDS - LOCK_MTIME)) -gt 600 ] || return 1
+  LOCK_PID_TO_CHECK=$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$LOCK_PATH_TO_CHECK" 2>/dev/null | head -n 1 || true)
+  if [ -n "$LOCK_PID_TO_CHECK" ] && kill -0 "$LOCK_PID_TO_CHECK" 2>/dev/null; then return 1; fi
+  return 0
+}
+
 sanmao_log() {
   [ -n "$SANMAO_LOG_FILE" ] || return 0
   TS=$(date '+%Y-%m-%d %H:%M:%S')

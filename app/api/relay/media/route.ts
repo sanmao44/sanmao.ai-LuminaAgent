@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import sharp from 'sharp';
 import { PUBLIC_MEDIA_TTL_MS, storeSignedMedia } from '@/lib/signed-media';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 
@@ -57,7 +58,9 @@ export async function POST(request: Request) {
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > MAX_REQUEST_BYTES) return Response.json({ error: '图片不能超过 4 MiB' }, { status: 413 });
 
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('relay-upload');
     const form = await request.formData();
     const file = form.get('file');
     const kind = String(form.get('kind') || 'image');
@@ -71,6 +74,9 @@ export async function POST(request: Request) {
     const stored = await storeSignedMedia(bytes, mime, 'image', { ttlMs: PUBLIC_MEDIA_TTL_MS, pathPrefix: '/api/relay/media' });
     return Response.json({ ok: true, url: stored.url, expiresAt: new Date(stored.expiresAt).toISOString(), bytes: stored.bytes }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '图片中转失败' }, { status: 400 });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }

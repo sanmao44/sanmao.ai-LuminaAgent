@@ -5,6 +5,7 @@ import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEn
 import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validateBackupPassword } from '@/lib/backup-crypto';
 import { getDefaultStoragePath, getStorageRoots } from '@/lib/image-storage';
 import { createLocalSnapshot } from '@/lib/local-snapshots';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 
@@ -148,7 +149,9 @@ async function restoreArchive(archive: Buffer) {
 
 export async function POST(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('backup-export');
     const body = await request.json();
     const client = body?.client;
     const clientBytes = Buffer.byteLength(JSON.stringify(client || {}), 'utf8');
@@ -166,13 +169,18 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '生成完整备份失败' }, { status: 400 });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }
 
 export async function PUT(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('backup-restore');
     const backupPassword = request.headers.get('x-sanmao-backup-password') || '';
     const contentLength = Number(request.headers.get('content-length') || 0);
     if (contentLength > maxArchiveBytes) throw new Error('备份归档超过 2GB，无法恢复');
@@ -185,6 +193,9 @@ export async function PUT(request: Request) {
     const result = await restoreArchive(archive);
     return Response.json({ ok: true, legacyUnencrypted: !encrypted, ...result });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '恢复完整备份失败' }, { status: 400 });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }

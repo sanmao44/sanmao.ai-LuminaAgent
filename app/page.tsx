@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
+import RuntimeServiceControl from '@/components/RuntimeServiceControl';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
 import { agnesBillingLabel } from '@/lib/agnes';
 import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
@@ -13056,8 +13057,9 @@ export default function Page() {
                             }),
                             /*#__PURE__*/ _jsxs("div", {
                                 className: "settings-layout",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("section", {
+                                 children: [
+                                     /*#__PURE__*/ _jsx(RuntimeServiceControl, {}),
+                                     /*#__PURE__*/ _jsxs("section", {
                                         id: "settings-appearance",
                                         className: "settings-card surface",
                                                 children: [

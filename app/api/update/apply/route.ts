@@ -1,5 +1,5 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { startLocalUpdate } from '@/lib/local-update';
+import { LocalUpdateBusyError, startLocalUpdate } from '@/lib/local-update';
 import { getUpdateStatus } from '@/lib/update';
 
 export const runtime = 'nodejs';
@@ -39,6 +39,6 @@ export async function POST(request: Request) {
     const result = await startLocalUpdate(status, { port: requestPort(request) });
     return Response.json(result, { headers: noStoreHeaders });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : '本地更新失败' }, { status: 500, headers: noStoreHeaders });
+    return Response.json({ error: error instanceof Error ? error.message : '本地更新失败' }, { status: error instanceof LocalUpdateBusyError ? 409 : 500, headers: noStoreHeaders });
   }
 }

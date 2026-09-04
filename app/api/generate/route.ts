@@ -9,6 +9,7 @@ import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -76,9 +77,11 @@ export async function POST(request: Request) {
   const startedAt = Date.now();
   const requestController = new AbortController();
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
+  let releaseRuntimeRequest = async () => {};
   if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
   else request.signal.addEventListener('abort', abortFromClient, { once: true });
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('image-generate');
     const body = await request.json();
     sourceForLog = normalizeGenerationSource(body.source, 'workspace');
     const prompt = String(body.prompt || '').trim();
@@ -153,6 +156,9 @@ export async function POST(request: Request) {
     const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId });
     return Response.json({ ok: true, images: stored.images, mode: references.length ? 'reference' : 'generate', model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) {
+      return Response.json({ error: error.message, retryable: true }, { status: 409 });
+    }
     const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
     if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
@@ -160,6 +166,7 @@ export async function POST(request: Request) {
     if (logId) await finishGenerationLog(logId, failure).catch(() => undefined); else await appendGenerationLog(failure).catch(() => undefined);
     return Response.json({ error: failure.error }, { status: cancelled ? 499 : 502 });
   } finally {
+    await releaseRuntimeRequest();
     request.signal.removeEventListener('abort', abortFromClient);
   }
 }

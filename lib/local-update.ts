@@ -1,12 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, copyFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { UpdateStatus } from '@/lib/update';
+import {
+  acquireRuntimeOperationLock,
+  beginRuntimeDrain,
+  cancelRuntimeDrain,
+  operationLockMatches,
+  removeOwnedRuntimeOperationLock,
+} from '@/lib/runtime-operation';
 
 const MAX_UPDATE_BYTES = 150 * 1024 * 1024;
-const STALE_LOCK_MS = 10 * 60 * 1000;
 const MAX_PACKAGE_SOURCES = 6;
 const OFFICIAL_DOWNLOAD_TIMEOUT_MS = 120_000;
 const MIRROR_DOWNLOAD_TIMEOUT_MS = 60_000;
@@ -29,9 +35,17 @@ export type UpdateProgress = {
   error?: string;
 };
 
+export class LocalUpdateBusyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LocalUpdateBusyError';
+  }
+}
+
 type LocalUpdateOptions = {
   jobId?: string;
   port?: number;
+  operationToken?: string;
 };
 
 const progressJobs = new Map<string, UpdateProgress>();
@@ -172,7 +186,7 @@ function powershellLiteral(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function updaterArguments(scriptPath: string, archivePath: string, targetPath: string, version: string, logPath: string, port: number, progressPath: string) {
+function updaterArguments(scriptPath: string, archivePath: string, targetPath: string, version: string, logPath: string, port: number, progressPath: string, operationToken: string) {
   if (process.platform === 'win32') {
     // Windows PowerShell started directly with detached:true can exit with
     // code 0 without executing -File. Use a short foreground trampoline;
@@ -197,11 +211,13 @@ function updaterArguments(scriptPath: string, archivePath: string, targetPath: s
       String(port),
       '-ProgressPath',
       progressPath,
+      '-OperationToken',
+      operationToken,
     ].map(powershellLiteral).join(', ');
     const command = `Start-Process -FilePath 'powershell.exe' -ArgumentList @(${scriptArgs}) -WorkingDirectory ${powershellLiteral(targetPath)} -WindowStyle Hidden`;
     return ['-NoProfile', '-Command', command];
   }
-  return [scriptPath, archivePath, targetPath, String(process.pid), version, logPath, String(port), progressPath];
+  return [scriptPath, archivePath, targetPath, String(process.pid), version, logPath, String(port), progressPath, operationToken];
 }
 
 /**
@@ -416,54 +432,36 @@ export function packageSourceCandidates(status: UpdateStatus) {
 
 export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateOptions = {}) {
   const jobId = options.jobId || createUpdateJob(status.latestVersion || 'unknown').jobId;
+  const operationToken = options.operationToken;
   const port = Number.isInteger(options.port) && Number(options.port) >= 1024 && Number(options.port) <= 65525
     ? Number(options.port)
     : 0;
-  if (!status.hasUpdate || !status.canApply || !status.packageUrl || !status.sha256 || !status.latestVersion) {
-    throw new Error('当前更新没有满足本地安全更新条件');
-  }
-
   const root = process.cwd();
   const scriptsDir = join(root, 'scripts');
   const updaterSource = join(scriptsDir, updaterScriptName());
-  await access(updaterSource, constants.R_OK);
-
   const stagingDir = join(root, '.data', 'update-staging');
-  await mkdir(stagingDir, { recursive: true });
-  const lockPath = join(stagingDir, 'update.lock');
-  let lockHandle;
+  let archivePath = '';
+  let updaterPath = '';
+  let metadataPath = '';
+  let logPath = '';
+  let updaterSpawned = false;
+
   try {
-    try {
-      lockHandle = await open(lockPath, 'wx');
-    } catch {
-      try {
-        const lockInfo = await stat(lockPath);
-        if (Date.now() - lockInfo.mtimeMs > STALE_LOCK_MS) {
-          await rm(lockPath, { force: true });
-          lockHandle = await open(lockPath, 'wx');
-        } else {
-          throw new Error('已有更新任务正在进行，请稍候');
-        }
-      } catch (lockError) {
-        if (lockError instanceof Error && lockError.message === '已有更新任务正在进行，请稍候') throw lockError;
-        throw new Error('更新任务锁定失败，请稍后重试');
-      }
+    if (!status.hasUpdate || !status.canApply || !status.packageUrl || !status.sha256 || !status.latestVersion) {
+      throw new Error('当前更新没有满足本地安全更新条件');
     }
+    if (!operationToken || !(await operationLockMatches(operationToken))) {
+      throw new Error('更新任务锁定失败，请稍后重试');
+    }
+    await access(updaterSource, constants.R_OK);
+    await mkdir(stagingDir, { recursive: true });
     setUpdateProgress(jobId, { stage: 'queued', message: '正在准备更新任务…', percent: 0 });
-  } catch {
-    setUpdateProgress(jobId, { stage: 'failed', message: '更新任务无法启动', error: '已有更新任务正在进行，请稍候' });
-    throw new Error('已有更新任务正在进行，请稍候');
-  }
 
-  const safeVersion = status.latestVersion.replace(/[^0-9A-Za-z._-]/g, '_');
-  const archivePath = join(stagingDir, `sanmao-update-${safeVersion}.zip`);
-  const updaterPath = join(stagingDir, `apply-update-${safeVersion}${process.platform === 'win32' ? '.ps1' : '.sh'}`);
-  const metadataPath = join(stagingDir, `sanmao-update-${safeVersion}.json`);
-  const logPath = join(stagingDir, `update-${safeVersion}.log`);
-
-  try {
-    await lockHandle.writeFile(JSON.stringify({ jobId, version: status.latestVersion, startedAt: nowIso() }));
-    await lockHandle.close();
+    const safeVersion = status.latestVersion.replace(/[^0-9A-Za-z._-]/g, '_');
+    archivePath = join(stagingDir, `sanmao-update-${safeVersion}.zip`);
+    updaterPath = join(stagingDir, `apply-update-${safeVersion}${process.platform === 'win32' ? '.ps1' : '.sh'}`);
+    metadataPath = join(stagingDir, `sanmao-update-${safeVersion}.json`);
+    logPath = join(stagingDir, `update-${safeVersion}.log`);
     await rm(archivePath, { force: true });
     await rm(logPath, { force: true });
     await copyFile(updaterSource, updaterPath);
@@ -510,13 +508,14 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
     }, null, 2), 'utf8');
 
     setUpdateProgress(jobId, { stage: 'starting', message: '更新包已校验，正在启动更新程序…', percent: 98 });
-    const child = spawn(updaterCommand(), updaterArguments(updaterPath, archivePath, root, status.latestVersion, logPath, port, progressFilePath), {
+    const child = spawn(updaterCommand(), updaterArguments(updaterPath, archivePath, root, status.latestVersion, logPath, port, progressFilePath, operationToken), {
       cwd: root,
       detached: process.platform !== 'win32',
       stdio: 'ignore',
       windowsHide: true,
     });
     await waitForUpdaterSpawn(child);
+    updaterSpawned = true;
     await waitForUpdaterHandshake(logPath);
     child.unref();
     setUpdateProgress(jobId, { stage: 'completed', message: '更新程序已启动，应用正在重启…', percent: 100 });
@@ -530,7 +529,10 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
     await rm(archivePath, { force: true }).catch(() => undefined);
     await rm(updaterPath, { force: true }).catch(() => undefined);
     await rm(metadataPath, { force: true }).catch(() => undefined);
-    await rm(lockPath, { force: true }).catch(() => undefined);
+    if (!updaterSpawned) {
+      if (operationToken) await removeOwnedRuntimeOperationLock(operationToken);
+      await cancelRuntimeDrain(jobId);
+    }
     throw error;
   }
 }
@@ -538,9 +540,26 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
 /** Start the update without holding the HTTP request open during download/restart. */
 export async function startLocalUpdate(status: UpdateStatus, options: Omit<LocalUpdateOptions, 'jobId'> = {}) {
   const job = createUpdateJob(status.latestVersion || 'unknown');
+  const operation = await acquireRuntimeOperationLock('update', job.jobId, job.jobId);
+  if (!operation) {
+    setUpdateProgress(job.jobId, { stage: 'failed', message: '已有重启或更新任务正在进行', error: '请稍候再试' });
+    throw new LocalUpdateBusyError('已有重启或更新任务正在进行，请稍候再试');
+  }
+  const drain = await beginRuntimeDrain(job.jobId);
+  if (!drain) {
+    await removeOwnedRuntimeOperationLock(operation.token);
+    setUpdateProgress(job.jobId, { stage: 'failed', message: '已有重启或更新任务正在进行', error: '请稍候再试' });
+    throw new LocalUpdateBusyError('已有重启或更新任务正在进行，请稍候再试');
+  }
+  if (drain.activeRequests > 0) {
+    await cancelRuntimeDrain(job.jobId);
+    await removeOwnedRuntimeOperationLock(operation.token);
+    setUpdateProgress(job.jobId, { stage: 'failed', message: '当前有任务正在执行，请完成后再更新', error: `当前还有 ${drain.activeRequests} 个任务正在执行` });
+    throw new LocalUpdateBusyError(`当前还有 ${drain.activeRequests} 个任务正在执行，请完成后再更新`);
+  }
   const port = Number.isInteger(options.port) && Number(options.port) >= 1024 && Number(options.port) <= 65525
     ? Number(options.port)
     : 0;
-  void runLocalUpdate(status, { ...options, port, jobId: job.jobId }).catch(() => undefined);
+  void runLocalUpdate(status, { ...options, port, jobId: job.jobId, operationToken: operation.token }).catch(() => undefined);
   return { started: true, jobId: job.jobId, version: status.latestVersion, port };
 }

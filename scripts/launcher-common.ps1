@@ -26,6 +26,27 @@ function Initialize-SanmaoLauncher {
   }
 }
 
+function Test-SanmaoOperationLockStale {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [int]$MaxAgeMs = 600000
+  )
+
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  try {
+    $ageMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - ([DateTimeOffset](Get-Item -LiteralPath $Path -ErrorAction Stop).LastWriteTimeUtc).ToUnixTimeMilliseconds()
+    if ($ageMs -le $MaxAgeMs) { return $false }
+    try {
+      $lock = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json
+      $ownerPid = [int]$lock.pid
+      if ($ownerPid -gt 0 -and (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)) { return $false }
+    } catch {}
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 function Write-SanmaoLauncherLog {
   param(
     [Parameter(Mandatory = $true)][string]$Message,

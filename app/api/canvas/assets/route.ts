@@ -6,6 +6,7 @@ import { getDefaultStoragePath } from '@/lib/image-storage';
 import { getDefaultVideoStoragePath } from '@/lib/video-storage';
 import { getDefaultAudioStoragePath } from '@/lib/audio-storage';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
 
@@ -32,7 +33,9 @@ function extension(name: string, mime: string) {
 }
 export async function POST(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let releaseRuntimeRequest = async () => {};
   try {
+    releaseRuntimeRequest = await beginRuntimeRequest('canvas-upload');
     const mime = String(request.headers.get('content-type') || 'application/octet-stream').split(';', 1)[0].toLowerCase();
     const name = decodeURIComponent(String(request.headers.get('x-file-name') || '画布素材'));
     const kind = mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : mime.startsWith('image/') ? 'image' : '';
@@ -53,6 +56,9 @@ export async function POST(request: Request) {
     await writeFile(path.join(root, filename), body, { flag: 'wx' });
     return Response.json({ id: randomUUID(), kind, name: name || filename, url: kind === 'video' ? `/api/storage/video?name=${encodeURIComponent(filename)}` : kind === 'audio' ? `/api/storage/audio?name=${encodeURIComponent(filename)}` : `/api/storage/file?name=${encodeURIComponent(filename)}`, mime, size: body.byteLength });
   } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '素材上传失败' }, { status: 400 });
+  } finally {
+    await releaseRuntimeRequest();
   }
 }
