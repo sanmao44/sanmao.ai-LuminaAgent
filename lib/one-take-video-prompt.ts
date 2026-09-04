@@ -1,3 +1,5 @@
+import { normalizeOneTakeDuration } from "./one-take-video-duration";
+
 /**
  * 专用于多张参考图“一镜到底”按钮的系统指令。
  * 这里只生成可交给 Seedance 2.0 的视频 Prompt，不调用视频生成接口。
@@ -100,3 +102,13 @@ Add scene-specific negative constraints to prevent character drift, object defor
 
 最重要原则：不要把参考图片理解为几张需要依次展示的幻灯片，而要把它们理解为同一个连续世界中的几个关键视觉节点；先在内部回答“如果这是真实电影拍摄，摄影机怎样才能从第一张图所在的位置，真实地连续移动到最后一张图的位置？”，再输出内容对应、无剪辑、无跳变、丝滑、自然、合理、惊艳、电影级的中文和英文一镜到底视频 Prompt。
 `.trim();
+
+export function buildOneTakeVideoPromptInstructions(durationSeconds: number) {
+  const duration = normalizeOneTakeDuration(durationSeconds);
+  const finalSegment = Math.min(2, duration);
+  return ONE_TAKE_VIDEO_PROMPT_INSTRUCTIONS
+    .replace(/(?<!\d)15(?!\d)/g, String(duration))
+    .replaceAll("2–3 秒", `${finalSegment} 秒`)
+    .replaceAll("2–3 Seconds", `${finalSegment} Seconds`)
+    .replaceAll("2–3 seconds", `${finalSegment} seconds`);
+}

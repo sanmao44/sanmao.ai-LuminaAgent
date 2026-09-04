@@ -29,7 +29,18 @@ const capabilityLabels: Partial<Record<ModelCapability, string>> = {
   'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频',
 };
 
-const capabilityClasses: Partial<Record<ModelCapability, string>> = { chat: 'chat', generate: 'generate', edit: 'edit', upscale: 'upscale' };
+const capabilityClasses: Partial<Record<ModelCapability, string>> = {
+  chat: 'chat',
+  generate: 'generate',
+  edit: 'edit',
+  upscale: 'upscale',
+  'video-generate': 'video',
+  'video-edit': 'video-edit',
+  'video-extend': 'video-extend',
+  'video-first-frame': 'video-first-frame',
+  'video-reference': 'video-reference',
+  'video-audio': 'video-audio',
+};
 export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];
 }

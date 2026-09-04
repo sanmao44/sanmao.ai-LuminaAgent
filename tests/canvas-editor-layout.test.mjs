@@ -141,3 +141,47 @@ test("keeps context menus bounded with a short dynamic viewport", () => {
     { left: 70, top: 10 },
   );
 });
+
+test("places a compact dock horizontally centered below a centered node", () => {
+  const anchor = { left: 300, top: 200, width: 380, height: 260 };
+  const stage = { width: 1280, height: 720 };
+  const dock = layout.placeCanvasNodeEditorDock(
+    anchor,
+    stage,
+    { width: 680, height: 320 },
+  );
+
+  assert.deepEqual(dock, { left: 150, top: 474 });
+  assert.equal(dock.top, anchor.top + anchor.height + 14);
+});
+
+test("clamps a compact dock to the left horizontal margin", () => {
+  const dock = layout.placeCanvasNodeEditorDock(
+    { left: -100, top: 60, width: 280, height: 180 },
+    { width: 900, height: 700 },
+    { width: 680, height: 300 },
+  );
+
+  assert.deepEqual(dock, { left: 12, top: 254 });
+});
+
+test("clamps a compact dock to the right horizontal margin", () => {
+  const dock = layout.placeCanvasNodeEditorDock(
+    { left: 700, top: 60, width: 280, height: 180 },
+    { width: 900, height: 700 },
+    { width: 680, height: 300 },
+  );
+
+  assert.deepEqual(dock, { left: 208, top: 254 });
+});
+
+test("allows a compact dock to extend past the bottom of the viewport", () => {
+  const dock = layout.placeCanvasNodeEditorDock(
+    { left: 300, top: 600, width: 380, height: 260 },
+    { width: 1280, height: 720 },
+    { width: 680, height: 320 },
+  );
+
+  assert.deepEqual(dock, { left: 150, top: 874 });
+  assert.equal("maxHeight" in dock, false);
+});

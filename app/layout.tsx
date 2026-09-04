@@ -37,10 +37,28 @@ const themeBootScript = `
 })();
 `;
 
+// After a forced update reload the cache-busting query is only needed to make
+// the browser re-request the document once. Strip it on arrival so the shared /
+// LAN URL stays clean and the app-router never sees a stale marker parameter.
+const reloadCleanupScript = `
+(function(){
+  try {
+    var url = new URL(window.location.href);
+    if (url.searchParams.has('sanmao_reload')) {
+      url.searchParams.delete('sanmao_reload');
+      window.history.replaceState(null, '', url.toString());
+    }
+  } catch (e) {}
+})();
+`;
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN" data-theme="light" suppressHydrationWarning>
-      <head><script dangerouslySetInnerHTML={{ __html: themeBootScript }} /></head>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+        <script dangerouslySetInnerHTML={{ __html: reloadCleanupScript }} />
+      </head>
       <body><MotionPreference /><LocalLifecycle />{children}</body>
     </html>
   );

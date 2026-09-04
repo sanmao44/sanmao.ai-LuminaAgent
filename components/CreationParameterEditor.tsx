@@ -25,7 +25,7 @@ type Props = {
   runtime: PublicState | null;
   unavailableModelId?: string;
   referenceCount?: number;
-  variant?: "default" | "canvas-flat";
+  variant?: "default" | "canvas-flat" | "dock";
   portalZIndex?: number;
   dialogPortalZIndex?: number;
   onChange: (settings: CreationSettings) => void;
@@ -71,6 +71,13 @@ function ImageEditor({
 }) {
   const [advanced, setAdvanced] = useState(false);
   const flat = variant === "canvas-flat";
+  const dock = variant === "dock";
+  const dockQualityLabel = (label: string) =>
+    label === "自动质量" ? "自动"
+    : label === "低质量" ? "低画质"
+    : label === "中等质量" ? "标准画质"
+    : label === "高质量" ? "高画质"
+    : label.replace("质量", "");
   const [parameterDrawerOpen, setParameterDrawerOpen] = useState(false);
   useEffect(() => {
     if (!parameterDrawerOpen) return;
@@ -99,7 +106,7 @@ function ImageEditor({
     : `${settings.width}×${settings.height}`;
   const parameterSummary = `${settings.aspect} · ${qualityLabel} · ${sizeLabel} · ${settings.count} 张`;
   return (
-    <div className={`creation-parameter-editor image${flat ? " canvas-flat" : ""}`}>
+    <div className={`creation-parameter-editor image${flat ? " canvas-flat" : ""}${dock ? " canvas-dock" : ""}`}>
       {unavailableModelId && (
         <div className="creation-model-warning">
           <b>原模型当前不可用</b>
@@ -109,7 +116,124 @@ function ImageEditor({
           </span>
         </div>
       )}
-      {flat ? (
+      {dock ? (
+        <div className="canvas-parameter-groups">
+          <div className="canvas-parameter-group">
+            <span className="canvas-parameter-group-label">画质</span>
+            <div className="canvas-parameter-options quality" role="group" aria-label="图片质量">
+              {IMAGE_QUALITY_OPTIONS.map((option) => (
+                <button
+                  type="button"
+                  key={option.value}
+                  className={settings.quality === option.value ? "active" : ""}
+                  aria-pressed={settings.quality === option.value}
+                  title={option.description}
+                  onClick={() => update("quality", option.value)}
+                >
+                  {dockQualityLabel(option.label)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {settings.sizeMode === "system" ? (
+            <div className="canvas-parameter-group">
+              <span className="canvas-parameter-group-label">清晰度</span>
+              <div className="canvas-parameter-options resolution" role="group" aria-label="图片分辨率">
+                {IMAGE_SIZE_TIERS.map((item) => (
+                  <button type="button" key={item.value} className={settings.resolution === item.value ? "active" : ""} aria-pressed={settings.resolution === item.value} title={`长边约 ${item.longEdge}px`} onClick={() => update("resolution", item.value)}>{item.label}</button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="canvas-parameter-group">
+              <span className="canvas-parameter-group-label">自定义尺寸</span>
+              <div className="creation-pixel-fields canvas-parameter-pixels">
+                <label><small>宽度</small><input type="number" min={1} max={16384} value={settings.width} onChange={(event) => update("width", Math.max(1, Number(event.target.value) || 1))} /></label>
+                <b>×</b>
+                <label><small>高度</small><input type="number" min={1} max={16384} value={settings.height} onChange={(event) => update("height", Math.max(1, Number(event.target.value) || 1))} /></label>
+              </div>
+            </div>
+          )}
+          <div className="canvas-parameter-group">
+            <span className="canvas-parameter-group-label">比例</span>
+            <div className="canvas-parameter-options aspect" role="group" aria-label="图片比例">
+              {IMAGE_RATIOS.map((value) => (
+                <button type="button" key={value} className={settings.aspect === value ? "active" : ""} aria-pressed={settings.aspect === value} data-ratio={value} title={ratioDescriptions[value]} onClick={() => update("aspect", value)}>
+                  <i className="canvas-parameter-ratio-icon" aria-hidden="true" />
+                  <span>{value === "自动" ? "自动" : value}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {settings.aspect === "自定义" && (
+            <div className="creation-custom-ratio canvas-parameter-custom-ratio">
+              <span>自定义比例</span>
+              <input type="number" min={1} value={settings.customAspectWidth} onChange={(event) => update("customAspectWidth", Math.max(1, Number(event.target.value) || 1))} />
+              <b>:</b>
+              <input type="number" min={1} value={settings.customAspectHeight} onChange={(event) => update("customAspectHeight", Math.max(1, Number(event.target.value) || 1))} />
+            </div>
+          )}
+          <div className="canvas-parameter-group">
+            <span className="canvas-parameter-group-label">生成数量</span>
+            <div className="canvas-parameter-options count" role="group" aria-label="生成数量">
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((value) => (
+                <button type="button" key={value} className={settings.count === value ? "active" : ""} aria-pressed={settings.count === value} onClick={() => update("count", value)}>{value} 张</button>
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
+            onClick={() => setAdvanced((value) => !value)}
+            aria-expanded={advanced}
+            title={advanced ? "收起尺寸、格式与背景参数" : "展开尺寸、格式与背景参数"}
+          >
+            <span>{advanced ? "收起更多参数" : "更多参数"}</span>
+            <small>尺寸 · 格式与背景</small>
+            <b>{advanced ? "⌃" : "⌄"}</b>
+          </button>
+          {advanced && (
+            <div className="creation-parameter-grid advanced canvas-parameter-extra-grid">
+              <div className="canvas-parameter-group">
+                <span className="canvas-parameter-group-label">尺寸方式</span>
+                <div className="canvas-parameter-options size-mode" role="group" aria-label="图片尺寸方式">
+                  <button type="button" className={settings.sizeMode === "system" ? "active" : ""} aria-pressed={settings.sizeMode === "system"} onClick={() => update("sizeMode", "system")}>标准尺寸</button>
+                  <button type="button" className={settings.sizeMode === "custom" ? "active" : ""} aria-pressed={settings.sizeMode === "custom"} onClick={() => update("sizeMode", "custom")}>自定义</button>
+                </div>
+              </div>
+              <label className="creation-field">
+                <small>输出格式</small>
+                <SelectMenu
+                  portalZIndex={portalZIndex}
+                  value={settings.outputFormat}
+                  onChange={(value) => update("outputFormat", value)}
+                  options={[
+                    { value: "png", label: "PNG · 无损" },
+                    { value: "jpeg", label: "JPEG · 体积更小" },
+                    { value: "webp", label: "WebP · 适合网页" },
+                  ]}
+                  ariaLabel="输出格式"
+                />
+              </label>
+              <label className="creation-field">
+                <small>背景限制</small>
+                <SelectMenu
+                  portalZIndex={portalZIndex}
+                  value={settings.backgroundMode}
+                  onChange={(value) => onChange({ ...settings, backgroundMode: value, ...(value === "api-transparent" || value === "local-transparent" ? { outputFormat: "png" as const } : {}) })}
+                  options={[
+                    { value: "auto", label: "自动" },
+                    { value: "api-transparent", label: "API 透明", description: "仅支持部分模型" },
+                    { value: "local-transparent", label: "本地透明", description: "自动去白底并输出 PNG" },
+                    { value: "opaque", label: "不透明" },
+                  ]}
+                  ariaLabel="背景限制"
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      ) : flat ? (
         <>
           <div className="canvas-parameter-model">
             <label className="creation-field model">
@@ -502,13 +626,15 @@ function durationValues(
   maximum: number,
   fixed?: number,
   allowed?: number[],
+  current?: number,
 ) {
   if (fixed) return [fixed];
   if (allowed?.length) return allowed;
   return [
     ...new Set(
-      [minimum, 3, 4, 5, 6, 8, 10, 12, 15, 30, maximum].filter(
-        (value) => value >= minimum && value <= maximum,
+      [minimum, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, maximum, current].filter(
+        (value): value is number =>
+          typeof value === "number" && value >= minimum && value <= maximum,
       ),
     ),
   ].sort((left, right) => left - right);
@@ -518,6 +644,7 @@ function VideoEditor({
   settings,
   runtime,
   unavailableModelId,
+  variant,
   onChange,
   onVideoInputModeChange,
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
@@ -526,11 +653,13 @@ function VideoEditor({
   settings: VideoCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  variant?: Props["variant"];
   portalZIndex?: number;
   dialogPortalZIndex?: number;
   onChange: Props["onChange"];
   onVideoInputModeChange?: Props["onVideoInputModeChange"];
 }) {
+  const dock = variant === "dock";
   const update = <K extends keyof VideoCreationSettings>(
     key: K,
     value: VideoCreationSettings[K],
@@ -627,6 +756,7 @@ function VideoEditor({
       limits.maxSeconds,
       limits.fixedSeconds,
       limits.allowedSeconds,
+      settings.duration,
     ),
     [limits],
   );
@@ -661,24 +791,26 @@ function VideoEditor({
         </div>
       )}
       <div className="creation-parameter-grid primary">
-        <label className="creation-field model">
-          <small>视频模型</small>
-          <ModelPicker
-            models={runtime?.models || []}
-            value={settings.model}
-            capability="video-generate"
-            portalZIndex={portalZIndex}
-            dialogPortalZIndex={dialogPortalZIndex}
-            defaultProviderId={runtime?.settings.defaultProviderId}
-            defaultProviderName={
-              runtime?.providers.find(
-                (item) => item.id === runtime.settings.defaultProviderId,
-              )?.name
-            }
-            defaultModelId={runtime?.settings.defaultVideoModelId}
-            onChange={(value) => update("model", value)}
-          />
-        </label>
+        {!dock && (
+          <label className="creation-field model">
+            <small>视频模型</small>
+            <ModelPicker
+              models={runtime?.models || []}
+              value={settings.model}
+              capability="video-generate"
+              portalZIndex={portalZIndex}
+              dialogPortalZIndex={dialogPortalZIndex}
+              defaultProviderId={runtime?.settings.defaultProviderId}
+              defaultProviderName={
+                runtime?.providers.find(
+                  (item) => item.id === runtime.settings.defaultProviderId,
+                )?.name
+              }
+              defaultModelId={runtime?.settings.defaultVideoModelId}
+              onChange={(value) => update("model", value)}
+            />
+          </label>
+        )}
         {showOperationField && (
           <label className="creation-field">
             <small>操作</small>
@@ -876,6 +1008,7 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      variant={variant}
       portalZIndex={portalZIndex}
       dialogPortalZIndex={dialogPortalZIndex}
       onChange={onChange}

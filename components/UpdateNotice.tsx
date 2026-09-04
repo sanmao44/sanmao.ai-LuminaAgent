@@ -39,6 +39,7 @@ const DISMISSED_KEY = 'sanmao-dismissed-update-version';
 const CHECKED_KEY = 'sanmao-update-checked-at';
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 const PROJECT_URL = 'https://github.com/sanmao44/sanmao.ai-LuminaAgent';
+const AUTO_RELOAD_DELAY_MS = 1500;
 
 function openExternal(url?: string) {
   if (!url) return;
@@ -74,6 +75,8 @@ export default function UpdateNotice() {
   const [checkNoticeTone, setCheckNoticeTone] = useState<CheckNoticeTone>('success');
   const checkNoticeTimerRef = useRef<number | null>(null);
   const updateTargetVersionRef = useRef<string | null>(null);
+  const autoReloadTimerRef = useRef<number | null>(null);
+  const autoReloadScheduledRef = useRef(false);
 
   const announceCheckResult = useCallback((message: string, tone: CheckNoticeTone = 'success') => {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
@@ -89,6 +92,27 @@ export default function UpdateNotice() {
 
   useEffect(() => () => {
     if (checkNoticeTimerRef.current !== null) window.clearTimeout(checkNoticeTimerRef.current);
+    if (autoReloadTimerRef.current !== null) window.clearTimeout(autoReloadTimerRef.current);
+  }, []);
+
+  const forceReloadApp = useCallback(() => {
+    // Cancelling any pending timer here prevents a double navigation when the
+    // user clicks the tray while the automatic restart countdown is running.
+    if (autoReloadTimerRef.current !== null) {
+      window.clearTimeout(autoReloadTimerRef.current);
+      autoReloadTimerRef.current = null;
+    }
+    try {
+      const url = new URL(window.location.href);
+      // A cache-busting query makes the browser request the main document from
+      // the restarted server instead of reusing a cached shell. The server then
+      // returns fresh HTML that references the newly built, content-hashed
+      // static assets, so layout/CSS changes from the update actually render.
+      url.searchParams.set('sanmao_reload', String(Date.now()));
+      window.location.replace(url.toString());
+    } catch {
+      window.location.reload();
+    }
   }, []);
 
   const announceRefreshRequired = useCallback((version: string) => {
@@ -98,7 +122,17 @@ export default function UpdateNotice() {
     setShowModal(false);
     setRefreshedVersion(version);
     setRefreshRequired(true);
-  }, []);
+    // Do not rely on the user manually refreshing: a normal reload can leave
+    // the previous build's layout cached. Force the app to restart against the
+    // newly installed build after a short, visible grace period.
+    if (autoReloadScheduledRef.current) return;
+    autoReloadScheduledRef.current = true;
+    if (autoReloadTimerRef.current !== null) window.clearTimeout(autoReloadTimerRef.current);
+    autoReloadTimerRef.current = window.setTimeout(() => {
+      autoReloadTimerRef.current = null;
+      void forceReloadApp();
+    }, AUTO_RELOAD_DELAY_MS);
+  }, [forceReloadApp]);
 
   const readProgress = useCallback(async (jobId?: string) => {
     try {
@@ -262,15 +296,15 @@ export default function UpdateNotice() {
         <button
           type="button"
           className="update-progress-tray complete refresh-required"
-          onClick={() => window.location.reload()}
-          aria-label="刷新页面以使用新版本"
+          onClick={() => void forceReloadApp()}
+          aria-label="应用正在自动重启以载入新版本"
         >
           <span className="update-progress-tray-orb" aria-hidden="true" />
           <span className="update-progress-tray-copy">
-            <strong>更新完成，请刷新页面</strong>
-            <small>已更新到 v{refreshedVersion || status?.currentVersion || '最新版本'}</small>
+            <strong>更新完成，正在自动重启…</strong>
+            <small>已更新到 v{refreshedVersion || status?.currentVersion || '最新版本'}，如未自动跳转可点击此处</small>
           </span>
-          <span className="update-progress-tray-value">刷新</span>
+          <span className="update-progress-tray-value">重启</span>
         </button>
       ) : updateProgress ? (
         <button

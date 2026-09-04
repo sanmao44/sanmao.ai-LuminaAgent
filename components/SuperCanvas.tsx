@@ -24,6 +24,7 @@ import {
   arrangeCanvas,
   arrangeCanvasGroup,
   canvasEdgeEndpoints,
+  canConnect,
   clone,
   connectionPath,
   createEmptyMedia,
@@ -98,6 +99,7 @@ import {
   CANVAS_NODE_COLOR_KEYS,
   canvasNodeColorKey,
   canvasSourceColorKey,
+  type CanvasNodeColorKey,
 } from "@/lib/canvas/appearance";
 import { formatCanvasVideoDuration } from "@/lib/canvas/media";
 import { downloadCanvasShareImage } from "@/lib/canvas/share";
@@ -108,6 +110,7 @@ import {
   resolveAvailableCreationModel,
   subscribeSharedCreationSettings,
   videoModelOptions,
+  IMAGE_QUALITY_OPTIONS,
   writeSharedCreationSettings,
   type CreationSettings,
   type AgentCreationSettings,
@@ -146,6 +149,11 @@ import {
   runReversePrompt,
 } from "@/lib/creation/agent";
 import {
+  nearestOneTakeVideoDuration,
+  normalizeOneTakeDuration,
+  ONE_TAKE_DEFAULT_DURATION,
+} from "@/lib/one-take-video-duration";
+import {
   hideUnifiedAsset,
   listUnifiedAssets,
   registerCanvasAsset,
@@ -162,6 +170,8 @@ import {
 } from "@/lib/client-history";
 import { bootstrapWorkspace, startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
+import OneTakeDurationPicker from "@/components/OneTakeDurationPicker";
+import ModelPicker from "@/components/ModelPicker";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
 import CanvasProcessingIndicator, {
   type CanvasProcessingKind,
@@ -240,6 +250,7 @@ type CanvasCursorTask =
   | "copying";
 type Point = { x: number; y: number };
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
+const CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS = 140;
 
 function canvasEdgeMidpoint(document: CanvasDocument, edge: CanvasEdge): Point {
   const endpoints = canvasEdgeEndpoints(document, edge);
@@ -1038,7 +1049,26 @@ function connectCanvasNodesInDocument(
   const existingInputs = incomingReferences(next, targetId).length;
   const hasReferenceInput = inputRole === "reference-image" || inputRole === "first-frame" || inputRole === "last-frame" || inputRole === "audio" || sourceHasImage || sourceHasVideo || sourceHasAudio;
   next = addEdge(next, sourceId, targetId, sourcePort, targetPort, hasReferenceInput ? "reference" : "manual", inputRole, existingInputs);
-  if (next.edges.length === beforeEdges) return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
+  if (next.edges.length === beforeEdges) {
+    // Re-mentioning or re-dropping an input that is already wired should be a
+    // no-op success rather than a confusing "already exists" error. Keep the
+    // existing edge role so video slot semantics stay stable.
+    const existingEdge = next.edges.find(
+      (edge) =>
+        edge.source === sourceId &&
+        edge.target === targetId &&
+        edge.sourcePort === sourcePort &&
+        edge.targetPort === targetPort,
+    );
+    if (
+      existingEdge &&
+      !["generated", "variant", "lineage"].includes(existingEdge.kind || "") &&
+      canConnect(next, sourceId, targetId, inputRole).ok
+    ) {
+      return { ok: true, document: next, inputRole: existingEdge.inputRole || inputRole, videoMode };
+    }
+    return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
+  }
   const synchronized = targetKind === "video"
     ? syncCanvasVideoReferences(next, runtime)
     : next;
@@ -1512,6 +1542,31 @@ function defaultCanvasVideoInputRole(
   return "reference-image";
 }
 
+// A drag/resize update only rewrites x/y (and possibly w/h) on a subset of
+// nodes while keeping every node's identity, data and group membership intact.
+// Detecting this lets the hot setDoc path skip the video-reference sync and
+// editor-draft reconcile that would otherwise run on every pointermove frame.
+function canvasNodesPositionOnly(
+  previous: CanvasDocument,
+  next: CanvasDocument,
+) {
+  if (next.nodes.length !== previous.nodes.length) return false;
+  for (let index = 0; index < next.nodes.length; index++) {
+    const before = previous.nodes[index];
+    const after = next.nodes[index];
+    if (before === after) continue;
+    if (
+      before.id !== after.id ||
+      before.type !== after.type ||
+      before.groupId !== after.groupId ||
+      before.data !== after.data
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function sameCanvasIdOrder(value: unknown, expected: readonly string[]) {
   return Array.isArray(value) &&
     value.length === expected.length &&
@@ -1906,8 +1961,12 @@ function CanvasEdgeVisual({
   document,
   edge,
   related,
+  animateRelated,
   style,
   selected,
+  colorKey,
+  sourceKey,
+  targetKey,
   onSelect,
   onHover,
   onLeave,
@@ -1915,14 +1974,17 @@ function CanvasEdgeVisual({
   document: CanvasDocument;
   edge: CanvasEdge;
   related: boolean;
+  animateRelated: boolean;
   style: ConnectionStyle;
   selected: boolean;
+  colorKey: CanvasNodeColorKey;
+  sourceKey: string;
+  targetKey: string;
   onSelect: () => void;
-  onHover: () => void;
+  onHover: (event: ReactPointerEvent<SVGPathElement>) => void;
   onLeave: () => void;
 }) {
   const path = edgePath(document, edge, style);
-  const colorKey = canvasSourceColorKey(document, edge.source);
   const handlePointerDown = (event: ReactPointerEvent<SVGPathElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1930,7 +1992,11 @@ function CanvasEdgeVisual({
   };
   const handlePointerEnter = (event: ReactPointerEvent<SVGPathElement>) => {
     event.stopPropagation();
-    onHover();
+    onHover(event);
+  };
+  const handlePointerMove = (event: ReactPointerEvent<SVGPathElement>) => {
+    event.stopPropagation();
+    onHover(event);
   };
   const handlePointerLeave = () => {
     onLeave();
@@ -1942,18 +2008,20 @@ function CanvasEdgeVisual({
         d={path}
         aria-hidden="true"
         onPointerEnter={handlePointerEnter}
+        onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
       <path
-        className={`canvas-edge ${related ? "related" : ""} ${selected ? "selected" : ""}`}
+        className={`canvas-edge ${related ? "related" : ""} ${selected ? "selected" : ""} ${related && !animateRelated ? "related-static" : ""}`}
         d={path}
         markerEnd={`url(#canvas-arrow-${colorKey})`}
         onPointerEnter={handlePointerEnter}
+        onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
-      {related && (
+      {related && animateRelated && (
         <path
           className="canvas-edge-related-flow"
           d={path}
@@ -1964,6 +2032,24 @@ function CanvasEdgeVisual({
     </g>
   );
 }
+
+// Edge geometry depends only on the edge's own identity plus the source/target
+// entity geometry (node/group positions and sizes). Camera-only updates replace
+// the document wrapper but preserve node/group identities, so memoizing on the
+// endpoint geometry keys keeps the edge layer out of the per-frame zoom/pan
+// render path while still updating edges whose endpoints actually move.
+const MemoizedCanvasEdgeVisual = memo(
+  CanvasEdgeVisual,
+  (previous, next) =>
+    previous.edge === next.edge &&
+    previous.related === next.related &&
+    previous.animateRelated === next.animateRelated &&
+    previous.selected === next.selected &&
+    previous.style === next.style &&
+    previous.colorKey === next.colorKey &&
+    previous.sourceKey === next.sourceKey &&
+    previous.targetKey === next.targetKey,
+);
 
 export default function SuperCanvas() {
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -1984,6 +2070,7 @@ export default function SuperCanvas() {
   const saveTimerRef = useRef<number | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomCameraRef = useRef<CanvasCamera | null>(null);
+  const zoomBusyTimerRef = useRef<number | null>(null);
   const pollTimersRef = useRef<Set<number>>(new Set());
   const pollAttemptsRef = useRef<Map<string, number>>(new Map());
   const pollStartedAtRef = useRef<Map<string, number>>(new Map());
@@ -2047,7 +2134,8 @@ export default function SuperCanvas() {
   const [textLightboxNodeId, setTextLightboxNodeId] = useState<string | null>(
     null,
   );
-  const [agentResult, setAgentResult] = useState<{ value: string; title: string } | null>(null);
+  const [agentResult, setAgentResult] = useState<{ value: string; title: string; durationSeconds?: number } | null>(null);
+  const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<"assets" | "activity" | "settings" | "shortcuts" | null>(null);
   const [topbarCollapsed, setTopbarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -2071,9 +2159,14 @@ export default function SuperCanvas() {
   const [connectionCancelEdgeId, setConnectionCancelEdgeId] = useState<
     string | null
   >(null);
+  const [connectionCancelPointer, setConnectionCancelPointer] =
+    useState<Point | null>(null);
   const connectionHoverEdgeRef = useRef<string | null>(null);
   const connectionCancelButtonHoverRef = useRef(false);
   const connectionCancelHideTimerRef = useRef<number | null>(null);
+  const connectionCancelShowTimerRef = useRef<number | null>(null);
+  const connectionCancelShowEdgeRef = useRef<string | null>(null);
+  const connectionCancelShowPositionRef = useRef<Point | null>(null);
   const [logs, setLogs] = useState<CanvasActivityLog[]>([]);
   const [generationLogs, setGenerationLogs] = useState<CanvasGenerationLog[]>([]);
   const [generationLogsLoading, setGenerationLogsLoading] = useState(false);
@@ -2101,6 +2194,7 @@ export default function SuperCanvas() {
   const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
   const [panReady, setPanReady] = useState(false);
   const [panActive, setPanActive] = useState(false);
+  const [zoomBusy, setZoomBusy] = useState(false);
   const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
   const [cursorTask, setCursorTask] = useState<CanvasCursorTask>("idle");
   const [assetRefresh, setAssetRefresh] = useState(0);
@@ -2118,6 +2212,7 @@ export default function SuperCanvas() {
     setProjectMenuOpen(false);
     setReusePreview(null);
     setAgentResult(null);
+    setOneTakeDurationOpen(false);
     setLightbox(null);
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
@@ -2249,15 +2344,27 @@ export default function SuperCanvas() {
           )
           .map((edge) => edge.id),
       ),
-    [document, selectedGroupId, selectedIds],
+    // edgeTouchesSelection only inspects the edge set, group membership and
+    // the selection; node positions/camera never change which edges are
+    // related, so avoid recomputing this on every drag/zoom frame.
+    [document.edges, document.groups, selectedGroupId, selectedIds],
   );
   const visibleCanvasNodes = useMemo(
     () => sortCanvasNodesByLayer(document.nodes),
     [document.nodes],
   );
-  const visibleCanvasNodeIds = useMemo(
-    () => new Set(visibleCanvasNodes.map((node) => node.id)),
+  // Node ids and their paint order never change when a drag/resize only rewrites
+  // x/y/w/h, so derive the id set from a value-stable signature. The signature
+  // string recomputes cheaply each frame but compares equal across position-only
+  // updates, keeping the edge-visibility Set (and thus the whole edge filter)
+  // out of the per-pointermove path while still updating on add/remove/reorder.
+  const visibleCanvasNodeIdKey = useMemo(
+    () => JSON.stringify(visibleCanvasNodes.map((node) => node.id)),
     [visibleCanvasNodes],
+  );
+  const visibleCanvasNodeIds = useMemo(
+    () => new Set(JSON.parse(visibleCanvasNodeIdKey) as string[]),
+    [visibleCanvasNodeIdKey],
   );
   const selectedGroup = selectedGroupId
     ? groupById(document, selectedGroupId)
@@ -2304,8 +2411,36 @@ export default function SuperCanvas() {
   );
 
   const setDoc = useCallback((next: CanvasDocument) => {
+    const previous = docRef.current;
+    // Pan/zoom only replace the camera; the node/edge/group collections keep
+    // their identities. Skip the video-reference sync and editor-draft
+    // reconcile so zooming/panning stays smooth on large boards.
+    if (
+      next.camera !== previous.camera &&
+      next.nodes === previous.nodes &&
+      next.edges === previous.edges &&
+      next.groups === previous.groups
+    ) {
+      docRef.current = next;
+      setDocument(next);
+      return;
+    }
+    // Dragging/resizing rewrites node positions while preserving node identity,
+    // data and group membership. Those fields never affect video references,
+    // so skip the same heavy reconcile here too.
+    if (
+      next.camera === previous.camera &&
+      next.edges === previous.edges &&
+      next.groups === previous.groups &&
+      next.nodes !== previous.nodes &&
+      canvasNodesPositionOnly(previous, next)
+    ) {
+      docRef.current = next;
+      setDocument(next);
+      return;
+    }
     const normalized = normalizeCanvasDocumentLayers(
-      docRef.current,
+      previous,
       syncCanvasVideoReferences(next, runtime),
     );
     setEditorDrafts((current) => syncCanvasEditorDraftInputModes(current, normalized, runtime));
@@ -2768,33 +2903,69 @@ export default function SuperCanvas() {
     return () => window.cancelAnimationFrame(frame);
   }, [deckHeight, ensureSelectedNodeVisible, ready, selectedSingle?.id]);
 
+  const clearConnectionCancelShowTimer = useCallback(() => {
+    if (connectionCancelShowTimerRef.current !== null) {
+      window.clearTimeout(connectionCancelShowTimerRef.current);
+      connectionCancelShowTimerRef.current = null;
+    }
+    connectionCancelShowEdgeRef.current = null;
+    connectionCancelShowPositionRef.current = null;
+  }, []);
   const clearSelection = useCallback(() => {
+    clearConnectionCancelShowTimer();
     setSelectedIds(new Set());
     setSelectedGroupId(null);
     setSelectedEdgeId(null);
     setConnectionCancelEdgeId(null);
+    setConnectionCancelPointer(null);
     setEditingNodeId(null);
     setExpandedEditorId(null);
-  }, []);
+  }, [clearConnectionCancelShowTimer]);
   const clearConnectionCancelHideTimer = useCallback(() => {
     if (connectionCancelHideTimerRef.current === null) return;
     window.clearTimeout(connectionCancelHideTimerRef.current);
     connectionCancelHideTimerRef.current = null;
   }, []);
   const showConnectionCancel = useCallback(
-    (edgeId: string) => {
+    (edgeId: string, position: Point) => {
       if (connection) return;
       clearConnectionCancelHideTimer();
-      setConnectionCancelEdgeId(edgeId);
+      setConnectionCancelPointer(position);
+      if (connectionCancelEdgeId === edgeId) return;
+      if (connectionCancelShowEdgeRef.current === edgeId) {
+        connectionCancelShowPositionRef.current = position;
+        return;
+      }
+      clearConnectionCancelShowTimer();
+      connectionCancelShowEdgeRef.current = edgeId;
+      connectionCancelShowPositionRef.current = position;
+      setConnectionCancelEdgeId(null);
+      connectionCancelShowTimerRef.current = window.setTimeout(() => {
+        connectionCancelShowTimerRef.current = null;
+        const nextPosition = connectionCancelShowPositionRef.current;
+        const stillHovering = connectionHoverEdgeRef.current === edgeId;
+        connectionCancelShowEdgeRef.current = null;
+        connectionCancelShowPositionRef.current = null;
+        if (!stillHovering || interactionRef.current?.kind === "connect") return;
+        setConnectionCancelEdgeId(edgeId);
+        if (nextPosition) setConnectionCancelPointer(nextPosition);
+      }, CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS);
     },
-    [clearConnectionCancelHideTimer, connection],
+    [
+      clearConnectionCancelHideTimer,
+      clearConnectionCancelShowTimer,
+      connection,
+      connectionCancelEdgeId,
+    ],
   );
   const hideConnectionCancel = useCallback(() => {
     clearConnectionCancelHideTimer();
+    clearConnectionCancelShowTimer();
     setConnectionCancelEdgeId(null);
+    setConnectionCancelPointer(null);
     connectionHoverEdgeRef.current = null;
     connectionCancelButtonHoverRef.current = false;
-  }, [clearConnectionCancelHideTimer]);
+  }, [clearConnectionCancelHideTimer, clearConnectionCancelShowTimer]);
   const scheduleConnectionCancelHide = useCallback(
     (edgeId: string) => {
       clearConnectionCancelHideTimer();
@@ -2812,20 +2983,24 @@ export default function SuperCanvas() {
     [clearConnectionCancelHideTimer],
   );
   const handleConnectionHover = useCallback(
-    (edgeId: string) => {
+    (edgeId: string, event: ReactPointerEvent<SVGPathElement>) => {
       connectionHoverEdgeRef.current = edgeId;
-      showConnectionCancel(edgeId);
+      showConnectionCancel(
+        edgeId,
+        stagePoint(event.clientX, event.clientY),
+      );
     },
-    [showConnectionCancel],
+    [showConnectionCancel, stagePoint],
   );
   const handleConnectionLeave = useCallback(
     (edgeId: string) => {
       if (connectionHoverEdgeRef.current === edgeId)
         connectionHoverEdgeRef.current = null;
+      clearConnectionCancelShowTimer();
       if (!connectionCancelButtonHoverRef.current)
         scheduleConnectionCancelHide(edgeId);
     },
-    [scheduleConnectionCancelHide],
+    [clearConnectionCancelShowTimer, scheduleConnectionCancelHide],
   );
   useEffect(() => {
     const handleSpaceDown = (event: KeyboardEvent) => {
@@ -2984,12 +3159,22 @@ export default function SuperCanvas() {
       if (event.button !== 0 && event.button !== 1) return;
       const target = event.target as HTMLElement;
       setContextMenu(null);
-      if (
-        target.closest(
-          ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
-        )
-      )
-        return;
+      const panIntent = event.button === 1 || spaceHeldRef.current;
+      const overCanvasContent = target.closest(
+        ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
+      );
+      const overUiOverlay = target.closest(
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+      );
+      // A normal left-button press on canvas content is handled by that
+      // content's own pointer handlers (node/group drag, resize, connect).
+      // Don't hijack it into a canvas pan here.
+      if (!panIntent && (overCanvasContent || overUiOverlay)) return;
+      // While explicitly panning (middle mouse button or holding Space), avoid
+      // starting a pan from a UI overlay that manages its own drag (menus,
+      // pickers, minimap). Panning must work across nodes/groups/canvas content
+      // even when the pointer starts on top of a node.
+      if (panIntent && overUiOverlay) return;
       setConnectionNodePicker(null);
       setDraggingNodeIds(new Set());
       setQuickToolbarNodeId(null);
@@ -3032,6 +3217,9 @@ export default function SuperCanvas() {
         )
       )
         return;
+      // Holding Space switches to canvas pan mode, so let the pointer event
+      // bubble to the stage pan handler instead of starting a node drag.
+      if (spaceHeldRef.current) return;
       focusCanvasStage();
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       event.preventDefault();
@@ -3113,6 +3301,9 @@ export default function SuperCanvas() {
   const startGroupDrag = useCallback(
     (event: ReactPointerEvent, group: CanvasGroup) => {
       if (event.button !== 0) return;
+      // Holding Space switches to canvas pan mode, so let the pointer event
+      // bubble to the stage pan handler instead of starting a group drag.
+      if (spaceHeldRef.current) return;
       focusCanvasStage();
       event.preventDefault();
       event.stopPropagation();
@@ -3268,6 +3459,7 @@ export default function SuperCanvas() {
     (edgeId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
+      hideConnectionCancel();
       commit((value) => removeEdge(value, edgeId));
       setSelectedEdgeId((current) => (current === edgeId ? null : current));
       addLog("已取消连线");
@@ -3280,6 +3472,7 @@ export default function SuperCanvas() {
     [
       addLog,
       commit,
+      hideConnectionCancel,
     ],
   );
 
@@ -3826,6 +4019,15 @@ export default function SuperCanvas() {
   const zoomAt = useCallback(
     (clientX: number, clientY: number, factor: number) => {
       const point = stagePoint(clientX, clientY);
+      // Disable the related-edge flow animation for the whole zoom gesture
+      // (debounced) rather than toggling it every frame, which would flicker.
+      setZoomBusy(true);
+      if (zoomBusyTimerRef.current !== null)
+        window.clearTimeout(zoomBusyTimerRef.current);
+      zoomBusyTimerRef.current = window.setTimeout(
+        () => setZoomBusy(false),
+        180,
+      );
       // Wheel events can arrive faster than React can commit a render. Build
       // on the latest effective camera (including an update waiting for the
       // next frame) instead of a stale render closure, then commit once per
@@ -3878,6 +4080,9 @@ export default function SuperCanvas() {
         window.cancelAnimationFrame(zoomFrameRef.current);
       zoomFrameRef.current = null;
       pendingZoomCameraRef.current = null;
+      if (zoomBusyTimerRef.current !== null)
+        window.clearTimeout(zoomBusyTimerRef.current);
+      zoomBusyTimerRef.current = null;
     };
   }, []);
   const panToWorld = useCallback(
@@ -8484,6 +8689,7 @@ export default function SuperCanvas() {
       }
       let next: CanvasDocument = { ...docRef.current };
       const createdNodes: CanvasNode[] = [];
+      const edges: CanvasEdge[] = [];
       for (const [index, output] of assets.entries()) {
         const column = index % Math.max(1, request.lines.vertical.length + 1);
         const row = Math.floor(index / Math.max(1, request.lines.vertical.length + 1));
@@ -8530,8 +8736,9 @@ export default function SuperCanvas() {
           ...openNodePosition({ x: draft.x, y: draft.y }, draft, createdNodes),
         };
         createdNodes.push(positioned);
+        edges.push({ id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
       }
-      next = { ...next, nodes: [...next.nodes, ...createdNodes] };
+      next = { ...next, nodes: [...next.nodes, ...createdNodes], edges: [...next.edges, ...edges] };
       next = createGroup(next, createdNodes.map((node) => node.id), "宫格切分");
       const group = next.groups.at(-1);
       commit(() => next);
@@ -9264,16 +9471,40 @@ export default function SuperCanvas() {
     }
     notify(inPlaceVideo ? "提示词已写入当前视频节点，请点击生成" : "提示词已复制到画布编辑器，原节点保持不变");
   }, [notify, openImageEditor, openReuseDraft, updateEditorPrompt]);
-  const runOneTakeFromSelection = useCallback(async () => {
+  const runOneTakeFromSelection = useCallback(async (durationSeconds = ONE_TAKE_DEFAULT_DURATION) => {
     const source = selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image");
     if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
     const model = runtime?.settings.agentModelId || undefined;
+    const duration = normalizeOneTakeDuration(durationSeconds);
     try {
-      const value = await runOneTakeVideoPrompt(source.map((node) => ({ url: String(node.data.url), name: String(node.data.name || "参考图") })), model);
-      setAgentResult({ value, title: "一镜到底提示词" });
+      const value = await runOneTakeVideoPrompt(source.map((node) => ({ url: String(node.data.url), name: String(node.data.name || "参考图") })), model, duration);
+      setAgentResult({ value, title: "一镜到底提示词", durationSeconds: duration });
       addLog("Agent 已生成一镜到底提示词");
     } catch (error) { notify(error instanceof Error ? error.message : "一镜到底生成失败", "error"); }
   }, [addLog, notify, runtime?.settings.agentModelId, selectedNodes]);
+  const writeAgentResultToVideo = useCallback(() => {
+    if (!agentResult?.value) return;
+    const currentParams = normalizeCreationSettings("video", drafts.video.params, runtime);
+    const resolvedModel = resolveAvailableCreationModel(currentParams, runtime);
+    const provider = runtime?.providers.find((item) => item.id === resolvedModel.model?.providerId);
+    const limits = getVideoModelLimits(resolvedModel.model || undefined, provider);
+    const requested = agentResult.durationSeconds === undefined
+      ? currentParams.duration
+      : normalizeOneTakeDuration(agentResult.durationSeconds);
+    const duration = nearestOneTakeVideoDuration(requested, limits);
+    const nextParams = { ...currentParams, duration };
+    setDrafts((current) => ({
+      ...current,
+      video: { ...current.video, prompt: agentResult.value, params: nextParams },
+    }));
+    writeSharedCreationSettings(nextParams);
+    setMode("video");
+    if (duration !== requested) {
+      notify(`当前视频模型不支持 ${requested} 秒，已调整为 ${duration} 秒；Prompt 仍保留 ${requested} 秒`, "ok");
+    } else {
+      notify(`一镜到底提示词已写入视频生成面板（${duration} 秒）`);
+    }
+  }, [agentResult, drafts.video.params, notify, runtime]);
   const createViewerTextNode = useCallback((node: CanvasNode, value: string) => {
     const draft = createPrompt({ x: node.x + nodeSize(node).w + 90, y: node.y });
     const textNode = { ...draft, data: { ...draft.data, text: value, agentPrompt: value, role: "结果文本" } };
@@ -9637,20 +9868,12 @@ export default function SuperCanvas() {
     [updateDeckPrompt],
   );
   const applyDeckVariantMention = useCallback(
-    (index: number, value: string) => {
+    (_index: number, value: string) => {
       if (selectedSingle?.type !== "generator") return;
       updateVariantRequirements(value);
-      const node = mentionCandidates[index];
-      if (!node) return;
-      const role: CanvasInputRole = node.type === "prompt" || node.type === "generator"
-        ? "context"
-        : node.data.kind === "video"
-          ? selectedSingle.data.kind === "video" ? "video" : "reference-image"
-          : "reference-image";
-      addNodeReference(selectedSingle.id, node.id, role);
       setVariantMentionState(null);
     },
-    [addNodeReference, mentionCandidates, selectedSingle, updateVariantRequirements],
+    [selectedSingle, updateVariantRequirements],
   );
   const reorderReference = useCallback(
     (ownerId: string, draggedId: string, targetId: string) => {
@@ -9729,14 +9952,88 @@ export default function SuperCanvas() {
   const connectionTargetScreen = connectionTargetBounds
     ? worldToScreen(connectionTargetBounds.x, connectionTargetBounds.y)
     : null;
-  const visibleCanvasEdges = document.edges.filter((edge) => {
-    if (!isCanvasEdgeVisible(document, edge)) return false;
-    const sourceVisible =
-      visibleCanvasNodeIds.has(edge.source) || Boolean(groupById(document, edge.source));
-    const targetVisible =
-      visibleCanvasNodeIds.has(edge.target) || Boolean(groupById(document, edge.target));
-    return sourceVisible && targetVisible;
-  });
+  // O(1) lookup maps built only when the node/group collections change. The
+  // memoized edge visuals use these instead of re-scanning the whole document
+  // for source/target geometry and color on every render/frame.
+  const canvasColorKeyById = useMemo(() => {
+    const nodeByIdMap = new Map(
+      document.nodes.map((node) => [node.id, node]),
+    );
+    const keyById = new Map<string, CanvasNodeColorKey>();
+    for (const node of document.nodes) {
+      keyById.set(node.id, canvasNodeColorKey(node));
+    }
+    for (const group of document.groups) {
+      const firstMember = group.nodeIds
+        .map((id) => nodeByIdMap.get(id))
+        .find((node): node is CanvasNode => Boolean(node));
+      keyById.set(
+        group.id,
+        firstMember ? canvasNodeColorKey(firstMember) : "image",
+      );
+    }
+    return keyById;
+  }, [document.nodes, document.groups]);
+
+  // Geometry signatures for edge endpoints. Node keys encode the node's current
+  // position/size so a moved node invalidates only the edges touching it. Group
+  // keys encode member positions so group port points track their members.
+  const canvasEntityGeometryKeyById = useMemo(() => {
+    const nodeByIdMap = new Map(
+      document.nodes.map((node) => [node.id, node]),
+    );
+    const keyById = new Map<string, string>();
+    for (const node of document.nodes) {
+      const size = nodeSize(node);
+      keyById.set(
+        node.id,
+        `n:${node.id}:${node.x}:${node.y}:${size.w}x${size.h}`,
+      );
+    }
+    for (const group of document.groups) {
+      const members = group.nodeIds
+        .map((id) => nodeByIdMap.get(id))
+        .filter((node): node is CanvasNode => Boolean(node));
+      keyById.set(
+        group.id,
+        `g:${group.id}:${members
+          .map((node) => {
+            const size = nodeSize(node);
+            return `${node.id}:${node.x}:${node.y}:${size.w}x${size.h}`;
+          })
+          .join("|")}`,
+      );
+    }
+    return keyById;
+  }, [document.nodes, document.groups]);
+
+  // Group visibility is a pure id set, so build it once per group collection
+  // change instead of scanning document.groups for every edge on every filter
+  // pass (O(E*G) -> O(E)).
+  const canvasGroupIdSet = useMemo(
+    () => new Set(document.groups.map((group) => group.id)),
+    [document.groups],
+  );
+  const visibleCanvasEdges = useMemo(
+    () =>
+      document.edges.filter((edge) => {
+        const sourceVisible =
+          visibleCanvasNodeIds.has(edge.source) ||
+          canvasGroupIdSet.has(edge.source);
+        const targetVisible =
+          visibleCanvasNodeIds.has(edge.target) ||
+          canvasGroupIdSet.has(edge.target);
+        return sourceVisible && targetVisible;
+      }),
+    [document.edges, canvasGroupIdSet, visibleCanvasNodeIds],
+  );
+  // The flow/dash animation is the main paint cost at scale. Keep it only when
+  // the user is at rest (no drag/pan/marquee/resize/connect and not zooming);
+  // during an active interaction related edges fall back to static dashes so the
+  // canvas stays smooth. The animation returns the moment the gesture ends, so a
+  // single-node click still plays the related-edge flow after selection.
+  const canvasEdgesAnimateRelated =
+    !selectedGroupId && cursorTask === "idle" && !zoomBusy;
   const connectionCancelEdge = connectionCancelEdgeId
     ? document.edges.find(
         (edge) => edge.id === connectionCancelEdgeId && isCanvasEdgeVisible(document, edge),
@@ -9751,7 +10048,7 @@ export default function SuperCanvas() {
         y: (connection.start.y + connection.end.y) / 2,
       }
     : connectionCancelEdgeMidpoint
-      ? worldToScreen(
+      ? connectionCancelPointer || worldToScreen(
           connectionCancelEdgeMidpoint.x,
           connectionCancelEdgeMidpoint.y,
         )
@@ -10207,7 +10504,17 @@ export default function SuperCanvas() {
         </button>
       )}
       {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
-        <button type="button" onClick={() => void runOneTakeFromSelection()}>🎬 一镜到底</button>
+        <div className="one-take-duration-control">
+          <button type="button" onClick={() => setOneTakeDurationOpen(true)}>🎬 一镜到底</button>
+          <OneTakeDurationPicker
+            open={oneTakeDurationOpen}
+            onConfirm={(duration) => {
+              setOneTakeDurationOpen(false);
+              void runOneTakeFromSelection(duration);
+            }}
+            onCancel={() => setOneTakeDurationOpen(false)}
+          />
+        </div>
       )}
       {selectedImageDownloads.length >= 2 && (
         <button
@@ -10663,27 +10970,31 @@ export default function SuperCanvas() {
                 ))}
               </defs>
               {visibleCanvasEdges.map((edge) => (
-                <CanvasEdgeVisual
+                <MemoizedCanvasEdgeVisual
                   key={edge.id}
                   document={document}
                   edge={edge}
                   related={relatedConnectionEdgeIds.has(edge.id)}
+                  animateRelated={canvasEdgesAnimateRelated}
                   style={connectionStyle}
                   selected={selectedEdgeId === edge.id}
+                  colorKey={canvasColorKeyById.get(edge.source) ?? "image"}
+                  sourceKey={canvasEntityGeometryKeyById.get(edge.source) ?? edge.source}
+                  targetKey={canvasEntityGeometryKeyById.get(edge.target) ?? edge.target}
                   onSelect={() => {
                     hideConnectionCancel();
                     setSelectedEdgeId(edge.id);
                     setSelectedIds(new Set());
                     setSelectedGroupId(null);
                   }}
-                  onHover={() => handleConnectionHover(edge.id)}
+                  onHover={(event) => handleConnectionHover(edge.id, event)}
                   onLeave={() => handleConnectionLeave(edge.id)}
                 />
               ))}
               {draftConnection && (
                 <path
-                  className={`canvas-edge canvas-edge-draft node-color-${canvasSourceColorKey(document, draftConnection.sourceId)}`}
-                  markerEnd={`url(#canvas-arrow-${canvasSourceColorKey(document, draftConnection.sourceId)})`}
+                  className={`canvas-edge canvas-edge-draft node-color-${canvasColorKeyById.get(draftConnection.sourceId) ?? "image"}`}
+                  markerEnd={`url(#canvas-arrow-${canvasColorKeyById.get(draftConnection.sourceId) ?? "image"})`}
                   d={connectionPath(
                     draftConnection.start,
                     draftConnection.end,
@@ -10834,7 +11145,7 @@ export default function SuperCanvas() {
                   onReferenceDrop={addNodeReference}
                   onAddReferenceFiles={addEditorReferenceFiles}
                   editorContexts={incomingContext(document, node.id).filter((item) => item.type === "prompt" || item.type === "generator")}
-                   mentionCandidates={document.nodes.filter((candidate) => Boolean(candidate.data.url || candidate.data.text || candidate.data.prompt || candidate.data.agentPrompt))}
+                   mentionCandidates={incomingContext(document, node.id).filter(isCanvasMentionableNode)}
                 />
               ))}
            </div>
@@ -11411,19 +11722,7 @@ export default function SuperCanvas() {
 
             <div className="canvas-context-menu-body">
 
-            <button type="button" className="canvas-menu-item canvas-menu-item-tool" onClick={() => addNode("upscale", contextMenu.world)}>
-              <span className="canvas-menu-icon" aria-hidden="true">↗</span>
-              <span className="canvas-menu-copy"><b>超分节点</b><small>连接图片后在独立面板中提交</small></span>
-              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-            </button>
             <div className="canvas-menu-group">
-              <div className="canvas-menu-group-title">
-                <span className="canvas-menu-group-mark" aria-hidden="true">01</span>
-                <span>
-                  <b>基础节点</b>
-                  <small>从空白开始创建</small>
-                </span>
-              </div>
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-image"
@@ -11474,14 +11773,13 @@ export default function SuperCanvas() {
               </button>
             </div>
 
+            <button type="button" className="canvas-menu-item canvas-menu-item-tool" onClick={() => addNode("upscale", contextMenu.world)}>
+              <span className="canvas-menu-icon" aria-hidden="true">↗</span>
+              <span className="canvas-menu-copy"><b>超分节点</b><small>连接图片后在独立面板中提交</small></span>
+              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+            </button>
+
             <div className="canvas-menu-group">
-              <div className="canvas-menu-group-title">
-                <span className="canvas-menu-group-mark" aria-hidden="true">02</span>
-                <span>
-                  <b>生成工作流</b>
-                  <small>批量生成与变体</small>
-                </span>
-              </div>
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-image"
@@ -11785,7 +12083,7 @@ export default function SuperCanvas() {
           <header><b>{agentResult.title}</b><button type="button" onClick={() => setAgentResult(null)}>×</button></header>
           <p>{agentResult.value}</p>
           <footer>
-            <button type="button" onClick={() => { setDrafts((current) => ({ ...current, video: { ...current.video, prompt: agentResult.value } })); setMode("video"); notify("一镜到底提示词已写入视频生成面板"); }}>写入视频面板</button>
+            <button type="button" onClick={writeAgentResultToVideo}>写入视频面板</button>
             <button type="button" onClick={() => { const draft = createPrompt({ x: document.camera.x + 120, y: document.camera.y + 120 }); const node = { ...draft, data: { ...draft.data, text: agentResult.value, agentPrompt: agentResult.value, role: agentResult.title } }; commit((current) => ({ ...current, nodes: [...current.nodes, node] })); setAgentResult(null); notify("已创建新的文本节点"); }}>创建文本节点</button>
             <button type="button" onClick={() => navigator.clipboard?.writeText(agentResult.value)}>复制</button>
           </footer>
@@ -13258,7 +13556,7 @@ function CanvasAudioNodePanel({
   const hasAudio = Boolean(data.url);
   return (
     <div
-      className="canvas-audio-node-panel"
+      className="canvas-audio-panel"
       data-canvas-wheel-isolate
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
@@ -13951,13 +14249,6 @@ function CanvasNodeContextMenu({
       <div className="canvas-context-menu-body">
         {groups.filter((group) => group.actions.length > 0).map((group) => (
           <div className="canvas-menu-group" key={group.label}>
-            <div className="canvas-menu-group-title">
-              <span className="canvas-menu-group-mark" aria-hidden="true">⌘</span>
-              <span>
-                <b>{group.label}</b>
-                <small>快捷操作</small>
-              </span>
-            </div>
             {group.actions.map((action) => (
               <button
                 type="button"
@@ -14027,8 +14318,17 @@ function CanvasNodeEditorPopover({
   const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
+  const imageDockFileRef = useRef<HTMLInputElement | null>(null);
   const data = node.data;
   const audioNode = node.type === "media" && data.kind === "audio";
+  const isImageNode = !audioNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
+  const isVariantGenerator = node.type === "generator" && data.kind === "video";
+  const isDockNode = isImageNode || isVariantGenerator;
+  const stackedEditor = !promptExpanded && !audioNode && !isDockNode;
+  const isVideoNode = data.kind === "video";
+  const isAgentNode = node.type === "prompt";
+  const isUpscaleNode = node.type === "upscale";
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
@@ -14036,6 +14336,108 @@ function CanvasNodeEditorPopover({
   const inPlaceVideo = canvasVideoTargetHasImageReference(document, node);
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
+  const imageParams = isImageNode && editorParams && editorParams.kind === "image" ? editorParams : null;
+  const imageQualityLabel = imageParams
+    ? (IMAGE_QUALITY_OPTIONS.find((option) => option.value === imageParams.quality)?.label.replace("质量", "") || imageParams.quality)
+    : "";
+  const imageSizeLabel = imageParams
+    ? imageParams.sizeMode === "system"
+      ? imageParams.resolution
+      : `${imageParams.width}×${imageParams.height}`
+    : "";
+  const imageParameterSummary = imageParams
+    ? `${imageParams.aspect} · ${imageQualityLabel} · ${imageSizeLabel} · ${imageParams.count}张`
+    : "";
+  const videoEditorParams = editorParams && editorParams.kind === "video" ? editorParams : null;
+  const textEditorParams = editorParams && editorParams.kind === "text" ? editorParams : null;
+  const modelNameForSummary = textEditorParams
+    ? (runtime?.models?.find((item) => item.id === textEditorParams.model)?.displayName || runtime?.models?.find((item) => item.id === runtime?.settings.agentModelId)?.displayName || "自动选择")
+    : "";
+  const webModeLabel = textEditorParams
+    ? (textEditorParams.webMode === "always" ? "始终联网" : textEditorParams.webMode === "auto" ? "智能联网" : "关闭联网")
+    : "";
+  const videoParameterSummary = videoEditorParams
+    ? `${videoEditorParams.aspect} · ${videoEditorParams.duration}s · ${videoEditorParams.resolution}`
+    : "";
+  const upscaleParameterSummary = upscaleParams ? `${upscaleParams.scale}倍 · ${upscaleParams.target}` : "";
+  const parameterSummary = imageParams
+    ? imageParameterSummary
+    : (videoParameterSummary || (textEditorParams ? `${modelNameForSummary} · ${webModeLabel}` : "") || upscaleParameterSummary || "");
+  const dockModelValue = imageParams?.model ?? videoEditorParams?.model ?? textEditorParams?.model;
+  const dockModelCapability = imageParams
+    ? (imageParams.mask ? "edit" : "generate")
+    : videoEditorParams
+      ? "video-generate"
+      : textEditorParams
+        ? "chat"
+        : null;
+  const dockModelDefaultId = imageParams
+    ? runtime?.settings.defaultImageModelId
+    : videoEditorParams
+      ? runtime?.settings.defaultVideoModelId
+      : runtime?.settings.agentModelId;
+  const referenceFileAccept = isUpscaleNode
+    ? "image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"
+    : "image/*,video/*,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
+  const dockHint = isUpscaleNode
+    ? (upscaleMissingInput ? "请连接一张已完成的图片" : "连接图片后提交超分")
+    : isAgentNode
+      ? "Enter 发送 · Shift + Enter 换行"
+      : inPlaceVideo
+        ? "引用图片 · 结果写回当前视频节点"
+        : isVideoNode
+          ? "右侧生成新视频"
+          : node.type === "media" && data.kind === "image" && data.url
+            ? "当前图片作参考 · 右侧生成新图"
+            : node.type === "generator"
+              ? "共同提示词 + 多行变体要求"
+              : "Ctrl/Cmd + Enter 生成";
+  const promptPlaceholder = isAgentNode
+    ? "输入 Agent 任务… 输入 @ 引用节点"
+    : isVideoNode
+      ? "描述动作、镜头和声音… 输入 @ 引用节点"
+      : "描述想生成的画面… 输入 @ 引用节点";
+  const promptLabelSmall = promptExpanded
+    ? "@ 引用节点 · 编辑完成后点击保存"
+    : isAgentNode
+      ? "@ 引用节点 · Enter 发送"
+      : "@ 引用节点 · Ctrl/Cmd + Enter 生成";
+  const generateLabel = pending
+    ? "处理中…"
+    : isUpscaleNode
+      ? "提交超分"
+      : isAgentNode
+        ? "发送"
+        : inPlaceVideo
+          ? "生成到当前节点"
+          : node.type === "generator"
+            ? (data.kind === "video" ? "生成新视频" : "生成新图")
+            : node.type === "media" && data.kind === "image" && data.url
+              ? "生成新图"
+              : "生成";
+  const editorActionLabel = promptExpanded ? "保存" : generateLabel;
+  const handleEditorAction = () => {
+    if (promptExpanded) {
+      setPromptExpanded(false);
+      window.setTimeout(() => promptRef.current?.focus(), 0);
+      return;
+    }
+    onGenerate(node);
+  };
+
+  const editorSubtitle = node.type === "generator"
+    ? (data.kind === "video" ? "视频变体 · 生成新视频" : "变体 · 生成新图")
+    : node.type === "prompt"
+      ? "Agent 节点"
+      : data.kind === "video"
+        ? "视频节点"
+        : audioNode
+          ? "音频素材"
+          : node.type === "upscale"
+            ? (upscaleMissingInput ? "超分节点 · 请连接一张已完成的图片" : "超分节点 · 已连接图片")
+            : node.type === "media" && data.kind === "image" && data.url
+              ? "当前图片作参考 · 右侧生成新图"
+              : "图片节点";
 
   useEffect(() => {
     setPromptExpanded(false);
@@ -14046,8 +14448,24 @@ function CanvasNodeEditorPopover({
     if (!textarea) return;
     const syncPromptHeight = () => {
       const mobile = window.matchMedia("(max-width: 720px)").matches;
-      const minHeight = promptExpanded ? (mobile ? 180 : 220) : (mobile ? 104 : 120);
-      const maxHeight = promptExpanded ? (mobile ? 360 : 460) : (mobile ? 220 : 260);
+      const shortViewport = window.innerHeight <= 620;
+      const baseMinHeight = promptExpanded
+        ? (mobile ? 180 : 220)
+        : stackedEditor
+          ? (mobile ? 50 : 54)
+          : (mobile ? 76 : 86);
+      const baseMaxHeight = promptExpanded
+        ? (mobile ? 360 : 460)
+        : stackedEditor
+          ? (mobile ? 88 : 96)
+          : (mobile ? 112 : 128);
+      const isCompactPromptDock = isDockNode && !promptExpanded;
+      const minHeight = isCompactPromptDock
+        ? (mobile ? 56 : 64)
+        : (shortViewport && !promptExpanded ? Math.min(baseMinHeight, 82) : baseMinHeight);
+      const maxHeight = isCompactPromptDock
+        ? (mobile ? 132 : 152)
+        : (shortViewport && !promptExpanded ? Math.min(baseMaxHeight, 132) : baseMaxHeight);
       textarea.style.height = "auto";
       const contentHeight = textarea.scrollHeight;
       textarea.style.height = `${Math.min(maxHeight, Math.max(minHeight, contentHeight))}px`;
@@ -14065,7 +14483,7 @@ function CanvasNodeEditorPopover({
       observer?.disconnect();
       window.removeEventListener("resize", syncPromptHeight);
     };
-  }, [editorPrompt, isCompact, node.id, promptExpanded]);
+  }, [editorPrompt, isCompact, isDockNode, node.id, promptExpanded]);
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -14080,6 +14498,8 @@ function CanvasNodeEditorPopover({
     return () => window.removeEventListener("keydown", handleEscape, true);
   }, [promptExpanded]);
 
+
+
   const reposition = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -14093,7 +14513,28 @@ function CanvasNodeEditorPopover({
     // Use the density's preferred height instead of the currently rendered
     // height. A previously constrained panel can then grow again after the
     // node is panned upward or the viewport becomes taller.
-     const popoverHeight = audioNode ? 330 : microEditor ? 400 : nextCompact ? 520 : 580;
+    const estimatedPopoverHeight = audioNode ? 330 : isImageNode ? 340 : microEditor ? 440 : nextCompact ? 540 : 620;
+    // scrollHeight remains the full natural height even while an earlier
+    // position temporarily constrained the panel. Use it for placement so a
+    // clipped first render cannot make the editor permanently lose its lower
+    // controls.
+    const popoverHeight = (() => {
+      const popover = popoverRef.current;
+      if (!popover) return estimatedPopoverHeight;
+      if (!audioNode) return popover.scrollHeight || estimatedPopoverHeight;
+
+      // The audio body is the only editor body that can become a native
+      // scroll container. Reading the popover's scrollHeight after it has
+      // been height-constrained therefore measures the already-clipped flex
+      // layout and feeds that smaller value back into the next layout pass.
+      // Measure the body's full content instead so the panel can grow when
+      // there is room, while still allowing the body to scroll in a short
+      // viewport.
+      const head = popover.querySelector<HTMLElement>(".canvas-node-editor-head");
+      const body = popover.querySelector<HTMLElement>(".canvas-node-editor-body");
+      const naturalHeight = (head?.offsetHeight || 0) + (body?.scrollHeight || 0) + 2;
+      return naturalHeight || estimatedPopoverHeight;
+    })();
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -14112,13 +14553,22 @@ function CanvasNodeEditorPopover({
           width: size.w * zoom,
           height: size.h * zoom,
         };
-    const position = fitCanvasNodeEditorBelow(
-      anchor,
-      { width: stageWidth, height: stageHeight },
-      { width: popoverWidth, height: popoverHeight },
-      14,
-      12,
-    );
+    // Use the node's real screen-space anchor for every editor mode. The
+    // panel may clamp to the stage margins when it is wider than the node,
+    // but it must not be recentered independently from the node.
+    const fittedPosition = fitCanvasNodeEditorBelow(
+        anchor,
+        { width: stageWidth, height: stageHeight },
+        { width: popoverWidth, height: popoverHeight },
+        14,
+        12,
+      );
+    // Keep the compact composer attached below its node. Its own text areas
+    // handle long content, so the complete panel may continue below the stage
+    // instead of being lifted or turned into a scroll drawer.
+    const position = stackedEditor
+      ? { ...fittedPosition, maxHeight: popoverHeight }
+      : fittedPosition;
     setPosition((current) =>
       current.left === position.left &&
       current.top === position.top &&
@@ -14126,7 +14576,7 @@ function CanvasNodeEditorPopover({
         ? current
         : position,
     );
-  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, node.x, node.y, promptExpanded, size.h, size.w, stageRef]);
+  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isImageNode, node.x, node.y, promptExpanded, size.h, size.w, stackedEditor, stageRef]);
 
   useLayoutEffect(() => {
     reposition();
@@ -14157,7 +14607,7 @@ function CanvasNodeEditorPopover({
   return (
     <div
       ref={popoverRef}
-      className={`canvas-node-editor-popover canvas-node-editor-dock${promptExpanded ? " is-prompt-expanded" : ""}`}
+       className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement="bottom"
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
@@ -14167,7 +14617,7 @@ function CanvasNodeEditorPopover({
       style={{
         left: position.left,
         top: position.top,
-        maxHeight: promptExpanded ? undefined : position.maxHeight,
+        maxHeight: promptExpanded || stackedEditor || isDockNode ? undefined : position.maxHeight,
       }}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
@@ -14179,15 +14629,16 @@ function CanvasNodeEditorPopover({
           <span className="canvas-node-editor-status-dot" aria-hidden="true" />
           <div>
             <b>{nodeLabel(node)}</b>
-             <small>{promptExpanded ? "文本编辑 · 专注输入" : node.type === "prompt" ? "Agent 节点" : data.kind === "video" ? "视频节点" : audioNode ? "音频素材" : "图片节点"} · 节点内编辑</small>
+             <small>{editorSubtitle} · 节点内编辑</small>
           </div>
         </div>
         <div className="canvas-node-editor-head-actions">
           <span>编辑中</span>
-           {!audioNode && <button
+           {!audioNode && node.type !== "upscale" && <button
             type="button"
             className="canvas-node-editor-expand"
             title={promptExpanded ? "收回编辑" : "放大编辑"}
+            {...(isDockNode ? { "data-tooltip": promptExpanded ? "收回编辑" : "放大编辑" } : {})}
             aria-label={promptExpanded ? "收回编辑" : "放大编辑"}
             aria-expanded={promptExpanded}
             onClick={(event) => {
@@ -14200,7 +14651,7 @@ function CanvasNodeEditorPopover({
           <button
             type="button"
             className={node.type === "upscale" && pending ? "canvas-node-editor-collapse" : undefined}
-            title={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
+            {...(isDockNode ? { "data-tooltip": node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数" } : { title: node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数" })}
             onClick={() => onToggleEditor(node)}
             aria-label={node.type === "upscale" && pending ? "收起超分面板" : "关闭节点参数"}
           >×</button>
@@ -14213,12 +14664,61 @@ function CanvasNodeEditorPopover({
              onReplaceAudio={onReplaceAudio}
              onDurationChange={onAudioDurationChange}
            />
-         ) : <div className="canvas-node-editor-columns">
-          <div className="canvas-node-editor-copy">
+          ) : isDockNode ? (
+           <div className="canvas-node-editor-image-dock">
+            <div className="canvas-node-editor-dock-chips">
+              <button type="button" className="canvas-node-editor-dock-chip" onClick={() => imageDockFileRef.current?.click()} aria-label="添加参考素材" data-tooltip="添加参考素材">
+                <span aria-hidden="true">＋</span> 参考
+              </button>
+              {node.type === "media" && node.data.kind === "image" && node.data.url && onLocalEdit && maskState && (
+                <button type="button" className="canvas-node-editor-dock-chip" onClick={() => onLocalEdit()} aria-label="局部编辑" data-tooltip="局部编辑">
+                  <span aria-hidden="true">✎</span> 局部编辑
+                </button>
+              )}
+              {node.type === "generator" && (
+                <div className="canvas-node-editor-dock-variant-wrap">
+                  <button type="button" className="canvas-node-editor-dock-chip" onClick={() => setImageDockPanel((value) => value === "variant" ? null : "variant")} aria-label="变体要求" aria-expanded={imageDockPanel === "variant"} aria-controls="canvas-node-dock-variant" data-tooltip="变体要求">
+                    <span aria-hidden="true">⧉</span> 变体
+                  </button>
+                  {imageDockPanel === "variant" && (
+                    <div id="canvas-node-dock-variant" className="canvas-node-editor-dock-popover canvas-node-editor-dock-drawer is-variant" role="dialog" aria-label="变体要求" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+                      <div className="canvas-node-editor-dock-drawer-grip" aria-hidden="true" />
+                      <div className="canvas-node-editor-dock-popover-head">
+                        <b>变体要求</b>
+                        <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
+                      </div>
+                      <div className="canvas-node-variant-editor">
+                        <div className="canvas-node-variant-editor-head">
+                          <label>变体要求 <small>每行一条，最多 8 条</small></label>
+                          <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
+                        </div>
+                        <ReferenceMentionEditor
+                          value={data.variantRequirementsText ?? variantRequirements.join("\n")}
+                          references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+                          ariaLabel={`${nodeLabel(node)}变体要求`}
+                          className="canvas-node-variant-requirements-editor"
+                          menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
+                          menuPortal
+                          onChange={(value) => onVariantRequirementsChange(node, value)}
+                          onMentionSelect={(_candidateIndex, value) => onVariantRequirementsChange(node, value)}
+                          placeholder="改成夜景\n改为俯拍视角"
+                          transformPastedText={(text) => replaceNaturalReferenceLabels(
+                            text,
+                            mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
+                          ).value}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <span className="canvas-node-editor-dock-hint">{dockHint}</span>
+            </div>
+            {!isUpscaleNode && (
             <div className="canvas-node-editor-prompt-wrap">
               <div className="canvas-node-editor-prompt-label">
-                <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
-                <small>@ 引用节点 · {node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
+                <span>{isAgentNode ? "Agent 任务" : "提示词"}</span>
+                <small>{promptLabelSmall}</small>
               </div>
               <ReferenceMentionEditor
                 ref={promptRef}
@@ -14227,23 +14727,128 @@ function CanvasNodeEditorPopover({
                 ariaLabel={`${nodeLabel(node)}提示词`}
                 className="canvas-node-prompt-editor"
                 menuClassName="canvas-node-mention-menu"
+                menuPortal
                 onChange={(value) => onEditorPromptChange(node, value)}
-                onMentionSelect={(candidateIndex, value) => {
-                  const candidate = mentionCandidates[candidateIndex];
-                  if (!candidate) return;
-                  onEditorPromptChange(node, value);
-                  const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                    ? "context"
-                    : candidate.data.kind === "video"
-                      ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
-                      : "reference-image";
-                  onReferenceDrop(node.id, candidate.id, role);
-                }}
-                placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
+                onMentionSelect={(_candidateIndex, value) => onEditorPromptChange(node, value)}
+                placeholder={promptPlaceholder}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
+                  if (!promptExpanded && event.key === "Enter" && (isAgentNode ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
                     event.preventDefault();
                     onGenerate(node);
+                  }
+                }}
+                transformPastedText={(text) => replaceNaturalReferenceLabels(
+                  text,
+                  mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
+                ).value}
+              />
+            </div>
+            )}
+            {branchDraft ? (
+              <CanvasReferenceDraftStrip
+                references={branchReferences}
+                onFiles={onDraftReferenceFiles || (() => undefined)}
+                onRemove={onDraftReferenceRemove || (() => undefined)}
+                onReorder={onDraftReferenceReorder || (() => undefined)}
+                onNodeDrop={onDraftReferenceNodeDrop}
+                onPaste={onDraftReferencePaste}
+                onPreview={onDraftReferencePreview}
+                emptyLabel="添加画布参考"
+              />
+            ) : isUpscaleNode ? (
+              <div className="canvas-upscale-input-note">输入：{upscaleSourceUrl ? "已连接一张图片" : "未连接图片"}</div>
+            ) : (
+              <CanvasNodeReferenceStrip
+                target={node}
+                document={document}
+                runtime={runtime}
+                references={editorReferences}
+                contexts={editorContexts}
+                onReorder={onReferenceReorder}
+                onRemove={onReferenceRemove}
+                onDrop={onReferenceDrop}
+                onAddFiles={onAddReferenceFiles}
+                onPreview={onOutputPreview}
+                onTextPreview={onTextPreview}
+                onRestoreAutomatic={onRestoreAutomatic}
+              />
+            )}
+            <div className="canvas-node-editor-dock-toolbar">
+              <div className="canvas-node-editor-dock-tool model">
+                {editorParams && dockModelCapability && (
+                  <ModelPicker
+                    models={runtime?.models || []}
+                    value={dockModelValue ?? ""}
+                    capability={dockModelCapability}
+                    portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                    dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                    defaultProviderId={runtime?.settings.defaultProviderId}
+                    defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+                    defaultModelId={dockModelDefaultId}
+                    onChange={(value) => onEditorParamsChange(node, { ...editorParams, model: value })}
+                    className="canvas-node-editor-dock-model-picker"
+                  />
+                )}
+              </div>
+              <div className="canvas-node-editor-dock-params-wrap">
+                <button type="button" className="canvas-node-editor-dock-tool params" onClick={() => setImageDockPanel((value) => value === "params" ? null : "params")} aria-expanded={imageDockPanel === "params"} aria-controls="canvas-image-dock-params">
+                  <b>生成参数</b>
+                  <small>{parameterSummary || "参数"}</small>
+                </button>
+                {imageDockPanel === "params" && (
+                  <div id="canvas-image-dock-params" className="canvas-node-editor-dock-popover canvas-node-editor-dock-drawer is-params" role="dialog" aria-label="生成参数" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+                    <div className="canvas-node-editor-dock-drawer-grip" aria-hidden="true" />
+                    <div className="canvas-node-editor-dock-popover-head">
+                      <b>生成参数</b>
+                      <button type="button" aria-label="关闭参数" onClick={() => setImageDockPanel(null)}>×</button>
+                    </div>
+                    <div className="canvas-node-editor-dock-drawer-body">
+                    {isUpscaleNode && upscaleParams && onUpscaleParamsChange ? (
+                      <CanvasUpscaleSettingsPanel params={upscaleParams} runtime={runtime} sourceUrl={upscaleSourceUrl} onChange={onUpscaleParamsChange} />
+                    ) : editorParams ? (
+                      <CreationParameterEditor
+                        key={node.id}
+                        settings={editorParams}
+                        runtime={runtime}
+                        referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
+                        variant={isDockNode ? "dock" : undefined}
+                        portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                        dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                        onChange={(settings) => onEditorParamsChange(node, settings)}
+                        onVideoInputModeChange={() => onVideoInputModeChange(node)}
+                      />
+                    ) : null}
+                    </div>
+                    <div className="canvas-node-editor-dock-drawer-summary"><span>{parameterSummary || "参数"}</span></div>
+                  </div>
+                )}
+              </div>
+               <button type="button" className="canvas-node-editor-generate" data-tooltip={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+            </div>
+            <input ref={imageDockFileRef} hidden type="file" multiple accept={referenceFileAccept} onChange={(event) => { if (event.target.files) onAddReferenceFiles(node.id, [...event.target.files]); event.currentTarget.value = ""; }} />
+           </div>
+          ) : <div className="canvas-node-editor-columns">
+          <div className="canvas-node-editor-copy">
+            <div className="canvas-node-editor-prompt-wrap">
+              <div className="canvas-node-editor-prompt-label">
+                <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
+                <small>@ 引用节点 · {promptExpanded ? "编辑完成后点击保存" : node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
+              </div>
+              <ReferenceMentionEditor
+                ref={promptRef}
+                value={editorPrompt}
+                references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+                ariaLabel={`${nodeLabel(node)}提示词`}
+                className="canvas-node-prompt-editor"
+                menuClassName="canvas-node-mention-menu"
+                menuPortal
+                onChange={(value) => onEditorPromptChange(node, value)}
+                onMentionSelect={(_candidateIndex, value) => onEditorPromptChange(node, value)}
+                 placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
+                 onKeyDown={(event) => {
+                   if (!promptExpanded && event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
+                     event.preventDefault();
+                     onGenerate(node);
                   }
                 }}
                 transformPastedText={(text) => replaceNaturalReferenceLabels(
@@ -14302,18 +14907,9 @@ function CanvasNodeEditorPopover({
                   ariaLabel={`${nodeLabel(node)}变体要求`}
                   className="canvas-node-variant-requirements-editor"
                   menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
+                  menuPortal
                   onChange={(value) => onVariantRequirementsChange(node, value)}
-                  onMentionSelect={(candidateIndex, value) => {
-                    const candidate = mentionCandidates[candidateIndex];
-                    if (!candidate) return;
-                    onVariantRequirementsChange(node, value);
-                    const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                      ? "context"
-                      : candidate.data.kind === "video"
-                        ? data.kind === "video" ? "video" : "reference-image"
-                        : "reference-image";
-                    onReferenceDrop(node.id, candidate.id, role);
-                  }}
+                  onMentionSelect={(_candidateIndex, value) => onVariantRequirementsChange(node, value)}
                   placeholder="改成夜景\n改为俯拍视角"
                   transformPastedText={(text) => replaceNaturalReferenceLabels(
                     text,
@@ -14340,10 +14936,10 @@ function CanvasNodeEditorPopover({
           </div>
          </div>}
        </div>
-       {!audioNode && <div className="canvas-node-editor-actions">
-        <span>{node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
-        <button type="button" className="canvas-node-editor-generate" title={upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={pending || upscaleMissingInput} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "upscale" ? "提交超分" : node.type === "prompt" ? "发送" : inPlaceVideo ? "生成到当前节点" : node.type === "media" && data.kind === "image" && data.url ? "生成新图" : "生成"}</button>
-       </div>}
+         {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
+          <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
+          <button type="button" className="canvas-node-editor-generate" title={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+        </div>}
     </div>
   );
 }

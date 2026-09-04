@@ -156,7 +156,8 @@ test("prompt editor measures content and caps scrolling in both display modes", 
   assert.match(component, /const promptRef = useRef<HTMLDivElement \| null>\(null\)/);
   assert.match(component, /editor\.style\.height = "auto"/);
   assert.match(component, /const contentHeight = (?:textarea|editor)\.scrollHeight/);
-  assert.match(component, /promptExpanded \? \(mobile \? 360 : 460\) : \(mobile \? 220 : 260\)/);
+  assert.match(component, /const baseMinHeight = promptExpanded[\s\S]*stackedEditor[\s\S]*mobile \? 50 : 54/);
+  assert.match(component, /const baseMaxHeight = promptExpanded[\s\S]*stackedEditor[\s\S]*mobile \? 88 : 96/);
   assert.match(component, /textarea\.style\.overflowY = contentHeight > maxHeight \? "auto" : "hidden"/);
 });
 
@@ -171,6 +172,18 @@ test("expanded editor is centered and remains responsive", () => {
   assert.match(styles, /@media\(max-width:720px\)\{[\s\S]*\.canvas-node-editor-popover\.is-prompt-expanded\{width:calc\(100vw - 16px\)/);
 });
 
+test("expanded prompt editing saves without triggering generation", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  assert.ok(editorStart >= 0, "node editor popover should be present");
+  const editor = component.slice(editorStart);
+  assert.match(editor, /const editorActionLabel = promptExpanded \? "保存" : generateLabel/);
+  assert.match(editor, /const promptLabelSmall = promptExpanded[\s\S]*编辑完成后点击保存/);
+  assert.match(editor, /const handleEditorAction = \(\) => \{[\s\S]*?if \(promptExpanded\) \{[\s\S]*?setPromptExpanded\(false\)[\s\S]*?return;[\s\S]*?\}\s*onGenerate\(node\);/);
+  assert.match(editor, /!promptExpanded && event\.key === "Enter"/);
+  assert.match(editor, /!audioNode && \(promptExpanded \|\| !isDockNode\)/);
+  assert.match(editor, /disabled=\{!promptExpanded && \(pending \|\| upscaleMissingInput\)\} onClick=\{handleEditorAction\}>\{editorActionLabel\}/);
+});
+
 test("editor keeps references, variant requirements, parameters, mentions and generation", () => {
   assert.match(component, /<CanvasNodeReferenceStrip/);
   assert.match(component, /<CanvasReferenceDraftStrip/);
@@ -180,6 +193,21 @@ test("editor keeps references, variant requirements, parameters, mentions and ge
   assert.match(component, /onGenerate\(node\)/);
   assert.match(component, /setMentionState\(null\)/);
   assert.match(component, /setPromptExpanded\(false\)/);
+});
+
+test("video variant generators reuse the compact image-variant dock", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  const editor = component.slice(editorStart);
+  assert.match(editor, /const isVariantGenerator = node\.type === "generator" && data\.kind === "video"/);
+  assert.match(editor, /const isDockNode = isImageNode \|\| isVariantGenerator/);
+  assert.match(editor, /className="canvas-node-editor-dock-variant-wrap"/);
+  assert.match(editor, /aria-controls="canvas-node-dock-variant"/);
+  assert.match(editor, /id="canvas-node-dock-variant"/);
+  assert.doesNotMatch(editor, /imageDockPanel === "variant" && createPortal/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*position:absolute[\s\S]*left:0[\s\S]*bottom:calc\(100% \+ 8px\)/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*width:min\(540px,calc\(100vw - 32px\),100%\)/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{[\s\S]*position:relative/);
 });
 
 test("reference thumbnails keep the strip compact and scroll horizontally only", () => {
@@ -241,10 +269,17 @@ test("selected related canvas edges become dashed and animate their flow", () =>
   assert.match(styles, /canvas-edge-related-flow,html:not\(\[data-motion="on"\]\) \.canvas-edge\.related\{animation:none!important\}/);
 });
 
-test("canvas edges reveal one small red removal control without a modifier", () => {
+test("canvas edges reveal one small red removal control at the pointer without a modifier", () => {
+  assert.match(component, /CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS = 140/);
   assert.match(component, /const handleConnectionHover = useCallback/);
-  assert.match(component, /showConnectionCancel\(edgeId\)/);
-  assert.match(component, /onHover=\{\(\) => handleConnectionHover\(edge\.id\)\}/);
+  assert.match(component, /clearConnectionCancelShowTimer/);
+  assert.match(component, /connectionCancelShowTimerRef\.current = window\.setTimeout/);
+  assert.match(component, /}, CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS\);/);
+  assert.match(component, /showConnectionCancel\(\s*edgeId,\s*stagePoint\(event\.clientX, event\.clientY\),\s*\)/);
+  assert.match(component, /onPointerMove=\{handlePointerMove\}/);
+  assert.match(component, /onHover=\{\(event\) => handleConnectionHover\(edge\.id, event\)\}/);
+  assert.match(component, /const \[connectionCancelPointer, setConnectionCancelPointer\]/);
+  assert.match(component, /connectionCancelPointer \|\| worldToScreen\(/);
   assert.match(component, /onPointerDown=\{\(event\) =>\s*connectionCancelEdge/);
   assert.doesNotMatch(component, /悬停连线显示取消按钮/);
   assert.match(styles, /\.canvas-connection-cancel\{[^}]*width:14px[^}]*height:14px/);
@@ -291,6 +326,13 @@ test("audio nodes use the branded rounded player instead of browser gray control
   assert.match(styles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
 });
 
+test("audio editor keeps its natural height after viewport fitting", () => {
+  assert.match(component, /className="canvas-audio-panel"/);
+  assert.match(component, /if \(!audioNode\) return popover\.scrollHeight \|\| estimatedPopoverHeight/);
+  assert.match(component, /const naturalHeight = \(head\?\.offsetHeight \|\| 0\) \+ \(body\?\.scrollHeight \|\| 0\) \+ 2/);
+  assert.match(styles, /\.canvas-audio-panel\{display:grid;gap:11px;min-width:0\}/);
+});
+
 test("image node editing persists parameters without turning uploads into generated media", () => {
   assert.match(component, /role: "参考素材",\s*mimeType: asset\.mime,\s*\.\.\.defaultMediaParams\(asset\.kind, runtime\)/);
   assert.match(component, /generation: item\.data\.generation/);
@@ -333,13 +375,24 @@ test("local edit summary only occupies editor space when a mask exists", () => {
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {
   assert.match(component, /fitCanvasNodeEditorBelow\(/);
+  assert.match(component, /const fittedPosition = fitCanvasNodeEditorBelow\(\s*anchor,/);
+  assert.doesNotMatch(component, /layoutAnchor/);
   assert.match(component, /data-placement="bottom"/);
-  assert.match(component, /maxHeight: promptExpanded \? undefined : position\.maxHeight/);
+  assert.match(component, /const position = stackedEditor\s*\? \{ \.\.\.fittedPosition, maxHeight: popoverHeight \}/);
+  assert.match(component, /maxHeight: promptExpanded \|\| stackedEditor \|\| isDockNode \? undefined : position\.maxHeight/);
+  assert.doesNotMatch(component, /needsFullPanelLift/);
   assert.doesNotMatch(component, /useTopPlacement/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*width:min\(920px,calc\(100vw - 64px\)\)!important/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\{[^}]*max-height:none!important/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-columns\{grid-template-columns:minmax\(0,1fr\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-settings>.creation-parameter-editor\.image \.creation-parameter-grid\.primary\{grid-template-columns:repeat\(4,minmax\(0,1fr\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-settings>.creation-parameter-editor\.image \.creation-parameter-grid\.primary>.creation-field\.model\{grid-column:1\/-1\}/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-actions\{min-height:55px/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\) \.canvas-editor-frame-slot\{\s*min-height:0!important/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\) \.canvas-node-editor-actions\{\s*min-height:38px/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:not\(.is-prompt-expanded\)\[data-density\]\{\s*width:min\(940px,calc\(100vw - 64px\)\)!important;/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*max-height:none!important/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:not\(.is-prompt-expanded\) \.canvas-node-editor-dock-tool\.params\{\s*flex:0 1 360px;/);
 });
 
 test("multi-select layout toolbar exposes alignment and distribution icons only for ordinary nodes", () => {

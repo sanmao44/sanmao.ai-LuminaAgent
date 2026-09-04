@@ -12,3 +12,8 @@ image_generation_records/
 *.sanmao.json
 *.sanmao-backup.tar.gz
 *.lnk
+
+dev.log
+temp_edit*.py
+super_canvas_*.py
+*.bak

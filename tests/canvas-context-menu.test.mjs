@@ -123,9 +123,14 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-x:hidden[^}]*overflow-y:auto/);
   assert.match(styles, /\.canvas-context-menu-body\{[^}]*scrollbar-gutter:stable/);
   assert.match(styles, /max-height:min\(560px,calc\(100dvh - 16px\)\)/);
-  assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-group-title small\{display:none\}/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
+  const nodeMenuStart = component.indexOf("function CanvasNodeContextMenu");
+  const nodeMenuEnd = component.indexOf("function CanvasNodeEditorPopover", nodeMenuStart);
+  assert.ok(nodeMenuStart >= 0 && nodeMenuEnd > nodeMenuStart, "node context menu renderer should exist");
+  const nodeMenu = component.slice(nodeMenuStart, nodeMenuEnd);
+  assert.doesNotMatch(nodeMenu, /canvas-menu-group-title|canvas-menu-group-mark/);
+  assert.match(styles, /\.canvas-menu-group\+\.canvas-menu-group\{[^}]*border-top:1px solid/);
 });
 
 test("blank canvas exposes compact, ungrouped canvas operations", () => {
@@ -168,4 +173,20 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.notEqual(arrangeIcon, fitIcon);
   assert.match(styles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
   assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
+});
+
+test("create menu uses separators instead of spacious group headings", () => {
+  const createMenuStart = component.indexOf('ariaLabel="创建节点菜单"');
+  const createMenuEnd = component.indexOf("</CanvasContextMenuFrame>", createMenuStart);
+  assert.ok(createMenuStart >= 0 && createMenuEnd > createMenuStart, "create menu should be present");
+  const createMenu = component.slice(createMenuStart, createMenuEnd);
+  assert.equal((createMenu.match(/className="canvas-menu-group"/g) || []).length, 2);
+  assert.doesNotMatch(createMenu, /canvas-menu-group-title|canvas-menu-group-mark/);
+  assert.doesNotMatch(createMenu, /从空白开始创建|批量生成与变体/);
+  const basicNodesPosition = createMenu.indexOf('addNode("image", contextMenu.world)');
+  const upscalePosition = createMenu.indexOf('addNode("upscale", contextMenu.world)');
+  const workflowPosition = createMenu.indexOf('addNode("workflowImage", contextMenu.world)');
+  assert.ok(basicNodesPosition >= 0 && upscalePosition > basicNodesPosition && workflowPosition > upscalePosition, "create menu should place upscale after basic nodes");
+  assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\{[^}]*border-top:1px solid/);
+  assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\+\.canvas-menu-group\{[^}]*border-top:1px solid/);
 });

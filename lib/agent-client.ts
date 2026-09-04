@@ -28,6 +28,7 @@ export type AgentRequestPayload = {
   references?: CreativeReference[];
   model?: string;
   task?: string;
+  durationSeconds?: number;
   webMode?: "off" | "auto" | "always";
   webSearch?: boolean;
   deliverable?: AgentDeliverable;
@@ -52,6 +53,7 @@ export type AgentResponse = {
   generations?: Array<Record<string, unknown>>;
   webSearch?: Record<string, unknown> | null;
   webSearchDecision?: Record<string, unknown>;
+  durationSeconds?: number;
   error?: string;
   cancelled?: boolean;
   [key: string]: unknown;

@@ -10,6 +10,7 @@ import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
 import { replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { nearestOneTakeVideoDuration, normalizeOneTakeDuration } from '@/lib/one-take-video-duration';
 
 type VideoTask = {
   id: string;
@@ -31,6 +32,8 @@ type Props = {
   defaultModelId?: string | null;
   promptPrefill?: string | null;
   onPromptPrefillConsumed?: () => void;
+  durationPrefill?: number | null;
+  onDurationPrefillConsumed?: () => void;
   mediaPrefill?: { name: string; url: string; kind: 'image' }[];
   mediaPrefillToken?: number;
   onMediaPrefillConsumed?: () => void;
@@ -358,7 +361,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   };
 }
 
-export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onOpenProviders, onNotify }: Props) {
+export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, durationPrefill, onDurationPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, onOpenModels, onOpenProviders, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [modelId, setModelId] = useState(defaultModelId || 'auto');
@@ -533,13 +536,39 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const showOperationField = operationOptions.length > 1;
   const inputModeOptions = useMemo(() => [{ value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' }, ...(supportsFirst ? [{ value: 'first-frame' as const, label: '首帧 · 控制开场画面', description: '上传一张开场参考图' }, { value: 'frames' as const, label: uses65535Policy ? '双参考图 · 控制起止' : '首尾帧 · 约束镜头起止', description: uses65535Policy ? '65535 将首帧和尾帧按两张参考图提交' : '上传首帧和尾帧' }] : []), ...(supportsReference ? [{ value: 'reference' as const, label: '参考图 · 保持主体风格', description: `最多添加 ${modelLimits.maxReferenceImages} 张参考图` }] : [])], [modelLimits.maxReferenceImages, supportsFirst, supportsReference, uses65535Policy]);
   const durationOptions = useMemo(() => {
-    const values = modelLimits.fixedSeconds ? [modelLimits.fixedSeconds] : modelLimits.allowedSeconds || [1, 3, 5, 8, 10, 15, 30, 60];
+    const values = modelLimits.fixedSeconds
+      ? [modelLimits.fixedSeconds]
+      : modelLimits.allowedSeconds || Array.from(
+        { length: Math.max(0, modelLimits.maxSeconds - modelLimits.minSeconds + 1) },
+        (_, index) => modelLimits.minSeconds + index,
+      );
     return values.filter((value) => value >= modelLimits.minSeconds && value <= modelLimits.maxSeconds).map((value) => ({ value, label: `${value} 秒` }));
   }, [modelLimits]);
   const ratioOptions = allRatios.map((value) => ({ value, label: value === 'auto' ? 'Auto' : value, description: value === 'auto' ? '模型自选 / 跟随首帧' : value.includes(':') ? (value.split(':')[0] === value.split(':')[1] ? '方形' : Number(value.split(':')[0]) > Number(value.split(':')[1]) ? '横屏' : '竖屏') : '模型自选' }));
   const resolutionOptions = modelLimits.resolutions.map((value) => ({ value, label: value, description: value === '480p' ? '快速生成' : value === '1080p' ? '高清' : '推荐' }));
   const selectedAgnesV20Duration = AGNES_V20_DURATION_PRESETS.find((preset) => preset.frames === agnesNumFrames && preset.frameRate === agnesFrameRate);
   const selectedAgnesV20Dimensions = AGNES_V20_DIMENSION_PRESETS.find((preset) => preset.width === agnesWidth && preset.height === agnesHeight);
+
+  useEffect(() => {
+    if (durationPrefill === undefined || durationPrefill === null) return;
+    const requested = normalizeOneTakeDuration(durationPrefill);
+    if (usesAgnesV20) {
+      const preset = AGNES_V20_DURATION_PRESETS.reduce((closest, candidate) => {
+        const closestSeconds = closest.frames / closest.frameRate;
+        const candidateSeconds = candidate.frames / candidate.frameRate;
+        return Math.abs(candidateSeconds - requested) < Math.abs(closestSeconds - requested) ? candidate : closest;
+      });
+      const applied = Math.round(preset.frames / preset.frameRate);
+      setAgnesNumFrames(preset.frames);
+      setAgnesFrameRate(preset.frameRate);
+      if (applied !== requested) onNotify(`当前模型按帧控制时长，已调整为约 ${applied} 秒`);
+    } else {
+      const applied = nearestOneTakeVideoDuration(requested, modelLimits);
+      setSeconds(applied);
+      if (applied !== requested) onNotify(`当前模型不支持 ${requested} 秒，已调整为 ${applied} 秒`);
+    }
+    onDurationPrefillConsumed?.();
+  }, [durationOptions, durationPrefill, modelLimits.minSeconds, onDurationPrefillConsumed, onNotify, usesAgnesV20]);
 
   function applyAgnesV20Duration(preset: typeof AGNES_V20_DURATION_PRESETS[number]) {
     setAgnesNumFrames(preset.frames);

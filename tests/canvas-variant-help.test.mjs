@@ -13,7 +13,7 @@ const styles = await readFile(
 
 test("variant generators expose shared contextual help in cards and editors", () => {
   assert.match(component, /function CanvasGeneratorHelp\(\{ kind \}: \{ kind: CanvasMediaKind \}\)/);
-  assert.equal((component.match(/<CanvasGeneratorHelp kind=\{data\.kind === "video" \? "video" : "image"\} \/>/g) || []).length, 2);
+  assert.equal((component.match(/<CanvasGeneratorHelp kind=\{data\.kind === "video" \? "video" : "image"\} \/>/g) || []).length, 3);
   assert.match(component, /aria-label=\{`查看\$\{label\}使用方法`\}/);
   assert.match(component, /aria-expanded=\{open\}/);
   assert.match(component, /aria-controls=\{panelId\}/);
