@@ -241,7 +241,27 @@ export default function UpdateNotice() {
   function dismissUpdate() {
     if (status?.latestVersion) window.localStorage.setItem(DISMISSED_KEY, status.latestVersion);
     setShowModal(false);
+    // A failed update record is persisted server-side and would otherwise
+    // reappear as a stuck "更新失败" tray on every reload. Clear it as well.
+    if (updateProgress?.stage === 'failed') void clearFailedUpdate();
   }
+
+  const clearFailedUpdate = useCallback(async () => {
+    try {
+      await fetch('/api/update/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'dismiss' }),
+        cache: 'no-store',
+      });
+    } catch {
+      // A failed clear should not block the UI from dismissing locally.
+    }
+    updateTargetVersionRef.current = null;
+    setUpdateProgress(null);
+    setApplyState('idle');
+    setApplyMessage('');
+  }, []);
 
   async function applyUpdate(runInBackground = false) {
     if (!status?.hasUpdate) return;
@@ -307,19 +327,34 @@ export default function UpdateNotice() {
           <span className="update-progress-tray-value">重启</span>
         </button>
       ) : updateProgress ? (
-        <button
-          type="button"
-          className={`update-progress-tray ${updateProgress.stage === 'failed' ? 'error' : updateProgress.stage === 'completed' ? 'complete' : ''}`}
-          onClick={() => setShowModal(true)}
-          aria-label="查看更新进度"
+        <div
+          className={`update-progress-tray ${updateProgress.stage === 'failed' ? 'error has-dismiss' : updateProgress.stage === 'completed' ? 'complete' : ''}`}
+          role="status"
         >
-          <span className="update-progress-tray-orb" aria-hidden="true" />
-          <span className="update-progress-tray-copy">
-            <strong>{progressLabel}</strong>
-            <small>{updateProgress.message}</small>
-          </span>
-          <span className="update-progress-tray-value">{progressPercent === null ? '…' : `${progressPercent}%`}</span>
-        </button>
+          <button
+            type="button"
+            className="update-progress-tray-hit"
+            onClick={() => setShowModal(true)}
+            aria-label="查看更新进度"
+          >
+            <span className="update-progress-tray-orb" aria-hidden="true" />
+            <span className="update-progress-tray-copy">
+              <strong>{progressLabel}</strong>
+              <small>{updateProgress.error || updateProgress.message}</small>
+            </span>
+            <span className="update-progress-tray-value">{progressPercent === null ? '…' : `${progressPercent}%`}</span>
+          </button>
+          {updateProgress.stage === 'failed' ? (
+            <button
+              type="button"
+              className="update-progress-tray-dismiss"
+              aria-label="关闭更新提示"
+              onClick={() => void clearFailedUpdate()}
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
       ) : null}
       <aside className={`version-card ${hasUpdate ? 'has-update' : ''}`} aria-label="SANMAO.AI 版本信息">
         <div className="version-card-anchor">

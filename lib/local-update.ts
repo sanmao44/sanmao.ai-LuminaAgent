@@ -75,7 +75,16 @@ export function isCompletedUpdateProgressStale(progress: Pick<UpdateProgress, 's
 }
 
 export function isUpdateProgressStale(progress: Pick<UpdateProgress, 'stage' | 'version'>, currentVersion: string) {
-  return progress.stage !== 'failed' && Boolean(currentVersion) && compareVersions(currentVersion, progress.version) >= 0;
+  if (!currentVersion) return false;
+  // Once the running app already equals/exceeds the update target, the record is
+  // no longer relevant - including a failed one. Without this, a stale
+  // "更新失败" tray would reappear forever after the target version is reached
+  // by another path (e.g. a fresh source checkout or a reinstall).
+  if (compareVersions(currentVersion, progress.version) >= 0) return true;
+  // For a target still newer than the installed version, keep the record
+  // (including a failure) visible so the user can retry. It is dropped when the
+  // target is reached or the user explicitly dismisses it.
+  return false;
 }
 
 function persistUpdateProgress(progress: UpdateProgress) {
@@ -104,6 +113,18 @@ async function readPersistedUpdateProgress() {
 async function clearPersistedUpdateProgress() {
   await progressWriteQueue;
   await rm(progressFilePath, { force: true }).catch(() => undefined);
+}
+
+/** Drop a progress record (usually a failed one) after the user dismisses it. */
+export async function clearUpdateProgress(jobId?: string) {
+  if (jobId) {
+    progressJobs.delete(jobId);
+  } else {
+    const latest = [...progressJobs.values()]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    if (latest) progressJobs.delete(latest.jobId);
+  }
+  await clearPersistedUpdateProgress();
 }
 
 export function createUpdateJob(version: string) {

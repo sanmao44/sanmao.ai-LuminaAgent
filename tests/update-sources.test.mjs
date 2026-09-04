@@ -31,11 +31,16 @@ test('completed progress is stale after the app reaches the recorded version', (
   assert.equal(local.isCompletedUpdateProgressStale({ stage: 'starting', version: '0.7.0' }, '0.7.2'), false);
 });
 
-test('any non-failed progress is stale after the app reaches the recorded version', () => {
+test('progress is stale once the running app reaches the recorded version', () => {
+  // Any stage (including a failure) is irrelevant once the target is already
+  // reached; otherwise a stale "更新失败" tray would reappear forever.
   assert.equal(local.isUpdateProgressStale({ stage: 'starting', version: '0.7.14' }, '0.7.14'), true);
   assert.equal(local.isUpdateProgressStale({ stage: 'verifying', version: '0.7.13' }, '0.7.14'), true);
-  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.13' }, '0.7.14'), false);
+  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.13' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.14' }, '0.7.14'), true);
+  // A target still newer than the installed version is kept, even when failed.
   assert.equal(local.isUpdateProgressStale({ stage: 'starting', version: '0.7.15' }, '0.7.14'), false);
+  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.15' }, '0.7.14'), false);
 });
 
 test('update archives remain the single source of installed updater code', async () => {
