@@ -241,10 +241,13 @@ test("selected related canvas edges become dashed and animate their flow", () =>
   assert.match(styles, /canvas-edge-related-flow,html:not\(\[data-motion="on"\]\) \.canvas-edge\.related\{animation:none!important\}/);
 });
 
-test("canvas edges reveal one small red removal control without a modifier", () => {
+test("canvas edges reveal one small red removal control at the pointer without a modifier", () => {
   assert.match(component, /const handleConnectionHover = useCallback/);
-  assert.match(component, /showConnectionCancel\(edgeId\)/);
-  assert.match(component, /onHover=\{\(\) => handleConnectionHover\(edge\.id\)\}/);
+  assert.match(component, /showConnectionCancel\(\s*edgeId,\s*stagePoint\(event\.clientX, event\.clientY\),\s*\)/);
+  assert.match(component, /onPointerMove=\{handlePointerMove\}/);
+  assert.match(component, /onHover=\{\(event\) => handleConnectionHover\(edge\.id, event\)\}/);
+  assert.match(component, /const \[connectionCancelPointer, setConnectionCancelPointer\]/);
+  assert.match(component, /connectionCancelPointer \|\| worldToScreen\(/);
   assert.match(component, /onPointerDown=\{\(event\) =>\s*connectionCancelEdge/);
   assert.doesNotMatch(component, /悬停连线显示取消按钮/);
   assert.match(styles, /\.canvas-connection-cancel\{[^}]*width:14px[^}]*height:14px/);

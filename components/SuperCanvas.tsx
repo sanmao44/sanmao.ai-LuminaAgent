@@ -1975,7 +1975,7 @@ function CanvasEdgeVisual({
   sourceKey: string;
   targetKey: string;
   onSelect: () => void;
-  onHover: () => void;
+  onHover: (event: ReactPointerEvent<SVGPathElement>) => void;
   onLeave: () => void;
 }) {
   const path = edgePath(document, edge, style);
@@ -1986,7 +1986,11 @@ function CanvasEdgeVisual({
   };
   const handlePointerEnter = (event: ReactPointerEvent<SVGPathElement>) => {
     event.stopPropagation();
-    onHover();
+    onHover(event);
+  };
+  const handlePointerMove = (event: ReactPointerEvent<SVGPathElement>) => {
+    event.stopPropagation();
+    onHover(event);
   };
   const handlePointerLeave = () => {
     onLeave();
@@ -1998,6 +2002,7 @@ function CanvasEdgeVisual({
         d={path}
         aria-hidden="true"
         onPointerEnter={handlePointerEnter}
+        onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
@@ -2006,6 +2011,7 @@ function CanvasEdgeVisual({
         d={path}
         markerEnd={`url(#canvas-arrow-${colorKey})`}
         onPointerEnter={handlePointerEnter}
+        onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       />
@@ -2146,6 +2152,8 @@ export default function SuperCanvas() {
   const [connectionCancelEdgeId, setConnectionCancelEdgeId] = useState<
     string | null
   >(null);
+  const [connectionCancelPointer, setConnectionCancelPointer] =
+    useState<Point | null>(null);
   const connectionHoverEdgeRef = useRef<string | null>(null);
   const connectionCancelButtonHoverRef = useRef(false);
   const connectionCancelHideTimerRef = useRef<number | null>(null);
@@ -2889,6 +2897,7 @@ export default function SuperCanvas() {
     setSelectedGroupId(null);
     setSelectedEdgeId(null);
     setConnectionCancelEdgeId(null);
+    setConnectionCancelPointer(null);
     setEditingNodeId(null);
     setExpandedEditorId(null);
   }, []);
@@ -2898,16 +2907,18 @@ export default function SuperCanvas() {
     connectionCancelHideTimerRef.current = null;
   }, []);
   const showConnectionCancel = useCallback(
-    (edgeId: string) => {
+    (edgeId: string, position: Point) => {
       if (connection) return;
       clearConnectionCancelHideTimer();
       setConnectionCancelEdgeId(edgeId);
+      setConnectionCancelPointer(position);
     },
     [clearConnectionCancelHideTimer, connection],
   );
   const hideConnectionCancel = useCallback(() => {
     clearConnectionCancelHideTimer();
     setConnectionCancelEdgeId(null);
+    setConnectionCancelPointer(null);
     connectionHoverEdgeRef.current = null;
     connectionCancelButtonHoverRef.current = false;
   }, [clearConnectionCancelHideTimer]);
@@ -2928,11 +2939,14 @@ export default function SuperCanvas() {
     [clearConnectionCancelHideTimer],
   );
   const handleConnectionHover = useCallback(
-    (edgeId: string) => {
+    (edgeId: string, event: ReactPointerEvent<SVGPathElement>) => {
       connectionHoverEdgeRef.current = edgeId;
-      showConnectionCancel(edgeId);
+      showConnectionCancel(
+        edgeId,
+        stagePoint(event.clientX, event.clientY),
+      );
     },
-    [showConnectionCancel],
+    [showConnectionCancel, stagePoint],
   );
   const handleConnectionLeave = useCallback(
     (edgeId: string) => {
@@ -3400,6 +3414,7 @@ export default function SuperCanvas() {
     (edgeId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
+      hideConnectionCancel();
       commit((value) => removeEdge(value, edgeId));
       setSelectedEdgeId((current) => (current === edgeId ? null : current));
       addLog("已取消连线");
@@ -3412,6 +3427,7 @@ export default function SuperCanvas() {
     [
       addLog,
       commit,
+      hideConnectionCancel,
     ],
   );
 
@@ -9963,7 +9979,7 @@ export default function SuperCanvas() {
         y: (connection.start.y + connection.end.y) / 2,
       }
     : connectionCancelEdgeMidpoint
-      ? worldToScreen(
+      ? connectionCancelPointer || worldToScreen(
           connectionCancelEdgeMidpoint.x,
           connectionCancelEdgeMidpoint.y,
         )
@@ -10892,7 +10908,7 @@ export default function SuperCanvas() {
                     setSelectedIds(new Set());
                     setSelectedGroupId(null);
                   }}
-                  onHover={() => handleConnectionHover(edge.id)}
+                  onHover={(event) => handleConnectionHover(edge.id, event)}
                   onLeave={() => handleConnectionLeave(edge.id)}
                 />
               ))}
