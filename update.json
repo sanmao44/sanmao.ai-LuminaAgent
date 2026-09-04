@@ -9,7 +9,7 @@
         "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip",
         "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip"
     ],
-    "sha256": "da2c915f0813af6773ab16f8a94d2703ae4ba0f975745b403f8ba7c5b18ef04d",
+    "sha256": "da2c915f0813af6773ab16f8a94d2703ae4baf0f975745b403f8ba7c5b18ef04",
     "publishedAt": "2026-09-04T19:52:52+08:00",
     "notes": [
       "服务生命周期与安全重启：关闭网页不再关闭后台服务；设置页可重启并自动重建；更新与重启增加任务排空、并发锁和失败回滚；局域网模式避免网页重启影响其他设备。"
