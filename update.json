@@ -1,17 +1,19 @@
 {
     "schemaVersion": 1,
-    "latestVersion": "0.7.26",
-    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.26",
+    "latestVersion": "0.7.27",
+    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.27",
     "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip",
+    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip",
     "mirrorUrls": [
-        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip",
-        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip",
-        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.26/SANMAO.AI-0.7.26.zip"
+        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip",
+        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip",
+        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip"
     ],
-    "sha256": "da2c915f0813af6773ab16f8a94d2703ae4baf0f975745b403f8ba7c5b18ef04",
-    "publishedAt": "2026-09-04T19:52:52+08:00",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "publishedAt": "2026-09-04T21:29:13+08:00",
     "notes": [
-      "服务生命周期与安全重启：关闭网页不再关闭后台服务；设置页可重启并自动重建；更新与重启增加任务排空、并发锁和失败回滚；局域网模式避免网页重启影响其他设备。"
+        "修复更新失败后红色托盘提示无法关闭：新增“×”关闭按钮，应用达到目标版本后自动清理残留失败记录，旧报错不再反复出现。",
+        "新增发布校验脚本（scripts/verify-release.mjs），发布前交叉核对 update.json 与 Release 压缩包的 SHA-256，避免“更新包 SHA-256 校验失败，已拒绝执行”。",
+        "优化 SHA-256 校验失败提示，显示清单记录值与下载包实际值，便于排查与反馈。"
     ]
 }
