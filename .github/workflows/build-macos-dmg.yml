@@ -47,6 +47,7 @@ jobs:
             --exclude 'dev.log' \
             --exclude 'temp_edit*.py' \
             ./ "$app_root/"
+          find "$app_root" -type f \( -name '*.sh' -o -name '*.command' \) -exec perl -pi -e 's/\r$//' {} +
           chmod +x "$app/Contents/MacOS/SANMAO.AI"
 
           test -x "$app/Contents/MacOS/SANMAO.AI"
