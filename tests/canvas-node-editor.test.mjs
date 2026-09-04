@@ -218,6 +218,13 @@ test("video variant generators reuse the compact image-variant dock", () => {
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-actions>\.canvas-generator-help-popover\{[\s\S]*position:absolute[\s\S]*bottom:calc\(100% \+ 10px\)/);
 });
 
+test("image parameter dock closes when the pointer lands outside it", () => {
+  assert.match(component, /const imageDockParamsRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(component, /if \(imageDockPanel !== "params"\) return;[\s\S]*?window\.document\.addEventListener\("pointerdown", closeOnOutsidePointer\)/);
+  assert.match(component, /imageDockPanel === "params" && !imageDockParamsRef\.current\?\.contains\(target\)/);
+  assert.match(component, /<div ref=\{imageDockParamsRef\} className="canvas-node-editor-dock-params-wrap">/);
+});
+
 test("reference thumbnails keep the strip compact and scroll horizontally only", () => {
   const start = component.indexOf("const renderItem =");
   const end = component.indexOf("const renderSlot =", start);

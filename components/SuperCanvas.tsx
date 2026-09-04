@@ -72,8 +72,10 @@ import {
 import {
   CANVAS_NODE_INTERACTION_OFFSET,
   CANVAS_Z_INDEX,
+  canvasGroupPaintZIndex,
+  canvasNodePaintZIndex,
   normalizeCanvasDocumentLayers,
-  reorderCanvasNodes,
+  reorderCanvasEntities,
   sortCanvasNodesByLayer,
   type CanvasNodeLayerAction,
 } from "@/lib/canvas/layers";
@@ -340,8 +342,9 @@ type CanvasContextMenuState = {
   x: number;
   y: number;
   world: Point;
-  menu: "node" | "create" | "tools";
+  menu: "node" | "group" | "create" | "tools";
   nodeId?: string;
+  groupId?: string;
 };
 type MentionState = { start: number; end: number; query: string } | null;
 type CanvasPanel = "assets" | "activity" | "settings" | "shortcuts";
@@ -4243,21 +4246,30 @@ export default function SuperCanvas() {
           ? [...selectedIds]
           : [];
       if (!ids.length) return;
+      const entityIds = [
+        ...new Set(
+          ids.map((id) =>
+            groupById(docRef.current, id)?.id ||
+            groupForNode(docRef.current, id)?.id ||
+            id,
+          ),
+        ),
+      ];
       const labels: Record<CanvasNodeLayerAction, string> = {
         "bring-to-front": "置于顶层",
         "bring-to-back": "置于底层",
         raise: "上移一层",
         lower: "下移一层",
       };
-      const next = reorderCanvasNodes(docRef.current, ids, action);
+      const next = reorderCanvasEntities(docRef.current, entityIds, action);
       if (next === docRef.current) {
         const boundary = action === "bring-to-back" || action === "lower" ? "底层" : "顶层";
-        notify(`选中的 ${ids.length} 个节点已在${boundary}`);
+        notify(`选中的 ${entityIds.length} 个对象已在${boundary}`);
         return;
       }
       commit(() => next);
       setSelectedIds(new Set(ids));
-      const message = `已将 ${ids.length} 个节点${labels[action]}`;
+      const message = `已将 ${entityIds.length} 个对象${labels[action]}`;
       addLog(message);
       notify(message);
     },
@@ -9396,20 +9408,19 @@ export default function SuperCanvas() {
       if (groupElement && !node && !isolatedTarget?.closest(".canvas-context-menu")) {
         event.preventDefault();
         const group = groupById(docRef.current, groupElement.dataset.canvasGroupId);
-        const groupMember = group ? groupNodes(docRef.current, group.id)[0] : undefined;
         const point = stagePoint(event.clientX, event.clientY);
         const world = {
           x: (point.x - document.camera.x) / document.camera.zoom,
           y: (point.y - document.camera.y) / document.camera.zoom,
         };
-        if (group && groupMember) {
+        if (group) {
           setSelectedGroupId(group.id);
           setSelectedIds(new Set(group.nodeIds));
           setContextMenu({
             x: event.clientX,
             y: event.clientY,
-            menu: "node",
-            nodeId: groupMember.id,
+            menu: "group",
+            groupId: group.id,
             world,
           });
         } else {
@@ -14399,6 +14410,7 @@ function CanvasNodeEditorPopover({
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
+  const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
   const data = node.data;
   const audioNode = node.type === "media" && data.kind === "audio";
@@ -14578,6 +14590,17 @@ function CanvasNodeEditorPopover({
     return () => window.removeEventListener("keydown", handleEscape, true);
   }, [promptExpanded]);
 
+  useEffect(() => {
+    if (imageDockPanel !== "params") return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && imageDockParamsRef.current?.contains(target)) return;
+      setImageDockPanel(null);
+    };
+    window.document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => window.document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [imageDockPanel]);
+
 
 
   const reposition = useCallback(() => {
@@ -14699,7 +14722,13 @@ function CanvasNodeEditorPopover({
         top: position.top,
         maxHeight: promptExpanded || stackedEditor || isDockNode ? undefined : position.maxHeight,
       }}
-      onPointerDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => {
+        const target = event.target as Node;
+        if (imageDockPanel === "params" && !imageDockParamsRef.current?.contains(target)) {
+          setImageDockPanel(null);
+        }
+        event.stopPropagation();
+      }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
@@ -14888,7 +14917,7 @@ function CanvasNodeEditorPopover({
                   />
                 )}
               </div>
-              <div className="canvas-node-editor-dock-params-wrap">
+              <div ref={imageDockParamsRef} className="canvas-node-editor-dock-params-wrap">
                 <button type="button" className="canvas-node-editor-dock-tool params" onClick={() => setImageDockPanel((value) => value === "params" ? null : "params")} aria-expanded={imageDockPanel === "params"} aria-controls="canvas-image-dock-params">
                   <b>生成参数</b>
                   <small>{parameterSummary || "参数"}</small>
