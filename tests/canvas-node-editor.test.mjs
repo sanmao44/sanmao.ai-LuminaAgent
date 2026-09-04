@@ -313,8 +313,8 @@ test("nested node scrolling does not trigger canvas zoom", () => {
 });
 
 test("grouped cards defer external connections to the group ports", () => {
-  assert.match(component, /!node\.groupId && \(\s*<button\s+type="button"\s+className="canvas-port left"/);
-  assert.match(component, /!node\.groupId && \(\s*<button\s+type="button"\s+className="canvas-port right"/);
+  assert.match(component, /!group && \(\s*<button\s+type="button"\s+className="canvas-port left"/);
+  assert.match(component, /!group && \(\s*<button\s+type="button"\s+className="canvas-port right"/);
 });
 
 test("audio nodes use the branded rounded player instead of browser gray controls", () => {
@@ -388,10 +388,14 @@ test("dock local edit control keeps the remove action inside the same chip", () 
   assert.match(component, /className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove"/);
   assert.match(component, /aria-label="删除局部编辑"/);
   assert.match(component, /title="删除当前局部编辑范围"/);
+  const removeStart = component.indexOf("className=\"canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove\"");
+  const removeEnd = component.indexOf("</button>", removeStart);
+  assert.ok(removeStart >= 0 && removeEnd > removeStart, "local edit remove button should be present");
+  assert.doesNotMatch(component.slice(removeStart, removeEnd), /data-tooltip=/);
   assert.match(component, /event\.stopPropagation\(\);\s*onLocalEditRemove\(\)/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*position:relative[^}]*border-radius:999px/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*position:relative[^}]*isolation:isolate[^}]*border-radius:999px/);
   assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-edit\{[^}]*padding:0 31px 0 9px/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute[^}]*border-radius:50%/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute[^}]*display:grid[^}]*place-items:center[^}]*border-radius:50%/);
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {

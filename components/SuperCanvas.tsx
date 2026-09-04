@@ -3093,27 +3093,25 @@ export default function SuperCanvas() {
   }, []);
   const selectNode = useCallback((node: CanvasNode, additive = false) => {
     setSelectedEdgeId(null);
-    if (node.groupId) {
-      const group = groupById(docRef.current, node.groupId);
-      if (group) {
-        setSelectedIds((current) => {
-          if (
-            !additive &&
-            current.has(node.id) &&
-            current.size >= group.nodeIds.length
-          )
-            return current;
-          if (!additive) return new Set(group.nodeIds);
-          const next = new Set(current);
-          const allSelected = group.nodeIds.every((id) => next.has(id));
-          group.nodeIds.forEach((id) =>
-            allSelected ? next.delete(id) : next.add(id),
-          );
-          return next;
-        });
-        setSelectedGroupId(additive ? null : group.id);
-        return;
-      }
+    const group = groupForNode(docRef.current, node.id);
+    if (group) {
+      setSelectedIds((current) => {
+        if (
+          !additive &&
+          current.has(node.id) &&
+          current.size >= group.nodeIds.length
+        )
+          return current;
+        if (!additive) return new Set(group.nodeIds);
+        const next = new Set(current);
+        const allSelected = group.nodeIds.every((id) => next.has(id));
+        group.nodeIds.forEach((id) =>
+          allSelected ? next.delete(id) : next.add(id),
+        );
+        return next;
+      });
+      setSelectedGroupId(additive ? null : group.id);
+      return;
     }
     setSelectedGroupId(null);
     setSelectedIds((current) => {
@@ -9394,7 +9392,36 @@ export default function SuperCanvas() {
       const isolatedTarget = element?.closest(
         "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
-      if (isolatedTarget || (groupElement && !node)) {
+      if (groupElement && !node && !isolatedTarget?.closest(".canvas-context-menu")) {
+        event.preventDefault();
+        const group = groupById(docRef.current, groupElement.dataset.canvasGroupId);
+        const groupMember = group ? groupNodes(docRef.current, group.id)[0] : undefined;
+        const point = stagePoint(event.clientX, event.clientY);
+        const world = {
+          x: (point.x - document.camera.x) / document.camera.zoom,
+          y: (point.y - document.camera.y) / document.camera.zoom,
+        };
+        if (group && groupMember) {
+          setSelectedGroupId(group.id);
+          setSelectedIds(new Set(group.nodeIds));
+          setContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            menu: "node",
+            nodeId: groupMember.id,
+            world,
+          });
+        } else {
+          setContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            menu: "tools",
+            world,
+          });
+        }
+        return;
+      }
+      if (isolatedTarget) {
         if (isolatedTarget?.closest(".canvas-context-menu")) event.preventDefault();
         return;
       }
@@ -14733,7 +14760,6 @@ function CanvasNodeEditorPopover({
                       className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove"
                       aria-label="删除局部编辑"
                       title="删除当前局部编辑范围"
-                      data-tooltip="删除局部编辑"
                       onClick={(event) => {
                         event.stopPropagation();
                         onLocalEditRemove();
@@ -15129,6 +15155,7 @@ function CanvasNodeCard({
 }) {
   const size = nodeSize(node);
   const data = node.data;
+  const group = groupForNode(document, node.id);
   const colorKey = canvasNodeColorKey(node);
   const status = data.status || "idle";
   const pending = data.status === "queued" || data.status === "running";
@@ -15310,7 +15337,7 @@ function CanvasNodeCard({
         else onToggleEditor(node);
       }}
     >
-      {node.groupId && (
+      {group && (
         <button
           type="button"
           className="canvas-node-group-remove"
@@ -15325,7 +15352,7 @@ function CanvasNodeCard({
           出组
         </button>
       )}
-      {!node.groupId && (
+      {!group && (
         <button
           type="button"
           className="canvas-port left"
@@ -15885,7 +15912,7 @@ function CanvasNodeCard({
           </div>
         </div>
       )}
-      {!node.groupId && (
+      {!group && (
         <button
           type="button"
           className="canvas-port right"

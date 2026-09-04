@@ -88,8 +88,11 @@ test("grouped cards keep the existing card context menu entry point", () => {
     component.indexOf("const deck = deckSource()"),
   );
   assert.match(contextHandler, /data-canvas-group-id/);
-  assert.match(contextHandler, /if \(isolatedTarget \|\| \(groupElement && !node\)\)/);
+  assert.match(contextHandler, /if \(groupElement && !node && !isolatedTarget\?\.closest\("\.canvas-context-menu"\)\)/);
+  assert.match(contextHandler, /event\.preventDefault\(\)[\s\S]*?menu: "node"[\s\S]*?nodeId: groupMember\.id/);
   assert.doesNotMatch(contextHandler, /\.canvas-group,/);
+  assert.match(component, /const group = groupForNode\(document, node\.id\);/);
+  assert.match(component, /\{group && \([\s\S]*?className="canvas-node-group-remove"/);
 
   assert.match(component, /label: "下载"/);
   assert.match(component, /label: "加入资产"/);

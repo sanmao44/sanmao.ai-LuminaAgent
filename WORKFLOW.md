@@ -11,7 +11,7 @@
 | 你说的话 | Codex 会做 |
 |---------|-----------|
 | “同步 / 备份 / 推到 GitHub” | 只 `commit + push`，**不**升级版本号、不打 tag、不出 Release |
-| “发布 / 出个版本 / 通知用户更新” | 才升级版本号、打 tag、出 Release、上传 zip、更新 update.json |
+| “发布 / 出个版本 / 通知用户更新” | 才升级版本号、打 tag、出 Release、上传 ZIP + DMG、更新 update.json |
 
 **平时修改 = 不打包、不发布；给出明确发布指令 = 才打包 + 发布。**
 
@@ -69,11 +69,24 @@ git push origin main                 # 这样别人 pull main 才能拿到
 
 > ⚠️ **如果改动只停留在 `feature-xxx` / `codex/xxx` 分支而没有合并进 `main`，那别人拉 `main` 是拿不到的。** 这就是"在家更新却什么都没变"的最常见原因。
 
+### 分支清理规则
+
+- “合并所有分支”只指最近有实际修改（存在近期新提交或相对 `main` 有差异）且已确认的分支；长期未修改的历史分支视为过期，**不自动合并**。
+- 分支合并到 `main` 并推送成功后，默认删除对应的本地分支和 GitHub 远程分支，避免以后被误认为待合并分支。
+- 删除前必须确认分支已合并；`main` 和未合并分支不得删除。用户明确要求保留时，以用户要求为准。
+
 ---
 
 ## 3. 想正式发布给用户时
 
-发布 = **升级版本号 + 打 tag + 出 GitHub Release**，这时才真正通知用户。
+发布 = **升级版本号 + 打 tag + 出 GitHub Release**，并同时提供 ZIP 与 DMG，这时才真正通知用户。
+
+### 发布包规则：ZIP + DMG
+
+- ZIP 和 DMG 必须从同一个最新的 `main` 提交生成，不能拿旧分支或历史构建产物发布。
+- ZIP 供应用内自动更新，`update.json.packageUrl` 必须指向 ZIP；发布后必须用实际 ZIP 校验 SHA-256。
+- DMG 供 macOS 用户首次安装，作为同一个 GitHub Release 的附件与 ZIP 一起上传。
+- DMG 不提交到源码仓库；优先使用 macOS runner/CI 构建。发布前确认 DMG 内的应用拖入“应用程序”后可以独立启动。
 
 ```powershell
 # 1) 确认 main 是最新、改动都在
@@ -91,11 +104,14 @@ git push origin main
 git tag v0.7.25
 git push origin v0.7.25
 
-# 4) 创建 GitHub Release（真正发布/通知用户）
-gh release create v0.7.25 "C:\path\to\SANMAO.AI-0.7.25.zip" --repo sanmao44/sanmao.ai-LuminaAgent --title "SANMAO.AI v0.7.25" --notes "本次更新说明..."
+# 4) 创建 GitHub Release，并同时上传 ZIP 和 DMG（真正发布/通知用户）
+gh release create v0.7.25 `
+  "C:\path\to\SANMAO.AI-0.7.25.zip" `
+  "C:\path\to\SANMAO.AI-0.7.25.dmg" `
+  --repo sanmao44/sanmao.ai-LuminaAgent --title "SANMAO.AI v0.7.25" --notes "本次更新说明..."
 ```
 
-> 如果想**全自动**：配好 `.github/workflows` 里的 CI，之后**只要打 tag / 推分支**，GitHub 就会自动打包并出 Release，不用手动 `gh release create`。
+> 如果想**全自动**：配好 `.github/workflows` 里的 CI，之后**只要打 tag / 推分支**，GitHub 就会自动从 `main` 打包 ZIP 和 DMG 并出 Release，不用手动 `gh release create`。
 > **发布前必做校验（避免“SHA-256 校验失败”）：**
 > 上传 zip 后，在仓库根目录运行：
 > ```powershell
@@ -117,7 +133,7 @@ gh release create v0.7.25 "C:\path\to\SANMAO.AI-0.7.25.zip" --repo sanmao44/sanm
 3. 去 `packageUrl` 下载新的 zip
 4. **解压覆盖整个运行目录** → 重启
 
-> **只要发布用的 zip 是从 `main` 全量代码打包出来的，用户就能 100% 拿到所有改动。**
+> **只要发布用的 zip 是从 `main` 全量代码打包出来的，用户就能 100% 拿到所有改动。DMG 只负责 macOS 首次安装，不替代 ZIP 的应用内更新职责。**
 > 如果 zip 打包不全、或 `update.json` 的下载地址/版本对不上，用户就会漏改 → 类似今晚的情况。
 
 ---
@@ -127,9 +143,11 @@ gh release create v0.7.25 "C:\path\to\SANMAO.AI-0.7.25.zip" --repo sanmao44/sanm
 | 坑 | 结果 | 正确做法 |
 |----|------|----------|
 | 改动只推到 `codex/xxx` 分支，没合并进 `main` | 别人拉 `main` 拿到不到 | 完工后**合并回 main 再 push** |
+| 历史分支被误合并 | 旧改动重新进入发布内容 | 只处理本次明确指定/今晚产生的分支，合并后清理远程分支 |
 | 改了但忘了 `git commit` / `git push` | GitHub 上没有，别人拉不到 | 每次改动**提交并推送** |
 | `push` 了但没升级版本号 / 没出 Release | 代码更新了，但用户不知道、不更新 | 想发布时**打 tag + 出 Release** |
-| zip 不是从 `main` 全量打的 | 用户更新后**漏改动** | 发布前确认 `main` 就是最新 |
+| ZIP/DMG 不是从同一个最新 `main` 全量构建 | 用户更新后**漏改动**或安装包内容不一致 | 发布前确认构建提交和 `main` 一致 |
+| Release 只上传 ZIP 或只上传 DMG | macOS 用户缺少首次安装包或自动更新包 | 每次正式发布同时上传 ZIP + DMG |
 | 版本号与 GitHub 不一致 | 用户端检测不到新版本 | 发布时同步升级 `package.json` / `update.json` |
 | `update.json` 的 sha256 与实际 zip 不一致 | 用户端一直提示“SHA-256 校验失败”无法更新 | 用 `scripts/verify-release.mjs` 校验后再提交 |
 
@@ -139,6 +157,7 @@ gh release create v0.7.25 "C:\path\to\SANMAO.AI-0.7.25.zip" --repo sanmao44/sanm
 
 - 平时小改：`git push origin main`（不发布）
 - 想隔离开发：分支 → **合并回 main** → push（不发布）
-- 想发一版：升级版本号 → `git tag` → `gh release create`（发布）
+- 分支合并后：确认已合并 → 默认删除本地/远程分支
+- 想发一版：升级版本号 → `git tag` → 从 `main` 生成 ZIP + DMG → `gh release create`（发布）
 - 用户更新：`git pull` 或 下载 Release zip
 
