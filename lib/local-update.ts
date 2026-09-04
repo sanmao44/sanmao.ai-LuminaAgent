@@ -315,9 +315,14 @@ async function downloadToFile(
   }
 
   const actualSha256 = hash.digest('hex');
-  if (actualSha256 !== expectedSha256.toLowerCase()) {
-    throw new Error('更新包 SHA-256 校验失败，已拒绝执行');
+  const expectedSha256Normalized = expectedSha256.toLowerCase();
+  if (actualSha256 !== expectedSha256Normalized) {
+    throw new Error(
+      '更新包 SHA-256 校验失败：更新清单记录 ' + expectedSha256Normalized + '，下载包实际为 ' + actualSha256 + '。' +
+      '请确认发布时 update.json 的 sha256 与 Release 压缩包一致，或稍后重试。',
+    );
   }
+
   return { bytes: total, sha256: actualSha256 };
 }
 
