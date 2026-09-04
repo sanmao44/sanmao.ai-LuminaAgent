@@ -1,19 +1,19 @@
 {
     "schemaVersion": 1,
-    "latestVersion": "0.7.27",
-    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.27",
+    "latestVersion": "0.7.28",
+    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.28",
     "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip",
+    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip",
     "mirrorUrls": [
-        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip",
-        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip",
-        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip"
+        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip",
+        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip",
+        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip"
     ],
-    "sha256": "f8b1f6a2d73cb4ab9204ecb5f8f3c2b19b731bb3235fd70df790ba821a502c9b",
-    "publishedAt": "2026-09-04T21:29:13+08:00",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "publishedAt": "2026-09-05T02:36:24+08:00",
     "notes": [
-        "修复更新失败后红色托盘提示无法关闭：新增“×”关闭按钮，应用达到目标版本后自动清理残留失败记录，旧报错不再反复出现。",
-        "新增发布校验脚本（scripts/verify-release.mjs），发布前交叉核对 update.json 与 Release 压缩包的 SHA-256，避免“更新包 SHA-256 校验失败，已拒绝执行”。",
-        "优化 SHA-256 校验失败提示，显示清单记录值与下载包实际值，便于排查与反馈。"
+        "组内卡片拖拽限制在当前组的有效区域内，只有点击“出组”才会解除当前卡片的组关系。",
+        "修复组框空白区域右键弹出浏览器原生菜单的问题，恢复组工具栏和应用自定义右键菜单。",
+        "优化“出组”按钮的响应式字号、防溢出布局，以及整理组内的卡片间距和不重叠排版。"
     ]
 }

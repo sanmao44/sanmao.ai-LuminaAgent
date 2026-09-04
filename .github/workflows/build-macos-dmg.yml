@@ -1,0 +1,72 @@
+name: Build macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit used for the release source
+        required: true
+        type: string
+      version:
+        description: Release version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-dmg:
+    runs-on: macos-latest
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Build self-contained macOS app image
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/sanmao-dmg-stage"
+          app="$stage/SANMAO.AI.app"
+          app_root="$app/Contents/Resources/AppRoot"
+          output="$RUNNER_TEMP/SANMAO.AI-$RELEASE_VERSION.dmg"
+
+          rm -rf "$stage"
+          mkdir -p "$app_root"
+          cp -R SANMAO.AI.app/. "$app/"
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.next' \
+            --exclude 'node_modules' \
+            --exclude '.data' \
+            --exclude 'SANMAO.AI.app' \
+            --exclude 'dev.log' \
+            --exclude 'temp_edit*.py' \
+            ./ "$app_root/"
+          chmod +x "$app/Contents/MacOS/SANMAO.AI"
+
+          test -x "$app/Contents/MacOS/SANMAO.AI"
+          test -f "$app/Contents/Resources/AppRoot/scripts/start-macos.sh"
+          test -f "$app/Contents/Resources/AppRoot/package.json"
+          sh -n "$app/Contents/MacOS/SANMAO.AI"
+          sh -n "$app/Contents/Resources/AppRoot/scripts/start-macos.sh"
+
+          hdiutil create \
+            -volname "SANMAO.AI $RELEASE_VERSION" \
+            -srcfolder "$stage" \
+            -ov \
+            -format UDZO \
+            "$output"
+
+          hdiutil imageinfo "$output" | grep -E 'image-type|partition-scheme|size:'
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SANMAO.AI-${{ inputs.version }}-dmg
+          path: ${{ runner.temp }}/SANMAO.AI-${{ inputs.version }}.dmg
+          if-no-files-found: error
