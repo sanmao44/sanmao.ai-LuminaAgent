@@ -9,7 +9,7 @@
         "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip",
         "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.27/SANMAO.AI-0.7.27.zip"
     ],
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sha256": "f8b1f6a2d73cb4ab9204ecb5f8f3c2b19b731bb3235fd70df790ba821a502c9b",
     "publishedAt": "2026-09-04T21:29:13+08:00",
     "notes": [
         "修复更新失败后红色托盘提示无法关闭：新增“×”关闭按钮，应用达到目标版本后自动清理残留失败记录，旧报错不再反复出现。",
