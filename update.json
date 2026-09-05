@@ -1,19 +1,19 @@
 {
-    "schemaVersion": 1,
-    "latestVersion": "0.7.30",
-    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.30",
-    "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
-    "mirrorUrls": [
-        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
-        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
-        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip"
-    ],
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "publishedAt": "2026-09-05T23:59:00+08:00",
-    "notes": [
-        "优化 Agent 联网搜索意图和查询规划，最新新闻等问题会结合主题与日期生成更准确的搜索词。",
-        "增强搜索结果日期覆盖、自动扩展、去重和来源整理，降低严格日期过滤造成的无结果情况。",
-        "改进联网搜索失败状态和可重试反馈，提升 Agent 返回可用联网结果的稳定性。"
-    ]
+  "schemaVersion": 1,
+  "latestVersion": "0.7.30",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.30",
+  "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
+  "mirrorUrls": [
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip"
+  ],
+  "sha256": "75e7548fcb12da37d1965a8075cf66daa2bd0b6af44947f0ef224a94dceb6b69",
+  "publishedAt": "2026-09-05T23:59:00+08:00",
+  "notes": [
+    "优化 Agent 联网搜索意图和查询规划，最新新闻等问题会结合主题与日期生成更准确的搜索词。",
+    "增强搜索结果日期覆盖、自动扩展、去重和来源整理，降低严格日期过滤造成的无结果情况。",
+    "改进联网搜索失败状态和可重试反馈，提升 Agent 返回可用联网结果的稳定性。"
+  ]
 }
