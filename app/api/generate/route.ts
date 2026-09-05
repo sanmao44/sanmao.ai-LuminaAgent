@@ -10,6 +10,7 @@ import { referenceRecordsForLog } from '@/lib/reference-images';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { normalizeStarApiLandscapeImages, normalizeStarApiLandscapePrompt } from '@/lib/image-orientation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -98,11 +99,10 @@ export async function POST(request: Request) {
       : undefined;
     const cameraPayload = camera ? buildAnglePayload(camera, undefined, cameraStart, angleOutput) : undefined;
     if (camera && body.angleGuide === true && !angleOutput) return Response.json({ error: '3D 构图导引必须提供有效的输出宽高。' }, { status: 400 });
-    const generationPrompt = camera
+    const baseGenerationPrompt = camera
       ? compileAngleTargetPrompt(angleNote, camera, { hasGuideReference: body.angleGuide === true, output: angleOutput, cameraStart })
       : prompt;
-    promptForLog = generationPrompt;
-    if (!generationPrompt) return Response.json({ error: '请输入生图描述。' }, { status: 400 });
+    if (!baseGenerationPrompt) return Response.json({ error: '请输入生图描述。' }, { status: 400 });
     const references = Array.isArray(body.references)
       ? body.references.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 16)
       : [];
@@ -112,6 +112,14 @@ export async function POST(request: Request) {
       : await getRuntimeImageGenerationModel(String(body.model || 'auto'));
     if (!runtime) return Response.json({ error: hasEditInput ? '没有可用的改图模型，请启用带 edit 能力的图片模型' : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;
+    const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
+    const generationPrompt = normalizeStarApiLandscapePrompt(runtime.provider, runtime.model.rawId, baseGenerationPrompt, {
+      aspectRatio: String(body.aspectRatio || '自动'),
+      width: Number(body.width || 0),
+      height: Number(body.height || 0),
+      sizeMode,
+    });
+    promptForLog = generationPrompt;
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
     if (camera && body.angleGuide === true && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始人物参考和 3D 构图导引。' }, { status: 400 });
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
@@ -127,6 +135,7 @@ export async function POST(request: Request) {
       count: Number(body.count || 1),
       width: Number(body.width || 0),
       height: Number(body.height || 0),
+      sizeMode,
       quality: String(body.quality || '自动'),
       resolution: ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
       outputFormat,
@@ -138,21 +147,23 @@ export async function POST(request: Request) {
     outputSizeForLog = input.width && input.height ? `${input.width}×${input.height}` : undefined;
     modeForLog = references.length ? 'edit' : 'generate';
     logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
+    const storagePath = (await getPublicState()).settings.imageStoragePath;
     const providerImages = references.length
       ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references, mask, fidelity: camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
       : await generateImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
-    const normalizedImages = camera && angleOutput
-      ? await normalizeAngleOutputSize(providerImages, angleOutput.width, angleOutput.height, effectiveAngle(camera.roll), requestController.signal)
-      : providerImages;
-    if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
-    const providerFinishedAt = Date.now();
-    const storagePath = (await getPublicState()).settings.imageStoragePath;
-    const generatedImages = mask
-      ? await enforceLocalEditMask(normalizedImages, references[0], mask, {
+    const maskSafeImages = mask
+      ? await enforceLocalEditMask(providerImages, references[0], mask, {
           storagePath,
           signal: requestController.signal,
         })
-      : normalizedImages;
+      : providerImages;
+    const orientationSafeImages = await normalizeStarApiLandscapeImages(runtime.provider, runtime.model.rawId, input, maskSafeImages, requestController.signal);
+    const normalizedImages = camera && angleOutput
+      ? await normalizeAngleOutputSize(orientationSafeImages, angleOutput.width, angleOutput.height, effectiveAngle(camera.roll), requestController.signal)
+      : orientationSafeImages;
+    if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
+    const providerFinishedAt = Date.now();
+    const generatedImages = normalizedImages;
     const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId });
     return Response.json({ ok: true, images: stored.images, mode: references.length ? 'reference' : 'generate', model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {

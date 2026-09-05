@@ -196,3 +196,30 @@ test('omits legacy input_fidelity for GPT Image 2 while preserving it for other 
   assert.equal(otherBody.input_fidelity, 'low');
   assert.deepEqual(gptImageBody.images, [{ image_url: input.references[0] }]);
 });
+
+test('uses StarAPI native image sizes only for its gpt-image-2 model', () => {
+  const starApi = {
+    type: 'openai-compatible',
+    name: 'sanmao.ai-OpenAI',
+    platform: 'openai',
+    baseUrl: 'https://www.starapi.cc/v1',
+  };
+  assert.equal(providers.mapImageRequestSize(starApi, 'gpt-image-2', '16:9', 4096, 2304), '1536x1024');
+  assert.equal(providers.mapImageRequestSize(starApi, 'gpt-image-2', '16:9', 1024, 1536), '1536x1024');
+  assert.equal(providers.mapImageRequestSize(starApi, 'gpt-image-2', '2:1', 4096, 2048), '1536x1024');
+  assert.equal(providers.mapImageRequestSize(starApi, 'gpt-image-2', '9:16', 2304, 4096), '1024x1536');
+  assert.equal(providers.mapImageRequestSize(starApi, 'gpt-image-2', '1:1', 4096, 4096), '1024x1024');
+  assert.equal(providers.mapImageRequestSize(starApi, 'gpt-image-2', '自定义', 1536, 1024), '1536x1024');
+  assert.equal(providers.mapImageRequestSize({ ...starApi, baseUrl: 'https://proxy.example.test', name: 'star api-OpenAI' }, 'gpt-image-2', '16:9', 4096, 2304), '1536x1024');
+});
+
+test('does not change generic image size mapping for other models and providers', () => {
+  const provider = {
+    type: 'openai-compatible',
+    name: 'OpenAI compatible',
+    platform: 'openai',
+    baseUrl: 'https://images.example.test/v1',
+  };
+  assert.equal(providers.mapImageRequestSize(provider, 'gpt-image-2', '16:9', 4096, 2304), '3840x2304');
+  assert.equal(providers.mapImageRequestSize(provider, 'gpt-image-2-lite', '16:9', 4096, 2304), '3840x2304');
+});

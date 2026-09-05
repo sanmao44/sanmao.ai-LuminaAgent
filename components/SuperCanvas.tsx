@@ -6064,6 +6064,7 @@ export default function SuperCanvas() {
                     : imageParams.aspect,
                 resolution: imageParams.resolution,
                 quality: imageParams.quality,
+                sizeMode: imageParams.sizeMode,
                 ...(imageParams.sizeMode === "custom"
                   ? { width: imageParams.width, height: imageParams.height }
                   : {}),
@@ -6791,6 +6792,7 @@ export default function SuperCanvas() {
           : params.aspect,
         resolution: params.resolution,
         quality: params.quality,
+        sizeMode: params.sizeMode,
         ...(params.sizeMode === "custom" ? { width: params.width, height: params.height } : {}),
         outputFormat: params.outputFormat,
         background: params.backgroundMode === "api-transparent"
@@ -7690,9 +7692,10 @@ export default function SuperCanvas() {
             imageParams.aspect === "自定义"
               ? `${imageParams.customAspectWidth}:${imageParams.customAspectHeight}`
               : imageParams.aspect,
-          resolution: imageParams.resolution,
-          quality: imageParams.quality,
-          ...(imageParams.sizeMode === "custom"
+                resolution: imageParams.resolution,
+                quality: imageParams.quality,
+                sizeMode: imageParams.sizeMode,
+                ...(imageParams.sizeMode === "custom"
             ? { width: imageParams.width, height: imageParams.height }
             : {}),
           outputFormat: imageParams.outputFormat,

@@ -392,6 +392,7 @@ export async function generateCanvasImage(input: {
   quality?: string;
   width?: number;
   height?: number;
+  sizeMode?: "system" | "custom";
   outputFormat?: "png" | "jpeg" | "webp";
   background?: "transparent" | "opaque";
   maskUrl?: string;
@@ -427,6 +428,7 @@ export async function generateCanvasImage(input: {
       ...(input.width && input.height
         ? { width: input.width, height: input.height }
         : {}),
+      ...(input.sizeMode ? { sizeMode: input.sizeMode } : {}),
       ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
       ...(input.background ? { background: input.background } : {}),
       ...(mask ? { mask } : {}),

@@ -1,4 +1,4 @@
-import { editImage } from '@/lib/providers';
+import { editImage, type ImageEditInput } from '@/lib/providers';
 import { resolveStoredImageReference } from '@/lib/image-storage';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
@@ -7,6 +7,7 @@ import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { normalizeStarApiLandscapeImages, normalizeStarApiLandscapePrompt } from '@/lib/image-orientation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -40,16 +41,24 @@ export async function POST(request: Request) {
     const runtime = await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit');
     if (!runtime) return Response.json({ error: '没有支持图片修改的可用模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;
+    const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
     const publicState = await getPublicState();
     const storagePath = publicState.settings.imageStoragePath;
     const resolvedReferences = await Promise.all(references.map((reference) => resolveStoredImageReference(reference, storagePath)));
-    const input = {
-      prompt,
+    const generationPrompt = normalizeStarApiLandscapePrompt(runtime.provider, runtime.model.rawId, prompt, {
+      aspectRatio: String(body.aspectRatio || '自动'),
+      width: Number(body.width || 0),
+      height: Number(body.height || 0),
+      sizeMode,
+    });
+    const input: ImageEditInput = {
+      prompt: generationPrompt,
       references: resolvedReferences,
       aspectRatio: String(body.aspectRatio || '自动'),
       count: Number(body.count || 1),
       width: Number(body.width || 0),
       height: Number(body.height || 0),
+      sizeMode,
       resolution: ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
       quality: String(body.quality || '自动'),
       fidelity: body.fidelity === 'low' ? 'low' as const : 'high' as const,
@@ -58,15 +67,17 @@ export async function POST(request: Request) {
       responseFormat,
       background,
     };
-    aspectRatioForLog = input.aspectRatio;
-    logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
+    promptForLog = generationPrompt;
+    aspectRatioForLog = input.aspectRatio || '自动';
+    logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const providerImages = await editImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
-    const images = mask
+    const maskSafeImages = mask
       ? await enforceLocalEditMask(providerImages, resolvedReferences[0], mask, {
           storagePath,
           signal: requestController.signal,
         })
       : providerImages;
+    const images = await normalizeStarApiLandscapeImages(runtime.provider, runtime.model.rawId, input, maskSafeImages, requestController.signal);
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
     const stored = await persistGenerationResult({ images, storagePath, startedAt, providerFinishedAt, logId });

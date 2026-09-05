@@ -124,5 +124,5 @@ test('both image-generation entry points enforce the local-edit composite', asyn
   const editRoute = await readFile(new URL('../app/api/edit/route.ts', import.meta.url), 'utf8');
   const generateRoute = await readFile(new URL('../app/api/generate/route.ts', import.meta.url), 'utf8');
   assert.match(editRoute, /enforceLocalEditMask\(providerImages, resolvedReferences\[0\], mask/);
-  assert.match(generateRoute, /enforceLocalEditMask\(normalizedImages, references\[0\], mask/);
+  assert.match(generateRoute, /enforceLocalEditMask\(providerImages, references\[0\], mask/);
 });

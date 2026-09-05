@@ -592,6 +592,46 @@ function exactImageSize(width?: number, height?: number) {
   return Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && h <= 16384 ? `${w}x${h}` : undefined;
 }
 
+const STARAPI_GPT_IMAGE_NATIVE_SIZES = new Set(['512x512', '1024x1024', '1024x1536', '1536x1024']);
+
+function isStarApiProvider(provider: Pick<RuntimeProvider, 'baseUrl' | 'name'>) {
+  let hostname = '';
+  try { hostname = new URL(provider.baseUrl || '').hostname.toLowerCase(); } catch { /* malformed custom URLs stay on the generic path */ }
+  return /(?:^|\.)starapi\.cc$/i.test(hostname) || /star[\s_-]*api/i.test(String(provider.name || ''));
+}
+
+function isStarApiGptImage2(provider: Pick<RuntimeProvider, 'baseUrl' | 'name'>, rawModelId: string) {
+  return isStarApiProvider(provider) && String(rawModelId || '').trim().toLowerCase() === 'gpt-image-2';
+}
+
+function starApiGptImage2Size(ratio: string, width?: number, height?: number) {
+  const exact = exactImageSize(width, height);
+  const hasExplicitRatio = Boolean(ratio && ratio !== '自动' && ratio !== '自定义');
+  if (!hasExplicitRatio && exact && STARAPI_GPT_IMAGE_NATIVE_SIZES.has(exact)) return exact;
+
+  let value = 0;
+  if (ratio && ratio !== '自动' && ratio !== '自定义') {
+    const [rawWidth, rawHeight] = ratio.split(':').map(Number);
+    if (rawWidth > 0 && rawHeight > 0) value = rawWidth / rawHeight;
+  }
+  if (!value && width && height) value = Number(width) / Number(height);
+  if (!Number.isFinite(value) || value <= 0) return '1024x1024';
+  return value > 1.05 ? '1536x1024' : value < 0.95 ? '1024x1536' : '1024x1024';
+}
+
+/** Keep the StarAPI gpt-image-2 exception local; all other providers retain the existing mapping. */
+export function mapImageRequestSize(
+  provider: Pick<RuntimeProvider, 'baseUrl' | 'name'>,
+  rawModelId: string,
+  ratio: string,
+  width?: number,
+  height?: number,
+) {
+  return isStarApiGptImage2(provider, rawModelId)
+    ? starApiGptImage2Size(ratio, width, height)
+    : mapRatioToSize(ratio, width, height);
+}
+
 // Image generation providers can legitimately take much longer than chat APIs.
 // Keep the server-side wait long enough for slow-but-successful vendors such as APIQIK.
 const IMAGE_REQUEST_TIMEOUT = 30 * 60 * 1000;
@@ -847,7 +887,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
     model: rawModelId,
     prompt: input.prompt,
     n: count,
-    size: mapRatioToSize(input.aspectRatio || '自动', input.width, input.height),
+    size: mapImageRequestSize(provider, rawModelId, input.aspectRatio || '自动', input.width, input.height),
   };
   if (input.quality && input.quality !== '自动') body.quality = input.quality;
   if (input.resolution && input.aspectRatio === '自动') body.resolution = input.resolution;
@@ -926,7 +966,7 @@ async function refToBlob(ref: string, index: number) {
   throw new Error(`第 ${index + 1} 张参考图格式无效`);
 }
 
-export type ImageEditInput = { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' };
+export type ImageEditInput = { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' };
 
 export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, references: string[], count: number, size: string) {
   const jsonBody: Record<string, unknown> = {
@@ -954,7 +994,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
-  const size = mapRatioToSize(input.aspectRatio || '自动', input.width, input.height);
+  const size = mapImageRequestSize(provider, rawModelId, input.aspectRatio || '自动', input.width, input.height);
   const sendInputFidelity = input.fidelity && shouldSendInputFidelity(provider, rawModelId);
   const jsonBody = buildImageEditRequestBody(provider, rawModelId, input, references, count, size);
 
