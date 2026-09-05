@@ -109,6 +109,7 @@ test("grid composite layout accepts explicit columns and visual options", () => 
     maxEdge: 2048,
     background: "transparent",
     fit: "cover",
+    cropPosition: "bottom-right",
   });
   assert.deepEqual(
     {
@@ -120,6 +121,7 @@ test("grid composite layout accepts explicit columns and visual options", () => 
       height: layout.height,
       background: layout.background,
       fit: layout.fit,
+      cropPosition: layout.cropPosition,
     },
     {
       columns: 2,
@@ -130,6 +132,24 @@ test("grid composite layout accepts explicit columns and visual options", () => 
       height: 1536,
       background: "transparent",
       fit: "cover",
+      cropPosition: "bottom-right",
     },
   );
+});
+
+test("grid composite layout keeps an independent crop offset for every image", () => {
+  const layout = operations.gridCompositeLayout(3, {
+    fit: "cover",
+    cropPosition: "center",
+    cropOffsets: [
+      { x: 0, y: 0 },
+      { x: 0.25, y: 0.75 },
+      { x: 9, y: -2 },
+    ],
+  });
+  assert.deepEqual(layout.cropOffsets, [
+    { x: 0, y: 0 },
+    { x: 0.25, y: 0.75 },
+    { x: 1, y: 0 },
+  ]);
 });

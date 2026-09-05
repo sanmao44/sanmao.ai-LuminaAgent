@@ -33,7 +33,7 @@ test("image-connected video cards generate back into the current node", () => {
 });
 
 test("overlay positioning ignores identical geometry updates", () => {
-  const toolbarStart = component.indexOf("function CanvasNodeQuickToolbar");
+  const toolbarStart = component.indexOf("function CanvasQuickToolbar");
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   assert.ok(toolbarStart >= 0 && editorStart > toolbarStart, "canvas overlays should be present");
   const toolbar = component.slice(toolbarStart, editorStart);
@@ -475,17 +475,15 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
 });
 
 test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {
-  assert.match(component, /function CanvasGroupSelectionToolbar\(/);
+  assert.match(component, /function CanvasQuickToolbar\(/);
   assert.match(component, /data-canvas-group-id=\{group\.id\}/);
-  assert.match(component, /placeCanvasGroupToolbar\(bounds, stageSize, overlay, 10\)/);
-  assert.match(component, /arrangeCanvasGroup\(docRef\.current, activeGroup\.id\)/);
-  assert.match(component, /selectedGroupId \? "⌗ 整理组内" : "⌗ 整理选中"/);
-  assert.match(
-    component,
-    /selectedNodes\.length >= 2 && \(\s*selectedGroupId && selectedGroup \?\s*\(\s*<CanvasGroupSelectionToolbar[\s\S]*?<\/CanvasGroupSelectionToolbar>\s*\)\s*:\s*\(\s*<div\s+className="canvas-selection-toolbar"/,
-  );
+  assert.match(component, /placeCanvasGroupToolbar\(anchor, stageSize, overlay, 10\)/);
+  assert.match(component, /arrangeCanvasGroup\(docRef\.current, activeGroup\.id, mode\)/);
+  assert.match(component, /id: "arrange-group"[\s\S]*?label: "组内整理"/);
+  assert.match(component, /className="canvas-group-arrange-menu"/);
+  assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
   assert.match(component, /selectedNodes\.length >= 2 && !selectedGroupId/);
-  assert.match(styles, /\.canvas-group-selection-toolbar\{[^}]*transform:none/);
+  assert.match(styles, /\.canvas-node-quick-toolbar/);
 });
 
 test("canvas image parameters collapse into a compact one-line collection", () => {

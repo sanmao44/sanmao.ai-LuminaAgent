@@ -91,5 +91,5 @@ test('upscale results expose a direct download action on the infinite canvas', a
     quickActions,
     /if \(node\.type === "upscale"\) \{[\s\S]*?const hasResult = Boolean\(node\.data\.url\)[\s\S]*?primaryActions: \[[\s\S]*?id: "download"[\s\S]*?下载超分节点生成的图片/,
   );
-  assert.doesNotMatch(quickActions, /if \(node\.type === "upscale"\) \{[\s\S]*?menuGroups: \[\s*\{/);
+  assert.match(quickActions, /if \(node\.type === "upscale"\) \{[\s\S]*?menuGroups: \[\s*\]/);
 });

@@ -20,6 +20,7 @@ type Props<T extends string | number> = {
   ariaLabel: string;
   className?: string;
   menuClassName?: string;
+  menuWidth?: number;
   portalZIndex?: number;
   disabled?: boolean;
   onDelete?: (value: T) => void;
@@ -27,7 +28,7 @@ type Props<T extends string | number> = {
 
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-export default function SelectMenu<T extends string | number>({ value, options, onChange, ariaLabel, className = '', menuClassName = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, disabled = false, onDelete }: Props<T>) {
+export default function SelectMenu<T extends string | number>({ value, options, onChange, ariaLabel, className = '', menuClassName = '', menuWidth, portalZIndex = CANVAS_Z_INDEX.portalPopover, disabled = false, onDelete }: Props<T>) {
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(value);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -52,10 +53,13 @@ export default function SelectMenu<T extends string | number>({ value, options, 
     function positionMenu() {
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
+      const viewportPadding = 8;
       const gap = 8;
       const maxHeight = 310;
-      const width = Math.round(rect.width);
-      const viewportPadding = 8;
+      const width = Math.min(
+        Math.round(menuWidth ?? rect.width),
+        Math.max(64, window.innerWidth - viewportPadding * 2),
+      );
       const left = Math.max(
         viewportPadding,
         Math.min(Math.round(rect.left), window.innerWidth - width - viewportPadding),
@@ -108,7 +112,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       window.removeEventListener('resize', positionMenu);
       window.removeEventListener('scroll', positionMenu, true);
     };
-  }, [open, value]);
+  }, [menuWidth, open, value]);
 
   function openMenu() {
     setMenuStyle({

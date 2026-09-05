@@ -97,6 +97,67 @@
 .canvas-compose-dialog-foot button.primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 10px 24px color-mix(in srgb,var(--accent) 30%,transparent)}
 @media(max-width:720px){.canvas-compose-dialog-head{padding:15px 14px 13px}.canvas-compose-reset{padding:0 8px}.canvas-compose-fields{gap:9px}.canvas-compose-field-wide{grid-column:auto}.canvas-compose-preview{min-height:120px}.canvas-compose-dialog-foot{padding:11px 14px}}
 
+/* Keep the live preview inside a measured stage so square cells never stretch
+   past the viewport or overlap while the controls are being adjusted. */
+.canvas-compose-preview-label{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 7px;color:var(--text-2);font-size:8px;font-weight:900}
+.canvas-compose-preview-label>span{display:inline-flex;align-items:center;gap:6px;color:var(--accent-text);letter-spacing:.02em}
+.canvas-compose-preview-label i{display:block;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 0 10px color-mix(in srgb,var(--accent) 56%,transparent)}
+.canvas-compose-preview-label small{color:var(--muted);font-size:8px;font-weight:650}
+.canvas-compose-preview-viewport{position:relative;display:grid;place-items:center;box-sizing:border-box;min-height:150px;max-height:220px;overflow:hidden;padding:7px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--panel-3) 88%,var(--accent-soft));box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.canvas-compose-preview-viewport.transparent{background:repeating-conic-gradient(color-mix(in srgb,var(--panel-3) 78%,var(--accent-soft)) 0 25%,var(--panel-3) 0 50%) 50%/14px 14px}
+.canvas-compose-preview-result-shell{position:relative;display:block;max-width:100%;max-height:204px;width:max-content;height:max-content;line-height:0}
+.canvas-compose-preview-result{display:block;max-width:100%;max-height:204px;width:auto;height:auto;border-radius:9px;box-shadow:0 4px 16px rgba(0,0,0,.14)}
+.canvas-compose-preview-hit-area{position:absolute;inset:0;pointer-events:none}
+.canvas-compose-preview-hit-cell{position:absolute;box-sizing:border-box;display:grid;place-items:center;border:1px solid transparent;border-radius:5px;pointer-events:auto;cursor:grab;touch-action:none;transition:border-color .12s,background .12s,box-shadow .12s}
+.canvas-compose-preview-hit-cell:hover,.canvas-compose-preview-hit-cell.active{border-color:color-mix(in srgb,var(--accent) 78%,#fff);background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,#fff 48%,transparent),0 0 0 2px color-mix(in srgb,var(--accent) 16%,transparent)}
+.canvas-compose-preview-hit-cell:active{cursor:grabbing}
+.canvas-compose-preview-hit-cell span{padding:2px 5px;border-radius:999px;background:color-mix(in srgb,var(--panel) 84%,transparent);color:var(--accent-text);font-size:7px;font-weight:900;opacity:0;transition:opacity .12s}
+.canvas-compose-preview-hit-cell:hover span,.canvas-compose-preview-hit-cell.active span{opacity:1}
+.canvas-compose-preview-viewport.is-updating .canvas-compose-preview-result{opacity:.72;filter:saturate(.86)}
+.canvas-compose-preview-status{position:absolute;right:10px;bottom:9px;padding:4px 7px;border:1px solid color-mix(in srgb,var(--accent) 30%,rgba(255,255,255,.45));border-radius:999px;background:color-mix(in srgb,var(--panel) 88%,transparent);color:var(--accent-text);font-size:7px;font-weight:850;box-shadow:0 4px 12px rgba(0,0,0,.14)}
+.canvas-compose-preview-empty{display:grid;place-items:center;min-height:136px;color:var(--muted);font-size:9px;font-weight:750}
+.canvas-compose-summary{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px}.canvas-compose-summary span{padding:7px 9px;border-radius:9px}.canvas-compose-summary b{font-size:11px}.canvas-compose-summary small{font-size:7px}
+.canvas-compose-dialog-body{padding:10px 14px}.canvas-compose-fields{gap:7px;margin-top:10px}.canvas-compose-fields select{height:33px;border-radius:9px}.canvas-compose-range-field{padding:7px 9px 5px;border-radius:10px}.canvas-compose-range-field input[type=range]{height:15px;margin:3px 0 0}.canvas-compose-range-field small{font-size:6px}.canvas-compose-choice-field{padding:7px 9px 6px;border-radius:10px}.canvas-compose-segmented{gap:4px}.canvas-compose-segmented button{min-height:33px;padding:4px 6px;border-radius:8px}.canvas-compose-segmented button b{font-size:7px}.canvas-compose-segmented button small{font-size:6px}
+.canvas-compose-select-shell::after{display:none}.canvas-compose-select-shell .select-menu{width:100%;min-width:0}.canvas-compose-fields .select-menu-trigger{height:33px;min-height:33px;padding:6px 9px;border:1px solid color-mix(in srgb,var(--line) 86%,var(--accent));border-radius:9px;background:var(--panel-2);font:inherit}.canvas-compose-fields .select-menu-trigger:hover,.canvas-compose-fields .select-menu.open .select-menu-trigger{border-color:var(--accent);background:color-mix(in srgb,var(--panel-2) 84%,var(--accent-soft));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 11%,transparent)}.canvas-compose-fields .select-menu-trigger-copy{font-size:9px}.canvas-compose-fields .select-menu-chevron{font-size:14px}.canvas-compose-select-menu{min-width:210px;padding:5px;border-radius:12px;background:color-mix(in srgb,var(--panel) 98%,transparent);box-shadow:0 16px 34px rgba(31,33,44,.18),0 0 0 1px color-mix(in srgb,var(--accent) 10%,transparent)}.canvas-compose-select-menu .select-menu-option{gap:7px;padding:7px 8px;border-radius:8px}.canvas-compose-select-menu .select-menu-option-copy{gap:2px}.canvas-compose-select-menu .select-menu-option-copy strong{font-size:9px}.canvas-compose-select-menu .select-menu-option-copy small{font-size:7px}.canvas-compose-select-menu .select-menu-check{font-size:12px}
+.canvas-compose-fit-row{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;align-items:end}
+@media(max-width:720px){.canvas-compose-preview-label{align-items:flex-start;flex-direction:column;gap:3px}.canvas-compose-preview-viewport{min-height:120px;max-height:190px}.canvas-compose-preview-result{max-height:174px}.canvas-compose-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.canvas-compose-dialog-body{padding:9px 11px}.canvas-compose-fields{gap:8px}}
+
+/* Adapt the editor to the available space: a short desktop viewport gets a
+   two-column workbench, while a narrow viewport keeps the controls stacked. */
+.canvas-compose-dialog-body{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;overflow:hidden}
+.canvas-compose-preview-column,.canvas-compose-settings-column{min-width:0;min-height:0}
+.canvas-compose-preview-column{display:grid;align-content:start;min-width:0}
+.canvas-compose-settings-column{display:grid;align-content:start;min-width:0;min-height:0}
+.canvas-compose-settings-column .canvas-compose-fields{margin-top:0}
+.canvas-compose-settings-column .canvas-compose-hint,.canvas-compose-settings-column .canvas-compose-error{margin-top:7px}
+@media(min-width:721px) and (max-height:780px){
+  .canvas-compose-dialog-body{grid-template-columns:minmax(0,1.08fr) minmax(300px,.92fr);gap:14px;padding:12px 14px}
+  .canvas-compose-preview-viewport{height:clamp(180px,calc(100vh - 320px),340px);min-height:180px;max-height:none}
+  .canvas-compose-preview-result-shell{max-width:100%;max-height:100%}
+  .canvas-compose-preview-result{max-width:100%;max-height:100%}
+  .canvas-compose-summary{margin-top:8px}
+  .canvas-compose-settings-column{overflow:hidden}
+  .canvas-compose-fields{gap:7px}
+}
+@media(min-width:721px) and (max-height:600px){
+  .canvas-compose-dialog-head{padding-top:12px;padding-bottom:10px}
+  .canvas-compose-dialog-body{gap:10px;padding-top:9px;padding-bottom:9px}
+  .canvas-compose-preview-viewport{height:180px}
+  .canvas-compose-summary span{padding-top:6px;padding-bottom:6px}
+  .canvas-compose-dialog-foot{padding-top:9px;padding-bottom:9px}
+}
+@media(max-width:720px){
+  .canvas-compose-dialog-body{overflow:auto}
+  .canvas-compose-preview-column,.canvas-compose-settings-column{min-height:auto}
+}
+
+/* Light canvas groups need a quiet but definite boundary against the dotted
+   stage. Keep the accent restrained so the cards remain the visual focus. */
+html[data-theme="light"] .canvas-group{border-color:color-mix(in srgb,var(--accent) 42%,var(--line-strong));background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 26%,transparent),color-mix(in srgb,var(--panel) 92%,transparent));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 10%,transparent),0 9px 25px rgba(78,67,199,.08),inset 0 1px 0 rgba(255,255,255,.86);transition:border-color .16s,background .16s,box-shadow .16s}
+html[data-theme="light"] .canvas-group:hover{border-color:color-mix(in srgb,var(--accent) 62%,var(--line-strong));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 12%,transparent),0 12px 28px rgba(78,67,199,.12),inset 0 1px 0 rgba(255,255,255,.92)}
+html[data-theme="light"] .canvas-group.selected{border-color:var(--accent);background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 48%,transparent),color-mix(in srgb,var(--panel) 88%,transparent));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent),0 13px 32px rgba(78,67,199,.16),inset 0 1px 0 rgba(255,255,255,.95)}
+html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(--accent) 34%,var(--line-strong));background:color-mix(in srgb,#fff 94%,var(--accent-soft));box-shadow:0 3px 10px rgba(78,67,199,.12),inset 0 1px 0 #fff}
+
 /* The arrangement choice belongs to the selected group toolbar, not the global top bar. */
 .canvas-node-quick-toolbar:has(.canvas-group-arrange-menu),.canvas-node-quick-toolbar:has(.canvas-group-arrange-menu) .canvas-node-quick-actions{overflow:visible}
 .canvas-group-arrange-control{position:relative;display:inline-flex;flex:none}

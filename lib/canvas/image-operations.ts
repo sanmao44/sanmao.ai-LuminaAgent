@@ -9,6 +9,17 @@ export type OutpaintMargins = { top: number; right: number; bottom: number; left
 export type CropAspect = 'original' | '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | 'free';
 export type GridLines = { vertical: number[]; horizontal: number[] };
 export type CanvasImageGridFit = 'contain' | 'cover';
+export type CanvasImageGridCropPosition =
+  | 'top-left'
+  | 'top'
+  | 'top-right'
+  | 'left'
+  | 'center'
+  | 'right'
+  | 'bottom-left'
+  | 'bottom'
+  | 'bottom-right';
+export type CanvasImageGridCropOffset = { x: number; y: number };
 export type CanvasImageGridCompositeOptions = {
   columns?: number;
   cellSize?: number;
@@ -16,6 +27,9 @@ export type CanvasImageGridCompositeOptions = {
   maxEdge?: number;
   background?: string;
   fit?: CanvasImageGridFit;
+  cropPosition?: CanvasImageGridCropPosition;
+  /** Per-image normalized crop window offsets. 0 is left/top, 1 is right/bottom. */
+  cropOffsets?: Array<CanvasImageGridCropOffset | null | undefined>;
 };
 export type CanvasImageGridCompositeLayout = {
   columns: number;
@@ -27,6 +41,8 @@ export type CanvasImageGridCompositeLayout = {
   height: number;
   background: string;
   fit: CanvasImageGridFit;
+  cropPosition: CanvasImageGridCropPosition;
+  cropOffsets: CanvasImageGridCropOffset[];
 };
 
 export type CanvasImageRenderRequest =
@@ -46,6 +62,31 @@ const ASPECTS: Record<Exclude<CropAspect, 'original' | 'free'>, number> = {
 function finitePositive(value: unknown, fallback = 1) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+const GRID_CROP_POSITIONS: CanvasImageGridCropPosition[] = [
+  'top-left', 'top', 'top-right', 'left', 'center', 'right', 'bottom-left', 'bottom', 'bottom-right',
+];
+
+const CROP_POSITION_OFFSETS: Record<CanvasImageGridCropPosition, CanvasImageGridCropOffset> = {
+  'top-left': { x: 0, y: 0 },
+  top: { x: 0.5, y: 0 },
+  'top-right': { x: 1, y: 0 },
+  left: { x: 0, y: 0.5 },
+  center: { x: 0.5, y: 0.5 },
+  right: { x: 1, y: 0.5 },
+  'bottom-left': { x: 0, y: 1 },
+  bottom: { x: 0.5, y: 1 },
+  'bottom-right': { x: 1, y: 1 },
+};
+
+function clampCropOffset(value: CanvasImageGridCropOffset | null | undefined, fallback: CanvasImageGridCropOffset) {
+  const x = Number(value?.x);
+  const y = Number(value?.y);
+  return {
+    x: Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : fallback.x,
+    y: Number.isFinite(y) ? Math.max(0, Math.min(1, y)) : fallback.y,
+  };
 }
 
 export function normalizeImageSize(size: ImageSize): ImageSize {
@@ -251,6 +292,13 @@ export function gridCompositeLayout(
   const scale = Math.min(1, maxEdge / rawWidth, maxEdge / rawHeight);
   const background = String(options.background || '#ffffff').trim() || '#ffffff';
   const fit: CanvasImageGridFit = options.fit === 'cover' ? 'cover' : 'contain';
+  const cropPosition = GRID_CROP_POSITIONS.includes(options.cropPosition as CanvasImageGridCropPosition)
+    ? options.cropPosition as CanvasImageGridCropPosition
+    : 'center';
+  const defaultCropOffset = CROP_POSITION_OFFSETS[cropPosition];
+  const cropOffsets = Array.from({ length: safeCount }, (_, index) =>
+    clampCropOffset(options.cropOffsets?.[index], defaultCropOffset),
+  );
   return {
     columns,
     rows,
@@ -261,7 +309,18 @@ export function gridCompositeLayout(
     height: Math.max(1, Math.round(rawHeight * scale)),
     background,
     fit,
+    cropPosition,
+    cropOffsets,
   };
+}
+
+function coverOffset(
+  cellSize: number,
+  imageSize: number,
+  offset: number,
+) {
+  const remaining = cellSize - imageSize;
+  return remaining * Math.max(0, Math.min(1, Number(offset) || 0));
 }
 
 function loadImage(url: string) {
@@ -374,6 +433,7 @@ export async function renderCanvasImageGridComposite(
       : Math.min(cellSize / imageWidth, cellSize / imageHeight);
     const width = imageWidth * imageScale;
     const height = imageHeight * imageScale;
+    const cropOffset = layout.cropOffsets[index] || { x: 0.5, y: 0.5 };
     context.save();
     if (layout.fit === 'cover') {
       context.beginPath();
@@ -382,8 +442,8 @@ export async function renderCanvasImageGridComposite(
     }
     context.drawImage(
       image,
-      cellX + (cellSize - width) / 2,
-      cellY + (cellSize - height) / 2,
+      cellX + coverOffset(cellSize, width, cropOffset.x),
+      cellY + coverOffset(cellSize, height, cropOffset.y),
       width,
       height,
     );

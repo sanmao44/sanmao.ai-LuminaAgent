@@ -32,6 +32,8 @@ test("group headers expose an accessible grid compose action", () => {
   assert.match(component, /const openComposeDialog = useCallback/);
   assert.match(component, /onClick: \(\) => openComposeDialog\(group\.id\)/);
   assert.match(component, /<CanvasGroupComposeDialog/);
+  assert.match(component, /canvas-compose-backdrop/);
+  assert.match(component, /querySelector\("\.canvas-compose-backdrop"\)/);
   assert.match(component, /operation: "grid-compose"/);
   assert.match(component, /sourceNodeIds: sourceIds/);
   assert.match(component, /kind: "lineage"/);
@@ -45,4 +47,18 @@ test("group removal control scales with its card and stays within the card", () 
   assert.match(styles, /\.canvas-node-group-remove\{[^}]*font-size:clamp\(10px,3cqw,16px\)/);
   assert.match(styles, /\.canvas-node-group-remove\{[^}]*max-width:calc\(100% - 14px\)/);
   assert.match(styles, /\.canvas-node-group-remove\{[^}]*overflow:hidden/);
+});
+
+test("light theme group boundaries stay visible without overpowering cards", () => {
+  assert.match(styles, /html\[data-theme="light"\] \.canvas-group\{/);
+  assert.match(styles, /html\[data-theme="light"\] \.canvas-group\.selected\{/);
+  assert.match(styles, /html\[data-theme="light"\] \.canvas-group-label\{/);
+});
+
+test("group arrangement preserves the current canvas camera", () => {
+  const start = component.indexOf("const arrangeCanvasAction = useCallback");
+  const end = component.indexOf("const chooseGroupArrangeMode", start);
+  assert.ok(start >= 0 && end > start, "arrangement action should be present");
+  const action = component.slice(start, end);
+  assert.match(action, /if \(!activeGroup\) fitView\(result\.arrangedIds\)/);
 });

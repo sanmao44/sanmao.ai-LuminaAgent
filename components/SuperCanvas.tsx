@@ -4320,7 +4320,9 @@ export default function SuperCanvas() {
             : "画布无需重新整理",
       );
     }
-    fitView(result.arrangedIds);
+    // Group arrangement is an in-place operation: preserve the user's current
+    // camera so a small local cleanup never jumps or zooms the whole canvas.
+    if (!activeGroup) fitView(result.arrangedIds);
   }, [addLog, arrangeMode, fitView, notify, selectedGroupId, selectedIds, setDoc]);
 
   const chooseGroupArrangeMode = useCallback((mode: CanvasArrangeMode) => {
@@ -8757,6 +8759,8 @@ export default function SuperCanvas() {
       maxEdge: settings.maxEdge,
       background: settings.background,
       fit: settings.fit,
+      cropPosition: settings.cropPosition,
+      cropOffsets: settings.cropOffsets,
     };
 
     setComposingGroupId(groupId);
@@ -8793,6 +8797,8 @@ export default function SuperCanvas() {
           maxEdge: settings.maxEdge || 6144,
           background: rendered.layout.background,
           fit: rendered.layout.fit,
+          cropPosition: rendered.layout.cropPosition,
+          cropOffsets: JSON.stringify(rendered.layout.cropOffsets),
           order: settings.order,
         },
         createdAt: Date.now(),
@@ -9381,10 +9387,11 @@ export default function SuperCanvas() {
     const handler = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (window.document.querySelector(".canvas-asset-preview-backdrop")) return;
+        if (window.document.querySelector(".canvas-compose-backdrop")) return;
         if (window.document.querySelector(".canvas-node-quick-menu")) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest(
-          ".reference-mention-editor,.canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu.open,.select-menu-popover,.model-picker-trigger.open,.model-picker-panel,.model-picker-dialog-backdrop,.media-viewer-backdrop,.canvas-asset-preview-backdrop,.mask-editor-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
+          ".reference-mention-editor,.canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu.open,.select-menu-popover,.model-picker-trigger.open,.model-picker-panel,.model-picker-dialog-backdrop,.media-viewer-backdrop,.canvas-asset-preview-backdrop,.mask-editor-backdrop,.canvas-compose-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
         )) return;
         event.preventDefault();
         event.stopPropagation();
