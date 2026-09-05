@@ -857,7 +857,15 @@ function scoreResult(result: WebSearchResult, query: string, plan: SearchPlan) {
 function rankResults(results: WebSearchResult[], query: string, plan: SearchPlan) {
   return dedupeResults(results)
     .map((result, index) => ({ result, details: scoreResult(result, query, plan), index }))
-    .sort((a, b) => b.details.quality - a.details.quality || a.index - b.index)
+    .sort((a, b) => {
+      if (plan.intent.timeRange && plan.intent.intent === 'latest_news' && b.details.dateMatch !== a.details.dateMatch) {
+        return Number(b.details.dateMatch) - Number(a.details.dateMatch);
+      }
+      const aPublished = parsePublishedDate(a.result.publishedAt)?.getTime() || 0;
+      const bPublished = parsePublishedDate(b.result.publishedAt)?.getTime() || 0;
+      if (plan.intent.timeSensitive && aPublished !== bPublished) return bPublished - aPublished;
+      return b.details.quality - a.details.quality || a.index - b.index;
+    })
     .slice(0, 10)
     .map((item) => ({ ...item.result, qualityScore: Number(item.details.quality.toFixed(3)) }));
 }
@@ -879,10 +887,20 @@ function evaluateCoverage(results: WebSearchResult[], attempts: SearchAttempt[],
     return { enoughResults: false, reason: status === 'SEARCH_TIMEOUT' ? '搜索请求超时' : '所有搜索服务都返回了 API 错误', highQualityResults, datedResults, matchedTimeRange, retry: true, status };
   }
   if (!results.length) return { enoughResults: false, reason: '搜索服务返回零条结果', highQualityResults, datedResults, matchedTimeRange, retry: true, status: 'SEARCH_ZERO_RESULTS' };
-  if (plan.intent.timeRange && matchedTimeRange === 0 && datedResults > 0) {
-    return { enoughResults: false, reason: '结果有发布时间，但没有落在用户要求的时间范围内', highQualityResults, datedResults, matchedTimeRange, retry: true, status: 'SEARCH_DATE_MISMATCH' };
+  if (plan.intent.timeRange && matchedTimeRange === 0) {
+    const reason = datedResults > 0
+      ? '结果有发布时间，但没有落在用户要求的时间范围内'
+      : '结果缺少可核验的发布时间，无法确认是否落在用户要求的时间范围内';
+    return { enoughResults: false, reason, highQualityResults, datedResults, matchedTimeRange, retry: true, status: 'SEARCH_DATE_MISMATCH' };
   }
   const minimumResults = ['latest_news', 'weather', 'sports', 'recommendation', 'comparison'].includes(plan.intent.intent) ? 3 : 2;
+  const minimumDateMatches = plan.intent.intent === 'latest_news' && plan.intent.timeRange ? 3 : 0;
+  if (minimumDateMatches > 0 && matchedTimeRange < minimumDateMatches) {
+    const reason = datedResults > 0
+      ? `当前时间范围内只有 ${matchedTimeRange} 条带日期结果，低于新闻覆盖要求的 ${minimumDateMatches} 条`
+      : '结果缺少可核验的发布时间，无法确认是否落在用户要求的时间范围内';
+    return { enoughResults: false, reason, highQualityResults, datedResults, matchedTimeRange, retry: true, status: 'SEARCH_DATE_MISMATCH' };
+  }
   const enoughResults = results.length >= minimumResults && (highQualityResults >= Math.min(3, minimumResults) || results.length >= 5);
   return {
     enoughResults,
@@ -915,7 +933,11 @@ function logSearchTrace(input: string, plan: SearchPlan, trace: SearchTrace, cov
 
 function buildCoverageNote(plan: SearchPlan, strictMatchCount: number, finalCoverage: SearchCoverage, rounds: number) {
   const range = plan.intent.timeRange;
-  if (!range || rounds <= 1 || !['today', 'yesterday', 'day-before-yesterday'].includes(range.value)) return undefined;
+  if (!range || rounds <= 1) return undefined;
+  if (finalCoverage.datedResults === 0) {
+    return `已尝试 ${rounds} 轮检索，但来源中没有解析到可核验的发布时间，无法确认候选内容是否落在${range.label}内；以下结果仅作线索，请打开原文核对日期。`;
+  }
+  if (!['today', 'yesterday', 'day-before-yesterday'].includes(range.value)) return undefined;
   const expandedLabel = range.value === 'today' ? '过去24/48小时' : '过去48小时';
   return `严格按${range.label}（${range.start}）找到 ${strictMatchCount} 条；为避免漏掉相关信息，已补充${expandedLabel}的结果，请结合每条结果的发布时间判断。${finalCoverage.matchedTimeRange ? `其中 ${finalCoverage.matchedTimeRange} 条落在原时间范围内。` : ''}`;
 }

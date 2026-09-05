@@ -147,6 +147,32 @@ test('expands relative-date news queries with the current local date', async () 
   assert.ok(response.trace.length >= 1);
 });
 
+test('does not claim date coverage when sources have no parseable timestamps', async () => {
+  process.env.ANYSEARCH_API_KEY = 'test-anysearch-key';
+  delete process.env.QIANFAN_API_KEY;
+  globalThis.fetch = async (url, init) => {
+    const endpoint = String(url);
+    if (endpoint === 'https://api.anysearch.com/v1/search') {
+      return new Response(JSON.stringify({ results: [
+        { title: 'AI 行业资讯', url: 'https://example.com/undated-ai-a', snippet: '人工智能行业动态与模型进展' },
+        { title: 'AI 公司动态', url: 'https://example.com/undated-ai-b', snippet: 'AI 公司与产品更新' },
+        { title: 'AI 技术进展', url: 'https://example.com/undated-ai-c', snippet: '人工智能技术研究进展' },
+      ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (/undated-ai-[abc]$/.test(new URL(endpoint).pathname)) return new Response('<html><body>AI 候选来源正文。</body></html>', { status: 200 });
+    return new Response('', { status: 404 });
+  };
+
+  const response = await webSearch.searchWeb('今天没有日期的 AI 行业资讯');
+  assert.equal(response.status, 'SEARCH_DATE_MISMATCH');
+  assert.equal(response.coverage.datedResults, 0);
+  assert.equal(response.coverage.matchedTimeRange, 0);
+  assert.equal(response.rounds, 3);
+  assert.equal(response.resultCount, 3);
+  assert.equal(response.retryable, true);
+  assert.match(response.coverageNote, /没有解析到可核验的发布时间/);
+});
+
 test('resolves calendar language and plans intent-specific query variants', () => {
   const fixedNow = new Date('2026-09-05T10:30:00+08:00');
   const today = webSearch.resolveTimeRange('今天 AI 有什么新闻？', fixedNow, 'Asia/Shanghai');
@@ -201,6 +227,7 @@ test('returns machine-readable coverage and retries with a rewritten query', asy
   assert.equal(response.rounds, 2);
   assert.equal(response.coverage.enoughResults, true);
   assert.equal(response.coverage.matchedTimeRange, 3);
+  assert.equal(response.results.filter((result) => result.publishedAt?.startsWith(currentIsoDate)).length, 3);
   assert.equal(response.retryable, false);
   assert.equal(response.suggestedAction, 'none');
   assert.ok(response.trace[0].retryReason);
