@@ -2961,6 +2961,27 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
   animation:canvas-dock-params-in .16s ease-out;
 }
+
+/* Give the Agent and video task editors a little more breathing room. Their
+   surrounding card grows with this field, so the extra height stays attached
+   below the node instead of creating a separate scroll area. */
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="agent"] .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="agent"] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="video"] .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="video"] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  min-height:82px!important;
+  max-height:140px!important;
+}
+
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="agent"] .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="agent"] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="video"] .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density][data-node-kind="video"] .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+    min-height:70px!important;
+    max-height:120px!important;
+  }
+}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params .canvas-node-editor-dock-drawer-grip{
   display:none;
 }

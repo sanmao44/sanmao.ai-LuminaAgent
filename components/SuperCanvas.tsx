@@ -13482,7 +13482,7 @@ function CanvasNodeReferenceStrip({
       onDrop={(event) => handleDrop(event, reference?.id || "__slot__", slotRole)}
     >
       <span className="canvas-editor-slot-label"><b>{label}</b><small>{reference ? "已连接" : "拖入图片"}</small></span>
-      {reference ? renderItem(reference, references.findIndex((item) => item.id === reference.id), "slot-item", slotRole) : <span className="canvas-editor-frame-slot-empty">＋ {label}</span>}
+      {reference ? renderItem(reference, references.findIndex((item) => item.id === reference.id), "slot-item", slotRole) : <span className="canvas-editor-frame-slot-empty">＋ 添加图片</span>}
     </div>
   );
 
