@@ -100,3 +100,36 @@ test("grid composite layout respects the existing 6144px edge limit", () => {
   assert.ok(layout.height <= operations.CANVAS_IMAGE_OPERATION_MAX_EDGE);
   assert.ok(layout.scale < 1);
 });
+
+test("grid composite layout accepts explicit columns and visual options", () => {
+  const layout = operations.gridCompositeLayout(5, {
+    columns: 2,
+    cellSize: 512,
+    gap: 0,
+    maxEdge: 2048,
+    background: "transparent",
+    fit: "cover",
+  });
+  assert.deepEqual(
+    {
+      columns: layout.columns,
+      rows: layout.rows,
+      cellSize: layout.cellSize,
+      gap: layout.gap,
+      width: layout.width,
+      height: layout.height,
+      background: layout.background,
+      fit: layout.fit,
+    },
+    {
+      columns: 2,
+      rows: 3,
+      cellSize: 512,
+      gap: 0,
+      width: 1024,
+      height: 1536,
+      background: "transparent",
+      fit: "cover",
+    },
+  );
+});

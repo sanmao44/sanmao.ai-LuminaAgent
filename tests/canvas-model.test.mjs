@@ -1413,8 +1413,37 @@ test('arranges isolated group cards with horizontal and vertical gaps', () => {
 
   assert.equal(rows.length, 2);
   assert.equal(columns.length, 2);
-  assert.ok(columns[1] - columns[0] - members[0].w >= 120);
-  assert.ok(rows[1] - rows[0] - members[0].h >= 72);
+  assert.ok(columns[1] - columns[0] - members[0].w >= 72);
+  assert.ok(rows[1] - rows[0] - members[0].h >= 48);
+});
+
+test('supports compact horizontal, vertical, and grid arrangement modes', () => {
+  const empty = model.normalizeDocument(null);
+  const nodes = [
+    model.createMedia('image', '/mode-one.png', '一', { x: 900, y: 900 }),
+    model.createMedia('image', '/mode-two.png', '二', { x: 80, y: 80 }),
+    model.createMedia('image', '/mode-three.png', '三', { x: 500, y: 500 }),
+    model.createMedia('image', '/mode-four.png', '四', { x: 120, y: 700 }),
+  ];
+  const document = model.createGroup({ ...empty, nodes }, nodes.map((node) => node.id), '排列模式组');
+  const group = document.groups[0];
+  const membersFor = (arranged) => group.nodeIds.map((id) => arranged.nodes.find((node) => node.id === id));
+
+  const horizontal = membersFor(model.arrangeCanvasGroup(document, group.id, 'horizontal').document).sort((left, right) => left.x - right.x);
+  assert.equal(new Set(horizontal.map((node) => node.y)).size, 1);
+  for (let index = 1; index < horizontal.length; index += 1) {
+    assert.ok(horizontal[index].x - horizontal[index - 1].x - horizontal[index - 1].w >= 72);
+  }
+
+  const vertical = membersFor(model.arrangeCanvasGroup(document, group.id, 'vertical').document).sort((left, right) => left.y - right.y);
+  assert.equal(new Set(vertical.map((node) => node.x)).size, 1);
+  for (let index = 1; index < vertical.length; index += 1) {
+    assert.ok(vertical[index].y - vertical[index - 1].y - vertical[index - 1].h >= 48);
+  }
+
+  const grid = membersFor(model.arrangeCanvasGroup(document, group.id, 'grid').document);
+  assert.equal(new Set(grid.map((node) => node.x)).size, 2);
+  assert.equal(new Set(grid.map((node) => node.y)).size, 2);
 });
 
 test('handles cycles, empty selections, and deterministic output', () => {

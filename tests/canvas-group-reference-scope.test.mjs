@@ -29,7 +29,9 @@ test("canvas edge resolver expands only an explicit group source", () => {
 test("group headers expose an accessible grid compose action", () => {
   assert.match(component, /className=\{`canvas-group-compose/);
   assert.match(component, /disabled=\{availableImageCount < 2 \|\| Boolean\(composingGroupId\)\}/);
-  assert.match(component, /void composeCanvasGroup\(group\.id\)/);
+  assert.match(component, /const openComposeDialog = useCallback/);
+  assert.match(component, /onClick: \(\) => openComposeDialog\(group\.id\)/);
+  assert.match(component, /<CanvasGroupComposeDialog/);
   assert.match(component, /operation: "grid-compose"/);
   assert.match(component, /sourceNodeIds: sourceIds/);
   assert.match(component, /kind: "lineage"/);

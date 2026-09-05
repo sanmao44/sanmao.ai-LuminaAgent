@@ -8,10 +8,14 @@ export type ImageRect = { x: number; y: number; width: number; height: number };
 export type OutpaintMargins = { top: number; right: number; bottom: number; left: number };
 export type CropAspect = 'original' | '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | 'free';
 export type GridLines = { vertical: number[]; horizontal: number[] };
+export type CanvasImageGridFit = 'contain' | 'cover';
 export type CanvasImageGridCompositeOptions = {
+  columns?: number;
   cellSize?: number;
   gap?: number;
   maxEdge?: number;
+  background?: string;
+  fit?: CanvasImageGridFit;
 };
 export type CanvasImageGridCompositeLayout = {
   columns: number;
@@ -21,6 +25,8 @@ export type CanvasImageGridCompositeLayout = {
   scale: number;
   width: number;
   height: number;
+  background: string;
+  fit: CanvasImageGridFit;
 };
 
 export type CanvasImageRenderRequest =
@@ -220,10 +226,19 @@ export function gridCompositeLayout(
   options: CanvasImageGridCompositeOptions = {},
 ): CanvasImageGridCompositeLayout {
   const safeCount = Math.max(1, Math.round(Number(count) || 1));
-  const columns = Math.max(1, Math.ceil(Math.sqrt(safeCount)));
+  const requestedColumns = Number(options.columns);
+  const columns = Number.isFinite(requestedColumns) && requestedColumns > 0
+    ? Math.min(safeCount, Math.max(1, Math.min(8, Math.round(requestedColumns))))
+    : Math.max(1, Math.ceil(Math.sqrt(safeCount)));
   const rows = Math.ceil(safeCount / columns);
-  const cellSize = Math.max(64, Math.round(Number(options.cellSize) || 1024));
-  const gap = Math.max(0, Math.round(Number(options.gap) || 16));
+  const requestedCellSize = Number(options.cellSize);
+  const cellSize = Number.isFinite(requestedCellSize)
+    ? Math.max(256, Math.min(2048, Math.round(requestedCellSize)))
+    : 1024;
+  const requestedGap = Number(options.gap);
+  const gap = Number.isFinite(requestedGap)
+    ? Math.max(0, Math.min(128, Math.round(requestedGap)))
+    : 16;
   const maxEdge = Math.max(
     1,
     Math.min(
@@ -234,6 +249,8 @@ export function gridCompositeLayout(
   const rawWidth = columns * cellSize + Math.max(0, columns - 1) * gap;
   const rawHeight = rows * cellSize + Math.max(0, rows - 1) * gap;
   const scale = Math.min(1, maxEdge / rawWidth, maxEdge / rawHeight);
+  const background = String(options.background || '#ffffff').trim() || '#ffffff';
+  const fit: CanvasImageGridFit = options.fit === 'cover' ? 'cover' : 'contain';
   return {
     columns,
     rows,
@@ -242,6 +259,8 @@ export function gridCompositeLayout(
     scale,
     width: Math.max(1, Math.round(rawWidth * scale)),
     height: Math.max(1, Math.round(rawHeight * scale)),
+    background,
+    fit,
   };
 }
 
@@ -334,8 +353,12 @@ export async function renderCanvasImageGridComposite(
   const images = await Promise.all(urls.map((url) => loadImage(url)));
   const layout = gridCompositeLayout(images.length, options);
   const { canvas, context } = prepareCanvas(layout.width, layout.height);
-  context.fillStyle = '#fff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  if (layout.background !== 'transparent') {
+    context.fillStyle = layout.background;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  } else {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  }
 
   const cellSize = layout.cellSize * layout.scale;
   const gap = layout.gap * layout.scale;
@@ -346,9 +369,17 @@ export async function renderCanvasImageGridComposite(
     const cellY = row * (cellSize + gap);
     const imageWidth = image.naturalWidth || image.width || 1;
     const imageHeight = image.naturalHeight || image.height || 1;
-    const imageScale = Math.min(cellSize / imageWidth, cellSize / imageHeight);
+    const imageScale = layout.fit === 'cover'
+      ? Math.max(cellSize / imageWidth, cellSize / imageHeight)
+      : Math.min(cellSize / imageWidth, cellSize / imageHeight);
     const width = imageWidth * imageScale;
     const height = imageHeight * imageScale;
+    context.save();
+    if (layout.fit === 'cover') {
+      context.beginPath();
+      context.rect(cellX, cellY, cellSize, cellSize);
+      context.clip();
+    }
     context.drawImage(
       image,
       cellX + (cellSize - width) / 2,
@@ -356,6 +387,7 @@ export async function renderCanvasImageGridComposite(
       width,
       height,
     );
+    context.restore();
   });
 
   return {

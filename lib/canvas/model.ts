@@ -1102,6 +1102,8 @@ export type CanvasArrangeResult = {
   changed: boolean;
 };
 
+export type CanvasArrangeMode = "horizontal" | "vertical" | "grid";
+
 type ArrangeEntity = {
   id: string;
   nodeIds: string[];
@@ -1113,8 +1115,8 @@ type ArrangeEntity = {
 
 type ArrangePoint = { x: number; y: number };
 
-const ARRANGE_GAP_X = 120;
-const ARRANGE_GAP_Y = 72;
+const ARRANGE_GAP_X = 72;
+const ARRANGE_GAP_Y = 48;
 
 function arrangeTypeRank(document: CanvasDocument, entity: ArrangeEntity) {
   const node = nodeById(document, entity.nodeIds[0]);
@@ -1183,6 +1185,49 @@ function arrangeGrid(entities: ArrangeEntity[], origin: ArrangePoint) {
     height:
       rowHeights.reduce((total, height) => total + height, 0) +
       ARRANGE_GAP_Y * Math.max(0, rows - 1),
+  };
+}
+
+function arrangeExplicit(
+  document: CanvasDocument,
+  entities: ArrangeEntity[],
+  mode: CanvasArrangeMode,
+  origin: ArrangePoint,
+) {
+  const ordered = [...entities].sort((left, right) =>
+    compareArrangeEntities(document, left, right),
+  );
+  if (mode === "grid") return arrangeGrid(ordered, origin);
+  if (!ordered.length)
+    return { positions: new Map<string, ArrangePoint>(), width: 0, height: 0 };
+
+  const positions = new Map<string, ArrangePoint>();
+  if (mode === "horizontal") {
+    let x = origin.x;
+    ordered.forEach((entity) => {
+      positions.set(entity.id, { x, y: origin.y });
+      x += entity.w + ARRANGE_GAP_X;
+    });
+    return {
+      positions,
+      width:
+        ordered.reduce((total, entity) => total + entity.w, 0) +
+        ARRANGE_GAP_X * Math.max(0, ordered.length - 1),
+      height: Math.max(...ordered.map((entity) => entity.h), 0),
+    };
+  }
+
+  let y = origin.y;
+  ordered.forEach((entity) => {
+    positions.set(entity.id, { x: origin.x, y });
+    y += entity.h + ARRANGE_GAP_Y;
+  });
+  return {
+    positions,
+    width: Math.max(...ordered.map((entity) => entity.w), 0),
+    height:
+      ordered.reduce((total, entity) => total + entity.h, 0) +
+      ARRANGE_GAP_Y * Math.max(0, ordered.length - 1),
   };
 }
 
@@ -1320,6 +1365,7 @@ function arrangeCanvasSelection(
   document: CanvasDocument,
   selected: Set<string>,
   collapseFullGroups: boolean,
+  mode?: CanvasArrangeMode,
 ): CanvasArrangeResult {
   const allNodes = document.nodes;
   if (!selected.size)
@@ -1385,17 +1431,25 @@ function arrangeCanvasSelection(
   const minX = Math.min(...entities.map((entity) => entity.x));
   const minY = Math.min(...entities.map((entity) => entity.y));
   const positions = new Map<string, ArrangePoint>();
-  const isolatedLayout = arrangeGrid(isolated, { x: minX, y: minY });
-  isolatedLayout.positions.forEach((position, id) =>
-    positions.set(id, position),
-  );
-  const layeredLayout = arrangeLayered(document, connected, graphEdges, {
-    x: minX + (isolated.length ? isolatedLayout.width + ARRANGE_GAP_X : 0),
-    y: minY,
-  });
-  layeredLayout.positions.forEach((position, id) =>
-    positions.set(id, position),
-  );
+  if (mode) {
+    const explicitLayout = arrangeExplicit(document, entities, mode, {
+      x: minX,
+      y: minY,
+    });
+    explicitLayout.positions.forEach((position, id) => positions.set(id, position));
+  } else {
+    const isolatedLayout = arrangeGrid(isolated, { x: minX, y: minY });
+    isolatedLayout.positions.forEach((position, id) =>
+      positions.set(id, position),
+    );
+    const layeredLayout = arrangeLayered(document, connected, graphEdges, {
+      x: minX + (isolated.length ? isolatedLayout.width + ARRANGE_GAP_X : 0),
+      y: minY,
+    });
+    layeredLayout.positions.forEach((position, id) =>
+      positions.set(id, position),
+    );
+  }
   const next = clone(document);
   let changed = false;
   next.nodes = next.nodes.map((node) => {
@@ -1415,18 +1469,20 @@ function arrangeCanvasSelection(
 export function arrangeCanvas(
   document: CanvasDocument,
   selectedIds?: string[],
+  mode?: CanvasArrangeMode,
 ): CanvasArrangeResult {
   const selected =
     selectedIds === undefined
       ? new Set(document.nodes.map((node) => node.id))
       : new Set(selectedIds.filter((id) => nodeById(document, id)));
-  return arrangeCanvasSelection(document, selected, true);
+  return arrangeCanvasSelection(document, selected, true, mode);
 }
 
 /** Arranges every node inside one group without moving the group as an entity. */
 export function arrangeCanvasGroup(
   document: CanvasDocument,
   groupId: string,
+  mode?: CanvasArrangeMode,
 ): CanvasArrangeResult {
   const group = groupById(document, groupId);
   const selected = new Set(
@@ -1435,7 +1491,7 @@ export function arrangeCanvasGroup(
   if (!group || selected.size < 2) {
     return { document: clone(document), arrangedIds: [...selected], changed: false };
   }
-  return arrangeCanvasSelection(document, selected, false);
+  return arrangeCanvasSelection(document, selected, false, mode);
 }
 
 function canvasRectanglesOverlap(

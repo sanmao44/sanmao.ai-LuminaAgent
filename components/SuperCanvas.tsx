@@ -66,6 +66,7 @@ import {
   smartPrompt,
   snapshot,
   uid,
+  type CanvasArrangeMode,
   type CanvasAlignment,
   type CanvasDistribution,
 } from "@/lib/canvas/model";
@@ -189,6 +190,10 @@ import SelectMenu from "@/components/SelectMenu";
 import CanvasImageEditorWorkbench, {
   type CanvasImageEditorSaveRequest,
 } from "@/components/canvas/CanvasImageEditorWorkbench";
+import CanvasGroupComposeDialog, {
+  type CanvasGroupComposeSettings,
+  type CanvasGroupComposeSource,
+} from "@/components/canvas/CanvasGroupComposeDialog";
 import type {
   CanvasCamera,
   CanvasConnectionStyle,
@@ -211,6 +216,7 @@ import {
   renderCanvasImageGrid,
   renderCanvasImageGridComposite,
   renderCanvasImageOperation,
+  type CanvasImageGridCompositeOptions,
   type ImageSize,
 } from "@/lib/canvas/image-operations";
 import {
@@ -610,6 +616,36 @@ type ConnectionNodePicker = {
 };
 
 const CANVAS_SETTINGS_KEY = "sanmao.canvas.settings";
+const CANVAS_ARRANGE_MODE_KEY = "sanmao.canvas.arrange-mode";
+const CANVAS_ARRANGE_MODE_OPTIONS: Array<{
+  value: CanvasArrangeMode;
+  label: string;
+  description: string;
+  icon: string;
+}> = [
+  {
+    value: "horizontal",
+    label: "横向排列",
+    description: "按当前顺序排成一行",
+    icon: "↔",
+  },
+  {
+    value: "vertical",
+    label: "纵向排列",
+    description: "按当前顺序排成一列",
+    icon: "↕",
+  },
+  {
+    value: "grid",
+    label: "宫格排列",
+    description: "自动分成接近方阵的多行",
+    icon: "▦",
+  },
+];
+
+function canvasArrangeModeLabel(mode: CanvasArrangeMode) {
+  return CANVAS_ARRANGE_MODE_OPTIONS.find((option) => option.value === mode)?.label || "宫格排列";
+}
 const CANVAS_ALIGNMENT_OPTIONS: Array<{
   value: CanvasAlignment;
   label: string;
@@ -2127,6 +2163,20 @@ export default function SuperCanvas() {
   const [saving, setSaving] = useState(false);
   const [batchDownloading, setBatchDownloading] = useState(false);
   const [composingGroupId, setComposingGroupId] = useState<string | null>(null);
+  const [composeDialogGroupId, setComposeDialogGroupId] = useState<string | null>(null);
+  const [composeDialogSources, setComposeDialogSources] = useState<CanvasGroupComposeSource[]>([]);
+  const [arrangeMode, setArrangeMode] = useState<CanvasArrangeMode>(() => {
+    if (typeof window === "undefined") return "grid";
+    try {
+      const stored = window.localStorage.getItem(CANVAS_ARRANGE_MODE_KEY);
+      return CANVAS_ARRANGE_MODE_OPTIONS.some((option) => option.value === stored)
+        ? stored as CanvasArrangeMode
+        : "grid";
+    } catch {
+      return "grid";
+    }
+  });
+  const [arrangeGroupMenuOpen, setArrangeGroupMenuOpen] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>("idle");
   const [generationKeys, setGenerationKeys] = useState<Set<string>>(new Set());
@@ -2235,6 +2285,8 @@ export default function SuperCanvas() {
     setMaskNodeId(null);
     setAssetCollectionPickerNodeId(null);
     setActivePanel(null);
+    setArrangeGroupMenuOpen(false);
+    setComposeDialogGroupId(null);
     setEditingNodeId(null);
     setExpandedEditorId(null);
     setConnectionNodePicker(null);
@@ -2324,6 +2376,36 @@ export default function SuperCanvas() {
       }
       return next;
     });
+
+  const chooseArrangeMode = useCallback((value: CanvasArrangeMode) => {
+    setArrangeMode(value);
+    try {
+      window.localStorage.setItem(CANVAS_ARRANGE_MODE_KEY, value);
+    } catch {
+      /* local storage is optional */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!arrangeGroupMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target?.closest(".canvas-group-arrange-control")) {
+        setArrangeGroupMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setArrangeGroupMenuOpen(false);
+    };
+    window.document.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [arrangeGroupMenuOpen]);
 
   const currentProject = projects.find(
     (project) => project.id === activeProjectId,
@@ -2479,7 +2561,8 @@ export default function SuperCanvas() {
   );
   const commit = useCallback(
     (updater: (value: CanvasDocument) => CanvasDocument) => {
-      setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60));
+      const previous = snapshot(docRef.current);
+      setUndoStack((items) => [...items, previous].slice(-60));
       setRedoStack([]);
       updateDoc(updater);
     },
@@ -4198,16 +4281,20 @@ export default function SuperCanvas() {
     [updateDoc],
   );
 
-  const arrangeCanvasAction = useCallback(() => {
+  const arrangeCanvasAction = useCallback((modeOverride?: CanvasArrangeMode) => {
+    const mode = modeOverride || arrangeMode;
     const selected = selectedIds.size ? [...selectedIds] : undefined;
     const activeGroup = selectedGroupId
       ? groupById(docRef.current, selectedGroupId)
       : undefined;
     const result = activeGroup
-      ? arrangeCanvasGroup(docRef.current, activeGroup.id)
-      : arrangeCanvas(docRef.current, selected);
+      ? arrangeCanvasGroup(docRef.current, activeGroup.id, mode)
+      : selected
+        ? arrangeCanvas(docRef.current, selected, mode)
+        : arrangeCanvas(docRef.current, selected);
     if (result.changed) {
-      setUndoStack((items) => [...items, snapshot(docRef.current)].slice(-60));
+      const previous = snapshot(docRef.current);
+      setUndoStack((items) => [...items, previous].slice(-60));
       setRedoStack([]);
       setDoc(result.document);
       addLog(
@@ -4234,7 +4321,13 @@ export default function SuperCanvas() {
       );
     }
     fitView(result.arrangedIds);
-  }, [addLog, fitView, notify, selectedGroupId, selectedIds, setDoc]);
+  }, [addLog, arrangeMode, fitView, notify, selectedGroupId, selectedIds, setDoc]);
+
+  const chooseGroupArrangeMode = useCallback((mode: CanvasArrangeMode) => {
+    chooseArrangeMode(mode);
+    setArrangeGroupMenuOpen(false);
+    arrangeCanvasAction(mode);
+  }, [arrangeCanvasAction, chooseArrangeMode]);
 
   const reorderSelection = useCallback(
     (action: CanvasNodeLayerAction, nodeIds?: string[]) => {
@@ -4330,7 +4423,8 @@ export default function SuperCanvas() {
   const undo = useCallback(() => {
     const previous = undoStack.at(-1);
     if (!previous) return;
-    setRedoStack((items) => [...items, snapshot(docRef.current)]);
+    const current = snapshot(docRef.current);
+    setRedoStack((items) => [...items, current]);
     setUndoStack((items) => items.slice(0, -1));
     setDoc(normalizeDocument(previous));
     clearSelection();
@@ -4338,7 +4432,8 @@ export default function SuperCanvas() {
   const redo = useCallback(() => {
     const next = redoStack.at(-1);
     if (!next) return;
-    setUndoStack((items) => [...items, snapshot(docRef.current)]);
+    const current = snapshot(docRef.current);
+    setUndoStack((items) => [...items, current]);
     setRedoStack((items) => items.slice(0, -1));
     setDoc(normalizeDocument(next));
     clearSelection();
@@ -8578,10 +8673,9 @@ export default function SuperCanvas() {
     setLightbox(null);
   }, [notify]);
 
-  const composeCanvasGroup = useCallback(async (groupId: string) => {
-    if (composingGroupId) return;
+  const composeSourcesForGroup = useCallback((groupId: string) => {
     const group = groupById(docRef.current, groupId);
-    if (!group) return;
+    if (!group) return null;
     const memberOrder = new Map(group.nodeIds.map((id, index) => [id, index]));
     const sources = group.nodeIds
       .map((id) => nodeById(docRef.current, id))
@@ -8599,14 +8693,48 @@ export default function SuperCanvas() {
           left.y - right.y ||
           left.x - right.x ||
           (memberOrder.get(left.id) || 0) - (memberOrder.get(right.id) || 0),
-      );
-    if (sources.length < 2) {
+      )
+      .map((node, canvasIndex) => ({
+        id: node.id,
+        url: String(node.data.url),
+        name: String(node.data.name || node.id),
+        canvasIndex,
+        groupIndex: memberOrder.get(node.id) || 0,
+      } satisfies CanvasGroupComposeSource));
+    return { group, sources };
+  }, []);
+
+  const openComposeDialog = useCallback((groupId: string) => {
+    if (composingGroupId) return;
+    const result = composeSourcesForGroup(groupId);
+    if (!result || result.sources.length < 2) {
       notify("组内至少需要 2 张可用图片才能宫格拼接", "error");
       return;
     }
+    setComposeDialogGroupId(groupId);
+    setComposeDialogSources(result.sources);
+    setContextMenu(null);
+    setArrangeGroupMenuOpen(false);
+  }, [composingGroupId, composeSourcesForGroup, notify]);
 
-    const sourceIds = sources.map((node) => node.id);
-    const sourceUrls = sources.map((node) => String(node.data.url));
+  const composeCanvasGroup = useCallback(async (
+    groupId: string,
+    settings: CanvasGroupComposeSettings,
+  ): Promise<boolean> => {
+    if (composingGroupId) return false;
+    const sourceResult = composeSourcesForGroup(groupId);
+    if (!sourceResult || sourceResult.sources.length < 2) {
+      notify("组内至少需要 2 张可用图片才能宫格拼接", "error");
+      return false;
+    }
+    const { group, sources } = sourceResult;
+    const orderedSources = [...sources].sort((left, right) =>
+      settings.order === "group"
+        ? left.groupIndex - right.groupIndex
+        : left.canvasIndex - right.canvasIndex,
+    );
+    const sourceIds = orderedSources.map((source) => source.id);
+    const sourceUrls = orderedSources.map((source) => source.url);
     const groupNodeIds = [...group.nodeIds];
     const sourceSnapshot = new Map(sourceIds.map((id, index) => [id, sourceUrls[index]]));
     const stillMatchesGroup = () => {
@@ -8622,10 +8750,18 @@ export default function SuperCanvas() {
           ),
       );
     };
+    const renderOptions: CanvasImageGridCompositeOptions = {
+      columns: settings.columns,
+      cellSize: settings.cellSize,
+      gap: settings.gap,
+      maxEdge: settings.maxEdge,
+      background: settings.background,
+      fit: settings.fit,
+    };
 
     setComposingGroupId(groupId);
     try {
-      const rendered = await renderCanvasImageGridComposite(sourceUrls);
+      const rendered = await renderCanvasImageGridComposite(sourceUrls, renderOptions);
       if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
       const groupBoundsValue = groupBounds(docRef.current, groupId);
       const asset = await uploadCanvasAsset(
@@ -8633,9 +8769,9 @@ export default function SuperCanvas() {
       );
       if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
 
-      const sourceWithImageParams = sources.find(
-        (node) => node.type === "media" && node.data.kind === "image",
-      );
+      const sourceWithImageParams = orderedSources
+        .map((source) => nodeById(docRef.current, source.id))
+        .find((node) => node?.type === "media" && node.data.kind === "image");
       const sourceParams =
         sourceWithImageParams?.data.generation?.params ||
         sourceWithImageParams?.data.params ||
@@ -8654,6 +8790,10 @@ export default function SuperCanvas() {
           cellSize: rendered.layout.cellSize,
           gap: rendered.layout.gap,
           scale: rendered.layout.scale,
+          maxEdge: settings.maxEdge || 6144,
+          background: rendered.layout.background,
+          fit: rendered.layout.fit,
+          order: settings.order,
         },
         createdAt: Date.now(),
       };
@@ -8713,14 +8853,16 @@ export default function SuperCanvas() {
       setQuickToolbarNodeId(null);
       setExpandedEditorId(null);
       setLightbox(null);
-      notify(`已将 ${sources.length} 张图片拼接为宫格图片`);
-      addLog(`宫格拼接完成：${group.name} · ${sources.length} 张`);
+      notify(`已将 ${orderedSources.length} 张图片拼接为宫格图片`);
+      addLog(`宫格拼接完成：${group.name} · ${orderedSources.length} 张`);
+      return true;
     } catch (error) {
       notify(error instanceof Error ? error.message : "宫格拼接失败", "error");
+      return false;
     } finally {
       setComposingGroupId((current) => (current === groupId ? null : current));
     }
-  }, [addLog, commit, composingGroupId, notify, openNodePosition, runtime]);
+  }, [addLog, commit, composingGroupId, composeSourcesForGroup, notify, openNodePosition, runtime]);
 
   const saveImageOperation = useCallback(async (request: CanvasImageEditorSaveRequest) => {
     const source = imageEditorNodeId
@@ -10411,8 +10553,8 @@ export default function SuperCanvas() {
           id: "arrange-group",
           icon: "arrange",
           label: "组内整理",
-          title: "只整理对象组内的卡片",
-          onClick: arrangeCanvasAction,
+          title: `只整理对象组内的卡片 · 当前为${canvasArrangeModeLabel(arrangeMode)}`,
+          onClick: () => setArrangeGroupMenuOpen(true),
         },
         {
           id: "duplicate-group",
@@ -10448,7 +10590,7 @@ export default function SuperCanvas() {
               label: "宫格拼接",
               title: "将组内可用图片拼接为一张新图",
               disabled: groupImages.length < 2 || Boolean(composingGroupId),
-              onClick: () => void composeCanvasGroup(group.id),
+              onClick: () => openComposeDialog(group.id),
             },
             {
               id: "one-take-group",
@@ -10487,9 +10629,10 @@ export default function SuperCanvas() {
     };
   }, [
     arrangeCanvasAction,
+    arrangeMode,
     batchDownloading,
     breakGroup,
-    composeCanvasGroup,
+    openComposeDialog,
     composingGroupId,
     deleteSelection,
     document,
@@ -10729,7 +10872,7 @@ export default function SuperCanvas() {
     };
     const primary = groupQuickActions.primaryActions.map((action) => ({
       ...action,
-      onClick: close(action.onClick),
+      onClick: close(action.id === "arrange-group" ? () => arrangeCanvasAction() : action.onClick),
     }));
     const groupOperations = groupQuickActions.menuGroups.find(
       (group) => group.id === "group-actions",
@@ -10770,7 +10913,7 @@ export default function SuperCanvas() {
           : [],
       },
     ].filter((group) => group.actions.length > 0);
-  }, [contextGroup, copySelection, groupQuickActions]);
+  }, [arrangeCanvasAction, contextGroup, copySelection, groupQuickActions]);
 
   // Below this threshold the canvas is an overview, not a reading surface.
   // The CSS tier removes filters and animation-heavy decoration while keeping
@@ -10807,8 +10950,12 @@ export default function SuperCanvas() {
           {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageDownloads.length} 张`}
         </button>
       )}
-      <button type="button" onClick={arrangeCanvasAction}>
-        ⌗ 整理选中
+      <button
+        type="button"
+        onClick={() => arrangeCanvasAction()}
+        title={`按${canvasArrangeModeLabel(arrangeMode)}整理选中对象`}
+      >
+        ⌗ 整理选中 · {canvasArrangeModeLabel(arrangeMode).replace("排列", "")}
       </button>
       <button type="button" onClick={duplicateSelection}>
         ⧉ 复制
@@ -10840,6 +10987,7 @@ export default function SuperCanvas() {
       aria-label="SANMAO 无限画布"
       onClick={() => {
         setContextMenu(null);
+        setArrangeGroupMenuOpen(false);
         if (projectMenuOpen) setProjectMenuOpen(false);
       }}
     >
@@ -11048,6 +11196,23 @@ export default function SuperCanvas() {
           </div>
         </div>
       )}
+      {composeDialogGroupId && (() => {
+        const composeGroup = groupById(document, composeDialogGroupId);
+        if (!composeGroup) return null;
+        return (
+          <CanvasGroupComposeDialog
+            open
+            groupName={composeGroup.name}
+            sources={composeDialogSources}
+            onClose={() => setComposeDialogGroupId(null)}
+            onConfirm={async (settings) => {
+              const success = await composeCanvasGroup(composeDialogGroupId, settings);
+              if (success) setComposeDialogGroupId(null);
+              return success;
+            }}
+          />
+        );
+      })()}
       <div
         ref={stageRef}
         className={`canvas-stage ${panReady ? "is-pan-ready" : ""} ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""} ${cursorTask !== "idle" ? `is-cursor-${cursorTask}` : ""}`}
@@ -11358,7 +11523,7 @@ export default function SuperCanvas() {
                         onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => {
                           event.stopPropagation();
-                          void composeCanvasGroup(group.id);
+                          openComposeDialog(group.id);
                         }}
                       >
                         {composing ? "…" : "▦"}
@@ -11651,7 +11816,36 @@ export default function SuperCanvas() {
               actions={groupQuickActions}
               menuSubtitle="组操作"
               actionRenderer={(action, button) =>
-                action.id === "one-take-group" ? (
+                action.id === "arrange-group" ? (
+                  <div className="canvas-group-arrange-control" key={action.id} onPointerDown={(event) => event.stopPropagation()}>
+                    {button}
+                    {arrangeGroupMenuOpen && (
+                      <div className="canvas-group-arrange-menu" role="menu" aria-label="组内整理方式">
+                        <div className="canvas-group-arrange-menu-title">组内整理方式</div>
+                        {CANVAS_ARRANGE_MODE_OPTIONS.map((option) => (
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={arrangeMode === option.value}
+                            className={arrangeMode === option.value ? "active" : ""}
+                            key={option.value}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              chooseGroupArrangeMode(option.value);
+                            }}
+                          >
+                            <span>{option.icon}</span>
+                            <i>
+                              <b>{option.label}</b>
+                              <small>{option.description}</small>
+                            </i>
+                            {arrangeMode === option.value && <em>✓</em>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : action.id === "one-take-group" ? (
                   <div className="one-take-duration-control" key={action.id}>
                     {button}
                     <OneTakeDurationPicker
