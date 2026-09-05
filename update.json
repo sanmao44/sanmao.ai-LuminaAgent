@@ -1,19 +1,19 @@
 {
     "schemaVersion": 1,
-    "latestVersion": "0.7.28",
-    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.28",
+    "latestVersion": "0.7.29",
+    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.29",
     "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip",
+    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip",
     "mirrorUrls": [
-        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip",
-        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip",
-        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.28/SANMAO.AI-0.7.28.zip"
+        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip",
+        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip",
+        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip"
     ],
-    "sha256": "44e42e20c742a7e666bd45623c2b5fda54fdb04ef9b0b303f2659d620e3ec671",
-    "publishedAt": "2026-09-05T02:36:24+08:00",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "publishedAt": "2026-09-05T22:24:33+08:00",
     "notes": [
-        "组内卡片拖拽限制在当前组的有效区域内，只有点击“出组”才会解除当前卡片的组关系。",
-        "修复组框空白区域右键弹出浏览器原生菜单的问题，恢复组工具栏和应用自定义右键菜单。",
-        "优化“出组”按钮的响应式字号、防溢出布局，以及整理组内的卡片间距和不重叠排版。"
+        "完善超级画布对象组生成与拼接预览，优化组内布局、层级、连接端口和边界交互。",
+        "修复并优化图片、视频及视频续生成的输入模式、引用素材解析和任务结果节点。",
+        "修复 Agent 历史消息引用素材误带入当前请求，并统一画布及图片编辑的光标主题。"
     ]
 }
