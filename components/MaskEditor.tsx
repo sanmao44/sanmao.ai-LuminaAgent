@@ -146,12 +146,6 @@ function drawMaskOverlay(mask: HTMLCanvasElement, overlay: HTMLCanvasElement, fe
   return calculateLocalEditableCoverage(source.data);
 }
 
-function useToolCursor(tool: LocalEditTool) {
-  if (tool === 'pan') return 'grab';
-  if (tool === 'eraser') return 'cell';
-  return 'crosshair';
-}
-
 function annotationBounds(annotation: LocalEditAnnotation) {
   const geometry = annotation.geometry;
   if (geometry.kind === 'point') return { x: geometry.x - geometry.radius, y: geometry.y - geometry.radius, width: geometry.radius * 2, height: geometry.radius * 2 };
@@ -1294,7 +1288,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         <div className="local-edit-workbench-body">
           <div ref={canvasStageRef} className="local-edit-canvas-stage" data-preview={previewMode} onWheel={(event) => { event.preventDefault(); zoomBy(event.deltaY > 0 ? -0.1 : 0.1); }}>
             {!ready && <div className="mask-loading">正在读取图片…</div>}
-            <div className="local-edit-canvas-stack" style={{ aspectRatio: ratio, width: fitSize.width || undefined, height: fitSize.height || undefined, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: useToolCursor(tool) }}>
+            <div className="local-edit-canvas-stack" data-tool={tool} style={{ aspectRatio: ratio, width: fitSize.width || undefined, height: fitSize.height || undefined, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
               <canvas ref={imageCanvasRef} className="mask-canvas base" aria-label="原图预览" />
               <canvas ref={overlayCanvasRef} className="mask-canvas overlay" aria-label="局部编辑范围" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} onLostPointerCapture={handleLostPointerCapture} />
               <canvas ref={maskCanvasRef} className="mask-canvas mask-data" aria-hidden="true" />

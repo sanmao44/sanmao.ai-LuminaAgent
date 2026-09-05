@@ -1,0 +1,255 @@
+:root {
+  --cursor-default: url('/cursors/sanmao-default.svg') 4 3, default;
+  --cursor-pointer: url('/cursors/sanmao-pointer.svg') 4 3, pointer;
+  --cursor-text: url('/cursors/sanmao-text.svg') 16 16, text;
+  --cursor-grab: url('/cursors/sanmao-grab.svg') 16 16, grab;
+  --cursor-grabbing: url('/cursors/sanmao-grabbing.svg') 16 16, grabbing;
+  --cursor-crosshair: url('/cursors/sanmao-crosshair.svg') 16 16, crosshair;
+  --cursor-cell: url('/cursors/sanmao-cell.svg') 16 16, cell;
+  --cursor-move: url('/cursors/sanmao-move.svg') 16 16, move;
+  --cursor-resize-diagonal: url('/cursors/sanmao-resize-diagonal.svg') 16 16, nwse-resize;
+  --cursor-resize-horizontal: url('/cursors/sanmao-resize-horizontal.svg') 16 16, ew-resize;
+  --cursor-resize-vertical: url('/cursors/sanmao-resize-vertical.svg') 16 16, ns-resize;
+  --cursor-not-allowed: url('/cursors/sanmao-not-allowed.svg') 16 16, not-allowed;
+  --cursor-wait: url('/cursors/sanmao-wait.svg') 16 16, wait;
+  --cursor-copy: url('/cursors/sanmao-copy.svg') 8 8, copy;
+  --cursor-zoom-in: url('/cursors/sanmao-zoom-in.svg') 11 11, zoom-in;
+  --cursor-zoom-out: url('/cursors/sanmao-zoom-out.svg') 11 11, zoom-out;
+}
+
+/* Keep the visual language consistent anywhere the browser would otherwise
+   choose a platform-specific cursor. Semantic states below remain explicit. */
+html,
+body,
+body * {
+  cursor: var(--cursor-default) !important;
+}
+
+a,
+area,
+button,
+label,
+select,
+summary,
+[role='button'],
+[role='checkbox'],
+[role='menuitem'],
+[role='option'],
+[role='radio'],
+[role='switch'],
+[role='tab'],
+input[type='button'],
+input[type='checkbox'],
+input[type='color'],
+input[type='file'],
+input[type='image'],
+input[type='radio'],
+input[type='range'],
+input[type='reset'],
+input[type='submit'] {
+  cursor: var(--cursor-pointer) !important;
+}
+
+input:not([type='button']):not([type='checkbox']):not([type='color']):not([type='file']):not([type='hidden']):not([type='image']):not([type='radio']):not([type='range']):not([type='reset']):not([type='submit']),
+textarea,
+[contenteditable='true'] {
+  cursor: var(--cursor-text) !important;
+}
+
+[draggable='true'],
+[data-drag-handle],
+.canvas-node,
+.canvas-group,
+.canvas-global-asset-card,
+.canvas-reference-draft-item,
+.video-reference-item,
+.image-editor-grid-line,
+.image-editor-outpaint-handle {
+  cursor: var(--cursor-grab) !important;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+[aria-disabled='true'] {
+  cursor: var(--cursor-not-allowed) !important;
+}
+
+[aria-busy='true'],
+[data-loading='true'] {
+  cursor: var(--cursor-wait) !important;
+}
+
+[data-cursor='default'] { cursor: var(--cursor-default) !important; }
+[data-cursor='pointer'] { cursor: var(--cursor-pointer) !important; }
+[data-cursor='text'] { cursor: var(--cursor-text) !important; }
+[data-cursor='grab'] { cursor: var(--cursor-grab) !important; }
+[data-cursor='grabbing'] { cursor: var(--cursor-grabbing) !important; }
+[data-cursor='crosshair'] { cursor: var(--cursor-crosshair) !important; }
+[data-cursor='copy'] { cursor: var(--cursor-copy) !important; }
+[data-cursor='zoom-in'] { cursor: var(--cursor-zoom-in) !important; }
+[data-cursor='zoom-out'] { cursor: var(--cursor-zoom-out) !important; }
+
+/* Canvas states are intentionally last so a captured gesture wins over the
+   cursor of the element under the pointer. */
+.canvas-stage,
+.compare-stage,
+.media-viewer-stage,
+.local-edit-canvas-stage {
+  cursor: var(--cursor-default) !important;
+}
+
+.canvas-stage.is-pan-ready,
+.compare-stage.can-drag,
+.canvas-stage .canvas-node,
+.canvas-stage .canvas-group,
+.canvas-stage .canvas-minimap-node,
+.canvas-stage .canvas-minimap-viewport,
+.media-viewer-stage.can-drag {
+  cursor: var(--cursor-grab) !important;
+}
+
+.canvas-stage.is-panning,
+.canvas-stage.is-panning *,
+.canvas-stage.is-cursor-dragging,
+.canvas-stage.is-cursor-dragging *,
+.compare-stage.dragging,
+.compare-stage.dragging *,
+.media-viewer-stage.dragging,
+.media-viewer-stage.dragging *,
+.canvas-global-asset-card:active,
+.canvas-reference-draft-item.dragging {
+  cursor: var(--cursor-grabbing) !important;
+}
+
+.local-edit-canvas-stack[data-tool='pan'],
+.local-edit-canvas-stack[data-tool='pan'] * {
+  cursor: var(--cursor-grab) !important;
+}
+
+.canvas-stage.is-cursor-panning,
+.canvas-stage.is-cursor-panning * {
+  cursor: var(--cursor-grabbing) !important;
+}
+
+.canvas-stage.is-cursor-selecting,
+.canvas-stage.is-cursor-selecting *,
+.canvas-stage.is-cursor-connecting,
+.canvas-stage.is-cursor-connecting *,
+.canvas-port,
+.canvas-group-port,
+.canvas-edge,
+.canvas-edge-hit,
+.canvas-minimap-stage,
+.local-edit-canvas-stack[data-tool='brush'],
+.local-edit-canvas-stack[data-tool='brush'] *,
+.local-edit-canvas-stack[data-tool='rectangle'],
+.local-edit-canvas-stack[data-tool='rectangle'] *,
+.local-edit-canvas-stack[data-tool='ellipse'],
+.local-edit-canvas-stack[data-tool='ellipse'] *,
+.local-edit-canvas-stack[data-tool='lasso'],
+.local-edit-canvas-stack[data-tool='lasso'] *,
+.local-edit-canvas-stack[data-tool='point'],
+.local-edit-canvas-stack[data-tool='point'] *,
+.local-edit-canvas-stack[data-tool='smart'],
+.local-edit-canvas-stack[data-tool='smart'] * {
+  cursor: var(--cursor-crosshair) !important;
+}
+
+.canvas-stage.is-cursor-resizing,
+.canvas-stage.is-cursor-resizing *,
+.canvas-stage .canvas-group-resize,
+.canvas-stage .canvas-node-resize,
+.outpaint-handle.top-left,
+.outpaint-handle.bottom-right,
+.image-editor-crop-handle.top-left,
+.image-editor-crop-handle.bottom-right {
+  cursor: var(--cursor-resize-diagonal) !important;
+}
+
+.outpaint-handle.top-right,
+.outpaint-handle.bottom-left,
+.image-editor-crop-handle.top-right,
+.image-editor-crop-handle.bottom-left {
+  cursor: url('/cursors/sanmao-resize-diagonal-reverse.svg') 16 16, nesw-resize !important;
+}
+
+.outpaint-handle.left,
+.outpaint-handle.right,
+.image-editor-crop-handle.left,
+.image-editor-crop-handle.right,
+.compare-divider,
+.angle-result-divider,
+.angle-result-modal-stage .angle-compare-range {
+  cursor: var(--cursor-resize-horizontal) !important;
+}
+
+.outpaint-handle.top,
+.outpaint-handle.bottom,
+.image-editor-crop-handle.top,
+.image-editor-crop-handle.bottom {
+  cursor: var(--cursor-resize-vertical) !important;
+}
+
+.image-editor-crop-frame {
+  cursor: var(--cursor-move) !important;
+}
+
+.canvas-stage textarea,
+.canvas-stage input:not([type='button']):not([type='checkbox']):not([type='color']):not([type='file']):not([type='image']):not([type='radio']):not([type='range']):not([type='reset']):not([type='submit']),
+.canvas-stage select,
+.canvas-stage [contenteditable='true'],
+.canvas-text-lightbox-body {
+  cursor: var(--cursor-text) !important;
+}
+
+.canvas-stage select,
+.canvas-stage button:not(.canvas-port),
+.video-reference-preview,
+.video-upload-button img {
+  cursor: var(--cursor-pointer) !important;
+}
+
+.canvas-stage.is-cursor-copying,
+.canvas-stage.is-cursor-copying * {
+  cursor: var(--cursor-copy) !important;
+}
+
+.video-reference-preview,
+.video-upload-button img {
+  cursor: var(--cursor-zoom-in) !important;
+}
+
+.local-edit-canvas-stack[data-tool='eraser'],
+.local-edit-canvas-stack[data-tool='eraser'] * {
+  cursor: var(--cursor-cell) !important;
+}
+
+/* Pointer capture must win even when the pointer passes over a child control. */
+.canvas-stage.is-cursor-panning,
+.canvas-stage.is-cursor-panning * {
+  cursor: var(--cursor-grabbing) !important;
+}
+
+.canvas-stage.is-cursor-selecting,
+.canvas-stage.is-cursor-selecting *,
+.canvas-stage.is-cursor-connecting,
+.canvas-stage.is-cursor-connecting * {
+  cursor: var(--cursor-crosshair) !important;
+}
+
+.canvas-stage.is-cursor-dragging,
+.canvas-stage.is-cursor-dragging * {
+  cursor: var(--cursor-grabbing) !important;
+}
+
+.canvas-stage.is-cursor-resizing,
+.canvas-stage.is-cursor-resizing * {
+  cursor: var(--cursor-resize-diagonal) !important;
+}
+
+.canvas-stage.is-cursor-copying,
+.canvas-stage.is-cursor-copying * {
+  cursor: var(--cursor-copy) !important;
+}

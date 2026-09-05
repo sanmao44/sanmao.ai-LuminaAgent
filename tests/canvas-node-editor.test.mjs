@@ -319,17 +319,31 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
 test("text references can supply the prompt for repeat image and video generation", () => {
   const continuationStart = component.indexOf("const runImageContinuation = useCallback");
   const continuationEnd = component.indexOf("const runReuseGeneration = useCallback", continuationStart);
-  const reuseStart = continuationEnd;
-  const reuseEnd = component.indexOf("const runGeneration = useCallback", reuseStart);
+  const videoStart = component.indexOf("const runVideoContinuation = useCallback");
+  const videoEnd = component.indexOf("const runReuseGeneration = useCallback", videoStart);
   assert.ok(continuationStart >= 0 && continuationEnd > continuationStart, "image continuation should be present");
-  assert.ok(reuseEnd > reuseStart, "video reuse generation should be present");
+  assert.ok(videoStart >= 0 && videoEnd > videoStart, "video continuation should be present");
   const continuation = component.slice(continuationStart, continuationEnd);
-  const reuse = component.slice(reuseStart, reuseEnd);
-  [continuation, reuse].forEach((section) => {
+  const video = component.slice(videoStart, videoEnd);
+  [continuation, video].forEach((section) => {
     assert.match(section, /const hasTextReference = draft\.references\.some\(/);
     assert.match(section, /if \(!draft\.prompt\.trim\(\) && !hasTextReference\)/);
   });
   assert.match(component, /const persistedPrompt = String\(node\.data\.generation\?\.prompt \|\| node\.data\.prompt \|\| ""\)/);
+});
+
+test("video continuation creates a direct video result without a variant generator", () => {
+  const start = component.indexOf("const runVideoContinuation = useCallback");
+  const end = component.indexOf("const runReuseGeneration = useCallback", start);
+  assert.ok(start >= 0 && end > start, "video continuation implementation should be present");
+  const continuation = component.slice(start, end);
+
+  assert.match(continuation, /const output = createMedia\("video"/);
+  assert.match(continuation, /target: output\.id/);
+  assert.match(continuation, /if \(source\) initialEdges\.push\([\s\S]*kind: "lineage"/);
+  assert.match(continuation, /await generateCanvasVideo\(/);
+  assert.doesNotMatch(continuation, /createGenerator\(/);
+  assert.doesNotMatch(continuation, /sourceGeneratorId/);
 });
 
 test("selected related canvas edges become dashed and animate their flow", () => {

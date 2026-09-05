@@ -6930,16 +6930,9 @@ export default function SuperCanvas() {
     }
   }, [addLog, commit, notify, openNodePosition, runtime, updateDoc]);
 
-  const runReuseGeneration = useCallback(async (draftInput: CanvasReuseDraft) => {
+  const runVideoContinuation = useCallback(async (draftInput: CanvasReuseDraft) => {
     const draft = cloneReuseDraft(draftInput);
-    if (draft.kind === "audio") {
-      notify("音频节点只能作为视频参考输入，不能复用为生成节点。", "error");
-      return;
-    }
-    if (draft.kind === "image") {
-      await runImageContinuation(draft);
-      return;
-    }
+    if (draft.kind !== "video") return;
     const hasTextReference = draft.references.some(
       (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
     );
@@ -6968,25 +6961,9 @@ export default function SuperCanvas() {
     if (generationKeysRef.current.has(activeKey)) return notify("这个复用任务正在生成，请稍候。", "error");
     const source = draft.sourceNodeId ? nodeById(docRef.current, draft.sourceNodeId) : undefined;
     const sourcePosition = source || selectedSingle;
-    const seed = sourcePosition
+    const outputPosition = sourcePosition
       ? { x: sourcePosition.x + nodeSize(sourcePosition).w + 90, y: sourcePosition.y }
       : screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-    const generatorBase = createGenerator(draft.kind, seed, clone(draft.params));
-    const generator = {
-      ...generatorBase,
-      ...openNodePosition(seed, generatorBase),
-      data: {
-        ...generatorBase.data,
-        prompt,
-        role: "复用参数生成器",
-        status: "running" as const,
-        processingStartedAt: Date.now(),
-        statusLabel: draft.kind === "video" ? "视频复用生成中" : "图片复用生成中",
-        reuseSourceNodeId: draft.sourceNodeId,
-        variantRequirementsText: draft.variantRequirementsText || "",
-        variantRequirements: normalizeVariantRequirements(draft.variantRequirementsText || ""),
-      },
-    };
     const materializedReferences: CanvasNode[] = [];
     const resolvedReferenceIds: string[] = [];
     for (const [index, reference] of selectedReferences.entries()) {
@@ -6995,133 +6972,169 @@ export default function SuperCanvas() {
         resolvedReferenceIds.push(existing.id);
         continue;
       }
-      if (reference.kind === "text" && existing?.type === "prompt" && String(existing.data.text || "").trim()) {
+      if (reference.kind === "text" && existing?.type === "prompt" && String(existing.data.text || existing.data.agentResponse || "").trim()) {
         resolvedReferenceIds.push(existing.id);
         continue;
       }
+      const position = { x: outputPosition.x - 430, y: outputPosition.y + index * 285 };
       const materialized = reference.kind === "text"
-        ? createPrompt({ x: generator.x - 430, y: generator.y + index * 285 }, reference.text || "")
+        ? createPrompt(position, reference.text || "")
         : createMedia(
             reference.kind,
             reference.url || "",
             reference.name,
-            { x: generator.x - 430, y: generator.y + index * 285 },
+            position,
             { role: "复用参考素材", ...(reference.assetId ? { sourceAssetId: reference.assetId } : {}) },
           );
       const materializedWithMetadata = reference.kind === "text"
         ? { ...materialized, data: { ...materialized.data, name: reference.name, role: "文本引用", mimeType: reference.mimeType } }
         : materialized;
-      const placed = { ...materialized, ...openNodePosition({ x: generator.x - 430, y: generator.y + index * 285 }, materialized) };
-      materializedReferences.push({ ...materializedWithMetadata, ...openNodePosition({ x: generator.x - 430, y: generator.y + index * 285 }, materializedWithMetadata) });
+      const placed = { ...materializedWithMetadata, ...openNodePosition(position, materializedWithMetadata) };
+      materializedReferences.push(placed);
       resolvedReferenceIds.push(placed.id);
     }
     const referenceByIndex = selectedReferences.map((reference, index) => ({ reference, id: resolvedReferenceIds[index] }));
-    const referenceInputNodes = referenceByIndex.map(({ reference, id }) => {
-      const existing = nodeById(docRef.current, id);
-      return existing || {
-        id,
-        type: reference.kind === "text" ? "prompt" as const : "media" as const,
-        x: 0,
-        y: 0,
-        data: reference.kind === "text"
-          ? { text: reference.text || "", name: reference.name, role: "文本引用" }
-          : { kind: reference.kind, url: reference.url, name: reference.name },
-      };
-    });
-    const reuseInputMode = draft.kind === "video" ? (draft.params as VideoCreationSettings).inputMode : undefined;
-    let imageInputPosition = 0;
-    const initialEdges: CanvasEdge[] = referenceByIndex.map(({ id }, index) => {
-      const sourceNode = referenceInputNodes[index];
-      const inputRole = sourceNode && reuseInputMode
-        ? inferCanvasInputRole(sourceNode, generator, reuseInputMode, sourceNode.data.kind === "image" ? imageInputPosition : index)
-        : sourceNode
-          ? inferCanvasInputRole(sourceNode, generator, undefined, sourceNode.data.kind === "image" ? imageInputPosition : index)
-          : undefined;
-      if (sourceNode?.data.kind === "image") imageInputPosition += 1;
-      return {
-        id: uid("edge"), source: id, target: generator.id, sourcePort: "right" as const, targetPort: "left" as const, kind: "manual" as const,
-        ...(inputRole ? { inputRole } : {}),
-        order: index,
-      };
-    });
-    if (source) initialEdges.push({ id: uid("edge"), source: source.id, target: generator.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
-    const outputPosition = { x: generator.x + nodeSize(generator).w + 90, y: generator.y };
-    const output = createMedia(draft.kind, "", draft.kind === "video" ? "视频任务" : "图片生成中", outputPosition, {
-      role: "复用生成结果",
-      status: draft.kind === "video" ? "queued" : "running",
+    const output = createMedia("video", "", "视频任务", outputPosition, {
+      role: "视频续生成结果",
+      status: "queued",
       processingStartedAt: Date.now(),
-      statusLabel: draft.kind === "video" ? "视频任务提交中" : "图片生成中",
+      statusLabel: "视频任务提交中",
       generation: {
-        kind: draft.kind,
+        kind: "video",
         prompt,
         params: clone(draft.params),
         operation: draft.operation,
         referenceIds: resolvedReferenceIds,
-        sourceGeneratorId: generator.id,
         parentNodeId: source?.id,
         reuseSourceNodeId: source?.id,
         createdAt: Date.now(),
       },
       referenceOrder: resolvedReferenceIds,
     });
-    let initialDocument: CanvasDocument = {
+    const reuseInputMode = (draft.params as VideoCreationSettings).inputMode;
+    let imageInputPosition = 0;
+    const initialEdges: CanvasEdge[] = referenceByIndex.map(({ id }, index) => {
+      const sourceNode = nodeById(docRef.current, id) || materializedReferences.find((node) => node.id === id);
+      const inputRole = sourceNode && reuseInputMode
+        ? inferCanvasInputRole(sourceNode, output, reuseInputMode, sourceNode.data.kind === "image" ? imageInputPosition : index)
+        : sourceNode
+          ? inferCanvasInputRole(sourceNode, output, undefined, sourceNode.data.kind === "image" ? imageInputPosition : index)
+          : undefined;
+      if (sourceNode?.data.kind === "image") imageInputPosition += 1;
+      return {
+        id: uid("edge"), source: id, target: output.id, sourcePort: "right" as const, targetPort: "left" as const, kind: "manual" as const,
+        ...(inputRole ? { inputRole } : {}),
+        order: index,
+      };
+    });
+    if (source) initialEdges.push({ id: uid("edge"), source: source.id, target: output.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
+    const initialDocument: CanvasDocument = {
       ...docRef.current,
-      nodes: [...docRef.current.nodes, ...materializedReferences, generator, output],
-      edges: [...docRef.current.edges, ...initialEdges, { id: uid("edge"), source: generator.id, target: output.id, sourcePort: "right", targetPort: "left", kind: "generated" }],
+      nodes: [...docRef.current.nodes, ...materializedReferences, output],
+      edges: [...docRef.current.edges, ...initialEdges],
     };
     generationKeysRef.current.add(activeKey);
     setGenerationKeys(new Set(generationKeysRef.current));
     commit(() => initialDocument);
-    setSelectedIds(new Set([generator.id]));
+    setSelectedIds(new Set([output.id]));
     setSelectedGroupId(null);
     try {
-        const params = draft.params as VideoCreationSettings;
-        const sourceNode = draft.sourceNodeId
-          ? nodeById(docRef.current, draft.sourceNodeId)
-          : undefined;
-        const resolvedVideoModel = resolveAvailableCreationModel(params, runtime);
-        const videoProvider = runtime?.providers.find((item) => item.id === resolvedVideoModel.model?.providerId);
-        const videoLimits = getVideoModelLimits(resolvedVideoModel.model || undefined, videoProvider);
-        const videoInputs = resolveCanvasVideoInputs(
-          referenceInputNodes,
-          params.inputMode,
-          new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
-          { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(params, runtime).supportsAudio },
-        );
-        const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits, params.operation);
-        if (videoInputError) throw new Error(videoInputError);
-        const task = await generateCanvasVideo({
-          prompt, model: resolvedVideoModel.model?.id || "auto", operation: params.operation, inputMode: params.inputMode, duration: params.duration, aspect: params.aspect, resolution: params.resolution,
-          references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
-          referenceVideos: videoInputs.referenceVideos.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考视频") })),
-          firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
-          lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
-          referenceVideo: sourceNode?.data.kind === "video" && sourceNode.data.url
-            ? String(sourceNode.data.url)
-            : videoInputs.referenceVideo?.data.url
-              ? String(videoInputs.referenceVideo.data.url)
-              : undefined,
-          audios: videoInputs.audios.map((item) => ({
-            url: String(item.data.url),
-            name: String(item.data.name || "参考音频"),
-          })),
-        });
-        updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id ? { ...node, data: { ...node.data, status: "running", statusLabel: "视频生成中" } } : node.id === output.id ? { ...node, data: { ...node.data, jobId: task.id, status: task.status === "done" ? "completed" : "running", progress: Number(task.progress || 0), url: task.videoUrls?.[0] || node.data.url, statusLabel: task.status === "done" ? "视频已完成" : "视频生成中", generation: { kind: "video", prompt, params: clone(params), operation: draft.operation, referenceIds: resolvedReferenceIds, sourceGeneratorId: generator.id, parentNodeId: source?.id, reuseSourceNodeId: source?.id, taskId: task.id, createdAt: Date.now() } } } : node) }));
-        writeSharedCreationSettings(params);
-        setReuseDraft(null);
-        if (task.status === "done") notify("视频复用生成完成");
-        else { void pollVideo(output.id, task.id); notify("视频新分支任务已提交"); }
-        addLog(`视频复用任务已提交：${task.id}`);
+      const params = draft.params as VideoCreationSettings;
+      const resolvedVideoModel = resolveAvailableCreationModel(params, runtime);
+      const videoProvider = runtime?.providers.find((item) => item.id === resolvedVideoModel.model?.providerId);
+      const videoLimits = getVideoModelLimits(resolvedVideoModel.model || undefined, videoProvider);
+      const videoInputs = resolveCanvasVideoInputs(
+        referenceByIndex
+          .map(({ id }) => nodeById(docRef.current, id) || materializedReferences.find((node) => node.id === id))
+          .filter((node): node is CanvasNode => Boolean(node)),
+        params.inputMode,
+        new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
+        { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(params, runtime).supportsAudio },
+      );
+      const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits, params.operation);
+      if (videoInputError) throw new Error(videoInputError);
+      const task = await generateCanvasVideo({
+        prompt,
+        model: resolvedVideoModel.model?.id || "auto",
+        operation: params.operation,
+        inputMode: params.inputMode,
+        duration: params.duration,
+        aspect: params.aspect,
+        resolution: params.resolution,
+        references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
+        referenceVideos: videoInputs.referenceVideos.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考视频") })),
+        firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
+        lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
+        referenceVideo: params.operation !== "generate" && source?.data.kind === "video" && source.data.url
+          ? String(source.data.url)
+          : videoInputs.referenceVideo?.data.url
+            ? String(videoInputs.referenceVideo.data.url)
+            : undefined,
+        audios: videoInputs.audios.map((item) => ({
+          url: String(item.data.url),
+          name: String(item.data.name || "参考音频"),
+        })),
+      });
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === output.id
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                jobId: task.id,
+                status: task.status === "done" ? "completed" : "running",
+                progress: Number(task.progress || 0),
+                url: task.videoUrls?.[0] || node.data.url,
+                statusLabel: task.status === "done" ? "视频已完成" : "视频生成中",
+                generation: {
+                  kind: "video",
+                  prompt,
+                  params: clone(params),
+                  operation: draft.operation,
+                  referenceIds: resolvedReferenceIds,
+                  parentNodeId: source?.id,
+                  reuseSourceNodeId: source?.id,
+                  taskId: task.id,
+                  createdAt: Date.now(),
+                },
+              },
+            }
+          : node),
+      }));
+      writeSharedCreationSettings(params);
+      setReuseDraft(null);
+      if (task.status === "done") notify("视频新结果已完成");
+      else { void pollVideo(output.id, task.id); notify("视频新结果任务已提交"); }
+      addLog(`视频续生成任务已提交：${task.id}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "复用生成失败";
-      updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === generator.id || node.id === output.id ? { ...node, data: { ...node.data, status: "failed", statusLabel: message } } : node) }));
+      const message = error instanceof Error ? error.message : "视频续生成失败";
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === output.id
+          ? { ...node, data: { ...node.data, status: "failed", statusLabel: message } }
+          : node),
+      }));
       notify(message, "error");
-      addLog(`复用生成失败：${message}`);
+      addLog(`视频续生成失败：${message}`);
     } finally {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, notify, openNodePosition, pollVideo, runImageContinuation, runtime, screenToWorld, selectedSingle]);
+  }, [addLog, commit, notify, openNodePosition, pollVideo, runtime, screenToWorld, selectedSingle, updateDoc]);
+
+  const runReuseGeneration = useCallback(async (draftInput: CanvasReuseDraft) => {
+    const draft = cloneReuseDraft(draftInput);
+    if (draft.kind === "audio") {
+      notify("音频节点只能作为视频参考输入，不能复用为生成节点。", "error");
+      return;
+    }
+    if (draft.kind === "image") {
+      await runImageContinuation(draft);
+      return;
+    }
+    await runVideoContinuation(draft);
+  }, [notify, runImageContinuation, runVideoContinuation]);
 
   const runGeneration = useCallback(async (request?: CanvasGenerationRequest) => {
     const requestedNode = request?.nodeId
