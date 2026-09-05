@@ -1,19 +1,19 @@
 {
     "schemaVersion": 1,
-    "latestVersion": "0.7.29",
-    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.29",
+    "latestVersion": "0.7.30",
+    "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.30",
     "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip",
+    "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
     "mirrorUrls": [
-        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip",
-        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip",
-        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip"
+        "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
+        "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip",
+        "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.30/SANMAO.AI-0.7.30.zip"
     ],
-    "sha256": "7fc8b67bb3ebf56f616b0f7e1a90e5eee68e24ad09ae9a8ce8c24c02c6df6c5d",
-    "publishedAt": "2026-09-05T22:24:33+08:00",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "publishedAt": "2026-09-05T23:59:00+08:00",
     "notes": [
-        "完善超级画布对象组生成与拼接预览，优化组内布局、层级、连接端口和边界交互。",
-        "修复并优化图片、视频及视频续生成的输入模式、引用素材解析和任务结果节点。",
-        "修复 Agent 历史消息引用素材误带入当前请求，并统一画布及图片编辑的光标主题。"
+        "优化 Agent 联网搜索意图和查询规划，最新新闻等问题会结合主题与日期生成更准确的搜索词。",
+        "增强搜索结果日期覆盖、自动扩展、去重和来源整理，降低严格日期过滤造成的无结果情况。",
+        "改进联网搜索失败状态和可重试反馈，提升 Agent 返回可用联网结果的稳定性。"
     ]
 }
