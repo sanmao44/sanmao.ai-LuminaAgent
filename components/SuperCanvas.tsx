@@ -14978,6 +14978,7 @@ function CanvasNodeEditorPopover({
       onDoubleClick={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
+      <div className="canvas-node-editor-surface">
        <div className="canvas-node-editor-head">
         <div className="canvas-node-editor-identity">
           <span className="canvas-node-editor-status-dot" aria-hidden="true" />
@@ -15308,10 +15309,11 @@ function CanvasNodeEditorPopover({
           </div>
          </div>}
        </div>
-         {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
+        {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
           <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
           <button type="button" className="canvas-node-editor-generate" title={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
         </div>}
+      </div>
     </div>
   );
 }

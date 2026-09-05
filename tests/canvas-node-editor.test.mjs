@@ -172,6 +172,14 @@ test("expanded editor is centered and remains responsive", () => {
   assert.match(styles, /@media\(max-width:720px\)\{[\s\S]*\.canvas-node-editor-popover\.is-prompt-expanded\{width:calc\(100vw - 16px\)/);
 });
 
+test("editor surface clips shell corners while floating controls can escape", () => {
+  assert.match(component, /className="canvas-node-editor-surface"/);
+  assert.match(styles, /\.canvas-node-editor-surface\{[^}]*overflow:hidden[^}]*border-radius:inherit/);
+  assert.match(styles, /\.canvas-node-editor-popover:has\(\.canvas-parameter-drawer\)>\.canvas-node-editor-surface,\s*\.canvas-node-editor-popover:has\(\.reference-mention-menu\)>\.canvas-node-editor-surface\{\s*overflow:visible;?\s*\}/);
+  assert.match(styles, /\.canvas-node-editor-surface>\.canvas-node-editor-head\{[^}]*border-top-left-radius:inherit[^}]*border-top-right-radius:inherit[^}]*background-clip:padding-box/);
+  assert.match(styles, /\.canvas-node-editor-surface>\.canvas-node-editor-actions\{[^}]*border-bottom-left-radius:inherit[^}]*border-bottom-right-radius:inherit[^}]*background-clip:padding-box/);
+});
+
 test("expanded prompt editing saves without triggering generation", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   assert.ok(editorStart >= 0, "node editor popover should be present");
