@@ -2,6 +2,8 @@ import type { CanvasImageOperation } from './types';
 
 export const CANVAS_IMAGE_OPERATION_MAX_EDGE = 6144;
 export const CANVAS_IMAGE_OPERATION_MIN_EDGE = 32;
+export const CANVAS_IMAGE_GRID_MAX_LINES = 8;
+export const CANVAS_IMAGE_GRID_MIN_GAP = 0.03;
 
 export type ImageSize = { width: number; height: number };
 export type ImageRect = { x: number; y: number; width: number; height: number };
@@ -250,14 +252,51 @@ export function transformImageSize(sourceValue: ImageSize, rotation: 0 | 90 | 18
 }
 
 export function equalGridLines(count: number) {
-  const safeCount = Math.max(1, Math.min(8, Math.round(Number(count) || 1)));
+  const safeCount = Math.max(1, Math.min(CANVAS_IMAGE_GRID_MAX_LINES, Math.round(Number(count) || 1)));
   return Array.from({ length: safeCount + 1 }, (_, index) => index / safeCount);
 }
 
-export function clampGridLine(value: number, index: number, lines: number[], minGap = 0.03) {
+export function clampGridLine(value: number, index: number, lines: number[], minGap = CANVAS_IMAGE_GRID_MIN_GAP) {
   const previous = lines[index - 1] ?? 0;
   const next = lines[index + 1] ?? 1;
   return Math.max(previous + minGap, Math.min(next - minGap, Number(value) || 0));
+}
+
+function normalizedGridLines(lines: number[]) {
+  return Array.from(new Set(lines
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0 && value < 1)))
+    .sort((a, b) => a - b);
+}
+
+/** Add one line by splitting the largest available segment at its midpoint. */
+export function addGridLine(
+  lines: number[],
+  maxLines = CANVAS_IMAGE_GRID_MAX_LINES,
+  minGap = CANVAS_IMAGE_GRID_MIN_GAP,
+) {
+  const current = normalizedGridLines(lines);
+  const safeMax = Math.max(0, Math.round(Number(maxLines) || 0));
+  if (current.length >= safeMax) return current;
+
+  const boundaries = [0, ...current, 1];
+  let largestIndex = 0;
+  let largestGap = boundaries[1] - boundaries[0];
+  for (let index = 1; index < boundaries.length - 1; index += 1) {
+    const gap = boundaries[index + 1] - boundaries[index];
+    if (gap > largestGap) {
+      largestGap = gap;
+      largestIndex = index;
+    }
+  }
+
+  if (largestGap < minGap * 2) return current;
+  const inserted = (boundaries[largestIndex] + boundaries[largestIndex + 1]) / 2;
+  return [...current, inserted].sort((a, b) => a - b);
+}
+
+export function removeGridLine(lines: number[], index: number) {
+  return normalizedGridLines(lines).filter((_, lineIndex) => lineIndex !== index);
 }
 
 export function gridRects(sourceValue: ImageSize, lines: GridLines): ImageRect[] {

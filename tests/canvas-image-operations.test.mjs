@@ -68,6 +68,31 @@ test("grid line dragging keeps neighbouring lines separated", () => {
   assert.equal(operations.clampGridLine(0.01, 1, lines), 0.28);
 });
 
+test("adding a grid line splits the largest segment at its midpoint", () => {
+  assert.deepEqual(operations.addGridLine([]), [0.5]);
+  assert.deepEqual(operations.addGridLine([0.5]), [0.25, 0.5]);
+  assert.deepEqual(operations.addGridLine([0.75, 0.25, 0.5]), [0.125, 0.25, 0.5, 0.75]);
+});
+
+test("repeated grid line additions stay sorted and respect the minimum gap", () => {
+  let lines = [];
+  for (let count = 0; count < 8; count += 1) lines = operations.addGridLine(lines);
+  assert.equal(lines.length, 8);
+  assert.deepEqual(lines, [...lines].sort((a, b) => a - b));
+  const boundaries = [0, ...lines, 1];
+  for (let index = 1; index < boundaries.length; index += 1) {
+    assert.ok(boundaries[index] - boundaries[index - 1] >= operations.CANVAS_IMAGE_GRID_MIN_GAP);
+  }
+  assert.deepEqual(operations.addGridLine(lines), lines);
+});
+
+test("grid line additions stop at the per-direction maximum and removal targets one line", () => {
+  const lines = Array.from({ length: operations.CANVAS_IMAGE_GRID_MAX_LINES }, (_, index) => (index + 1) / 9);
+  assert.deepEqual(operations.addGridLine(lines), lines);
+  assert.deepEqual(operations.removeGridLine([0.75, 0.25, 0.5], 1), [0.25, 0.75]);
+  assert.deepEqual(operations.removeGridLine([0.5], 0), []);
+});
+
 test("grid composite layout uses a square-ish 1024px grid for common counts", () => {
   const expected = new Map([
     [2, { columns: 2, rows: 1, width: 2064, height: 1024 }],

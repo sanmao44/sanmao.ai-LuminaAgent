@@ -205,6 +205,25 @@ textarea:disabled,
   cursor: var(--cursor-move) !important;
 }
 
+/* Grid split handles are buttons for accessibility, but their primary
+   interaction is directional resizing rather than ordinary clicking. */
+.image-editor-grid-line-hit {
+  cursor: var(--cursor-resize-horizontal) !important;
+}
+
+.image-editor-grid-line.horizontal .image-editor-grid-line-hit {
+  cursor: var(--cursor-resize-vertical) !important;
+}
+
+.image-editor-grid-line.is-dragging .image-editor-grid-line-hit,
+.image-editor-grid-line.is-dragging.horizontal .image-editor-grid-line-hit {
+  cursor: var(--cursor-grabbing) !important;
+}
+
+.image-editor-grid-line-remove {
+  cursor: var(--cursor-pointer) !important;
+}
+
 .canvas-stage textarea,
 .canvas-stage input:not([type='button']):not([type='checkbox']):not([type='color']):not([type='file']):not([type='image']):not([type='radio']):not([type='range']):not([type='reset']):not([type='submit']),
 .canvas-stage select,
@@ -214,7 +233,7 @@ textarea:disabled,
 }
 
 .canvas-stage select,
-.canvas-stage button:not(.canvas-port):not(.canvas-node-resize):not(.canvas-group-resize):not(.image-editor-crop-handle):not(.image-editor-outpaint-handle):not(.outpaint-handle),
+.canvas-stage button:not(.canvas-port):not(.canvas-node-resize):not(.canvas-group-resize):not(.image-editor-crop-handle):not(.image-editor-outpaint-handle):not(.outpaint-handle):not(.image-editor-grid-line-hit):not(.image-editor-grid-line-remove),
 .video-reference-preview,
 .video-upload-button img {
   cursor: var(--cursor-pointer) !important;

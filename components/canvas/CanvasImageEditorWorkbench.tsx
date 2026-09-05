@@ -14,12 +14,15 @@ import {
 import type { CanvasDocument, CanvasImageOperation, CanvasNode } from "@/lib/canvas/types";
 import {
   CANVAS_IMAGE_OPERATION_MAX_EDGE,
+  CANVAS_IMAGE_GRID_MAX_LINES,
   clampGridLine,
   clampImageRect,
   cropRectForAspect,
+  addGridLine,
   equalGridLines,
   gridRects,
   moveImageRect,
+  removeGridLine,
   operationLabel,
   resizeImageRect,
   resizeTargetSize,
@@ -84,6 +87,7 @@ type Point = { x: number; y: number };
 type OutpaintDrag = { side: keyof OutpaintMargins; startX: number; startY: number; start: OutpaintMargins; scale: number };
 type CropDrag = { handle: string; startX: number; startY: number; start: ImageRect; scale: number };
 type GridDrag = { axis: "vertical" | "horizontal"; index: number };
+type GridSelection = GridDrag;
 
 const DEFAULT_OUTPAINT_PROMPT = "扩展画布，保持原图主体、风格和光影自然连续，补全新增区域";
 const TABS: Array<{ id: CanvasImageEditorOperation | "upscale"; label: string; icon: string }> = [
@@ -147,9 +151,9 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   const [cropRect, setCropRect] = useState<ImageRect>(() => cropRectForAspect(safeInputSize(node), "original"));
   const [cropDrag, setCropDrag] = useState<CropDrag | null>(null);
   const [outpaintDrag, setOutpaintDrag] = useState<OutpaintDrag | null>(null);
-  const [gridCount, setGridCount] = useState(2);
   const [gridLines, setGridLines] = useState<GridLines>({ vertical: [0.5], horizontal: [0.5] });
   const [gridDrag, setGridDrag] = useState<GridDrag | null>(null);
+  const [gridSelection, setGridSelection] = useState<GridSelection | null>(null);
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
   const [flipX, setFlipX] = useState(false);
   const [flipY, setFlipY] = useState(false);
@@ -177,16 +181,25 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   }, [cropAspect, sourceSize]);
 
   useEffect(() => {
-    setGridLines({ vertical: equalGridLines(gridCount).slice(1, -1), horizontal: equalGridLines(gridCount).slice(1, -1) });
-  }, [gridCount]);
-
-  useEffect(() => {
     const closeOnOutside = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const nodeElement = target?.closest(`[data-canvas-node-id="${node.id}"]`);
       if (!workbenchRef.current?.contains(target) && !nodeElement) onClose();
     };
     const closeOnEscape = (event: KeyboardEvent) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const editingText = Boolean(target?.matches("input, textarea, select, [contenteditable=\"true\"]") || target?.isContentEditable);
+      if ((event.key === "Delete" || event.key === "Backspace") && operation === "grid" && gridSelection && !editingText && !busy) {
+        event.preventDefault();
+        event.stopPropagation();
+        setGridLines((current) => ({
+          ...current,
+          [gridSelection.axis]: removeGridLine(current[gridSelection.axis], gridSelection.index),
+        }));
+        setGridSelection(null);
+        setGridDrag(null);
+        return;
+      }
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
@@ -202,7 +215,7 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
       window.document.removeEventListener("pointerdown", closeOnOutside, true);
       window.document.removeEventListener("keydown", closeOnEscape, true);
     };
-  }, [cropDrag, gridDrag, node.id, onClose, outpaintDrag]);
+  }, [busy, cropDrag, gridDrag, gridSelection, node.id, onClose, operation, outpaintDrag]);
 
   const reposition = useCallback(() => {
     const stage = stageRef.current;
@@ -309,6 +322,30 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, [document, gridDrag]);
 
+  const setGridPreset = (count: number) => {
+    const lines = equalGridLines(count).slice(1, -1);
+    setGridLines({ vertical: [...lines], horizontal: [...lines] });
+    setGridSelection(null);
+    setGridDrag(null);
+  };
+
+  const addCustomGridLine = (axis: "vertical" | "horizontal") => {
+    const current = gridLines[axis];
+    if (current.length >= CANVAS_IMAGE_GRID_MAX_LINES) return;
+    const next = addGridLine(current);
+    const insertedIndex = next.findIndex((value) => !current.some((currentValue) => currentValue === value));
+    if (insertedIndex < 0) return;
+    setGridLines((value) => ({ ...value, [axis]: next }));
+    setGridSelection({ axis, index: insertedIndex });
+    setGridDrag(null);
+  };
+
+  const removeCustomGridLine = (axis: "vertical" | "horizontal", index: number) => {
+    setGridLines((current) => ({ ...current, [axis]: removeGridLine(current[axis], index) }));
+    setGridSelection(null);
+    setGridDrag(null);
+  };
+
   const beginOutpaintDrag = (event: ReactPointerEvent<HTMLButtonElement>, side: keyof OutpaintMargins) => {
     event.preventDefault();
     event.stopPropagation();
@@ -324,11 +361,13 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   const beginGridDrag = (event: ReactPointerEvent<HTMLButtonElement>, axis: "vertical" | "horizontal", index: number) => {
     event.preventDefault();
     event.stopPropagation();
+    setGridSelection({ axis, index });
     setGridDrag({ axis, index });
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
   };
 
   const save = async () => {
-    if (busy) return;
+    if (busy || (operation === "grid" && gridPreviewRects.length < 2)) return;
     setBusy(true);
     setError("");
     try {
@@ -356,15 +395,53 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   };
 
   const gridPreviewRects = gridRects(sourceSize, gridLines);
+  const gridColumns = gridLines.vertical.length + 1;
+  const gridRows = gridLines.horizontal.length + 1;
+  const gridSaveWarning = gridPreviewRects.length < 2 ? "至少添加一条横线或竖线才能切分" : "";
+  const isGridPresetActive = (count: number) => {
+    const lines = equalGridLines(count).slice(1, -1);
+    return lines.length === gridLines.vertical.length && lines.every((value, index) => value === gridLines.vertical[index])
+      && lines.length === gridLines.horizontal.length && lines.every((value, index) => value === gridLines.horizontal[index]);
+  };
   const operationHint = operation === "outpaint"
     ? "拖动四边扩大白色画布，保存后可在节点编辑器中生成"
     : operation === "resize"
       ? "保持原图比例，输出为指定长边分辨率"
       : operation === "crop"
         ? "拖动选框移动或拉动边角调整范围"
-        : operation === "grid"
-          ? "拖动分割线调整每个切片的范围"
+      : operation === "grid"
+          ? "拖动分割线调整范围，或在下方添加横线、竖线"
           : "本地处理，不消耗模型额度";
+
+  const renderGridLine = (axis: "vertical" | "horizontal", value: number, index: number) => {
+    const selected = gridSelection?.axis === axis && gridSelection.index === index;
+    const dragging = gridDrag?.axis === axis && gridDrag.index === index;
+    const directionLabel = axis === "vertical" ? "竖向" : "横向";
+    return (
+      <div
+        key={`${axis}-${index}`}
+        className={`image-editor-grid-line ${axis} ${selected ? "is-selected" : ""} ${dragging ? "is-dragging" : ""}`}
+        style={axis === "vertical" ? { left: `${value * 100}%` } : { top: `${value * 100}%` }}
+      >
+        <button
+          type="button"
+          className="image-editor-grid-line-hit"
+          onPointerDown={(event) => beginGridDrag(event, axis, index)}
+          onFocus={() => setGridSelection({ axis, index })}
+          aria-label={`拖动第${index + 1}条${directionLabel}分割线`}
+        />
+        <button
+          type="button"
+          className="image-editor-grid-line-remove"
+          onPointerDown={(event) => { event.stopPropagation(); setGridSelection({ axis, index }); }}
+          onFocus={() => setGridSelection({ axis, index })}
+          onClick={() => removeCustomGridLine(axis, index)}
+          aria-label={`删除第${index + 1}条${directionLabel}分割线`}
+          title="删除分割线"
+        >×</button>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -428,14 +505,14 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
             <div className="canvas-image-editor-preview-area grid" data-image-editor-grid-preview style={{ width: sourceDisplay.width, height: sourceDisplay.height }}>
               {renderImage("image-editor-preview-image")}
               <div className="image-editor-grid-cells">{gridPreviewRects.map((rect, index) => <span key={`${rect.x}-${rect.y}`} style={{ left: `${(rect.x / sourceSize.width) * 100}%`, top: `${(rect.y / sourceSize.height) * 100}%`, width: `${(rect.width / sourceSize.width) * 100}%`, height: `${(rect.height / sourceSize.height) * 100}%` }}><b>{index + 1}</b></span>)}</div>
-              {gridLines.vertical.map((value, index) => <button type="button" key={`v-${index}`} className="image-editor-grid-line vertical" style={{ left: `${value * 100}%` }} onPointerDown={(event) => beginGridDrag(event, "vertical", index)} aria-label={`拖动第${index + 1}条竖向分割线`} />)}
-              {gridLines.horizontal.map((value, index) => <button type="button" key={`h-${index}`} className="image-editor-grid-line horizontal" style={{ top: `${value * 100}%` }} onPointerDown={(event) => beginGridDrag(event, "horizontal", index)} aria-label={`拖动第${index + 1}条横向分割线`} />)}
+              {gridLines.vertical.map((value, index) => renderGridLine("vertical", value, index))}
+              {gridLines.horizontal.map((value, index) => renderGridLine("horizontal", value, index))}
             </div>
           )}
           {operation === "transform" && (
             <div className="canvas-image-editor-preview-area transform" style={{ width: previewSize.width, height: previewSize.height }}>{renderImage("image-editor-transform-image", { transform: `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})` })}</div>
           )}
-          <div className="canvas-image-editor-preview-caption"><span>{operationHint}</span><b>{operation === "grid" ? `${gridCount} × ${gridCount} · ${gridPreviewRects.length} 张` : `${formatPixels(preview.width)} × ${formatPixels(preview.height)}`}</b></div>
+          <div className="canvas-image-editor-preview-caption"><span>{operationHint}</span><b>{operation === "grid" ? `${gridColumns} × ${gridRows} · ${gridPreviewRects.length} 张` : `${formatPixels(preview.width)} × ${formatPixels(preview.height)}`}</b></div>
         </div>
 
         {operation === "outpaint" && <div className="canvas-image-editor-controls">
@@ -457,19 +534,26 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
         </div>}
         {operation === "grid" && <div className="canvas-image-editor-controls">
           <div className="canvas-image-editor-section-title"><b>宫格预设</b><small>分割线可直接拖动</small></div>
-          <div className="canvas-image-editor-preset-row grid-presets">{[2, 3, 4, 5].map((value) => <button type="button" key={value} className={gridCount === value ? "active" : ""} onClick={() => setGridCount(value)}>{value} × {value}</button>)}</div>
-          <div className="canvas-image-editor-readout"><span>输出切片<strong>{gridPreviewRects.length} 张</strong></span><i>·</i><span>原图保留<strong>自动成组</strong></span></div>
+          <div className="canvas-image-editor-preset-row grid-presets">{[2, 3, 4, 5].map((value) => <button type="button" key={value} className={isGridPresetActive(value) ? "active" : ""} onClick={() => setGridPreset(value)}>{value} × {value}</button>)}</div>
+          <div className="canvas-image-editor-grid-custom">
+            <div className="canvas-image-editor-grid-custom-head"><b>自定义分割线</b><small>最多 8 条 / 方向</small></div>
+            <div className="canvas-image-editor-grid-custom-actions">
+              <button type="button" className="canvas-image-editor-grid-custom-add vertical" onClick={() => addCustomGridLine("vertical")} disabled={gridLines.vertical.length >= CANVAS_IMAGE_GRID_MAX_LINES} aria-label="添加竖线" title="添加竖线到当前最大分格"><span aria-hidden="true">↕</span><strong>＋竖线</strong><em>{gridLines.vertical.length}/{CANVAS_IMAGE_GRID_MAX_LINES}</em></button>
+              <button type="button" className="canvas-image-editor-grid-custom-add horizontal" onClick={() => addCustomGridLine("horizontal")} disabled={gridLines.horizontal.length >= CANVAS_IMAGE_GRID_MAX_LINES} aria-label="添加横线" title="添加横线到当前最大分格"><span aria-hidden="true">↔</span><strong>＋横线</strong><em>{gridLines.horizontal.length}/{CANVAS_IMAGE_GRID_MAX_LINES}</em></button>
+            </div>
+          </div>
+          <div className="canvas-image-editor-readout"><span>输出切片<strong>{gridColumns} × {gridRows} · {gridPreviewRects.length} 张</strong></span><i>·</i><span>原图保留<strong>自动成组</strong></span></div>
         </div>}
         {operation === "transform" && <div className="canvas-image-editor-controls">
           <div className="canvas-image-editor-section-title"><b>镜像-旋转</b><small>实时预览，保持原图清晰度</small></div>
           <div className="canvas-image-editor-transform-row"><button type="button" onClick={() => setRotation((value) => ((value + 270) % 360) as 0 | 90 | 180 | 270)}>↶ 左转</button><button type="button" onClick={() => setRotation((value) => ((value + 90) % 360) as 0 | 90 | 180 | 270)}>↷ 右转</button><span>{rotation}°</span><button type="button" className={flipX ? "active" : ""} onClick={() => setFlipX((value) => !value)}>↔ 水平</button><button type="button" className={flipY ? "active" : ""} onClick={() => setFlipY((value) => !value)}>↕ 垂直</button></div>
         </div>}
-        {(sizeError || sizeLimitWarning) && <small className="canvas-image-editor-warning">{sizeError || sizeLimitWarning}</small>}
+        {(sizeError || sizeLimitWarning || gridSaveWarning) && <small className="canvas-image-editor-warning">{sizeError || sizeLimitWarning || gridSaveWarning}</small>}
         {error && <div className="canvas-image-editor-error">{error}</div>}
       </div>
       <div className="canvas-image-editor-footer">
         {operation !== "grid" ? <div className="canvas-image-editor-save-mode" role="group" aria-label="保存方式"><button type="button" className={saveMode === "new" ? "active" : ""} onClick={() => setSaveMode("new")}>生成新节点</button><button type="button" className={saveMode === "replace" ? "active" : ""} onClick={() => setSaveMode("replace")}>覆盖当前</button></div> : <span className="canvas-image-editor-grid-note">原图保留 · 生成并自动成组</span>}
-        <div className="canvas-image-editor-footer-actions"><button type="button" className="canvas-image-editor-cancel" onClick={onClose}>取消</button><button type="button" className="canvas-image-editor-save" disabled={busy} onClick={() => void save()}>{busy ? "处理中…" : operation === "grid" ? "切分并成组" : saveMode === "replace" ? "覆盖当前节点" : "生成新节点"}</button></div>
+        <div className="canvas-image-editor-footer-actions"><button type="button" className="canvas-image-editor-cancel" onClick={onClose}>取消</button><button type="button" className="canvas-image-editor-save" disabled={busy || (operation === "grid" && gridPreviewRects.length < 2)} onClick={() => void save()}>{busy ? "处理中…" : operation === "grid" ? "切分并成组" : saveMode === "replace" ? "覆盖当前节点" : "生成新节点"}</button></div>
       </div>
     </div>
   );
