@@ -6,11 +6,13 @@ import {
   renderCanvasImageGridComposite,
   type CanvasImageGridCropOffset,
   type CanvasImageGridCompositeOptions,
+  type CanvasImageGridLayoutMode,
+  type ImageSize,
 } from "@/lib/canvas/image-operations";
 import SelectMenu from "@/components/SelectMenu";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 
-export type CanvasGroupComposeOrder = "canvas" | "group";
+export type CanvasGroupComposeOrder = "canvas" | "group" | "custom";
 
 export type CanvasGroupComposeSource = {
   id: string;
@@ -22,6 +24,7 @@ export type CanvasGroupComposeSource = {
 
 export type CanvasGroupComposeSettings = CanvasImageGridCompositeOptions & {
   order: CanvasGroupComposeOrder;
+  sourceOrderIds?: string[];
 };
 
 type Props = {
@@ -34,6 +37,7 @@ type Props = {
 
 const DEFAULT_SETTINGS: CanvasGroupComposeSettings = {
   order: "canvas",
+  layoutMode: "auto",
   cellSize: 1024,
   gap: 16,
   maxEdge: 6144,
@@ -46,6 +50,8 @@ const CELL_SIZE_MIN = 256;
 const CELL_SIZE_MAX = 2048;
 const MAX_EDGE_MIN = 2048;
 const MAX_EDGE_MAX = 6144;
+const PREVIEW_ZOOM_MIN = 0.65;
+const PREVIEW_ZOOM_MAX = 2.4;
 const COMPOSE_SELECT_MENU_PROPS = {
   portalZIndex: CANVAS_Z_INDEX.modalPopover,
   className: "canvas-compose-select",
@@ -65,13 +71,46 @@ function backgroundPreset(value: string | undefined) {
 
 function sortedSources(
   sources: CanvasGroupComposeSource[],
-  order: CanvasGroupComposeOrder,
+  order: Exclude<CanvasGroupComposeOrder, "custom">,
 ) {
   return [...sources].sort((left, right) =>
     order === "group"
       ? left.groupIndex - right.groupIndex
       : left.canvasIndex - right.canvasIndex,
   );
+}
+
+function sourcesWithOrder(
+  sources: CanvasGroupComposeSource[],
+  order: CanvasGroupComposeOrder,
+  sourceOrderIds?: string[],
+) {
+  if (order !== "custom" || !sourceOrderIds?.length) {
+    return sortedSources(sources, order === "group" ? "group" : "canvas");
+  }
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const ordered = sourceOrderIds
+    .map((id) => sourceById.get(id))
+    .filter((source): source is CanvasGroupComposeSource => Boolean(source));
+  const included = new Set(ordered.map((source) => source.id));
+  return [...ordered, ...sources.filter((source) => !included.has(source.id))];
+}
+
+function clampCropOffset(value: CanvasImageGridCropOffset): CanvasImageGridCropOffset {
+  return {
+    x: Math.max(0, Math.min(1, Number(value.x) || 0)),
+    y: Math.max(0, Math.min(1, Number(value.y) || 0)),
+  };
+}
+
+function normalizeHex(value: string) {
+  const trimmed = value.trim();
+  const withHash = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+  if (/^#[0-9a-f]{6}$/i.test(withHash)) return withHash.toLowerCase();
+  if (/^#[0-9a-f]{3}$/i.test(withHash)) {
+    return `#${withHash.slice(1).split("").map((value) => `${value}${value}`).join("")}`.toLowerCase();
+  }
+  return null;
 }
 
 const CROP_POSITION_OFFSETS: Record<NonNullable<CanvasImageGridCompositeOptions["cropPosition"]>, CanvasImageGridCropOffset> = {
@@ -86,13 +125,6 @@ const CROP_POSITION_OFFSETS: Record<NonNullable<CanvasImageGridCompositeOptions[
   "bottom-right": { x: 1, y: 1 },
 };
 
-function clampCropOffset(value: CanvasImageGridCropOffset): CanvasImageGridCropOffset {
-  return {
-    x: Math.max(0, Math.min(1, Number(value.x) || 0)),
-    y: Math.max(0, Math.min(1, Number(value.y) || 0)),
-  };
-}
-
 type GridDragState = {
   sourceId: string;
   pointerId: number;
@@ -101,6 +133,14 @@ type GridDragState = {
   startOffset: CanvasImageGridCropOffset;
   overflowX: number;
   overflowY: number;
+};
+
+type SourceDragState = {
+  sourceId: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  lastTargetId: string;
 };
 
 export default function CanvasGroupComposeDialog({
@@ -115,10 +155,12 @@ export default function CanvasGroupComposeDialog({
   const [error, setError] = useState("");
   const [cropOffsetsBySource, setCropOffsetsBySource] = useState<Record<string, CanvasImageGridCropOffset>>({});
   const [activeCropSourceId, setActiveCropSourceId] = useState("");
-  const [sourceRatios, setSourceRatios] = useState<Record<string, number>>({});
+  const [sourceSizesById, setSourceSizesById] = useState<Record<string, ImageSize>>({});
+  const [previewZoom, setPreviewZoom] = useState(1);
   const previewUrlRef = useRef("");
   const previewRevisionRef = useRef(0);
   const gridDragRef = useRef<GridDragState | null>(null);
+  const previewSortDragRef = useRef<SourceDragState | null>(null);
   const [previewResult, setPreviewResult] = useState<{
     url: string;
     width: number;
@@ -134,9 +176,10 @@ export default function CanvasGroupComposeDialog({
     setBusy(false);
     setError("");
     setCropOffsetsBySource({});
-    setSourceRatios({});
+    setSourceSizesById({});
     setActiveCropSourceId("");
-  }, [open, groupName]);
+    setPreviewZoom(1);
+  }, [groupName, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -152,21 +195,33 @@ export default function CanvasGroupComposeDialog({
   }, [busy, onClose, open]);
 
   const previewSources = useMemo(
-    () => sortedSources(sources, settings.order),
-    [settings.order, sources],
-  );
-  const layout = useMemo(
-    () => gridCompositeLayout(Math.max(1, previewSources.length), settings),
-    [previewSources.length, settings],
+    () => sourcesWithOrder(sources, settings.order, settings.sourceOrderIds),
+    [settings.order, settings.sourceOrderIds, sources],
   );
   const previewSourceKey = previewSources.map((source) => `${source.id}\u0001${source.url}`).join("\u0002");
   const previewSourceUrls = useMemo(() => previewSources.map((source) => source.url), [previewSourceKey]);
+  const sourceSizes = useMemo(
+    () => previewSources.map((source) => sourceSizesById[source.id] || { width: 1, height: 1 }),
+    [previewSources, sourceSizesById],
+  );
   const cropOffsetForSource = (sourceId: string) => cropOffsetsBySource[sourceId] || CROP_POSITION_OFFSETS[settings.cropPosition || "center"];
   const renderOptions = useMemo<CanvasImageGridCompositeOptions>(() => ({
-    ...settings,
+    layoutMode: settings.layoutMode,
+    columns: settings.columns,
+    cellSize: settings.cellSize,
+    gap: settings.gap,
+    maxEdge: settings.maxEdge,
+    background: settings.background,
+    fit: settings.layoutMode === "auto" ? "contain" : settings.fit,
+    cropPosition: settings.cropPosition,
     cropOffsets: previewSources.map((source) => cropOffsetsBySource[source.id]),
-  }), [cropOffsetsBySource, previewSources, settings]);
+    sourceSizes,
+  }), [cropOffsetsBySource, previewSources, settings, sourceSizes]);
   const background = settings.background || "#ffffff";
+  const layout = useMemo(
+    () => gridCompositeLayout(Math.max(1, previewSources.length), renderOptions),
+    [previewSources.length, renderOptions],
+  );
   const displayedLayout = previewResult?.layout || layout;
 
   useEffect(() => {
@@ -176,9 +231,12 @@ export default function CanvasGroupComposeDialog({
       const image = new Image();
       image.onload = () => {
         if (disposed) return;
-        setSourceRatios((current) => ({
+        setSourceSizesById((current) => ({
           ...current,
-          [source.id]: (image.naturalWidth || image.width || 1) / (image.naturalHeight || image.height || 1),
+          [source.id]: {
+            width: image.naturalWidth || image.width || 1,
+            height: image.naturalHeight || image.height || 1,
+          },
         }));
       };
       image.src = source.url;
@@ -244,6 +302,65 @@ export default function CanvasGroupComposeDialog({
     setSettings({ ...DEFAULT_SETTINGS });
     setCropOffsetsBySource({});
     setError("");
+    setPreviewZoom(1);
+  };
+
+  const setOrderPreset = (order: Exclude<CanvasGroupComposeOrder, "custom">) => {
+    setSettings((current) => ({ ...current, order, sourceOrderIds: undefined }));
+  };
+
+  const reorderSources = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    const next = [...previewSources];
+    const from = next.findIndex((source) => source.id === sourceId);
+    const target = next.findIndex((source) => source.id === targetId);
+    if (from < 0 || target < 0) return;
+    const [moved] = next.splice(from, 1);
+    next.splice(next.findIndex((source) => source.id === targetId), 0, moved);
+    setSettings((current) => ({
+      ...current,
+      order: "custom",
+      sourceOrderIds: next.map((source) => source.id),
+    }));
+  };
+
+  const moveSource = (sourceId: string, direction: -1 | 1) => {
+    const index = previewSources.findIndex((source) => source.id === sourceId);
+    const target = previewSources[index + direction];
+    if (index < 0 || !target) return;
+    reorderSources(sourceId, target.id);
+  };
+
+  const onPreviewSortPointerDown = (sourceId: string, event: ReactPointerEvent<HTMLDivElement>) => {
+    if (busy) return;
+    if (event.target instanceof Element && event.target.closest("button")) return;
+    previewSortDragRef.current = {
+      sourceId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastTargetId: sourceId,
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer events may not have an active pointer to capture.
+    }
+  };
+
+  const onPreviewSortPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = previewSortDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return;
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-compose-preview-source-id]");
+    const targetId = target?.dataset.composePreviewSourceId;
+    if (!targetId || targetId === drag.lastTargetId || targetId === drag.sourceId) return;
+    drag.lastTargetId = targetId;
+    reorderSources(drag.sourceId, targetId);
+  };
+
+  const onPreviewSortPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (previewSortDragRef.current?.pointerId === event.pointerId) previewSortDragRef.current = null;
   };
 
   const updateCropOffset = (sourceId: string, value: CanvasImageGridCropOffset) => {
@@ -251,9 +368,10 @@ export default function CanvasGroupComposeDialog({
   };
 
   const onGridPointerDown = (sourceId: string, event: ReactPointerEvent<HTMLDivElement>) => {
-    if (settings.fit !== "cover") return;
+    if (settings.layoutMode !== "fixed" || settings.fit !== "cover") return;
     const cellSize = event.currentTarget.getBoundingClientRect().width;
-    const ratio = sourceRatios[sourceId] || 1;
+    const source = sourceSizesById[sourceId] || { width: 1, height: 1 };
+    const ratio = source.width / Math.max(1, source.height);
     gridDragRef.current = {
       sourceId,
       pointerId: event.pointerId,
@@ -261,10 +379,14 @@ export default function CanvasGroupComposeDialog({
       startY: event.clientY,
       startOffset: cropOffsetForSource(sourceId),
       overflowX: Math.max(0, cellSize * ratio - cellSize),
-      overflowY: Math.max(0, cellSize / ratio - cellSize),
+      overflowY: Math.max(0, cellSize / Math.max(0.001, ratio) - cellSize),
     };
     setActiveCropSourceId(sourceId);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer events may not have an active pointer to capture.
+    }
   };
 
   const onGridPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -280,23 +402,37 @@ export default function CanvasGroupComposeDialog({
     if (gridDragRef.current?.pointerId === event.pointerId) gridDragRef.current = null;
   };
 
+  const changeLayoutMode = (value: CanvasImageGridLayoutMode) => {
+    setSettings((current) => ({
+      ...current,
+      layoutMode: value,
+      fit: value === "auto" ? "contain" : current.fit,
+    }));
+  };
+
+  const changeBackground = (value: string) => {
+    const normalized = normalizeHex(value);
+    if (normalized) update("background", normalized);
+  };
+
   const confirm = async () => {
     setBusy(true);
     setError("");
     try {
       const result = await onConfirm({
         ...settings,
+        sourceOrderIds: previewSources.map((source) => source.id),
         cropOffsets: previewSources.map((source) => cropOffsetsBySource[source.id]),
       });
-      if (result === false) {
-        setBusy(false);
-        return;
-      }
+      if (result === false) setBusy(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "宫格拼接失败");
       setBusy(false);
     }
   };
+
+  const showCropHandles = settings.layoutMode === "fixed" && settings.fit === "cover";
+  const previewInteractionClass = showCropHandles ? "interactive crop" : "interactive sortable";
 
   return (
     <div
@@ -316,13 +452,11 @@ export default function CanvasGroupComposeDialog({
         <header className="canvas-compose-dialog-head">
           <div>
             <span>对象组 · {sources.length} 张图片</span>
-            <h2 id="canvas-compose-title">宫格拼接</h2>
-            <small>{groupName} · 生成新的画布图片节点</small>
+            <h2 id="canvas-compose-title">宫格拼接工作台</h2>
+            <small>{groupName} · 原图比例、顺序和背景均可直接调整</small>
           </div>
           <div className="canvas-compose-head-actions">
-            <button type="button" className="canvas-compose-reset" onClick={resetSettings} disabled={busy}>
-              恢复默认
-            </button>
+            <button type="button" className="canvas-compose-reset" onClick={resetSettings} disabled={busy}>恢复默认</button>
             <button type="button" className="canvas-compose-close" onClick={onClose} disabled={busy} aria-label="关闭宫格拼接设置">×</button>
           </div>
         </header>
@@ -331,7 +465,17 @@ export default function CanvasGroupComposeDialog({
           <div className="canvas-compose-preview-column">
             <div className="canvas-compose-preview-label">
               <span><i aria-hidden="true" />实时预览</span>
-              <small>{previewSources.length} 张图片 · 铺满单格时可直接拖动每格</small>
+              <small>{previewSources.length} 张图片 · {settings.layoutMode === "auto" ? "按原图比例排版" : "固定方格模式"}</small>
+            </div>
+
+            <div className="canvas-compose-preview-toolbar">
+              <div className="canvas-compose-preview-zoom" role="group" aria-label="预览缩放">
+                <button type="button" onClick={() => setPreviewZoom((value) => Math.max(PREVIEW_ZOOM_MIN, Number((value - 0.15).toFixed(2))))} disabled={previewZoom <= PREVIEW_ZOOM_MIN} aria-label="缩小预览">−</button>
+                <output>{Math.round(previewZoom * 100)}%</output>
+                <button type="button" onClick={() => setPreviewZoom((value) => Math.min(PREVIEW_ZOOM_MAX, Number((value + 0.15).toFixed(2))))} disabled={previewZoom >= PREVIEW_ZOOM_MAX} aria-label="放大预览">＋</button>
+                <button type="button" onClick={() => setPreviewZoom(1)} aria-label="适应窗口预览">适应</button>
+              </div>
+              <span className="canvas-compose-preview-size">{displayedLayout.width} × {displayedLayout.height}px</span>
             </div>
 
             <div
@@ -339,47 +483,52 @@ export default function CanvasGroupComposeDialog({
               aria-label={`宫格预览 ${displayedLayout.columns} 列 ${displayedLayout.rows} 行`}
             >
               {previewResult ? (
-                <div className="canvas-compose-preview-result-shell">
-                  <img
-                    className="canvas-compose-preview-result"
-                    src={previewResult.url}
-                    alt="宫格拼接实时预览（与最终出图一致）"
-                  />
-                  {settings.fit === "cover" && (
-                    <div className="canvas-compose-preview-hit-area" aria-label="拖动每格图片调整裁切区域">
+                <div className="canvas-compose-preview-scroll">
+                  <div className="canvas-compose-preview-result-shell" style={previewZoom === 1 ? undefined : { transform: `scale(${previewZoom})` }}>
+                    <img
+                      className="canvas-compose-preview-result"
+                      src={previewResult.url}
+                      alt="宫格拼接实时预览（与最终出图一致）"
+                    />
+                    <div className={`canvas-compose-preview-hit-area ${previewInteractionClass}`} aria-label={showCropHandles ? "拖动每格图片调整裁切区域" : "拖动图片调整顺序"}>
                       {previewSources.map((source, index) => {
-                        const column = index % displayedLayout.columns;
-                        const row = Math.floor(index / displayedLayout.columns);
+                        const placement = displayedLayout.placements[index];
+                        if (!placement) return null;
+                        const placementStyle = {
+                          left: `${(placement.x / Math.max(1, displayedLayout.width)) * 100}%`,
+                          top: `${(placement.y / Math.max(1, displayedLayout.height)) * 100}%`,
+                          width: `${(placement.width / Math.max(1, displayedLayout.width)) * 100}%`,
+                          height: `${(placement.height / Math.max(1, displayedLayout.height)) * 100}%`,
+                        };
                         return (
                           <div
                             key={source.id}
                             className={`canvas-compose-preview-hit-cell ${source.id === activeCropSourceId ? "active" : ""}`}
-                            style={{
-                              left: `${((column * (displayedLayout.cellSize + displayedLayout.gap)) / Math.max(1, displayedLayout.width)) * 100}%`,
-                              top: `${((row * (displayedLayout.cellSize + displayedLayout.gap)) / Math.max(1, displayedLayout.height)) * 100}%`,
-                              width: `${(displayedLayout.cellSize / Math.max(1, displayedLayout.width)) * 100}%`,
-                              height: `${(displayedLayout.cellSize / Math.max(1, displayedLayout.height)) * 100}%`,
-                            }}
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`第 ${index + 1} 张图片，拖动调整裁切区域`}
-                            onPointerDown={(event) => onGridPointerDown(source.id, event)}
-                            onPointerMove={onGridPointerMove}
-                            onPointerUp={onGridPointerUp}
-                            onPointerCancel={onGridPointerUp}
-                            onClick={() => setActiveCropSourceId(source.id)}
+                            style={placementStyle}
+                            data-compose-preview-source-id={source.id}
+                            role="group"
+                            aria-label={showCropHandles ? `第 ${index + 1} 张图片，拖动调整裁切区域` : `第 ${index + 1} 张图片，拖动调整顺序`}
+                            title={showCropHandles ? "拖动调整裁切区域" : "拖动到另一张图片上方交换顺序"}
+                            onPointerDown={showCropHandles ? (event) => onGridPointerDown(source.id, event) : (event) => onPreviewSortPointerDown(source.id, event)}
+                            onPointerMove={showCropHandles ? onGridPointerMove : onPreviewSortPointerMove}
+                            onPointerUp={showCropHandles ? onGridPointerUp : onPreviewSortPointerUp}
+                            onPointerCancel={showCropHandles ? onGridPointerUp : onPreviewSortPointerUp}
+                            onClick={showCropHandles ? () => setActiveCropSourceId(source.id) : undefined}
                           >
-                            <span>{index + 1}</span>
+                            <span className="canvas-compose-preview-cell-number">{index + 1}</span>
+                            <span className="canvas-compose-preview-cell-name">{source.name}</span>
+                            <div className="canvas-compose-preview-cell-tools" onPointerDown={(event) => event.stopPropagation()}>
+                              <button type="button" onClick={() => moveSource(source.id, -1)} disabled={index === 0 || busy} aria-label={`第 ${index + 1} 张图片上移`}>↑</button>
+                              <button type="button" onClick={() => moveSource(source.id, 1)} disabled={index === previewSources.length - 1 || busy} aria-label={`第 ${index + 1} 张图片下移`}>↓</button>
+                            </div>
                           </div>
                         );
                       })}
                     </div>
-                  )}
+                  </div>
                 </div>
               ) : (
-                <div className="canvas-compose-preview-empty" aria-live="polite">
-                  {previewBusy ? "正在生成预览…" : "暂无预览"}
-                </div>
+                <div className="canvas-compose-preview-empty" aria-live="polite">{previewBusy ? "正在生成预览…" : "暂无预览"}</div>
               )}
               {previewBusy && previewResult && <span className="canvas-compose-preview-status">正在更新预览…</span>}
             </div>
@@ -387,97 +536,101 @@ export default function CanvasGroupComposeDialog({
             <div className="canvas-compose-summary" aria-live="polite">
               <span><b>{displayedLayout.columns} × {displayedLayout.rows}</b><small>布局</small></span>
               <span><b>{displayedLayout.width} × {displayedLayout.height}</b><small>输出尺寸</small></span>
-              <span><b>{Math.round(displayedLayout.scale * 100)}%</b><small>缩放</small></span>
+              <span><b>{Math.round(displayedLayout.scale * 100)}%</b><small>输出缩放</small></span>
               <span><b>{formatPixels(displayedLayout.gap)}</b><small>图片间隔</small></span>
             </div>
+
           </div>
 
           <div className="canvas-compose-settings-column">
-            <div className="canvas-compose-fields">
-            <label className="canvas-compose-field-wide">
-              <span>图片顺序 <em>影响拼接后的阅读顺序</em></span>
-              <span className="canvas-compose-select-shell">
-                <SelectMenu
-                  {...COMPOSE_SELECT_MENU_PROPS}
-                  value={settings.order}
-                  ariaLabel="图片顺序"
-                  options={[
-                    { value: "canvas", label: "按画布阅读顺序", description: "从左到右、从上到下" },
-                    { value: "group", label: "按组内加入顺序", description: "沿用对象组的加入顺序" },
-                  ]}
-                  onChange={(value) => update("order", value as CanvasGroupComposeOrder)}
-                />
-              </span>
-            </label>
-            <label>
-              <span>列数 <em>{settings.columns ? "手动" : "推荐"}</em></span>
-              <span className="canvas-compose-select-shell">
-                <SelectMenu
-                  {...COMPOSE_SELECT_MENU_PROPS}
-                  value={settings.columns === undefined ? "auto" : String(settings.columns)}
-                  ariaLabel="列数"
-                  options={[
-                    { value: "auto", label: "自动（接近方阵）", description: "根据图片数量自动平衡" },
-                    ...Array.from({ length: 8 }, (_, index) => {
-                      const value = String(index + 1);
-                      return { value, label: `${value} 列` };
-                    }),
-                  ]}
-                  onChange={(value) => update("columns", value === "auto" ? undefined : Number(value))}
-                />
-              </span>
-            </label>
-            <label className="canvas-compose-range-field">
-              <span><span>单格尺寸</span><output>{formatPixels(settings.cellSize ?? DEFAULT_SETTINGS.cellSize!)}</output></span>
-              <input aria-label="单格尺寸" type="range" min={CELL_SIZE_MIN} max={CELL_SIZE_MAX} step={64} value={settings.cellSize ?? DEFAULT_SETTINGS.cellSize} onChange={(event) => update("cellSize", Number(event.target.value))} />
-              <small><span>{formatPixels(CELL_SIZE_MIN)}</span><span>越大越清晰</span><span>{formatPixels(CELL_SIZE_MAX)}</span></small>
-            </label>
-            <label className="canvas-compose-range-field">
-              <span><span>图片间隔</span><output>{formatPixels(settings.gap ?? DEFAULT_SETTINGS.gap!)}</output></span>
-              <input aria-label="图片间隔" type="range" min={0} max={128} step={1} value={settings.gap ?? DEFAULT_SETTINGS.gap} onChange={(event) => update("gap", Number(event.target.value))} />
-              <small><span>紧凑</span><span>舒适</span><span>宽松</span></small>
-            </label>
-            <div className="canvas-compose-choice-field">
-              <span>图片适配 <em>不改变原图</em></span>
-              <div className="canvas-compose-fit-row">
-                <div className="canvas-compose-segmented" role="group" aria-label="图片适配">
-                  <button type="button" aria-pressed={settings.fit === "contain"} className={settings.fit === "contain" ? "active" : ""} onClick={() => update("fit", "contain")}>
-                    <b>完整显示</b><small>不裁切</small>
-                  </button>
-                  <button type="button" aria-pressed={settings.fit === "cover"} className={settings.fit === "cover" ? "active" : ""} onClick={() => update("fit", "cover")}>
-                    <b>铺满单格</b><small>允许裁切</small>
-                  </button>
+            <div className="canvas-compose-settings-scroll">
+              <div className="canvas-compose-fields">
+                <div className="canvas-compose-field-wide canvas-compose-order-panel">
+                  <span className="canvas-compose-field-title">图片顺序 <em>直接拖动预览中的图片即可调整</em></span>
+                  <div className="canvas-compose-order-presets" role="group" aria-label="图片顺序快捷方式">
+                    <button type="button" className={settings.order === "canvas" ? "active" : ""} onClick={() => setOrderPreset("canvas")} disabled={busy}>画布顺序</button>
+                    <button type="button" className={settings.order === "group" ? "active" : ""} onClick={() => setOrderPreset("group")} disabled={busy}>组内顺序</button>
+                    <span className={settings.order === "custom" ? "active" : ""}>自定义顺序</span>
+                  </div>
+                </div>
+
+                <label className="canvas-compose-field-wide">
+                  <span>排版模式 <em>{settings.layoutMode === "auto" ? "完整保留原图比例" : "传统固定方格"}</em></span>
+                  <span className="canvas-compose-select-shell">
+                    <SelectMenu
+                      {...COMPOSE_SELECT_MENU_PROPS}
+                      value={settings.layoutMode || "auto"}
+                      ariaLabel="排版模式"
+                      options={[
+                        { value: "auto", label: "自动等比紧凑", description: "同比例成网格，混合比例按行铺满" },
+                        { value: "fixed", label: "固定方格", description: "保留固定正方形单元和裁切选项" },
+                      ]}
+                      onChange={(value) => changeLayoutMode(value as CanvasImageGridLayoutMode)}
+                    />
+                  </span>
+                </label>
+
+                <label>
+                  <span>列数 <em>{settings.columns ? "手动" : "推荐"}</em></span>
+                  <span className="canvas-compose-select-shell">
+                    <SelectMenu
+                      {...COMPOSE_SELECT_MENU_PROPS}
+                      value={settings.columns === undefined ? "auto" : String(settings.columns)}
+                      ariaLabel="列数"
+                      options={[
+                        { value: "auto", label: "自动（接近方阵）", description: "根据图片数量自动平衡" },
+                        ...Array.from({ length: 8 }, (_, index) => ({ value: String(index + 1), label: `${index + 1} 列` })),
+                      ]}
+                      onChange={(value) => update("columns", value === "auto" ? undefined : Number(value))}
+                    />
+                  </span>
+                </label>
+
+                <label className="canvas-compose-range-field">
+                  <span><span>{settings.layoutMode === "auto" ? "基础行高" : "单格尺寸"}</span><output>{formatPixels(settings.cellSize ?? DEFAULT_SETTINGS.cellSize!)}</output></span>
+                  <input aria-label="单格尺寸" type="range" min={CELL_SIZE_MIN} max={CELL_SIZE_MAX} step={64} value={settings.cellSize ?? DEFAULT_SETTINGS.cellSize} onChange={(event) => update("cellSize", Number(event.target.value))} />
+                  <small><span>{formatPixels(CELL_SIZE_MIN)}</span><span>越大越清晰</span><span>{formatPixels(CELL_SIZE_MAX)}</span></small>
+                </label>
+
+                <label className="canvas-compose-range-field">
+                  <span><span>图片间隔</span><output>{formatPixels(settings.gap ?? DEFAULT_SETTINGS.gap!)}</output></span>
+                  <input aria-label="图片间隔" type="range" min={0} max={128} step={1} value={settings.gap ?? DEFAULT_SETTINGS.gap} onChange={(event) => update("gap", Number(event.target.value))} />
+                  <small><span>紧凑</span><span>舒适</span><span>宽松</span></small>
+                </label>
+
+                {settings.layoutMode === "fixed" && (
+                  <div className="canvas-compose-choice-field canvas-compose-field-wide">
+                    <span>图片适配 <em>固定方格模式</em></span>
+                    <div className="canvas-compose-segmented" role="group" aria-label="图片适配">
+                      <button type="button" aria-pressed={settings.fit === "contain"} className={settings.fit === "contain" ? "active" : ""} onClick={() => update("fit", "contain")}><b>完整显示</b><small>不裁切</small></button>
+                      <button type="button" aria-pressed={settings.fit === "cover"} className={settings.fit === "cover" ? "active" : ""} onClick={() => update("fit", "cover")}><b>铺满单格</b><small>允许裁切</small></button>
+                    </div>
+                  </div>
+                )}
+
+                <label className="canvas-compose-range-field">
+                  <span><span>输出边长上限</span><output>{formatPixels(settings.maxEdge ?? DEFAULT_SETTINGS.maxEdge!)}</output></span>
+                  <input aria-label="输出边长上限" type="range" min={MAX_EDGE_MIN} max={MAX_EDGE_MAX} step={2048} value={settings.maxEdge ?? DEFAULT_SETTINGS.maxEdge} onChange={(event) => update("maxEdge", Number(event.target.value))} />
+                  <small><span>轻量</span><span>平衡</span><span>高清</span></small>
+                </label>
+
+                <div className="canvas-compose-background-field canvas-compose-field-wide">
+                  <span className="canvas-compose-field-title">背景 <em>透明适合继续编辑</em></span>
+                  <div className="canvas-compose-background-row">
+                    <button type="button" className={`canvas-compose-background-swatch white ${backgroundPreset(background) === "white" ? "active" : ""}`} onClick={() => update("background", "#ffffff")} aria-label="白色背景" title="白色" />
+                    <button type="button" className={`canvas-compose-background-swatch black ${backgroundPreset(background) === "black" ? "active" : ""}`} onClick={() => update("background", "#000000")} aria-label="黑色背景" title="黑色" />
+                    <button type="button" className={`canvas-compose-background-swatch transparent ${backgroundPreset(background) === "transparent" ? "active" : ""}`} onClick={() => update("background", "transparent")} aria-label="透明背景" title="透明" />
+                    <input className="canvas-compose-color" type="color" value={background === "transparent" ? "#ffffff" : background} onChange={(event) => changeBackground(event.target.value)} aria-label="自定义背景颜色" />
+                    <input className="canvas-compose-color-text" type="text" value={background === "transparent" ? "" : background} placeholder="#ffffff" onChange={(event) => changeBackground(event.target.value)} aria-label="背景颜色十六进制值" />
+                  </div>
                 </div>
               </div>
-            </div>
-            <label className="canvas-compose-range-field">
-              <span><span>输出边长上限</span><output>{formatPixels(settings.maxEdge ?? DEFAULT_SETTINGS.maxEdge!)}</output></span>
-              <input aria-label="输出边长上限" type="range" min={MAX_EDGE_MIN} max={MAX_EDGE_MAX} step={2048} value={settings.maxEdge ?? DEFAULT_SETTINGS.maxEdge} onChange={(event) => update("maxEdge", Number(event.target.value))} />
-              <small><span>轻量</span><span>平衡</span><span>高清</span></small>
-            </label>
-            <label>
-              <span>背景 <em>透明适合继续编辑</em></span>
-              <span className="canvas-compose-select-shell canvas-compose-background-shell">
-                <SelectMenu
-                  {...COMPOSE_SELECT_MENU_PROPS}
-                  value={backgroundPreset(settings.background)}
-                  ariaLabel="背景"
-                  options={[
-                    { value: "white", label: "白色", description: "适合常规分享和打印" },
-                    { value: "black", label: "黑色", description: "适合深色素材和展示" },
-                    { value: "transparent", label: "透明", description: "适合继续编辑" },
-                    { value: "custom", label: "自定义颜色", description: "点击右侧色块选择颜色" },
-                  ]}
-                  onChange={(value) => update("background", value === "white" ? "#ffffff" : value === "black" ? "#000000" : value === "transparent" ? "transparent" : backgroundPreset(settings.background) === "custom" ? settings.background || "#e5e7eb" : "#e5e7eb")}
-                />
-                {backgroundPreset(settings.background) === "custom" && <input className="canvas-compose-color" type="color" value={settings.background || "#e5e7eb"} onChange={(event) => update("background", event.target.value)} aria-label="自定义背景颜色" />}
-              </span>
-            </label>
-            </div>
 
-            {layout.scale < 1 && <p className="canvas-compose-hint">当前布局超过输出边长上限，导出时会自动缩小到 {layout.width} × {layout.height}。</p>}
-            {previewError && <p className="canvas-compose-error" role="alert">{previewError}</p>}
-            {error && <p className="canvas-compose-error" role="alert">{error}</p>}
+              {settings.layoutMode === "auto" && <p className="canvas-compose-hint">自动等比模式会完整显示原图：同比例图片生成真正等比宫格，比例混合时按行紧凑排版。</p>}
+              {layout.scale < 1 && <p className="canvas-compose-hint">当前布局超过输出边长上限，导出时会自动缩小到 {layout.width} × {layout.height}。</p>}
+              {previewError && <p className="canvas-compose-error" role="alert">{previewError}</p>}
+              {error && <p className="canvas-compose-error" role="alert">{error}</p>}
+            </div>
           </div>
         </div>
 
@@ -485,9 +638,7 @@ export default function CanvasGroupComposeDialog({
           <span>原图保留 · 结果会自动连接到组内图片</span>
           <div>
             <button type="button" onClick={onClose} disabled={busy}>取消</button>
-            <button type="button" className="primary" onClick={() => void confirm()} disabled={busy || sources.length < 2}>
-              {busy ? "拼接中…" : "确认拼接"}
-            </button>
+            <button type="button" className="primary" onClick={() => void confirm()} disabled={busy || sources.length < 2}>{busy ? "拼接中…" : "确认拼接"}</button>
           </div>
         </footer>
       </section>

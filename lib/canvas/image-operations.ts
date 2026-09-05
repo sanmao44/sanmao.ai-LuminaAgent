@@ -9,6 +9,7 @@ export type OutpaintMargins = { top: number; right: number; bottom: number; left
 export type CropAspect = 'original' | '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | 'free';
 export type GridLines = { vertical: number[]; horizontal: number[] };
 export type CanvasImageGridFit = 'contain' | 'cover';
+export type CanvasImageGridLayoutMode = 'auto' | 'fixed';
 export type CanvasImageGridCropPosition =
   | 'top-left'
   | 'top'
@@ -26,10 +27,21 @@ export type CanvasImageGridCompositeOptions = {
   gap?: number;
   maxEdge?: number;
   background?: string;
+  layoutMode?: CanvasImageGridLayoutMode;
+  sourceSizes?: Array<ImageSize | null | undefined>;
   fit?: CanvasImageGridFit;
   cropPosition?: CanvasImageGridCropPosition;
   /** Per-image normalized crop window offsets. 0 is left/top, 1 is right/bottom. */
   cropOffsets?: Array<CanvasImageGridCropOffset | null | undefined>;
+};
+export type CanvasImageGridPlacement = {
+  index: number;
+  row: number;
+  column: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 export type CanvasImageGridCompositeLayout = {
   columns: number;
@@ -40,9 +52,12 @@ export type CanvasImageGridCompositeLayout = {
   width: number;
   height: number;
   background: string;
+  layoutMode: CanvasImageGridLayoutMode;
   fit: CanvasImageGridFit;
   cropPosition: CanvasImageGridCropPosition;
   cropOffsets: CanvasImageGridCropOffset[];
+  sourceSizes: ImageSize[];
+  placements: CanvasImageGridPlacement[];
 };
 
 export type CanvasImageRenderRequest =
@@ -262,16 +277,41 @@ export function gridRects(sourceValue: ImageSize, lines: GridLines): ImageRect[]
   return result;
 }
 
+function normalizedGridColumns(count: number, requestedColumns: number) {
+  return Number.isFinite(requestedColumns) && requestedColumns > 0
+    ? Math.min(count, Math.max(1, Math.min(8, Math.round(requestedColumns))))
+    : Math.max(1, Math.ceil(Math.sqrt(count)));
+}
+
+function areNearlyEqualRatios(sourceSizes: ImageSize[]) {
+  if (sourceSizes.length < 2) return true;
+  const base = sourceSizes[0].width / sourceSizes[0].height;
+  return sourceSizes.every((source) => {
+    const ratio = source.width / source.height;
+    return Math.abs(ratio - base) <= Math.max(0.01, base * 0.012);
+  });
+}
+
+function scaledGridPlacements(
+  placements: CanvasImageGridPlacement[],
+  scale: number,
+) {
+  return placements.map((placement) => ({
+    ...placement,
+    x: Math.round(placement.x * scale),
+    y: Math.round(placement.y * scale),
+    width: Math.max(1, Math.round(placement.width * scale)),
+    height: Math.max(1, Math.round(placement.height * scale)),
+  }));
+}
+
 export function gridCompositeLayout(
   count: number,
   options: CanvasImageGridCompositeOptions = {},
 ): CanvasImageGridCompositeLayout {
   const safeCount = Math.max(1, Math.round(Number(count) || 1));
   const requestedColumns = Number(options.columns);
-  const columns = Number.isFinite(requestedColumns) && requestedColumns > 0
-    ? Math.min(safeCount, Math.max(1, Math.min(8, Math.round(requestedColumns))))
-    : Math.max(1, Math.ceil(Math.sqrt(safeCount)));
-  const rows = Math.ceil(safeCount / columns);
+  const columns = normalizedGridColumns(safeCount, requestedColumns);
   const requestedCellSize = Number(options.cellSize);
   const cellSize = Number.isFinite(requestedCellSize)
     ? Math.max(256, Math.min(2048, Math.round(requestedCellSize)))
@@ -287,10 +327,8 @@ export function gridCompositeLayout(
       Math.round(Number(options.maxEdge) || CANVAS_IMAGE_OPERATION_MAX_EDGE),
     ),
   );
-  const rawWidth = columns * cellSize + Math.max(0, columns - 1) * gap;
-  const rawHeight = rows * cellSize + Math.max(0, rows - 1) * gap;
-  const scale = Math.min(1, maxEdge / rawWidth, maxEdge / rawHeight);
   const background = String(options.background || '#ffffff').trim() || '#ffffff';
+  const layoutMode: CanvasImageGridLayoutMode = options.layoutMode === 'fixed' ? 'fixed' : 'auto';
   const fit: CanvasImageGridFit = options.fit === 'cover' ? 'cover' : 'contain';
   const cropPosition = GRID_CROP_POSITIONS.includes(options.cropPosition as CanvasImageGridCropPosition)
     ? options.cropPosition as CanvasImageGridCropPosition
@@ -299,6 +337,88 @@ export function gridCompositeLayout(
   const cropOffsets = Array.from({ length: safeCount }, (_, index) =>
     clampCropOffset(options.cropOffsets?.[index], defaultCropOffset),
   );
+  const sourceSizes = Array.from({ length: safeCount }, (_, index) =>
+    normalizeImageSize(options.sourceSizes?.[index] || { width: 1, height: 1 }),
+  );
+
+  let rows = 0;
+  let rawWidth = 0;
+  let rawHeight = 0;
+  let placements: CanvasImageGridPlacement[] = [];
+
+  if (layoutMode === 'fixed') {
+    rows = Math.ceil(safeCount / columns);
+    rawWidth = columns * cellSize + Math.max(0, columns - 1) * gap;
+    rawHeight = rows * cellSize + Math.max(0, rows - 1) * gap;
+    placements = sourceSizes.map((_, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      return {
+        index,
+        row,
+        column,
+        x: column * (cellSize + gap),
+        y: row * (cellSize + gap),
+        width: cellSize,
+        height: cellSize,
+      };
+    });
+  } else if (areNearlyEqualRatios(sourceSizes)) {
+    const ratio = sourceSizes[0].width / sourceSizes[0].height;
+    const cellWidth = Math.max(1, Math.round(cellSize * ratio));
+    rows = Math.ceil(safeCount / columns);
+    rawWidth = columns * cellWidth + Math.max(0, columns - 1) * gap;
+    rawHeight = rows * cellSize + Math.max(0, rows - 1) * gap;
+    placements = sourceSizes.map((_, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      return {
+        index,
+        row,
+        column,
+        x: column * (cellWidth + gap),
+        y: row * (cellSize + gap),
+        width: cellWidth,
+        height: cellSize,
+      };
+    });
+  } else {
+    const rowsData = Array.from({ length: Math.ceil(safeCount / columns) }, (_, row) => {
+      const start = row * columns;
+      return sourceSizes.slice(start, Math.min(safeCount, start + columns));
+    });
+    rows = rowsData.length;
+    const rowWidthsAtTargetHeight = rowsData.map((row) =>
+      row.reduce((total, source) => total + source.width / source.height, 0) * cellSize + Math.max(0, row.length - 1) * gap,
+    );
+    rawWidth = Math.max(cellSize, ...rowWidthsAtTargetHeight);
+    let y = 0;
+    rowsData.forEach((row, rowIndex) => {
+      const ratioTotal = row.reduce((total, source) => total + source.width / source.height, 0);
+      const lastRow = rowIndex === rowsData.length - 1;
+      const rowHeight = lastRow
+        ? cellSize
+        : Math.max(64, (rawWidth - Math.max(0, row.length - 1) * gap) / Math.max(0.001, ratioTotal));
+      let x = 0;
+      row.forEach((source, offset) => {
+        const width = Math.max(1, Math.round(rowHeight * source.width / source.height));
+        placements.push({
+          index: rowIndex * columns + offset,
+          row: rowIndex,
+          column: offset,
+          x,
+          y,
+          width,
+          height: Math.max(1, Math.round(rowHeight)),
+        });
+        x += width + gap;
+      });
+      y += Math.max(1, Math.round(rowHeight)) + (rowIndex < rowsData.length - 1 ? gap : 0);
+    });
+    rawHeight = Math.max(1, y);
+  }
+
+  const scale = Math.min(1, maxEdge / rawWidth, maxEdge / rawHeight);
   return {
     columns,
     rows,
@@ -308,9 +428,12 @@ export function gridCompositeLayout(
     width: Math.max(1, Math.round(rawWidth * scale)),
     height: Math.max(1, Math.round(rawHeight * scale)),
     background,
+    layoutMode,
     fit,
     cropPosition,
     cropOffsets,
+    sourceSizes,
+    placements: scaledGridPlacements(placements, scale),
   };
 }
 
@@ -402,7 +525,7 @@ export async function renderCanvasImageGrid(sourceUrl: string, sourceValue: Imag
   return outputs;
 }
 
-/** Stitch multiple images into a square-ish, non-cropping white grid. */
+/** Stitch multiple images using the same layout geometry shown in the dialog. */
 export async function renderCanvasImageGridComposite(
   sourceUrls: string[],
   options: CanvasImageGridCompositeOptions = {},
@@ -410,7 +533,13 @@ export async function renderCanvasImageGridComposite(
   const urls = sourceUrls.map((url) => String(url || '').trim()).filter(Boolean);
   if (!urls.length) throw new Error('至少需要一张图片才能进行宫格拼接');
   const images = await Promise.all(urls.map((url) => loadImage(url)));
-  const layout = gridCompositeLayout(images.length, options);
+  const layout = gridCompositeLayout(images.length, {
+    ...options,
+    sourceSizes: images.map((image) => ({
+      width: image.naturalWidth || image.width || 1,
+      height: image.naturalHeight || image.height || 1,
+    })),
+  });
   const { canvas, context } = prepareCanvas(layout.width, layout.height);
   if (layout.background !== 'transparent') {
     context.fillStyle = layout.background;
@@ -419,15 +548,18 @@ export async function renderCanvasImageGridComposite(
     context.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  const cellSize = layout.cellSize * layout.scale;
-  const gap = layout.gap * layout.scale;
   images.forEach((image, index) => {
-    const column = index % layout.columns;
-    const row = Math.floor(index / layout.columns);
-    const cellX = column * (cellSize + gap);
-    const cellY = row * (cellSize + gap);
+    const placement = layout.placements[index];
+    if (!placement) return;
     const imageWidth = image.naturalWidth || image.width || 1;
     const imageHeight = image.naturalHeight || image.height || 1;
+    if (layout.layoutMode === 'auto') {
+      context.drawImage(image, placement.x, placement.y, placement.width, placement.height);
+      return;
+    }
+    const cellSize = placement.width;
+    const cellX = placement.x;
+    const cellY = placement.y;
     const imageScale = layout.fit === 'cover'
       ? Math.max(cellSize / imageWidth, cellSize / imageHeight)
       : Math.min(cellSize / imageWidth, cellSize / imageHeight);

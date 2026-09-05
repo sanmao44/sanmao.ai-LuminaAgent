@@ -103,6 +103,7 @@ test("grid composite layout respects the existing 6144px edge limit", () => {
 
 test("grid composite layout accepts explicit columns and visual options", () => {
   const layout = operations.gridCompositeLayout(5, {
+    layoutMode: "fixed",
     columns: 2,
     cellSize: 512,
     gap: 0,
@@ -135,6 +136,68 @@ test("grid composite layout accepts explicit columns and visual options", () => 
       cropPosition: "bottom-right",
     },
   );
+});
+
+test("automatic layout preserves a shared source ratio instead of forcing square cells", () => {
+  const layout = operations.gridCompositeLayout(6, {
+    columns: 3,
+    cellSize: 512,
+    gap: 16,
+    sourceSizes: Array.from({ length: 6 }, () => ({ width: 1600, height: 900 })),
+  });
+
+  assert.equal(layout.layoutMode, "auto");
+  assert.equal(layout.columns, 3);
+  assert.equal(layout.rows, 2);
+  assert.ok(Math.abs(layout.placements[0].width / layout.placements[0].height - 16 / 9) < 0.01);
+  assert.ok(Math.abs(layout.placements[5].width / layout.placements[5].height - 16 / 9) < 0.01);
+  assert.equal(layout.placements[3].y, layout.placements[0].height + layout.gap);
+});
+
+test("automatic mixed-ratio layout keeps placements proportional and leaves the last row un-stretched", () => {
+  const sourceSizes = [
+    { width: 1600, height: 900 },
+    { width: 1000, height: 1000 },
+    { width: 800, height: 1200 },
+    { width: 1200, height: 800 },
+    { width: 900, height: 1600 },
+  ];
+  const layout = operations.gridCompositeLayout(sourceSizes.length, {
+    columns: 3,
+    cellSize: 512,
+    gap: 16,
+    sourceSizes,
+  });
+
+  assert.equal(layout.rows, 2);
+  for (const placement of layout.placements) {
+    const source = sourceSizes[placement.index];
+    assert.ok(Math.abs(placement.width / placement.height - source.width / source.height) < 0.02);
+    assert.ok(placement.x >= 0 && placement.y >= 0);
+    assert.ok(placement.x + placement.width <= layout.width);
+    assert.ok(placement.y + placement.height <= layout.height);
+  }
+  assert.ok(layout.placements[3].height <= layout.placements[0].height);
+  assert.ok(layout.placements[3].x + layout.placements[3].width <= layout.width);
+  assert.ok(layout.placements[4].x + layout.placements[4].width <= layout.width);
+});
+
+test("fixed layout keeps square placements for the legacy crop workflow", () => {
+  const layout = operations.gridCompositeLayout(3, {
+    layoutMode: "fixed",
+    columns: 2,
+    cellSize: 512,
+    gap: 12,
+    sourceSizes: [
+      { width: 1600, height: 900 },
+      { width: 900, height: 1600 },
+      { width: 1000, height: 1000 },
+    ],
+  });
+
+  assert.ok(layout.placements.every((placement) => placement.width === placement.height));
+  assert.equal(layout.placements[2].x, 0);
+  assert.equal(layout.placements[2].y, layout.placements[0].height + layout.gap);
 });
 
 test("grid composite layout keeps an independent crop offset for every image", () => {

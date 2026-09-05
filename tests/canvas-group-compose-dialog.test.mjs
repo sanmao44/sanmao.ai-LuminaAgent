@@ -10,6 +10,11 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const composeStyles = await readFile(
+  new URL("../app/canvas-compose.css", import.meta.url),
+  "utf8",
+);
+const allStyles = `${styles}\n${composeStyles}`;
 
 test("grid compose dialog exposes tactile controls and a live preview", () => {
   assert.match(dialog, /role="dialog"/);
@@ -26,6 +31,14 @@ test("grid compose dialog exposes tactile controls and a live preview", () => {
   assert.match(dialog, /canvas-compose-preview-viewport/);
   assert.match(dialog, /canvas-compose-preview-column/);
   assert.match(dialog, /canvas-compose-settings-column/);
+  assert.match(dialog, /sourceOrderIds: previewSources\.map\(\(source\) => source\.id\)/);
+  assert.match(dialog, /onPreviewSortPointerDown/);
+  assert.match(dialog, /data-compose-preview-source-id/);
+  assert.match(dialog, /dataset\.composePreviewSourceId/);
+  assert.match(dialog, /直接拖动预览中的图片即可调整/);
+  assert.match(dialog, /layoutMode: "auto"/);
+  assert.match(dialog, /canvas-compose-color-text/);
+  assert.match(dialog, /canvas-compose-background-swatch/);
   assert.match(dialog, /renderCanvasImageGridComposite\(previewSourceUrls, renderOptions\)/);
   assert.match(dialog, /拖动每格图片调整裁切区域/);
   assert.match(dialog, /onGridPointerDown/);
@@ -33,25 +46,25 @@ test("grid compose dialog exposes tactile controls and a live preview", () => {
   assert.match(dialog, /与最终出图一致/);
   assert.match(dialog, /previewBusy && previewResult/);
   assert.match(dialog, /aria-live="polite"/);
-  assert.match(dialog, /backgroundPreset\(settings\.background\) === "custom"/);
-  assert.match(dialog, /value === "transparent" \? "transparent"/);
-  assert.match(dialog, /: "#e5e7eb"/);
+  assert.match(dialog, /background === "transparent"/);
+  assert.match(dialog, /normalizeHex/);
 });
 
 test("grid compose dialog styles dropdowns, sliders, segmented choices and mobile layout", () => {
-  assert.match(styles, /\.canvas-compose-select-shell\{position:relative/);
-  assert.match(styles, /\.canvas-compose-range-field input\[type=range\]/);
-  assert.match(styles, /\.canvas-compose-segmented button\.active/);
-  assert.match(styles, /\.canvas-compose-preview-viewport/);
-  assert.match(styles, /\.canvas-compose-preview-result/);
-  assert.match(styles, /\.canvas-compose-preview-hit-cell/);
-  assert.match(styles, /\.canvas-compose-preview-viewport\.is-updating/);
-  assert.match(styles, /overflow:hidden/);
-  assert.match(styles, /\.canvas-compose-select-menu/);
-  assert.match(styles, /\.canvas-compose-fit-row/);
-  assert.match(styles, /\.canvas-compose-dialog-body\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
-  assert.match(styles, /@media\(min-width:721px\) and \(max-height:780px\)/);
-  assert.match(styles, /grid-template-columns:minmax\(0,1\.08fr\) minmax\(300px,\.92fr\)/);
-  assert.match(styles, /\.canvas-compose-preview-column/);
-  assert.match(styles, /@media\(max-width:720px\)\{\.canvas-compose-dialog-head/);
+  assert.match(allStyles, /\.canvas-compose-select-shell/);
+  assert.match(allStyles, /\.canvas-compose-range-field input\[type="range"\]/);
+  assert.match(allStyles, /\.canvas-compose-segmented button\.active/);
+  assert.match(allStyles, /\.canvas-compose-preview-viewport/);
+  assert.match(allStyles, /\.canvas-compose-preview-result/);
+  assert.match(allStyles, /\.canvas-compose-preview-hit-cell/);
+  assert.match(allStyles, /\.canvas-compose-preview-viewport\.is-updating/);
+  assert.match(allStyles, /overflow: hidden/);
+  assert.match(allStyles, /\.canvas-compose-select-menu/);
+  assert.match(allStyles, /\.canvas-compose-dialog-body/);
+  assert.match(allStyles, /grid-template-columns: minmax\(0, 1\.75fr\) minmax\(300px, \.65fr\)/);
+  assert.doesNotMatch(allStyles, /\.canvas-compose-source-strip/);
+  assert.match(allStyles, /\.canvas-compose-preview-cell-tools/);
+  assert.match(allStyles, /\.canvas-compose-background-swatch/);
+  assert.match(allStyles, /height: min\(920px, calc\(100dvh - 24px\)\)/);
+  assert.match(allStyles, /@media \(max-width: 720px\)/);
 });

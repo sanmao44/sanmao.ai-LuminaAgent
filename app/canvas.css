@@ -215,7 +215,7 @@ html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(
 
 /* Group-member controls scale with the card resized by the group handle. */
 .canvas-node{container-type:inline-size}
-.canvas-node-group-remove{box-sizing:border-box;top:clamp(7px,1.8cqw,16px);left:clamp(7px,1.8cqw,16px);height:clamp(24px,7cqw,38px);max-width:calc(100% - 14px);padding:0 clamp(8px,1.7cqw,14px);border-radius:clamp(7px,1.8cqw,12px);font-size:clamp(10px,3cqw,16px);line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.canvas-node-group-remove{box-sizing:border-box;top:clamp(7px,1.8cqw,16px);left:clamp(7px,1.8cqw,16px);height:clamp(30px,8cqw,42px);max-width:calc(100% - 14px);padding:0 clamp(10px,2cqw,16px);border-radius:clamp(8px,2cqw,13px);font-size:clamp(12px,3.3cqw,17px);line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Interaction states stay visible in both SANMAO light and dark themes. */
 .canvas-workspace button,.canvas-workspace select,.canvas-workspace input{transition:border-color .15s,background-color .15s,color .15s,box-shadow .15s,transform .12s}

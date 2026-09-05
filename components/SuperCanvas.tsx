@@ -6546,7 +6546,10 @@ export default function SuperCanvas() {
   const runImageContinuation = useCallback(async (draftInput: CanvasReuseDraft) => {
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind !== "image") return;
-    if (!draft.prompt.trim()) return notify("请输入生成提示词。", "error");
+    const hasTextReference = draft.references.some(
+      (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
+    );
+    if (!draft.prompt.trim() && !hasTextReference) return notify("请输入生成提示词。", "error");
     const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
     if (naturalReferenceReplacement.unresolved.length && draft.references.length) {
       return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
@@ -6937,7 +6940,10 @@ export default function SuperCanvas() {
       await runImageContinuation(draft);
       return;
     }
-    if (!draft.prompt.trim()) return notify("请输入生成提示词。", "error");
+    const hasTextReference = draft.references.some(
+      (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
+    );
+    if (!draft.prompt.trim() && !hasTextReference) return notify("请输入生成提示词。", "error");
     const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
     if (naturalReferenceReplacement.unresolved.length && draft.references.length) {
       return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
@@ -7135,11 +7141,7 @@ export default function SuperCanvas() {
     const source = deckSource(request);
     const generationMode = source.kind;
     const selectedMediaTarget = source.target?.type === "media" ? source.target : null;
-    const selectedMediaReferences = selectedMediaTarget
-      ? incomingReferences(docRef.current, selectedMediaTarget.id)
-      : [];
-    const inPlaceVideoTarget = shouldGenerateVideoInPlace(selectedMediaTarget || undefined, selectedMediaReferences);
-    if (selectedMediaTarget?.data.url && !inPlaceVideoTarget) {
+    if (selectedMediaTarget?.data.url) {
       if (selectedMediaTarget.data.kind === "audio") {
         return notify("音频节点只能作为视频参考输入，不能直接生成新分支。", "error");
       }
@@ -7157,11 +7159,12 @@ export default function SuperCanvas() {
         ),
       );
       if (!draft) return notify("当前节点没有完整生成参数，无法创建新分支。", "error");
+      const requestedPrompt = request?.prompt?.trim();
       await runReuseGeneration(
         request
           ? {
               ...draft,
-              ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+              ...(requestedPrompt ? { prompt: request.prompt } : {}),
               ...(request.params ? { params: clone(request.params) } : {}),
               dirty: true,
             }
@@ -7602,11 +7605,9 @@ export default function SuperCanvas() {
     setGenerationKeys(new Set(generationKeysRef.current));
     let pendingImageId = "";
     try {
-      // Draft and completed media cards both own their next generation. A
-      // completed card is updated in place so a simple retry does not grow a
-      // second branch node; lineage tools (mask/upscale) remain explicit
-      // branch operations below.
-      const pendingId = sourceNode?.id || sourceTarget?.id;
+      // Draft media nodes receive their first result in place. Completed media
+      // nodes are routed above into an explicit continuation/new-branch path.
+      const pendingId = sourceNode?.id || (sourceTarget?.data.url ? undefined : sourceTarget?.id);
       if (pendingId)
         updateDoc((value) => ({
           ...value,
@@ -7620,6 +7621,9 @@ export default function SuperCanvas() {
                     processingStartedAt: Date.now(),
                     statusLabel: kind === "video" ? "视频生成中" : "图片生成中",
                     prompt,
+                    ...(node.data.generation
+                      ? { generation: { ...node.data.generation, prompt } }
+                      : {}),
                   },
                 }
               : node,
@@ -7736,7 +7740,7 @@ export default function SuperCanvas() {
             },
           ),
         );
-        const fillsTarget = Boolean(sourceTarget) || Boolean(pendingImageId);
+        const fillsTarget = Boolean(sourceTarget && !sourceTarget.data.url) || Boolean(pendingImageId);
         const fillId = sourceTarget?.id || pendingImageId;
         const selectedOutputIds = fillsTarget
           ? [fillId, ...outputs.slice(1).map((output) => output.id)]
@@ -7855,7 +7859,7 @@ export default function SuperCanvas() {
       } else {
         const videoParams = effectiveParams as VideoCreationSettings;
         const parent = sourceTarget || sourceNode;
-        const fillsTarget = Boolean(sourceTarget);
+        const fillsTarget = Boolean(sourceTarget && !sourceTarget.data.url);
         const position = parent
           ? {
               x: parent.x + (fillsTarget ? 0 : nodeSize(parent).w + 90),
@@ -8034,10 +8038,11 @@ export default function SuperCanvas() {
   const editorPromptFor = useCallback(
     (node: CanvasNode) => {
       const draft = editorDrafts[node.id];
-      if (draft) return draft.prompt;
+      if (draft?.prompt?.trim()) return draft.prompt;
       if (node.type === "prompt") return String(node.data.agentPrompt || node.data.text || "");
-      if (node.type === "media" && node.data.kind === "audio") return "";
-      return String(node.data.generation?.prompt || node.data.prompt || "");
+      if (node.type === "media" && node.data.kind === "audio") return draft?.prompt || "";
+      const persistedPrompt = String(node.data.generation?.prompt || node.data.prompt || "");
+      return persistedPrompt || draft?.prompt || "";
     },
     [editorDrafts],
   );
@@ -8423,9 +8428,10 @@ export default function SuperCanvas() {
         setReuseDraft((current) => current?.sourceNodeId === currentNode.id ? null : current);
       const draft = editorDrafts[currentNode.id];
       const params = draft?.params ? clone(draft.params) : editorParamsFor(currentNode);
+      const prompt = draft?.prompt?.trim() ? draft.prompt : editorPromptFor(currentNode);
       const generationRequest: CanvasGenerationRequest = {
         nodeId: currentNode.id,
-        prompt: draft?.prompt ?? editorPromptFor(currentNode),
+        prompt,
         ...(params ? { params } : {}),
       };
       if (draft) {
@@ -8437,18 +8443,18 @@ export default function SuperCanvas() {
                   ...item,
                   data: {
                     ...item.data,
-                    ...(item.type === "prompt" ? { text: draft.prompt, agentPrompt: draft.prompt } : { prompt: draft.prompt }),
+                    ...(item.type === "prompt" ? { text: prompt, agentPrompt: prompt } : { prompt }),
                     ...(draft.params ? { params: clone(draft.params) } : {}),
                     ...(item.type === "media" && item.data.generation
                       ? {
                           generation: {
                             ...item.data.generation,
-                            prompt: draft.prompt,
+                            prompt,
                             ...(draft.params ? { params: clone(draft.params) } : {}),
                           },
                         }
                       : {}),
-                    editor: { ...item.data.editor, dirty: false, draftPrompt: draft.prompt, draftParams: draft.params },
+                    editor: { ...item.data.editor, dirty: false, draftPrompt: prompt, draftParams: draft.params },
                   },
                 }
               : item,
@@ -8732,11 +8738,20 @@ export default function SuperCanvas() {
       return false;
     }
     const { group, sources } = sourceResult;
-    const orderedSources = [...sources].sort((left, right) =>
-      settings.order === "group"
-        ? left.groupIndex - right.groupIndex
-        : left.canvasIndex - right.canvasIndex,
-    );
+    const sourceById = new Map(sources.map((source) => [source.id, source]));
+    const customSources = settings.sourceOrderIds?.length
+      ? settings.sourceOrderIds
+          .map((id) => sourceById.get(id))
+          .filter((source): source is CanvasGroupComposeSource => Boolean(source))
+      : [];
+    const customIds = new Set(customSources.map((source) => source.id));
+    const orderedSources = customSources.length
+      ? [...customSources, ...sources.filter((source) => !customIds.has(source.id))]
+      : [...sources].sort((left, right) =>
+          settings.order === "group"
+            ? left.groupIndex - right.groupIndex
+            : left.canvasIndex - right.canvasIndex,
+        );
     const sourceIds = orderedSources.map((source) => source.id);
     const sourceUrls = orderedSources.map((source) => source.url);
     const groupNodeIds = [...group.nodeIds];
@@ -8755,6 +8770,7 @@ export default function SuperCanvas() {
       );
     };
     const renderOptions: CanvasImageGridCompositeOptions = {
+      layoutMode: settings.layoutMode,
       columns: settings.columns,
       cellSize: settings.cellSize,
       gap: settings.gap,
@@ -14874,7 +14890,7 @@ function CanvasNodeEditorPopover({
     : isAgentNode
       ? "Enter 发送 · Shift + Enter 换行"
       : inPlaceVideo
-        ? "引用图片 · 结果写回当前视频节点"
+        ? "引用图片 · 生成新视频"
         : isVideoNode
           ? "右侧生成新视频"
           : node.type === "media" && data.kind === "image" && data.url
@@ -14899,7 +14915,7 @@ function CanvasNodeEditorPopover({
       : isAgentNode
         ? "发送"
         : inPlaceVideo
-          ? "生成到当前节点"
+          ? "生成新视频"
           : node.type === "generator"
             ? (data.kind === "video" ? "生成新视频" : "生成新图")
             : node.type === "media" && data.kind === "image" && data.url
@@ -15350,7 +15366,7 @@ function CanvasNodeEditorPopover({
                   </div>
                 )}
               </div>
-               <button type="button" className="canvas-node-editor-generate" data-tooltip={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+              <button type="button" className="canvas-node-editor-generate" data-tooltip={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "生成新的结果卡片" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
             </div>
             <input ref={imageDockFileRef} hidden type="file" multiple accept={referenceFileAccept} onChange={(event) => { if (event.target.files) onAddReferenceFiles(node.id, [...event.target.files]); event.currentTarget.value = ""; }} />
            </div>
@@ -15464,7 +15480,7 @@ function CanvasNodeEditorPopover({
          </div>}
        </div>
         {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
-          <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
+          <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 生成新视频" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
           <div className="canvas-node-editor-action-buttons">
             {isAgentNode && !promptExpanded && readyOneTakeReferences.length >= 2 && (
               <div className="one-take-duration-control canvas-agent-one-take-control">
@@ -15487,7 +15503,7 @@ function CanvasNodeEditorPopover({
                 />
               </div>
             )}
-            <button type="button" className="canvas-node-editor-generate" title={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+            <button type="button" className="canvas-node-editor-generate" title={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "生成新的结果卡片" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
           </div>
         </div>}
       </div>

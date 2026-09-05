@@ -4,6 +4,7 @@ import './provider-library.css';
 import './agent-upgrades.css';
 import './desktop-readability.css';
 import './canvas.css';
+import './canvas-compose.css';
 import './motion.css';
 import './runtime-service.css';
 import './shadow-tuning.css';

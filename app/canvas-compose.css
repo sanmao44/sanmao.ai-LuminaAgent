@@ -1,0 +1,935 @@
+/* The canvas owns the viewport; only its local panels may scroll. */
+html:has(.canvas-workspace),
+body:has(.canvas-workspace) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+html:has(.canvas-workspace)::-webkit-scrollbar,
+body:has(.canvas-workspace)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.canvas-compose-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--canvas-z-modal);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: clamp(12px, 2.5vw, 32px);
+  background: rgba(8, 12, 24, .62);
+  backdrop-filter: blur(9px);
+}
+
+.canvas-compose-dialog {
+  width: min(1400px, calc(100vw - 28px));
+  height: min(920px, calc(100dvh - 24px));
+  max-height: calc(100dvh - 24px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line-strong));
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: 0 28px 100px rgba(0, 0, 0, .42), 0 0 0 1px rgba(255, 255, 255, .05);
+}
+
+.canvas-compose-dialog-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel));
+}
+
+.canvas-compose-dialog-head > div:first-child {
+  min-width: 0;
+}
+
+.canvas-compose-dialog-head span {
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+
+.canvas-compose-dialog-head h2 {
+  margin: 5px 0 4px;
+  color: var(--text);
+  font-size: 25px;
+  line-height: 1.1;
+}
+
+.canvas-compose-dialog-head small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.canvas-compose-head-actions {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.canvas-compose-head-actions button,
+.canvas-compose-dialog-foot button,
+.canvas-compose-preview-zoom button,
+.canvas-compose-order-presets button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.canvas-compose-reset {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.canvas-compose-reset:hover:not(:disabled),
+.canvas-compose-dialog-head .canvas-compose-close:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.canvas-compose-dialog-head .canvas-compose-close {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.canvas-compose-dialog-body {
+  min-width: 0;
+  min-height: 0;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.75fr) minmax(300px, .65fr);
+  gap: 22px;
+  overflow: hidden !important;
+  padding: 18px 22px;
+}
+
+.canvas-compose-preview-column,
+.canvas-compose-settings-column {
+  min-width: 0;
+  min-height: 0;
+}
+
+.canvas-compose-preview-column {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.canvas-compose-settings-column {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  padding-left: 20px;
+}
+
+.canvas-compose-settings-scroll {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1px 4px 8px 0;
+  scrollbar-width: thin;
+}
+
+.canvas-compose-preview-label,
+.canvas-compose-preview-toolbar,
+.canvas-compose-field-title,
+.canvas-compose-fields label > span:first-child,
+.canvas-compose-choice-field > span:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.canvas-compose-preview-label {
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.canvas-compose-preview-label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent-text);
+}
+
+.canvas-compose-preview-label i {
+  width: 8px;
+  height: 8px;
+  display: block;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent), 0 0 12px color-mix(in srgb, var(--accent) 56%, transparent);
+}
+
+.canvas-compose-preview-label small,
+.canvas-compose-preview-size {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-compose-preview-toolbar {
+  min-width: 0;
+  min-height: 34px;
+}
+
+.canvas-compose-preview-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.canvas-compose-preview-zoom button {
+  min-width: 28px;
+  height: 27px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.canvas-compose-preview-zoom button:last-child {
+  padding-inline: 9px;
+  font-size: 10px;
+}
+
+.canvas-compose-preview-zoom button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.canvas-compose-preview-zoom button:disabled,
+.canvas-compose-dialog button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.canvas-compose-preview-zoom output {
+  min-width: 42px;
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.canvas-compose-preview-viewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+  overflow: hidden;
+  display: flex;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel-3) 88%, var(--accent-soft));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+
+.canvas-compose-preview-viewport.transparent {
+  background: repeating-conic-gradient(color-mix(in srgb, var(--panel-3) 78%, var(--accent-soft)) 0 25%, var(--panel-3) 0 50%) 50% / 18px 18px;
+}
+
+.canvas-compose-preview-scroll {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.canvas-compose-preview-result-shell {
+  position: relative;
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  max-height: 100%;
+  flex: none;
+  line-height: 0;
+  transform-origin: center center;
+}
+
+.canvas-compose-preview-result {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+}
+
+.canvas-compose-preview-hit-area {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.canvas-compose-preview-hit-area.interactive {
+  pointer-events: auto;
+}
+
+.canvas-compose-preview-hit-cell {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.canvas-compose-preview-hit-area.interactive .canvas-compose-preview-hit-cell {
+  cursor: grab;
+  touch-action: none;
+}
+
+.canvas-compose-preview-hit-area.interactive .canvas-compose-preview-hit-cell:hover,
+.canvas-compose-preview-hit-area.interactive .canvas-compose-preview-hit-cell.active {
+  border-color: color-mix(in srgb, var(--accent) 82%, #fff);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 48%, transparent), 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.canvas-compose-preview-hit-cell span {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 900;
+  opacity: .85;
+}
+
+.canvas-compose-preview-cell-number,
+.canvas-compose-preview-cell-name,
+.canvas-compose-preview-cell-tools {
+  position: absolute;
+  z-index: 2;
+}
+
+.canvas-compose-preview-cell-number {
+  left: 8px;
+  top: 8px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.canvas-compose-preview-cell-name {
+  left: 9px;
+  right: 54px;
+  bottom: 9px;
+  max-width: calc(100% - 63px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-compose-preview-cell-tools {
+  right: 7px;
+  bottom: 7px;
+  display: flex;
+  gap: 3px;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity .15s;
+}
+
+.canvas-compose-preview-hit-cell:hover .canvas-compose-preview-cell-tools,
+.canvas-compose-preview-hit-cell.active .canvas-compose-preview-cell-tools {
+  opacity: 1;
+}
+
+.canvas-compose-preview-cell-tools button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, .38);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, .46);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.canvas-compose-preview-cell-tools button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.canvas-compose-preview-cell-tools button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.canvas-compose-preview-hit-area.interactive .canvas-compose-preview-hit-cell span {
+  opacity: 0;
+}
+
+.canvas-compose-preview-hit-area.interactive .canvas-compose-preview-hit-cell:hover span,
+.canvas-compose-preview-hit-area.interactive .canvas-compose-preview-hit-cell.active span {
+  opacity: 1;
+}
+
+.canvas-compose-preview-viewport.is-updating .canvas-compose-preview-result {
+  opacity: .68;
+  filter: saturate(.86);
+}
+
+.canvas-compose-preview-status {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--accent-text);
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.canvas-compose-preview-empty {
+  width: 100%;
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.canvas-compose-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.canvas-compose-summary span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel-2);
+}
+
+.canvas-compose-summary b {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-compose-summary small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.canvas-compose-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.canvas-compose-fields > label,
+.canvas-compose-background-field,
+.canvas-compose-order-panel {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.canvas-compose-fields label > span,
+.canvas-compose-field-title,
+.canvas-compose-choice-field > span:first-child {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.canvas-compose-fields label > span em,
+.canvas-compose-field-title em,
+.canvas-compose-choice-field > span:first-child em {
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.canvas-compose-field-wide {
+  grid-column: 1 / -1;
+}
+
+.canvas-compose-order-panel,
+.canvas-compose-choice-field,
+.canvas-compose-range-field,
+.canvas-compose-background-field {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-2) 82%, transparent);
+}
+
+.canvas-compose-order-presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.canvas-compose-order-presets button,
+.canvas-compose-order-presets span {
+  min-width: 0;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.canvas-compose-order-presets button:hover:not(:disabled),
+.canvas-compose-order-presets button.active,
+.canvas-compose-order-presets span.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.canvas-compose-select-shell {
+  position: relative;
+  display: block !important;
+}
+
+.canvas-compose-fields .select-menu-trigger {
+  width: 100%;
+  min-height: 42px;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, var(--accent));
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.canvas-compose-fields .select-menu-trigger:hover,
+.canvas-compose-fields .select-menu.open .select-menu-trigger {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.canvas-compose-select-menu {
+  min-width: 250px;
+  padding: 6px;
+  border-radius: 12px;
+}
+
+.canvas-compose-range-field > span:first-child {
+  font-size: 11px !important;
+}
+
+.canvas-compose-range-field output {
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.canvas-compose-range-field input[type="range"] {
+  width: 100%;
+  height: 22px;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.canvas-compose-range-field small {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.canvas-compose-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.canvas-compose-segmented button {
+  min-height: 46px;
+  display: grid;
+  gap: 3px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+}
+
+.canvas-compose-segmented button b {
+  color: inherit;
+  font-size: 10px;
+}
+
+.canvas-compose-segmented button small {
+  color: inherit;
+  font-size: 8px;
+}
+
+.canvas-compose-segmented button:hover,
+.canvas-compose-segmented button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.canvas-compose-background-row {
+  display: grid;
+  grid-template-columns: repeat(3, 34px) 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.canvas-compose-background-swatch {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 2px solid var(--line);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.canvas-compose-background-swatch.white { background: #fff; }
+.canvas-compose-background-swatch.black { background: #000; }
+.canvas-compose-background-swatch.transparent { background: repeating-conic-gradient(#d6d8df 0 25%, #fff 0 50%) 50% / 10px 10px; }
+.canvas-compose-background-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+
+.canvas-compose-color {
+  width: 42px;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.canvas-compose-color-text {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+}
+
+.canvas-compose-color-text:focus {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.canvas-compose-hint,
+.canvas-compose-error {
+  margin: 12px 0 0;
+  padding: 10px 11px;
+  border-radius: 10px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.canvas-compose-hint {
+  border: 1px dashed color-mix(in srgb, var(--warning) 42%, var(--line));
+  color: var(--warning);
+}
+
+.canvas-compose-error {
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.canvas-compose-dialog-foot {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 15px 22px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.canvas-compose-dialog-foot > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-compose-dialog-foot > div {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.canvas-compose-dialog-foot button {
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.canvas-compose-dialog-foot button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.canvas-compose-dialog-foot button.primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+@media (max-width: 900px) {
+  .canvas-compose-dialog-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 1.15fr) minmax(250px, .85fr);
+  }
+
+  .canvas-compose-settings-column {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    padding: 14px 0 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .canvas-compose-backdrop {
+    padding: 8px;
+  }
+
+  .canvas-compose-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 17px;
+  }
+
+  .canvas-compose-dialog-head {
+    align-items: flex-start;
+    padding: 16px 15px 13px;
+  }
+
+  .canvas-compose-dialog-head h2 {
+    font-size: 21px;
+  }
+
+  .canvas-compose-dialog-head small {
+    font-size: 9px;
+  }
+
+  .canvas-compose-reset {
+    min-height: 32px;
+    padding-inline: 9px;
+    font-size: 9px;
+  }
+
+  .canvas-compose-dialog-head .canvas-compose-close {
+    width: 32px;
+    height: 32px;
+  }
+
+  .canvas-compose-dialog-body {
+    grid-template-rows: minmax(300px, 1.2fr) minmax(230px, .8fr);
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .canvas-compose-preview-column {
+    grid-template-rows: auto auto minmax(180px, 1fr) auto;
+  }
+
+  .canvas-compose-preview-label small {
+    font-size: 9px;
+  }
+
+  .canvas-compose-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .canvas-compose-summary span {
+    padding: 8px 9px;
+  }
+
+  .canvas-compose-summary b {
+    font-size: 11px;
+  }
+
+  .canvas-compose-fields {
+    gap: 9px;
+  }
+
+  .canvas-compose-dialog-foot {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 11px 13px 13px;
+  }
+
+  .canvas-compose-dialog-foot > span {
+    white-space: normal;
+  }
+
+  .canvas-compose-dialog-foot > div {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .canvas-compose-dialog-head {
+    gap: 8px;
+  }
+
+  .canvas-compose-head-actions {
+    gap: 4px;
+  }
+
+  .canvas-compose-reset {
+    max-width: 74px;
+    overflow: hidden;
+    padding-inline: 7px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .canvas-compose-dialog-body {
+    grid-template-rows: minmax(250px, 1fr) minmax(220px, 1fr);
+    padding: 9px;
+  }
+
+  .canvas-compose-order-presets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .canvas-compose-order-presets span {
+    grid-column: 1 / -1;
+  }
+
+  .canvas-compose-background-row {
+    grid-template-columns: repeat(3, 32px) 38px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .canvas-compose-background-swatch,
+  .canvas-compose-color {
+    width: 32px;
+    height: 32px;
+  }
+
+  .canvas-compose-color {
+    width: 38px;
+  }
+}
+
+@media (max-height: 760px) and (min-width: 721px) {
+  .canvas-compose-dialog-head {
+    padding: 15px 20px 12px;
+  }
+
+  .canvas-compose-dialog-head h2 {
+    font-size: 22px;
+  }
+
+  .canvas-compose-dialog-body {
+    gap: 14px;
+    padding: 12px 16px;
+  }
+
+  .canvas-compose-preview-column {
+    grid-template-rows: auto auto minmax(150px, 1fr) auto;
+    gap: 8px;
+  }
+
+  .canvas-compose-preview-viewport {
+    height: 100%;
+    min-height: 136px;
+    max-height: none;
+  }
+
+  .canvas-compose-dialog-foot {
+    padding: 9px 16px;
+  }
+}

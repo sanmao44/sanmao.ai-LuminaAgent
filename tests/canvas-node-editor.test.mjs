@@ -23,13 +23,16 @@ test("node editor exposes an accessible expand/collapse control", () => {
   assert.match(component, /data-prompt-expanded=\{promptExpanded \? "true" : "false"\}/);
 });
 
-test("image-connected video cards generate back into the current node", () => {
+test("completed media cards always generate a new result branch", () => {
   assert.match(component, /shouldGenerateVideoInPlace/);
-  assert.match(component, /selectedMediaTarget\?\.data\.url && !inPlaceVideoTarget/);
+  assert.match(component, /if \(selectedMediaTarget\?\.data\.url\)/);
+  assert.doesNotMatch(component, /selectedMediaTarget\?\.data\.url && !inPlaceVideoTarget/);
   assert.match(component, /currentVideoIsSource/);
   assert.match(component, /canvasVideoTargetHasImageReference\(docRef\.current, target\)/);
-  assert.match(component, /引用图片 · 结果写回当前视频节点/);
-  assert.match(component, /生成到当前节点/);
+  assert.match(component, /await runReuseGeneration\(/);
+  assert.match(component, /const fillsTarget = Boolean\(sourceTarget && !sourceTarget\.data\.url\)/);
+  assert.match(component, /引用图片 · 生成新视频/);
+  assert.doesNotMatch(component, /结果写回当前视频节点|生成到当前节点/);
 });
 
 test("overlay positioning ignores identical geometry updates", () => {
@@ -51,7 +54,8 @@ test("editor generation forwards its draft without waiting for selection state",
   assert.match(editor, /const currentNode = nodeById\(docRef\.current, node\.id\)/);
   assert.match(editor, /const generationRequest: CanvasGenerationRequest/);
   assert.match(editor, /nodeId: currentNode\.id/);
-  assert.match(editor, /prompt: draft\?\.prompt \?\? editorPromptFor\(currentNode\)/);
+  assert.match(editor, /const prompt = draft\?\.prompt\?\.trim\(\) \? draft\.prompt : editorPromptFor\(currentNode\)/);
+  assert.match(editor, /prompt,\n\s*\.\.\.\(params/);
   assert.match(editor, /runGenerationRef\.current\?\.\(generationRequest\)/);
   assert.doesNotMatch(editor, /setTimeout/);
 
@@ -63,7 +67,8 @@ test("editor generation forwards its draft without waiting for selection state",
   assert.match(generation, /nodeById\(docRef\.current, request\.nodeId\)/);
   assert.match(generation, /const source = deckSource\(request\)/);
   assert.match(generation, /const generationMode = source\.kind/);
-  assert.match(generation, /request\.prompt !== undefined/);
+  assert.match(generation, /const requestedPrompt = request\?\.prompt\?\.trim\(\)/);
+  assert.match(generation, /\.\.\.\(requestedPrompt \? \{ prompt: request\.prompt \} : \{\}\)/);
   assert.match(generation, /if \(!request && reuseDraft\)/);
   assert.doesNotMatch(generation, /if \(mode === "text"\)/);
 });
@@ -309,6 +314,22 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.doesNotMatch(continuation, /sourceGeneratorId/);
   assert.doesNotMatch(continuation, /variantBatchId|variantIndex/);
   assert.doesNotMatch(continuation, /createGenerator\(/);
+});
+
+test("text references can supply the prompt for repeat image and video generation", () => {
+  const continuationStart = component.indexOf("const runImageContinuation = useCallback");
+  const continuationEnd = component.indexOf("const runReuseGeneration = useCallback", continuationStart);
+  const reuseStart = continuationEnd;
+  const reuseEnd = component.indexOf("const runGeneration = useCallback", reuseStart);
+  assert.ok(continuationStart >= 0 && continuationEnd > continuationStart, "image continuation should be present");
+  assert.ok(reuseEnd > reuseStart, "video reuse generation should be present");
+  const continuation = component.slice(continuationStart, continuationEnd);
+  const reuse = component.slice(reuseStart, reuseEnd);
+  [continuation, reuse].forEach((section) => {
+    assert.match(section, /const hasTextReference = draft\.references\.some\(/);
+    assert.match(section, /if \(!draft\.prompt\.trim\(\) && !hasTextReference\)/);
+  });
+  assert.match(component, /const persistedPrompt = String\(node\.data\.generation\?\.prompt \|\| node\.data\.prompt \|\| ""\)/);
 });
 
 test("selected related canvas edges become dashed and animate their flow", () => {

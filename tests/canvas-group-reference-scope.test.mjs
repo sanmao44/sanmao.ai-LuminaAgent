@@ -44,7 +44,8 @@ test("group headers expose an accessible grid compose action", () => {
 
 test("group removal control scales with its card and stays within the card", () => {
   assert.match(styles, /\.canvas-node\{container-type:inline-size\}/);
-  assert.match(styles, /\.canvas-node-group-remove\{[^}]*font-size:clamp\(10px,3cqw,16px\)/);
+  assert.match(styles, /\.canvas-node-group-remove\{[^}]*height:clamp\(30px,8cqw,42px\)/);
+  assert.match(styles, /\.canvas-node-group-remove\{[^}]*font-size:clamp\(12px,3\.3cqw,17px\)/);
   assert.match(styles, /\.canvas-node-group-remove\{[^}]*max-width:calc\(100% - 14px\)/);
   assert.match(styles, /\.canvas-node-group-remove\{[^}]*overflow:hidden/);
 });
