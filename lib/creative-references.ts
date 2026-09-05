@@ -175,7 +175,14 @@ export function replaceNaturalReferenceLabels<T extends CreativeReferenceLike>(v
   ];
   let output = value;
   for (const pattern of patterns) {
-    output = output.replace(pattern, (full, prefix: string, rawNumber: string) => {
+    output = output.replace(pattern, (full, prefix: string, rawNumber: string, offset: number, source: string) => {
+      const after = source.slice(offset + full.length);
+      const before = source.slice(0, offset);
+      const isModelLabel = /image/i.test(prefix) && (
+        /^\.\d/.test(after) ||
+        /\b(?:gpt|openai)\s*[-:]?\s*$/i.test(before)
+      );
+      if (isModelLabel) return full;
       const number = chineseNumber(rawNumber);
       const isVideoLabel = /视频|video/i.test(prefix);
       const index = Number(number) - 1;

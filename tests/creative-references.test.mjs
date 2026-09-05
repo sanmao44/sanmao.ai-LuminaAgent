@@ -82,6 +82,12 @@ test("turns natural image and video labels into real numbered mentions", () => {
   assert.equal(chinese.value, "@1接@2");
 });
 
+test("keeps model names and unresolved natural labels as ordinary prompt text", () => {
+  const result = refs.replaceNaturalReferenceLabels("## GPT Image 2 提示词\nImage 2.0 风格\nImage 4", available);
+  assert.equal(result.value, "## GPT Image 2 提示词\nImage 2.0 风格\nImage 4");
+  assert.deepEqual(result.unresolved, ["Image 4"]);
+});
+
 test("appends text reference content instead of a placeholder", () => {
   const prompt = refs.appendTextReferenceContext("生成视频", available);
   assert.match(prompt, /\[引用文本：脚本\.txt\]/);

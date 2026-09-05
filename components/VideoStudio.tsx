@@ -792,7 +792,6 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (usesAgnesV20 && (!Number.isInteger(agnesFrameRate) || agnesFrameRate < 1 || agnesFrameRate > 60)) return onNotify('Agnes V2.0 帧率必须在 1–60 之间');
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
     const naturalReferenceReplacement = replaceNaturalReferenceLabels(prompt, referenceCandidates);
-    if (naturalReferenceReplacement.unresolved.length && referenceCandidates.length) return onNotify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join('、')}`);
     const referenceSelection = selectCreativeReferences(naturalReferenceReplacement.value, referenceCandidates);
     if (referenceSelection.invalidNumbers.length) return onNotify(`提示词中的引用编号无效：${referenceSelection.invalidNumbers.map((number) => `@${number}`).join('、')}`);
     const selectedReferences = referenceSelection.references;

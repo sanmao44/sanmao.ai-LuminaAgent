@@ -180,7 +180,7 @@ test("expanded editor is centered and remains responsive", () => {
 test("editor surface clips shell corners while floating controls can escape", () => {
   assert.match(component, /className="canvas-node-editor-surface"/);
   assert.match(styles, /\.canvas-node-editor-surface\{[^}]*overflow:hidden[^}]*border-radius:inherit/);
-  assert.match(styles, /\.canvas-node-editor-popover:has\(\.canvas-parameter-drawer\)>\.canvas-node-editor-surface,\s*\.canvas-node-editor-popover:has\(\.reference-mention-menu\)>\.canvas-node-editor-surface\{\s*overflow:visible;?\s*\}/);
+  assert.match(styles, /\.canvas-node-editor-popover:has\(\.canvas-parameter-drawer\)>\.canvas-node-editor-surface,\s*\.canvas-node-editor-popover:has\(\.canvas-node-editor-dock-drawer\)>\.canvas-node-editor-surface,\s*\.canvas-node-editor-popover:has\(\.reference-mention-menu\)>\.canvas-node-editor-surface\{\s*overflow:visible;?\s*\}/);
   assert.match(styles, /\.canvas-node-editor-surface>\.canvas-node-editor-head\{[^}]*border-top-left-radius:inherit[^}]*border-top-right-radius:inherit[^}]*background-clip:padding-box/);
   assert.match(styles, /\.canvas-node-editor-surface>\.canvas-node-editor-actions\{[^}]*border-bottom-left-radius:inherit[^}]*border-bottom-right-radius:inherit[^}]*background-clip:padding-box/);
 });
@@ -233,7 +233,8 @@ test("video variant generators reuse the compact image-variant dock", () => {
 
 test("image parameter dock closes when the pointer lands outside it", () => {
   assert.match(component, /const imageDockParamsRef = useRef<HTMLDivElement \| null>\(null\)/);
-  assert.match(component, /if \(imageDockPanel !== "params"\) return;[\s\S]*?window\.document\.addEventListener\("pointerdown", closeOnOutsidePointer\)/);
+  assert.match(component, /if \(imageDockPanel !== "params"\) return;[\s\S]*?window\.document\.addEventListener\("pointerdown", closeOnOutsidePointer, true\)/);
+  assert.match(component, /window\.document\.removeEventListener\("pointerdown", closeOnOutsidePointer, true\)/);
   assert.match(component, /imageDockPanel === "params" && !imageDockParamsRef\.current\?\.contains\(target\)/);
   assert.match(component, /<div ref=\{imageDockParamsRef\} className="canvas-node-editor-dock-params-wrap">/);
 });
@@ -568,6 +569,7 @@ test("canvas image parameters collapse into a compact one-line collection", () =
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-drawer\{position:absolute;z-index:var\(--canvas-z-node-editor\)[^}]*padding:9px;gap:7px/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-options\.aspect>button\{height:44px/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-options\.count\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\);gap:4px\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-params-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-params \.canvas-node-editor-dock-drawer-body\{\s*overflow:visible;/);
   assert.match(styles, /data-density="compact"\]\{width:min\(500px/);
   assert.match(styles, /data-density="micro"\]\{width:min\(360px/);
   assert.match(styles, /data-density="micro"\]\{width:min\(360px,calc\(100vw - 24px\)\);max-height:min\(400px/);

@@ -2575,6 +2575,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   border-radius:inherit;
 }
 .canvas-node-editor-popover:has(.canvas-parameter-drawer)>.canvas-node-editor-surface,
+.canvas-node-editor-popover:has(.canvas-node-editor-dock-drawer)>.canvas-node-editor-surface,
 .canvas-node-editor-popover:has(.reference-mention-menu)>.canvas-node-editor-surface{
   overflow:visible;
 }
@@ -3138,8 +3139,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   display:none;
 }
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params .canvas-node-editor-dock-drawer-body{
-  overflow:auto;
-  scrollbar-width:thin;
+  overflow:visible;
 }
 @keyframes canvas-dock-params-in{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:none}}
 @media(max-width:720px){

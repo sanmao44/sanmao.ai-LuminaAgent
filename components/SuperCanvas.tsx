@@ -5857,20 +5857,13 @@ export default function SuperCanvas() {
       const commonPrompt = String(generator.data.prompt || "").trim();
       const naturalCommonPrompt = replaceNaturalReferenceLabels(commonPrompt, candidateReferences);
       const naturalRequirements = requirements.map((requirement) => replaceNaturalReferenceLabels(requirement, candidateReferences));
-      const unresolvedReferenceLabels = [
-        ...naturalCommonPrompt.unresolved,
-        ...naturalRequirements.flatMap((result) => result.unresolved),
-      ];
       const selection = selectCreativeReferences(
         [naturalCommonPrompt.value, ...naturalRequirements.map((result) => result.value)].join("\n"),
         candidateReferences,
       );
-      if (unresolvedReferenceLabels.length || selection.invalidNumbers.length) {
+      if (selection.invalidNumbers.length) {
         const invalid = selection.invalidNumbers.map((number) => `@${number}`);
-        const unresolved = Array.from(new Set(unresolvedReferenceLabels));
-        const message = invalid.length
-          ? `引用编号无效：${invalid.join("、")}`
-          : `找不到这些引用素材：${unresolved.join("、")}`;
+        const message = `引用编号无效：${invalid.join("、")}`;
         requested.forEach((index) => {
           updateDoc((value) => updateVariantState(value, index, {
             status: "failed",
@@ -6552,9 +6545,6 @@ export default function SuperCanvas() {
     );
     if (!draft.prompt.trim() && !hasTextReference) return notify("请输入生成提示词。", "error");
     const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
-    if (naturalReferenceReplacement.unresolved.length && draft.references.length) {
-      return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
-    }
     const selection = selectCreativeReferences(naturalReferenceReplacement.value, draft.references);
     if (selection.invalidNumbers.length) {
       return notify(`引用编号无效：${selection.invalidNumbers.map((number) => `@${number}`).join("、")}`, "error");
@@ -6939,9 +6929,6 @@ export default function SuperCanvas() {
     );
     if (!draft.prompt.trim() && !hasTextReference) return notify("请输入生成提示词。", "error");
     const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
-    if (naturalReferenceReplacement.unresolved.length && draft.references.length) {
-      return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
-    }
     const selection = selectCreativeReferences(naturalReferenceReplacement.value, draft.references);
     if (selection.invalidNumbers.length) {
       return notify(`引用编号无效：${selection.invalidNumbers.map((number) => `@${number}`).join("、")}`, "error");
@@ -7217,9 +7204,6 @@ export default function SuperCanvas() {
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const naturalReferenceReplacement = replaceNaturalReferenceLabels(rawPrompt, candidateReferences);
-      if (naturalReferenceReplacement.unresolved.length && candidateReferences.length) {
-        return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
-      }
       const selection = selectCreativeReferences(naturalReferenceReplacement.value, candidateReferences);
       if (selection.invalidNumbers.length) {
         return notify(`引用编号无效：${Array.from(new Set(selection.invalidNumbers)).map((number) => `@${number}`).join("、")}`, "error");
@@ -7545,9 +7529,6 @@ export default function SuperCanvas() {
           : {}),
       })),
     );
-    if (naturalReferenceReplacement.unresolved.length && mentionCandidates.length) {
-      return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join("、")}`, "error");
-    }
     const sourcePrompt = naturalReferenceReplacement.value;
     const explicitMentionNumbers = referenceMentionNumbers(sourcePrompt);
     const invalidMentionNumbers = explicitMentionNumbers.filter((number) => number < 1 || number > mentionCandidates.length);
@@ -15026,8 +15007,8 @@ function CanvasNodeEditorPopover({
       if (target && imageDockParamsRef.current?.contains(target)) return;
       setImageDockPanel(null);
     };
-    window.document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => window.document.removeEventListener("pointerdown", closeOnOutsidePointer);
+    window.document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => window.document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
   }, [imageDockPanel]);
 
 

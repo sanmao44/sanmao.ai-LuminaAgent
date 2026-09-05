@@ -7482,7 +7482,6 @@ export default function Page() {
             ...generateRefs
         ];
         const naturalReferenceReplacement = replaceNaturalReferenceLabels(rawSubmittedPrompt, availableSubmittedRefs);
-        if (naturalReferenceReplacement.unresolved.length && availableSubmittedRefs.length) return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join('、')}`);
         const referenceSelection = selectCreativeReferences(naturalReferenceReplacement.value, availableSubmittedRefs);
         if (referenceSelection.invalidNumbers.length) return notify(`引用编号无效：${referenceSelection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
         const submittedRefs = referenceSelection.references;
@@ -8492,7 +8491,6 @@ export default function Page() {
         const naturalReferenceReplacement = overrideRefs
             ? { value: rawContent, unresolved: [] }
             : replaceNaturalReferenceLabels(rawContent, availableReferences);
-        if (!overrideRefs && naturalReferenceReplacement.unresolved.length && availableReferences.length) return notify(`找不到这些引用素材：${naturalReferenceReplacement.unresolved.join('、')}`);
         const content = naturalReferenceReplacement.value;
         const selection = overrideRefs ? { references: availableReferences, invalidNumbers: [], hasMentions: false } : selectCreativeReferences(content, availableReferences);
         if (selection.invalidNumbers.length) return notify(`引用编号无效：${selection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
