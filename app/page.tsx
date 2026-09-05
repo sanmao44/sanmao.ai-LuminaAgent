@@ -6674,14 +6674,22 @@ export default function Page() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '搜索 API 测试失败');
             const sample = Array.isArray(data.sample) ? data.sample.map((item)=>item.title).filter(Boolean).slice(0, 2).join('、') : '';
-            setWebSearchApiResult(`${webSearchApiProvider === 'anysearch' ? 'AnySearch' : '百度千帆'}搜索可用，返回 ${data.resultCount || 0} 条结果${sample ? `：${sample}` : ''}`);
+            const providerLabel = webSearchApiProvider === 'anysearch' ? 'AnySearch' : '百度千帆';
+            if (!webSearchAnySearchSelected && key) {
+                await saveWebSearchApi(false, {
+                    successMessage: `${providerLabel}搜索可用，测试成功，已自动保存；返回设置后仍会保持连接`,
+                    failurePrefix: `${providerLabel}搜索测试成功，但自动保存失败：`,
+                });
+                return;
+            }
+            setWebSearchApiResult(`${providerLabel}搜索可用，返回 ${data.resultCount || 0} 条结果${sample ? `：${sample}` : ''}`);
         } catch (error) {
             setWebSearchApiResult(error instanceof Error ? error.message : '搜索 API 测试失败');
         } finally{
             setWebSearchApiBusy(false);
         }
     }
-    async function saveWebSearchApi(clear = false) {
+    async function saveWebSearchApi(clear = false, options = {}) {
         if (webSearchAnySearchSelected) {
             setWebSearchApiResult('AnySearch 仅通过 ANYSEARCH_API_KEY 环境变量配置，不在页面保存 Key');
             return;
@@ -6707,9 +6715,12 @@ export default function Page() {
             if (!res.ok) throw new Error(data.error || '保存搜索 API 失败');
             setState(data.state);
             setWebSearchApiKey('');
-            setWebSearchApiResult(clear ? '已清除百度千帆本地配置；若设置了环境变量，仍会继续可用' : '百度千帆 API 已保存；AnySearch 环境变量存在时会优先使用 AnySearch，失败后自动切换百度千帆');
+            setWebSearchApiResult(clear ? '已清除百度千帆本地配置；若设置了环境变量，仍会继续可用' : options.successMessage || '百度千帆 API 已保存；AnySearch 环境变量存在时会优先使用 AnySearch，失败后自动切换百度千帆');
+            return true;
         } catch (error) {
-            setWebSearchApiResult(error instanceof Error ? error.message : '保存搜索 API 失败');
+            const message = error instanceof Error ? error.message : '保存搜索 API 失败';
+            setWebSearchApiResult(`${options.failurePrefix || ''}${message}`);
+            return false;
         } finally{
             setWebSearchApiBusy(false);
         }
@@ -13347,7 +13358,7 @@ export default function Page() {
                                                                         },
                                                                         placeholder: webSearchAnySearchSelected
                                                                             ? webSearchAnySearchKeyConfigured ? '已配置 ANYSEARCH_API_KEY · 页面不显示 Key' : '未配置 Key，将使用匿名免费额度（可选配置 ANYSEARCH_API_KEY）'
-                                                                            : selectedWebSearchConfigured ? `已配置 ${state.settings.webSearchKeyMasked || '••••••••'}，留空保持不变` : '粘贴百度千帆 API Key（或配置 QIANFAN_API_KEY）'
+                                                                        : selectedWebSearchConfigured ? `已配置 ${state.settings.webSearchKeyMasked || '••••••••'}，留空保持不变` : '粘贴百度千帆控制台 API Key（通常以 bce-v3/ 开头）'
                                                                     })
                                                                 ]
                                                             })

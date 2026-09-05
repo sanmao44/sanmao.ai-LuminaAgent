@@ -6,6 +6,9 @@ export type AgentWebDecisionReason =
   | 'explicit-search'
   | 'fact-verification'
   | 'time-sensitive'
+  | 'recommendation'
+  | 'comparison'
+  | 'location-sensitive'
   | 'context-follow-up'
   | 'ordinary-chat';
 
@@ -161,11 +164,14 @@ export function resolveAgentWebMode(value: unknown, legacy?: unknown): AgentWebM
   return legacy === false ? 'off' : 'auto';
 }
 
-const explicitSearchPattern = /(?:联网|上网|搜索|查询|查找|检索|查证|核验|核实|找来源|给出处|官方(?:网站|公告)?|查新闻|搜一下|搜寻).{0,24}|(?:search|look\s*up|check|verify|browse|find\s+sources?)\b/i;
-const questionPattern = /(?:[吗呢么][。.!！?？]*$|[?？]|\b(?:who|what|when|where|which|how|why|is|are|did|does|do|can)\b)/i;
+const explicitSearchPattern = /(?:联网|上网|搜索|查询|查找|检索|查证|核验|核实|找来源|给出处|官方(?:网站|公告)?|查新闻|搜一下|搜寻|找一?个|推荐几个|帮我选|值得买|哪里有).{0,32}|(?:search|look\s*up|check|verify|browse|find|recommend|compare)\b/i;
+const questionPattern = /(?:[吗呢么][。.!！?？]*$|[?？]|\b(?:who|what|when|where|which|how|why|is|are|did|does|do|can)\b|(?:谁|什么|哪个|哪些|哪里|哪家|怎么|如何|多少|几家|值得不值得|好不好|怎么样|有何).{0,20}(?:吗|呢|？|\?|$))/i;
 const timeSensitivePattern = /(?:今天|今日|刚刚|现在|当前|实时|最新|近期|本周|本月|今年|最近|目前|截至|进展|更新|新闻|快讯|突发|天气|温度|价格|报价|股价|汇率|版本|更新日志|排名|比赛|赛程|比分|政策|法规|选举|任命|发布会|上映)/i;
 const verificationPattern = /(?:去世|逝世|死亡|病逝|失踪|辞职|离任|任职|当选|获奖|发布|上映|下架|关闭|宕机|真假|真伪|属实|谣言|假消息|辟谣|是否正确|是否存在|是否还在|还活着|发生了吗|是真的吗|真的假的|对不对|准确吗)/i;
 const externalFactPattern = /(?:人物|公司|机构|组织|品牌|产品|型号|版本|政策|法规|事件|新闻|消息|天气|价格|汇率|职位|职务|总理|总统|CEO|创始人|作者|导演|演员|地点|城市|国家|学校|医院|平台|服务|接口|API|上市|召回|故障)/i;
+const recommendationPattern = /(?:推荐|建议买|值得买|适合我|帮我选|选择哪|哪个更好|哪个好|哪家好|性价比|避坑|排行榜|排名|附近|周边|攻略|路线|行程|住宿|酒店|餐厅|咖啡店|门票|活动|展览|演出|旅游|旅行|购物|购买|订票|best|recommend|where to|worth buying|nearby|itinerary|hotel|restaurant)/i;
+const comparisonPattern = /(?:对比|比较|区别|差异|优缺点|哪个好|哪个更|选哪个|vs\.?|versus|compare|comparison|difference|pros?\s*(?:and|&)\s*cons?)/i;
+const locationSensitivePattern = /(?:附近|周边|本地|当地|在我这里|到哪里|哪里可以|哪个城市|路线|天气|温度|空气质量|交通|门票|酒店|餐厅|咖啡店|活动|展览|演出|旅游|旅行|nearby|local|weather|air quality|traffic|route|hotel|restaurant)/i;
 const contextFollowUpPattern = /(?:^|[\s，。！？])(?:(?:他|她|它|其|这个人|那个人|该人物|该事件|这件事|这个消息|该消息)(?:现在|目前|后来|之后|最近)?(?:怎么样|如何|还在吗|还好吗|是否还在|的情况|的进展)?|(?:后来|之后|现在|目前|最近)(?:怎么样|如何|呢)?|结果呢|进展呢)(?:[\s，。！？]|$)/i;
 const creativeOrArtifactPattern = /(?:生图|画图|绘图|改图|修图|海报|插画|提示词|prompt|代码|编程|typescript|javascript|python|脚本|文件|附件|总结|概括|改写|润色|翻译|摘要|整理成|数学题|公式|推导|证明|教程|步骤|怎么做|如何制作|设计方案)/i;
 const conversationalPattern = /^(?:你好|嗨|哈喽|谢谢|感谢|晚安|早上好|你好吗|你是谁|你叫什么|能帮我吗|可以吗|在吗|有人吗)[。.!！?？]*$/i;
@@ -220,11 +226,17 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   const question = questionPattern.test(text);
   const verification = verificationPattern.test(text);
   const timeSensitive = timeSensitivePattern.test(text) && (question || hasConcreteTopic(text));
+  const recommendation = recommendationPattern.test(text) && hasConcreteTopic(text);
+  const comparison = comparisonPattern.test(text) && hasConcreteTopic(text);
+  const locationSensitive = locationSensitivePattern.test(text) && hasConcreteTopic(text);
   const contextFollowUp = contextFollowUpPattern.test(text) && relevantContextForQuery(text, context).length > 0;
   const factQuestion = question && hasConcreteTopic(text);
 
   if (contextFollowUp) return { shouldSearch: true, reason: 'context-follow-up', query };
   if (verification) return { shouldSearch: true, reason: 'fact-verification', query };
+  if (recommendation) return { shouldSearch: true, reason: 'recommendation', query };
+  if (comparison) return { shouldSearch: true, reason: 'comparison', query };
+  if (locationSensitive) return { shouldSearch: true, reason: 'location-sensitive', query };
   if (timeSensitive) return { shouldSearch: true, reason: 'time-sensitive', query };
   if (factQuestion) return { shouldSearch: true, reason: 'fact-verification', query };
   return { shouldSearch: false, reason: 'ordinary-chat', query };

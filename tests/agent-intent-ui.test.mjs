@@ -20,3 +20,9 @@ test('uses the shared deliverable as the only main Agent image-loading route', (
   assert.ok(page.includes("const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');"));
   assert.equal(page.includes('likelyImageGenerationRequest(requestContent)'), false);
 });
+
+test('automatically persists a Qianfan key after a successful connection test', () => {
+  assert.match(page, /if \(!webSearchAnySearchSelected && key\) \{\s*await saveWebSearchApi\(false, \{/s);
+  assert.ok(page.includes('测试成功，已自动保存'));
+  assert.ok(page.includes('搜索测试成功，但自动保存失败'));
+});

@@ -261,6 +261,7 @@ body:has(.canvas-workspace)::-webkit-scrollbar {
   max-height: none;
   overflow: hidden;
   display: flex;
+  user-select: none;
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
   border-radius: 16px;
   background: color-mix(in srgb, var(--panel-3) 88%, var(--accent-soft));
@@ -311,6 +312,9 @@ body:has(.canvas-workspace)::-webkit-scrollbar {
   max-width: none;
   max-height: none;
   object-fit: fill;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
 }
@@ -654,9 +658,16 @@ body:has(.canvas-workspace)::-webkit-scrollbar {
 }
 
 .canvas-compose-background-row {
-  display: grid;
-  grid-template-columns: repeat(3, 34px) 42px minmax(0, 1fr);
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.canvas-compose-color-palette {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -674,35 +685,50 @@ body:has(.canvas-workspace)::-webkit-scrollbar {
 .canvas-compose-background-swatch.transparent { background: repeating-conic-gradient(#d6d8df 0 25%, #fff 0 50%) 50% / 10px 10px; }
 .canvas-compose-background-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
 
-.canvas-compose-color {
-  width: 42px;
+.canvas-compose-fields .canvas-compose-custom-color {
+  position: relative;
+  min-width: 84px;
   height: 34px;
   box-sizing: border-box;
-  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px 0 5px;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--panel);
   cursor: pointer;
-}
-
-.canvas-compose-color-text {
-  width: 100%;
-  min-width: 0;
-  height: 34px;
-  box-sizing: border-box;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel-2);
-  color: var(--text);
-  font: inherit;
+  color: var(--text-2);
   font-size: 10px;
+  font-weight: 800;
+  overflow: hidden;
 }
 
-.canvas-compose-color-text:focus {
+.canvas-compose-fields .canvas-compose-custom-color:hover,
+.canvas-compose-fields .canvas-compose-custom-color.active {
   border-color: var(--accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.canvas-compose-custom-color-preview {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, #fff);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22);
+}
+
+.canvas-compose-color-picker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .canvas-compose-hint,
@@ -900,18 +926,16 @@ body:has(.canvas-workspace)::-webkit-scrollbar {
   }
 
   .canvas-compose-background-row {
-    grid-template-columns: repeat(3, 32px) 38px minmax(0, 1fr);
     gap: 6px;
   }
 
-  .canvas-compose-background-swatch,
-  .canvas-compose-color {
+  .canvas-compose-background-swatch {
     width: 32px;
     height: 32px;
   }
 
-  .canvas-compose-color {
-    width: 38px;
+  .canvas-compose-fields .canvas-compose-custom-color {
+    height: 32px;
   }
 }
 

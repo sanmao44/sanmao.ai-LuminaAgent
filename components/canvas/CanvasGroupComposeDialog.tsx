@@ -46,6 +46,21 @@ const DEFAULT_SETTINGS: CanvasGroupComposeSettings = {
   cropPosition: "center",
 };
 
+const BACKGROUND_COLORS = [
+  { value: "#f8fafc", label: "雾白" },
+  { value: "#e2e8f0", label: "浅灰" },
+  { value: "#cbd5e1", label: "灰蓝" },
+  { value: "#fecaca", label: "浅红" },
+  { value: "#fed7aa", label: "浅橙" },
+  { value: "#fef08a", label: "浅黄" },
+  { value: "#bbf7d0", label: "浅绿" },
+  { value: "#a5f3fc", label: "浅青" },
+  { value: "#bfdbfe", label: "浅蓝" },
+  { value: "#ddd6fe", label: "浅紫" },
+  { value: "#fbcfe8", label: "浅粉" },
+  { value: "#334155", label: "深灰蓝" },
+];
+
 const CELL_SIZE_MIN = 256;
 const CELL_SIZE_MAX = 2048;
 const MAX_EDGE_MIN = 2048;
@@ -455,6 +470,8 @@ export default function CanvasGroupComposeDialog({
     if (normalized) update("background", normalized);
   };
 
+  const customBackgroundColor = background === "transparent" ? "#ffffff" : background;
+
   const confirm = async () => {
     setBusy(true);
     setError("");
@@ -535,6 +552,7 @@ export default function CanvasGroupComposeDialog({
               className={`canvas-compose-preview-viewport ${background === "transparent" ? "transparent" : ""} ${previewBusy ? "is-updating" : ""}`}
               aria-label={`宫格预览 ${displayedLayout.columns} 列 ${displayedLayout.rows} 行`}
               onWheel={onPreviewWheel}
+              onDragStart={(event) => event.preventDefault()}
             >
               {previewResult ? (
                 <div className={`canvas-compose-preview-scroll ${previewZoom === 1 ? "is-fit" : "is-zoomed"}`} ref={previewScrollRef}>
@@ -549,6 +567,7 @@ export default function CanvasGroupComposeDialog({
                       className="canvas-compose-preview-result"
                       src={previewResult.url}
                       alt="宫格拼接实时预览（与最终出图一致）"
+                      draggable={false}
                     />
                     <div className={`canvas-compose-preview-hit-area ${previewInteractionClass}`} aria-label={showCropHandles ? "拖动每格图片调整裁切区域" : "拖动图片调整顺序"}>
                       {previewSources.map((source, index) => {
@@ -678,11 +697,28 @@ export default function CanvasGroupComposeDialog({
                 <div className="canvas-compose-background-field canvas-compose-field-wide">
                   <span className="canvas-compose-field-title">背景 <em>透明适合继续编辑</em></span>
                   <div className="canvas-compose-background-row">
-                    <button type="button" className={`canvas-compose-background-swatch white ${backgroundPreset(background) === "white" ? "active" : ""}`} onClick={() => update("background", "#ffffff")} aria-label="白色背景" title="白色" />
-                    <button type="button" className={`canvas-compose-background-swatch black ${backgroundPreset(background) === "black" ? "active" : ""}`} onClick={() => update("background", "#000000")} aria-label="黑色背景" title="黑色" />
-                    <button type="button" className={`canvas-compose-background-swatch transparent ${backgroundPreset(background) === "transparent" ? "active" : ""}`} onClick={() => update("background", "transparent")} aria-label="透明背景" title="透明" />
-                    <input className="canvas-compose-color" type="color" value={background === "transparent" ? "#ffffff" : background} onChange={(event) => changeBackground(event.target.value)} aria-label="自定义背景颜色" />
-                    <input className="canvas-compose-color-text" type="text" value={background === "transparent" ? "" : background} placeholder="#ffffff" onChange={(event) => changeBackground(event.target.value)} aria-label="背景颜色十六进制值" />
+                    <div className="canvas-compose-color-palette" role="group" aria-label="背景颜色预设">
+                      <button type="button" className={`canvas-compose-background-swatch white ${backgroundPreset(background) === "white" ? "active" : ""}`} onClick={() => update("background", "#ffffff")} aria-label="白色背景" aria-pressed={backgroundPreset(background) === "white"} title="白色" />
+                      <button type="button" className={`canvas-compose-background-swatch black ${backgroundPreset(background) === "black" ? "active" : ""}`} onClick={() => update("background", "#000000")} aria-label="黑色背景" aria-pressed={backgroundPreset(background) === "black"} title="黑色" />
+                      <button type="button" className={`canvas-compose-background-swatch transparent ${backgroundPreset(background) === "transparent" ? "active" : ""}`} onClick={() => update("background", "transparent")} aria-label="透明背景" aria-pressed={backgroundPreset(background) === "transparent"} title="透明" />
+                      {BACKGROUND_COLORS.map((color) => (
+                        <button
+                          key={color.value}
+                          type="button"
+                          className={`canvas-compose-background-swatch ${background === color.value ? "active" : ""}`}
+                          style={{ backgroundColor: color.value }}
+                          onClick={() => update("background", color.value)}
+                          aria-label={`${color.label}背景`}
+                          aria-pressed={background === color.value}
+                          title={color.label}
+                        />
+                      ))}
+                    </div>
+                    <label className={`canvas-compose-custom-color ${backgroundPreset(background) === "custom" ? "active" : ""}`} title="打开颜色面板选择自定义背景色">
+                      <span className="canvas-compose-custom-color-preview" style={{ backgroundColor: customBackgroundColor }} aria-hidden="true" />
+                      <span>自定义</span>
+                      <input className="canvas-compose-color-picker" type="color" value={customBackgroundColor} onChange={(event) => changeBackground(event.target.value)} aria-label="打开自定义背景颜色面板" />
+                    </label>
                   </div>
                 </div>
               </div>

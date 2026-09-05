@@ -37,7 +37,10 @@ test("grid compose dialog exposes tactile controls and a live preview", () => {
   assert.match(dialog, /dataset\.composePreviewSourceId/);
   assert.match(dialog, /直接拖动预览中的图片即可调整/);
   assert.match(dialog, /layoutMode: "auto"/);
-  assert.match(dialog, /canvas-compose-color-text/);
+  assert.doesNotMatch(dialog, /canvas-compose-color-text/);
+  assert.match(dialog, /canvas-compose-color-palette/);
+  assert.match(dialog, /canvas-compose-custom-color/);
+  assert.match(dialog, /type="color" value=\{customBackgroundColor\}/);
   assert.match(dialog, /canvas-compose-background-swatch/);
   assert.match(dialog, /renderCanvasImageGridComposite\(previewSourceUrls, renderOptions\)/);
   assert.match(dialog, /拖动每格图片调整裁切区域/);
@@ -53,6 +56,8 @@ test("grid compose dialog exposes tactile controls and a live preview", () => {
   assert.match(dialog, /onWheel=\{onPreviewWheel\}/);
   assert.match(dialog, /event\.deltaY < 0/);
   assert.match(dialog, /event\.preventDefault\(\)/);
+  assert.match(dialog, /onDragStart=\{\(event\) => event\.preventDefault\(\)\}/);
+  assert.match(dialog, /draggable=\{false\}/);
   assert.match(dialog, /aria-live="polite"/);
   assert.match(dialog, /background === "transparent"/);
   assert.match(dialog, /normalizeHex/);
@@ -72,7 +77,12 @@ test("grid compose dialog styles dropdowns, sliders, segmented choices and mobil
   assert.match(allStyles, /grid-template-columns: minmax\(0, 1\.75fr\) minmax\(300px, \.65fr\)/);
   assert.doesNotMatch(allStyles, /\.canvas-compose-source-strip/);
   assert.match(allStyles, /\.canvas-compose-preview-cell-tools/);
+  assert.match(allStyles, /-webkit-user-drag: none/);
+  assert.match(allStyles, /pointer-events: none/);
   assert.match(allStyles, /\.canvas-compose-background-swatch/);
+  assert.match(allStyles, /\.canvas-compose-color-palette/);
+  assert.match(allStyles, /\.canvas-compose-custom-color/);
+  assert.match(allStyles, /\.canvas-compose-color-picker/);
   assert.match(allStyles, /height: min\(920px, calc\(100dvh - 24px\)\)/);
   assert.match(allStyles, /@media \(max-width: 720px\)/);
 });

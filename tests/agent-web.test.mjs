@@ -20,7 +20,7 @@ test('migrates legacy web preference and accepts explicit modes', () => {
 });
 
 test('smart mode searches changing facts and explicit source checks only', () => {
-  for (const input of ['今天 AI 行业有什么新闻？', 'OpenAI 最新 API 版本是多少？', '帮我核验这个消息是否属实', '请搜索这个问题的来源']) {
+  for (const input of ['今天 AI 行业有什么新闻？', 'OpenAI 最新 API 版本是多少？', '帮我核验这个消息是否属实', '请搜索这个问题的来源', '推荐北京周末适合去的咖啡店', '帮我比较 ChatGPT 和 Claude 的当前版本']) {
     assert.equal(web.shouldUseAgentWebSearch('auto', input).shouldSearch, true, input);
   }
   for (const input of ['写一段国风海报提示词', '解释这段 TypeScript', '给我总结这段内容', '你好']) {

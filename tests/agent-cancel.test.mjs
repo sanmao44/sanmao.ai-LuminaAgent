@@ -54,7 +54,7 @@ test('each conversation owns an independent request and only the active one is s
 
 test('server cancellation reaches model, search, image, stream, and subprocess transports', () => {
   assert.ok(route.includes("request.signal.addEventListener('abort', abortFromClient"));
-  assert.ok(route.includes('runNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, query, requestController.signal)'));
+  assert.ok(route.includes('runNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, requestController.signal)'));
   assert.ok(route.includes('searchWeb(query, requestController.signal)'));
   assert.ok(route.includes('chatCompletion(agentRuntime.provider, agentRuntime.model.rawId'));
   assert.ok(route.includes('chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId'));
@@ -70,8 +70,8 @@ test('server cancellation reaches model, search, image, stream, and subprocess t
 
 test('cancelled searches do not enter provider fallback or cache a partial response', () => {
   assert.match(nativeSearch, /catch \(error\) \{\r?\n\s+throwIfAborted\(signal\);/);
-  assert.ok(webSearch.includes('const attempts = await Promise.all(queryVariants.map((variant) => searchWithFallback(variant, news, apiConfigs, signal)))'));
-  assert.ok(webSearch.includes('const enriched = await Promise.all(results.slice(0, 3).map((result) => enrichResult(result, signal)))'));
+  assert.ok(webSearch.includes('const attempts = await Promise.all(queries.map((variant) => searchWithFallback(variant, plan, apiConfigs, signal)))'));
+  assert.ok(webSearch.includes('enrichResult(result, signal)'));
   assert.ok(route.includes('if (requestController.signal.aborted) throw requestController.signal.reason || error'));
   assert.ok(route.includes('if (signal?.aborted) return;'));
 });

@@ -31,7 +31,14 @@ export type WebSearchMeta = {
   modelId?: string;
   provider?: string;
   query: string;
+  rawResultCount?: number;
   resultCount: number;
+  status?: string;
+  coverageNote?: string;
+  rounds?: number;
+  warnings?: string[];
+  retryable?: boolean;
+  suggestedAction?: string;
   fallbackFrom?: 'native';
   searchedAt: string;
 };
