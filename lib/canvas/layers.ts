@@ -28,7 +28,6 @@ export const CANVAS_Z_INDEX = {
   nodeEditor: 220,
   assetDrawer: 260,
   portalPopover: 300,
-  agentResult: 320,
   contextMenu: 360,
   expandedEditor: 450,
   modal: 500,

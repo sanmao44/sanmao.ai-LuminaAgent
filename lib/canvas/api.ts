@@ -617,6 +617,7 @@ export async function generateCanvasAgent(
     webMode?: "off" | "auto" | "always";
     references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">>;
     task?: CanvasAgentTask;
+    durationSeconds?: number;
     deliverable?: AgentDeliverable;
     intentReason?: string;
     signal?: AbortSignal;
@@ -651,6 +652,7 @@ export async function generateCanvasAgent(
         messages,
         model: input.model || "auto",
         ...(input.task ? { task: input.task } : {}),
+        ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
         webMode: input.webMode || "off",
         webSearch: input.webMode !== "off",
         references: preparedReferences,

@@ -66,13 +66,19 @@ test("shift-click keeps multi-selection without opening the node editor", () => 
   );
 });
 
-test("grouped card drag is constrained and never auto-detaches", () => {
+test("dragging a grouped card moves only the node while the group bounds follow", () => {
+  const startNodeDrag = component.slice(
+    component.indexOf("const startNodeDrag = useCallback"),
+    component.indexOf("const startGroupDrag = useCallback"),
+  );
+  assert.match(startNodeDrag, /const dragIds = groupId \? \[node\.id\] : ids/);
+
   const moveInteraction = component.slice(
     component.indexOf("const moveInteraction = useCallback"),
     component.indexOf("const finishInteraction = useCallback"),
   );
-  assert.match(moveInteraction, /clampCanvasNodePositionToGroup/);
-  assert.match(moveInteraction, /interaction\.originGroupId && interaction\.originGroupBounds/);
+  assert.match(moveInteraction, /const constrainedPositions = snapResult\.positions/);
+  assert.doesNotMatch(moveInteraction, /clampCanvasNodePositionToGroup/);
 
   const finishInteraction = component.slice(
     component.indexOf("const finishInteraction = useCallback"),
@@ -80,6 +86,14 @@ test("grouped card drag is constrained and never auto-detaches", () => {
   );
   assert.doesNotMatch(finishInteraction, /detachNodesFromGroups/);
   assert.match(finishInteraction, /if \(!interaction\.originGroupId && dropTarget\)/);
+});
+
+test("dragging one grouped card does not raise the group frame above its other members", () => {
+  const groupRender = component.slice(
+    component.indexOf("const groupInteraction ="),
+    component.indexOf("return (", component.indexOf("const groupInteraction =")),
+  );
+  assert.match(groupRender, /group\.nodeIds\.every\(\(id\) => draggingNodeIds\.has\(id\)\)/);
 });
 
 test("group blank areas use an independent group context menu", () => {

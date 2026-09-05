@@ -24,7 +24,6 @@ import {
   arrangeCanvas,
   arrangeCanvasGroup,
   CANVAS_GROUP_INSETS,
-  clampCanvasNodePositionToGroup,
   canvasEdgeEndpoints,
   canConnect,
   clone,
@@ -91,6 +90,7 @@ import {
   loadCanvasRuntime,
   asDataUrl,
   uploadCanvasAsset,
+  type CanvasAgentTask,
 } from "@/lib/canvas/api";
 import {
   canvasProjectFromDocument,
@@ -149,11 +149,10 @@ import { recordCanvasImages } from "@/lib/creation/history";
 import type { LocalEditAnnotation } from "@/lib/local-edit";
 import {
   requestPromptOptimization,
-  runOneTakeVideoPrompt,
   runReversePrompt,
 } from "@/lib/creation/agent";
 import {
-  nearestOneTakeVideoDuration,
+  buildOneTakeVideoRequest,
   normalizeOneTakeDuration,
   ONE_TAKE_DEFAULT_DURATION,
 } from "@/lib/one-take-video-duration";
@@ -514,6 +513,9 @@ type CanvasGenerationRequest = {
   nodeId?: string;
   prompt?: string;
   params?: CanvasGenerationParams;
+  agentTask?: CanvasAgentTask;
+  durationSeconds?: number;
+  referenceNodeIds?: string[];
 };
 type Interaction =
   | {
@@ -537,7 +539,6 @@ type Interaction =
       shiftKey: boolean;
       doubleClick?: boolean;
       originGroupId?: string;
-      originGroupBounds?: { x: number; y: number; w: number; h: number };
       copyOnMove?: boolean;
       preserveInputConnections?: boolean;
     }
@@ -551,7 +552,6 @@ type Interaction =
       changed: boolean;
       snapGuides: CanvasSnapGuide[];
       originGroupId?: string;
-      originGroupBounds?: { x: number; y: number; w: number; h: number };
       copyOnMove?: boolean;
       preserveInputConnections?: boolean;
     }
@@ -1938,6 +1938,7 @@ function duplicateNodes(
   nodeIds: string[],
   offset = { x: 48, y: 48 },
   preserveInputConnections = false,
+  preserveGroupConnections = false,
 ) {
   const selected = document.nodes.filter((node) => nodeIds.includes(node.id));
   const selectedIds = new Set(selected.map((node) => node.id));
@@ -1960,6 +1961,18 @@ function duplicateNodes(
           .filter(Boolean),
       };
     });
+  const selectedEntityIds = preserveGroupConnections
+    ? new Set([
+        ...selectedIds,
+        ...document.groups
+          .filter(
+            (group) =>
+              group.nodeIds.length >= 2 &&
+              group.nodeIds.every((id) => selectedIds.has(id)),
+          )
+          .map((group) => group.id),
+      ])
+    : selectedIds;
   const copies = selected.map((node) => {
     const copy = remapNodeReferences(clone(node), idMap);
     return {
@@ -1972,16 +1985,26 @@ function duplicateNodes(
         : { groupId: undefined }),
     };
   });
-  const edgeCandidates = preserveInputConnections
-    ? document.edges.filter((edge) => selectedIds.has(edge.target))
-    : document.edges.filter(
-        (edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target),
-      );
+  const edgeCandidates = preserveGroupConnections
+    ? document.edges.filter(
+        (edge) =>
+          selectedEntityIds.has(edge.source) ||
+          selectedEntityIds.has(edge.target) ||
+          edge.sourceNodeIds?.some((id) => selectedIds.has(id)),
+      )
+    : preserveInputConnections
+      ? document.edges.filter((edge) => selectedIds.has(edge.target))
+      : document.edges.filter(
+          (edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target),
+        );
   const edges = edgeCandidates.map((edge) => ({
     ...clone(edge),
     id: uid("edge"),
     source: groupMap.get(edge.source) || idMap.get(edge.source) || edge.source,
     target: groupMap.get(edge.target) || idMap.get(edge.target) || edge.target,
+    ...(edge.sourceNodeIds
+      ? { sourceNodeIds: edge.sourceNodeIds.map((id) => idMap.get(id) || id) }
+      : {}),
   }));
   return {
     nodes: copies,
@@ -2208,8 +2231,6 @@ export default function SuperCanvas() {
   const [textLightboxNodeId, setTextLightboxNodeId] = useState<string | null>(
     null,
   );
-  const [agentResult, setAgentResult] = useState<{ value: string; title: string; durationSeconds?: number } | null>(null);
-  const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<"assets" | "activity" | "settings" | "shortcuts" | null>(null);
   const [topbarCollapsed, setTopbarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -2285,8 +2306,6 @@ export default function SuperCanvas() {
     setContextMenu(null);
     setProjectMenuOpen(false);
     setReusePreview(null);
-    setAgentResult(null);
-    setOneTakeDurationOpen(false);
     setLightbox(null);
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
@@ -3363,9 +3382,6 @@ export default function SuperCanvas() {
                 ? [...selectedIds]
                 : [node.id];
       const dragIds = groupId ? [node.id] : ids;
-      const originGroupBounds = groupId
-        ? groupBounds(docRef.current, groupId)
-        : undefined;
       const positions = Object.fromEntries(
         dragIds.map((id) => {
           const item = nodeById(docRef.current, id);
@@ -3384,7 +3400,6 @@ export default function SuperCanvas() {
         shiftKey: event.shiftKey,
         doubleClick,
         originGroupId: groupId,
-        originGroupBounds,
         copyOnMove: event.altKey,
         preserveInputConnections: event.altKey && event.shiftKey,
       };
@@ -3607,7 +3622,6 @@ export default function SuperCanvas() {
             changed: false,
             snapGuides: [],
             originGroupId: press.originGroupId,
-            originGroupBounds: press.originGroupBounds,
             copyOnMove: press.copyOnMove,
             preserveInputConnections: press.preserveInputConnections,
           };
@@ -3649,7 +3663,6 @@ export default function SuperCanvas() {
             interaction.positions = positions;
             interaction.copyOnMove = false;
             interaction.originGroupId = undefined;
-            interaction.originGroupBounds = undefined;
             setDoc({
               ...docRef.current,
               nodes: [...docRef.current.nodes, ...copies.nodes],
@@ -3701,34 +3714,8 @@ export default function SuperCanvas() {
                 },
               )
             : { positions: proposedPositions, guides: [] as CanvasSnapGuide[] };
-          const constrainedPositions = interaction.originGroupId && interaction.originGroupBounds
-            ? Object.fromEntries(
-                interaction.nodeIds.map((id) => {
-                  const node = nodeById(docRef.current, id);
-                  const position = snapResult.positions[id];
-                  return [
-                    id,
-                    node && position
-                      ? clampCanvasNodePositionToGroup(
-                          position,
-                          nodeSize(node),
-                          interaction.originGroupBounds!,
-                        )
-                      : position,
-                  ];
-                }),
-              )
-            : snapResult.positions;
-          const constrained = interaction.nodeIds.some((id) => {
-            const before = snapResult.positions[id];
-            const after = constrainedPositions[id];
-            return Boolean(
-              before &&
-                after &&
-                (before.x !== after.x || before.y !== after.y),
-            );
-          });
-          interaction.snapGuides = constrained ? [] : snapResult.guides;
+          const constrainedPositions = snapResult.positions;
+          interaction.snapGuides = snapResult.guides;
           setSnapGuides(interaction.snapGuides);
           updateDoc((value) => ({
             ...value,
@@ -4593,6 +4580,7 @@ export default function SuperCanvas() {
       [...selectedIds],
       { x: 48, y: 48 },
       true,
+      Boolean(selectedGroupId),
     );
     commit((value) => ({
       ...value,
@@ -4604,8 +4592,12 @@ export default function SuperCanvas() {
     setSelectedGroupId(
       copies.groupIds.length === 1 ? copies.groupIds[0] : null,
     );
-    notify(`已复制 ${copies.nodes.length} 个对象，并保留输入连线`);
-  }, [commit, notify, selectedIds]);
+    notify(
+      selectedGroupId
+        ? `已复制 ${copies.nodes.length} 个对象，并保留组内及边界连线`
+        : `已复制 ${copies.nodes.length} 个对象，并保留输入连线`,
+    );
+  }, [commit, notify, selectedGroupId, selectedIds]);
   const makeGroup = useCallback(() => {
     if (selectedIds.size < 2)
       return notify("请先选择至少 2 个对象再成组。", "error");
@@ -7194,6 +7186,14 @@ export default function SuperCanvas() {
       const incoming = source.node
         ? incomingContext(docRef.current, source.node.id)
         : selectedNodes;
+      const explicitReferenceNodes = request?.referenceNodeIds
+        ? request.referenceNodeIds
+          .map((id) => incoming.find((node) => node.id === id))
+          .filter((node): node is CanvasNode => Boolean(node) && isCanvasReadyImageSource(node))
+        : null;
+      if (request?.agentTask === "one_take_video_prompt" && (!explicitReferenceNodes || explicitReferenceNodes.length < 2)) {
+        return notify("一镜到底至少需要两张已完成的图片节点。", "error");
+      }
       const candidateNodes = mentionCandidates.length ? mentionCandidates : incoming;
       const candidateReferences = candidateNodes
         .filter((node) => node.id !== source.node?.id && isCanvasMentionableNode(node))
@@ -7208,12 +7208,14 @@ export default function SuperCanvas() {
         return notify(`引用编号无效：${Array.from(new Set(selection.invalidNumbers)).map((number) => `@${number}`).join("、")}`, "error");
       }
       const selectedReferenceIds = new Set(selection.references.map((reference) => reference.nodeId || reference.id));
-      const referenceNodes = selection.hasMentions
-        ? candidateNodes.filter((node) => selectedReferenceIds.has(node.id))
-        : incoming.filter(
-            (node) => (isCanvasReferenceableNode(node) && (node.data.kind === "image" || node.data.kind === "video"))
-              || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim())),
-          );
+      const referenceNodes = explicitReferenceNodes
+        ? explicitReferenceNodes
+        : selection.hasMentions
+          ? candidateNodes.filter((node) => selectedReferenceIds.has(node.id))
+          : incoming.filter(
+              (node) => (isCanvasReferenceableNode(node) && (node.data.kind === "image" || node.data.kind === "video"))
+                || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim())),
+            );
       const prompt = naturalReferenceReplacement.value;
       generationKeysRef.current.add(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
@@ -7328,9 +7330,10 @@ export default function SuperCanvas() {
           messages: agentMessages,
           model: effectiveSettings.model,
           webMode: effectiveSettings.webMode,
-          task: inferCanvasAgentTask(prompt, agentReferenceNodes.some((node) => node.data.kind === "image")),
-          deliverable: intentDecision.deliverable,
-          intentReason: intentDecision.reason,
+          task: request?.agentTask || inferCanvasAgentTask(prompt, agentReferenceNodes.some((node) => node.data.kind === "image")),
+          ...(request?.durationSeconds !== undefined ? { durationSeconds: request.durationSeconds } : {}),
+          deliverable: request?.agentTask === "one_take_video_prompt" ? "TEXT" : intentDecision.deliverable,
+          intentReason: request?.agentTask === "one_take_video_prompt" ? "一镜到底只需要返回可复制的视频 Prompt" : intentDecision.reason,
           references: agentReferenceNodes.map((node) => node.type === "prompt"
             ? { id: `node-ref:${node.id}`, nodeId: node.id, kind: "text" as const, name: String(node.data.name || node.data.role || "文本上下文"), text: String(node.data.text || node.data.agentResponse || "") }
             : { id: `node-ref:${node.id}`, nodeId: node.id, kind: node.data.kind as "image" | "video", name: String(node.data.name || (node.data.kind === "video" ? "参考视频" : "参考图")), url: String(node.data.url || "") }),
@@ -7370,8 +7373,11 @@ export default function SuperCanvas() {
           resolved.model?.displayName ||
           effectiveSettings.model;
         const imageSettings = readSharedCreationSettings("image", runtime);
-        const responseDeliverable = response.deliverable || intentDecision.deliverable;
-        const localAllowsImages = intentDecision.deliverable === "IMAGE" || intentDecision.deliverable === "BOTH";
+        const expectedDeliverable = request?.agentTask === "one_take_video_prompt"
+          ? "TEXT"
+          : intentDecision.deliverable;
+        const responseDeliverable = response.deliverable || expectedDeliverable;
+        const localAllowsImages = expectedDeliverable === "IMAGE" || expectedDeliverable === "BOTH";
         const serverAllowsImages = responseDeliverable === "IMAGE" || responseDeliverable === "BOTH";
         const acceptedImages = localAllowsImages && serverAllowsImages
           ? response.images || []
@@ -9419,10 +9425,6 @@ export default function SuperCanvas() {
           setReusePreview(null);
           return;
         }
-        if (agentResult) {
-          setAgentResult(null);
-          return;
-        }
         if (lightbox) {
           setLightbox(null);
           return;
@@ -9530,7 +9532,6 @@ export default function SuperCanvas() {
     redo,
     runGeneration,
     activePanel,
-    agentResult,
     assetCollectionPickerNodeId,
     connectionNodePicker,
     connectionTargetId,
@@ -9713,40 +9714,31 @@ export default function SuperCanvas() {
     }
     notify(inPlaceVideo ? "提示词已写入当前视频节点，请点击生成" : "提示词已复制到画布编辑器，原节点保持不变");
   }, [notify, openImageEditor, openReuseDraft, updateEditorPrompt]);
-  const runOneTakeFromSelection = useCallback(async (durationSeconds = ONE_TAKE_DEFAULT_DURATION) => {
-    const source = selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image");
-    if (source.length < 2) return notify("一镜到底至少需要两张图片节点。", "error");
-    const model = runtime?.settings.agentModelId || undefined;
-    const duration = normalizeOneTakeDuration(durationSeconds);
-    try {
-      const value = await runOneTakeVideoPrompt(source.map((node) => ({ url: String(node.data.url), name: String(node.data.name || "参考图") })), model, duration);
-      setAgentResult({ value, title: "一镜到底提示词", durationSeconds: duration });
-      addLog("Agent 已生成一镜到底提示词");
-    } catch (error) { notify(error instanceof Error ? error.message : "一镜到底生成失败", "error"); }
-  }, [addLog, notify, runtime?.settings.agentModelId, selectedNodes]);
-  const writeAgentResultToVideo = useCallback(() => {
-    if (!agentResult?.value) return;
-    const currentParams = normalizeCreationSettings("video", drafts.video.params, runtime);
-    const resolvedModel = resolveAvailableCreationModel(currentParams, runtime);
-    const provider = runtime?.providers.find((item) => item.id === resolvedModel.model?.providerId);
-    const limits = getVideoModelLimits(resolvedModel.model || undefined, provider);
-    const requested = agentResult.durationSeconds === undefined
-      ? currentParams.duration
-      : normalizeOneTakeDuration(agentResult.durationSeconds);
-    const duration = nearestOneTakeVideoDuration(requested, limits);
-    const nextParams = { ...currentParams, duration };
-    setDrafts((current) => ({
-      ...current,
-      video: { ...current.video, prompt: agentResult.value, params: nextParams },
-    }));
-    writeSharedCreationSettings(nextParams);
-    setMode("video");
-    if (duration !== requested) {
-      notify(`当前视频模型不支持 ${requested} 秒，已调整为 ${duration} 秒；Prompt 仍保留 ${requested} 秒`, "ok");
-    } else {
-      notify(`一镜到底提示词已写入视频生成面板（${duration} 秒）`);
-    }
-  }, [agentResult, drafts.video.params, notify, runtime]);
+  const runOneTakeForAgentNode = useCallback(
+    (node: CanvasNode, durationSeconds = ONE_TAKE_DEFAULT_DURATION) => {
+      if (node.type !== "prompt") return;
+      const currentNode = nodeById(docRef.current, node.id) || node;
+      const references = incomingReferences(docRef.current, currentNode.id)
+        .filter(isCanvasReadyImageSource);
+      if (references.length < 2) {
+        notify("一镜到底至少需要两张已完成的图片节点。", "error");
+        return;
+      }
+      const duration = normalizeOneTakeDuration(durationSeconds);
+      setSelectedIds(new Set([currentNode.id]));
+      setSelectedGroupId(null);
+      setMode("text");
+      setExpandedEditorId(null);
+      void runGenerationRef.current?.({
+        nodeId: currentNode.id,
+        prompt: buildOneTakeVideoRequest(duration),
+        agentTask: "one_take_video_prompt",
+        durationSeconds: duration,
+        referenceNodeIds: references.map((reference) => reference.id),
+      });
+    },
+    [notify],
+  );
   const createViewerTextNode = useCallback((node: CanvasNode, value: string) => {
     const draft = createPrompt({ x: node.x + nodeSize(node).w + 90, y: node.y });
     const textNode = { ...draft, data: { ...draft.data, text: value, agentPrompt: value, role: "结果文本" } };
@@ -10563,7 +10555,7 @@ export default function SuperCanvas() {
           id: "duplicate-group",
           icon: "duplicate",
           label: "复制组",
-          title: "复制整个对象组并保留组内连线",
+          title: "复制整个对象组并保留组内及边界连线",
           onClick: duplicateSelection,
         },
         {
@@ -10594,14 +10586,6 @@ export default function SuperCanvas() {
               title: "将组内可用图片拼接为一张新图",
               disabled: groupImages.length < 2 || Boolean(composingGroupId),
               onClick: () => openComposeDialog(group.id),
-            },
-            {
-              id: "one-take-group",
-              icon: "one-take",
-              label: "一镜到底",
-              title: "按组内图片生成一镜到底 Prompt",
-              disabled: groupImages.length < 2,
-              onClick: () => setOneTakeDurationOpen(true),
             },
             {
               id: "download-group",
@@ -10929,19 +10913,6 @@ export default function SuperCanvas() {
       <button type="button" onClick={makeGroup}>
         ⌘ 成组
       </button>
-      {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
-        <div className="one-take-duration-control">
-          <button type="button" onClick={() => setOneTakeDurationOpen(true)}>🎬 一镜到底</button>
-          <OneTakeDurationPicker
-            open={oneTakeDurationOpen}
-            onConfirm={(duration) => {
-              setOneTakeDurationOpen(false);
-              void runOneTakeFromSelection(duration);
-            }}
-            onCancel={() => setOneTakeDurationOpen(false)}
-          />
-        </div>
-      )}
       {selectedImageDownloads.length >= 2 && (
         <button
           type="button"
@@ -11463,6 +11434,8 @@ export default function SuperCanvas() {
                 const composing = composingGroupId === group.id;
                 const groupInteraction =
                   selectedGroupId === group.id &&
+                  group.nodeIds.length > 0 &&
+                  group.nodeIds.every((id) => draggingNodeIds.has(id)) &&
                   draggingNodeIds.size > 0 &&
                   (cursorTask === "dragging" || cursorTask === "resizing");
                 return (
@@ -11592,6 +11565,7 @@ export default function SuperCanvas() {
                   expanded={expandedEditorId === node.id}
                   onToggleEditor={toggleEditor}
                   onGenerate={runEditorGeneration}
+                  onOneTake={runOneTakeForAgentNode}
                   onReferenceReorder={reorderReference}
                   onReferenceRemove={removeNodeReference}
                   onReferenceDrop={addNodeReference}
@@ -11655,6 +11629,7 @@ export default function SuperCanvas() {
               }
               onToggleEditor={toggleEditor}
               onGenerate={runEditorGeneration}
+              onOneTake={runOneTakeForAgentNode}
               onEditorPromptChange={updateEditorPrompt}
               onEditorParamsChange={updateEditorParams}
               onVideoInputModeChange={lockVideoInputMode}
@@ -11847,18 +11822,6 @@ export default function SuperCanvas() {
                         ))}
                       </div>
                     )}
-                  </div>
-                ) : action.id === "one-take-group" ? (
-                  <div className="one-take-duration-control" key={action.id}>
-                    {button}
-                    <OneTakeDurationPicker
-                      open={oneTakeDurationOpen}
-                      onConfirm={(duration) => {
-                        setOneTakeDurationOpen(false);
-                        void runOneTakeFromSelection(duration);
-                      }}
-                      onCancel={() => setOneTakeDurationOpen(false)}
-                    />
                   </div>
                 ) : (
                   button
@@ -12588,17 +12551,6 @@ export default function SuperCanvas() {
         />
       )}
       {activePanel === "shortcuts" && <CanvasShortcutsPanel onClose={() => setActivePanel(null)} />}
-      {agentResult && (
-        <div className="canvas-agent-result-float">
-          <header><b>{agentResult.title}</b><button type="button" onClick={() => setAgentResult(null)}>×</button></header>
-          <p>{agentResult.value}</p>
-          <footer>
-            <button type="button" onClick={writeAgentResultToVideo}>写入视频面板</button>
-            <button type="button" onClick={() => { const draft = createPrompt({ x: document.camera.x + 120, y: document.camera.y + 120 }); const node = { ...draft, data: { ...draft.data, text: agentResult.value, agentPrompt: agentResult.value, role: agentResult.title } }; commit((current) => ({ ...current, nodes: [...current.nodes, node] })); setAgentResult(null); notify("已创建新的文本节点"); }}>创建文本节点</button>
-            <button type="button" onClick={() => navigator.clipboard?.writeText(agentResult.value)}>复制</button>
-          </footer>
-        </div>
-      )}
       {notice && (
         <div
           className={`canvas-toast ${notice.kind === "error" ? "error" : ""}`}
@@ -14139,6 +14091,7 @@ type CanvasNodeEditorPopoverProps = {
   onLocalEditRemove?: () => void;
   onToggleEditor: (node: CanvasNode) => void;
   onGenerate: (node: CanvasNode) => void;
+  onOneTake: (node: CanvasNode, durationSeconds: number) => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
   onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
   onVideoInputModeChange: (node: CanvasNode) => void;
@@ -14820,6 +14773,7 @@ function CanvasNodeEditorPopover({
   onLocalEditRemove,
   onToggleEditor,
   onGenerate,
+  onOneTake,
   onEditorPromptChange,
   onEditorParamsChange,
   onVideoInputModeChange,
@@ -14851,6 +14805,7 @@ function CanvasNodeEditorPopover({
   const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
@@ -14867,6 +14822,7 @@ function CanvasNodeEditorPopover({
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
   const editorReferences = incomingReferences(document, node.id);
+  const readyOneTakeReferences = editorReferences.filter(isCanvasReadyImageSource);
   const inPlaceVideo = canvasVideoTargetHasImageReference(document, node);
   const branchReferences = branchDraft?.references || [];
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
@@ -14975,6 +14931,7 @@ function CanvasNodeEditorPopover({
 
   useEffect(() => {
     setPromptExpanded(false);
+    setOneTakeDurationOpen(false);
   }, [node.id]);
 
   useLayoutEffect(() => {
@@ -15508,7 +15465,30 @@ function CanvasNodeEditorPopover({
        </div>
         {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
           <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 结果写回当前视频节点" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
-          <button type="button" className="canvas-node-editor-generate" title={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+          <div className="canvas-node-editor-action-buttons">
+            {isAgentNode && !promptExpanded && readyOneTakeReferences.length >= 2 && (
+              <div className="one-take-duration-control canvas-agent-one-take-control">
+                <button
+                  type="button"
+                  className="canvas-node-editor-one-take"
+                  disabled={pending}
+                  onClick={() => setOneTakeDurationOpen(true)}
+                >
+                  🎬 一镜到底
+                </button>
+                <OneTakeDurationPicker
+                  open={oneTakeDurationOpen}
+                  busy={pending}
+                  onConfirm={(duration) => {
+                    setOneTakeDurationOpen(false);
+                    onOneTake(node, duration);
+                  }}
+                  onCancel={() => setOneTakeDurationOpen(false)}
+                />
+              </div>
+            )}
+            <button type="button" className="canvas-node-editor-generate" title={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "视频结果将写回当前节点" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+          </div>
         </div>}
       </div>
     </div>
@@ -15572,6 +15552,7 @@ function CanvasNodeCard({
   expanded,
   onToggleEditor,
   onGenerate,
+  onOneTake,
   onReferenceReorder,
   onReferenceRemove,
   onReferenceDrop,
@@ -15617,6 +15598,7 @@ function CanvasNodeCard({
   expanded: boolean;
   onToggleEditor: (node: CanvasNode) => void;
   onGenerate: (node: CanvasNode) => void;
+  onOneTake: (node: CanvasNode, durationSeconds: number) => void;
   onReferenceReorder: (ownerId: string, draggedId: string, targetId: string) => void;
   onReferenceRemove: (ownerId: string, sourceId: string) => void;
   onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
@@ -16414,6 +16396,7 @@ const MemoizedCanvasNodeCard = memo(
     previous.editorPrompt === next.editorPrompt &&
     previous.editorParams === next.editorParams &&
     previous.expanded === next.expanded &&
+    previous.onOneTake === next.onOneTake &&
     previous.editing === next.editing,
 );
 

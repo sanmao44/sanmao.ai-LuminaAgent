@@ -256,12 +256,38 @@ test("Agent generation keeps the node model when image references are present", 
 
 test("Agent nodes share deliverable routing, throttle streaming paint, and reject unexpected images", () => {
   assert.match(component, /classifyAgentDeliverable\(prompt/);
-  assert.match(component, /deliverable: intentDecision\.deliverable/);
-  assert.match(component, /intentReason: intentDecision\.reason/);
+  assert.match(component, /deliverable: request\?\.agentTask === "one_take_video_prompt" \? "TEXT" : intentDecision\.deliverable/);
+  assert.match(component, /intentReason: request\?\.agentTask === "one_take_video_prompt"/);
   assert.match(component, /window\.requestAnimationFrame\(flushStreamedText\)/);
-  assert.match(component, /const localAllowsImages = intentDecision\.deliverable === "IMAGE" \|\| intentDecision\.deliverable === "BOTH"/);
+  assert.match(component, /const expectedDeliverable = request\?\.agentTask === "one_take_video_prompt"/);
+  assert.match(component, /const localAllowsImages = expectedDeliverable === "IMAGE" \|\| expectedDeliverable === "BOTH"/);
   assert.match(component, /const serverAllowsImages = responseDeliverable === "IMAGE" \|\| responseDeliverable === "BOTH"/);
   assert.match(component, /非预期图片，已按文字交付规则忽略/);
+});
+
+test("Agent editor exposes one-take only for two completed connected images", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  const editorEnd = component.indexOf("function CanvasMaskSummary", editorStart);
+  assert.ok(editorStart >= 0 && editorEnd > editorStart, "Agent editor should be present");
+  const editor = component.slice(editorStart, editorEnd);
+  assert.match(editor, /const readyOneTakeReferences = editorReferences\.filter\(isCanvasReadyImageSource\)/);
+  assert.match(editor, /isAgentNode && !promptExpanded && readyOneTakeReferences\.length >= 2/);
+  assert.match(editor, /onOneTake\(node, duration\)/);
+  assert.match(editor, /OneTakeDurationPicker/);
+});
+
+test("one-take Agent requests preserve connected image order and stream back as a reply", () => {
+  const generationStart = component.indexOf("const runGeneration = useCallback");
+  const generationEnd = component.indexOf("runGenerationRef.current = runGeneration", generationStart);
+  const generation = component.slice(generationStart, generationEnd);
+  assert.match(component, /incomingReferences\(docRef\.current, currentNode\.id\)\s*\.filter\(isCanvasReadyImageSource\)/);
+  assert.match(component, /referenceNodeIds: references\.map\(\(reference\) => reference\.id\)/);
+  assert.match(generation, /request\?\.referenceNodeIds/);
+  assert.match(generation, /request\.referenceNodeIds\s*\.map\(\(id\) => incoming\.find\(\(node\) => node\.id === id\)\)/);
+  assert.match(generation, /durationSeconds: request\.durationSeconds/);
+  assert.match(generation, /text: streamedText/);
+  assert.match(generation, /agentResponse: streamedText/);
+  assert.match(generation, /role: "Agent 回复"/);
 });
 
 test("image continuation uses the ordinary image API and keeps lineage on image nodes", () => {

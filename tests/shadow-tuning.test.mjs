@@ -14,7 +14,7 @@ test('shadow tuning is loaded after the shared surfaces', () => {
 });
 
 test('floating canvas and app surfaces use the restrained shadow tokens', () => {
-  assert.match(tuningCss, /\.canvas-topbar-main,[\s\S]*\.canvas-agent-result-float,[\s\S]*box-shadow:var\(--shadow-float\)/);
+  assert.match(tuningCss, /\.canvas-topbar-main,[\s\S]*\.canvas-hint,[\s\S]*box-shadow:var\(--shadow-float\)/);
   assert.match(tuningCss, /\.dropdown-menu,[\s\S]*\.select-menu-popover,[\s\S]*box-shadow:var\(--shadow-popover\)/);
   assert.match(tuningCss, /\.model-picker-dialog,[\s\S]*\.video-prompt-dialog-inner,[\s\S]*box-shadow:var\(--shadow-modal\)/);
   assert.match(tuningCss, /\.agent-web-mode-menu,[\s\S]*\.generate-mention-menu,[\s\S]*box-shadow:var\(--shadow-popover\)/);

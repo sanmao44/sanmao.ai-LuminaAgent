@@ -468,6 +468,24 @@ test('canvas agent forwards explicit reverse-prompt tasks', async () => {
   }
 });
 
+test('canvas agent forwards one-take task duration in the request payload', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ ok: true, message: '已完成' });
+  }, () => api.generateCanvasAgent({
+    messages: [{ role: 'user', content: '请按顺序输出视频 Prompt' }],
+    model: 'provider-a-chat-model',
+    task: 'one_take_video_prompt',
+    durationSeconds: 27,
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(request.input, '/api/agent');
+  assert.equal(payload.task, 'one_take_video_prompt');
+  assert.equal(payload.durationSeconds, 27);
+});
+
 test('canvas agent task inference only applies image-backed prompt work', () => {
   assert.equal(api.inferCanvasAgentTask('反推图片提示词', true), 'reverse_prompt');
   assert.equal(api.inferCanvasAgentTask('反推图片提示词', false), undefined);

@@ -44,7 +44,12 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /className=\{`canvas-context-menu\$\{className/);
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
-  assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*\)/);
+  assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*Boolean\(selectedGroupId\),\s*\)/);
+  assert.match(component, /preserveGroupConnections = false/);
+  assert.match(component, /selectedEntityIds = preserveGroupConnections/);
+  assert.match(component, /edge\.sourceNodeIds\?\.some\(\(id\) => selectedIds\.has\(id\)\)/);
+  assert.match(component, /sourceNodeIds: edge\.sourceNodeIds\.map\(\(id\) => idMap\.get\(id\) \|\| id\)/);
+  assert.match(component, /保留组内及边界连线/);
   assert.match(contextMenu, /label: "复制图片"/);
   assert.match(contextMenu, /label: "图片编辑"/);
   assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
@@ -99,7 +104,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(groupQuickActions, /id: "duplicate-group"[\s\S]*?label: "复制组"/);
   assert.match(groupQuickActions, /label: "组内整理"/);
   assert.match(groupQuickActions, /label: "宫格拼接"/);
-  assert.match(groupQuickActions, /label: "一镜到底"/);
+  assert.doesNotMatch(groupQuickActions, /一镜到底/);
   assert.match(groupQuickActions, /label: "批量下载"/);
   assert.match(groupQuickActions, /label: "聚焦"/);
   assert.match(groupQuickActions, /label: "解组"/);
@@ -152,6 +157,8 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-x:hidden[^}]*overflow-y:auto/);
   assert.match(styles, /\.canvas-context-menu-body\{[^}]*scrollbar-gutter:stable/);
   assert.match(styles, /max-height:min\(560px,calc\(100dvh - 16px\)\)/);
+  assert.match(styles, /\.canvas-group-arrange-menu\{[^}]*box-sizing:border-box[^}]*overflow-x:hidden/);
+  assert.match(styles, /\.canvas-group-arrange-menu button\{[^}]*min-width:0[^}]*box-sizing:border-box/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
   const nodeMenuStart = component.indexOf("function CanvasNodeContextMenu");
