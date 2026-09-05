@@ -1125,7 +1125,14 @@ function updateCanvasVideoModeAuto(document: CanvasDocument, targetId: string, a
     ...document,
     nodes: document.nodes.map((node) =>
       node.id === targetId && (node.type === "media" || node.type === "generator") && node.data.kind === "video"
-        ? { ...node, data: { ...node.data, videoInputModeAuto: automatic } }
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              videoInputModeAuto: automatic,
+              videoInputModeLocked: !automatic,
+            },
+          }
         : node,
     ),
   };
@@ -5432,16 +5439,11 @@ export default function SuperCanvas() {
       }
       const source = deckSource();
       if (source.node) {
-        const currentParams = source.node.data.params;
-        const lockVideoMode = source.node.data.kind === "video" &&
-          settings.kind === "video" &&
-          currentParams && typeof currentParams === "object" &&
-          "inputMode" in currentParams && currentParams.inputMode !== settings.inputMode;
         updateDoc((valueDoc) => ({
           ...valueDoc,
           nodes: valueDoc.nodes.map((node) =>
             node.id === source.node!.id
-              ? { ...node, data: { ...node.data, params: clone(settings), ...(lockVideoMode ? { videoInputModeAuto: false } : {}) } }
+              ? { ...node, data: { ...node.data, params: clone(settings) } }
               : node,
           ),
         }));
@@ -5481,8 +5483,6 @@ export default function SuperCanvas() {
           settings.kind === "video" &&
           canvasVideoTargetHasImageReference(docRef.current, target)
         ) {
-          const lockVideoMode = target.data.params && typeof target.data.params === "object" &&
-            "inputMode" in target.data.params && target.data.params.inputMode !== settings.inputMode;
           updateDoc((valueDoc) => ({
             ...valueDoc,
             nodes: valueDoc.nodes.map((node) =>
@@ -5492,7 +5492,6 @@ export default function SuperCanvas() {
                     data: {
                       ...node.data,
                       params: clone(settings),
-                      ...(lockVideoMode ? { videoInputModeAuto: false } : {}),
                       ...(node.data.generation
                         ? {
                             generation: {
@@ -8214,9 +8213,6 @@ export default function SuperCanvas() {
                 data: {
                   ...item.data,
                   params: clone(settings),
-                  ...(node.data.kind === "video" && settings.kind === "video" && node.data.params && typeof node.data.params === "object" && "inputMode" in node.data.params && node.data.params.inputMode !== settings.inputMode
-                    ? { videoInputModeAuto: false }
-                    : {}),
                   generation: item.data.generation
                     ? { ...item.data.generation, params: clone(settings) }
                     : item.data.generation,

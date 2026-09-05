@@ -139,6 +139,41 @@ test('hydrates legacy video media params from generation params', () => {
   assert.equal(legacy.data.generation.params.inputMode, 'frames');
   assert.equal(legacy.data.videoInputModeAuto, true);
 
+  const legacyAccidentalLock = model.normalizeDocument({
+    nodes: [{
+      id: 'legacy-accidental-lock',
+      type: 'media',
+      x: 0,
+      y: 0,
+      data: {
+        kind: 'video',
+        url: '/legacy-video.mp4',
+        videoInputModeAuto: false,
+        params: { inputMode: 'reference' },
+      },
+    }],
+  }).nodes[0];
+  assert.equal(legacyAccidentalLock.data.videoInputModeAuto, true);
+  assert.notEqual(legacyAccidentalLock.data.videoInputModeLocked, true);
+
+  const explicitManualLock = model.normalizeDocument({
+    nodes: [{
+      id: 'explicit-manual-lock',
+      type: 'media',
+      x: 0,
+      y: 0,
+      data: {
+        kind: 'video',
+        url: '/manual-video.mp4',
+        videoInputModeAuto: false,
+        videoInputModeLocked: true,
+        params: { inputMode: 'frames' },
+      },
+    }],
+  }).nodes[0];
+  assert.equal(explicitManualLock.data.videoInputModeAuto, false);
+  assert.equal(explicitManualLock.data.videoInputModeLocked, true);
+
   const created = model.createMedia('video', '/created-video.mp4', '创建的视频', { x: 0, y: 0 }, {
     generation: {
       kind: 'video',

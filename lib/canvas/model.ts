@@ -164,6 +164,14 @@ function nativeMediaRatio(data: CanvasNodeData) {
   return width && height ? width / height : null;
 }
 
+function normalizeVideoInputModeState(data: CanvasNodeData) {
+  // Older builds could persist auto=false when any unrelated parameter changed.
+  // Only retain that state when the newer explicit-lock marker is present.
+  if (data.videoInputModeAuto === false && data.videoInputModeLocked !== true)
+    data.videoInputModeAuto = true;
+  if (typeof data.videoInputModeAuto !== "boolean") data.videoInputModeAuto = true;
+}
+
 function normalizeNode(value: unknown): CanvasNode | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<CanvasNode> & { data?: unknown };
@@ -229,8 +237,7 @@ function normalizeNode(value: unknown): CanvasNode | null {
   }
   if (type === "generator") {
     const kind = mediaKind(data.kind || "image");
-    if (kind === "video" && typeof data.videoInputModeAuto !== "boolean")
-      data.videoInputModeAuto = true;
+    if (kind === "video") normalizeVideoInputModeState(data);
     data.params =
       kind === "image"
         ? normalizeCreationSettings("image", data.params)
@@ -273,8 +280,8 @@ function normalizeNode(value: unknown): CanvasNode | null {
         }));
     }
   }
-  if (type === "media" && data.kind === "video" && typeof data.videoInputModeAuto !== "boolean")
-    data.videoInputModeAuto = true;
+  if (type === "media" && data.kind === "video")
+    normalizeVideoInputModeState(data);
   if (type === "media" && data.generation) {
     const kind = mediaKind(data.generation.kind || data.kind);
     data.generation = kind === "audio"

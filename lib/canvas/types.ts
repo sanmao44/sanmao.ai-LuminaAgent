@@ -145,6 +145,8 @@ export type CanvasNodeData = {
   params?: CanvasNodeParams;
   /** Video nodes automatically derive their input mode from connected images until locked. */
   videoInputModeAuto?: boolean;
+  /** Distinguishes an explicit manual lock from legacy auto-mode state. */
+  videoInputModeLocked?: boolean;
   assetId?: string;
   sourceAssetId?: string;
   /** MIME type of an imported media asset, kept for reliable audio handling. */
