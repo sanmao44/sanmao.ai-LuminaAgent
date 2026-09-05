@@ -37,6 +37,8 @@ test("group headers expose an accessible grid compose action", () => {
   assert.match(component, /operation: "grid-compose"/);
   assert.match(component, /sourceNodeIds: sourceIds/);
   assert.match(component, /kind: "lineage"/);
+  assert.match(component, /isCanvasGridComposeLineageEdge/);
+  assert.match(component, /!isCanvasGridComposeLineageEdge\(document, edge\)/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose:disabled/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose:hover/);

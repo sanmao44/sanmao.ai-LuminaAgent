@@ -1134,6 +1134,52 @@ test('projects member edges to group boundaries without changing persisted edges
   });
 });
 
+test('keeps grid-compose provenance while hiding its lineage edges', () => {
+  const empty = model.normalizeDocument(null);
+  const source = model.createMedia('image', '/grid-source.png', '宫格来源图', { x: 0, y: 0 });
+  const result = model.createMedia('image', '/grid-result.png', '宫格结果图', { x: 760, y: 0 }, {
+    imageOperation: {
+      operation: 'grid-compose',
+      sourceNodeIds: [source.id],
+      inputWidth: 1024,
+      inputHeight: 1024,
+      outputWidth: 1024,
+      outputHeight: 1024,
+    },
+    generation: {
+      kind: 'image',
+      prompt: '宫格拼接',
+      params: {},
+      referenceIds: [source.id],
+    },
+  });
+  const regularResult = model.createMedia('image', '/regular-result.png', '普通结果图', { x: 760, y: 500 });
+  const gridLineage = { id: 'grid-lineage', source: source.id, target: result.id, kind: 'lineage' };
+  const regularLineage = { id: 'regular-lineage', source: source.id, target: regularResult.id, kind: 'lineage' };
+  const document = { ...empty, nodes: [source, result, regularResult], edges: [gridLineage, regularLineage] };
+
+  assert.equal(model.isCanvasGridComposeLineageEdge(document, gridLineage), true);
+  assert.equal(model.isCanvasGridComposeLineageEdge(document, regularLineage), false);
+  assert.equal(model.isCanvasEdgeVisible(document, gridLineage), false);
+  assert.equal(model.isCanvasEdgeVisible(document, regularLineage), true);
+  assert.deepEqual(result.data.imageOperation.sourceNodeIds, [source.id]);
+  assert.deepEqual(result.data.generation.referenceIds, [source.id]);
+
+  const group = model.createGroup({ ...document, edges: [] }, [source.id, regularResult.id], '测试组');
+  const ungrouped = model.ungroup({ ...group, edges: [gridLineage] }, group.groups[0].id);
+  assert.equal(model.isCanvasEdgeVisible(ungrouped, gridLineage), false);
+  assert.deepEqual(ungrouped.nodes.find((node) => node.id === result.id)?.data.imageOperation?.sourceNodeIds, [source.id]);
+
+  const legacyResult = model.createMedia('image', '/legacy-grid-result.png', '旧宫格结果图', { x: 760, y: 900 }, {
+    role: '宫格拼接结果',
+    statusLabel: '本地宫格拼接结果',
+  });
+  const legacyLineage = { id: 'legacy-grid-lineage', source: source.id, target: legacyResult.id, kind: 'lineage' };
+  const legacyDocument = { ...empty, nodes: [source, legacyResult], edges: [legacyLineage] };
+  assert.equal(model.isCanvasGridComposeLineageEdge(legacyDocument, legacyLineage), true);
+  assert.equal(model.isCanvasEdgeVisible(legacyDocument, legacyLineage), false);
+});
+
 test('only arranges a group when members overlap during creation or move-in', () => {
   const empty = model.normalizeDocument(null);
   const overlappingFirst = model.createMedia('image', '/overlap-first.png', '重叠一', { x: 0, y: 0 });

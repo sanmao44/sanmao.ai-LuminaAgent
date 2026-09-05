@@ -50,6 +50,7 @@ import {
   incomingContext,
   incomingReferences,
   isCanvasEdgeVisible,
+  isCanvasGridComposeLineageEdge,
   normalizeVariantRequirements,
   mediaCardSizeForRatio,
   upscaleCardSizeForRatio,
@@ -10286,9 +10287,9 @@ export default function SuperCanvas() {
         const targetVisible =
           visibleCanvasNodeIds.has(edge.target) ||
           canvasGroupIdSet.has(edge.target);
-        return sourceVisible && targetVisible;
+        return sourceVisible && targetVisible && !isCanvasGridComposeLineageEdge(document, edge);
       }),
-    [document.edges, canvasGroupIdSet, visibleCanvasNodeIds],
+    [document.edges, document.nodes, canvasGroupIdSet, visibleCanvasNodeIds],
   );
   // The flow/dash animation is the main paint cost at scale. Keep it only when
   // the user is at rest (no drag/pan/marquee/resize/connect and not zooming);

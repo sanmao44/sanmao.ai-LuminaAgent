@@ -948,11 +948,28 @@ export function canvasEdgeEndpoints(
   };
 }
 
+/** Grid-compose lineage is retained as provenance but is not a visible canvas edge. */
+export function isCanvasGridComposeLineageEdge(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  if (edge.kind !== "lineage") return false;
+  const target = nodeById(document, edge.target);
+  return Boolean(
+    target && (
+      target.data.imageOperation?.operation === "grid-compose" ||
+      target.data.role === "宫格拼接结果" ||
+      target.data.statusLabel === "本地宫格拼接结果"
+    ),
+  );
+}
+
 /** Internal member edges collapse into the group and should not be painted. */
 export function isCanvasEdgeVisible(
   document: CanvasDocument,
   edge: CanvasEdge,
 ) {
+  if (isCanvasGridComposeLineageEdge(document, edge)) return false;
   const endpoints = canvasEdgeEndpoints(document, edge);
   if (endpoints.source === endpoints.target) return false;
   return Boolean(
