@@ -1,0 +1,284 @@
+/*
+ * Floating surfaces should add separation, not a second gray surface.
+ * Keep one restrained shadow language across the app, with a deliberately
+ * lighter light-theme treatment where large black blurs are most visible.
+ */
+:root,
+html[data-theme="light"] {
+  --shadow-color:#1f212c;
+  --shadow:0 14px 34px rgba(31,33,44,.08);
+  --shadow-soft:0 5px 16px rgba(31,33,44,.05);
+  --shadow-float:0 12px 30px rgba(31,33,44,.08);
+  --shadow-popover:0 10px 24px rgba(31,33,44,.075);
+  --shadow-modal:0 20px 56px rgba(31,33,44,.14);
+  --shadow-control:0 4px 10px rgba(31,33,44,.065);
+  --agent-composer-shadow:0 12px 28px rgba(40,46,72,.09);
+}
+
+html[data-theme="dark"] {
+  --shadow-color:#000;
+  --shadow:0 18px 48px rgba(0,0,0,.28);
+  --shadow-soft:0 8px 24px rgba(0,0,0,.2);
+  --shadow-float:0 16px 40px rgba(0,0,0,.25);
+  --shadow-popover:0 12px 28px rgba(0,0,0,.22);
+  --shadow-modal:0 24px 64px rgba(0,0,0,.3);
+  --shadow-control:0 5px 14px rgba(0,0,0,.2);
+  --agent-composer-shadow:0 18px 46px rgba(0,0,0,.3);
+}
+
+/* Shared floating surfaces. Borders and focus rings continue to carry the
+   crisp state indication; the outer shadow only provides a small lift. */
+.dropdown-menu,
+.more-menu,
+.reference-mention-menu,
+  .settings-provider-menu,
+  .agent-web-mode-menu,
+  .agent-mention-menu,
+  .generate-mention-menu,
+  .dropdown-menu-floating,
+  .model-picker-panel,
+.one-take-duration-popover,
+.upscale-live-target,
+.agent-web-tooltip,
+.agent-quick-button[data-tooltip]::after,
+.conversation-nav-popover,
+.select-menu-popover,
+.angle-model-menu,
+.canvas-project-popover,
+.canvas-context-menu,
+.canvas-mention-menu,
+.canvas-node-mention-menu,
+.canvas-connection-picker,
+.canvas-selection-layout-tooltip::after {
+  box-shadow:var(--shadow-popover);
+}
+
+.viewer,
+.compare-viewer,
+.edit-drawer,
+.confirm-dialog,
+.toast,
+.chat-batch-dialog,
+.selection-push,
+.canvas-access-card,
+.log-detail-panel,
+.editor-modal,
+  .share-preview-modal,
+  .reference-preview,
+  .mask-editor,
+  .local-edit-workbench,
+  .model-picker-quick-panel,
+.model-picker-dialog,
+.support-modal,
+.update-modal,
+.angle-result-shell,
+.video-media-dialog-inner,
+.video-task-dialog-inner,
+.video-prompt-dialog-inner,
+.outpaint-editor,
+.local-editor-workspace,
+.crop-source-frame,
+.outpaint-workspace,
+.canvas-asset-target-dialog,
+.canvas-image-editor-workbench {
+  box-shadow:var(--shadow-modal);
+}
+
+.canvas-topbar-main,
+.canvas-hint,
+.canvas-selection-toolbar,
+.canvas-deck,
+.canvas-minimap,
+.canvas-toast,
+.canvas-lightbox,
+.canvas-workbench,
+.canvas-asset-drawer,
+.canvas-asset-preview-modal,
+.canvas-side-panel,
+.canvas-agent-result-float,
+.canvas-text-lightbox,
+.canvas-text-selection-toolbar,
+.canvas-file-drop-hint,
+.canvas-node-editor-popover,
+.canvas-node-quick-toolbar,
+  .canvas-node-editor-dock-popover,
+  .canvas-selection-layout-toolbar,
+  .angle-preview-pane,
+  .settings-section-nav,
+  .models-page .model-toolbar.surface,
+  .models-page .model-group,
+  .models-page .model-group.expanded,
+  .models-page .model-card,
+  .models-page .model-card:hover,
+  .agent-image-loading-card,
+  .generation-task-group,
+  .canvas-generator-help-popover,
+  .model-page-scroll-nav,
+.update-notice,
+.update-progress-tray,
+.history-page:not(.logs-page) .history-toolbar,
+.video-reference-dock,
+.motion-compat-notice {
+  box-shadow:var(--shadow-float);
+}
+
+.canvas-topbar-main {
+  box-shadow:var(--shadow-soft);
+}
+
+.canvas-asset-drawer-collapsed,
+.canvas-global-asset-card:hover,
+.canvas-task-log-card:hover,
+.canvas-task-log-card.selected,
+.models-page .default-models.surface {
+  box-shadow:var(--shadow-soft);
+}
+
+/* The compact rail controls are small enough that a broad blur reads as a
+   halo. Keep their lift close to the component and quiet in light mode. */
+.brand-mark,
+.topbar-brand-mark,
+.canvas-logo-mark,
+.support-rail-button,
+.canvas-brand-chevron,
+.canvas-run-button,
+.canvas-group-compose,
+.video-primary-button,
+  .video-submit,
+  .canvas-audio-panel-upload,
+  .send-button,
+.support-copy-button,
+.support-modal-logo,
+.canvas-asset-new-collection-form button,
+.canvas-image-editor-save {
+  box-shadow:var(--shadow-control);
+}
+
+.reference-thumb button,
+.reference-thumb button.reference-remove,
+.canvas-node-group-remove,
+.canvas-minimap-direction,
+.canvas-minimap-restore,
+.local-edit-move-cancel,
+.local-edit-annotation-toolbar,
+.local-edit-annotation-popover {
+  box-shadow:var(--shadow-control);
+}
+
+/* Keep selected/hovered canvas nodes legible without stacking a large accent
+   glow on top of the shared surface shadow. */
+.canvas-node:hover {
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--node-effective) 10%,transparent),var(--shadow-soft);
+}
+.canvas-node.selected {
+  box-shadow:0 0 0 6px color-mix(in srgb,var(--node-effective) 13%,transparent),0 0 18px color-mix(in srgb,var(--node-effective) 12%,transparent),var(--shadow-float);
+}
+.canvas-group.selected {
+  box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 11%,transparent),0 0 18px color-mix(in srgb,var(--accent) 11%,transparent);
+}
+
+/* The light canvas needs a little more group definition, not a black halo.
+   A translucent accent wash and a quiet outline keep the boundary readable
+   against the dotted background without competing with its child cards. */
+html[data-theme="light"] .canvas-group {
+  border-color:color-mix(in srgb,var(--accent) 40%,var(--line-strong));
+  background:color-mix(in srgb,var(--accent-soft) 32%,var(--panel));
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 7%,transparent),var(--shadow-soft);
+}
+html[data-theme="light"] .canvas-group:hover {
+  border-color:color-mix(in srgb,var(--accent) 52%,var(--line-strong));
+}
+html[data-theme="light"] .canvas-group.selected {
+  border-color:color-mix(in srgb,var(--accent) 86%,var(--line-strong));
+  background:color-mix(in srgb,var(--accent-soft) 52%,var(--panel));
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 14%,transparent),0 0 18px color-mix(in srgb,var(--accent) 10%,transparent),var(--shadow-soft);
+}
+
+.canvas-node:has(.canvas-node-editor),
+.canvas-node:has(.canvas-generator-card) {
+  box-shadow:var(--shadow-float);
+}
+.canvas-node:has(.canvas-node-editor).selected {
+  box-shadow:0 0 0 6px color-mix(in srgb,var(--node-effective) 13%,transparent),0 0 18px color-mix(in srgb,var(--node-effective) 12%,transparent),var(--shadow-float);
+}
+.canvas-node:has(.canvas-generator-card).selected {
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--generator-accent) 14%,transparent),0 0 18px color-mix(in srgb,var(--generator-accent) 12%,transparent),var(--shadow-float);
+}
+
+.assistant-code-block.expanded {
+  box-shadow:var(--shadow-modal);
+}
+
+/* Open/hover states should not re-introduce the old heavy shadow. */
+.canvas-topbar-toggle,
+.canvas-topbar-toggle:hover,
+.canvas-topbar.collapsed .canvas-topbar-toggle,
+.canvas-topbar.collapsed .canvas-topbar-toggle:hover,
+.canvas-home-button:hover,
+.canvas-brand.open,
+.canvas-brand:hover,
+.canvas-brand:focus-visible,
+.canvas-brand-chevron.open,
+.canvas-brand:hover .canvas-brand-chevron,
+.canvas-brand:focus-visible .canvas-brand-chevron,
+.canvas-minimap:hover,
+.canvas-node-editor-popover.is-prompt-expanded,
+.canvas-node-editor-popover .canvas-parameter-drawer,
+.canvas-upscale-select-popover,
+.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer,
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params,
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant {
+  box-shadow:var(--shadow-float);
+}
+
+.canvas-topbar-toggle,
+.canvas-topbar-toggle:hover,
+.canvas-topbar.collapsed .canvas-topbar-toggle,
+.canvas-topbar.collapsed .canvas-topbar-toggle:hover,
+.canvas-home-button:hover {
+  box-shadow:var(--shadow-control);
+}
+
+.canvas-video-play,
+.canvas-video-play:hover,
+.canvas-video-play.is-playing,
+.canvas-group-port:hover,
+.canvas-node .canvas-port:hover {
+  box-shadow:var(--shadow-control);
+}
+
+.canvas-video-play:focus-visible {
+  box-shadow:var(--shadow-control);
+}
+
+/* Ports use pseudo-elements for the visible capsule, so tune that layer too.
+   Keep the accent ring for keyboard focus while removing the broad dark halo. */
+.canvas-group .canvas-group-port:hover::before,
+.canvas-group .canvas-group-port:focus-visible::before,
+.canvas-node .canvas-port:hover::before,
+.canvas-node .canvas-port:focus-visible::before {
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 20%,transparent),0 3px 9px color-mix(in srgb,#000 12%,transparent),0 0 0 4px color-mix(in srgb,var(--node-effective,var(--accent)) 14%,transparent);
+}
+
+.super-canvas-entry,
+.super-canvas-entry:hover,
+.video-reference-dock-go,
+.video-reference-dock-go:hover,
+.send-button:not(:disabled):hover,
+.send-button.stop-button,
+.send-button.stop-button:hover:not(:disabled),
+.video-submit:hover {
+  box-shadow:var(--shadow-control);
+}
+
+.agent-direction-option:hover:not(:disabled),
+.model-page-scroll-nav button:hover {
+  box-shadow:var(--shadow-control);
+}
+
+/* Keep the branded entry's motion, but let it breathe instead of pulsing a
+   saturated halo over the light header. */
+@keyframes super-canvas-glow {
+  0%,100%{box-shadow:var(--shadow-control),0 0 0 1px color-mix(in srgb,var(--accent-2) 12%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 22%,transparent)}
+  50%{box-shadow:0 6px 14px color-mix(in srgb,var(--accent) 16%,transparent),0 0 0 1px color-mix(in srgb,var(--accent-2) 18%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 28%,transparent)}
+}
