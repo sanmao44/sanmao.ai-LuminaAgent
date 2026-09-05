@@ -6,6 +6,7 @@ import './desktop-readability.css';
 import './canvas.css';
 import './motion.css';
 import './runtime-service.css';
+import './shadow-tuning.css';
 import LocalLifecycle from '@/components/LocalLifecycle';
 import MotionPreference from '@/components/MotionPreference';
 
