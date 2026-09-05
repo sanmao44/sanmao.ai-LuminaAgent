@@ -63,7 +63,7 @@ async function loadTypeScript(path) {
       /^\s*import\s+\{\s*normalizeCanvasMaskState\s*\}\s+from\s+["']\.\/mask["'];?\s*$/m,
       '',
     ).replace(
-      /^\s*import\s+\{\s*normalizeCanvasNodeLayers\s*\}\s+from\s+["']\.\/layers["'];?\s*$/m,
+      /^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/layers["'];?\s*$/m,
       '',
     );
     return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${modelCompiled}`).toString('base64')}`);
@@ -371,6 +371,155 @@ test('new, copied, and imported nodes are appended above existing layers', () =>
   assert.deepEqual(model.sortCanvasNodesByLayer(next.nodes).map((node) => node.id), ['old-a', 'old-b', 'imported', 'copied']);
   assert.ok(next.nodes.find((node) => node.id === 'imported').zIndex > next.nodes.find((node) => node.id === 'old-b').zIndex);
   assert.ok(next.nodes.find((node) => node.id === 'copied').zIndex > next.nodes.find((node) => node.id === 'imported').zIndex);
+});
+
+function layerEntityIds(document) {
+  return model.sortCanvasEntitiesByLayer(document).map((entity) =>
+    entity.kind === 'group' ? `group:${entity.group.id}` : `node:${entity.node.id}`,
+  );
+}
+
+test('groups and ordinary nodes share one top-level layer stack', () => {
+  const nodes = [
+    layerNode('outside-bottom', 30),
+    layerNode('member-a', 31),
+    layerNode('member-b', 32),
+    layerNode('outside-top', 33),
+  ];
+  const document = model.normalizeCanvasEntityLayers({
+    ...layerDocument(nodes),
+    groups: [{ id: 'group-a', name: '组 A', nodeIds: ['member-a', 'member-b'] }],
+  });
+  assert.deepEqual(layerEntityIds(document), [
+    'node:outside-bottom',
+    'group:group-a',
+    'node:outside-top',
+  ]);
+  const group = document.groups[0];
+  const memberA = document.nodes.find((node) => node.id === 'member-a');
+  const memberB = document.nodes.find((node) => node.id === 'member-b');
+  const outsideTop = document.nodes.find((node) => node.id === 'outside-top');
+  assert.ok(memberA && memberB && outsideTop);
+  assert.ok(model.canvasGroupPaintZIndex(document, group) < model.canvasNodePaintZIndex(document, memberA));
+  assert.ok(model.canvasNodePaintZIndex(document, memberA) < model.canvasNodePaintZIndex(document, memberB));
+  assert.ok(model.canvasNodePaintZIndex(document, memberB) < model.canvasNodePaintZIndex(document, outsideTop));
+
+  for (const [action, expected] of [
+    ['bring-to-front', ['node:outside-bottom', 'node:outside-top', 'group:group-a']],
+    ['bring-to-back', ['group:group-a', 'node:outside-bottom', 'node:outside-top']],
+    ['raise', ['node:outside-bottom', 'node:outside-top', 'group:group-a']],
+    ['lower', ['group:group-a', 'node:outside-bottom', 'node:outside-top']],
+  ]) {
+    const reordered = model.reorderCanvasEntities(document, ['member-a'], action);
+    assert.deepEqual(layerEntityIds(reordered), expected, action);
+    const normalizedReordered = model.normalizeCanvasDocumentLayers(document, reordered);
+    assert.deepEqual(layerEntityIds(normalizedReordered), expected, `${action} through document normalization`);
+    assert.deepEqual(
+      model.sortCanvasGroupsByLayer(reordered).map((item) => item.id),
+      ['group-a'],
+    );
+  }
+});
+
+test('legacy groups without zIndex derive their top-level layer from members', () => {
+  const result = model.normalizeDocument({
+    nodes: [
+      layerNode('outside', 30),
+      layerNode('group-low', 40),
+      layerNode('group-high', 41),
+    ],
+    groups: [{ id: 'legacy-group', name: '旧组', nodeIds: ['group-low', 'group-high'] }],
+  });
+  const group = result.groups[0];
+  assert.equal(group.zIndex, 31);
+  assert.deepEqual(layerEntityIds(result), ['node:outside', 'group:legacy-group']);
+  assert.deepEqual(
+    model.sortCanvasNodesByLayer(result.nodes.filter((node) => node.groupId === group.id)).map((node) => node.id),
+    ['group-low', 'group-high'],
+  );
+});
+
+test('group creation, copying, ungrouping, and member removal keep stable top-level positions', () => {
+  const previous = layerDocument(['a', 'b', 'c', 'd', 'e'].map((id, index) => layerNode(id, 30 + index)));
+  const created = model.createGroup(previous, ['b', 'c'], '新组');
+  const grouped = model.normalizeCanvasDocumentLayers(previous, created);
+  assert.deepEqual(layerEntityIds(grouped), ['node:a', 'group:' + grouped.groups[0].id, 'node:d', 'node:e']);
+
+  const copiedGroupId = 'copied-group';
+  const copied = {
+    ...grouped,
+    nodes: [
+      ...grouped.nodes,
+      { ...grouped.nodes.find((node) => node.id === 'b'), id: 'b-copy', x: 48, y: 48, groupId: copiedGroupId },
+      { ...grouped.nodes.find((node) => node.id === 'c'), id: 'c-copy', x: 48, y: 48, groupId: copiedGroupId },
+    ],
+    groups: [
+      ...grouped.groups,
+      { id: copiedGroupId, name: '复制组', nodeIds: ['b-copy', 'c-copy'] },
+    ],
+  };
+  const withCopy = model.normalizeCanvasDocumentLayers(grouped, copied);
+  assert.deepEqual(layerEntityIds(withCopy), [
+    'node:a',
+    `group:${grouped.groups[0].id}`,
+    'node:d',
+    'node:e',
+    'group:copied-group',
+  ]);
+
+  const ungrouped = model.ungroup(grouped, grouped.groups[0].id);
+  const normalizedUngrouped = model.normalizeCanvasDocumentLayers(grouped, ungrouped);
+  assert.deepEqual(layerEntityIds(normalizedUngrouped), ['node:a', 'node:b', 'node:c', 'node:d', 'node:e']);
+
+  const threeMemberSource = layerDocument(['a', 'b', 'c', 'd', 'e'].map((id, index) => layerNode(id, 30 + index)));
+  const threeMemberGroup = model.createGroup(threeMemberSource, ['b', 'c', 'd'], '三节点组');
+  const threeMember = model.normalizeCanvasDocumentLayers(threeMemberSource, threeMemberGroup);
+  const afterMemberRemoval = model.normalizeCanvasDocumentLayers(threeMember, {
+    ...threeMember,
+    nodes: threeMember.nodes.filter((node) => node.id !== 'c'),
+    groups: threeMember.groups.map((group) => ({ ...group, nodeIds: ['b', 'd'] })),
+  });
+  assert.deepEqual(layerEntityIds(afterMemberRemoval), ['node:a', `group:${threeMember.groups[0].id}`, 'node:e']);
+  assert.deepEqual(afterMemberRemoval.groups[0].nodeIds, ['b', 'd']);
+});
+
+test('overlapping groups are hit in their real top-level paint order', () => {
+  const result = model.normalizeDocument({
+    nodes: [
+      { ...layerNode('g1-a', 30), x: 100, y: 100 },
+      { ...layerNode('g1-b', 31), x: 450, y: 100 },
+      { ...layerNode('g2-a', 32), x: 180, y: 180 },
+      { ...layerNode('g2-b', 33), x: 530, y: 180 },
+    ],
+    groups: [
+      { id: 'group-one', name: '组一', nodeIds: ['g1-a', 'g1-b'], zIndex: 30 },
+      { id: 'group-two', name: '组二', nodeIds: ['g2-a', 'g2-b'], zIndex: 31 },
+    ],
+  });
+  assert.equal(model.groupAtPoint(result, { x: 260, y: 240 })?.id, 'group-two');
+  const swapped = model.normalizeDocument({
+    ...result,
+    groups: result.groups.map((group) => ({
+      ...group,
+      zIndex: group.id === 'group-one' ? 31 : 30,
+    })),
+  });
+  assert.equal(model.groupAtPoint(swapped, { x: 260, y: 240 })?.id, 'group-one');
+});
+
+test('persisted group layers stay stable across document refresh normalization', () => {
+  const persisted = {
+    ...layerDocument([
+      layerNode('member-a', 30),
+      layerNode('member-b', 31),
+      ...Array.from({ length: 8 }, (_, index) => layerNode(`outside-${index}`, 32 + index)),
+    ]),
+    groups: [{ id: 'group-a', name: '组 A', nodeIds: ['member-a', 'member-b'], zIndex: 35 }],
+  };
+  const once = model.normalizeDocument(persisted);
+  const twice = model.normalizeDocument(once);
+  assert.deepEqual(layerEntityIds(once), layerEntityIds(twice));
+  assert.deepEqual(once.groups.map((group) => group.zIndex), twice.groups.map((group) => group.zIndex));
 });
 
 test('migrates legacy image params.mask into persistent pending mask metadata', () => {

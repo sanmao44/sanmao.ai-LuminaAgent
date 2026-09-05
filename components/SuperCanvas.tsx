@@ -70,7 +70,6 @@ import {
   type CanvasDistribution,
 } from "@/lib/canvas/model";
 import {
-  CANVAS_NODE_INTERACTION_OFFSET,
   CANVAS_Z_INDEX,
   canvasGroupPaintZIndex,
   canvasNodePaintZIndex,
@@ -140,7 +139,6 @@ import {
   placeCanvasGroupToolbar,
   placeCanvasContextMenu,
   placeCanvasNodeToolbar,
-  type CanvasGroupToolbarPlacement,
 } from "@/lib/canvas/editor-layout";
 import {
   createCanvasImageZip,
@@ -4246,11 +4244,12 @@ export default function SuperCanvas() {
           ? [...selectedIds]
           : [];
       if (!ids.length) return;
+      const current = docRef.current;
       const entityIds = [
         ...new Set(
           ids.map((id) =>
-            groupById(docRef.current, id)?.id ||
-            groupForNode(docRef.current, id)?.id ||
+            groupById(current, id)?.id ||
+            groupForNode(current, id)?.id ||
             id,
           ),
         ),
@@ -4261,14 +4260,22 @@ export default function SuperCanvas() {
         raise: "上移一层",
         lower: "下移一层",
       };
-      const next = reorderCanvasEntities(docRef.current, entityIds, action);
-      if (next === docRef.current) {
+      const next = reorderCanvasEntities(current, entityIds, action);
+      if (next === current) {
         const boundary = action === "bring-to-back" || action === "lower" ? "底层" : "顶层";
         notify(`选中的 ${entityIds.length} 个对象已在${boundary}`);
         return;
       }
       commit(() => next);
-      setSelectedIds(new Set(ids));
+      const selectedNodeIds = [
+        ...new Set(
+          entityIds.flatMap((id) => groupById(current, id)?.nodeIds || [id]),
+        ),
+      ].filter((id) => current.nodes.some((node) => node.id === id));
+      setSelectedIds(new Set(selectedNodeIds));
+      if (entityIds.length === 1 && groupById(current, entityIds[0])) {
+        setSelectedGroupId(entityIds[0]);
+      }
       const message = `已将 ${entityIds.length} 个对象${labels[action]}`;
       addLog(message);
       notify(message);
@@ -9405,7 +9412,7 @@ export default function SuperCanvas() {
       const isolatedTarget = element?.closest(
         "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
-      if (groupElement && !node && !isolatedTarget?.closest(".canvas-context-menu")) {
+      if (groupElement && !node && !isolatedTarget) {
         event.preventDefault();
         const group = groupById(docRef.current, groupElement.dataset.canvasGroupId);
         const point = stagePoint(event.clientX, event.clientY);
@@ -10356,6 +10363,144 @@ export default function SuperCanvas() {
   const contextNode = contextMenu?.menu === "node" && contextMenu.nodeId
     ? nodeById(document, contextMenu.nodeId)
     : undefined;
+  const contextGroup = contextMenu?.menu === "group" && contextMenu.groupId
+    ? groupById(document, contextMenu.groupId)
+    : undefined;
+  const groupQuickActions = useMemo<CanvasQuickToolbarActions>(() => {
+    const group = contextGroup || selectedGroup;
+    if (!group) return { primaryActions: [], menuGroups: [] };
+    const groupImages = groupNodes(document, group.id).filter(
+      (node) =>
+        isCanvasReferenceableNode(node) &&
+        node.data.kind === "image" &&
+        Boolean(node.data.url),
+    );
+    const layerActions: CanvasQuickAction[] = [
+      {
+        id: "bring-to-front",
+        icon: "bring-to-front",
+        label: "置于顶层",
+        title: "将整个对象组移到最上层",
+        onClick: () => reorderSelection("bring-to-front", [group.id]),
+      },
+      {
+        id: "bring-to-back",
+        icon: "bring-to-back",
+        label: "置于底层",
+        title: "将整个对象组移到最底层",
+        onClick: () => reorderSelection("bring-to-back", [group.id]),
+      },
+      {
+        id: "raise",
+        icon: "raise",
+        label: "上移一层",
+        title: "将整个对象组上移一层",
+        onClick: () => reorderSelection("raise", [group.id]),
+      },
+      {
+        id: "lower",
+        icon: "lower",
+        label: "下移一层",
+        title: "将整个对象组下移一层",
+        onClick: () => reorderSelection("lower", [group.id]),
+      },
+    ];
+    return {
+      primaryActions: [
+        {
+          id: "arrange-group",
+          icon: "arrange",
+          label: "组内整理",
+          title: "只整理对象组内的卡片",
+          onClick: arrangeCanvasAction,
+        },
+        {
+          id: "duplicate-group",
+          icon: "duplicate",
+          label: "复制组",
+          title: "复制整个对象组并保留组内连线",
+          onClick: duplicateSelection,
+        },
+        {
+          id: "focus-group",
+          icon: "focus",
+          label: "聚焦",
+          title: "聚焦当前对象组",
+          onClick: () => fitView(group.nodeIds),
+        },
+        {
+          id: "ungroup",
+          icon: "ungroup",
+          label: "解组",
+          title: "保留组内对象并移除对象组",
+          onClick: breakGroup,
+        },
+      ],
+      menuGroups: [
+        {
+          id: "group-actions",
+          icon: "group-actions",
+          label: "组操作",
+          actions: [
+            {
+              id: "compose-group",
+              icon: "compose",
+              label: "宫格拼接",
+              title: "将组内可用图片拼接为一张新图",
+              disabled: groupImages.length < 2 || Boolean(composingGroupId),
+              onClick: () => void composeCanvasGroup(group.id),
+            },
+            {
+              id: "one-take-group",
+              icon: "one-take",
+              label: "一镜到底",
+              title: "按组内图片生成一镜到底 Prompt",
+              disabled: groupImages.length < 2,
+              onClick: () => setOneTakeDurationOpen(true),
+            },
+            {
+              id: "download-group",
+              icon: "download",
+              label: "批量下载",
+              title: "按组内顺序打包下载图片",
+              disabled: selectedImageDownloads.length < 2 || batchDownloading,
+              onClick: () => void downloadSelectedImages(),
+            },
+          ],
+        },
+        {
+          id: "layer",
+          icon: "layer",
+          label: "层级",
+          title: "调整整个对象组的层级",
+          actions: layerActions,
+        },
+      ],
+      dangerAction: {
+        id: "delete-group",
+        icon: "delete",
+        label: "删除组内对象",
+        title: "删除对象组及其中的全部对象",
+        danger: true,
+        onClick: deleteSelection,
+      },
+    };
+  }, [
+    arrangeCanvasAction,
+    batchDownloading,
+    breakGroup,
+    composeCanvasGroup,
+    composingGroupId,
+    deleteSelection,
+    document,
+    duplicateSelection,
+    downloadSelectedImages,
+    fitView,
+    reorderSelection,
+    contextGroup,
+    selectedGroup,
+    selectedImageDownloads.length,
+  ]);
   const contextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
     const node = contextNode;
     if (!node) return [];
@@ -10576,23 +10721,68 @@ export default function SuperCanvas() {
     selectedIds,
   ]);
 
+  const groupContextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
+    if (!contextGroup) return [];
+    const close = (action: () => void) => () => {
+      setContextMenu(null);
+      action();
+    };
+    const primary = groupQuickActions.primaryActions.map((action) => ({
+      ...action,
+      onClick: close(action.onClick),
+    }));
+    const groupOperations = groupQuickActions.menuGroups.find(
+      (group) => group.id === "group-actions",
+    );
+    const layer = groupQuickActions.menuGroups.find(
+      (group) => group.id === "layer",
+    );
+    const dangerAction = groupQuickActions.dangerAction;
+    return [
+      {
+        label: "组操作",
+        actions: [
+          {
+            id: "copy-group",
+            icon: "copy",
+            label: "复制组内容",
+            title: "复制整个对象组及组内连线",
+            onClick: close(() => void copySelection()),
+          },
+          ...primary,
+          ...(groupOperations?.actions || []).map((action) => ({
+            ...action,
+            onClick: close(action.onClick),
+          })),
+        ],
+      },
+      {
+        label: "层级",
+        actions: (layer?.actions || []).map((action) => ({
+          ...action,
+          onClick: close(action.onClick),
+        })),
+      },
+      {
+        label: "删除",
+        actions: dangerAction
+          ? [{ ...dangerAction, onClick: close(dangerAction.onClick) }]
+          : [],
+      },
+    ].filter((group) => group.actions.length > 0);
+  }, [contextGroup, copySelection, groupQuickActions]);
+
   // Below this threshold the canvas is an overview, not a reading surface.
   // The CSS tier removes filters and animation-heavy decoration while keeping
   // the actual node geometry and hit targets unchanged.
   const canvasZoomTier = document.camera.zoom < 0.28 ? "overview" : "detail";
   const selectionToolbarContent = selectedNodes.length >= 2 ? (
     <>
-      <b>
-        {selectedGroupId
-          ? "已选对象组"
-          : `已选 ${selectedNodes.length} 个对象`}
-      </b>
+      <b>{`已选 ${selectedNodes.length} 个对象`}</b>
       <span />
-      {!selectedGroupId && (
-        <button type="button" onClick={makeGroup}>
-          ⌘ 成组
-        </button>
-      )}
+      <button type="button" onClick={makeGroup}>
+        ⌘ 成组
+      </button>
       {selectedNodes.filter((node) => isCanvasReferenceableNode(node) && node.data.kind === "image").length >= 2 && (
         <div className="one-take-duration-control">
           <button type="button" onClick={() => setOneTakeDurationOpen(true)}>🎬 一镜到底</button>
@@ -10617,13 +10807,8 @@ export default function SuperCanvas() {
           {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageDownloads.length} 张`}
         </button>
       )}
-      {selectedGroupId && (
-        <button type="button" onClick={breakGroup}>
-          解组
-        </button>
-      )}
       <button type="button" onClick={arrangeCanvasAction}>
-        {selectedGroupId ? "⌗ 整理组内" : "⌗ 整理选中"}
+        ⌗ 整理选中
       </button>
       <button type="button" onClick={duplicateSelection}>
         ⧉ 复制
@@ -11108,6 +11293,10 @@ export default function SuperCanvas() {
                   );
                 }).length;
                 const composing = composingGroupId === group.id;
+                const groupInteraction =
+                  selectedGroupId === group.id &&
+                  draggingNodeIds.size > 0 &&
+                  (cursorTask === "dragging" || cursorTask === "resizing");
                 return (
                   <div
                     key={group.id}
@@ -11119,6 +11308,11 @@ export default function SuperCanvas() {
                       top: bounds.y,
                       width: bounds.w,
                       height: bounds.h,
+                      zIndex: canvasGroupPaintZIndex(
+                        document,
+                        group,
+                        groupInteraction,
+                      ),
                     }}
                     onPointerDown={(event) => startGroupDrag(event, group)}
                   >
@@ -11247,11 +11441,12 @@ export default function SuperCanvas() {
           (quickActions.primaryActions.length > 0 ||
             quickActions.menuGroups.length > 0 ||
             Boolean(quickActions.dangerAction)) && (
-          <CanvasNodeQuickToolbar
-            node={selectedSingle}
+          <CanvasQuickToolbar
+            target={{ kind: "node", node: selectedSingle }}
             document={document}
             stageRef={stageRef}
             actions={quickActions}
+            menuSubtitle="节点操作"
           />
         )}
         {imageEditorNodeId && !nodeGestureActive && (() => {
@@ -11443,25 +11638,46 @@ export default function SuperCanvas() {
             </b>
           </div>
         )}
-        {selectedNodes.length >= 2 && (
-          selectedGroupId && selectedGroup ? (
-            <CanvasGroupSelectionToolbar
-              group={selectedGroup}
+        {selectedGroupId &&
+          selectedGroup &&
+          !nodeGestureActive &&
+          (groupQuickActions.primaryActions.length > 0 ||
+            groupQuickActions.menuGroups.some((group) => group.actions.length > 0) ||
+            Boolean(groupQuickActions.dangerAction)) && (
+            <CanvasQuickToolbar
+              target={{ kind: "group", group: selectedGroup }}
               document={document}
               stageRef={stageRef}
-            >
-              {selectionToolbarContent}
-            </CanvasGroupSelectionToolbar>
-          ) : (
-            <div
-              className="canvas-selection-toolbar"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-              onWheel={(event) => event.stopPropagation()}
-            >
-              {selectionToolbarContent}
-            </div>
-          )
+              actions={groupQuickActions}
+              menuSubtitle="组操作"
+              actionRenderer={(action, button) =>
+                action.id === "one-take-group" ? (
+                  <div className="one-take-duration-control" key={action.id}>
+                    {button}
+                    <OneTakeDurationPicker
+                      open={oneTakeDurationOpen}
+                      onConfirm={(duration) => {
+                        setOneTakeDurationOpen(false);
+                        void runOneTakeFromSelection(duration);
+                      }}
+                      onCancel={() => setOneTakeDurationOpen(false)}
+                    />
+                  </div>
+                ) : (
+                  button
+                )
+              }
+            />
+          )}
+        {selectedNodes.length >= 2 && !selectedGroupId && (
+          <div
+            className="canvas-selection-toolbar"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+          >
+            {selectionToolbarContent}
+          </div>
         )}
         {selectedNodes.length >= 2 && !selectedGroupId && (
           <div
@@ -11791,7 +12007,13 @@ export default function SuperCanvas() {
           onNavigate={panToWorld}
           onMoveNodes={moveMinimapNodes}
         />
-        {contextNode && contextMenu?.menu === "node" && contextMenu.nodeId ? (
+        {contextGroup && contextMenu?.menu === "group" && contextMenu.groupId ? (
+          <CanvasGroupContextMenu
+            group={contextGroup}
+            groups={groupContextMenuGroups}
+            position={contextMenu}
+          />
+        ) : contextNode && contextMenu?.menu === "node" && contextMenu.nodeId ? (
           <CanvasNodeContextMenu
             node={contextNode}
             selectionCount={selectedIds.size}
@@ -13771,6 +13993,10 @@ type CanvasQuickToolbarActions = {
   dangerAction?: CanvasQuickAction;
 };
 
+type CanvasQuickToolbarTarget =
+  | { kind: "node"; node: CanvasNode }
+  | { kind: "group"; group: CanvasGroup };
+
 type CanvasContextMenuGroup = {
   label: string;
   actions: CanvasQuickAction[];
@@ -13809,126 +14035,63 @@ function CanvasActionIcon({ name }: { name: string }) {
       return svg(<><path d="m12 4 1.7 4.3L18 10l-4.3 1.7L12 16l-1.7-4.3L6 10l4.3-1.7L12 4Z" /><path d="m18.5 15 .7 1.8L21 17.5l-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z" /></>);
     case "preview":
       return svg(<><path d="M8 5H5v3M16 5h3v3M5 16v3h3M19 16v3h-3" /><path d="m9 9 6 6M15 9l-6 6" opacity=".5" /></>);
+    case "copy":
+    case "duplicate":
+      return svg(<><rect x="8" y="8" width="10" height="10" rx="2" /><path d="M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>);
+    case "arrange":
+      return svg(<><rect x="4" y="5" width="6" height="6" rx="1" /><rect x="14" y="13" width="6" height="6" rx="1" /><path d="m10 8 4 4M14 8h-4v4" /></>);
+    case "focus":
+      return svg(<><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M8 20H5a1 1 0 0 1-1-1v-3M16 20h3a1 1 0 0 0 1-1v-3" /><rect x="8" y="8" width="8" height="8" rx="1" /></>);
+    case "ungroup":
+      return svg(<><rect x="4" y="5" width="6" height="6" rx="1" /><rect x="14" y="13" width="6" height="6" rx="1" /><path d="M10 8h4v4" /></>);
+    case "group-actions":
+      return svg(<><rect x="4" y="5" width="7" height="7" rx="1.5" /><rect x="13" y="12" width="7" height="7" rx="1.5" /><path d="m10 12 3 0M12 10v4" /></>);
+    case "layer":
+      return svg(<><path d="m4 8 8-4 8 4-8 4-8-4Z" /><path d="m4 12 8 4 8-4M4 16l8 4 8-4" /></>);
+    case "bring-to-front":
+      return svg(<><path d="M6 17V7M6 7l-3 3M6 7l3 3M14 17V7M14 7l-3 3M14 7l3 3" /></>);
+    case "bring-to-back":
+      return svg(<><path d="M6 7v10M6 17l-3-3M6 17l3-3M14 7v10M14 17l-3-3M14 17l3-3" /></>);
+    case "raise":
+      return svg(<><path d="M12 19V5M7 10l5-5 5 5" /></>);
+    case "lower":
+      return svg(<><path d="M12 5v14M7 14l5 5 5-5" /></>);
+    case "compose":
+      return svg(<><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="7" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" /></>);
+    case "one-take":
+      return svg(<><path d="M5 7.5h14v9H5z" /><path d="m10 10 4 2-4 2v-4ZM7 5v2M17 5v2" /></>);
     default:
       return <>{name}</>;
   }
 }
 
-function CanvasGroupSelectionToolbar({
-  group,
-  document,
-  stageRef,
-  children,
-}: {
-  group: CanvasGroup;
-  document: CanvasDocument;
-  stageRef: RefObject<HTMLDivElement | null>;
-  children: ReactNode;
-}) {
-  const toolbarRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<CanvasGroupToolbarPlacement>({
-    left: 10,
-    top: 10,
-    placement: "above",
-  });
+type CanvasQuickToolbarPosition = {
+  left: number;
+  top: number;
+  placement?: "above" | "inside";
+};
 
-  const reposition = useCallback(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const stageRect = stage.getBoundingClientRect();
-    const groupElement = Array.from(
-      stage.querySelectorAll<HTMLElement>("[data-canvas-group-id]"),
-    ).find((element) => element.dataset.canvasGroupId === group.id);
-    const groupRect = groupElement?.getBoundingClientRect();
-    const bounds = groupRect
-      ? {
-          left: groupRect.left - stageRect.left,
-          top: groupRect.top - stageRect.top,
-          width: groupRect.width,
-          height: groupRect.height,
-        }
-      : (() => {
-          const groupBoundsValue = groupBounds(document, group.id);
-          const zoom = Math.max(0.12, document.camera.zoom || 1);
-          return {
-            left: groupBoundsValue.x * zoom + document.camera.x,
-            top: groupBoundsValue.y * zoom + document.camera.y,
-            width: groupBoundsValue.w * zoom,
-            height: groupBoundsValue.h * zoom,
-          };
-        })();
-    const stageSize = {
-      width: Math.max(1, stage.clientWidth),
-      height: Math.max(1, stage.clientHeight),
-    };
-    const overlay = {
-      width: toolbarRef.current?.offsetWidth || 520,
-      height: toolbarRef.current?.offsetHeight || 40,
-    };
-    const nextPosition = placeCanvasGroupToolbar(bounds, stageSize, overlay, 10);
-    setPosition((current) =>
-      current.left === nextPosition.left &&
-      current.top === nextPosition.top &&
-      current.placement === nextPosition.placement
-        ? current
-        : nextPosition,
-    );
-  }, [document, group.id, stageRef]);
-
-  useLayoutEffect(() => {
-    reposition();
-    let frame = 0;
-    const handleResize = () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(reposition);
-    };
-    const observer = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(handleResize)
-      : null;
-    if (observer) {
-      if (toolbarRef.current) observer.observe(toolbarRef.current);
-      if (stageRef.current) observer.observe(stageRef.current);
-    }
-    window.addEventListener("resize", handleResize);
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-      window.removeEventListener("resize", handleResize);
-    };
-  }, [reposition, stageRef]);
-
-  return (
-    <div
-      ref={toolbarRef}
-      className="canvas-selection-toolbar canvas-group-selection-toolbar"
-      data-placement={position.placement}
-      aria-label={`${group.name}对象组工具`}
-      style={{ left: position.left, top: position.top }}
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={(event) => event.stopPropagation()}
-      onWheel={(event) => event.stopPropagation()}
-    >
-      {children}
-    </div>
-  );
-}
-
-function CanvasNodeQuickToolbar({
-  node,
+function CanvasQuickToolbar({
+  target,
   document,
   stageRef,
   actions,
+  menuSubtitle,
+  actionRenderer,
 }: {
-  node: CanvasNode;
+  target: CanvasQuickToolbarTarget;
   document: CanvasDocument;
   stageRef: RefObject<HTMLDivElement | null>;
   actions: CanvasQuickToolbarActions;
+  menuSubtitle: string;
+  actionRenderer?: (action: CanvasQuickAction, button: ReactNode) => ReactNode;
 }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState({ left: 10, top: 10 });
+  const [position, setPosition] = useState<CanvasQuickToolbarPosition>({ left: 10, top: 10 });
   const [isCompact, setIsCompact] = useState(false);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const targetId = target.kind === "node" ? target.node.id : target.group.id;
 
   const closeMenu = useCallback((returnFocus = false) => {
     const groupId = openGroupId;
@@ -13944,7 +14107,7 @@ function CanvasNodeQuickToolbar({
 
   useEffect(() => {
     setOpenGroupId(null);
-  }, [node.id]);
+  }, [target.kind, targetId]);
 
   useEffect(() => {
     if (!openGroupId) return;
@@ -13971,24 +14134,40 @@ function CanvasNodeQuickToolbar({
     const stage = stageRef.current;
     if (!stage) return;
     const stageRect = stage.getBoundingClientRect();
-    const nodeElement = Array.from(
-      stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
-    ).find((element) => element.dataset.canvasNodeId === node.id);
-    const nodeRect = nodeElement?.getBoundingClientRect();
+    const targetElement = Array.from(
+      stage.querySelectorAll<HTMLElement>(
+        target.kind === "node" ? "[data-canvas-node-id]" : "[data-canvas-group-id]",
+      ),
+    ).find((element) =>
+      target.kind === "node"
+        ? element.dataset.canvasNodeId === targetId
+        : element.dataset.canvasGroupId === targetId,
+    );
+    const targetRect = targetElement?.getBoundingClientRect();
     const zoom = Math.max(0.12, document.camera.zoom || 1);
-    const anchor = nodeRect
+    const anchor = targetRect
       ? {
-          left: nodeRect.left - stageRect.left,
-          top: nodeRect.top - stageRect.top,
-          width: nodeRect.width,
-          height: nodeRect.height,
+          left: targetRect.left - stageRect.left,
+          top: targetRect.top - stageRect.top,
+          width: targetRect.width,
+          height: targetRect.height,
         }
-      : {
-          left: node.x * zoom + document.camera.x,
-          top: node.y * zoom + document.camera.y,
-          width: nodeSize(node).w * zoom,
-          height: nodeSize(node).h * zoom,
-        };
+      : target.kind === "node"
+        ? {
+            left: target.node.x * zoom + document.camera.x,
+            top: target.node.y * zoom + document.camera.y,
+            width: nodeSize(target.node).w * zoom,
+            height: nodeSize(target.node).h * zoom,
+          }
+        : (() => {
+            const bounds = groupBounds(document, target.group.id);
+            return {
+              left: bounds.x * zoom + document.camera.x,
+              top: bounds.y * zoom + document.camera.y,
+              width: bounds.w * zoom,
+              height: bounds.h * zoom,
+            };
+          })();
     const stageSize = {
       width: Math.max(1, stage.clientWidth),
       height: Math.max(1, stage.clientHeight),
@@ -13999,13 +14178,17 @@ function CanvasNodeQuickToolbar({
       width: toolbarRef.current?.offsetWidth || (compact ? 280 : 520),
       height: toolbarRef.current?.offsetHeight || 40,
     };
-    const nextPosition = placeCanvasNodeToolbar(anchor, stageSize, overlay, 10);
+    const nextPosition: CanvasQuickToolbarPosition = target.kind === "group"
+      ? placeCanvasGroupToolbar(anchor, stageSize, overlay, 10)
+      : placeCanvasNodeToolbar(anchor, stageSize, overlay, 10);
     setPosition((current) =>
-      current.left === nextPosition.left && current.top === nextPosition.top
+      current.left === nextPosition.left &&
+      current.top === nextPosition.top &&
+      current.placement === nextPosition.placement
         ? current
         : nextPosition,
     );
-  }, [document.camera.x, document.camera.y, document.camera.zoom, isCompact, node, stageRef]);
+  }, [document, isCompact, stageRef, target, targetId]);
 
   const toggleGroup = useCallback((event: ReactMouseEvent<HTMLButtonElement>, group: CanvasQuickActionGroup) => {
     event.stopPropagation();
@@ -14018,25 +14201,28 @@ function CanvasNodeQuickToolbar({
     setOpenGroupId(group.id);
   }, [openGroupId]);
 
-  const renderAction = (action: CanvasQuickAction) => (
-    <button
-      type="button"
-      key={action.id}
-      className={action.danger ? "danger" : ""}
-      data-action-id={action.id}
-      title={action.title || action.label}
-      aria-label={action.label}
-      disabled={action.disabled}
-      onClick={(event) => {
-        event.stopPropagation();
-        closeMenu();
-        action.onClick();
-      }}
-    >
-      <span className="canvas-node-quick-icon" aria-hidden="true"><CanvasActionIcon name={action.icon} /></span>
-      <em>{action.label}</em>
-    </button>
-  );
+  const renderAction = (action: CanvasQuickAction) => {
+    const button = (
+      <button
+        type="button"
+        key={action.id}
+        className={action.danger ? "danger" : ""}
+        data-action-id={action.id}
+        title={action.title || action.label}
+        aria-label={action.label}
+        disabled={action.disabled}
+        onClick={(event) => {
+          event.stopPropagation();
+          closeMenu();
+          action.onClick();
+        }}
+      >
+        <span className="canvas-node-quick-icon" aria-hidden="true"><CanvasActionIcon name={action.icon} /></span>
+        <em>{action.label}</em>
+      </button>
+    );
+    return actionRenderer ? actionRenderer(action, button) : button;
+  };
 
   const openGroup = actions.menuGroups.find((group) => group.id === openGroupId);
 
@@ -14068,16 +14254,21 @@ function CanvasNodeQuickToolbar({
         ref={toolbarRef}
         className="canvas-node-quick-toolbar"
         data-density={isCompact ? "compact" : "comfortable"}
-        data-node-id={node.id}
-        aria-label={`${nodeLabel(node)}快捷工具`}
+        data-node-id={target.kind === "node" ? target.node.id : undefined}
+        data-group-id={target.kind === "group" ? target.group.id : undefined}
+        data-placement={position.placement}
+        aria-label={`${target.kind === "node" ? nodeLabel(target.node) : `${target.group.name}对象组`}快捷工具`}
         style={{ left: position.left, top: position.top }}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
         onWheel={(event) => event.stopPropagation()}
       >
         <span className="canvas-node-quick-title">
-          <i aria-hidden="true">{node.type === "upscale" ? "↗" : node.type === "prompt" ? "✦" : node.type === "generator" ? "⌁" : node.data.kind === "video" ? "▶" : "▣"}</i>
-          <b>{nodeLabel(node)}</b>
+          <i aria-hidden="true">{target.kind === "group" ? "⌘" : target.node.type === "upscale" ? "↗" : target.node.type === "prompt" ? "✦" : target.node.type === "generator" ? "⌁" : target.node.data.kind === "video" ? "▶" : "▣"}</i>
+          <span className="canvas-node-quick-title-copy">
+            <b>{target.kind === "node" ? nodeLabel(target.node) : target.group.name}</b>
+            {target.kind === "group" && <small>{target.group.nodeIds.length} 个对象</small>}
+          </span>
         </span>
         <span className="canvas-node-quick-divider" aria-hidden="true" />
         <div className="canvas-node-quick-actions">
@@ -14091,7 +14282,7 @@ function CanvasNodeQuickToolbar({
               title={group.title || group.label}
               aria-label={group.label}
               aria-haspopup="menu"
-              aria-controls={`canvas-quick-menu-${node.id}-${group.id}`}
+              aria-controls={`canvas-quick-menu-${targetId}-${group.id}`}
               aria-expanded={openGroupId === group.id}
               onClick={(event) => toggleGroup(event, group)}
             >
@@ -14105,9 +14296,10 @@ function CanvasNodeQuickToolbar({
       </div>
       {openGroup && (
         <CanvasNodeQuickMenu
-          nodeId={node.id}
+          targetId={targetId}
           group={openGroup}
           position={menuPosition}
+          subtitle={menuSubtitle}
           onClose={closeMenu}
         />
       )}
@@ -14116,18 +14308,20 @@ function CanvasNodeQuickToolbar({
 }
 
 function CanvasNodeQuickMenu({
-  nodeId,
+  targetId,
   group,
   position,
+  subtitle,
   onClose,
 }: {
-  nodeId: string;
+  targetId: string;
   group: CanvasQuickActionGroup;
   position: { x: number; y: number };
+  subtitle: string;
   onClose: (returnFocus?: boolean) => void;
 }) {
   const firstEnabledAction = group.actions.find((action) => !action.disabled);
-  const menuId = `canvas-quick-menu-${nodeId}-${group.id}`;
+  const menuId = `canvas-quick-menu-${targetId}-${group.id}`;
   const firstActionRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     let attempts = 0;
@@ -14169,7 +14363,7 @@ function CanvasNodeQuickMenu({
   return (
     <CanvasContextMenuFrame
       className="canvas-node-quick-menu"
-      dataNodeId={nodeId}
+      dataNodeId={targetId}
       dataMenuId={menuId}
       ariaLabel={`${group.label}菜单`}
       position={position}
@@ -14177,7 +14371,7 @@ function CanvasNodeQuickMenu({
       <div className="canvas-node-quick-menu-body" onKeyDown={handleKeyDown}>
         <div className="canvas-menu-title">
           <span>{group.label}</span>
-          <small>图片操作</small>
+          <small>{subtitle}</small>
         </div>
         {group.actions.map((action) => (
           <button
@@ -14355,6 +14549,57 @@ function CanvasNodeContextMenu({
                 }}
               >
                 <span className="canvas-menu-icon" aria-hidden="true">{action.icon}</span>
+                <span className="canvas-menu-copy"><b>{action.label}</b></span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </CanvasContextMenuFrame>
+  );
+}
+
+function CanvasGroupContextMenu({
+  group,
+  groups,
+  position,
+}: {
+  group: CanvasGroup;
+  groups: CanvasContextMenuGroup[];
+  position: { x: number; y: number };
+}) {
+  return (
+    <CanvasContextMenuFrame
+      className="canvas-group-context-menu"
+      dataMenuId={group.id}
+      ariaLabel={`${group.name}对象组右键菜单`}
+      position={position}
+    >
+      <div className="canvas-menu-title">
+        <span>{group.name}</span>
+        <small>{group.nodeIds.length} 个对象 · 组操作</small>
+      </div>
+      <div className="canvas-context-menu-body">
+        {groups.map((menuGroup) => (
+          <div className="canvas-menu-group" key={menuGroup.label}>
+            {menuGroup.actions.map((action) => (
+              <button
+                type="button"
+                role="menuitem"
+                key={action.id}
+                className={`canvas-menu-item canvas-menu-item-context${action.danger ? " danger" : ""}`}
+                title={action.title || action.label}
+                aria-label={action.label}
+                disabled={action.disabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  action.onClick();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">
+                  <CanvasActionIcon name={action.icon} />
+                </span>
                 <span className="canvas-menu-copy"><b>{action.label}</b></span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
@@ -15346,8 +15591,7 @@ function CanvasNodeCard({
         top: node.y,
         width: size.w,
         height: size.h,
-        zIndex: (typeof node.zIndex === "number" && Number.isFinite(node.zIndex) ? Math.trunc(node.zIndex) : CANVAS_Z_INDEX.node) +
-          (dragging ? CANVAS_NODE_INTERACTION_OFFSET : 0),
+        zIndex: canvasNodePaintZIndex(document, node, dragging),
       }}
       // Node movement and typed connections use the canvas pointer model.
       // Do not enable native HTML dragging on the whole card: it steals click

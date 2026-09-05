@@ -218,6 +218,8 @@ export type CanvasGroup = {
   id: string;
   name: string;
   nodeIds: string[];
+  /** Persisted top-level paint order shared with ungrouped nodes. */
+  zIndex?: number;
 };
 
 export type CanvasCamera = {

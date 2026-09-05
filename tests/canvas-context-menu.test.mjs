@@ -13,24 +13,33 @@ const styles = await readFile(
 
 test("card context menus select the target and preserve selected multi-actions", () => {
   const contextMenuStart = component.indexOf("const contextMenuGroups = useMemo");
-  const contextMenuEnd = component.indexOf("function CanvasNodeContextMenu", contextMenuStart);
+  const groupContextMenuStart = component.indexOf("const groupContextMenuGroups = useMemo");
+  const contextMenuEnd = groupContextMenuStart;
   assert.ok(contextMenuStart >= 0 && contextMenuEnd > contextMenuStart, "node context menu builder should exist");
   const contextMenu = component.slice(contextMenuStart, contextMenuEnd);
+  const groupContextMenuEnd = component.indexOf("// Below this threshold", groupContextMenuStart);
+  assert.ok(groupContextMenuStart >= 0 && groupContextMenuEnd > groupContextMenuStart, "group context menu builder should exist");
+  const groupContextMenu = component.slice(groupContextMenuStart, groupContextMenuEnd);
+  const groupQuickActionsStart = component.indexOf("const groupQuickActions = useMemo");
+  const groupQuickActions = component.slice(groupQuickActionsStart, groupContextMenuStart);
   const audioMenuStart = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "audio")');
   const audioMenuEnd = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "image")', audioMenuStart);
   assert.ok(audioMenuStart >= 0 && audioMenuEnd > audioMenuStart, "audio context menu should have its own branch");
   const audioContextMenu = contextMenu.slice(audioMenuStart, audioMenuEnd);
   const ordinaryContextMenu = `${contextMenu.slice(0, audioMenuStart)}${contextMenu.slice(audioMenuEnd)}`;
   const quickActionsStart = component.indexOf("const quickActions = useMemo");
-  const quickActionsEnd = component.indexOf("const contextNode =", quickActionsStart);
+  const quickActionsEnd = component.indexOf("// Below this threshold", quickActionsStart);
   assert.ok(quickActionsStart >= 0 && quickActionsEnd > quickActionsStart, "node quick toolbar builder should exist");
   const quickActions = component.slice(quickActionsStart, quickActionsEnd);
 
   assert.match(component, /type CanvasContextMenuState/);
-  assert.match(component, /menu: "node" \| "create" \| "tools"/);
+  assert.match(component, /menu: "node" \| "group" \| "create" \| "tools"/);
   assert.match(component, /nodeId\?: string/);
+  assert.match(component, /groupId\?: string/);
   assert.match(component, /if \(!selectedIds\.has\(node\.id\)\) selectNode\(node\)/);
   assert.match(component, /<CanvasNodeContextMenu/);
+  assert.match(component, /<CanvasGroupContextMenu/);
+  assert.match(component, /className="canvas-group-context-menu"/);
   assert.match(component, /className="canvas-node-context-menu"/);
   assert.match(component, /className=\{`canvas-context-menu\$\{className/);
   assert.match(component, /label: "复制节点"/);
@@ -71,7 +80,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.doesNotMatch(quickActions, /label: "更多"/);
   assert.doesNotMatch(quickActions, /label: "预览"/);
   assert.match(component, /aria-haspopup="menu"/);
-  assert.match(component, /aria-controls={`canvas-quick-menu-\$\{node\.id\}-\$\{group\.id\}`}/);
+  assert.match(component, /aria-controls={`canvas-quick-menu-\$\{targetId\}-\$\{group\.id\}`}/);
   assert.match(component, /aria-expanded=\{openGroupId === group\.id\}/);
   assert.match(component, /className="canvas-node-quick-menu"/);
   assert.match(component, /const focusFirstAction = \(\) =>/);
@@ -83,18 +92,38 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /\["ArrowDown", "ArrowUp", "Home", "End"\]/);
   assert.match(styles, /\.canvas-node-quick-menu\{width:min\(266px/);
   assert.match(styles, /\.canvas-node-quick-menu-trigger\.open/);
+  assert.match(groupContextMenu, /label: "复制组内容"/);
+  assert.match(groupContextMenu, /const dangerAction = groupQuickActions\.dangerAction/);
+  assert.match(groupContextMenu, /label: "删除"/);
+  assert.match(groupContextMenu, /label: "复制组内容"/);
+  assert.match(groupQuickActions, /id: "duplicate-group"[\s\S]*?label: "复制组"/);
+  assert.match(groupQuickActions, /label: "组内整理"/);
+  assert.match(groupQuickActions, /label: "宫格拼接"/);
+  assert.match(groupQuickActions, /label: "一镜到底"/);
+  assert.match(groupQuickActions, /label: "批量下载"/);
+  assert.match(groupQuickActions, /label: "聚焦"/);
+  assert.match(groupQuickActions, /label: "解组"/);
+  assert.match(groupQuickActions, /label: "删除组内对象"/);
+  assert.doesNotMatch(groupContextMenu, /图片编辑|局部编辑|复制图片|作为参考|继续生成/);
+  assert.match(component, /target: CanvasQuickToolbarTarget/);
+  assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
 });
 
-test("layer actions respect the selected node's real z-index and explain boundary no-ops", () => {
+test("layer actions use the shared entity stack and explain boundary no-ops", () => {
   const reorderStart = component.indexOf("const reorderSelection = useCallback");
   const reorderEnd = component.indexOf("const alignSelection = useCallback", reorderStart);
   assert.ok(reorderStart >= 0 && reorderEnd > reorderStart, "layer action handler should exist");
   const reorder = component.slice(reorderStart, reorderEnd);
 
-  assert.match(reorder, /if \(next === docRef\.current\) \{[\s\S]*const boundary = action === "bring-to-back" \|\| action === "lower" \? "底层" : "顶层";[\s\S]*notify\(`选中的 \$\{ids\.length\} 个节点已在\$\{boundary\}`\)/);
-  assert.match(component, /zIndex: \(typeof node\.zIndex === "number"[\s\S]*\+\s*\(dragging \? CANVAS_NODE_INTERACTION_OFFSET : 0\),/);
-  assert.match(styles, /\.canvas-world-content>\.canvas-node-layer>\.canvas-node\.dragging\{z-index:var\(--canvas-z-node-interaction\)\}/);
-  assert.doesNotMatch(styles, /\.canvas-world-content>\.canvas-node-layer>\.canvas-node\.selected,\.canvas-world-content>\.canvas-node-layer>\.canvas-node\.dragging/);
+  assert.match(reorder, /reorderCanvasEntities\((?:docRef\.current|current), entityIds, action\)/);
+  assert.match(reorder, /groupById\((?:docRef\.current|current), id\)\?\.id/);
+  assert.match(reorder, /const boundary = action === "bring-to-back" \|\| action === "lower" \? "底层" : "顶层";/);
+  assert.match(reorder, /选中的 \$\{entityIds\.length\} 个对象已在\$\{boundary\}/);
+  assert.match(component, /zIndex: canvasGroupPaintZIndex\([\s\S]*groupInteraction,[\s\S]*\),/);
+  assert.match(component, /zIndex: canvasNodePaintZIndex\(document, node, dragging\)/);
+  assert.match(styles, /\.canvas-world-content>\.canvas-group-layer,\.canvas-world-content>\.canvas-node-layer\{z-index:auto\}/);
+  assert.doesNotMatch(styles, /\.canvas-world-content>\.canvas-group-layer\{z-index:var\(--canvas-z-group\)\}/);
+  assert.doesNotMatch(styles, /\.canvas-world-content>\.canvas-node-layer\{z-index:var\(--canvas-z-node\)\}/);
 });
 
 test("context paste uses the right-click world position while keyboard paste keeps its center fallback", () => {

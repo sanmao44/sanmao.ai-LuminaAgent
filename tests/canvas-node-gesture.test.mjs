@@ -82,17 +82,21 @@ test("grouped card drag is constrained and never auto-detaches", () => {
   assert.match(finishInteraction, /if \(!interaction\.originGroupId && dropTarget\)/);
 });
 
-test("grouped cards keep the existing card context menu entry point", () => {
+test("group blank areas use an independent group context menu", () => {
   const contextHandler = component.slice(
     component.indexOf("const handleContextMenu = useCallback"),
     component.indexOf("const deck = deckSource()"),
   );
   assert.match(contextHandler, /data-canvas-group-id/);
-  assert.match(contextHandler, /if \(groupElement && !node && !isolatedTarget\?\.closest\("\.canvas-context-menu"\)\)/);
-  assert.match(contextHandler, /event\.preventDefault\(\)[\s\S]*?menu: "node"[\s\S]*?nodeId: groupMember\.id/);
-  assert.doesNotMatch(contextHandler, /\.canvas-group,/);
+  assert.match(contextHandler, /if \(groupElement && !node && !isolatedTarget\)/);
+  assert.match(contextHandler, /event\.preventDefault\(\)[\s\S]*?menu: "group"[\s\S]*?groupId: group\.id/);
+  assert.doesNotMatch(contextHandler, /groupMember|groupMember\.id/);
+  assert.match(component, /function CanvasGroupContextMenu/);
+  assert.match(component, /ariaLabel=\{`\$\{group\.name\}对象组右键菜单`\}/);
   assert.match(component, /const group = groupForNode\(document, node\.id\);/);
   assert.match(component, /\{group && \([\s\S]*?className="canvas-node-group-remove"/);
+  assert.match(component, /groupById\((?:docRef\.current|current), id\)\?\.id \|\|[\s\S]*groupForNode\((?:docRef\.current|current), id\)\?\.id/);
+  assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
 
   assert.match(component, /label: "下载"/);
   assert.match(component, /label: "加入资产"/);

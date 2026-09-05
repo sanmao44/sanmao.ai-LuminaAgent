@@ -16,7 +16,11 @@ import type {
 } from "./types";
 import { normalizeCreationSettings } from "../creation/settings";
 import { normalizeCanvasMaskState } from "./mask";
-import { normalizeCanvasNodeLayers } from "./layers";
+import {
+  normalizeCanvasEntityLayers,
+  normalizeCanvasNodeLayers,
+  sortCanvasGroupsByLayer,
+} from "./layers";
 
 export const CANVAS_VERSION = "sanmao-canvas-3";
 export const MAX_CANVAS_VARIANTS = 8;
@@ -567,6 +571,9 @@ export function normalizeDocument(
                 nodeIds.has(id),
               )
             : [],
+          ...(typeof group.zIndex === "number" && Number.isFinite(group.zIndex)
+            ? { zIndex: Math.trunc(group.zIndex) }
+            : {}),
         }))
         .filter(
           (group, index, all) =>
@@ -581,13 +588,27 @@ export function normalizeDocument(
       if (!groupMembership.has(id)) groupMembership.set(id, group.id);
     }),
   );
-  const normalizedNodes = normalizeCanvasNodeLayers(
-    migratedNodes.map((node) =>
-      groupMembership.has(node.id)
-        ? { ...node, groupId: groupMembership.get(node.id) }
-        : withoutGroupId(node),
-    ),
+  const membershipNormalizedNodes = migratedNodes.map((node) =>
+    groupMembership.has(node.id)
+      ? { ...node, groupId: groupMembership.get(node.id) }
+      : withoutGroupId(node),
   );
+  // Once groups exist, their zIndex competes with top-level nodes while
+  // member zIndex values are only internal. Normalizing every node as a
+  // standalone item first would overwrite that two-level contract on every
+  // refresh and make an explicitly moved group drift back down.
+  const normalizedNodes = groups.length
+    ? membershipNormalizedNodes
+    : normalizeCanvasNodeLayers(membershipNormalizedNodes);
+  const normalizedLayerDocument = normalizeCanvasEntityLayers({
+    version: CANVAS_VERSION,
+    nodes: normalizedNodes,
+    edges: [],
+    groups,
+    camera: normalizeCamera(raw.camera, defaultCamera(width, height)),
+  });
+  const layerNormalizedNodes = normalizedLayerDocument.nodes;
+  const layerNormalizedGroups = normalizedLayerDocument.groups;
   const rawEdges = Array.isArray(raw.edges)
     ? (raw.edges
         .map(normalizeEdge)
@@ -614,9 +635,9 @@ export function normalizeDocument(
     );
   const upscaleTargets = new Set<string>();
   const usableEdges = migratedEdges.filter((edge) => {
-    const targetNode = normalizedNodes.find((node) => node.id === edge.target);
+    const targetNode = layerNormalizedNodes.find((node) => node.id === edge.target);
     if (targetNode?.type !== "upscale") return true;
-    const sourceNode = normalizedNodes.find((node) => node.id === edge.source);
+    const sourceNode = layerNormalizedNodes.find((node) => node.id === edge.source);
     if (!sourceNode || sourceNode.type !== "media" || sourceNode.data.kind !== "image" || !sourceNode.data.url || upscaleTargets.has(targetNode.id)) return false;
     upscaleTargets.add(targetNode.id);
     return true;
@@ -642,12 +663,12 @@ export function normalizeDocument(
   const edgeInputPositions = new Map<string, number>();
   const normalizedEdgeMap = new Map<CanvasEdge, CanvasEdge>();
   orderedUsableEdges.forEach(({ edge }) => {
-    const targetNode = normalizedNodes.find((node) => node.id === edge.target);
+    const targetNode = layerNormalizedNodes.find((node) => node.id === edge.target);
     if (targetNode?.type === "upscale") {
       normalizedEdgeMap.set(edge, { ...edge, inputRole: "upscale-image" as CanvasInputRole });
       return;
     }
-    const sourceNode = normalizedNodes.find((node) => node.id === edge.source);
+    const sourceNode = layerNormalizedNodes.find((node) => node.id === edge.source);
     if (!sourceNode || !targetNode) {
       normalizedEdgeMap.set(edge, edge);
       return;
@@ -679,9 +700,9 @@ export function normalizeDocument(
   const edges = usableEdges.map((edge) => normalizedEdgeMap.get(edge) || edge);
   return {
     version: CANVAS_VERSION,
-    nodes: normalizedNodes,
+    nodes: layerNormalizedNodes,
     edges,
-    groups,
+    groups: layerNormalizedGroups,
     camera: normalizeCamera(raw.camera, defaultCamera(width, height)),
   };
 }
@@ -879,7 +900,7 @@ export function groupAtPoint(
   document: CanvasDocument,
   point: { x: number; y: number },
 ) {
-  return [...document.groups]
+  return sortCanvasGroupsByLayer(document)
     .reverse()
     .find((group) => {
       const bounds = groupBounds(document, group.id);

@@ -49,10 +49,7 @@
 .canvas-stage>.canvas-grid{z-index:var(--canvas-z-grid)}
 .canvas-stage>.canvas-world{z-index:var(--canvas-z-world);isolation:isolate}
 .canvas-world-content>.canvas-edge-layer{z-index:var(--canvas-z-edge)}
-.canvas-world-content>.canvas-group-layer{z-index:var(--canvas-z-group)}
-.canvas-world-content>.canvas-node-layer{z-index:var(--canvas-z-node)}
-.canvas-world-content>.canvas-node-layer>.canvas-node{z-index:var(--canvas-z-node)}
-.canvas-world-content>.canvas-node-layer>.canvas-node.dragging{z-index:var(--canvas-z-node-interaction)}
+.canvas-world-content>.canvas-group-layer,.canvas-world-content>.canvas-node-layer{z-index:auto}
 .canvas-stage>.canvas-snap-guides,.canvas-stage>.canvas-marquee,.canvas-stage>.canvas-connection-target,.canvas-stage>.canvas-connection-cancel,.canvas-stage>.canvas-connection-picker{z-index:var(--canvas-z-stage-guide)}
 .canvas-stage>.canvas-selection-toolbar,.canvas-stage>.canvas-selection-layout-toolbar,.canvas-stage>.canvas-minimap{z-index:var(--canvas-z-selection)}
 .canvas-stage>.canvas-deck{z-index:var(--canvas-z-deck)}
@@ -983,6 +980,23 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node-context-menu .canvas-menu-item-context:disabled{opacity:.42;cursor:not-allowed;transform:none}
 .canvas-node-context-menu .canvas-menu-item-context:disabled:hover{border-color:transparent;background:transparent;box-shadow:none}
 @media(max-width:420px){.canvas-node-context-menu{width:calc(100vw - 16px);padding:7px}.canvas-node-context-menu .canvas-menu-item-context{min-height:34px}.canvas-node-context-menu .canvas-menu-item-context .canvas-menu-icon{width:24px;height:24px}}
+.canvas-group-context-menu{width:min(320px,calc(100vw - 16px));padding:8px}
+.canvas-group-context-menu .canvas-menu-title{padding:2px 4px 6px}
+.canvas-group-context-menu .canvas-menu-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-group-context-menu .canvas-menu-group{gap:2px}
+.canvas-group-context-menu .canvas-menu-group+.canvas-menu-group{margin-top:5px;padding-top:5px}
+.canvas-group-context-menu button.canvas-menu-item-context{min-height:35px;gap:6px;padding:4px 5px;border-radius:9px}
+.canvas-group-context-menu .canvas-menu-item-context .canvas-menu-icon{width:25px;height:25px;border-radius:7px;font-size:11px}
+.canvas-group-context-menu .canvas-menu-item-context .canvas-menu-icon svg{width:15px;height:15px;display:block;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.7}
+.canvas-group-context-menu .canvas-menu-item-context .canvas-menu-copy b{font-size:10px}
+.canvas-group-context-menu .canvas-menu-item-context .canvas-menu-arrow{font-size:16px}
+.canvas-group-context-menu .canvas-menu-item-context.danger{color:var(--danger)}
+.canvas-group-context-menu .canvas-menu-item-context.danger .canvas-menu-icon{border-color:color-mix(in srgb,var(--danger) 34%,var(--line));background:var(--danger-soft);color:var(--danger)}
+.canvas-group-context-menu .canvas-menu-item-context.danger .canvas-menu-copy b{color:var(--danger)}
+.canvas-group-context-menu .canvas-menu-item-context:hover{border-color:color-mix(in srgb,var(--accent) 28%,var(--line));background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel));box-shadow:0 4px 12px color-mix(in srgb,var(--accent) 8%,transparent);transform:translateX(2px)}
+.canvas-group-context-menu .canvas-menu-item-context.danger:hover{border-color:color-mix(in srgb,var(--danger) 42%,var(--line));background:var(--danger-soft);box-shadow:none}
+.canvas-group-context-menu .canvas-menu-item-context:disabled{opacity:.42;cursor:not-allowed;transform:none}
+@media(max-width:420px){.canvas-group-context-menu{width:calc(100vw - 16px);padding:7px}.canvas-group-context-menu .canvas-menu-item-context{min-height:34px}.canvas-group-context-menu .canvas-menu-item-context .canvas-menu-icon{width:24px;height:24px}}
 
 /* Blank-canvas tools stay compact and use one flat action list. */
 .canvas-tools-context-menu{width:min(252px,calc(100vw - 16px));padding:7px}
@@ -1416,6 +1430,8 @@ html[data-theme="dark"] .canvas-workspace{
   border-radius:11px;
   background:color-mix(in srgb,var(--accent-soft) 48%,var(--panel-2));
 }
+.canvas-node-quick-title-copy{display:grid;min-width:0;gap:1px}
+.canvas-node-quick-title-copy small{overflow:hidden;color:var(--muted);font-size:7px;font-weight:700;line-height:1;white-space:nowrap;text-overflow:ellipsis}
 .canvas-node-quick-title i{
   width:25px;
   height:25px;
@@ -1486,7 +1502,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node-quick-menu .canvas-menu-item{min-height:44px}
 .canvas-node-quick-menu .canvas-menu-icon svg{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.7}
 .canvas-node-quick-menu .canvas-menu-item:disabled{opacity:.42;cursor:not-allowed}
-@media(max-width:540px){.canvas-node-quick-menu-trigger .canvas-node-quick-caret{display:none}.canvas-node-quick-menu{width:min(248px,calc(100vw - 16px))}}
+@media(max-width:540px){.canvas-node-quick-menu-trigger .canvas-node-quick-caret{display:none}.canvas-node-quick-menu{width:min(248px,calc(100vw - 16px))}.canvas-node-quick-title-copy{display:none}}
 
 /* Media viewer chrome: keep utility controls quiet and make downloads one
    obvious split action instead of two unrelated buttons. */
@@ -1826,11 +1842,6 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 /* Group actions stay attached to the selected group instead of floating at
    the top of the viewport. The inside fallback is used when there is no room
    above the group. */
-.canvas-group-selection-toolbar{max-width:min(680px,calc(100% - 20px));overflow-x:auto;overflow-y:hidden;gap:4px;padding:5px 7px;border-radius:12px;scrollbar-width:thin;white-space:nowrap;transform:none}
-.canvas-group-selection-toolbar>button{padding:5px 6px}
-.canvas-group-selection-toolbar[data-placement="above"]::after{content:"";position:absolute;left:50%;top:100%;width:1px;height:10px;background:linear-gradient(var(--accent),color-mix(in srgb,var(--accent) 18%,transparent));pointer-events:none;transform:translateX(-50%)}
-.canvas-group-selection-toolbar[data-placement="inside"]{border-color:color-mix(in srgb,var(--accent) 46%,var(--line));background:color-mix(in srgb,var(--panel) 98%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent),var(--shadow-soft)}
-
 /* Keep the middle-button affordance visible without becoming another canvas
    hit target. The highlighted wheel makes the supported pan gesture obvious
    even before the user opens the keyboard-shortcut panel. */
