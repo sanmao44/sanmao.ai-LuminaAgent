@@ -58,7 +58,10 @@ async function readTrimmed(file: string) {
 }
 
 async function readRestartStatus() {
-  try { return JSON.parse(await readFile(restartStatusPath, 'utf8')) as Record<string, unknown>; } catch { return null; }
+  try {
+    const content = await readFile(restartStatusPath, 'utf8');
+    return JSON.parse(content.replace(/^\uFEFF/, '')) as Record<string, unknown>;
+  } catch { return null; }
 }
 
 async function dependenciesChangedSinceBuild() {

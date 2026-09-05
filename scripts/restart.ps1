@@ -24,7 +24,11 @@ function Write-RestartStatus([string]$State, [string]$Error = '', [bool]$RolledB
     }
     if ($Error) { $payload.error = $Error }
     $temporary = "$statusPath.$OperationId.tmp"
-    $payload | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporary -Encoding UTF8
+    # Windows PowerShell's UTF8 encoding includes a BOM. Node's JSON.parse does
+    # not accept that marker, so write the handoff status as BOM-free UTF-8.
+    $json = $payload | ConvertTo-Json -Depth 5
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($temporary, $json, $utf8NoBom)
     Move-Item -LiteralPath $temporary -Destination $statusPath -Force
   } catch {}
 }

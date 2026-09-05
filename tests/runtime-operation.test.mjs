@@ -93,3 +93,13 @@ test('restart and update helpers preserve rollback and release locks only after 
   assert.match(updaterSh, /BACKUP_COMPLETE/);
   assert.match(updater, /更新流程完成/);
 });
+
+test('Windows restart status is written in a Node-readable UTF-8 format', () => {
+  const restart = read('scripts/restart.ps1');
+  const service = read('lib/runtime-service.ts');
+  const statusWriter = restart.slice(restart.indexOf('function Write-RestartStatus'), restart.indexOf('function Assert-RestartLock'));
+  assert.match(restart, /UTF8Encoding\(\$false\)/);
+  assert.match(restart, /File\]::WriteAllText\(\$temporary, \$json, \$utf8NoBom\)/);
+  assert.doesNotMatch(statusWriter, /Set-Content/);
+  assert.match(service, /content\.replace\(\/\^\\uFEFF\//);
+});
