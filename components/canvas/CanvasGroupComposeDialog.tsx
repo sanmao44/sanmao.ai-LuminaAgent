@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import {
   gridCompositeLayout,
   renderCanvasImageGridComposite,
@@ -159,8 +159,10 @@ export default function CanvasGroupComposeDialog({
   const [previewZoom, setPreviewZoom] = useState(1);
   const previewUrlRef = useRef("");
   const previewRevisionRef = useRef(0);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
   const gridDragRef = useRef<GridDragState | null>(null);
   const previewSortDragRef = useRef<SourceDragState | null>(null);
+  const [previewViewportSize, setPreviewViewportSize] = useState({ width: 0, height: 0 });
   const [previewResult, setPreviewResult] = useState<{
     url: string;
     width: number;
@@ -287,6 +289,23 @@ export default function CanvasGroupComposeDialog({
     };
   }, [open, previewSourceUrls, renderOptions]);
 
+  useEffect(() => {
+    if (!open || !previewResult) return;
+    const element = previewScrollRef.current;
+    if (!element) return;
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      const computed = window.getComputedStyle(element);
+      const width = Math.max(0, rect.width - Number.parseFloat(computed.paddingLeft) - Number.parseFloat(computed.paddingRight));
+      const height = Math.max(0, rect.height - Number.parseFloat(computed.paddingTop) - Number.parseFloat(computed.paddingBottom));
+      setPreviewViewportSize((current) => current.width === width && current.height === height ? current : { width, height });
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [open, previewResult]);
+
   useEffect(() => () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
   }, []);
@@ -363,6 +382,15 @@ export default function CanvasGroupComposeDialog({
     if (previewSortDragRef.current?.pointerId === event.pointerId) previewSortDragRef.current = null;
   };
 
+  const onPreviewWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (busy || !Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const steps = Math.min(3, Math.max(1, Math.round(Math.abs(event.deltaY) / 80)));
+    const delta = (event.deltaY < 0 ? 1 : -1) * steps * 0.1;
+    setPreviewZoom((value) => Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, Number((value + delta).toFixed(2)))));
+  };
+
   const updateCropOffset = (sourceId: string, value: CanvasImageGridCropOffset) => {
     setCropOffsetsBySource((current) => ({ ...current, [sourceId]: clampCropOffset(value) }));
   };
@@ -402,6 +430,18 @@ export default function CanvasGroupComposeDialog({
     if (gridDragRef.current?.pointerId === event.pointerId) gridDragRef.current = null;
   };
 
+  const onPreviewCellDoubleClick = (sourceId: string, event: ReactMouseEvent<HTMLDivElement>) => {
+    if (busy) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveCropSourceId(sourceId);
+    setSettings((current) => ({
+      ...current,
+      layoutMode: "fixed",
+      fit: "cover",
+    }));
+  };
+
   const changeLayoutMode = (value: CanvasImageGridLayoutMode) => {
     setSettings((current) => ({
       ...current,
@@ -433,6 +473,19 @@ export default function CanvasGroupComposeDialog({
 
   const showCropHandles = settings.layoutMode === "fixed" && settings.fit === "cover";
   const previewInteractionClass = showCropHandles ? "interactive crop" : "interactive sortable";
+  const previewInteractionHint = showCropHandles
+    ? "裁切模式 · 拖动图片调整显示范围 · 双击切换图片"
+    : "双击图片进入裁切模式 · 拖动图片调整顺序";
+  const previewFrameSize = useMemo(() => {
+    const sourceWidth = Math.max(1, displayedLayout.width);
+    const sourceHeight = Math.max(1, displayedLayout.height);
+    if (previewViewportSize.width <= 0 || previewViewportSize.height <= 0) return null;
+    const scale = Math.min(previewViewportSize.width / sourceWidth, previewViewportSize.height / sourceHeight);
+    return {
+      width: Math.max(1, Math.round(sourceWidth * scale)),
+      height: Math.max(1, Math.round(sourceHeight * scale)),
+    };
+  }, [displayedLayout.height, displayedLayout.width, previewViewportSize]);
 
   return (
     <div
@@ -465,7 +518,7 @@ export default function CanvasGroupComposeDialog({
           <div className="canvas-compose-preview-column">
             <div className="canvas-compose-preview-label">
               <span><i aria-hidden="true" />实时预览</span>
-              <small>{previewSources.length} 张图片 · {settings.layoutMode === "auto" ? "按原图比例排版" : "固定方格模式"}</small>
+              <small>{previewSources.length} 张图片 · {previewInteractionHint}</small>
             </div>
 
             <div className="canvas-compose-preview-toolbar">
@@ -481,10 +534,17 @@ export default function CanvasGroupComposeDialog({
             <div
               className={`canvas-compose-preview-viewport ${background === "transparent" ? "transparent" : ""} ${previewBusy ? "is-updating" : ""}`}
               aria-label={`宫格预览 ${displayedLayout.columns} 列 ${displayedLayout.rows} 行`}
+              onWheel={onPreviewWheel}
             >
               {previewResult ? (
-                <div className="canvas-compose-preview-scroll">
-                  <div className="canvas-compose-preview-result-shell" style={previewZoom === 1 ? undefined : { transform: `scale(${previewZoom})` }}>
+                <div className={`canvas-compose-preview-scroll ${previewZoom === 1 ? "is-fit" : "is-zoomed"}`} ref={previewScrollRef}>
+                  <div
+                    className="canvas-compose-preview-result-shell"
+                    style={{
+                      ...(previewFrameSize ? { width: `${previewFrameSize.width}px`, height: `${previewFrameSize.height}px` } : {}),
+                      ...(previewZoom === 1 ? {} : { transform: `scale(${previewZoom})` }),
+                    }}
+                  >
                     <img
                       className="canvas-compose-preview-result"
                       src={previewResult.url}
@@ -514,6 +574,7 @@ export default function CanvasGroupComposeDialog({
                             onPointerUp={showCropHandles ? onGridPointerUp : onPreviewSortPointerUp}
                             onPointerCancel={showCropHandles ? onGridPointerUp : onPreviewSortPointerUp}
                             onClick={showCropHandles ? () => setActiveCropSourceId(source.id) : undefined}
+                            onDoubleClick={(event) => onPreviewCellDoubleClick(source.id, event)}
                           >
                             <span className="canvas-compose-preview-cell-number">{index + 1}</span>
                             <span className="canvas-compose-preview-cell-name">{source.name}</span>

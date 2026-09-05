@@ -42,9 +42,17 @@ test("grid compose dialog exposes tactile controls and a live preview", () => {
   assert.match(dialog, /renderCanvasImageGridComposite\(previewSourceUrls, renderOptions\)/);
   assert.match(dialog, /拖动每格图片调整裁切区域/);
   assert.match(dialog, /onGridPointerDown/);
+  assert.match(dialog, /onPreviewCellDoubleClick/);
+  assert.match(dialog, /layoutMode: "fixed"/);
+  assert.match(dialog, /fit: "cover"/);
+  assert.match(dialog, /onDoubleClick=\{\(event\) => onPreviewCellDoubleClick/);
+  assert.match(dialog, /双击图片进入裁切模式/);
   assert.match(dialog, /URL\.createObjectURL\(rendered\.blob\)/);
   assert.match(dialog, /与最终出图一致/);
   assert.match(dialog, /previewBusy && previewResult/);
+  assert.match(dialog, /onWheel=\{onPreviewWheel\}/);
+  assert.match(dialog, /event\.deltaY < 0/);
+  assert.match(dialog, /event\.preventDefault\(\)/);
   assert.match(dialog, /aria-live="polite"/);
   assert.match(dialog, /background === "transparent"/);
   assert.match(dialog, /normalizeHex/);
