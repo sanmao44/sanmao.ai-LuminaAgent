@@ -327,9 +327,13 @@ test("nested node scrolling does not trigger canvas zoom", () => {
   assert.match(styles, /overscroll-behavior:contain/);
 });
 
-test("grouped cards defer external connections to the group ports", () => {
-  assert.match(component, /!group && \(\s*<button\s+type="button"\s+className="canvas-port left"/);
-  assert.match(component, /!group && \(\s*<button\s+type="button"\s+className="canvas-port right"/);
+test("grouped cards expose their own left and right connection ports", () => {
+  const cardStart = component.indexOf("function CanvasNodeCard");
+  const cardEnd = component.indexOf("// Camera updates replace the document object", cardStart);
+  const card = component.slice(cardStart, cardEnd);
+  assert.match(card, /<button\s+type="button"\s+className="canvas-port left"/);
+  assert.match(card, /<button\s+type="button"\s+className="canvas-port right"/);
+  assert.doesNotMatch(card, /!group && \(\s*<button\s+type="button"\s+className="canvas-port/);
 });
 
 test("audio nodes use the branded rounded player instead of browser gray controls", () => {

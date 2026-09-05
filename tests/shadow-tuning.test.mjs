@@ -21,5 +21,5 @@ test('floating canvas and app surfaces use the restrained shadow tokens', () => 
   assert.match(tuningCss, /\.canvas-group \.canvas-group-port:hover::before/);
   assert.match(tuningCss, /\.canvas-node \.canvas-port:focus-visible::before/);
   assert.match(tuningCss, /0 3px 9px color-mix\(in srgb,#000 12%,transparent\)/);
-  assert.match(tuningCss, /html\[data-theme="light"\] \.canvas-group[\s\S]*background:color-mix\(in srgb,var\(--accent-soft\) 32%,var\(--panel\)\)/);
+  assert.match(tuningCss, /html\[data-theme="light"\] \.canvas-group[\s\S]*background:color-mix\(in srgb,var\(--accent-soft\) 40%,var\(--panel\)\)/);
 });

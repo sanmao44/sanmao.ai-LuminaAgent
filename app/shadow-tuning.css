@@ -182,7 +182,7 @@ html[data-theme="dark"] {
    against the dotted background without competing with its child cards. */
 html[data-theme="light"] .canvas-group {
   border-color:color-mix(in srgb,var(--accent) 40%,var(--line-strong));
-  background:color-mix(in srgb,var(--accent-soft) 32%,var(--panel));
+  background:color-mix(in srgb,var(--accent-soft) 40%,var(--panel));
   box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 7%,transparent),var(--shadow-soft);
 }
 html[data-theme="light"] .canvas-group:hover {
