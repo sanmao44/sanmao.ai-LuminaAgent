@@ -9,7 +9,7 @@
         "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip",
         "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.29/SANMAO.AI-0.7.29.zip"
     ],
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sha256": "7fc8b67bb3ebf56f616b0f7e1a90e5eee68e24ad09ae9a8ce8c24c02c6df6c5d",
     "publishedAt": "2026-09-05T22:24:33+08:00",
     "notes": [
         "完善超级画布对象组生成与拼接预览，优化组内布局、层级、连接端口和边界交互。",
