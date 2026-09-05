@@ -68,6 +68,17 @@ test("Agent reference tray stays compact and keeps the picker above it", () => {
   assert.match(styles, /\.agent-composer \.reference-mention-menu\{z-index:130\}/);
 });
 
+test("Agent requests only carry references from the latest user message", () => {
+  assert.equal((page.match(/const latestUserMessage =/g) || []).length, 2);
+  assert.equal((page.match(/const referenceSource = latestUserMessage;/g) || []).length, 2);
+  assert.doesNotMatch(page, /role === ['"]user['"] && (?:item|message)\.references\?\.length/);
+});
+
+test("Agent composer uses a neutral chat placeholder", () => {
+  assert.match(page, /placeholder: "输入问题、任务或创作要求；可上传图片\/文件，也可引用本轮素材。"/);
+  assert.doesNotMatch(page, /placeholder: "详细描述你想生成或修改的画面/);
+});
+
 test("image prompt actions do not sit inside a label that steals editor clicks", () => {
   assert.match(page, /_jsxs\("div", \{\s*className: "field-block prompt-field"/);
   assert.doesNotMatch(page, /_jsxs\("label", \{\s*className: "field-block prompt-field"/);

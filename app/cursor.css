@@ -1,20 +1,21 @@
 :root {
-  --cursor-default: url('/cursors/sanmao-default.svg') 4 3, default;
-  --cursor-pointer: url('/cursors/sanmao-pointer.svg') 4 3, pointer;
-  --cursor-text: url('/cursors/sanmao-text.svg') 16 16, text;
-  --cursor-grab: url('/cursors/sanmao-grab.svg') 16 16, grab;
-  --cursor-grabbing: url('/cursors/sanmao-grabbing.svg') 16 16, grabbing;
-  --cursor-crosshair: url('/cursors/sanmao-crosshair.svg') 16 16, crosshair;
-  --cursor-cell: url('/cursors/sanmao-cell.svg') 16 16, cell;
-  --cursor-move: url('/cursors/sanmao-move.svg') 16 16, move;
-  --cursor-resize-diagonal: url('/cursors/sanmao-resize-diagonal.svg') 16 16, nwse-resize;
-  --cursor-resize-horizontal: url('/cursors/sanmao-resize-horizontal.svg') 16 16, ew-resize;
-  --cursor-resize-vertical: url('/cursors/sanmao-resize-vertical.svg') 16 16, ns-resize;
-  --cursor-not-allowed: url('/cursors/sanmao-not-allowed.svg') 16 16, not-allowed;
-  --cursor-wait: url('/cursors/sanmao-wait.svg') 16 16, wait;
-  --cursor-copy: url('/cursors/sanmao-copy.svg') 8 8, copy;
-  --cursor-zoom-in: url('/cursors/sanmao-zoom-in.svg') 11 11, zoom-in;
-  --cursor-zoom-out: url('/cursors/sanmao-zoom-out.svg') 11 11, zoom-out;
+  --cursor-default: url('/cursors/sanmao-default.svg') 3 2, default;
+  --cursor-pointer: url('/cursors/sanmao-pointer.svg') 3 2, pointer;
+  --cursor-text: url('/cursors/sanmao-text.svg') 12 12, text;
+  --cursor-grab: url('/cursors/sanmao-grab.svg') 12 12, grab;
+  --cursor-grabbing: url('/cursors/sanmao-grabbing.svg') 12 12, grabbing;
+  --cursor-crosshair: url('/cursors/sanmao-crosshair.svg') 12 12, crosshair;
+  --cursor-cell: url('/cursors/sanmao-cell.svg') 12 12, cell;
+  --cursor-move: url('/cursors/sanmao-move.svg') 12 12, move;
+  --cursor-resize-diagonal: url('/cursors/sanmao-resize-diagonal.svg') 12 12, nwse-resize;
+  --cursor-resize-diagonal-reverse: url('/cursors/sanmao-resize-diagonal-reverse.svg') 12 12, nesw-resize;
+  --cursor-resize-horizontal: url('/cursors/sanmao-resize-horizontal.svg') 12 12, ew-resize;
+  --cursor-resize-vertical: url('/cursors/sanmao-resize-vertical.svg') 12 12, ns-resize;
+  --cursor-not-allowed: url('/cursors/sanmao-not-allowed.svg') 12 12, not-allowed;
+  --cursor-wait: url('/cursors/sanmao-wait.svg') 12 12, wait;
+  --cursor-copy: url('/cursors/sanmao-copy.svg') 5 5, copy;
+  --cursor-zoom-in: url('/cursors/sanmao-zoom-in.svg') 10 10, zoom-in;
+  --cursor-zoom-out: url('/cursors/sanmao-zoom-out.svg') 10 10, zoom-out;
 }
 
 /* Keep the visual language consistent anywhere the browser would otherwise
@@ -163,6 +164,8 @@ textarea:disabled,
 .canvas-stage .canvas-node-resize,
 .outpaint-handle.top-left,
 .outpaint-handle.bottom-right,
+.image-editor-outpaint-handle.top-left,
+.image-editor-outpaint-handle.bottom-right,
 .image-editor-crop-handle.top-left,
 .image-editor-crop-handle.bottom-right {
   cursor: var(--cursor-resize-diagonal) !important;
@@ -170,13 +173,17 @@ textarea:disabled,
 
 .outpaint-handle.top-right,
 .outpaint-handle.bottom-left,
+.image-editor-outpaint-handle.top-right,
+.image-editor-outpaint-handle.bottom-left,
 .image-editor-crop-handle.top-right,
 .image-editor-crop-handle.bottom-left {
-  cursor: url('/cursors/sanmao-resize-diagonal-reverse.svg') 16 16, nesw-resize !important;
+  cursor: var(--cursor-resize-diagonal-reverse) !important;
 }
 
 .outpaint-handle.left,
 .outpaint-handle.right,
+.image-editor-outpaint-handle.left,
+.image-editor-outpaint-handle.right,
 .image-editor-crop-handle.left,
 .image-editor-crop-handle.right,
 .compare-divider,
@@ -187,6 +194,8 @@ textarea:disabled,
 
 .outpaint-handle.top,
 .outpaint-handle.bottom,
+.image-editor-outpaint-handle.top,
+.image-editor-outpaint-handle.bottom,
 .image-editor-crop-handle.top,
 .image-editor-crop-handle.bottom {
   cursor: var(--cursor-resize-vertical) !important;
@@ -205,7 +214,7 @@ textarea:disabled,
 }
 
 .canvas-stage select,
-.canvas-stage button:not(.canvas-port),
+.canvas-stage button:not(.canvas-port):not(.canvas-node-resize):not(.canvas-group-resize):not(.image-editor-crop-handle):not(.image-editor-outpaint-handle):not(.outpaint-handle),
 .video-reference-preview,
 .video-upload-button img {
   cursor: var(--cursor-pointer) !important;

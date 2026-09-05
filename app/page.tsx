@@ -8337,12 +8337,11 @@ export default function Page() {
         setChatBusy(sessionId, true);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
         try {
-            const latestUserId = [
+            const latestUserMessage = [
                 ...contextMessages
-            ].reverse().find((item)=>item.role === 'user')?.id;
-            const referenceSource = [
-                ...contextMessages
-            ].reverse().find((item)=>item.role === 'user' && item.references?.length);
+            ].reverse().find((item)=>item.role === 'user');
+            const latestUserId = latestUserMessage?.id;
+            const referenceSource = latestUserMessage;
             const referencesForRequest = await prepareCreativeReferencesForAgent(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
@@ -8583,12 +8582,11 @@ export default function Page() {
                     activity
                 });
             };
-            const latestUserId = [
+            const latestUserMessage = [
                 ...nextMessages
-            ].reverse().find((message)=>message.role === 'user')?.id;
-            const referenceSource = [
-                ...nextMessages
-            ].reverse().find((message)=>message.role === 'user' && message.references?.length);
+            ].reverse().find((message)=>message.role === 'user');
+            const latestUserId = latestUserMessage?.id;
+            const referenceSource = latestUserMessage;
             const referencesForRequest = await prepareCreativeReferencesForAgent(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
@@ -10873,7 +10871,7 @@ export default function Page() {
                                                     value: agentInput,
                                                     references: referenceMentionOptions(agentRefs),
                                                     readOnly: agentMessageSelectionActive || promptOptimizing,
-                                                    placeholder: "详细描述你想生成或修改的画面：主体外观与动作、场景环境、构图视角、光线色彩、风格材质、镜头感和需要避免的内容；也可以上传参考图让助手分析。",
+                                                    placeholder: "输入问题、任务或创作要求；可上传图片/文件，也可引用本轮素材。",
                                                     className: "agent-prompt-mention-editor",
                                                     menuClassName: "agent-mention-menu",
                                                     ariaLabel: "Agent 输入",
