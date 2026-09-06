@@ -5063,7 +5063,20 @@ export default function Page() {
     const [editor, setEditor] = useState(null);
     const [upscaleSourceSize, setUpscaleSourceSize] = useState(null);
     const [outpaintEditor, setOutpaintEditor] = useState(null);
-    useBodyScrollLock(Boolean(supportOpen || confirmState || messageReferencePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor));
+    useEffect(()=>{
+        if (!providerEditor || !state.providers.length) return;
+        const closeOnEscape = (event)=>{
+            if (event.key !== 'Escape') return;
+            setProviderEditor(false);
+            setProviderEditId(null);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return ()=>window.removeEventListener('keydown', closeOnEscape);
+    }, [
+        providerEditor,
+        state.providers.length
+    ]);
+    useBodyScrollLock(Boolean(supportOpen || confirmState || messageReferencePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && (providerEditor || !state.providers.length)));
     const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
         state.models,
         state.providers
@@ -13758,8 +13771,19 @@ export default function Page() {
                                         onStateChanged: setState,
                                         onNotify: notify
                                     }),
-                                    (providerEditor || !state.providers.length) && /*#__PURE__*/ _jsxs("form", {
-                                        className: "provider-form surface provider-simple-form",
+                                    (providerEditor || !state.providers.length) && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
+                                        className: "provider-editor-backdrop",
+                                        onMouseDown: (event)=>{
+                                            if (event.target === event.currentTarget && state.providers.length > 0) {
+                                                setProviderEditor(false);
+                                                setProviderEditId(null);
+                                            }
+                                        },
+                                        children: /*#__PURE__*/ _jsxs("form", {
+                                        role: "dialog",
+                                        "aria-modal": true,
+                                        "aria-labelledby": "provider-editor-title",
+                                        className: "provider-form surface provider-simple-form provider-modal-form",
                                         onSubmit: saveProvider,
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", {
@@ -13772,6 +13796,7 @@ export default function Page() {
                                                                 children: providerEditId ? `正在编辑 · ${providerForm.name}` : state.providers.length ? '新增连接' : '快速接入'
                                                             }),
                                                             /*#__PURE__*/ _jsx("h2", {
+                                                                id: "provider-editor-title",
                                                                 children: providerEditId ? `${providerForm.name} 的服务配置` : '选择平台并连接'
                                                             }),
                                                             /*#__PURE__*/ _jsx("p", {
@@ -14107,7 +14132,8 @@ export default function Page() {
                                                 ]
                                             })
                                         ]
-                                    }),
+                                    })
+                                    }), document.body),
                                     /*#__PURE__*/ _jsx("div", {
                                         className: "provider-list",
                                         // Jimeng is managed by the dedicated local CLI card above;
