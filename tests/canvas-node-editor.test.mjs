@@ -545,6 +545,9 @@ test("group selection uses a toolbar attached to the group card while ordinary m
   assert.match(component, /data-canvas-group-id=\{group\.id\}/);
   assert.match(component, /placeCanvasGroupToolbar\(anchor, stageSize, overlay, 10\)/);
   assert.match(component, /arrangeCanvasGroup\(docRef\.current, activeGroup\.id, mode\)/);
+  assert.doesNotMatch(component, /arrangeCanvas\(docRef\.current, selected, mode\)/);
+  assert.match(component, /title="按节点父子关系整理选中对象"/);
+  assert.match(component, /⌗ 整理选中\s*<\/button>/);
   assert.match(component, /id: "arrange-group"[\s\S]*?label: "组内整理"/);
   assert.match(component, /className="canvas-group-arrange-menu"/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);

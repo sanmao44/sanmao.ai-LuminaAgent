@@ -4294,16 +4294,14 @@ export default function SuperCanvas() {
   );
 
   const arrangeCanvasAction = useCallback((modeOverride?: CanvasArrangeMode) => {
-    const mode = modeOverride || arrangeMode;
     const selected = selectedIds.size ? [...selectedIds] : undefined;
     const activeGroup = selectedGroupId
       ? groupById(docRef.current, selectedGroupId)
       : undefined;
+    const mode = activeGroup ? modeOverride || arrangeMode : undefined;
     const result = activeGroup
       ? arrangeCanvasGroup(docRef.current, activeGroup.id, mode)
-      : selected
-        ? arrangeCanvas(docRef.current, selected, mode)
-        : arrangeCanvas(docRef.current, selected);
+      : arrangeCanvas(docRef.current, selected);
     if (result.changed) {
       const previous = snapshot(docRef.current);
       setUndoStack((items) => [...items, previous].slice(-60));
@@ -10999,9 +10997,9 @@ export default function SuperCanvas() {
       <button
         type="button"
         onClick={() => arrangeCanvasAction()}
-        title={`按${canvasArrangeModeLabel(arrangeMode)}整理选中对象`}
+        title="按节点父子关系整理选中对象"
       >
-        ⌗ 整理选中 · {canvasArrangeModeLabel(arrangeMode).replace("排列", "")}
+        ⌗ 整理选中
       </button>
       <button type="button" onClick={duplicateSelection}>
         ⧉ 复制
