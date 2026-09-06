@@ -347,6 +347,40 @@ test("video continuation creates a direct video result without a variant generat
   assert.doesNotMatch(continuation, /sourceGeneratorId/);
 });
 
+test("all canvas video generation paths forward Agnes V2.0 parameters", () => {
+  const variantStart = component.indexOf("const runVariantBatch = useCallback");
+  const variantEnd = component.indexOf("const runVideoContinuation = useCallback", variantStart);
+  const continuationStart = component.indexOf("const runVideoContinuation = useCallback");
+  const continuationEnd = component.indexOf("const runGeneration = useCallback", continuationStart);
+  const generationStart = component.indexOf("const runGeneration = useCallback");
+  const generationEnd = component.indexOf("runGenerationRef.current = runGeneration", generationStart);
+  assert.ok(variantStart >= 0 && variantEnd > variantStart, "video variant path should be present");
+  assert.ok(continuationStart >= 0 && continuationEnd > continuationStart, "video continuation path should be present");
+  assert.ok(generationStart >= 0 && generationEnd > generationStart, "normal generation path should be present");
+
+  const paths = [
+    component.slice(variantStart, variantEnd),
+    component.slice(continuationStart, continuationEnd),
+    component.slice(generationStart, generationEnd),
+  ];
+  paths.forEach((path) => {
+    assert.match(path, /modelRawId:/);
+    assert.match(path, /agnesWidth:/);
+    assert.match(path, /agnesHeight:/);
+    assert.match(path, /agnesNumFrames:/);
+    assert.match(path, /agnesFrameRate:/);
+  });
+});
+
+test("canvas Agnes V2.0 parameters stay collapsed until opened and keep advanced fields in one row", () => {
+  assert.match(parameterEditor, /const canvasCompact = variant === "dock" \|\| variant === "canvas-flat"/);
+  assert.match(parameterEditor, /const \[agnesV20PanelOpen, setAgnesV20PanelOpen\] = useState\(!canvasCompact\)/);
+  assert.match(parameterEditor, /className="video-v20-parameter-trigger"/);
+  assert.match(parameterEditor, /aria-controls="canvas-video-v20-parameter-drawer"/);
+  assert.match(parameterEditor, /className="video-v20-parameter-drawer"/);
+  assert.match(styles, /video-v20-parameter-drawer \.video-v20-advanced-fields\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)!important/);
+});
+
 test("selected related canvas edges become dashed and animate their flow", () => {
   assert.match(component, /related \? "related"/);
   assert.match(styles, /\.canvas-edge-visual \.canvas-edge\.related\{[^}]*stroke-dasharray:11 9[^}]*animation:canvas-edge-related-dashes 1\.8s linear infinite/);
@@ -601,5 +635,6 @@ test("canvas stacking rules are tokenized instead of using historical hard-coded
     "--canvas-z-modal-popover:580",
     "--canvas-z-toast:700",
   ].forEach((token) => assert.match(styles, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))));
-  assert.doesNotMatch(styles, /z-index\s*:\s*-?\d+!?/);
+  const nonTokenCss = styles.replace(/--[\w-]+\s*:\s*-?\d+!?/g, "");
+  assert.doesNotMatch(nonTokenCss, /z-index\s*:\s*-?\d+!?/);
 });

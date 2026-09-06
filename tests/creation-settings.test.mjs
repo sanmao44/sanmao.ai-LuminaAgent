@@ -78,6 +78,65 @@ test('automatic video settings resolve the actual default video model', () => {
   assert.equal(selected.model?.rawId, 'agnes-video-v2.0');
 });
 
+test('video settings expose shared Agnes V2.0 presets and backward-compatible defaults', () => {
+  assert.deepEqual(settings.AGNES_V20_DURATION_PRESETS.map(({ frames, frameRate }) => ({ frames, frameRate })), [
+    { frames: 81, frameRate: 24 },
+    { frames: 121, frameRate: 24 },
+    { frames: 241, frameRate: 24 },
+    { frames: 441, frameRate: 24 },
+  ]);
+  assert.deepEqual(settings.AGNES_V20_DIMENSION_PRESETS.map(({ width, height }) => ({ width, height })), [
+    { width: 1152, height: 768 },
+    { width: 1024, height: 576 },
+    { width: 576, height: 1024 },
+    { width: 768, height: 768 },
+  ]);
+  const defaults = settings.defaultVideoCreationSettings(runtime);
+  assert.deepEqual({
+    width: defaults.agnesWidth,
+    height: defaults.agnesHeight,
+    numFrames: defaults.agnesNumFrames,
+    frameRate: defaults.agnesFrameRate,
+  }, { width: 1152, height: 768, numFrames: 81, frameRate: 24 });
+  const legacy = settings.normalizeVideoCreationSettings({ kind: 'video', model: 'agnes-v20' }, runtime);
+  assert.deepEqual({
+    width: legacy.agnesWidth,
+    height: legacy.agnesHeight,
+    numFrames: legacy.agnesNumFrames,
+    frameRate: legacy.agnesFrameRate,
+  }, { width: 1152, height: 768, numFrames: 81, frameRate: 24 });
+});
+
+test('Agnes V2.0 custom video settings are normalized to provider constraints', () => {
+  const result = settings.normalizeVideoCreationSettings({
+    kind: 'video',
+    agnesWidth: 1000,
+    agnesHeight: 4000,
+    agnesNumFrames: 82,
+    agnesFrameRate: 99,
+  }, runtime);
+  assert.deepEqual({
+    width: result.agnesWidth,
+    height: result.agnesHeight,
+    numFrames: result.agnesNumFrames,
+    frameRate: result.agnesFrameRate,
+  }, { width: 1024, height: 3840, numFrames: 81, frameRate: 60 });
+
+  const invalid = settings.normalizeVideoCreationSettings({
+    kind: 'video',
+    agnesWidth: 1,
+    agnesHeight: 63,
+    agnesNumFrames: 0,
+    agnesFrameRate: 0,
+  }, runtime);
+  assert.deepEqual({
+    width: invalid.agnesWidth,
+    height: invalid.agnesHeight,
+    numFrames: invalid.agnesNumFrames,
+    frameRate: invalid.agnesFrameRate,
+  }, { width: 64, height: 64, numFrames: 1, frameRate: 1 });
+});
+
 test('image settings retain local-edit annotations in the persisted mask', () => {
   const result = settings.normalizeImageCreationSettings({
     kind: 'image',

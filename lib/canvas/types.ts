@@ -80,6 +80,8 @@ export type CanvasGenerationMeta = {
   variantIndex?: number;
   variantInstruction?: string;
   createdAt?: number;
+  /** Elapsed time from request start until the provider returned the result. */
+  durationMs?: number;
   updatedAt?: number;
 };
 

@@ -183,6 +183,7 @@ import CanvasProcessingIndicator, {
   type CanvasProcessingKind,
 } from "@/components/canvas/CanvasProcessingIndicator";
 import MediaViewer, {
+  type ImageVersionInfo,
   type MediaViewerItem,
   type MediaViewerReference,
 } from "@/components/MediaViewer";
@@ -1236,6 +1237,96 @@ function nodeLabel(node: CanvasNode) {
   return node.data.kind === "video" ? "视频卡片" : node.data.kind === "audio" ? "音频节点" : "图片卡片";
 }
 
+function mediaViewerVersionInfo(
+  document: CanvasDocument,
+  node: CanvasNode,
+  runtime: CanvasRuntimeState | null,
+): ImageVersionInfo | undefined {
+  const generation = node.data.generation;
+  const rawParams = generation?.params || node.data.params;
+  const params = rawParams && typeof rawParams === "object"
+    ? rawParams as Record<string, unknown>
+    : undefined;
+  const entries: Array<{ label: string; value: string }> = [];
+  const addEntry = (label: string, value: unknown) => {
+    const normalized = String(value ?? "").trim();
+    if (normalized) entries.push({ label, value: normalized });
+  };
+  const aspect = params?.aspect === "自定义"
+    ? `${params.customAspectWidth || "?"}:${params.customAspectHeight || "?"}`
+    : params?.aspect;
+  const operationLabels: Record<string, string> = {
+    generate: "生成",
+    edit: "编辑",
+    upscale: "超分",
+    extend: "扩展",
+  };
+  const inputModeLabels: Record<string, string> = {
+    reference: "参考图",
+    first_last: "首尾帧",
+    first_frame: "首帧",
+    multi_frame: "多帧参考",
+  };
+  addEntry("比例", aspect);
+  addEntry("分辨率", params?.resolution);
+  addEntry("质量", params?.quality);
+  addEntry(
+    "尺寸",
+    params?.sizeMode === "custom"
+      ? `${params.width || "?"} × ${params.height || "?"}`
+      : undefined,
+  );
+  addEntry("背景", params?.backgroundMode);
+  addEntry("格式", params?.outputFormat);
+  addEntry("操作", operationLabels[String(params?.operation || "")] || params?.operation);
+  addEntry("输入", inputModeLabels[String(params?.inputMode || "")] || params?.inputMode);
+  addEntry("时长", params?.duration ? `${params.duration} 秒` : undefined);
+  if (generation?.referenceIds?.length) addEntry("参考", `${generation.referenceIds.length} 项`);
+  if (params?.mask) addEntry("局部编辑", "已启用");
+
+  const modelId = String(params?.model || node.data.model || "").trim();
+  const runtimeModel = runtime?.models?.find(
+    (model) => model.id === modelId || model.displayName === modelId,
+  );
+  const provider = String(node.data.providerName || runtimeModel?.providerName || "").trim();
+  const displayModel = String(node.data.model || runtimeModel?.displayName || modelId).trim();
+  const model = modelId && displayModel && modelId !== displayModel
+    ? `${displayModel} · ${modelId}`
+    : displayModel || modelId;
+  const sourceNodeId = generation?.parentNodeId || generation?.reuseSourceNodeId || generation?.sourceGeneratorId;
+  const sourceNode = sourceNodeId ? nodeById(document, sourceNodeId) : undefined;
+  const sourceNodeLabel = sourceNode
+    ? `${nodeLabel(sourceNode)}${sourceNode.data.name ? ` · ${String(sourceNode.data.name)}` : ""}`
+    : sourceNodeId || "直接生成";
+  const width = Number(node.data.nativeWidth);
+  const height = Number(node.data.nativeHeight);
+  const dimensions = width > 0 && height > 0
+    ? `${width} × ${height}`
+    : params?.sizeMode === "custom"
+      ? `${params.width || "?"} × ${params.height || "?"}`
+      : params?.resolution
+        ? `${String(params.resolution)}${aspect ? ` · ${String(aspect)}` : ""}`
+        : undefined;
+  const status = node.data.status === "failed"
+    ? "失败"
+    : node.data.statusLabel || (node.data.url ? "已完成" : "待处理");
+  const generationDurationMs = Number(generation?.durationMs);
+
+  return {
+    sourceNode: sourceNodeLabel,
+    provider: provider || "未记录",
+    model: model || "未记录",
+    dimensions,
+    createdAt: generation?.createdAt || generation?.updatedAt,
+    generationDurationMs: Number.isFinite(generationDurationMs) && generationDurationMs >= 0
+      ? generationDurationMs
+      : undefined,
+    prompt: generation?.prompt || node.data.prompt,
+    parameters: entries,
+    status,
+  };
+}
+
 function canvasUpscaleSource(document: CanvasDocument, nodeId: string) {
   return incomingReferences(document, nodeId).find(
     (item) => isCanvasReadyImageSource(item),
@@ -2232,6 +2323,7 @@ export default function SuperCanvas() {
   const [reusePromptBeforeOptimization, setReusePromptBeforeOptimization] = useState<string | null>(null);
   const [deckPromptBeforeOptimization, setDeckPromptBeforeOptimization] = useState<string | null>(null);
   const [canvasPromptOptimizing, setCanvasPromptOptimizing] = useState(false);
+  const [reverseAgentNodeId, setReverseAgentNodeId] = useState<string | null>(null);
   const [reusePreview, setReusePreview] = useState<CanvasReferenceDraft | null>(null);
   const [textLightboxNodeId, setTextLightboxNodeId] = useState<string | null>(
     null,
@@ -5643,7 +5735,10 @@ export default function SuperCanvas() {
           return {
             ...value,
             nodes: value.nodes.map((node) => {
-              if (node.id === nodeId)
+              if (node.id === nodeId) {
+                const generationDurationMs = terminal && node.data.generation?.createdAt
+                  ? Math.max(0, Date.now() - node.data.generation.createdAt)
+                  : undefined;
                 return {
                   ...node,
                   data: {
@@ -5665,8 +5760,12 @@ export default function SuperCanvas() {
                         : terminal
                           ? "视频任务已中断"
                           : "视频生成中"),
+                    ...(generationDurationMs !== undefined && node.data.generation
+                      ? { generation: { ...node.data.generation, durationMs: generationDurationMs } }
+                      : {}),
                   },
                 };
+              }
               if (
                 node.id === sourceGeneratorId &&
                 typeof variantIndex === "number"
@@ -5997,33 +6096,38 @@ export default function SuperCanvas() {
               : ("running" as const);
         let next = {
           ...value,
-          nodes: value.nodes.map((node) =>
-            node.id === targetId
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    status:
-                      task.status === "done"
-                        ? ("completed" as const)
-                        : terminal
-                          ? ("failed" as const)
-                          : ("running" as const),
-                    progress: Number(
-                      task.progress || (task.status === "done" ? 100 : 0),
-                    ),
-                    url: task.videoUrls?.[0] || node.data.url,
-                    statusLabel:
-                      task.error ||
-                      (task.status === "done"
-                        ? "视频已完成"
-                        : terminal
-                          ? "视频任务已中断"
-                          : "视频生成中"),
-                  },
-                }
-              : node,
-          ),
+          nodes: value.nodes.map((node) => {
+            if (node.id !== targetId) return node;
+            const generationDurationMs = terminal && node.data.generation?.createdAt
+              ? Math.max(0, Date.now() - node.data.generation.createdAt)
+              : undefined;
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                status:
+                  task.status === "done"
+                    ? ("completed" as const)
+                    : terminal
+                      ? ("failed" as const)
+                      : ("running" as const),
+                progress: Number(
+                  task.progress || (task.status === "done" ? 100 : 0),
+                ),
+                url: task.videoUrls?.[0] || node.data.url,
+                statusLabel:
+                  task.error ||
+                  (task.status === "done"
+                    ? "视频已完成"
+                    : terminal
+                      ? "视频任务已中断"
+                      : "视频生成中"),
+                ...(generationDurationMs !== undefined && node.data.generation
+                  ? { generation: { ...node.data.generation, durationMs: generationDurationMs } }
+                  : {}),
+              },
+            };
+          }),
         };
         next = updateVariantState(next, index, {
           status: variantStatus,
@@ -6068,6 +6172,7 @@ export default function SuperCanvas() {
           try {
             if (kind === "image") {
               const imageParams = effectiveParams as ImageCreationSettings;
+              const generationStartedAt = Date.now();
               const result = await generateCanvasImage({
                 taskId: uid("image-task"),
                 prompt,
@@ -6095,6 +6200,7 @@ export default function SuperCanvas() {
               });
               if (!result.images?.length)
                 throw new Error("服务端没有返回图片结果。");
+              const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
               const outputs = result.images.map((image, outputIndex) =>
                 createMedia(
                   "image",
@@ -6114,6 +6220,7 @@ export default function SuperCanvas() {
                       variantIndex: index,
                       variantInstruction: requirements[index],
                       createdAt: Date.now(),
+                      durationMs: generationDurationMs,
                     },
                     referenceOrder: linked.map((item) => item.id),
                   },
@@ -6171,14 +6278,20 @@ export default function SuperCanvas() {
               );
               const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
               if (videoInputError) throw new Error(videoInputError);
+              const generationStartedAt = Date.now();
               const task = await generateCanvasVideo({
                 prompt,
                 model: effectiveParams.model,
+                modelRawId: resolvedModel.model?.rawId,
                 operation: videoParams.operation,
                 inputMode: videoParams.inputMode,
                 duration: videoParams.duration,
                 aspect: videoParams.aspect,
                 resolution: videoParams.resolution,
+                agnesWidth: videoParams.agnesWidth,
+                agnesHeight: videoParams.agnesHeight,
+                agnesNumFrames: videoParams.agnesNumFrames,
+                agnesFrameRate: videoParams.agnesFrameRate,
                 references: videoInputs.referenceImages.map((item) => ({
                     url: String(item.data.url),
                     name: String(item.data.name || "参考图片"),
@@ -6195,6 +6308,9 @@ export default function SuperCanvas() {
                   name: String(item.data.name || "参考音频"),
                 })),
               });
+              const generationDurationMs = task.status === "done"
+                ? Math.max(0, Date.now() - generationStartedAt)
+                : undefined;
               const target = createMedia(
                 "video",
                 task.videoUrls?.[0] || "",
@@ -6219,7 +6335,8 @@ export default function SuperCanvas() {
                     variantIndex: index,
                     variantInstruction: requirements[index],
                     taskId: task.id,
-                    createdAt: Date.now(),
+                    createdAt: generationStartedAt,
+                    ...(generationDurationMs !== undefined ? { durationMs: generationDurationMs } : {}),
                   },
                   referenceOrder: linked.map((item) => item.id),
                 },
@@ -6777,6 +6894,7 @@ export default function SuperCanvas() {
       name: string,
       position: Point,
       status: "running" | "completed" | "failed",
+      durationMs?: number,
     ) => createMedia("image", url, name, position, {
       role: "图片续生成结果",
       model: params.model,
@@ -6795,6 +6913,7 @@ export default function SuperCanvas() {
         reuseSourceNodeId: source.id,
         taskId,
         createdAt,
+        ...(durationMs !== undefined ? { durationMs } : {}),
       },
       referenceOrder: [...resolvedReferenceIds],
     });
@@ -6836,6 +6955,7 @@ export default function SuperCanvas() {
     }
 
     try {
+      const generationStartedAt = Date.now();
       const result = await generateCanvasImage({
         taskId,
         prompt,
@@ -6858,6 +6978,7 @@ export default function SuperCanvas() {
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
+      const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
 
       const outputs: CanvasNode[] = [];
       result.images.forEach((image, index) => {
@@ -6870,6 +6991,7 @@ export default function SuperCanvas() {
             y: pendingPositioned.y + Math.floor(index / 2) * 280,
           },
           "completed",
+          generationDurationMs,
         );
         outputs.push({
           ...output,
@@ -6880,7 +7002,7 @@ export default function SuperCanvas() {
           ),
         });
       });
-      const firstData = createOutput(result.images[0].url, "继续生成图片 1", pendingPositioned, "completed").data;
+      const firstData = createOutput(result.images[0].url, "继续生成图片 1", pendingPositioned, "completed", generationDurationMs).data;
       const extraEdges = outputs.flatMap((output) => [
         {
           id: uid("edge"),
@@ -7097,14 +7219,20 @@ export default function SuperCanvas() {
       );
       const videoInputError = canvasVideoInputError(videoInputs, params.inputMode, videoLimits, params.operation);
       if (videoInputError) throw new Error(videoInputError);
+      const generationStartedAt = Date.now();
       const task = await generateCanvasVideo({
         prompt,
         model: resolvedVideoModel.model?.id || "auto",
+        modelRawId: resolvedVideoModel.model?.rawId,
         operation: params.operation,
         inputMode: params.inputMode,
         duration: params.duration,
         aspect: params.aspect,
         resolution: params.resolution,
+        agnesWidth: params.agnesWidth,
+        agnesHeight: params.agnesHeight,
+        agnesNumFrames: params.agnesNumFrames,
+        agnesFrameRate: params.agnesFrameRate,
         references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
         referenceVideos: videoInputs.referenceVideos.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考视频") })),
         firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
@@ -7119,6 +7247,9 @@ export default function SuperCanvas() {
           name: String(item.data.name || "参考音频"),
         })),
       });
+      const generationDurationMs = task.status === "done"
+        ? Math.max(0, Date.now() - generationStartedAt)
+        : undefined;
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) => node.id === output.id
@@ -7140,7 +7271,8 @@ export default function SuperCanvas() {
                   parentNodeId: source?.id,
                   reuseSourceNodeId: source?.id,
                   taskId: task.id,
-                  createdAt: Date.now(),
+                  createdAt: generationStartedAt,
+                  ...(generationDurationMs !== undefined ? { durationMs: generationDurationMs } : {}),
                 },
               },
             }
@@ -7382,6 +7514,7 @@ export default function SuperCanvas() {
         streamFrame = window.requestAnimationFrame(flushStreamedText);
       };
       try {
+        const generationStartedAt = Date.now();
         const agentReferenceNodes = referenceNodes.filter((node) => node.type === "prompt" || node.data.kind !== "audio");
         const response = await generateCanvasAgent({
           messages: agentMessages,
@@ -7417,6 +7550,7 @@ export default function SuperCanvas() {
             scheduleStreamFlush();
           }
         });
+        const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
         if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
         flushStreamedText();
         const parent = nodeById(docRef.current, inputId) || inputNode;
@@ -7460,6 +7594,7 @@ export default function SuperCanvas() {
                 referenceIds: referenceNodes.map((node) => node.id),
                 parentNodeId: inputId,
                 createdAt: Date.now(),
+                durationMs: generationDurationMs,
               },
               referenceOrder: referenceNodes.map((node) => node.id),
             },
@@ -7737,6 +7872,7 @@ export default function SuperCanvas() {
             }),
           );
         }
+        const generationStartedAt = Date.now();
         const result = await generateCanvasImage({
           taskId,
           prompt,
@@ -7763,6 +7899,7 @@ export default function SuperCanvas() {
           references: refs,
         });
         if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
+        const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
         const outputs = result.images.map((image, index) =>
           createMedia(
             "image",
@@ -7787,6 +7924,7 @@ export default function SuperCanvas() {
                 parentNodeId: undefined,
                 taskId,
                 createdAt: Date.now(),
+                durationMs: generationDurationMs,
               },
               referenceOrder: linked.map((node) => node.id),
             },
@@ -7918,6 +8056,7 @@ export default function SuperCanvas() {
               y: parent.y,
             }
           : screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        const generationStartedAt = Date.now();
         const target = fillsTarget
           ? sourceTarget!
           : createMedia("video", "", "视频任务", position, {
@@ -7932,7 +8071,7 @@ export default function SuperCanvas() {
                 referenceIds: linked.map((item) => item.id),
                 sourceGeneratorId: sourceNode?.id,
                 parentNodeId: undefined,
-                createdAt: Date.now(),
+                createdAt: generationStartedAt,
               },
             });
         targetId = target.id;
@@ -7966,11 +8105,16 @@ export default function SuperCanvas() {
         const task = await generateCanvasVideo({
           prompt,
           model: effectiveParams.model,
+          modelRawId: resolvedModel.model?.rawId,
           operation: videoParams.operation,
           inputMode: videoParams.inputMode,
           duration: videoParams.duration,
           aspect: videoParams.aspect,
           resolution: videoParams.resolution,
+          agnesWidth: videoParams.agnesWidth,
+          agnesHeight: videoParams.agnesHeight,
+          agnesNumFrames: videoParams.agnesNumFrames,
+          agnesFrameRate: videoParams.agnesFrameRate,
           references: (videoInputs?.referenceImages || [])
             .filter((item) => item.data.url)
             .map((item) => ({
@@ -7992,6 +8136,9 @@ export default function SuperCanvas() {
             name: String(item.data.name || "参考音频"),
           })),
         });
+        const generationDurationMs = task.status === "done"
+          ? Math.max(0, Date.now() - generationStartedAt)
+          : undefined;
         updateDoc((value) => ({
           ...value,
           nodes: value.nodes.map((node) =>
@@ -8014,7 +8161,8 @@ export default function SuperCanvas() {
                       sourceGeneratorId: sourceNode?.id,
                       parentNodeId: undefined,
                       taskId: task.id,
-                      createdAt: Date.now(),
+                      createdAt: generationStartedAt,
+                      ...(generationDurationMs !== undefined ? { durationMs: generationDurationMs } : {}),
                     },
                   },
                 }
@@ -9757,31 +9905,6 @@ export default function SuperCanvas() {
     const maxHeight = window.innerWidth <= 720 ? 190 : 320;
     editor.style.height = `${Math.min(maxHeight, Math.max(minHeight, editor.scrollHeight))}px`;
   }, [composerPrompt, mode, reuseDraft, selectedSingle?.id]);
-  const writeViewerPrompt = useCallback((node: CanvasNode, value: string) => {
-    if (node.type !== "media") return;
-    if (node.data.kind === "audio") {
-      notify("音频节点不支持提示词或生成参数。", "error");
-      return;
-    }
-    const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
-    if (node.data.kind === "image") {
-      openImageEditor(node, { prompt: value });
-    } else if (inPlaceVideo) {
-      updateEditorPrompt(node, value);
-      setSelectedIds(new Set([node.id]));
-      setSelectedGroupId(null);
-      setMode("video");
-      setExpandedEditorId(node.id);
-      setLightbox(null);
-    } else {
-      openReuseDraft(node, {
-        prompt: value,
-        operation: "generate",
-        includeSourceReference: true,
-      });
-    }
-    notify(inPlaceVideo ? "提示词已写入当前视频节点，请点击生成" : "提示词已复制到画布编辑器，原节点保持不变");
-  }, [notify, openImageEditor, openReuseDraft, updateEditorPrompt]);
   const runOneTakeForAgentNode = useCallback(
     (node: CanvasNode, durationSeconds = ONE_TAKE_DEFAULT_DURATION) => {
       if (node.type !== "prompt") return;
@@ -9807,13 +9930,6 @@ export default function SuperCanvas() {
     },
     [notify],
   );
-  const createViewerTextNode = useCallback((node: CanvasNode, value: string) => {
-    const draft = createPrompt({ x: node.x + nodeSize(node).w + 90, y: node.y });
-    const textNode = { ...draft, data: { ...draft.data, text: value, agentPrompt: value, role: "结果文本" } };
-    commit((current) => ({ ...current, nodes: [...current.nodes, textNode] }));
-    setSelectedIds(new Set([textNode.id]));
-    notify("已创建新的文本节点");
-  }, [commit, notify]);
   const createViewerAgentNode = useCallback((node: CanvasNode, value: string) => {
     if (node.type !== "prompt") return;
     const prompt = value.trim();
@@ -9924,33 +10040,6 @@ export default function SuperCanvas() {
       } else openImageEditor(node);
     },
     [notify, openImageEditor, openReuseDraft],
-  );
-  const updateViewerParams = useCallback(
-    (node: CanvasNode, settings: CreationSettings) => {
-      if (node.type !== "media" || settings.kind === "text") return;
-      if (node.data.kind === "audio") {
-        notify("音频节点不支持生成参数。", "error");
-        return;
-      }
-      if (reuseDraft?.sourceNodeId === node.id) {
-        setReuseDraft((current) => current ? { ...current, params: clone(settings), dirty: true } : current);
-        setExpandedEditorId(node.id);
-        setLightbox(null);
-        notify("参数已复制到画布编辑器，原节点保持不变");
-        return;
-      }
-      if (node.data.kind === "image") openImageEditor(node, { params: settings });
-      else if (canvasVideoTargetHasImageReference(docRef.current, node)) {
-        updateEditorParams(node, settings);
-        setSelectedIds(new Set([node.id]));
-        setSelectedGroupId(null);
-        setMode("video");
-        setExpandedEditorId(node.id);
-        setLightbox(null);
-      }
-      else openReuseDraft(node, { params: settings });
-    },
-    [notify, openImageEditor, openReuseDraft, reuseDraft, updateEditorParams],
   );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
     if (!canAddCanvasAsset(node)) return null;
@@ -10403,6 +10492,54 @@ export default function SuperCanvas() {
         model.kind === "chat" && model.enabled !== false && model.published !== false,
     ),
   );
+  const reverseAgentNodePrompt = useCallback(async (node: CanvasNode) => {
+    if (node.type !== "prompt" || reverseAgentNodeId === node.id) return;
+    const currentNode = nodeById(docRef.current, node.id) || node;
+    if (["queued", "running"].includes(String(currentNode.data.status || ""))) return;
+    const images = incomingReferences(docRef.current, currentNode.id)
+      .filter(isCanvasReadyImageSource)
+      .map((reference) => ({
+        url: String(reference.data.url),
+        name: String(reference.data.name || "参考图片"),
+      }))
+      .filter((reference) => Boolean(reference.url));
+    if (!images.length) return;
+    if (!chatModelsAvailable) return;
+
+    setReverseAgentNodeId(node.id);
+    try {
+      const value = await runReversePrompt(images, runtime?.settings.agentModelId || undefined);
+      updateDoc((current) => ({
+        ...current,
+        nodes: current.nodes.map((item) => {
+          if (item.id !== node.id || item.type !== "prompt") return item;
+          const hasResponse = Boolean(String(item.data.agentResponse || "").trim())
+            || String(item.data.role || "").includes("回复");
+          return {
+            ...item,
+            data: {
+              ...item.data,
+              agentPrompt: value,
+              ...(hasResponse
+                ? {}
+                : {
+                    text: value,
+                    agentResponse: undefined,
+                    role: "Agent 输入",
+                    status: "idle" as const,
+                    statusLabel: undefined,
+                  }),
+            },
+          };
+        }),
+      }));
+      notify("已反推提示词，已回填当前 Agent 节点");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "反推提示词失败", "error");
+    } finally {
+      setReverseAgentNodeId(null);
+    }
+  }, [chatModelsAvailable, notify, reverseAgentNodeId, runtime, updateDoc]);
   const quickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const node = selectedSingle;
     if (!node || selectedGroupId || selectedNodes.length !== 1) return { primaryActions: [], menuGroups: [] };
@@ -10503,9 +10640,19 @@ export default function SuperCanvas() {
     }
     if (node.type === "prompt") {
       const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
+      const hasImageReferences = incomingReferences(document, node.id).some(isCanvasReadyImageSource);
+      const nodeBusy = ["queued", "running"].includes(String(node.data.status || ""));
       return {
         primaryActions: [
           { id: "preview", icon: "preview", label: "放大查看", onClick: () => openCanvasTextViewer(node.id) },
+          {
+            id: "reverse-prompt",
+            icon: "reverse-prompt",
+            label: reverseAgentNodeId === node.id ? "反推中…" : "反推提示词",
+            title: hasImageReferences ? "根据当前 Agent 节点连接的图片反推提示词" : "请先连接一张已完成的图片",
+            disabled: !hasImageReferences || !chatModelsAvailable || nodeBusy || reverseAgentNodeId === node.id,
+            onClick: () => void reverseAgentNodePrompt(node),
+          },
           {
             id: "image",
             icon: "image",
@@ -10557,10 +10704,13 @@ export default function SuperCanvas() {
     deleteSelection,
     downloadCanvasNode,
     generationKeys,
+    chatModelsAvailable,
     openImageEditor,
     openImageOperations,
     retryFailedVariants,
     createUpscaleFromSource,
+    reverseAgentNodeId,
+    reverseAgentNodePrompt,
     selectedGroupId,
     selectedNodes.length,
     selectedSingle,
@@ -12464,7 +12614,6 @@ export default function SuperCanvas() {
       {lightbox && (() => {
         const viewerNode = nodeById(document, lightbox.nodeId);
         if (!viewerNode || !isCanvasReferenceableNode(viewerNode)) return null;
-        const viewerIsMedia = viewerNode.type === "media";
         const viewerItem: MediaViewerItem = {
           id: viewerNode.id,
           kind: viewerNode.data.kind || "image",
@@ -12473,6 +12622,7 @@ export default function SuperCanvas() {
           prompt: String(viewerNode.data.generation?.prompt || viewerNode.data.prompt || ""),
           width: Number(viewerNode.data.nativeWidth) || undefined,
           height: Number(viewerNode.data.nativeHeight) || undefined,
+          versionInfo: mediaViewerVersionInfo(document, viewerNode, runtime),
         };
         const viewerReferences: MediaViewerReference[] = comparisonReferences(document, viewerNode.id).map((reference) => ({
           id: reference.id,
@@ -12480,45 +12630,12 @@ export default function SuperCanvas() {
           url: String(reference.data.url || ""),
           name: String(reference.data.name || "参考素材"),
         })).filter((reference) => Boolean(reference.url));
-        const viewerVideoInPlace = canvasVideoTargetHasImageReference(document, viewerNode);
-        const removeViewerNode = () => {
-          if (!window.confirm("删除这个节点？可以使用撤销恢复。")) return;
-          commit((value) => removeNodes(value, [viewerNode.id]));
-          setSelectedIds(new Set());
-          setSelectedGroupId(null);
-          setLightbox(null);
-          notify("节点已删除，可用撤销恢复");
-        };
         return <MediaViewer
           item={viewerItem}
           references={viewerReferences}
-          surface="canvas"
           initialCompare={lightbox.compare}
-          model={runtime?.settings.agentModelId || undefined}
-          agentAvailable={chatModelsAvailable}
-          runtime={runtime}
-          parameters={viewerIsMedia && viewerNode.data.kind === "video"
-            ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "video", runtime) as VideoCreationSettings
-            : viewerIsMedia
-            ? copyParams(viewerNode.data.generation?.params || viewerNode.data.params, "image", runtime) as ImageCreationSettings
-            : undefined}
           onClose={() => setLightbox(null)}
-          onParametersChange={viewerIsMedia ? (settings) => updateViewerParams(viewerNode, settings) : undefined}
-          onPromptSave={viewerIsMedia ? (value) => writeViewerPrompt(viewerNode, value) : undefined}
-          onWriteResult={viewerIsMedia ? (value) => writeViewerPrompt(viewerNode, value) : undefined}
-          onCreateTextNode={(value) => createViewerTextNode(viewerNode, value)}
           onNotify={notify}
-          onEdit={viewerIsMedia ? () => viewerNode.data.kind === "image"
-            ? openImageEditor(viewerNode)
-            : viewerVideoInPlace
-              ? toggleEditor(viewerNode)
-              : openReuseDraft(viewerNode) : undefined}
-          onLocalEdit={viewerIsMedia && viewerNode.data.kind === "image" ? () => openCanvasMaskEditor(viewerNode.id) : undefined}
-          onUpscale={viewerIsMedia && viewerNode.data.kind === "image" ? () => createUpscaleFromSource(viewerNode) : undefined}
-          onContinue={viewerIsMedia ? () => continueFromMedia(viewerNode) : undefined}
-          onReuse={viewerIsMedia ? () => viewerNode.data.kind === "image" ? openImageEditor(viewerNode) : openReuseDraft(viewerNode) : undefined}
-          onUseAsReference={viewerIsMedia ? () => addCurrentNodeToReuse(viewerNode) : undefined}
-          onAddToAssets={canAddCanvasAsset(viewerNode) ? () => openAssetCollectionPicker(viewerNode) : undefined}
           onDownload={(variant) => {
             if (variant === "share") {
               void downloadCanvasShare(viewerNode);
@@ -12526,7 +12643,6 @@ export default function SuperCanvas() {
             }
             downloadCanvasNode(viewerNode);
           }}
-          onDelete={removeViewerNode}
         />;
       })()}
       {reusePreview && (
@@ -13250,7 +13366,7 @@ function CanvasAssetDrawer({
                   deletable: !item.builtin,
                 }))}
               />
-              <button type="button" disabled={collection === "all" || collections.find((item) => item.id === collection)?.builtin !== false} onClick={() => void renameCollection(collection)} title="重命名当前自定义集合" aria-label="重命名当前资产集合">✎</button>
+              <button type="button" disabled={collection === "all" || !collections.some((item) => item.id === collection && item.builtin !== true)} onClick={() => void renameCollection(collection)} title="重命名当前自定义集合" aria-label="重命名当前资产集合">✎</button>
             </div>
             <SelectMenu
               value={source}
@@ -14251,6 +14367,8 @@ function CanvasActionIcon({ name }: { name: string }) {
       return svg(<><path d="m12 4 1.7 4.3L18 10l-4.3 1.7L12 16l-1.7-4.3L6 10l4.3-1.7L12 4Z" /><path d="m18.5 15 .7 1.8L21 17.5l-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z" /></>);
     case "preview":
       return svg(<><path d="M8 5H5v3M16 5h3v3M5 16v3h3M19 16v3h-3" /><path d="m9 9 6 6M15 9l-6 6" opacity=".5" /></>);
+    case "reverse-prompt":
+      return svg(<><path d="M5 6.5h14v11H5z" /><path d="m8 14 2.2-2.3 2 1.8 2.1-2.5 2.7 3" /><path d="M8 9h.01" /><path d="M18.5 4.5v4M16.5 6.5h4" /></>);
     case "copy":
     case "duplicate":
       return svg(<><rect x="8" y="8" width="10" height="10" rx="2" /><path d="M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>);

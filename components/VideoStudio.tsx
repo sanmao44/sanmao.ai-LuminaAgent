@@ -12,6 +12,7 @@ import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMedia
 import { replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { nearestOneTakeVideoDuration, normalizeOneTakeDuration } from '@/lib/one-take-video-duration';
 import { requestPromptOptimization } from '@/lib/creation/agent';
+import { AGNES_V20_DIMENSION_PRESETS, AGNES_V20_DURATION_PRESETS } from '@/lib/creation/settings';
 
 type VideoTask = {
   id: string;
@@ -53,19 +54,6 @@ type MediaTransportStatus = { mode: 'relay' | 'self-hosted' | 'unavailable'; rel
 const MAX_65535_INLINE_BYTES = 64 * 1024 * 1024;
 const MAX_VIDEO_IMAGE_EDGE = 2048;
 const MAX_VIDEO_IMAGE_BYTES = 4 * 1024 * 1024;
-const AGNES_V20_DURATION_PRESETS = [
-  { label: '约 3 秒', frames: 81, frameRate: 24 },
-  { label: '约 5 秒', frames: 121, frameRate: 24 },
-  { label: '约 10 秒', frames: 241, frameRate: 24 },
-  { label: '约 18 秒', frames: 441, frameRate: 24 },
-] as const;
-const AGNES_V20_DIMENSION_PRESETS = [
-  { label: '标准 3:2', width: 1152, height: 768 },
-  { label: '横屏 16:9', width: 1024, height: 576 },
-  { label: '竖屏 9:16', width: 576, height: 1024 },
-  { label: '方形 1:1', width: 768, height: 768 },
-] as const;
-
 function readFile(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();

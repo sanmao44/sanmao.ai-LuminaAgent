@@ -41,9 +41,9 @@ test("completed upscale results use the same image preview path as media nodes",
   assert.match(component, /if \(isCanvasReferenceableNode\(node\)\)\s*openCanvasMediaViewer\(node\.id\)/);
   assert.match(card, /else if \(isCanvasReferenceableNode\(node\)\) onPreview\(\)/);
   assert.match(component, /if \(!viewerNode \|\| !isCanvasReferenceableNode\(viewerNode\)\) return null/);
-  assert.match(component, /const viewerIsMedia = viewerNode\.type === "media"/);
-  assert.match(component, /parameters=\{viewerIsMedia && viewerNode\.data\.kind === "video"/);
-  assert.match(component, /onEdit=\{viewerIsMedia \?/);
+  assert.match(component, /versionInfo: mediaViewerVersionInfo\(document, viewerNode, runtime\)/);
+  assert.doesNotMatch(component, /parameters=\{viewerIsMedia/);
+  assert.doesNotMatch(component, /onEdit=\{viewerIsMedia/);
 });
 
 test("canvas overlays share the token stack and asset preview owns the first Escape", () => {

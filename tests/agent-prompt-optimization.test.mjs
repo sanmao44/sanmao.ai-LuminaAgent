@@ -62,14 +62,14 @@ test('Canvas composer and node editor use the same polish task with undo snapsho
   assert.ok(superCanvas.includes('onNotify("已完成 AI 优化，可继续修改；也可以撤销")'));
 });
 
-test('Media Viewer writes polish output into the editor and keeps the reverse result area independent', () => {
-  assert.match(mediaViewer, /requestPromptOptimization\([\s\S]*currentPrompt,[\s\S]*"polish_text"/);
-  assert.ok(mediaViewer.includes('setPromptBeforeOptimization(currentPrompt);'));
-  assert.ok(mediaViewer.includes('setPromptDraft(value);'));
-  assert.ok(mediaViewer.includes('const undoPromptOptimization = () =>'));
-  assert.ok(mediaViewer.includes('className="canvas-media-viewer-ai-action"'));
-  assert.ok(mediaViewer.includes('className="canvas-media-viewer-undo-action"'));
-  assert.ok(mediaViewer.includes('AI 结果（未覆盖原文）'));
+test('Media Viewer keeps viewing controls and prompt copy/save while AI actions stay on Agent nodes', () => {
+  assert.doesNotMatch(mediaViewer, /requestPromptOptimization|runReversePrompt/);
+  assert.doesNotMatch(mediaViewer, /AI 优化|反推提示词|canvas-media-viewer-actions|AI 结果（未覆盖原文）/);
+  assert.ok(mediaViewer.includes('复制提示词'));
+  assert.doesNotMatch(mediaViewer, />保存提示词</);
+  assert.ok(mediaViewer.includes('参数查看'));
+  assert.ok(mediaViewer.includes('MediaViewerVersionInfo'));
+  assert.match(mediaViewer, /event\.target === event\.currentTarget\) onClose\(\)/);
 });
 
 test('Prompt action groups stay contained and responsive', () => {

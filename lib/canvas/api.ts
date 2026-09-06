@@ -446,6 +446,7 @@ export async function generateCanvasImage(input: {
 export async function generateCanvasVideo(input: {
   prompt: string;
   model?: string;
+  modelRawId?: string;
   operation?: "generate" | "edit" | "extend";
   inputMode?: "text" | "first-frame" | "frames" | "reference";
   duration?: number;
@@ -458,6 +459,10 @@ export async function generateCanvasVideo(input: {
   lastFrame?: string;
   referenceVideo?: string;
   audio?: boolean;
+  agnesWidth?: number;
+  agnesHeight?: number;
+  agnesNumFrames?: number;
+  agnesFrameRate?: number;
   /** Reference audio files supplied by the canvas connection resolver. */
   audios?: Array<{ url: string; name?: string }>;
 }) {
@@ -494,9 +499,12 @@ export async function generateCanvasVideo(input: {
     ? "reference"
     : input.inputMode === "frames"
       ? "keyframe"
-      : input.inputMode === "text"
-        ? "text"
-        : undefined;
+        : input.inputMode === "text"
+          ? "text"
+          : undefined;
+  const usesAgnesV20 = /agnes(?:-video| video)?[- ]?(?:v2\.0|v20)/i.test(
+    `${input.modelRawId || ""} ${input.model || ""}`,
+  );
   const referenceVideo = input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend"
     ? input.referenceVideo
     : undefined;
@@ -523,9 +531,21 @@ export async function generateCanvasVideo(input: {
         prompt: input.prompt,
         ...(input.operation ? { operation: input.operation } : {}),
         ...(videoMode ? { videoMode } : {}),
-        seconds: Number(input.duration || 5),
-        aspectRatio: input.aspect || "16:9",
-        resolution: input.resolution || "720p",
+        ...(!usesAgnesV20
+          ? {
+              seconds: Number(input.duration || 5),
+              aspectRatio: input.aspect || "16:9",
+              resolution: input.resolution || "720p",
+            }
+          : {}),
+        ...(usesAgnesV20
+          ? {
+              width: input.agnesWidth ?? 1152,
+              height: input.agnesHeight ?? 768,
+              numFrames: input.agnesNumFrames ?? 81,
+              frameRate: input.agnesFrameRate ?? 24,
+            }
+          : {}),
         ...(firstFrame ? { firstFrame } : {}),
         ...(lastFrame ? { lastFrame } : {}),
         referenceImages:

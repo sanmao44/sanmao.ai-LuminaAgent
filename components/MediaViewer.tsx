@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import CreationParameterEditor from "@/components/CreationParameterEditor";
-import { requestPromptOptimization, runReversePrompt } from "@/lib/creation/agent";
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from "@/lib/creation/settings";
-import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 
 export type MediaViewerReference = {
   id: string;
@@ -22,6 +19,19 @@ export type MediaViewerItem = {
   revisedPrompt?: string;
   width?: number;
   height?: number;
+  versionInfo?: ImageVersionInfo;
+};
+
+export type ImageVersionInfo = {
+  sourceNode?: string;
+  provider?: string;
+  model?: string;
+  dimensions?: string;
+  createdAt?: number;
+  generationDurationMs?: number;
+  prompt?: string;
+  parameters?: Array<{ label: string; value: string }>;
+  status?: string;
 };
 
 export type MediaViewerSurface = "workspace" | "canvas";
@@ -48,31 +58,73 @@ function containMediaSize(media: MediaViewerSize, viewport: MediaViewerViewport)
   };
 }
 
+function formatVersionTime(value?: number) {
+  if (!value || !Number.isFinite(value)) return "";
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function formatGenerationDuration(value?: number) {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return "未记录";
+  if (value < 1000) return `${Math.round(value)} 毫秒`;
+  return `${(value / 1000).toFixed(1)} 秒`;
+}
+
+function MediaViewerVersionInfo({ info }: { info: ImageVersionInfo }) {
+  const facts = [
+    ["来源节点", info.sourceNode],
+    ["服务商", info.provider],
+    ["模型", info.model],
+    ["图片尺寸", info.dimensions],
+    ["生成时间", formatVersionTime(info.createdAt)],
+    ["生成持续时间", formatGenerationDuration(info.generationDurationMs)],
+    ["请求状态", info.status],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  return (
+    <div className="canvas-media-version-info">
+      <div className="canvas-media-version-heading">
+        <b>版本信息</b>
+        <small>仅展示当前图片可公开的生成记录</small>
+      </div>
+      {facts.length > 0 && (
+        <dl className="canvas-media-version-facts">
+          {facts.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd title={value}>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {info.parameters && info.parameters.length > 0 && (
+        <div className="canvas-media-version-parameters">
+          <span>关键参数</span>
+          <div>
+            {info.parameters.map((parameter) => (
+              <span key={`${parameter.label}:${parameter.value}`} title={`${parameter.label}: ${parameter.value}`}>
+                <b>{parameter.label}</b> {parameter.value}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {info.prompt && (
+        <div className="canvas-media-version-prompt">
+          <span>提示词</span>
+          <p>{info.prompt}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MediaViewer({
   item,
   references,
-  surface = "workspace",
   initialCompare = false,
-  parameters,
-  runtime,
-  model,
-  agentAvailable,
   onClose,
   onNavigate,
-  onPromptSave,
-  onParametersChange,
-  onEdit,
-  onLocalEdit,
-  onUpscale,
-  onContinue,
-  onReuse,
-  onUseAsReference,
-  onAddToAssets,
-  onDelete,
   onDownload,
-  onWriteResult,
-  onCreateTextNode,
-  onAngle,
   onNotify,
 }: {
   item: MediaViewerItem;
@@ -80,9 +132,9 @@ export default function MediaViewer({
   surface?: MediaViewerSurface;
   initialCompare?: boolean;
   parameters?: ImageCreationSettings | VideoCreationSettings;
-  runtime: unknown;
+  runtime?: unknown;
   model?: string;
-  agentAvailable: boolean;
+  agentAvailable?: boolean;
   onClose: () => void;
   onNavigate?: (direction: -1 | 1) => void;
   onPromptSave?: (value: string) => void;
@@ -124,13 +176,7 @@ export default function MediaViewer({
     before: { width: 0, height: 0 },
     current: { width: 0, height: 0 },
   });
-  const [result, setResult] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [busyAction, setBusyAction] = useState<"reverse" | "optimize" | null>(null);
   const [showParameters, setShowParameters] = useState(false);
-  const [promptDraft, setPromptDraft] = useState<string | null>(null);
-  const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
-  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const pointerStart = useRef<{
     pointerId: number;
     x: number;
@@ -140,8 +186,7 @@ export default function MediaViewer({
   } | null>(null);
   const sliderPointerId = useRef<number | null>(null);
 
-  const sourcePrompt = item.prompt || "";
-  const currentPrompt = promptDraft ?? sourcePrompt;
+  const currentPrompt = (item.prompt || item.versionInfo?.prompt || "").trim();
   const selectedReference = references.find((reference) => reference.id === selectedReferenceId) || references[0];
   const canCompare = item.kind === "image" && selectedReference?.kind === "image" && Boolean(selectedReference.url);
   const referenceSignature = references.map((reference) => `${reference.id}:${reference.url}`).join("|");
@@ -158,10 +203,7 @@ export default function MediaViewer({
       item: { width: 0, height: 0 },
       reference: { width: 0, height: 0 },
     });
-    setResult(null);
     setShowParameters(false);
-    setPromptDraft(null);
-    setPromptBeforeOptimization(null);
   }, [initialCompare, item.id, referenceSignature]);
 
   useEffect(() => {
@@ -402,77 +444,8 @@ export default function MediaViewer({
     objectFit: "contain" as const,
   };
 
-  const runReverse = async () => {
-    if (item.kind !== "image") return;
-    if (!agentAvailable) return onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
-    setBusy(true);
-    setBusyAction("reverse");
-    try {
-      const value = await runReversePrompt(
-        [{ url: item.url, name: item.name }, ...references.map((reference) => ({ url: reference.url, name: reference.name }))],
-        model,
-      );
-      setResult(value);
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "反推提示词失败", "error");
-    } finally {
-      setBusy(false);
-      setBusyAction(null);
-    }
-  };
-
-  const runOptimize = async () => {
-    if (!agentAvailable) return onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
-    if (!currentPrompt.trim()) return onNotify("当前媒体没有可优化的提示词", "error");
-    setBusy(true);
-    setBusyAction("optimize");
-    try {
-      const value = await requestPromptOptimization(
-        currentPrompt,
-        [],
-        model,
-        "polish_text",
-      );
-      setPromptBeforeOptimization(currentPrompt);
-      setPromptDraft(value);
-      setResult(null);
-      window.setTimeout(() => promptRef.current?.focus(), 0);
-      onNotify("已完成 AI 优化，可继续修改；也可以撤销");
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "AI 优化失败", "error");
-    } finally {
-      setBusy(false);
-      setBusyAction(null);
-    }
-  };
-
-  const writeResultToPrompt = () => {
-    if (!result) return;
-    // Keep the result visible here too; the canvas parent may close this viewer
-    // after copying it into the node editor.
-    setPromptDraft(result);
-    setPromptBeforeOptimization(null);
-    onWriteResult?.(result);
-  };
-
-  const undoPromptOptimization = () => {
-    if (promptBeforeOptimization === null) return;
-    setPromptDraft(promptBeforeOptimization);
-    setPromptBeforeOptimization(null);
-    window.setTimeout(() => promptRef.current?.focus(), 0);
-    onNotify("已撤销 AI 优化");
-  };
-
-  const savePrompt = () => {
-    if (!onPromptSave || !currentPrompt.trim() || currentPrompt === sourcePrompt) return;
-    onPromptSave(currentPrompt);
-    setPromptDraft(null);
-    setPromptBeforeOptimization(null);
-    onNotify("提示词已保存");
-  };
-
   const copyPrompt = async () => {
-    const prompt = currentPrompt.trim();
+    const prompt = currentPrompt;
     if (!prompt) return;
     try {
       await navigator.clipboard.writeText(prompt);
@@ -525,7 +498,7 @@ export default function MediaViewer({
                 <button type="button" className={compareMode === "side-by-side" ? "active" : ""} onClick={() => setCompareMode("side-by-side")}><span aria-hidden="true">▥</span>并排</button>
               </div>
             )}
-            {parameters && <button type="button" className={`media-viewer-header-button media-viewer-settings-button ${showParameters ? "active" : ""}`} onClick={() => setShowParameters((value) => !value)}><span className="media-viewer-button-icon" aria-hidden="true">⚙</span><span>参数调整</span></button>}
+            {item.versionInfo && <button type="button" className={`media-viewer-header-button media-viewer-settings-button ${showParameters ? "active" : ""}`} onClick={() => setShowParameters((value) => !value)}><span className="media-viewer-button-icon" aria-hidden="true">ⓘ</span><span>参数查看</span></button>}
             <div className="media-viewer-download-group" role="group" aria-label="下载">
               <button type="button" className="media-viewer-download-button original" onClick={() => download("original")}><span className="media-viewer-button-icon" aria-hidden="true">↓</span><span>{item.kind === "video" ? "原视频" : item.kind === "audio" ? "原音频" : "原图"}</span></button>
               <button type="button" className="media-viewer-download-button share" onClick={() => download("share")} disabled={item.kind !== "image"}><span className="media-viewer-button-icon" aria-hidden="true">⇩</span><span>分享版</span></button>
@@ -613,51 +586,22 @@ export default function MediaViewer({
           </section>
         )}
 
-        <div className="canvas-media-viewer-editing">
-          <label><span>提示词</span><textarea ref={promptRef} value={currentPrompt} onChange={(event) => { setPromptDraft(event.target.value); setPromptBeforeOptimization(null); }} placeholder="当前节点没有保存提示词" /></label>
-          <div className="canvas-media-viewer-prompt-actions">
-            <button type="button" className="canvas-media-viewer-ai-action" disabled={busy || !agentAvailable || !currentPrompt.trim()} aria-busy={busyAction === "optimize"} onClick={() => void runOptimize()}>{busyAction === "optimize" ? "✦ 优化中…" : "✦ AI 优化"}</button>
-            {promptBeforeOptimization !== null && <button type="button" className="canvas-media-viewer-undo-action" disabled={busy} onClick={undoPromptOptimization}>↶ 撤销</button>}
-            <button type="button" disabled={!currentPrompt.trim()} onClick={() => void copyPrompt()}>复制提示词</button>
-            <button type="button" disabled={!onPromptSave || !currentPrompt.trim() || currentPrompt === sourcePrompt} onClick={savePrompt}>保存提示词</button>
+        <div className="canvas-media-viewer-prompt">
+          <div className="canvas-media-viewer-prompt-head">
+            <span>提示词</span>
+            <div className="canvas-media-viewer-prompt-actions">
+              <button type="button" disabled={!currentPrompt.trim()} onClick={() => void copyPrompt()}>复制提示词</button>
+            </div>
+          </div>
+          <div className="canvas-media-viewer-prompt-content">
+            <p className={currentPrompt ? "" : "empty"}>{currentPrompt || "当前节点没有保存提示词"}</p>
           </div>
         </div>
 
-        {showParameters && parameters && onParametersChange && (
+        {showParameters && item.versionInfo && (
           <section className="canvas-media-parameters">
-            <header><b>生成参数</b><small>{surface === "canvas" && item.kind === "image" ? "修改后从当前图片生成右侧新图，原图不会被覆盖" : "修改后用于生成新分支，原图不会被覆盖"}</small></header>
-            <CreationParameterEditor settings={parameters} runtime={runtime as never} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onParametersChange} />
-          </section>
-        )}
-
-        <div className={`canvas-media-viewer-actions media-viewer-actions-shared media-viewer-surface-${surface}`}>
-          {item.kind === "image" && <button type="button" disabled={busy || !agentAvailable} aria-busy={busyAction === "reverse"} onClick={() => void runReverse()}>{busyAction === "reverse" ? "⌁ 反推中…" : "⌁ 反推提示词"}</button>}
-          {surface === "canvas" ? (
-            <>
-              {onEdit && <button type="button" onClick={onEdit}>✎ 编辑节点</button>}
-              {onLocalEdit && item.kind === "image" && <button type="button" onClick={onLocalEdit}>◌ 局部编辑</button>}
-            </>
-          ) : onEdit ? <button type="button" onClick={onEdit}>✎ 修改图片</button> : null}
-          {onAngle && item.kind === "image" && <button type="button" onClick={onAngle}>◌ 调整角度</button>}
-          {onUpscale && item.kind === "image" && <button type="button" onClick={onUpscale}>↗ 超分</button>}
-          {onContinue && <button type="button" onClick={onContinue}>{item.kind === "video" ? "▶ 继续生成 / 变体" : "▶ 继续生成"}</button>}
-          {onReuse && <button type="button" className="primary" onClick={onReuse}>⧉ 用此参数继续生成</button>}
-          {onUseAsReference && <button type="button" onClick={onUseAsReference}>⌁ 作为参考图</button>}
-          {onAddToAssets && <button type="button" onClick={onAddToAssets}>＋ 加入资产库</button>}
-          {onDelete && <button type="button" className="danger" onClick={onDelete}>⌫ 删除</button>}
-        </div>
-
-        {!agentAvailable && <div className="canvas-media-viewer-note">反推提示词与 AI 优化已暂停：请先在主界面模型库启用一个对话模型。</div>}
-        {result && (
-          <section className="canvas-media-result-panel">
-            <header><b>AI 结果（未覆盖原文）</b><button type="button" onClick={() => setResult(null)}>×</button></header>
-            <p>{result}</p>
-            <footer>
-              {onWriteResult && <button type="button" onClick={writeResultToPrompt}>写入当前提示词</button>}
-              {onCreateTextNode && <button type="button" onClick={() => onCreateTextNode(result)}>创建文本节点</button>}
-              <button type="button" onClick={() => void navigator.clipboard?.writeText(result)}>复制结果</button>
-              <button type="button" onClick={() => setResult(null)}>放弃</button>
-            </footer>
+            <header><b>参数查看</b><small>仅展示当前版本的生成参数和记录，不会修改当前节点</small></header>
+            <MediaViewerVersionInfo info={item.versionInfo} />
           </section>
         )}
       </div>

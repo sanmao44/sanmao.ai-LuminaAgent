@@ -59,6 +59,10 @@ export type VideoCreationSettings = {
   aspect: string;
   resolution: string;
   audio: boolean;
+  agnesWidth: number;
+  agnesHeight: number;
+  agnesNumFrames: number;
+  agnesFrameRate: number;
 };
 
 export type AgentCreationSettings = {
@@ -99,6 +103,24 @@ export const VIDEO_RATIOS = [
   "3:2",
   "2:3",
 ] as const;
+export const AGNES_V20_DURATION_PRESETS = [
+  { label: "约 3 秒", frames: 81, frameRate: 24 },
+  { label: "约 5 秒", frames: 121, frameRate: 24 },
+  { label: "约 10 秒", frames: 241, frameRate: 24 },
+  { label: "约 18 秒", frames: 441, frameRate: 24 },
+] as const;
+export const AGNES_V20_DIMENSION_PRESETS = [
+  { label: "标准 3:2", width: 1152, height: 768 },
+  { label: "横屏 16:9", width: 1024, height: 576 },
+  { label: "竖屏 9:16", width: 576, height: 1024 },
+  { label: "方形 1:1", width: 768, height: 768 },
+] as const;
+export const AGNES_V20_DEFAULT_PARAMS = {
+  width: 1152,
+  height: 768,
+  numFrames: 81,
+  frameRate: 24,
+} as const;
 export const IMAGE_SIZE_TIERS = [
   { value: "1K" as const, label: "1K", longEdge: 1280 },
   { value: "2K" as const, label: "2K", longEdge: 2048 },
@@ -237,6 +259,10 @@ export function defaultVideoCreationSettings(
     aspect: "16:9",
     resolution: "720p",
     audio: false,
+    agnesWidth: AGNES_V20_DEFAULT_PARAMS.width,
+    agnesHeight: AGNES_V20_DEFAULT_PARAMS.height,
+    agnesNumFrames: AGNES_V20_DEFAULT_PARAMS.numFrames,
+    agnesFrameRate: AGNES_V20_DEFAULT_PARAMS.frameRate,
   };
 }
 
@@ -389,6 +415,17 @@ export function normalizeVideoCreationSettings(
   const resolution = String(
     raw.resolution || fallback.resolution,
   ).toLowerCase();
+  const normalizeAgnesDimension = (value: unknown, fallbackValue: number) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallbackValue;
+    return Math.max(64, Math.min(3840, Math.round(parsed / 64) * 64));
+  };
+  const normalizeAgnesFrames = (value: unknown, fallbackValue: number) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallbackValue;
+    const clamped = Math.max(1, Math.min(441, Math.round(parsed)));
+    return Math.max(1, Math.min(441, Math.round((clamped - 1) / 8) * 8 + 1));
+  };
   return {
     kind: "video",
     model: availableModel(runtime, "video", raw.model || raw.modelId),
@@ -403,6 +440,15 @@ export function normalizeVideoCreationSettings(
     aspect: String(raw.aspect || raw.aspectRatio || fallback.aspect),
     resolution,
     audio: Boolean(raw.audio),
+    agnesWidth: normalizeAgnesDimension(raw.agnesWidth, fallback.agnesWidth),
+    agnesHeight: normalizeAgnesDimension(raw.agnesHeight, fallback.agnesHeight),
+    agnesNumFrames: normalizeAgnesFrames(raw.agnesNumFrames, fallback.agnesNumFrames),
+    agnesFrameRate: clampInteger(
+      raw.agnesFrameRate,
+      1,
+      60,
+      fallback.agnesFrameRate,
+    ),
   };
 }
 

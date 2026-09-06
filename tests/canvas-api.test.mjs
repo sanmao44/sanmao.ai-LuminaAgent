@@ -357,6 +357,56 @@ test('canvas video generation sends explicit first-frame and first/last-frame in
   }
 });
 
+test('canvas video generation maps Agnes V2.0 parameters and omits them for other models', async () => {
+  const mocks = withImageCanvas();
+  try {
+    const requests = [];
+    await withFetch(async (input, options) => {
+      requests.push(JSON.parse(options.body));
+      return jsonResponse({ task: { id: `video-${requests.length}`, status: 'pending' } });
+    }, async () => {
+      await api.generateCanvasVideo({
+        prompt: 'Agnes 自定义尺寸',
+        model: 'agnes-v20',
+        modelRawId: 'agnes-video-v2.0',
+        agnesWidth: 1024,
+        agnesHeight: 576,
+        agnesNumFrames: 121,
+        agnesFrameRate: 24,
+      });
+      await api.generateCanvasVideo({
+        prompt: '普通模型',
+        model: 'generic-video',
+        modelRawId: 'generic-video',
+        agnesWidth: 1024,
+        agnesHeight: 576,
+        agnesNumFrames: 121,
+        agnesFrameRate: 24,
+      });
+    });
+
+    assert.deepEqual(
+      {
+        width: requests[0].input.width,
+        height: requests[0].input.height,
+        numFrames: requests[0].input.numFrames,
+        frameRate: requests[0].input.frameRate,
+      },
+      { width: 1024, height: 576, numFrames: 121, frameRate: 24 },
+    );
+    assert.equal('seconds' in requests[0].input, false);
+    assert.equal('aspectRatio' in requests[0].input, false);
+    assert.equal('resolution' in requests[0].input, false);
+    assert.equal('agnesWidth' in requests[0].input, false);
+    assert.equal('width' in requests[1].input, false);
+    assert.equal('height' in requests[1].input, false);
+    assert.equal('numFrames' in requests[1].input, false);
+    assert.equal('frameRate' in requests[1].input, false);
+  } finally {
+    mocks.restore();
+  }
+});
+
 test('canvas video generation blocks incomplete frame inputs before network submission', async () => {
   const mocks = withImageCanvas();
   let fetchCalled = false;

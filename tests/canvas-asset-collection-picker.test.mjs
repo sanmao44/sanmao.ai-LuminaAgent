@@ -15,7 +15,7 @@ test("all canvas asset actions open the collection picker before writing", () =>
   assert.match(component, /function CanvasAssetCollectionPicker/);
   assert.match(component, /onClick: \(\) => openAssetCollectionPicker\(node\)/);
   assert.match(component, /onClick: close\(\(\) => openAssetCollectionPicker\(node\)\)/);
-  assert.match(component, /onAddToAssets=\{canAddCanvasAsset\(viewerNode\) \? \(\) => openAssetCollectionPicker\(viewerNode\) : undefined\}/);
+  assert.doesNotMatch(component, /onAddToAssets=\{/);
   assert.match(component, /preferredCollectionId=\{assetLibraryCollectionId\}/);
   assert.match(component, /const success = await addViewerAsset\(pickerNode, collectionId\)/);
   assert.match(component, /collectionSelection=\{assetLibraryCollectionId\}/);
@@ -67,4 +67,24 @@ test("asset drawer makes new collection creation a clear primary action", () => 
   assert.match(drawer, /disabled=\{!newCollectionName\.trim\(\)\}/);
   assert.match(styles, /\.canvas-asset-new-collection\{display:grid;[^}]*border:1px solid color-mix/);
   assert.match(styles, /\.canvas-asset-new-collection-form button\{[^}]*background:linear-gradient/);
+});
+
+test("asset drawer keeps the media preview primary across responsive layouts", () => {
+  assert.match(styles, /\.canvas-asset-drawer\{width:min\(480px,calc\(100vw - 32px\)\)\}/);
+  assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-kind\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)\}/);
+  assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-filters\{grid-template-columns:minmax\(0,1\.25fr\) repeat\(2,minmax\(0,1fr\)\)\}/);
+  assert.match(styles, /\.canvas-asset-drawer \.canvas-global-asset-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:10px\}/);
+  assert.match(styles, /\.canvas-asset-drawer \.canvas-global-asset-card\{display:block\}/);
+  assert.match(styles, /\.canvas-asset-drawer \.canvas-global-asset-preview\{[^}]*aspect-ratio:4 \/ 3/);
+  assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-new-collection\{display:grid;grid-template-columns:minmax\(0,.82fr\) minmax\(0,1\.18fr\)/);
+  assert.match(styles, /@media\(max-width:720px\)\{[\s\S]*?\.canvas-asset-drawer \.canvas-global-asset-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
+});
+
+test("custom asset collections can be renamed even when legacy records omit builtin false", () => {
+  const drawer = component.slice(
+    component.indexOf("function CanvasAssetDrawer"),
+    component.indexOf("function CanvasAssetCollectionPicker", component.indexOf("function CanvasAssetDrawer")),
+  );
+  assert.match(drawer, /disabled=\{collection === "all" \|\| !collections\.some\(\(item\) => item\.id === collection && item\.builtin !== true\)\}/);
+  assert.match(drawer, /if \(!target \|\| target\.builtin\)/);
 });
