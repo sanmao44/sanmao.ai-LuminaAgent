@@ -2318,11 +2318,21 @@ export function incomingReferences(document: CanvasDocument, entityId: string) {
 
 /** Preview comparison includes provenance without changing generation inputs. */
 export function comparisonReferences(document: CanvasDocument, entityId: string) {
-  const sources = document.edges
+  const entity = nodeById(document, entityId);
+  const generation = entity?.data.generation;
+  const connectedSources = document.edges
     .filter((edge) => edge.target === entityId && ["generated", "variant", "lineage"].includes(edge.kind || ""))
-    .map((edge) => nodeById(document, edge.source));
+    .flatMap((edge) => sourceNodesForEdge(document, edge));
+  const persistedSourceIds = [
+    generation?.parentNodeId,
+    generation?.reuseSourceNodeId,
+    entity?.data.imageOperation?.sourceNodeId,
+    ...(generation?.referenceIds || []),
+    ...(entity?.data.referenceOrder || []),
+  ].filter((id): id is string => Boolean(id));
+  const persistedSources = persistedSourceIds.map((id) => nodeById(document, id));
   const seen = new Set<string>([entityId]);
-  return [...sources, ...incomingReferences(document, entityId)].filter(
+  return [...connectedSources, ...persistedSources, ...incomingReferences(document, entityId)].filter(
     (node): node is CanvasNode => Boolean(
       node && isCanvasReferenceableNode(node) && node.data.kind === "image" &&
       !seen.has(node.id) && seen.add(node.id),

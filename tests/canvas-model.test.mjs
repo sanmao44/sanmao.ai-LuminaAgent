@@ -91,6 +91,49 @@ test('comparison uses continuation provenance without adding generation inputs',
     assert.deepEqual(model.comparisonReferences(restored, 'result').map((node) => node.id), ['original', 'reference']);
   }
 });
+
+test('comparison falls back to persisted provenance when a legacy result has no lineage edge', () => {
+  const original = {
+    id: 'original', type: 'media', x: 0, y: 0,
+    data: { kind: 'image', url: '/original.png' },
+  };
+  const result = {
+    id: 'result', type: 'media', x: 400, y: 0,
+    data: {
+      kind: 'image', url: '/result.png', referenceOrder: ['original'],
+      imageOperation: { sourceNodeId: 'original' },
+      generation: {
+        kind: 'image', prompt: '继续生成', params: {},
+        referenceIds: ['original'], parentNodeId: 'original', reuseSourceNodeId: 'original',
+      },
+    },
+  };
+
+  assert.deepEqual(
+    model.comparisonReferences({ nodes: [original, result], groups: [], edges: [] }, 'result').map((node) => node.id),
+    ['original'],
+  );
+});
+
+test('comparison expands grouped provenance connections', () => {
+  const original = {
+    id: 'original', type: 'media', x: 0, y: 0,
+    data: { kind: 'image', url: '/original.png' },
+  };
+  const result = {
+    id: 'result', type: 'media', x: 400, y: 0,
+    data: { kind: 'image', url: '/result.png' },
+  };
+
+  assert.deepEqual(
+    model.comparisonReferences({
+      nodes: [original, result],
+      groups: [{ id: 'source-group', name: '来源', nodeIds: ['original'] }],
+      edges: [{ id: 'lineage', source: 'source-group', target: 'result', kind: 'lineage' }],
+    }, 'result').map((node) => node.id),
+    ['original'],
+  );
+});
 const storageSource = await readFile(new URL('../lib/canvas/storage.ts', import.meta.url), 'utf8');
 
 test('normalizes NOVA-compatible documents and drops invalid graph references', () => {
