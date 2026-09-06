@@ -49,6 +49,7 @@ import {
   isCanvasReferenceableNode,
   incomingContext,
   incomingReferences,
+  comparisonReferences,
   isCanvasEdgeVisible,
   isCanvasGridComposeLineageEdge,
   normalizeVariantRequirements,
@@ -12423,7 +12424,7 @@ export default function SuperCanvas() {
           width: Number(viewerNode.data.nativeWidth) || undefined,
           height: Number(viewerNode.data.nativeHeight) || undefined,
         };
-        const viewerReferences: MediaViewerReference[] = incomingReferences(document, viewerNode.id).map((reference) => ({
+        const viewerReferences: MediaViewerReference[] = comparisonReferences(document, viewerNode.id).map((reference) => ({
           id: reference.id,
           kind: reference.data.kind || "image",
           url: String(reference.data.url || ""),

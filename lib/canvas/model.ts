@@ -2316,6 +2316,20 @@ export function incomingReferences(document: CanvasDocument, entityId: string) {
   return incomingContext(document, entityId).filter(isCanvasReferenceableNode);
 }
 
+/** Preview comparison includes provenance without changing generation inputs. */
+export function comparisonReferences(document: CanvasDocument, entityId: string) {
+  const sources = document.edges
+    .filter((edge) => edge.target === entityId && ["generated", "variant", "lineage"].includes(edge.kind || ""))
+    .map((edge) => nodeById(document, edge.source));
+  const seen = new Set<string>([entityId]);
+  return [...sources, ...incomingReferences(document, entityId)].filter(
+    (node): node is CanvasNode => Boolean(
+      node && isCanvasReferenceableNode(node) && node.data.kind === "image" &&
+      !seen.has(node.id) && seen.add(node.id),
+    ),
+  );
+}
+
 export function reorderReferences(
   document: CanvasDocument,
   ownerId: string,

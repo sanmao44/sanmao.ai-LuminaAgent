@@ -72,6 +72,25 @@ async function loadTypeScript(path) {
 }
 
 const model = await loadTypeScript('../lib/canvas/model.ts');
+test('comparison uses continuation provenance without adding generation inputs', () => {
+  const nodes = ['original', 'result', 'reference', 'video', 'empty'].map((id) => ({
+    id, type: 'media', x: 0, y: 0,
+    data: { kind: id === 'video' ? 'video' : 'image', url: id === 'empty' ? '' : `/${id}.png` },
+  }));
+  for (const kind of ['lineage', 'variant', 'generated']) {
+    const document = { nodes, groups: [], edges: [
+      { id: 'ref', source: 'reference', target: 'result', kind: 'reference' },
+      { id: 'source', source: 'original', target: 'result', kind },
+      { id: 'duplicate', source: 'original', target: 'result', kind },
+      ...['video', 'empty', 'missing', 'result'].map((source) => ({ id: source, source, target: 'result', kind })),
+    ] };
+    assert.deepEqual(model.comparisonReferences(document, 'result').map((node) => node.id), ['original', 'reference']);
+    assert.deepEqual(model.incomingReferences(document, 'result').map((node) => node.id), ['reference']);
+    assert.deepEqual(model.comparisonReferences(document, 'original'), []);
+    const restored = JSON.parse(JSON.stringify(document));
+    assert.deepEqual(model.comparisonReferences(restored, 'result').map((node) => node.id), ['original', 'reference']);
+  }
+});
 const storageSource = await readFile(new URL('../lib/canvas/storage.ts', import.meta.url), 'utf8');
 
 test('normalizes NOVA-compatible documents and drops invalid graph references', () => {

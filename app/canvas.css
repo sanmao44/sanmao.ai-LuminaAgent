@@ -3283,3 +3283,6 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
     max-height:min(300px,calc(100vh - 40px));
   }
 }
+.canvas-media-viewer-prompt-actions{display:flex;align-items:center;gap:6px}
+.canvas-media-viewer-prompt-actions>button{height:32px;padding:0 10px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;white-space:nowrap;cursor:pointer}
+.canvas-media-viewer-prompt-actions>button:disabled{opacity:.45;cursor:not-allowed}

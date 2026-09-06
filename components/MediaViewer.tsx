@@ -453,6 +453,17 @@ export default function MediaViewer({
     onNotify("提示词已保存");
   };
 
+  const copyPrompt = async () => {
+    const prompt = currentPrompt.trim();
+    if (!prompt) return;
+    try {
+      await navigator.clipboard.writeText(prompt);
+      onNotify("提示词已复制");
+    } catch {
+      onNotify("复制提示词失败，请检查剪贴板权限", "error");
+    }
+  };
+
   const download = (variant: "original" | "share") => {
     if (onDownload) return onDownload(variant);
     const anchor = document.createElement("a");
@@ -586,7 +597,10 @@ export default function MediaViewer({
 
         <div className="canvas-media-viewer-editing">
           <label><span>提示词</span><textarea value={currentPrompt} onChange={(event) => setPromptDraft(event.target.value)} placeholder="当前节点没有保存提示词" /></label>
-          <button type="button" disabled={!onPromptSave || !currentPrompt.trim() || currentPrompt === sourcePrompt} onClick={savePrompt}>保存提示词</button>
+          <div className="canvas-media-viewer-prompt-actions">
+            <button type="button" disabled={!currentPrompt.trim()} onClick={() => void copyPrompt()}>复制提示词</button>
+            <button type="button" disabled={!onPromptSave || !currentPrompt.trim() || currentPrompt === sourcePrompt} onClick={savePrompt}>保存提示词</button>
+          </div>
         </div>
 
         {showParameters && parameters && onParametersChange && (

@@ -15104,6 +15104,19 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                         }),
                                         /*#__PURE__*/ _jsxs("button", {
                                             type: "button",
+                                            className: "copy-prompt-primary",
+                                            disabled: !viewerItem.prompt?.trim(),
+                                            onClick: ()=>void copyPrompt(viewerItem.prompt || ''),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "copy",
+                                                    size: 15
+                                                }),
+                                                "复制提示词"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
                                             className: "download-primary",
                                             onClick: ()=>void downloadUrl(viewerItem.url, `SANMAO-${viewerItem.id}.png`),
                                             children: [
