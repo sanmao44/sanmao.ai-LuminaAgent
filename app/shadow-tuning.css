@@ -281,3 +281,138 @@ html[data-theme="light"] .canvas-group.selected {
   0%,100%{box-shadow:var(--shadow-control),0 0 0 1px color-mix(in srgb,var(--accent-2) 12%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 22%,transparent)}
   50%{box-shadow:0 6px 14px color-mix(in srgb,var(--accent) 16%,transparent),0 0 0 1px color-mix(in srgb,var(--accent-2) 18%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 28%,transparent)}
 }
+
+/* Light surfaces use a small amount of brand color to separate adjacent
+   layers. Keep the wash on shells and card chrome so media remains faithful. */
+html[data-theme="light"] body,
+html[data-theme="light"] .app-shell,
+html[data-theme="light"] .main-column,
+html[data-theme="light"] .canvas-workspace {
+  background:var(--surface-page);
+}
+
+html[data-theme="light"] .surface,
+html[data-theme="light"] .creative-record-group,
+html[data-theme="light"] .video-compose-card,
+html[data-theme="light"] .video-preview-card,
+html[data-theme="light"] .video-task-list,
+html[data-theme="light"] .video-empty-state,
+html[data-theme="light"] .models-page .model-group,
+html[data-theme="light"] .models-page .default-models.surface,
+html[data-theme="light"] .models-page .model-toolbar.surface,
+html[data-theme="light"] .history-page:not(.logs-page) .history-toolbar,
+html[data-theme="light"] .logs-page .logs-toolbar,
+html[data-theme="light"] .settings-section-nav {
+  background:linear-gradient(155deg,var(--surface-shell-start),var(--surface-shell-end));
+  border-color:var(--surface-shell-border);
+  box-shadow:var(--shadow-soft),inset 0 1px 0 var(--surface-inset-highlight);
+}
+
+html[data-theme="light"] .image-card,
+html[data-theme="light"] .creative-video-card,
+html[data-theme="light"] .loading-card,
+html[data-theme="light"] .provider-card,
+html[data-theme="light"] .upscale-connection-card,
+html[data-theme="light"] .models-page .model-card,
+html[data-theme="light"] .logs-page .log-row,
+html[data-theme="light"] .video-task-card,
+html[data-theme="light"] .runtime-card,
+html[data-theme="light"] .canvas-global-asset-card,
+html[data-theme="light"] .canvas-task-log-card {
+  background:linear-gradient(145deg,var(--surface-card-start),var(--surface-card-end));
+  border-color:var(--surface-card-border);
+  box-shadow:var(--shadow-soft),inset 0 1px 0 var(--surface-inset-highlight);
+}
+
+html[data-theme="light"] .canvas-media-card {
+  background:linear-gradient(145deg,var(--surface-card-start),var(--surface-card-end));
+}
+
+html[data-theme="light"] .image-card:hover,
+html[data-theme="light"] .creative-video-card:hover,
+html[data-theme="light"] .provider-card:hover,
+html[data-theme="light"] .models-page .model-card:hover,
+html[data-theme="light"] .logs-page .log-row:hover,
+html[data-theme="light"] .video-task-card:hover,
+html[data-theme="light"] .canvas-global-asset-card:hover,
+html[data-theme="light"] .canvas-task-log-card:hover {
+  border-color:var(--surface-card-border-strong);
+  box-shadow:var(--shadow-soft),inset 0 1px 0 rgba(255,255,255,.84);
+}
+
+html[data-theme="light"] .canvas-node {
+  background:linear-gradient(145deg,color-mix(in srgb,var(--node-soft,var(--accent-soft)) 42%,var(--surface-card-start)),var(--surface-card-end));
+  border-color:color-mix(in srgb,var(--node-effective,var(--accent)) 22%,var(--surface-card-border));
+  box-shadow:var(--shadow-soft),inset 0 1px 0 var(--surface-inset-highlight);
+}
+
+html[data-theme="light"] .canvas-node:hover {
+  border-color:color-mix(in srgb,var(--node-effective,var(--accent)) 60%,var(--surface-card-border-strong));
+}
+
+html[data-theme="light"] .canvas-node.selected {
+  border-color:var(--node-effective,var(--accent));
+}
+
+html[data-theme="light"] .creative-video-card.failed,
+html[data-theme="light"] .video-task-card.failed,
+html[data-theme="light"] .logs-page .log-row.error,
+html[data-theme="light"] .canvas-task-log-card.error {
+  border-color:color-mix(in srgb,var(--danger) 35%,var(--surface-card-border));
+}
+
+html[data-theme="light"] .creative-video-card.done,
+html[data-theme="light"] .video-task-card.done,
+html[data-theme="light"] .logs-page .log-row.success,
+html[data-theme="light"] .canvas-task-log-card.success {
+  border-color:color-mix(in srgb,var(--success) 28%,var(--surface-card-border));
+}
+
+html[data-theme="light"] .creative-video-card.running,
+html[data-theme="light"] .creative-video-card.pending,
+html[data-theme="light"] .video-task-card.running,
+html[data-theme="light"] .video-task-card.pending,
+html[data-theme="light"] .logs-page .log-row.pending,
+html[data-theme="light"] .canvas-task-log-card.pending {
+  border-color:color-mix(in srgb,var(--accent) 28%,var(--surface-card-border));
+}
+
+html[data-theme="light"] .dropdown-menu,
+html[data-theme="light"] .more-menu,
+html[data-theme="light"] .reference-mention-menu,
+html[data-theme="light"] .settings-provider-menu,
+html[data-theme="light"] .agent-web-mode-menu,
+html[data-theme="light"] .agent-mention-menu,
+html[data-theme="light"] .generate-mention-menu,
+html[data-theme="light"] .dropdown-menu-floating,
+html[data-theme="light"] .model-picker-panel,
+html[data-theme="light"] .select-menu-popover,
+html[data-theme="light"] .canvas-context-menu,
+html[data-theme="light"] .canvas-node-mention-menu,
+html[data-theme="light"] .canvas-arrange-menu,
+html[data-theme="light"] .canvas-asset-target-dialog {
+  background:linear-gradient(155deg,var(--surface-popover-start),var(--surface-popover-end));
+  border-color:var(--surface-card-border);
+}
+
+html[data-theme="light"] .canvas-node-editor,
+html[data-theme="light"] .canvas-node-quick-toolbar,
+html[data-theme="light"] .canvas-compose-dialog {
+  background:linear-gradient(155deg,var(--surface-shell-start),var(--surface-shell-end));
+  border-color:var(--surface-shell-border);
+}
+
+html[data-theme="light"] .search-box,
+html[data-theme="light"] .model-picker-trigger,
+html[data-theme="light"] .select-menu-trigger,
+html[data-theme="light"] .field-block textarea,
+html[data-theme="light"] .provider-fields input,
+html[data-theme="light"] .provider-fields select,
+html[data-theme="light"] .video-field textarea,
+html[data-theme="light"] .video-field select,
+html[data-theme="light"] .video-option-segment,
+html[data-theme="light"] .canvas-node-editor-prompt-wrap>textarea,
+html[data-theme="light"] .canvas-node-editor-settings>.creation-parameter-editor,
+html[data-theme="light"] .canvas-node-variant-editor {
+  background:var(--surface-control);
+}

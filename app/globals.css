@@ -31,6 +31,20 @@ html[data-theme="dark"] {
   --agent-nav-bg:#171a22; --agent-nav-muted:#858e9e;
   --shadow:0 24px 70px rgba(0,0,0,.38); --shadow-soft:0 12px 36px rgba(0,0,0,.28); --overlay:rgba(0,0,0,.68);
 }
+html[data-theme="light"] {
+  --surface-page:color-mix(in srgb,var(--bg) 96%,var(--accent) 4%);
+  --surface-shell-start:color-mix(in srgb,var(--panel) 97%,var(--accent) 3%);
+  --surface-shell-end:color-mix(in srgb,var(--panel-2) 97%,var(--accent) 3%);
+  --surface-card-start:color-mix(in srgb,var(--panel) 94%,var(--accent) 6%);
+  --surface-card-end:color-mix(in srgb,var(--panel-2) 94%,var(--accent) 6%);
+  --surface-control:color-mix(in srgb,var(--panel-2) 92%,var(--accent) 8%);
+  --surface-popover-start:color-mix(in srgb,var(--panel) 96%,var(--accent) 4%);
+  --surface-popover-end:color-mix(in srgb,var(--panel-2) 94%,var(--accent) 6%);
+  --surface-shell-border:color-mix(in srgb,var(--line) 82%,var(--accent) 18%);
+  --surface-card-border:color-mix(in srgb,var(--line) 84%,var(--accent) 16%);
+  --surface-card-border-strong:color-mix(in srgb,var(--line-strong) 78%,var(--accent) 22%);
+  --surface-inset-highlight:rgba(255,255,255,.72);
+}
 *{box-sizing:border-box} html,body{margin:0;min-height:100%;background:var(--bg)} body{color:var(--text);font-family:Inter,"PingFang SC","Microsoft YaHei",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-tap-highlight-color:transparent} button:disabled{cursor:not-allowed;opacity:.45} input,textarea{outline:none} ::placeholder{color:var(--muted)}
 .app-shell{min-height:100vh;background:var(--bg);color:var(--text)}
