@@ -929,7 +929,7 @@ html[data-theme="dark"] .canvas-workspace{
 /* v4: the editor is a card extension, not a detached modal. It keeps a
    stable world-space position so the canvas does not reflow, while sharing
    the node surface, status language and visual rhythm. */
-.canvas-node-editor-popover{position:absolute;z-index:var(--canvas-z-node-editor);width:min(640px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:min(580px,calc(100vh - 24px));display:flex;flex-direction:column;gap:0;overflow:hidden;padding:0;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));border-radius:18px;background:linear-gradient(160deg,color-mix(in srgb,var(--panel) 99%,var(--accent-soft) 1%),color-mix(in srgb,var(--panel-2) 96%,var(--panel)));box-shadow:0 16px 42px rgba(0,0,0,.34),0 0 0 3px color-mix(in srgb,var(--accent) 7%,transparent);backdrop-filter:blur(18px);pointer-events:auto;overscroll-behavior:contain;scrollbar-width:thin;box-sizing:border-box}
+.canvas-node-editor-popover{position:absolute;z-index:var(--canvas-z-node-editor);width:min(640px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:min(580px,calc(100vh - 24px));display:flex;flex-direction:column;gap:0;overflow:hidden;padding:0;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));border-radius:18px;background:linear-gradient(160deg,color-mix(in srgb,var(--panel) 99%,var(--accent-soft) 1%),color-mix(in srgb,var(--panel-2) 96%,var(--panel)));box-shadow:0 12px 30px rgba(0,0,0,.20),0 0 0 2px color-mix(in srgb,var(--accent) 6%,transparent);backdrop-filter:blur(18px);pointer-events:auto;overscroll-behavior:contain;scrollbar-width:thin;box-sizing:border-box}
 .canvas-node-editor-popover::before{content:"";position:absolute;z-index:var(--canvas-z-local-underlay);background:color-mix(in srgb,var(--accent) 52%,var(--line-strong));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 8%,transparent)}
 .canvas-node-editor-popover::after{content:"";position:absolute;z-index:var(--canvas-z-local-underlay);width:7px;height:7px;border:1px solid color-mix(in srgb,var(--accent) 54%,var(--line-strong));border-radius:50%;background:var(--panel)}
 .canvas-node-editor-popover[data-placement="right"]{border-left-width:2px;border-top-left-radius:9px;border-bottom-left-radius:9px}
@@ -2138,7 +2138,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover.is-image-dock.is-prompt-expanded .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{flex:1 1 auto;min-height:220px;max-height:460px;font-size:13px;line-height:1.75}
 .canvas-node-editor-popover.is-prompt-expanded .reference-mention-editor-content{flex:1 1 auto;min-height:0}
 
-.canvas-node-editor-dock-popover{position:fixed;z-index:var(--canvas-z-modal-popover);width:min(680px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:min(620px,calc(100vh - 32px));display:flex;flex-direction:column;min-height:0;overflow:auto;padding:12px;box-sizing:border-box;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line-strong));border-radius:16px;background:color-mix(in srgb,var(--panel) 97%,transparent);box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);backdrop-filter:blur(20px)}
+.canvas-node-editor-dock-popover{position:fixed;z-index:var(--canvas-z-modal-popover);width:min(680px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:min(620px,calc(100vh - 32px));display:flex;flex-direction:column;min-height:0;overflow:auto;padding:12px;box-sizing:border-box;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line-strong));border-radius:16px;background:color-mix(in srgb,var(--panel) 97%,transparent);box-shadow:0 14px 34px rgba(0,0,0,.18),0 0 0 1px color-mix(in srgb,var(--accent) 6%,transparent);backdrop-filter:blur(20px)}
 .canvas-node-editor-dock-popover-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
 .canvas-node-editor-dock-popover-head b{font-size:12px;color:var(--text);font-weight:900}
 .canvas-node-editor-dock-popover-head button{width:26px;height:26px;display:grid;place-items:center;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--muted);cursor:pointer;font-size:15px;line-height:1}
@@ -2186,7 +2186,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   padding:10px;
   border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
   border-radius:14px;
-  box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
+  box-shadow:0 14px 34px rgba(0,0,0,.18),0 0 0 1px color-mix(in srgb,var(--accent) 6%,transparent);
 }
 .canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-popover-head{margin-bottom:8px}
 .canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer .canvas-node-editor-dock-drawer-grip{
@@ -3171,7 +3171,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   border-radius:14px;
   transform:none;
   box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
-  animation:canvas-dock-params-in .16s ease-out;
+  animation:none;
 }
 
 /* Give the Agent and video task editors a little more breathing room. Their
@@ -3237,8 +3237,8 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   border-bottom:1px solid color-mix(in srgb,var(--accent) 34%,var(--line-strong));
   border-radius:14px;
   transform:none;
-  box-shadow:0 24px 64px rgba(0,0,0,.36),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
-  animation:canvas-dock-variant-in .16s ease-out;
+  box-shadow:0 14px 34px rgba(0,0,0,.18),0 0 0 1px color-mix(in srgb,var(--accent) 6%,transparent);
+  animation:none;
 }
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-variant-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-variant .canvas-node-editor-dock-drawer-grip{
   display:none;
@@ -3426,4 +3426,458 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 
 @media(max-width:380px){
   .canvas-asset-drawer .canvas-asset-new-collection{grid-template-columns:1fr}
+}
+
+/* Agnes V2.0 canvas controls stay compact: the quick choices share one row,
+   while duration and aspect open their own upward palettes. */
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded):has(.creation-parameter-editor.video.canvas-compact),
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]:has(.creation-parameter-editor.video.canvas-compact){
+  width:min(760px,calc(100vw - 24px))!important;
+  max-width:calc(100vw - 24px)!important;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded):has(.creation-parameter-editor.video.canvas-compact) .creation-parameter-editor.video.canvas-compact,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]:has(.creation-parameter-editor.video.canvas-compact) .creation-parameter-editor.video.canvas-compact{
+  display:grid;
+  gap:5px;
+  min-width:0;
+  max-width:100%;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded):has(.creation-parameter-editor.video.canvas-compact) .creation-model-notes,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]:has(.creation-parameter-editor.video.canvas-compact) .creation-model-notes{
+  min-width:0;
+  max-width:100%;
+}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded):has(.creation-parameter-editor.video.canvas-compact) .creation-model-notes span,
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]:has(.creation-parameter-editor.video.canvas-compact) .creation-model-notes span{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.canvas-node-editor-popover .video-v20-parameter-panel-canvas{
+  position:relative;
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr)!important;
+  gap:5px!important;
+  min-width:0;
+  margin:0;
+  padding:4px 5px!important;
+  border-radius:11px;
+  overflow:visible;
+}
+.canvas-node-editor-popover .video-v20-canvas-quick-row{
+  display:grid;
+  grid-template-columns:minmax(104px,.62fr) minmax(0,1fr) minmax(0,1fr);
+  gap:5px;
+  align-items:center;
+  min-width:0;
+}
+.canvas-node-editor-popover .video-v20-canvas-title{
+  min-width:0;
+  overflow:hidden;
+  color:var(--text);
+  font-size:9px;
+  font-weight:900;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold{
+  position:relative;
+  min-width:0;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-trigger{
+  width:100%;
+  min-width:0;
+  height:29px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:4px 7px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--panel-2);
+  color:var(--text);
+  text-align:left;
+  cursor:pointer;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-trigger:hover,
+.canvas-node-editor-popover .video-v20-canvas-fold.open .video-v20-canvas-fold-trigger{
+  border-color:color-mix(in srgb,var(--accent) 56%,var(--line));
+  background:var(--accent-soft);
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-trigger>span{
+  min-width:0;
+  display:flex;
+  align-items:baseline;
+  gap:6px;
+  flex:1;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-trigger b{
+  flex:none;
+  color:var(--text);
+  font-size:8px;
+  font-weight:900;
+  white-space:nowrap;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-trigger small{
+  min-width:0;
+  overflow:hidden;
+  color:var(--muted);
+  font-size:8px;
+  line-height:1.2;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-trigger>i{
+  width:16px;
+  height:16px;
+  display:grid;
+  place-items:center;
+  flex:none;
+  border:1px solid var(--line);
+  border-radius:5px;
+  background:var(--panel);
+  color:var(--accent-text);
+  font-size:10px;
+  font-style:normal;
+  line-height:1;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer{
+  position:absolute;
+  z-index:var(--canvas-z-node-editor);
+  left:0;
+  bottom:calc(100% + 7px);
+  width:min(330px,calc(100vw - 32px));
+  padding:8px;
+  border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));
+  border-radius:12px;
+  background:color-mix(in srgb,var(--panel) 98%,#0a0b10);
+  box-shadow:0 18px 46px rgba(0,0,0,.42),0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent);
+  animation:canvas-parameter-popover-in .16s ease-out;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold.dimension .video-v20-canvas-fold-drawer{
+  right:0;
+  left:auto;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold:not(.dimension) .video-v20-canvas-fold-drawer{
+  right:0;
+  left:auto;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer::after{
+  content:"";
+  position:absolute;
+  right:10px;
+  bottom:-6px;
+  width:10px;
+  height:10px;
+  border-right:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));
+  border-bottom:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));
+  background:color-mix(in srgb,var(--panel) 98%,#0a0b10);
+  transform:rotate(45deg);
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-preset-list{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:4px;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-preset-list button{
+  min-width:0;
+  min-height:34px;
+  padding:4px;
+  border-radius:8px;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-preset-list b{font-size:8px}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-preset-list small{font-size:7px}
+.canvas-node-editor-popover .video-v20-canvas-advanced-row{
+  display:grid;
+  grid-template-columns:minmax(116px,.68fr) minmax(0,2.32fr);
+  align-items:end;
+  gap:6px;
+  min-width:0;
+  padding-top:4px;
+  border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent);
+}
+.canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-label{
+  display:grid;
+  align-content:center;
+  gap:2px;
+  min-width:0;
+  padding:0;
+  border:0;
+}
+.canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-label span{
+  overflow:hidden;
+  color:var(--text);
+  font-size:8px;
+  font-weight:900;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-label small{
+  overflow:hidden;
+  color:var(--muted);
+  font-size:7px;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-fields{
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:4px!important;
+  min-width:0;
+}
+.canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-fields label{
+  min-width:0;
+  gap:2px;
+  overflow:hidden;
+  color:var(--muted);
+  font-size:7px;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-fields input{
+  min-width:0;
+  width:100%;
+  height:27px;
+  padding:4px;
+  border-radius:7px;
+  font-size:8px;
+}
+.canvas-node-editor-popover .creation-parameter-editor.video.canvas-compact .video-model-parameter-help{display:none}
+
+@media(max-width:540px){
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded):has(.creation-parameter-editor.video.canvas-compact),
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]:has(.creation-parameter-editor.video.canvas-compact){
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+  }
+  .canvas-node-editor-popover .video-v20-canvas-quick-row{grid-template-columns:minmax(82px,.52fr) minmax(0,1fr) minmax(0,1fr);gap:4px}
+  .canvas-node-editor-popover .video-v20-canvas-title{font-size:8px}
+  .canvas-node-editor-popover .video-v20-canvas-fold-trigger{padding-inline:5px}
+  .canvas-node-editor-popover .video-v20-canvas-fold-trigger>span{gap:4px}
+  .canvas-node-editor-popover .video-v20-canvas-fold-trigger b,
+  .canvas-node-editor-popover .video-v20-canvas-fold-trigger small{font-size:7px}
+  .canvas-node-editor-popover .video-v20-canvas-advanced-row{grid-template-columns:minmax(82px,.52fr) minmax(0,1fr);gap:4px}
+  .canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-fields{gap:3px!important}
+  .canvas-node-editor-popover .video-v20-canvas-advanced-row .video-v20-advanced-fields input{height:25px;padding-inline:3px;font-size:7px}
+}
+
+/* Match the compact select-menu treatment: each Agnes preset is a readable
+   vertical option with a single selected checkmark. */
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer{
+  width:min(224px,calc(100vw - 32px));
+  padding:6px;
+  border-radius:13px;
+  background:color-mix(in srgb,var(--panel) 98%,#090a0f);
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-preset-list{
+  grid-template-columns:minmax(0,1fr);
+  gap:2px;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option{
+  width:100%;
+  min-width:0;
+  min-height:38px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:6px 8px;
+  border:1px solid transparent;
+  border-radius:9px;
+  background:transparent;
+  color:var(--text);
+  text-align:left;
+  cursor:pointer;
+  transition:background .14s ease,border-color .14s ease,color .14s ease;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option:hover,
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option.selected{
+  border-color:color-mix(in srgb,var(--accent) 38%,var(--line));
+  background:var(--accent-soft);
+  color:var(--accent-text);
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option>span{
+  min-width:0;
+  display:grid;
+  gap:2px;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option b{
+  min-width:0;
+  overflow:hidden;
+  color:var(--text);
+  font-size:9px;
+  font-weight:850;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option small{
+  min-width:0;
+  overflow:hidden;
+  color:var(--muted);
+  font-size:8px;
+  line-height:1.2;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option.selected b,
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option.selected small{
+  color:var(--accent-text);
+}
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option>i{
+  width:17px;
+  height:17px;
+  display:grid;
+  place-items:center;
+  flex:none;
+  border-radius:50%;
+  background:var(--accent);
+  color:#fff;
+  font-size:10px;
+  font-style:normal;
+  font-weight:900;
+  line-height:1;
+}
+@media(max-width:540px){
+  .canvas-node-editor-popover .video-v20-canvas-fold-drawer{width:min(208px,calc(100vw - 28px));padding:5px}
+  .canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option{min-height:36px;padding:5px 7px}
+  .canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option b{font-size:8px}
+  .canvas-node-editor-popover .video-v20-canvas-fold-drawer .video-v20-drawer-option small{font-size:7px}
+}
+
+/* Video variant generators use the same compact width as their parameter
+   drawer; the image dock's historical 940px width leaves controls floating too
+   far from the node and makes the parameter row look disconnected. */
+.canvas-node-editor-popover.is-image-dock:has(.creation-parameter-editor.video.canvas-compact),
+.canvas-node-editor-popover.is-image-dock[data-density]:has(.creation-parameter-editor.video.canvas-compact){
+  width:min(780px,calc(100vw - 24px))!important;
+  max-width:calc(100vw - 24px)!important;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"]{
+  width:min(780px,calc(100vw - 24px))!important;
+  max-width:calc(100vw - 24px)!important;
+}
+.canvas-node-editor-popover.is-image-dock:has(.creation-parameter-editor.video.canvas-compact) .canvas-node-editor-dock-toolbar,
+.canvas-node-editor-popover.is-image-dock[data-density]:has(.creation-parameter-editor.video.canvas-compact) .canvas-node-editor-dock-toolbar{
+  gap:6px;
+}
+.canvas-node-editor-popover.is-image-dock:has(.creation-parameter-editor.video.canvas-compact) .canvas-node-editor-dock-tool.params,
+.canvas-node-editor-popover.is-image-dock[data-density]:has(.creation-parameter-editor.video.canvas-compact) .canvas-node-editor-dock-tool.params{
+  flex:1 1 auto;
+  min-width:170px;
+  max-width:none;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params{
+  width:min(460px,calc(100vw - 24px));
+  max-width:min(460px,calc(100vw - 24px));
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-parameter-editor.video.canvas-compact{
+  display:grid;
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  overflow:visible;
+  gap:5px;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-parameter-grid.primary{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:5px!important;
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-parameter-grid.primary>.creation-field,
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-parameter-grid.primary>.creation-field.model{
+  grid-column:auto!important;
+  min-width:0;
+  max-width:100%;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-field .model-picker-trigger,
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-field .select-menu-trigger,
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-toggle>button{
+  width:100%;
+  min-width:0;
+  max-width:100%;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .video-v20-canvas-quick-row,
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .video-v20-canvas-advanced-row{
+  width:100%;
+  min-width:0;
+  max-width:100%;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-model-notes{
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+}
+.canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-drawer.is-params .creation-model-notes span{
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-image-dock:has(.creation-parameter-editor.video.canvas-compact),
+  .canvas-node-editor-popover.is-image-dock[data-density]:has(.creation-parameter-editor.video.canvas-compact){
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+  }
+  .canvas-node-editor-popover.is-image-dock[data-node-kind="video"]{
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+  }
+  .canvas-node-editor-popover.is-image-dock[data-node-kind="video"] .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params{
+    width:calc(100vw - 24px);
+    max-width:calc(100vw - 24px);
+  }
+}
+
+/* Parameter palettes should feel anchored to their trigger, not animated
+   across the editor. Render them in place immediately above the button. */
+.canvas-node-editor-popover .video-v20-canvas-fold-drawer{
+  animation:none!important;
+  transform:none!important;
+  transition:none!important;
+  box-shadow:0 7px 18px rgba(31,33,44,.12),0 0 0 1px color-mix(in srgb,var(--accent) 10%,var(--line))!important;
+}
+
+/* Local drawers should appear in place without changing the editor's painted
+   weight or replaying a scale animation on every parameter click. */
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-drawer{
+  animation:none!important;
+  transition:none!important;
+}
+
+/* Keep the video variant frame stable while its local parameter drawer opens;
+   the drawer may escape upward, but it must never be clipped by its shell. */
+.canvas-node-editor-popover.is-video-variant{
+  width:min(780px,calc(100vw - 24px))!important;
+  max-width:calc(100vw - 24px)!important;
+}
+/* The video variant dock contains its parameter editor only after the drawer
+   opens. Keep this stronger selector active before and after that render so
+   :has(...) cannot make the outer frame jump from the legacy 940px width. */
+.canvas-node-editor-popover.is-image-dock.is-video-variant:not(.is-prompt-expanded){
+  width:min(780px,calc(100vw - 24px))!important;
+  max-width:calc(100vw - 24px)!important;
+  transition:none!important;
+}
+.canvas-node-editor-popover.is-video-variant .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params{
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-video-variant .canvas-node-editor-dock-params-wrap>.canvas-node-editor-dock-popover.canvas-node-editor-dock-drawer.is-params .canvas-node-editor-dock-drawer-body{
+  overflow:visible;
+}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-video-variant{
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+  }
+  .canvas-node-editor-popover.is-image-dock.is-video-variant:not(.is-prompt-expanded){
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+  }
 }

@@ -250,6 +250,19 @@ html[data-theme="light"] .canvas-group.selected {
   box-shadow:var(--shadow-control);
 }
 
+/* Video variant generators are compact, attached controls. Keep their local
+   elevation lighter than the rest of the canvas so the generator stays crisp
+   without turning the prompt area into a dark halo. */
+.canvas-node-editor-popover.is-video-variant {
+  box-shadow:0 10px 26px rgba(0,0,0,.16),0 0 0 2px color-mix(in srgb,var(--accent) 6%,transparent);
+}
+.canvas-node-editor-popover.is-video-variant .canvas-node-editor-dock-drawer {
+  box-shadow:0 12px 28px rgba(0,0,0,.17),0 0 0 1px color-mix(in srgb,var(--accent) 6%,transparent);
+}
+.canvas-node-editor-popover.is-video-variant .video-v20-canvas-fold-drawer {
+  box-shadow:0 7px 18px rgba(31,33,44,.12),0 0 0 1px color-mix(in srgb,var(--accent) 10%,var(--line))!important;
+}
+
 /* Ports use pseudo-elements for the visible capsule, so tune that layer too.
    Keep the accent ring for keyboard focus while removing the broad dark halo. */
 .canvas-group .canvas-group-port:hover::before,

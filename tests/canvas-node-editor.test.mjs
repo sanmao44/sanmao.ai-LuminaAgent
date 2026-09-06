@@ -14,6 +14,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const shadowStyles = await readFile(
+  new URL("../app/shadow-tuning.css", import.meta.url),
+  "utf8",
+);
 
 test("node editor exposes an accessible expand/collapse control", () => {
   assert.match(component, /className="canvas-node-editor-expand"/);
@@ -372,13 +376,48 @@ test("all canvas video generation paths forward Agnes V2.0 parameters", () => {
   });
 });
 
-test("canvas Agnes V2.0 parameters stay collapsed until opened and keep advanced fields in one row", () => {
+test("canvas Agnes V2.0 parameters use aligned upward drawers and keep advanced fields in one row", () => {
   assert.match(parameterEditor, /const canvasCompact = variant === "dock" \|\| variant === "canvas-flat"/);
-  assert.match(parameterEditor, /const \[agnesV20PanelOpen, setAgnesV20PanelOpen\] = useState\(!canvasCompact\)/);
-  assert.match(parameterEditor, /className="video-v20-parameter-trigger"/);
-  assert.match(parameterEditor, /aria-controls="canvas-video-v20-parameter-drawer"/);
-  assert.match(parameterEditor, /className="video-v20-parameter-drawer"/);
-  assert.match(styles, /video-v20-parameter-drawer \.video-v20-advanced-fields\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)!important/);
+  assert.match(parameterEditor, /const \[agnesV20DurationOpen, setAgnesV20DurationOpen\] = useState\(false\)/);
+  assert.match(parameterEditor, /const \[agnesV20DimensionOpen, setAgnesV20DimensionOpen\] = useState\(false\)/);
+  assert.match(parameterEditor, /className="video-v20-canvas-quick-row"/);
+  assert.match(parameterEditor, /aria-controls="canvas-video-v20-duration-drawer"/);
+  assert.match(parameterEditor, /aria-controls="canvas-video-v20-dimension-drawer"/);
+  assert.match(parameterEditor, /video-v20-drawer-option/);
+  assert.doesNotMatch(parameterEditor, /canvas-video-v20-parameter-drawer/);
+  assert.match(styles, /video-v20-canvas-fold-drawer\{[\s\S]*bottom:calc\(100% \+ 7px\)/);
+  assert.match(styles, /video-v20-canvas-fold:not\(.dimension\) \.video-v20-canvas-fold-drawer\{\s*right:0;\s*left:auto/);
+  assert.match(styles, /video-v20-canvas-fold-drawer \.video-v20-preset-list\{\s*grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(styles, /video-v20-canvas-advanced-row \.video-v20-advanced-fields\{\s*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)!important/);
+  assert.match(styles, /is-columns-node:not\(.is-prompt-expanded\):has\(.creation-parameter-editor\.video\.canvas-compact\)[\s\S]*width:min\(760px/);
+});
+
+test("video variant parameter docks keep all controls inside their compact drawer", () => {
+  assert.match(styles, /is-image-dock\[data-node-kind="video"\][\s\S]*width:min\(780px/);
+  assert.match(styles, /is-image-dock\[data-node-kind="video"\][\s\S]*is-params\{\s*width:min\(460px/);
+  assert.match(styles, /is-image-dock\[data-node-kind="video"\][\s\S]*creation-parameter-grid\.primary\{\s*display:grid;\s*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)!important/);
+  assert.match(styles, /is-image-dock\[data-node-kind="video"\][\s\S]*creation-parameter-editor\.video\.canvas-compact\{[\s\S]*overflow:visible/);
+  assert.match(styles, /is-image-dock\[data-node-kind="video"\][\s\S]*creation-model-notes\{\s*width:100%/);
+  assert.match(component, /isVariantGenerator \? " is-video-variant"/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-video-variant\{[\s\S]*width:min\(780px/);
+  assert.match(styles, /is-video-variant[\s\S]*is-params\{\s*overflow:visible/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock\.is-video-variant:not\(.is-prompt-expanded\)\{[\s\S]*width:min\(780px/);
+});
+
+test("canvas drawers appear directly and do not add heavy stacked shadows", () => {
+  assert.match(styles, /\.canvas-node-editor-popover\{[^}]*box-shadow:0 12px 30px rgba\(0,0,0,\.20\),0 0 0 2px/);
+  assert.match(styles, /\.canvas-node-editor-dock-popover\{[^}]*box-shadow:0 14px 34px rgba\(0,0,0,\.18\),0 0 0 1px/);
+  assert.match(styles, /is-params\{[^}]*animation:none;/);
+  assert.match(styles, /is-variant\{[^}]*animation:none;/);
+  assert.match(styles, /video-v20-canvas-fold-drawer\{[\s\S]*animation:none!important[\s\S]*box-shadow:0 7px 18px/);
+  assert.match(styles, /is-image-dock \.canvas-node-editor-dock-drawer\{[\s\S]*animation:none!important[\s\S]*transition:none!important/);
+  assert.match(shadowStyles, /\.canvas-node-editor-popover\.is-video-variant\s*\{[\s\S]*box-shadow:0 10px 26px rgba\(0,0,0,\.16\)/);
+  assert.match(shadowStyles, /\.canvas-node-editor-popover\.is-video-variant \.canvas-node-editor-dock-drawer\s*\{[\s\S]*box-shadow:0 12px 28px rgba\(0,0,0,\.17\)/);
+});
+
+test("opening a dock drawer measures only the attached editor surface", () => {
+  assert.match(component, /if \(isDockNode\) \{[\s\S]*const surface = popover\.querySelector<HTMLElement>\("\.canvas-node-editor-surface"\);[\s\S]*return surface\?\.offsetHeight/);
+  assert.match(component, /isCompact, isDockNode, isImageNode/);
 });
 
 test("selected related canvas edges become dashed and animate their flow", () => {

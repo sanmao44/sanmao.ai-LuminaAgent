@@ -663,7 +663,8 @@ function VideoEditor({
 }) {
   const dock = variant === "dock";
   const canvasCompact = variant === "dock" || variant === "canvas-flat";
-  const [agnesV20PanelOpen, setAgnesV20PanelOpen] = useState(!canvasCompact);
+  const [agnesV20DurationOpen, setAgnesV20DurationOpen] = useState(false);
+  const [agnesV20DimensionOpen, setAgnesV20DimensionOpen] = useState(false);
   const update = <K extends keyof VideoCreationSettings>(
     key: K,
     value: VideoCreationSettings[K],
@@ -792,7 +793,14 @@ function VideoEditor({
     agnesWidth: preset.width,
     agnesHeight: preset.height,
   });
-  const agnesV20ParameterSummary = `${settings.agnesWidth} × ${settings.agnesHeight} · ${settings.agnesNumFrames} 帧 / ${settings.agnesFrameRate} FPS`;
+  const agnesV20AdvancedFields = (
+    <div className="video-v20-advanced-fields">
+      <label>宽度（px）<input aria-label="宽度" type="number" min={64} max={3840} step={64} value={settings.agnesWidth} onChange={(event) => update("agnesWidth", Math.max(64, Math.min(3840, Math.round((Number(event.target.value) || 64) / 64) * 64)))} /></label>
+      <label>高度（px）<input aria-label="高度" type="number" min={64} max={3840} step={64} value={settings.agnesHeight} onChange={(event) => update("agnesHeight", Math.max(64, Math.min(3840, Math.round((Number(event.target.value) || 64) / 64) * 64)))} /></label>
+      <label>帧数（8n+1）<input aria-label="帧数" type="number" min={1} max={441} step={8} value={settings.agnesNumFrames} onChange={(event) => { const value = Math.round(Number(event.target.value) || 1); update("agnesNumFrames", Math.max(1, Math.min(441, Math.round((value - 1) / 8) * 8 + 1))); }} /></label>
+      <label>帧率（FPS）<input aria-label="帧率" type="number" min={1} max={60} step={1} value={settings.agnesFrameRate} onChange={(event) => update("agnesFrameRate", Math.max(1, Math.min(60, Math.round(Number(event.target.value) || 1))))} /></label>
+    </div>
+  );
   const agnesV20ParameterContent = (
     <>
       <div className="video-v20-heading"><span>V2.0 专属参数</span><small>旧版接口用帧数控制时长，不能直接填写秒数。</small></div>
@@ -809,26 +817,22 @@ function VideoEditor({
         </div>
       </div>
       <div className="video-v20-advanced-label"><span>高级自定义</span><small>宽高须为 64 的倍数；帧数须满足 8n + 1。</small></div>
-      <div className="video-v20-advanced-fields">
-        <label>宽度（px）<input aria-label="宽度" type="number" min={64} max={3840} step={64} value={settings.agnesWidth} onChange={(event) => update("agnesWidth", Math.max(64, Math.min(3840, Math.round((Number(event.target.value) || 64) / 64) * 64)))} /></label>
-        <label>高度（px）<input aria-label="高度" type="number" min={64} max={3840} step={64} value={settings.agnesHeight} onChange={(event) => update("agnesHeight", Math.max(64, Math.min(3840, Math.round((Number(event.target.value) || 64) / 64) * 64)))} /></label>
-        <label>帧数（8n+1）<input aria-label="帧数" type="number" min={1} max={441} step={8} value={settings.agnesNumFrames} onChange={(event) => { const value = Math.round(Number(event.target.value) || 1); update("agnesNumFrames", Math.max(1, Math.min(441, Math.round((value - 1) / 8) * 8 + 1))); }} /></label>
-        <label>帧率（FPS）<input aria-label="帧率" type="number" min={1} max={60} step={1} value={settings.agnesFrameRate} onChange={(event) => update("agnesFrameRate", Math.max(1, Math.min(60, Math.round(Number(event.target.value) || 1))))} /></label>
-      </div>
+      {agnesV20AdvancedFields}
       <small className="video-model-parameter-help">预计时长约 {(Math.max(1, settings.agnesNumFrames) / Math.max(1, settings.agnesFrameRate)).toFixed(1)} 秒（按官方 num_frames ÷ frame_rate 估算）</small>
     </>
   );
   useEffect(() => {
-    if (!agnesV20PanelOpen || !canvasCompact) return;
+    if ((!agnesV20DurationOpen && !agnesV20DimensionOpen) || !canvasCompact) return;
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      setAgnesV20PanelOpen(false);
+      setAgnesV20DurationOpen(false);
+      setAgnesV20DimensionOpen(false);
     };
     window.addEventListener("keydown", handleEscape, true);
     return () => window.removeEventListener("keydown", handleEscape, true);
-  }, [agnesV20PanelOpen, canvasCompact]);
+  }, [agnesV20DurationOpen, agnesV20DimensionOpen, canvasCompact]);
   useEffect(() => {
     const operationIsSupported =
       settings.operation === "generate" ||
@@ -848,7 +852,7 @@ function VideoEditor({
         limits.omitAspectRatioResolutionFor?.includes(settings.operation),
       ));
   return (
-    <div className="creation-parameter-editor video">
+    <div className={`creation-parameter-editor video${canvasCompact ? " canvas-compact" : ""}`}>
       {unavailableModelId && (
         <div className="creation-model-warning">
           <b>原模型当前不可用</b>
@@ -963,25 +967,46 @@ function VideoEditor({
       </div>
       {usesAgnesV20 && (
         canvasCompact ? (
-          <div className={`video-option-segment video-v20-parameter-panel video-v20-parameter-panel-canvas${agnesV20PanelOpen ? " open" : ""}`}>
-            <button
-              type="button"
-              className="video-v20-parameter-trigger"
-              aria-expanded={agnesV20PanelOpen}
-              aria-controls="canvas-video-v20-parameter-drawer"
-              onClick={() => setAgnesV20PanelOpen((value) => !value)}
-            >
-              <span>
-                <b>Agnes V2.0 参数</b>
-                <small>{agnesV20ParameterSummary}</small>
-              </span>
-              <i aria-hidden="true">{agnesV20PanelOpen ? "⌃" : "⌄"}</i>
-            </button>
-            {agnesV20PanelOpen && (
-              <div className="video-v20-parameter-drawer" id="canvas-video-v20-parameter-drawer" role="region" aria-label="Agnes V2.0 参数">
-                {agnesV20ParameterContent}
+          <div className={`video-option-segment video-v20-parameter-panel video-v20-parameter-panel-canvas${agnesV20DurationOpen || agnesV20DimensionOpen ? " open" : ""}`}>
+            <div className="video-v20-canvas-quick-row">
+              <span className="video-v20-canvas-title">V2.0 专属参数</span>
+              <div className={`video-v20-canvas-fold${agnesV20DurationOpen ? " open" : ""}`}>
+                <button type="button" className="video-v20-canvas-fold-trigger" aria-expanded={agnesV20DurationOpen} aria-controls="canvas-video-v20-duration-drawer" onClick={() => { setAgnesV20DurationOpen((value) => !value); setAgnesV20DimensionOpen(false); }}>
+                  <span><b>时长</b><small>{selectedAgnesV20Duration?.label || `${settings.agnesNumFrames} 帧 / ${settings.agnesFrameRate} FPS`}</small></span>
+                  <i aria-hidden="true">{agnesV20DurationOpen ? "⌃" : "⌄"}</i>
+                </button>
+                {agnesV20DurationOpen && (
+                  <div className="video-v20-canvas-fold-drawer" id="canvas-video-v20-duration-drawer" role="region" aria-label="Agnes V2.0 时长预设">
+                    <div className="video-v20-preset-list">
+                      {AGNES_V20_DURATION_PRESETS.map((preset) => {
+                        const selected = selectedAgnesV20Duration?.frames === preset.frames;
+                        return <button key={preset.frames} type="button" className={`video-v20-drawer-option${selected ? " selected" : ""}`} aria-pressed={selected} onClick={() => applyAgnesV20Duration(preset)}><span><b>{preset.label}</b><small>{preset.frames} 帧 / {preset.frameRate} FPS</small></span>{selected && <i aria-hidden="true">✓</i>}</button>;
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+              <div className={`video-v20-canvas-fold dimension${agnesV20DimensionOpen ? " open" : ""}`}>
+                <button type="button" className="video-v20-canvas-fold-trigger" aria-expanded={agnesV20DimensionOpen} aria-controls="canvas-video-v20-dimension-drawer" onClick={() => { setAgnesV20DimensionOpen((value) => !value); setAgnesV20DurationOpen(false); }}>
+                  <span><b>画幅</b><small>{selectedAgnesV20Dimensions?.label || `${settings.agnesWidth} × ${settings.agnesHeight}`}</small></span>
+                  <i aria-hidden="true">{agnesV20DimensionOpen ? "⌃" : "⌄"}</i>
+                </button>
+                {agnesV20DimensionOpen && (
+                  <div className="video-v20-canvas-fold-drawer" id="canvas-video-v20-dimension-drawer" role="region" aria-label="Agnes V2.0 画幅预设">
+                    <div className="video-v20-preset-list">
+                      {AGNES_V20_DIMENSION_PRESETS.map((preset) => {
+                        const selected = selectedAgnesV20Dimensions?.width === preset.width && selectedAgnesV20Dimensions?.height === preset.height;
+                        return <button key={preset.label} type="button" className={`video-v20-drawer-option${selected ? " selected" : ""}`} aria-pressed={selected} onClick={() => applyAgnesV20Dimensions(preset)}><span><b>{preset.label}</b><small>{preset.width} × {preset.height}</small></span>{selected && <i aria-hidden="true">✓</i>}</button>;
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="video-v20-canvas-advanced-row">
+              <div className="video-v20-advanced-label"><span>高级自定义</span><small>宽高 64 倍数 · 帧数 8n + 1</small></div>
+              {agnesV20AdvancedFields}
+            </div>
           </div>
         ) : (
           <div className="video-option-segment video-v20-parameter-panel">

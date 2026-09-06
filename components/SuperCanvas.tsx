@@ -15263,6 +15263,13 @@ function CanvasNodeEditorPopover({
     const popoverHeight = (() => {
       const popover = popoverRef.current;
       if (!popover) return estimatedPopoverHeight;
+      if (isDockNode) {
+        // The upward params/variant drawers are absolute overlays. Measure the
+        // painted editor surface only so opening them never moves or resizes
+        // the attached dock.
+        const surface = popover.querySelector<HTMLElement>(".canvas-node-editor-surface");
+        return surface?.offsetHeight || estimatedPopoverHeight;
+      }
       if (!audioNode) return popover.scrollHeight || estimatedPopoverHeight;
 
       // The audio body is the only editor body that can become a native
@@ -15318,7 +15325,7 @@ function CanvasNodeEditorPopover({
         ? current
         : position,
     );
-  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isImageNode, node.x, node.y, promptExpanded, size.h, size.w, stackedEditor, stageRef]);
+  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isDockNode, isImageNode, node.x, node.y, promptExpanded, size.h, size.w, stackedEditor, stageRef]);
 
   useLayoutEffect(() => {
     reposition();
@@ -15349,7 +15356,7 @@ function CanvasNodeEditorPopover({
   return (
     <div
       ref={popoverRef}
-       className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
+       className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement="bottom"
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
