@@ -2229,6 +2229,9 @@ export default function SuperCanvas() {
     compare: boolean;
   } | null>(null);
   const [reuseDraft, setReuseDraft] = useState<CanvasReuseDraft | null>(null);
+  const [reusePromptBeforeOptimization, setReusePromptBeforeOptimization] = useState<string | null>(null);
+  const [deckPromptBeforeOptimization, setDeckPromptBeforeOptimization] = useState<string | null>(null);
+  const [canvasPromptOptimizing, setCanvasPromptOptimizing] = useState(false);
   const [reusePreview, setReusePreview] = useState<CanvasReferenceDraft | null>(null);
   const [textLightboxNodeId, setTextLightboxNodeId] = useState<string | null>(
     null,
@@ -2379,6 +2382,10 @@ export default function SuperCanvas() {
     );
   }, []);
 
+  useEffect(() => {
+    if (!reuseDraft) setReusePromptBeforeOptimization(null);
+  }, [reuseDraft]);
+
   const toggleTheme = useCallback(() => {
     const next: CanvasTheme = theme === "light" ? "dark" : "light";
     setTheme(next);
@@ -2457,6 +2464,15 @@ export default function SuperCanvas() {
     [document.nodes, selectedIds],
   );
   const selectedSingle = selectedNodes.length === 1 ? selectedNodes[0] : null;
+  useEffect(() => {
+    setDeckPromptBeforeOptimization(null);
+  }, [mode, reuseDraft?.sourceNodeId, selectedSingle?.id]);
+
+  const activeDeckPrompt = reuseDraft
+    ? reuseDraft.prompt
+    : selectedSingle?.type === "prompt"
+      ? String(selectedSingle.data.agentPrompt || selectedSingle.data.text || "")
+      : drafts[mode].prompt;
   const relatedConnectionEdgeIds = useMemo(
     () =>
       new Set(
@@ -6357,6 +6373,7 @@ export default function SuperCanvas() {
         ...(options?.operation ? { operation: options.operation } : {}),
         dirty: Boolean(options),
       });
+      setReusePromptBeforeOptimization(null);
       setMode(source.data.kind === "video" ? "video" : "image");
       setExpandedEditorId(source.id);
       setSelectedIds(new Set([source.id]));
@@ -6500,25 +6517,63 @@ export default function SuperCanvas() {
     if (!reuseDraft?.prompt.trim()) return notify("请输入需要优化的提示词。", "error");
     if (!runtime?.models?.some((model) => model.kind === "chat" && model.enabled !== false && model.published !== false))
       return notify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+    if (canvasPromptOptimizing) return;
+    setCanvasPromptOptimizing(true);
     try {
-      const prompt = appendTextReferenceContext(reuseDraft.prompt, reuseDraft.references.map((reference) => ({
-        id: reference.id,
-        kind: reference.kind,
-        name: reference.name,
-        ...(reference.url ? { url: reference.url } : {}),
-        ...(reference.text ? { text: reference.text } : {}),
-      })));
       const value = await requestPromptOptimization(
-        prompt,
-        reuseDraft.references.filter((reference) => reference.kind === "image" && reference.url).map((reference) => ({ url: reference.url!, name: reference.name })),
-        runtime.settings.agentModelId || undefined,
+        reuseDraft.prompt,
+        [],
+        runtime?.settings.agentModelId || undefined,
+        "polish_text",
       );
+      setReusePromptBeforeOptimization(reuseDraft.prompt);
       setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
-      notify("AI 已优化提示词，尚未生成");
+      notify("已完成 AI 优化，可继续修改；也可以撤销");
     } catch (error) {
       notify(error instanceof Error ? error.message : "AI 优化失败", "error");
+    } finally {
+      setCanvasPromptOptimizing(false);
     }
-  }, [notify, reuseDraft, runtime]);
+  }, [canvasPromptOptimizing, notify, reuseDraft, runtime]);
+
+  const undoReusePromptOptimization = useCallback(() => {
+    if (reusePromptBeforeOptimization === null) return;
+    setReuseDraft((current) => current ? { ...current, prompt: reusePromptBeforeOptimization, dirty: true } : current);
+    setReusePromptBeforeOptimization(null);
+    notify("已撤销 AI 优化");
+  }, [notify, reusePromptBeforeOptimization]);
+
+  const optimizeDeckPrompt = useCallback(async () => {
+    if (reuseDraft) return optimizeReusePrompt();
+    if (!activeDeckPrompt.trim()) return notify("请输入需要优化的提示词。", "error");
+    if (!runtime?.models?.some((model) => model.kind === "chat" && model.enabled !== false && model.published !== false))
+      return notify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+    if (canvasPromptOptimizing) return;
+    setCanvasPromptOptimizing(true);
+    try {
+      const value = await requestPromptOptimization(
+        activeDeckPrompt,
+        [],
+        runtime?.settings.agentModelId || undefined,
+        "polish_text",
+      );
+      updatePrompt(value);
+      setDeckPromptBeforeOptimization(activeDeckPrompt);
+      notify("已完成 AI 优化，可继续修改；也可以撤销");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "AI 优化失败", "error");
+    } finally {
+      setCanvasPromptOptimizing(false);
+    }
+  }, [activeDeckPrompt, canvasPromptOptimizing, notify, optimizeReusePrompt, reuseDraft, runtime, updatePrompt]);
+
+  const undoDeckPromptOptimization = useCallback(() => {
+    if (reuseDraft) return undoReusePromptOptimization();
+    if (deckPromptBeforeOptimization === null) return;
+    updatePrompt(deckPromptBeforeOptimization);
+    setDeckPromptBeforeOptimization(null);
+    notify("已撤销 AI 优化");
+  }, [deckPromptBeforeOptimization, notify, reuseDraft, undoReusePromptOptimization, updatePrompt]);
 
   const reverseReusePrompt = useCallback(async () => {
     if (!reuseDraft) return;
@@ -10091,9 +10146,11 @@ export default function SuperCanvas() {
     (value: string, cursor: number) => {
       if (reuseDraft) {
         setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
+        setReusePromptBeforeOptimization(null);
         setMentionState(mentionStateForValue(value, cursor));
         return;
       }
+      setDeckPromptBeforeOptimization(null);
       if (selectedSingle?.type === "media") {
         if (
           selectedSingle.data.kind === "image" ||
@@ -11645,6 +11702,7 @@ export default function SuperCanvas() {
               onToggleEditor={toggleEditor}
               onGenerate={runEditorGeneration}
               onOneTake={runOneTakeForAgentNode}
+              onNotify={notify}
               onEditorPromptChange={updateEditorPrompt}
               onEditorParamsChange={updateEditorParams}
               onVideoInputModeChange={lockVideoInputMode}
@@ -12015,12 +12073,11 @@ export default function SuperCanvas() {
                       onClear={() => setReuseDraft((current) => current ? { ...current, references: [], dirty: true } : current)}
                       onPreview={setReusePreview}
                       emptyLabel="添加参考图"
-                      trailing={
-                        <>
-                          <button type="button" disabled={!reuseDraft.references.length} onClick={() => void reverseReusePrompt()}>⌁ 反推</button>
-                          <button type="button" disabled={!reuseDraft.prompt.trim()} onClick={() => void optimizeReusePrompt()}>✦ 优化</button>
-                        </>
-                      }
+                        trailing={
+                          <>
+                            <button type="button" disabled={!reuseDraft.references.length} onClick={() => void reverseReusePrompt()}>⌁ 反推</button>
+                          </>
+                        }
                     />
                   ) : (
                     <CanvasReferenceList
@@ -12091,16 +12148,11 @@ export default function SuperCanvas() {
                       mentionCandidates.map((node, index) => canvasMentionOption(document, node, index)),
                     ).value}
                   />
-                  {reuseDraft && composerPrompt && (
-                    <button
-                      type="button"
-                      className="canvas-reuse-prompt-clear"
-                      aria-label="清空复用提示词"
-                      onClick={() => setReuseDraft((current) => current ? { ...current, prompt: "", dirty: true } : current)}
-                    >
-                      清空
-                    </button>
-                  )}
+                  </div>
+                  <div className="canvas-deck-prompt-actions" aria-label="提示词操作">
+                    {activeDeckPrompt.trim() && <button type="button" className="canvas-prompt-ai-action" disabled={canvasPromptOptimizing} aria-busy={canvasPromptOptimizing} title={chatModelsAvailable ? "使用 AI 优化当前提示词" : "请先在模型库启用对话模型"} onClick={() => void optimizeDeckPrompt()}><span aria-hidden="true">✦</span><span>{canvasPromptOptimizing ? "优化中…" : "AI 优化"}</span></button>}
+                    {((reuseDraft && reusePromptBeforeOptimization !== null) || (!reuseDraft && deckPromptBeforeOptimization !== null)) && <button type="button" className="canvas-prompt-undo-action" disabled={canvasPromptOptimizing} onClick={undoDeckPromptOptimization}><span aria-hidden="true">↶</span><span>撤销</span></button>}
+                    {activeDeckPrompt.trim() && <button type="button" className="canvas-prompt-clear-action" aria-label={reuseDraft ? "清空复用提示词" : "清空提示词"} onClick={() => { if (reuseDraft) setReuseDraft((current) => current ? { ...current, prompt: "", dirty: true } : current); else updatePrompt(""); setReusePromptBeforeOptimization(null); setDeckPromptBeforeOptimization(null); setMentionState(null); window.setTimeout(() => deckPromptRef.current?.focus(), 0); }}><span aria-hidden="true">⌫</span><span>清空</span></button>}
                   </div>
                   <button
                     type="button"
@@ -14107,6 +14159,7 @@ type CanvasNodeEditorPopoverProps = {
   onToggleEditor: (node: CanvasNode) => void;
   onGenerate: (node: CanvasNode) => void;
   onOneTake: (node: CanvasNode, durationSeconds: number) => void;
+  onNotify: (message: string, kind?: "ok" | "error") => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
   onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
   onVideoInputModeChange: (node: CanvasNode) => void;
@@ -14789,6 +14842,7 @@ function CanvasNodeEditorPopover({
   onToggleEditor,
   onGenerate,
   onOneTake,
+  onNotify,
   onEditorPromptChange,
   onEditorParamsChange,
   onVideoInputModeChange,
@@ -14820,6 +14874,8 @@ function CanvasNodeEditorPopover({
   const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [promptOptimizing, setPromptOptimizing] = useState(false);
+  const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
@@ -14833,6 +14889,11 @@ function CanvasNodeEditorPopover({
   const isVideoNode = data.kind === "video";
   const isAgentNode = node.type === "prompt";
   const isUpscaleNode = node.type === "upscale";
+  const editorChatAvailable = Boolean(
+    runtime?.models?.some(
+      (model) => model.kind === "chat" && model.enabled !== false && model.published !== false,
+    ),
+  );
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
@@ -14923,6 +14984,7 @@ function CanvasNodeEditorPopover({
   const editorActionLabel = promptExpanded ? "保存" : generateLabel;
   const handleEditorAction = () => {
     if (promptExpanded) {
+      setPromptBeforeOptimization(null);
       setPromptExpanded(false);
       window.setTimeout(() => promptRef.current?.focus(), 0);
       return;
@@ -14943,6 +15005,53 @@ function CanvasNodeEditorPopover({
             : node.type === "media" && data.kind === "image" && data.url
               ? "当前图片作参考 · 右侧生成新图"
               : "图片节点";
+
+  useEffect(() => {
+    setPromptBeforeOptimization(null);
+  }, [node.id]);
+
+  async function optimizeEditorPrompt() {
+    if (!editorPrompt.trim()) return;
+    if (!editorChatAvailable) return onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
+    if (promptOptimizing) return;
+    const original = editorPrompt;
+    setPromptOptimizing(true);
+    try {
+      const optimized = await requestPromptOptimization(
+        original,
+        [],
+        runtime?.settings.agentModelId || undefined,
+        "polish_text",
+      );
+      setPromptBeforeOptimization(original);
+      onEditorPromptChange(node, optimized);
+      window.setTimeout(() => promptRef.current?.focus(), 0);
+      onNotify("已完成 AI 优化，可继续修改；也可以撤销");
+    } catch {
+      onNotify("AI 优化失败", "error");
+    } finally {
+      setPromptOptimizing(false);
+    }
+  }
+
+  function undoEditorPromptOptimization() {
+    if (promptBeforeOptimization === null) return;
+    onEditorPromptChange(node, promptBeforeOptimization);
+    setPromptBeforeOptimization(null);
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  }
+
+  function handleEditorPromptChange(value: string) {
+    setPromptBeforeOptimization(null);
+    onEditorPromptChange(node, value);
+  }
+
+  const promptOptimizationActions = (
+    <div className="canvas-node-editor-prompt-actions" aria-label="提示词操作">
+      {editorPrompt.trim() && <button type="button" disabled={promptOptimizing} aria-busy={promptOptimizing} title={editorChatAvailable ? "使用 AI 优化当前提示词" : "请先在模型库启用对话模型"} onClick={() => void optimizeEditorPrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? "优化中…" : "AI 优化"}</span></button>}
+      {promptBeforeOptimization !== null && <button type="button" disabled={promptOptimizing} title="撤销 AI 优化" onClick={undoEditorPromptOptimization}><span aria-hidden="true">↶</span><span>撤销</span></button>}
+    </div>
+  );
 
   useEffect(() => {
     setPromptExpanded(false);
@@ -15261,6 +15370,7 @@ function CanvasNodeEditorPopover({
               <div className="canvas-node-editor-prompt-label">
                 <span>{isAgentNode ? "Agent 任务" : "提示词"}</span>
                 <small>{promptLabelSmall}</small>
+                {promptOptimizationActions}
               </div>
               <ReferenceMentionEditor
                 ref={promptRef}
@@ -15270,8 +15380,8 @@ function CanvasNodeEditorPopover({
                 className="canvas-node-prompt-editor"
                 menuClassName="canvas-node-mention-menu"
                 menuPortal
-                onChange={(value) => onEditorPromptChange(node, value)}
-                onMentionSelect={(_candidateIndex, value) => onEditorPromptChange(node, value)}
+                onChange={handleEditorPromptChange}
+                onMentionSelect={(_candidateIndex, value) => handleEditorPromptChange(value)}
                 placeholder={promptPlaceholder}
                 onKeyDown={(event) => {
                   if (!promptExpanded && event.key === "Enter" && (isAgentNode ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
@@ -15375,6 +15485,7 @@ function CanvasNodeEditorPopover({
               <div className="canvas-node-editor-prompt-label">
                 <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>
                 <small>@ 引用节点 · {promptExpanded ? "编辑完成后点击保存" : node.type === "prompt" ? "Enter 发送" : "Ctrl/Cmd + Enter 生成"}</small>
+                {promptOptimizationActions}
               </div>
               <ReferenceMentionEditor
                 ref={promptRef}
@@ -15384,8 +15495,8 @@ function CanvasNodeEditorPopover({
                 className="canvas-node-prompt-editor"
                 menuClassName="canvas-node-mention-menu"
                 menuPortal
-                onChange={(value) => onEditorPromptChange(node, value)}
-                onMentionSelect={(_candidateIndex, value) => onEditorPromptChange(node, value)}
+                onChange={handleEditorPromptChange}
+                onMentionSelect={(_candidateIndex, value) => handleEditorPromptChange(value)}
                  placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
                  onKeyDown={(event) => {
                    if (!promptExpanded && event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {

@@ -9,6 +9,10 @@ import {
 
 export type AgentReference = { url: string; name?: string };
 export type AgentMessage = { role: "user" | "assistant"; content: string };
+export type PromptOptimizationTask = "optimize_prompt" | "polish_text";
+
+export const SIMPLE_TEXT_POLISH_PROMPT =
+  "帮我简单润色一下这段文字，保留原意和原本语气，让表达更自然、顺畅、简洁，不要过度修改，也不要写得太正式或有明显 AI 感。";
 
 type AgentEvent = { type?: string; text?: string; message?: string; [key: string]: unknown };
 
@@ -104,7 +108,15 @@ export function runOneTakeVideoPrompt(
   return runAgentTask("one_take_video_prompt", buildOneTakeVideoRequest(duration), referenceImages, model, duration);
 }
 
-export function requestPromptOptimization(prompt: string, references: AgentReference[] = [], model?: string) {
+export function requestPromptOptimization(
+  prompt: string,
+  references: AgentReference[] = [],
+  model?: string,
+  task: PromptOptimizationTask = "optimize_prompt",
+) {
   if (!prompt.trim()) return Promise.reject(new Error("请输入需要优化的提示词"));
-  return runAgentTask("optimize_prompt", prompt, references, model);
+  const request = task === "polish_text"
+    ? `${SIMPLE_TEXT_POLISH_PROMPT}\n[原文]\n${prompt}`
+    : prompt;
+  return runAgentTask(task, request, references, model);
 }

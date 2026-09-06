@@ -1158,12 +1158,14 @@ function formatFileSize(size) {
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
+const SIMPLE_TEXT_POLISH_PROMPT = '帮我简单润色一下这段文字，保留原意和原本语气，让表达更自然、顺畅、简洁，不要过度修改，也不要写得太正式或有明显 AI 感。';
 async function requestPromptOptimization(source, model, references = [], task = 'optimize_prompt') {
+    const prompt = task === 'polish_text' ? `${SIMPLE_TEXT_POLISH_PROMPT}\n[原文]\n${source}` : source;
     const data = await requestAgent({
             messages: [
                 {
                     role: 'user',
-                    content: source,
+                    content: prompt,
                     references,
                     files: []
                 }
@@ -8911,29 +8913,21 @@ export default function Page() {
     }
     async function optimizeGeneratePrompt() {
         const source = generatePrompt.trim();
-        if (!source) return notify('请先在提示词框写下想生成的画面内容');
-        if (generateUpscaleMode) return notify('图片超分模式不需要优化生图提示词');
+        if (!source) return notify('请先在提示词框写下想润色的文字');
+        if (generateUpscaleMode) return notify('图片超分模式不需要 AI 润色');
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
-        if (generatePromptOptimizing || generateRefs.some((reference)=>reference.pending)) return;
+        if (generatePromptOptimizing) return;
         setGeneratePromptOptimizing(true);
         try {
-            const references = await Promise.all(generateRefs.slice(0, 4).map(async (reference)=>({
-                id: reference.id,
-                kind: reference.kind,
-                name: reference.name,
-                url: reference.kind === 'image' ? await compressReferenceDataUrl(creativeReferenceUrl(reference)) : creativeReferenceUrl(reference),
-                ...(reference.kind === 'text' ? { text: reference.text } : {}),
-                ...(reference.mimeType ? { mimeType: reference.mimeType } : {})
-            })));
-            const optimized = await requestPromptOptimization(source, activeAgentModelId, references);
+            const optimized = await requestPromptOptimization(source, activeAgentModelId, [], 'polish_text');
             setGeneratePromptBeforeOptimization(generatePrompt);
             setGeneratePrompt(optimized);
             requestAnimationFrame(()=>{
                 focusContentEditableToEnd(generatePromptRef.current);
             });
-            notify(references.length ? '已结合引用素材完成 AI 优化，可继续修改后生成' : '已完成 AI 优化，可继续修改后生成');
+            notify('已完成 AI 润色，可继续修改后生成；也可以撤销');
         } catch (error) {
-            notify(error instanceof Error ? error.message : 'AI 优化失败');
+            notify(error instanceof Error ? error.message : 'AI 润色失败');
         } finally{
             setGeneratePromptOptimizing(false);
         }
@@ -11252,6 +11246,8 @@ export default function Page() {
                                 mediaPrefill: videoMediaPrefill,
                                 mediaPrefillToken: videoMediaPrefillToken,
                                 onMediaPrefillConsumed: ()=>setVideoMediaPrefill(null),
+                                agentAvailable: availableChatModels.length > 0,
+                                agentModelId: activeAgentModelId,
                                 onOpenModels: ()=>setSection('models'),
                                 onOpenProviders: ()=>setSection('providers'),
                                 onNotify: notify
@@ -11331,7 +11327,7 @@ export default function Page() {
                                                                         type: "button",
                                                                         className: "prompt-optimize",
                                                                         "aria-busy": generatePromptOptimizing,
-                                                                        disabled: generatePromptOptimizing || generateRefs.some((reference)=>reference.pending),
+                                                                        disabled: generatePromptOptimizing,
                                                                         onClick: ()=>void optimizeGeneratePrompt(),
                                                                         children: [
                                                                             /*#__PURE__*/ _jsx(Icon, {
@@ -11339,7 +11335,7 @@ export default function Page() {
                                                                                 size: 13
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("span", {
-                                                                                children: generatePromptOptimizing ? '优化中…' : 'AI 优化'
+                                                                                children: generatePromptOptimizing ? '润色中…' : 'AI 润色'
                                                                             })
                                                                         ]
                                                                     })

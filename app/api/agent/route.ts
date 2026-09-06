@@ -515,7 +515,7 @@ export async function POST(request: Request) {
     const webFailureContext = '';
     system = buildSystem(`${webSearchInstructions}${nativeAnswerInstructions}`, webContext, webFailureContext);
     system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
-    if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask) llmMessages[0] = { role: 'system', content: system };
+    if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0] = { role: 'system', content: system };
 
     // Search is selected locally before this point. Do not give ordinary
     // questions another model-side web_search planning round trip.
@@ -567,7 +567,7 @@ export async function POST(request: Request) {
         ? streamResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] })
         : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
-    const directStream = wantsStream && !needsWebSearch && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest;
+    const directStream = wantsStream && !isTextPolishTask && !needsWebSearch && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest;
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
     if (directStream) {
       try {
@@ -577,7 +577,7 @@ export async function POST(request: Request) {
         if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
       }
     }
-    const useTools = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion;
+    const useTools = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion;
     let first: any;
     try {
       first = await chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, useTools

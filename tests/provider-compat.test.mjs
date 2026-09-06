@@ -120,7 +120,7 @@ test('recognizes provider-native search for standard OpenAI and Gemini model ids
   assert.equal(browserModels[0].nativeSearchProtocol, 'openai-responses');
 });
 
-test('adds the standard v1 model endpoint for a provider website root', () => {
+test('prefers the standard v1 model endpoint for a provider website root', () => {
   const candidates = providers.modelEndpointCandidates({
     type: 'openai-compatible',
     baseUrl: 'https://api.apiqik.com',
@@ -128,9 +128,58 @@ test('adds the standard v1 model endpoint for a provider website root', () => {
     apiKey: 'test',
   });
   assert.deepEqual(candidates, [
-    { url: 'https://api.apiqik.com/models' },
     { url: 'https://api.apiqik.com/v1/models', inferredBaseUrl: 'https://api.apiqik.com/v1' },
+    { url: 'https://api.apiqik.com/models' },
   ]);
+});
+
+test('falls back to the unversioned model endpoint when /v1/models is unavailable', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).endsWith('/v1/models')) return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+    return new Response(JSON.stringify({ data: [{ id: 'root-model' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = {
+    type: 'openai-compatible',
+    platform: 'custom',
+    baseUrl: 'https://root.example.test',
+    modelsPath: '/models',
+    apiKey: 'test',
+  };
+  try {
+    const models = await providers.discoverModels(provider);
+    assert.deepEqual(models.map((model) => model.id), ['root-model']);
+    assert.deepEqual(calls, ['https://root.example.test/v1/models', 'https://root.example.test/models']);
+    assert.equal(provider.baseUrl, 'https://root.example.test');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('persists the inferred /v1 base when a versioned model endpoint succeeds', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ data: [{ id: 'versioned-model' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = {
+    type: 'openai-compatible',
+    platform: 'custom',
+    baseUrl: 'https://versioned.example.test',
+    modelsPath: '/models',
+    apiKey: 'test',
+  };
+  try {
+    const models = await providers.discoverModels(provider);
+    assert.deepEqual(models.map((model) => model.id), ['versioned-model']);
+    assert.deepEqual(calls, ['https://versioned.example.test/v1/models']);
+    assert.equal(provider.baseUrl, 'https://versioned.example.test/v1');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test('does not override an explicitly versioned base URL', () => {
@@ -244,6 +293,40 @@ test('sends a manually registered image model raw ID to the real generation requ
     assert.equal(images.length, 1);
     assert.equal(JSON.parse(calls[0].init.body).model, 'gpt-image-2-4K');
     assert.match(calls[0].url, /\/images\/generations$/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('uses the inferred v1 base when a manually registered image model is generated after sync', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/v1/models')) {
+      return new Response(JSON.stringify({ data: [{ id: 'gpt-image-2-4K' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const provider = {
+    type: 'openai-compatible',
+    platform: 'custom',
+    baseUrl: 'https://images.example.test',
+    apiKey: 'test-key',
+  };
+  try {
+    await providers.discoverModels(provider);
+    const images = await providers.generateImage(provider, 'gpt-image-2-4K', { prompt: 'test', count: 1, aspectRatio: '1:1' });
+    assert.equal(images.length, 1);
+    assert.equal(provider.baseUrl, 'https://images.example.test/v1');
+    assert.equal(calls[1].url, 'https://images.example.test/v1/images/generations');
+    assert.equal(JSON.parse(calls[1].init.body).model, 'gpt-image-2-4K');
   } finally {
     globalThis.fetch = previousFetch;
   }

@@ -531,7 +531,11 @@ html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webki
 }
 
 /* Long video prompts can be edited in a focused, viewport-sized workspace. */
-.video-prompt-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0}
+.video-prompt-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;flex-wrap:wrap}
+.video-prompt-optimize,.video-prompt-undo{height:27px;display:inline-flex;align-items:center;gap:5px;padding:0 9px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;font-weight:850;cursor:pointer;white-space:nowrap;transition:border-color .16s,background .16s,opacity .16s,transform .16s}
+.video-prompt-optimize:hover,.video-prompt-undo:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel-2));transform:translateY(-1px)}
+.video-prompt-optimize:disabled,.video-prompt-undo:disabled{opacity:.52;cursor:not-allowed;transform:none}
+.video-prompt-optimize>span:first-child,.video-prompt-undo>span:first-child{font-size:13px;line-height:1}
 .video-prompt-expand{height:27px;display:inline-flex;align-items:center;gap:5px;padding:0 9px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent-soft) 42%,var(--panel-2));color:var(--accent-text);font-size:9px;font-weight:850;cursor:pointer;white-space:nowrap;transition:border-color .16s,background .16s,transform .16s}
 .video-prompt-expand:hover{border-color:var(--accent);background:var(--accent-soft);transform:translateY(-1px)}
 .video-prompt-expand>span:first-child{font-size:14px;line-height:1}
@@ -549,8 +553,9 @@ html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webki
 .video-prompt-dialog-foot small{min-width:0;color:var(--muted);font-size:10px;line-height:1.5}
 .video-prompt-dialog-foot .video-primary-button{min-height:38px;border-radius:10px;padding-inline:18px;flex:none}
 @media(max-width:620px){
-  .video-prompt-expand>span:last-child{display:none}
-  .video-prompt-expand{width:31px;justify-content:center;padding:0}
+  .video-prompt-heading-actions{gap:4px}
+  .video-prompt-optimize>span:last-child,.video-prompt-undo>span:last-child,.video-prompt-expand>span:last-child{display:none}
+  .video-prompt-optimize,.video-prompt-undo,.video-prompt-expand{width:31px;justify-content:center;padding:0}
   .video-prompt-dialog{padding:0}
   .video-prompt-dialog-inner{width:100%;height:100%;border-radius:0;border-left:0;border-right:0}
   .video-prompt-dialog-head{padding:14px}

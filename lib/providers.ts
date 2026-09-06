@@ -343,13 +343,14 @@ type ModelEndpointCandidate = { url: string; inferredBaseUrl?: string };
 export function modelEndpointCandidates(provider: RuntimeProvider): ModelEndpointCandidate[] {
   const configuredPath = String(provider.modelsPath || '/models').trim() || '/models';
   const primaryUrl = providerEndpoint(provider, configuredPath, '/models');
-  const candidates: ModelEndpointCandidate[] = [{ url: primaryUrl }];
   const baseUrl = runtimeBaseUrl(provider);
   const isDefaultModelsPath = /^\/?models\/?$/i.test(configuredPath);
   const hasVersionSuffix = /\/(?:v\d+(?:\.\d+)?|api\/v\d+(?:\.\d+)?)$/i.test(baseUrl);
+  const candidates: ModelEndpointCandidate[] = [];
   if (isDefaultModelsPath && !hasVersionSuffix) {
     candidates.push({ url: `${baseUrl}/v1/models`, inferredBaseUrl: `${baseUrl}/v1` });
   }
+  candidates.push({ url: primaryUrl });
   return candidates.filter((candidate, index, all) => all.findIndex((item) => item.url === candidate.url) === index);
 }
 

@@ -129,6 +129,8 @@ export default function MediaViewer({
   const [busyAction, setBusyAction] = useState<"reverse" | "optimize" | null>(null);
   const [showParameters, setShowParameters] = useState(false);
   const [promptDraft, setPromptDraft] = useState<string | null>(null);
+  const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const pointerStart = useRef<{
     pointerId: number;
     x: number;
@@ -159,6 +161,7 @@ export default function MediaViewer({
     setResult(null);
     setShowParameters(false);
     setPromptDraft(null);
+    setPromptBeforeOptimization(null);
   }, [initialCompare, item.id, referenceSignature]);
 
   useEffect(() => {
@@ -420,16 +423,21 @@ export default function MediaViewer({
 
   const runOptimize = async () => {
     if (!agentAvailable) return onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
-    if (!sourcePrompt.trim()) return onNotify("当前媒体没有可优化的原始提示词", "error");
+    if (!currentPrompt.trim()) return onNotify("当前媒体没有可优化的提示词", "error");
     setBusy(true);
     setBusyAction("optimize");
     try {
       const value = await requestPromptOptimization(
-        sourcePrompt,
-        references.map((reference) => ({ url: reference.url, name: reference.name })),
+        currentPrompt,
+        [],
         model,
+        "polish_text",
       );
-      setResult(value);
+      setPromptBeforeOptimization(currentPrompt);
+      setPromptDraft(value);
+      setResult(null);
+      window.setTimeout(() => promptRef.current?.focus(), 0);
+      onNotify("已完成 AI 优化，可继续修改；也可以撤销");
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "AI 优化失败", "error");
     } finally {
@@ -443,13 +451,23 @@ export default function MediaViewer({
     // Keep the result visible here too; the canvas parent may close this viewer
     // after copying it into the node editor.
     setPromptDraft(result);
+    setPromptBeforeOptimization(null);
     onWriteResult?.(result);
+  };
+
+  const undoPromptOptimization = () => {
+    if (promptBeforeOptimization === null) return;
+    setPromptDraft(promptBeforeOptimization);
+    setPromptBeforeOptimization(null);
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+    onNotify("已撤销 AI 优化");
   };
 
   const savePrompt = () => {
     if (!onPromptSave || !currentPrompt.trim() || currentPrompt === sourcePrompt) return;
     onPromptSave(currentPrompt);
     setPromptDraft(null);
+    setPromptBeforeOptimization(null);
     onNotify("提示词已保存");
   };
 
@@ -596,8 +614,10 @@ export default function MediaViewer({
         )}
 
         <div className="canvas-media-viewer-editing">
-          <label><span>提示词</span><textarea value={currentPrompt} onChange={(event) => setPromptDraft(event.target.value)} placeholder="当前节点没有保存提示词" /></label>
+          <label><span>提示词</span><textarea ref={promptRef} value={currentPrompt} onChange={(event) => { setPromptDraft(event.target.value); setPromptBeforeOptimization(null); }} placeholder="当前节点没有保存提示词" /></label>
           <div className="canvas-media-viewer-prompt-actions">
+            <button type="button" className="canvas-media-viewer-ai-action" disabled={busy || !agentAvailable || !currentPrompt.trim()} aria-busy={busyAction === "optimize"} onClick={() => void runOptimize()}>{busyAction === "optimize" ? "✦ 优化中…" : "✦ AI 优化"}</button>
+            {promptBeforeOptimization !== null && <button type="button" className="canvas-media-viewer-undo-action" disabled={busy} onClick={undoPromptOptimization}>↶ 撤销</button>}
             <button type="button" disabled={!currentPrompt.trim()} onClick={() => void copyPrompt()}>复制提示词</button>
             <button type="button" disabled={!onPromptSave || !currentPrompt.trim() || currentPrompt === sourcePrompt} onClick={savePrompt}>保存提示词</button>
           </div>
@@ -612,7 +632,6 @@ export default function MediaViewer({
 
         <div className={`canvas-media-viewer-actions media-viewer-actions-shared media-viewer-surface-${surface}`}>
           {item.kind === "image" && <button type="button" disabled={busy || !agentAvailable} aria-busy={busyAction === "reverse"} onClick={() => void runReverse()}>{busyAction === "reverse" ? "⌁ 反推中…" : "⌁ 反推提示词"}</button>}
-          <button type="button" disabled={busy || !agentAvailable} aria-busy={busyAction === "optimize"} onClick={() => void runOptimize()}>{busyAction === "optimize" ? "✦ 优化中…" : "✦ AI 优化"}</button>
           {surface === "canvas" ? (
             <>
               {onEdit && <button type="button" onClick={onEdit}>✎ 编辑节点</button>}
