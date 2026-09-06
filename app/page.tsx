@@ -1158,7 +1158,7 @@ function formatFileSize(size) {
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
-async function requestPromptOptimization(source, model, references = []) {
+async function requestPromptOptimization(source, model, references = [], task = 'optimize_prompt') {
     const data = await requestAgent({
             messages: [
                 {
@@ -1169,7 +1169,7 @@ async function requestPromptOptimization(source, model, references = []) {
                 }
             ],
             model,
-            task: 'optimize_prompt'
+            task
         });
     const optimized = String(data.message || '').trim();
     if (!optimized) throw new Error('助手没有返回优化后的文案');
@@ -4862,6 +4862,7 @@ export default function Page() {
     const [activeChatId, setActiveChatId] = useState(null);
     const [agentInput, setAgentInput] = useState('');
     const [promptOptimizing, setPromptOptimizing] = useState(false);
+    const [agentInputBeforeOptimization, setAgentInputBeforeOptimization] = useState(null);
     const [busyChatIds, setBusyChatIds] = useState([]);
     const [agentRefs, setAgentRefs] = useState([]);
     const [messageReferencePreview, setMessageReferencePreview] = useState(null);
@@ -8166,6 +8167,7 @@ export default function Page() {
         setAgentRefs([]);
         setAgentFiles([]);
         setAgentInput('');
+        setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
         resetMessageSelection();
         resetShareSelection();
@@ -8179,6 +8181,7 @@ export default function Page() {
         setAgentRefs([]);
         setAgentFiles([]);
         setAgentInput('');
+        setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
         resetMessageSelection();
         resetShareSelection();
@@ -8645,6 +8648,7 @@ export default function Page() {
         ]);
         requestChatScrollAfterCommit();
         setAgentInput('');
+        setAgentInputBeforeOptimization(null);
         setAgentRefs([]);
         setAgentFiles([]);
         setAgentFollowUp(null);
@@ -8878,23 +8882,32 @@ export default function Page() {
         await sendAgent(buildOneTakeVideoRequest(duration), 'one_take_video_prompt', agentRefs, undefined, duration);
     }
     async function optimizeAgentPrompt() {
-        const source = agentInput.trim();
-        if (!source) return notify('请先在输入框写下想表达的画面内容');
+        const original = agentInput;
+        const source = original.trim();
+        if (!source) return notify('请先在输入框写下想润色的文字');
         if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
         if (promptOptimizing) return;
         setPromptOptimizing(true);
         try {
-            const optimized = await requestPromptOptimization(source, activeAgentModelId);
+            const optimized = await requestPromptOptimization(source, activeAgentModelId, [], 'polish_text');
+            setAgentInputBeforeOptimization(original);
             setAgentInput(optimized);
             requestAnimationFrame(()=>{
                 focusContentEditableToEnd(agentInputRef.current);
             });
-            notify('已完成 AI 优化，可继续修改后发送');
+            notify('已完成 AI 润色，可继续修改后发送；也可以撤销');
         } catch (error) {
-            notify(error instanceof Error ? error.message : 'AI 优化失败');
+            notify(error instanceof Error ? error.message : 'AI 润色失败');
         } finally{
             setPromptOptimizing(false);
         }
+    }
+    function undoAgentPromptOptimization() {
+        if (agentInputBeforeOptimization === null) return;
+        setAgentInput(agentInputBeforeOptimization);
+        setAgentInputBeforeOptimization(null);
+        window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
+        notify('已撤销 AI 润色');
     }
     async function optimizeGeneratePrompt() {
         const source = generatePrompt.trim();
@@ -10985,7 +10998,10 @@ export default function Page() {
                                                     className: "agent-prompt-mention-editor",
                                                     menuClassName: "agent-mention-menu",
                                                     ariaLabel: "Agent 输入",
-                                                    onChange: (value)=>setAgentInput(value),
+                                                    onChange: (value)=>{
+                                                        setAgentInput(value);
+                                                        setAgentInputBeforeOptimization(null);
+                                                    },
                                                     transformPastedText: (value)=>replaceNaturalReferenceLabels(value, agentRefs).value,
                                                     onPaste: (event)=>{
                                                         const files = Array.from(event.clipboardData.files || []);
@@ -11005,7 +11021,10 @@ export default function Page() {
                                                     type: "button",
                                                     className: "agent-input-clear",
                                                     title: "清空输入内容",
-                                                    onClick: ()=>setAgentInput(''),
+                                                    onClick: ()=>{
+                                                        setAgentInput('');
+                                                        setAgentInputBeforeOptimization(null);
+                                                    },
                                                     children: "清空"
                                                 }),
                                                     ]
@@ -11131,19 +11150,32 @@ export default function Page() {
                                                                                 })
                                                                             ]
                                                                         }),
+                                                                        agentInputBeforeOptimization !== null && /*#__PURE__*/ _jsxs("button", {
+                                                                            type: "button",
+                                                                            className: "agent-quick-button prompt-undo",
+                                                                            disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionActive,
+                                                                            onClick: undoAgentPromptOptimization,
+                                                                            "data-tooltip": "撤回本次 AI 润色，恢复润色前的原文",
+                                                                            "aria-label": "撤回本次 AI 润色",
+                                                                            children: [
+                                                                                /*#__PURE__*/ _jsx("span", {
+                                                                                    children: "撤回润色"
+                                                                                })
+                                                                            ]
+                                                                        }),
                                                                         agentInput.trim() && /*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
                                                                             className: "agent-quick-button optimize",
-                                                                             disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionActive,
+                                                                            disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionActive,
                                                                             onClick: ()=>void optimizeAgentPrompt(),
-                                                                            "data-tooltip": "润色并细写输入框中的文案，不会自动发送",
-                                                                            "aria-label": "润色并细写输入框中的文案，不会自动发送",
+                                                                            "data-tooltip": "简单润色输入框中的文案，不会自动发送",
+                                                                            "aria-label": "简单润色输入框中的文案，不会自动发送",
                                                                             children: [
                                                                                 /*#__PURE__*/ _jsx(Icon, {
                                                                                     name: "agent",
                                                                                     size: 14
                                                                                 }),
-                                                                                promptOptimizing ? 'AI 优化中…' : 'AI 优化'
+                                                                                promptOptimizing ? 'AI 润色中…' : 'AI 润色'
                                                                             ]
                                                                         })
                                                                     ]

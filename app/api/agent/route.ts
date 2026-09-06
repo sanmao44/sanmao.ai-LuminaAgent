@@ -346,6 +346,8 @@ export async function POST(request: Request) {
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
     const isOptimizePromptTask = body.task === 'optimize_prompt';
+    const isTextPolishTask = body.task === 'polish_text';
+    const isPromptOptimizationTask = isOptimizePromptTask || isTextPolishTask;
     if (isOneTakeVideoPromptTask && body.durationSeconds !== undefined && !isValidOneTakeDuration(body.durationSeconds)) {
       return Response.json({ error: '一镜到底时长必须是 1–60 之间的整数秒。' }, { status: 400 });
     }
@@ -414,19 +416,24 @@ export async function POST(request: Request) {
       '', '核心原则：忠于原图，少脑补，重构图、光影、色彩和主体特征。中英文提示词都必须可以直接复制用于 GPT Image 2。',
     ].join('\n');
     const optimizePromptInstructions = [
-      '你是一名专业的图片生成提示词优化专家。',
-      '请把用户输入框中的原始文案润色并扩写成更清晰、更完整、更适合图像生成模型理解的提示词。',
-      '保留用户原本的主体、意图和关键限制，不要擅自改变创作方向；可以补充主体细节、场景关系、构图、视角、光线、色彩、风格、材质、镜头感和后期效果。',
-      '如果用户输入很短，也要在不违背原意的前提下合理细写；不要编造与原意冲突的重要元素。',
-      '如果附带参考图，参考图只作为视觉上下文：结合其中可确认的主体、构图、色彩和风格进行优化，但不要臆造无法确认的重要细节，也不要偏离用户文字意图。',
-      '只输出优化后的可直接复制使用的提示词正文，不要输出标题、解释、分析过程、引号或 Markdown 代码块。',
+      '你是一名专业的图像和视频生成提示词优化助手。',
+      '请在保留用户原本主体、意图和关键限制的前提下，把原始提示词优化得更清晰、具体、适合生成模型理解。',
+      '可以补充主体细节、场景关系、构图、视角、动作、光线、色彩、风格、材质和镜头感，但不要编造与原意冲突的重要内容。',
+      '只输出优化后的提示词正文，不要回答原文中的问题，不要解释、道歉、提问或要求重新提供文案，不要输出标题、引号或 Markdown 代码块。',
+    ].join('\n');
+    const textPolishInstructions = [
+      '你是一名中文文案润色助手。',
+      '帮我简单润色一下这段文字，保留原意和原本语气，让表达更自然、顺畅、简洁，不要过度修改，也不要写得太正式或有明显 AI 感。',
+      '无论原文是在提问、抱怨、反馈还是描述需求，都只润色这段文字本身，不要回答其中的问题。',
+      '只返回润色后的正文，不要解释、道歉、加标题、加引号或使用 Markdown。',
+      '[原文]',
     ].join('\n');
     const identityQuestion = isModelIdentityQuestion(latest?.content || '');
-    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
-    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask && !identityQuestion && likelyFileGenerationRequest(latest?.content || '');
+    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
+    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion && likelyFileGenerationRequest(latest?.content || '');
     const webMode = resolveAgentWebMode(body.webMode, body.webSearch);
     const webSearchEnabled = webMode !== 'off';
-    const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isOptimizePromptTask || identityQuestion;
+    const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isPromptOptimizationTask || identityQuestion;
     const rawWebDecision = shouldUseAgentWebSearch(webMode, latest?.content || '', messages.slice(0, -1));
     const webDecision: AgentWebDecision = searchExcludedTask
       ? { ...rawWebDecision, shouldSearch: false, reason: 'ordinary-chat' }
@@ -438,7 +445,7 @@ export async function POST(request: Request) {
     let nativeSearchError = '';
     const providerPlatform = getProviderPreset(agentRuntime.provider.platform).label;
     const currentDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'long', timeZone: 'Asia/Shanghai' }).format(new Date());
-    const ordinaryChatDirectionsInstructions = !isReversePromptTask && !isOneTakeVideoPromptTask && !isOptimizePromptTask
+    const ordinaryChatDirectionsInstructions = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask
       ? '\n\n普通文本回答结束时，追加一个标题为“你还可以继续”的小节，并用 1.、2.、3. 列出 3 个结合当前对话、可以直接作为下一轮提问的具体短句，每项不超过 40 字。不要解释这些按钮或交互。若本轮生成了图片，改用专门的“下一版可尝试方向”格式。'
       : '';
     const query = webDecision.query;
@@ -459,6 +466,7 @@ export async function POST(request: Request) {
     if (isReversePromptTask) llmMessages[0] = { role: 'system', content: reversePromptInstructions };
     if (isOneTakeVideoPromptTask) llmMessages[0] = { role: 'system', content: buildOneTakeVideoPromptInstructions(oneTakeDuration || ONE_TAKE_DEFAULT_DURATION) };
     if (isOptimizePromptTask) llmMessages[0] = { role: 'system', content: optimizePromptInstructions };
+    if (isTextPolishTask) llmMessages[0] = { role: 'system', content: textPolishInstructions };
 
     if (needsWebSearch && nativeWebSearch) {
       try {
