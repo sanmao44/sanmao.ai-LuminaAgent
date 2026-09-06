@@ -30,6 +30,11 @@ test('recognizes image-edit-only model names without treating them as text-to-im
   assert.equal(modelKind.isImageEditOnlyModel({ rawId: 'gpt-image-2' }), false);
 });
 
+test('recognizes APIKL GPT Image Pro and 4K models as image models', () => {
+  assert.equal(modelKind.inferModelKind({ rawId: 'gpt-image-2-pro' }), 'image');
+  assert.equal(modelKind.inferModelKind({ rawId: 'gpt-image-2-4K' }), 'image');
+});
+
 test('uses discovered capabilities before name heuristics', () => {
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/custom-model', capabilities: ['video-generate'] }), 'video');
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/custom-model', capabilities: ['generate'] }), 'image');

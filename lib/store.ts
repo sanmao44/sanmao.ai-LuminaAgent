@@ -6,6 +6,7 @@ import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
 import { inferModelKind, isImageEditOnlyModel, resolveModelKind } from './model-kind';
+import { buildManualModelRecord, mergeProviderModelRecords } from './model-registry';
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
 
@@ -525,18 +526,24 @@ export async function setProviderModelLibraryEnabled(id: string, enabled: boolea
 
 export async function replaceProviderModels(providerId: string, providerName: string, rawModels: Array<{ id: string; name?: string; capabilities?: ReadonlyArray<ModelCapability>; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection; billing?: ModelBilling; enabledByDefault?: boolean; contextWindow?: number; maxInputTokens?: number; maxOutputTokens?: number }>) {
   return mutateState((state) => {
-    const existing = new Map(state.models.filter((m) => m.providerId === providerId).map((m) => [m.rawId, m]));
-    const next = rawModels.map((raw) => {
+    const providerModels = state.models.filter((m) => m.providerId === providerId);
+    const existing = new Map(providerModels.map((m) => [m.rawId, m]));
+    const seenRawIds = new Set<string>();
+    const platform = state.providers.find((provider) => provider.id === providerId)?.platform;
+    const next = rawModels.filter((raw) => {
+      if (!raw.id || seenRawIds.has(raw.id)) return false;
+      seenRawIds.add(raw.id);
+      return true;
+    }).map((raw) => {
       const previous = existing.get(raw.id);
       if (previous) {
-        const inferred = inferModel(raw.id, state.providers.find((provider) => provider.id === providerId)?.platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
-        return normalizeModel({ ...previous, providerName, displayName: raw.name?.split('/').pop() || previous.displayName, ...(raw.billing ? { billing: raw.billing } : {}), ...(raw.enabledByDefault !== undefined ? { enabledByDefault: raw.enabledByDefault } : {}), ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}), ...(raw.maxInputTokens !== undefined ? { maxInputTokens: raw.maxInputTokens } : {}), ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}), ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, state.providers.find((provider) => provider.id === providerId)?.platform);
+        const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
+        return normalizeModel({ ...previous, providerName, displayName: raw.name?.split('/').pop() || previous.displayName, ...(raw.billing ? { billing: raw.billing } : {}), ...(raw.enabledByDefault !== undefined ? { enabledByDefault: raw.enabledByDefault } : {}), ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}), ...(raw.maxInputTokens !== undefined ? { maxInputTokens: raw.maxInputTokens } : {}), ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}), ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, platform);
       }
-      const platform = state.providers.find((provider) => provider.id === providerId)?.platform;
       const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
       const enabledByDefault = raw.enabledByDefault === true;
       return normalizeModel({
-        id: randomUUID(), providerId, providerName, rawId: raw.id,
+        id: randomUUID(), providerId, providerName, rawId: raw.id, source: 'discovered',
         displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,
         kind: inferred.kind, enabled: enabledByDefault, published: enabledByDefault, capabilities: Array.from(new Set([...(raw.capabilities || []), ...inferred.capabilities])),
         ...(raw.billing ? { billing: raw.billing } : {}),
@@ -548,8 +555,54 @@ export async function replaceProviderModels(providerId: string, providerName: st
         ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}),
       } satisfies RegistryModel, platform);
     });
-    state.models = [...state.models.filter((m) => m.providerId !== providerId), ...next];
+    const merged = mergeProviderModelRecords(providerModels, next);
+    state.models = [...state.models.filter((m) => m.providerId !== providerId), ...merged];
     return next;
+  });
+}
+
+type ManualModelInput = {
+  rawId: string;
+  displayName?: string;
+  kind?: ModelKind | 'auto';
+};
+
+export async function addManualProviderModel(providerId: string, input: ManualModelInput) {
+  return mutateState((state) => {
+    const provider = state.providers.find((item) => item.id === providerId);
+    if (!provider) throw new Error('服务商不存在');
+    if (provider.type !== 'openai-compatible' && provider.type !== 'google-gemini') throw new Error('该服务商不支持手动登记模型');
+    const rawId = typeof input.rawId === 'string' ? input.rawId.trim() : '';
+    if (!rawId) throw new Error('请填写模型 ID');
+    if (state.models.some((model) => model.providerId === providerId && model.rawId === rawId)) throw new Error('该服务商已存在相同模型 ID');
+    const displayName = typeof input.displayName === 'string' ? input.displayName.trim() || rawId : rawId;
+    const selectedKind = input.kind === undefined || input.kind === 'auto' ? undefined : input.kind;
+    if (selectedKind && !['chat', 'image', 'video'].includes(selectedKind)) throw new Error('模型类型无效');
+    const inferred = inferModel(rawId, provider.platform, undefined, { displayName });
+    const model = normalizeModel(buildManualModelRecord({
+      id: randomUUID(),
+      providerId,
+      providerName: provider.name,
+      rawId,
+      displayName,
+      kind: selectedKind || inferred.kind,
+      inferred,
+    }), provider.platform);
+    state.models.push(model);
+    return model;
+  });
+}
+
+export async function removeManualModel(id: string) {
+  return mutateState((state) => {
+    const model = state.models.find((item) => item.id === id);
+    if (!model) throw new Error('模型不存在');
+    if (model.source !== 'manual') throw new Error('只能删除手动登记的模型');
+    state.models = state.models.filter((item) => item.id !== id);
+    if (state.settings.agentModelId === id) state.settings.agentModelId = null;
+    if (state.settings.defaultImageModelId === id) state.settings.defaultImageModelId = null;
+    if (state.settings.defaultVideoModelId === id) state.settings.defaultVideoModelId = null;
+    return model;
   });
 }
 

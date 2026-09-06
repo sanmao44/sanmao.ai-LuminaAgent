@@ -107,6 +107,7 @@ export type RegistryModel = {
   providerId: string;
   providerName: string;
   rawId: string;
+  source?: 'discovered' | 'manual';
   displayName: string;
   kind: ModelKind;
   enabled: boolean;

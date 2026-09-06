@@ -1,5 +1,5 @@
 import { isAdminRequest } from '@/lib/auth';
-import { getPublicState, patchModel } from '@/lib/store';
+import { getPublicState, patchModel, removeManualModel } from '@/lib/store';
 
 export const runtime = 'nodejs';
 
@@ -14,5 +14,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return Response.json({ ok: true, state: await getPublicState() });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '更新模型失败。' }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  try {
+    const { id } = await context.params;
+    await removeManualModel(id);
+    return Response.json({ ok: true, state: await getPublicState() });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : '删除模型失败。' }, { status: 400 });
   }
 }

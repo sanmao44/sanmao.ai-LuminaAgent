@@ -196,6 +196,9 @@ function kindLabel(kind) {
 function typeLabel(type) {
     return type === 'google-gemini' ? '谷歌 Gemini' : '通用兼容接口';
 }
+function isManualModelProvider(provider) {
+    return provider?.type === 'openai-compatible' || provider?.type === 'google-gemini';
+}
 function platformLabel(platform) {
     return providerPresets.find((item)=>item.value === platform)?.short || '自定义';
 }
@@ -4840,6 +4843,9 @@ export default function Page() {
     const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
     const [syncingId, setSyncingId] = useState(null);
     const [providerForm, setProviderForm] = useState(emptyProviderForm);
+    const [manualModelProvider, setManualModelProvider] = useState(null);
+    const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto' });
+    const [manualModelBusy, setManualModelBusy] = useState(false);
     const selectedProviderPreset = getProviderPreset(providerForm.platform);
     const [modelSearch, setModelSearch] = useState('');
     const [modelProviderFilter, setModelProviderFilter] = useState('all');
@@ -5076,7 +5082,15 @@ export default function Page() {
         providerEditor,
         state.providers.length
     ]);
-    useBodyScrollLock(Boolean(supportOpen || confirmState || messageReferencePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && (providerEditor || !state.providers.length)));
+    useEffect(()=>{
+        if (!manualModelProvider) return;
+        const closeOnEscape = (event)=>{
+            if (event.key === 'Escape') setManualModelProvider(null);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return ()=>window.removeEventListener('keydown', closeOnEscape);
+    }, [manualModelProvider]);
+    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && (providerEditor || !state.providers.length)));
     const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
         state.models,
         state.providers
@@ -7029,6 +7043,10 @@ export default function Page() {
         });
         setProviderEditor(true);
     }
+    function openManualModelDialog(provider) {
+        setManualModelProvider(provider);
+        setManualModelForm({ rawId: '', displayName: '', kind: 'auto' });
+    }
     function applyProviderPreset(platform) {
         const preset = getProviderPreset(platform);
         const existingCount = state.providers.filter((provider)=>provider.platform === platform && provider.id !== providerEditId).length;
@@ -7150,6 +7168,35 @@ export default function Page() {
             setSyncingId(null);
         }
     }
+    async function addManualModel(event) {
+        event.preventDefault();
+        if (!manualModelProvider || !manualModelForm.rawId.trim()) return notify('请填写模型 ID');
+        setManualModelBusy(true);
+        try {
+            const providerId = manualModelProvider.id;
+            const res = await fetch(`/api/providers/${providerId}/models`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    rawId: manualModelForm.rawId.trim(),
+                    displayName: manualModelForm.displayName.trim(),
+                    kind: manualModelForm.kind
+                })
+            });
+            const data = await applyReturnedState(res);
+            setManualModelProvider(null);
+            setModelProviderFilter(providerId);
+            setExpandedModelProviders((current)=>new Set([...current, providerId]));
+            setSection('models');
+            notify(`已登记模型 ${data.model?.displayName || manualModelForm.rawId.trim()}，默认未启用`);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '登记模型失败');
+        } finally{
+            setManualModelBusy(false);
+        }
+    }
     function toggleModelProviderGroup(providerId) {
         setExpandedModelProviders((current)=>{
             const next = new Set(current);
@@ -7254,6 +7301,21 @@ export default function Page() {
         });
         if (model.kind === 'video' && !nextState.settings.defaultVideoModelId) await patchSettings({
             defaultVideoModelId: model.id
+        });
+    }
+    function askDeleteManualModel(model) {
+        setConfirmState({
+            title: '删除手动登记模型？',
+            text: `将从模型库移除“${model.displayName || model.rawId}”，不会影响服务商 Key 或其他创作记录。`,
+            danger: true,
+            confirmText: '删除模型',
+            action: async ()=>{
+                const res = await fetch(`/api/models/${model.id}`, {
+                    method: 'DELETE'
+                });
+                await applyReturnedState(res);
+                notify('手动登记模型已删除');
+            }
         });
     }
     async function persistReferenceImages(references) {
@@ -9667,6 +9729,17 @@ export default function Page() {
                     title: favorite ? '取消收藏' : '收藏模型',
                     children: "★"
                 }),
+                model.source === 'manual' && /*#__PURE__*/ _jsx("button", {
+                    type: "button",
+                    className: "model-card-delete",
+                    onClick: ()=>askDeleteManualModel(model),
+                    title: "删除手动登记模型",
+                    "aria-label": "删除手动登记模型",
+                    children: /*#__PURE__*/ _jsx(Icon, {
+                        name: "trash",
+                        size: 14
+                    })
+                }),
                 /*#__PURE__*/ _jsxs("div", {
                     className: "model-card-main",
                     children: [
@@ -9679,6 +9752,10 @@ export default function Page() {
                                 /*#__PURE__*/ _jsx("span", {
                                 className: `kind-badge ${model.kind}`,
                                     children: kindLabel(model.kind)
+                                }),
+                                model.source === 'manual' && /*#__PURE__*/ _jsx("span", {
+                                    className: "model-source-badge",
+                                    children: "手动"
                                 }),
                                 model.billing && /*#__PURE__*/ _jsx("span", {
                                     className: `billing-badge ${model.billing}`,
@@ -14217,6 +14294,13 @@ export default function Page() {
                                                         className: "provider-card-actions",
                                                         children: [
                                                             /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                disabled: !isManualModelProvider(provider),
+                                                                onClick: ()=>openManualModelDialog(provider),
+                                                                title: "手动登记模型",
+                                                                children: "手动添加模型"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
                                                                 onClick: ()=>openEditProvider(provider),
                                                                 children: "修改"
                                                             }),
@@ -15626,6 +15710,140 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                     ]
                 })
             }), document.body),
+            manualModelProvider && /*#__PURE__*/ _jsx("div", {
+                className: "dialog-backdrop manual-model-dialog-backdrop",
+                onClick: ()=>setManualModelProvider(null),
+                children: /*#__PURE__*/ _jsxs("form", {
+                    className: "manual-model-dialog",
+                    onClick: (event)=>event.stopPropagation(),
+                    onSubmit: addManualModel,
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "manual-model-dialog-head",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "模型登记"
+                                        }),
+                                        /*#__PURE__*/ _jsx("h2", {
+                                            children: `为 ${manualModelProvider.name} 添加模型`
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "icon-button",
+                                    onClick: ()=>setManualModelProvider(null),
+                                    title: "关闭",
+                                    "aria-label": "关闭手动登记模型",
+                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                        name: "close",
+                                        size: 16
+                                    })
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "manual-model-fields",
+                            children: [
+                                /*#__PURE__*/ _jsxs("label", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "模型 ID"
+                                        }),
+                                        /*#__PURE__*/ _jsx("input", {
+                                            autoFocus: true,
+                                            required: true,
+                                            value: manualModelForm.rawId,
+                                            onChange: (event)=>setManualModelForm((current)=>({ ...current, rawId: event.target.value })),
+                                            placeholder: "例如 gpt-image-2-pro"
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("label", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "显示名称（可选）"
+                                        }),
+                                        /*#__PURE__*/ _jsx("input", {
+                                            value: manualModelForm.displayName,
+                                            onChange: (event)=>setManualModelForm((current)=>({ ...current, displayName: event.target.value })),
+                                            placeholder: "留空使用模型 ID"
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "manual-model-kind-field",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "模型类型"
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "segmented manual-model-kind",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: manualModelForm.kind === 'auto' ? 'active' : '',
+                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'auto' })),
+                                                    children: "自动识别"
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: manualModelForm.kind === 'chat' ? 'active' : '',
+                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'chat' })),
+                                                    children: "对话"
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: manualModelForm.kind === 'image' ? 'active' : '',
+                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'image' })),
+                                                    children: "图片"
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: manualModelForm.kind === 'video' ? 'active' : '',
+                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'video' })),
+                                                    children: "视频"
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "manual-model-notice",
+                            children: [
+                                /*#__PURE__*/ _jsx(Icon, {
+                                    name: "agent",
+                                    size: 16
+                                }),
+                                /*#__PURE__*/ _jsx("p", {
+                                    children: "手动登记只会让模型出现在 SANMAO 模型库，不代表服务商已授权。APIKL 当前 Key 未授权 Pro/4K 时，调用会返回权限错误，不会自动降级到其他模型。"
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "form-actions",
+                            children: [
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "secondary-action",
+                                    onClick: ()=>setManualModelProvider(null),
+                                    children: "取消"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "submit",
+                                    className: "primary-action compact",
+                                    disabled: manualModelBusy,
+                                    children: manualModelBusy ? "登记中…" : "登记模型"
+                                })
+                            ]
+                        })
+                    ]
+                })
+            }),
             confirmState && /*#__PURE__*/ _jsx("div", {
                 className: "dialog-backdrop",
                 onClick: ()=>setConfirmState(null),
