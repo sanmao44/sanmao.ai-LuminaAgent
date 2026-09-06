@@ -6138,6 +6138,7 @@ export default function Page() {
         });
     }
     function followChatToEnd() {
+        closeConversationNavigator();
         chatAutoFollowRef.current = true;
         chatScrollAfterCommitRef.current = false;
         setChatNearBottom(true);
@@ -6196,6 +6197,11 @@ export default function Page() {
             conversationNavCloseAfterClickRef.current = false;
             setConversationNavOpen(false);
         }, 1000);
+    }
+    function closeConversationNavigator() {
+        clearConversationNavCloseTimer();
+        conversationNavCloseAfterClickRef.current = false;
+        setConversationNavOpen(false);
     }
     function setThemePreference(next) {
         setTheme(next);
@@ -10894,6 +10900,7 @@ export default function Page() {
                                             !chatNearBottom && /*#__PURE__*/ _jsx("button", {
                                                 type: "button",
                                                 className: "conversation-nav-bottom",
+                                                onPointerDown: closeConversationNavigator,
                                                 onClick: followChatToEnd,
                                                 "data-tooltip": "跳到对话底部",
                                                 "aria-label": "跳到对话底部",
