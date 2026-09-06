@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.31/SANMAO.AI-0.7.31.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.31/SANMAO.AI-0.7.31.zip"
   ],
-  "sha256": "75e7548fcb12da37d1965a8075cf66daa2bd0b6af44947f0ef224a94dceb6b69",
+  "sha256": "73f164334c200643bc759ac75eb1bfd6782bb523800aa4873217daf7fa55efde",
   "publishedAt": "2026-09-07T03:26:05+08:00",
   "notes": [
     "补齐超级画布 Agnes V2.0 的宽度、高度、帧数和帧率参数，统一普通生成、视频变体和视频续生成的请求映射。",
