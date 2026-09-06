@@ -6871,7 +6871,15 @@ export default function Page() {
         }
     }
     async function applyReturnedState(res) {
-        const data = await res.json();
+        const contentType = res.headers.get('content-type') || '';
+        const body = await res.text();
+        let data = {};
+        try {
+            data = body.trim() ? JSON.parse(body) : {};
+        } catch {
+            const isHtml = contentType.includes('text/html') || /^\s*<!doctype\s+html|^\s*<html[\s>]/i.test(body);
+            throw new Error(isHtml ? '服务器返回了 HTML 页面，当前本地服务可能尚未重新构建，请重启应用后重试。' : '服务器返回了无法解析的响应，请重试。');
+        }
         if (!res.ok) throw new Error(data.error || '操作失败');
         if (data.state) setState(data.state);
         return data;
@@ -15712,7 +15720,6 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
             }), document.body),
             manualModelProvider && /*#__PURE__*/ _jsx("div", {
                 className: "dialog-backdrop manual-model-dialog-backdrop",
-                onClick: ()=>setManualModelProvider(null),
                 children: /*#__PURE__*/ _jsxs("form", {
                     className: "manual-model-dialog",
                     onClick: (event)=>event.stopPropagation(),
@@ -15820,7 +15827,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                     size: 16
                                 }),
                                 /*#__PURE__*/ _jsx("p", {
-                                    children: "手动登记只会让模型出现在 SANMAO 模型库，不代表服务商已授权。APIKL 当前 Key 未授权 Pro/4K 时，调用会返回权限错误，不会自动降级到其他模型。"
+                                    children: "启用后会把这个模型 ID 接入 SANMAO 的真实生图调用链，并原样发送给服务商；手动登记不代表服务商已授权。APIKL 当前 Key 未授权 Pro/4K 时，调用仍会返回权限错误，不会自动降级到其他模型。"
                                 })
                             ]
                         }),
