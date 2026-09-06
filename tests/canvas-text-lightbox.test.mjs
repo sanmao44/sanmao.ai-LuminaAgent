@@ -56,6 +56,11 @@ test("Agent response selection toolbar only operates on selected body text", () 
   assert.match(lightbox, /onUseAsImagePrompt\(node, value\)/);
   assert.match(lightbox, /onUseAsVideoPrompt\(node, value\)/);
   assert.match(lightbox, /onPointerDown=\{\(event\) =>/);
+  assert.match(lightbox, /const handleBodyScroll = \(\) => updateSelection\(\);/);
+  assert.match(lightbox, /body\.addEventListener\("scroll", handleBodyScroll\)/);
+  assert.match(lightbox, /body\.removeEventListener\("scroll", handleBodyScroll\)/);
+  assert.doesNotMatch(lightbox, /window\.addEventListener\("scroll", handleViewportChange, true\)/);
+  assert.doesNotMatch(lightbox, /const handleViewportChange = \(\) => clearSelection\(\);/);
   assert.doesNotMatch(lightbox, /onClick=\{\(event\) => \{\s*if \(event\.target === event\.currentTarget\) onClose\(\)/);
 });
 

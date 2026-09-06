@@ -17050,15 +17050,17 @@ function CanvasTextLightbox({
   }, [node, onClose]);
 
   useEffect(() => {
-    if (!bodyRef.current || editing) return;
-    const handleViewportChange = () => clearSelection();
+    const body = bodyRef.current;
+    if (!body || editing) return;
+    const handleViewportChange = () => updateSelection();
+    const handleBodyScroll = () => updateSelection();
     window.addEventListener("resize", handleViewportChange);
-    window.addEventListener("scroll", handleViewportChange, true);
+    body.addEventListener("scroll", handleBodyScroll);
     return () => {
       window.removeEventListener("resize", handleViewportChange);
-      window.removeEventListener("scroll", handleViewportChange, true);
+      body.removeEventListener("scroll", handleBodyScroll);
     };
-  }, [clearSelection, editing]);
+  }, [editing, updateSelection]);
 
   useEffect(() => {
     if (!selection || editing) return;
