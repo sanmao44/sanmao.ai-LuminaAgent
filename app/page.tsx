@@ -4481,6 +4481,60 @@ function renderCodeLine(text, language) {
     if (cursor < text.length) nodes.push(text.slice(cursor));
     return nodes;
 }
+function codeDownloadExtension(language) {
+    if ([
+        'js',
+        'javascript'
+    ].includes(language)) return 'js';
+    if ([
+        'jsx'
+    ].includes(language)) return 'jsx';
+    if ([
+        'ts',
+        'typescript'
+    ].includes(language)) return 'ts';
+    if ([
+        'tsx'
+    ].includes(language)) return 'tsx';
+    if ([
+        'json'
+    ].includes(language)) return 'json';
+    if ([
+        'css'
+    ].includes(language)) return 'css';
+    if ([
+        'html',
+        'htm'
+    ].includes(language)) return 'html';
+    if ([
+        'xml'
+    ].includes(language)) return 'xml';
+    if ([
+        'svg'
+    ].includes(language)) return 'svg';
+    if ([
+        'py',
+        'python'
+    ].includes(language)) return 'py';
+    if ([
+        'yaml',
+        'yml'
+    ].includes(language)) return 'yml';
+    if ([
+        'sh',
+        'bash',
+        'shell'
+    ].includes(language)) return 'sh';
+    if ([
+        'ps1',
+        'powershell'
+    ].includes(language)) return 'ps1';
+    if ([
+        'md',
+        'markdown'
+    ].includes(language)) return 'md';
+    return 'txt';
+}
 function AssistantCodeBlock({ language, code, onNotify }) {
     const [expanded, setExpanded] = useState(false);
     const normalizedLanguage = language.trim().toLowerCase() || 'text';
@@ -4491,6 +4545,25 @@ function AssistantCodeBlock({ language, code, onNotify }) {
             onNotify('代码已复制');
         } catch  {
             onNotify('复制失败');
+        }
+    }
+    function downloadCode() {
+        try {
+            const url = URL.createObjectURL(new Blob([
+                code
+            ], {
+                type: 'text/plain;charset=utf-8'
+            }));
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = `sanmao-code.${codeDownloadExtension(normalizedLanguage)}`;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(()=>URL.revokeObjectURL(url), 1500);
+            onNotify(`代码已下载：${anchor.download}`);
+        } catch  {
+            onNotify('代码下载失败');
         }
     }
     function runCode() {
@@ -4537,6 +4610,17 @@ function AssistantCodeBlock({ language, code, onNotify }) {
                                         children: "▶"
                                     }),
                                     "运行"
+                                ]
+                            }),
+                            /*#__PURE__*/ _jsxs("button", {
+                                type: "button",
+                                onClick: downloadCode,
+                                children: [
+                                    /*#__PURE__*/ _jsx(Icon, {
+                                        name: "download",
+                                        size: 13
+                                    }),
+                                    "下载"
                                 ]
                             }),
                             /*#__PURE__*/ _jsxs("button", {
