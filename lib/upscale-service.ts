@@ -3,7 +3,7 @@ import { preparePublicMediaUrl } from './signed-media';
 import { persistImageBuffer } from './image-storage';
 import { getPublicState, getUpscaleConnectionWithCredentials, setUpscaleConnectionStatus, type UpscaleConnectionCredentials } from './store';
 import { getUpscaleCatalogModel, isUpscaleModelId, preferredUpscaleModelId } from './upscale-catalog';
-import { prepareAliyunUpscaleImage, prepareTencentUpscaleImage } from './upscale-image';
+import { ALIYUN_GENERATIVE_UPSCALE_MAX_ASPECT_RATIO, prepareAliyunUpscaleImage, prepareTencentUpscaleImage } from './upscale-image';
 import { createUpscaleProvider, isUpscaleProviderError, uploadAliyunImageToOss, uploadTencentImageToCos, type UpscaleProviderError } from './upscale-providers';
 import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, type UpscaleTask } from './upscale-task-store';
 import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
@@ -47,9 +47,9 @@ function normalizeOutputQuality(value: unknown) {
   return Number.isFinite(number) ? Math.max(30, Math.min(100, Math.round(number))) : undefined;
 }
 
-async function publicImageUrl(reference: string, provider: UpscaleProviderId, storagePath?: string, credentials?: UpscaleConnectionCredentials) {
+async function publicImageUrl(reference: string, provider: UpscaleProviderId, storagePath?: string, credentials?: UpscaleConnectionCredentials, modelId?: UpscaleModelId) {
   if (provider === 'aliyun-viapi') {
-    const prepared = await prepareAliyunUpscaleImage(reference, storagePath);
+    const prepared = await prepareAliyunUpscaleImage(reference, storagePath, modelId === 'aliyun-generative-super-resolution' ? { maxAspectRatio: ALIYUN_GENERATIVE_UPSCALE_MAX_ASPECT_RATIO } : undefined);
     if (credentials?.accessKeyId && credentials?.accessKeySecret) {
       return uploadAliyunImageToOss(credentials, prepared.bytes, prepared.mime);
     }
@@ -99,7 +99,7 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
   const existing = (await createUpscaleTask({ provider: model.provider, model: modelId, scale, outputFormat, outputQuality, sourceImageId, status: 'processing', idempotencyKey: key })).task;
   if (existing.status === 'succeeded' || existing.status === 'queued' || existing.status === 'processing' && existing.providerTaskId) return { task: existing, model };
   try {
-    const imageUrl = await publicImageUrl(reference, model.provider, state.settings.imageStoragePath, connection);
+    const imageUrl = await publicImageUrl(reference, model.provider, state.settings.imageStoragePath, connection, modelId);
     const result = await provider.upscale({ imageUrl, scale, modelId, outputFormat, outputQuality });
     if (result.status === 'succeeded') {
       const task = await saveResult(existing, result);

@@ -138,6 +138,7 @@ function mapProviderError(providerCode: string, status: number | undefined, requ
   if (/notpurchase|notpurchased|service.?not.?enabled|unsubscribed/.test(code)) return new UpscaleProviderError('该 AI 服务尚未开通，请先前往官方控制台开通。', 'NOT_PURCHASED', { providerCode, status, requestId });
   if (/permission|forbidden|no.?permission|access.?denied/.test(code) || status === 403) return new UpscaleProviderError(provider === 'aliyun-viapi' ? '阿里云图像生产服务尚未开通，或当前 AccessKey 没有该能力权限。请先开通图像生产；如使用子账号，再配置 AliyunVIAPIFullAccess。' : provider === 'tencent-ci' ? '腾讯云暂无处理权限。请确认该存储桶已开启“数据万象（CI）”、已开通对应图像处理服务，且该桶属于当前账号。' : '当前账号没有调用此功能的权限，请检查云平台授权。', 'PERMISSION_DENIED', { providerCode, status, requestId });
   if (/balance|quota|insufficient|arrears/.test(code)) return new UpscaleProviderError('云平台余额或额度不足，请充值后再试。', 'INSUFFICIENT_BALANCE', { providerCode, status, requestId });
+  if (provider === 'aliyun-viapi' && /invalidimage[.\s_-]*resolution|resolution|dimension|aspect/.test(code)) return new UpscaleProviderError('阿里云生成式超分要求图片尺寸和宽高比符合限制（宽高比不超过 2:1），请裁剪图片或更换图片后重试。', 'INVALID_IMAGE', { providerCode, status, requestId });
   if (/size|too.?large|oversize|filesize|image.?limit/.test(code) || status === 413) return new UpscaleProviderError('这张图片超过该模型支持的尺寸，请选择较小图片或其他模型。', 'IMAGE_TOO_LARGE', { providerCode, status, requestId });
   if (/image|url|format|parameter|invalidarg/.test(code) && status && status < 500) {
     const isAliyunUrl = provider === 'aliyun-viapi' && /invalidimage\.?url|invalid.?url|图片链接/.test(code);
@@ -458,7 +459,11 @@ function createAliyunProvider(credentials: UpscaleConnectionCredentials): Upscal
     async poll(providerTaskId, input) {
       const response = await aliyunRpc(credentials, 'GetAsyncJobResult', { JobId: providerTaskId }, input?.signal);
       const state = aliTaskState(response.payload);
-      if (state === 'failed') throw new UpscaleProviderError('阿里云生成式高清处理失败，请稍后重试。', 'UPSTREAM_ERROR', { requestId: response.requestId });
+      if (state === 'failed') {
+        const providerCode = nestedValue(response.payload, ['ErrorCode', 'errorCode', 'Code', 'code']);
+        if (providerCode) throw mapProviderError(providerCode, 422, response.requestId, '阿里云生成式高清处理失败，请稍后重试。', 'aliyun-viapi');
+        throw new UpscaleProviderError('阿里云生成式高清处理失败，请稍后重试。', 'UPSTREAM_ERROR', { requestId: response.requestId });
+      }
       if (state !== 'succeeded') return { status: state, provider: 'aliyun-viapi', model: input?.modelId || 'aliyun-generative-super-resolution', providerTaskId, requestId: response.requestId };
       const url = resultUrl(response.payload);
       if (!url) throw new UpscaleProviderError('阿里云任务已完成，但没有返回结果图片。', 'UPSTREAM_ERROR', { requestId: response.requestId });

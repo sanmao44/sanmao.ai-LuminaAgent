@@ -178,6 +178,17 @@ test('Alibaba generative VIAPI maps queued, processing and succeeded results', a
   assert.equal(actions[3], null);
 });
 
+test('Alibaba generative VIAPI exposes asynchronous resolution failures', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ Data: { Status: 'PROCESS_FAILED', ErrorCode: 'InvalidImage.Resolution', ErrorMessage: 'resolution' } }), { status: 200 });
+  const client = provider.createUpscaleProvider('aliyun-viapi', { provider: 'aliyun-viapi', accessKeyId: 'LTAIexample', accessKeySecret: 'SECRET' });
+  await assert.rejects(() => client.poll('job-1', { modelId: 'aliyun-generative-super-resolution' }), (error) => {
+    assert.equal(error.code, 'INVALID_IMAGE');
+    assert.match(error.message, /宽高比不超过 2:1/);
+    assert.equal(error.providerCode, 'InvalidImage.Resolution');
+    return true;
+  });
+});
+
 test('cloud failures are mapped to actionable Chinese messages', async () => {
   globalThis.fetch = async () => new Response('<Error><Code>SignatureDoesNotMatch</Code><Message>secret</Message></Error>', { status: 403, headers: { 'content-type': 'application/xml' } });
   const client = provider.createUpscaleProvider('tencent-ci', { provider: 'tencent-ci', secretId: 'AKID', secretKey: 'SECRET', bucket: 'demo', region: 'ap-shanghai' });
@@ -209,6 +220,16 @@ test('VIAPI preprocessing keeps the documented dimensions, byte limit and transp
   const transparentResult = await imageModule.prepareAliyunUpscaleImage(`data:image/png;base64,${transparent.toString('base64')}`);
   assert.equal(transparentResult.mime, 'image/png');
   assert.match(transparentResult.dataUrl, /^data:image\/png;base64,/);
+});
+
+test('generative VIAPI preprocessing crops wide images to the documented 2:1 ratio', async () => {
+  const sharp = (await import('sharp')).default;
+  const wide = await sharp({ create: { width: 1918, height: 820, channels: 3, background: { r: 120, g: 130, b: 140 } } }).png().toBuffer();
+  const result = await imageModule.prepareAliyunUpscaleImage(`data:image/png;base64,${wide.toString('base64')}`, undefined, { maxAspectRatio: 2 });
+  const metadata = await sharp(result.bytes).metadata();
+  assert.equal(metadata.width, 1640);
+  assert.equal(metadata.height, 820);
+  assert.ok((metadata.width || 0) / (metadata.height || 1) <= 2);
 });
 
 test('catalog keeps fixed cloud models outside the generic model discovery flow', () => {

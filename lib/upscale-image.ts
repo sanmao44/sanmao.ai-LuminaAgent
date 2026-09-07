@@ -5,6 +5,7 @@ import { resolveStoredImageReference } from './image-storage';
 export const ALIYUN_UPSCALE_MAX_BYTES = 5 * 1024 * 1024;
 export const ALIYUN_UPSCALE_MAX_WIDTH = 1920;
 export const ALIYUN_UPSCALE_MAX_HEIGHT = 1080;
+export const ALIYUN_GENERATIVE_UPSCALE_MAX_ASPECT_RATIO = 2;
 
 type ImageBytes = { bytes: Buffer; mime: string };
 
@@ -41,13 +42,24 @@ async function readImageBytes(reference: string, storagePath?: string): Promise<
   throw new Error('无法读取原图，请重新选择图片后再试');
 }
 
-async function encode(bytes: Buffer, hasAlpha: boolean, maxWidth: number, maxHeight: number, quality: number): Promise<ImageBytes> {
-  const pipeline = sharp(bytes, { failOn: 'none' }).rotate().resize({ width: maxWidth, height: maxHeight, fit: 'inside', withoutEnlargement: true });
-  if (hasAlpha) return { bytes: await pipeline.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer(), mime: 'image/png' };
-  return { bytes: await pipeline.jpeg({ quality, mozjpeg: true }).toBuffer(), mime: 'image/jpeg' };
+async function encode(bytes: Buffer, hasAlpha: boolean, maxWidth: number, maxHeight: number, quality: number, maxAspectRatio?: number): Promise<ImageBytes> {
+  const resized = sharp(bytes, { failOn: 'none' }).rotate().resize({ width: maxWidth, height: maxHeight, fit: 'inside', withoutEnlargement: true });
+  const encoded = hasAlpha
+    ? { bytes: await resized.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer(), mime: 'image/png' }
+    : { bytes: await resized.jpeg({ quality, mozjpeg: true }).toBuffer(), mime: 'image/jpeg' };
+  if (!maxAspectRatio || maxAspectRatio <= 1) return encoded;
+  const metadata = await sharp(encoded.bytes, { failOn: 'none' }).metadata();
+  const width = metadata.width || 0;
+  const height = metadata.height || 0;
+  if (!width || !height || width / height <= maxAspectRatio) return encoded;
+  const targetWidth = Math.max(1, Math.floor(height * maxAspectRatio));
+  const cropped = sharp(encoded.bytes, { failOn: 'none' }).resize({ width: targetWidth, height, fit: 'cover', position: 'attention' });
+  return hasAlpha
+    ? { bytes: await cropped.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer(), mime: 'image/png' }
+    : { bytes: await cropped.jpeg({ quality, mozjpeg: true }).toBuffer(), mime: 'image/jpeg' };
 }
 
-async function prepareCloudUpscaleImage(reference: string, storagePath: string | undefined, providerLabel: string) {
+async function prepareCloudUpscaleImage(reference: string, storagePath: string | undefined, providerLabel: string, maxAspectRatio?: number) {
   const original = await readImageBytes(reference, storagePath);
   const metadata = await sharp(original.bytes, { failOn: 'none' }).metadata();
   const width = Math.max(1, metadata.width || 1);
@@ -56,15 +68,15 @@ async function prepareCloudUpscaleImage(reference: string, storagePath: string |
   let maxWidth = ALIYUN_UPSCALE_MAX_WIDTH;
   let maxHeight = ALIYUN_UPSCALE_MAX_HEIGHT;
   let quality = 88;
-  let encoded = await encode(original.bytes, hasAlpha, maxWidth, maxHeight, quality);
+  let encoded = await encode(original.bytes, hasAlpha, maxWidth, maxHeight, quality, maxAspectRatio);
   for (let attempt = 0; attempt < 7 && encoded.bytes.byteLength > ALIYUN_UPSCALE_MAX_BYTES; attempt += 1) {
     quality = Math.max(55, quality - 6);
     maxWidth = Math.max(768, Math.round(maxWidth * 0.9));
     maxHeight = Math.max(432, Math.round(maxHeight * 0.9));
-    encoded = await encode(original.bytes, hasAlpha, maxWidth, maxHeight, quality);
+    encoded = await encode(original.bytes, hasAlpha, maxWidth, maxHeight, quality, maxAspectRatio);
   }
   if (encoded.bytes.byteLength > ALIYUN_UPSCALE_MAX_BYTES && hasAlpha) {
-    encoded = await encode(original.bytes, false, maxWidth, maxHeight, 72);
+    encoded = await encode(original.bytes, false, maxWidth, maxHeight, 72, maxAspectRatio);
   }
   if (encoded.bytes.byteLength > ALIYUN_UPSCALE_MAX_BYTES) throw new Error(`这张图片超过${providerLabel}超分支持的 5MB 限制，请选择较小图片`);
   const outputMeta = await sharp(encoded.bytes, { failOn: 'none' }).metadata();
@@ -81,8 +93,8 @@ async function prepareCloudUpscaleImage(reference: string, storagePath: string |
 }
 
 /** Applies VIAPI's safe input limits and returns a self-contained image data URL. */
-export async function prepareAliyunUpscaleImage(reference: string, storagePath?: string) {
-  return prepareCloudUpscaleImage(reference, storagePath, '阿里云');
+export async function prepareAliyunUpscaleImage(reference: string, storagePath?: string, options: { maxAspectRatio?: number } = {}) {
+  return prepareCloudUpscaleImage(reference, storagePath, '阿里云', options.maxAspectRatio);
 }
 
 /** Applies Tencent Cloud's safe input limits and returns a self-contained image data URL. */
