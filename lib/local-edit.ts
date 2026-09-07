@@ -267,7 +267,7 @@ export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnn
         const history = annotation.move.from.length > 1 ? `（含之前的 ${annotation.move.from.length} 个原位置）` : "";
         return {
           index: index + 1,
-          text: `将对象从原位置${history}移动到目标位置（移动方向：${direction}）；清除原位置并自然补全背景；在目标位置重建主体。${description ? `补充说明：${description}` : ""}`,
+          text: `将对象从原位置${history}移动到目标位置（移动方向：${direction}）；原位置智能补齐并自然恢复背景；在目标位置重建主体。${description ? `补充说明：${description}` : ""}`,
         };
       }
       return { index: index + 1, text: description };

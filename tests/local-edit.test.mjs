@@ -198,6 +198,29 @@ test("moving a selection masks both source and target without changing the sourc
   assert.match(compiled, /补充说明：把物体移到右侧/);
 });
 
+test("moving a smart selection masks its original and translated smart pixels", () => {
+  const sourceSmart = raster.createProtectedMask(6, 4);
+  sourceSmart[(1 * 6 + 1) * 4 + 3] = 0;
+  const targetSmart = raster.createProtectedMask(6, 4);
+  targetSmart[(1 * 6 + 4) * 4 + 3] = 0;
+  const annotation = {
+    id: "smart-move",
+    kind: "smart",
+    description: "修改智能主体",
+    geometry: { kind: "smart", x: 0.66, y: 0.25, width: 0.17, height: 0.25, maskDataUrl: "data:image/png;base64,target" },
+    move: { from: [{ kind: "smart", x: 0.16, y: 0.25, width: 0.17, height: 0.25, maskDataUrl: "data:image/png;base64,source" }] },
+    createdAt: 1,
+  };
+  const masks = new Map([
+    ["smart-move", targetSmart],
+    ["smart-move:from:0", sourceSmart],
+  ]);
+  const merged = raster.rasterizeLocalEditAnnotations(6, 4, [annotation], masks);
+  assert.equal(merged[(1 * 6 + 1) * 4 + 3], 0);
+  assert.equal(merged[(1 * 6 + 4) * 4 + 3], 0);
+  assert.equal(merged[(1 * 6 + 2) * 4 + 3], 255);
+});
+
 test("local edit exposes reliable pointer tools, free lasso selection, and a fixed no-scroll workbench", () => {
   assert.match(editor, /type LocalEditTool = 'brush' \| 'eraser' \| 'rectangle' \| 'ellipse' \| 'lasso' \| 'point' \| 'smart' \| 'pan'/);
   assert.match(editor, /function drawLasso\(context: CanvasRenderingContext2D, path: Point\[\]\)/);
@@ -214,6 +237,13 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /initialFeather\?: number/);
   assert.match(editor, /normalizeFeather\(feather\)/);
   assert.match(editor, /function beginMoveAnnotation/);
+  assert.match(editor, /type LocalEditMode = 'modify' \| 'move'/);
+  assert.match(editor, /aria-label="局部编辑功能"/);
+  assert.match(editor, /在画布上直接拖动源选区到目标位置/);
+  assert.match(editor, /mode === 'move'\) beginMoveAnnotation\(event, annotation\)/);
+  assert.match(editor, /className=\{`local-edit-annotation\$\{mode === 'move' \? ' move-enabled' : ''\}/);
+  assert.match(editor, /local-edit-operation-card/);
+  assert.match(editor, /setMoveSourceId\(annotation\.id\)/);
   assert.match(editor, /local-edit-move-frame target/);
   assert.match(editor, /move: \{ from:/);
   assert.match(editor, /取消移动/);

@@ -129,6 +129,16 @@ textarea:disabled,
   cursor: var(--cursor-grab) !important;
 }
 
+.local-edit-canvas-stack[data-mode='move'] .local-edit-annotation.move-enabled,
+.local-edit-canvas-stack[data-mode='move'] .local-edit-annotation.move-enabled * {
+  cursor: var(--cursor-grab) !important;
+}
+
+.local-edit-canvas-stack[data-mode='move'] .local-edit-annotation.move-enabled:active,
+.local-edit-canvas-stack[data-mode='move'] .local-edit-annotation.move-enabled:active * {
+  cursor: var(--cursor-grabbing) !important;
+}
+
 .canvas-stage.is-cursor-panning,
 .canvas-stage.is-cursor-panning * {
   cursor: var(--cursor-grabbing) !important;

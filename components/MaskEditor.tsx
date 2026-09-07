@@ -43,6 +43,7 @@ export const LOCAL_EDIT_INTENTS: ReadonlyArray<{ value: LocalEditIntent; label: 
 ];
 
 type LocalEditTool = 'brush' | 'eraser' | 'rectangle' | 'ellipse' | 'lasso' | 'point' | 'smart' | 'pan';
+type LocalEditMode = 'modify' | 'move';
 type PreviewMode = 'overlay' | 'original' | 'range';
 type Point = { x: number; y: number };
 type HistorySnapshot = {
@@ -316,6 +317,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   const gestureRef = useRef<Gesture | null>(null);
   const movePreviewRef = useRef<MovePreview | null>(null);
   const spacePressedRef = useRef(false);
+  const [mode, setMode] = useState<LocalEditMode>('modify');
   const [tool, setTool] = useState<LocalEditTool>('brush');
   const [brushSize, setBrushSize] = useState(48);
   const [feather, setFeather] = useState(() => normalizeFeather(initialFeather));
@@ -328,6 +330,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   const [pendingAnnotation, setPendingAnnotation] = useState<PendingAnnotation | null>(null);
   const [annotationDraft, setAnnotationDraft] = useState('');
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [moveSourceId, setMoveSourceId] = useState<string | null>(null);
   const [movingAnnotation, setMovingAnnotation] = useState<MovingAnnotation | null>(null);
   const [movePreview, setMovePreview] = useState<MovePreview | null>(null);
   const [smartBusy, setSmartBusy] = useState(false);
@@ -431,6 +434,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     smartMaskPixelsRef.current = new Map(state.smartMasks.map(([id, pixels]) => [id, new Uint8ClampedArray(pixels)]));
     annotationsRef.current = copyAnnotations(state.annotations);
     setAnnotations(annotationsRef.current);
+    setMoveSourceId((current) => current && state.annotations.some((annotation) => annotation.id === current) ? current : null);
     context.putImageData(copyImageData(state.mask), 0, 0);
     refreshPreview();
   };
@@ -458,7 +462,11 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        if (!saving) onCancel();
+        if (!saving) {
+          if (movingAnnotation) cancelMoveAnnotation();
+          else if (pendingAnnotation) cancelPendingAnnotation();
+          else onCancel();
+        }
         return;
       }
       if (event.code === 'Space' && !event.repeat) {
@@ -495,10 +503,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     setZoom(1);
     setFitSize({ width: 0, height: 0 });
     setPan({ x: 0, y: 0 });
+    setMode('modify');
     annotationsRef.current = normalizeLocalEditAnnotations(initialAnnotations);
     setAnnotations(copyAnnotations(annotationsRef.current));
     setPendingAnnotation(null);
     setEditingAnnotationId(null);
+    setMoveSourceId(null);
     setMovingAnnotation(null);
     movePreviewRef.current = null;
     setMovePreview(null);
@@ -782,20 +792,40 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   }
 
   function moveGeometry(geometry: LocalEditAnnotationGeometry, dx: number, dy: number): LocalEditAnnotationGeometry {
-    const shiftPoint = (point: LocalEditPoint): LocalEditPoint => ({ x: Math.max(0, Math.min(1, point.x + dx)), y: Math.max(0, Math.min(1, point.y + dy)) });
+    // The caller clamps the translation using the complete source bounds.
+    // Translating every point by the same delta keeps lasso/brush geometry
+    // intact at the canvas edges instead of squeezing it point by point.
+    const shiftPoint = (point: LocalEditPoint): LocalEditPoint => ({ x: point.x + dx, y: point.y + dy });
     if (geometry.kind === 'point') return { ...geometry, x: Math.max(0, Math.min(1, geometry.x + dx)), y: Math.max(0, Math.min(1, geometry.y + dy)) };
     if (geometry.kind === 'brush' || geometry.kind === 'lasso') return { ...geometry, points: geometry.points.map(shiftPoint) };
     return { ...geometry, x: Math.max(0, Math.min(1 - geometry.width, geometry.x + dx)), y: Math.max(0, Math.min(1 - geometry.height, geometry.y + dy)) };
   }
 
+  function switchLocalEditMode(nextMode: LocalEditMode, annotation?: LocalEditAnnotation) {
+    if (saving || pendingAnnotation || movingAnnotation || smartBusy) return;
+    setMode(nextMode);
+    if (nextMode === 'move' && annotation) setMoveSourceId(annotation.id);
+    if (nextMode === 'modify') setMoveSourceId(null);
+    setError('');
+  }
+
+  function handleAnnotationSummaryClick(annotation: LocalEditAnnotation) {
+    if (mode === 'move') {
+      setMoveSourceId(annotation.id);
+      return;
+    }
+    editAnnotation(annotation);
+  }
+
   function beginMoveAnnotation(event: React.PointerEvent, annotation: LocalEditAnnotation) {
-    if (saving || pendingAnnotation) return;
+    if (saving || pendingAnnotation || smartBusy || mode !== 'move') return;
     event.preventDefault();
     event.stopPropagation();
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
     const before = captureSnapshot();
     if (!before) return;
+    setMoveSourceId(annotation.id);
     const initialSmartMask = smartMaskPixelsRef.current.get(annotation.id);
     setMovingAnnotation({
       id: annotation.id,
@@ -926,6 +956,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     allowAnnotationToOverrideProtection(pendingAnnotation.annotation);
     annotationsRef.current = next;
     setAnnotations(next);
+    if (mode === 'move') setMoveSourceId(pendingAnnotation.annotation.id);
     rebuildMask(next);
     pushHistory(pendingAnnotation.before);
     setPendingAnnotation(null);
@@ -937,6 +968,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     const next = [...annotations, annotation].slice(0, 16);
     annotationsRef.current = next;
     setAnnotations(next);
+    if (mode === 'move') setMoveSourceId(annotation.id);
     rebuildMask(next);
     pushHistory(before);
   }
@@ -952,6 +984,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
 
   function editAnnotation(annotation: LocalEditAnnotation) {
     if (pendingAnnotation || movingAnnotation) return;
+    setMode('modify');
+    setMoveSourceId(null);
     setEditingAnnotationId(annotation.id);
     setAnnotationDraft(annotation.description);
     const canvas = maskCanvasRef.current;
@@ -1003,6 +1037,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     const next = annotations.filter((item) => item.id !== annotation.id);
     annotationsRef.current = next;
     setAnnotations(next);
+    if (moveSourceId === annotation.id) setMoveSourceId(null);
     smartMaskPixelsRef.current.delete(annotation.id);
     rebuildMask(next);
     pushHistory(before);
@@ -1143,6 +1178,9 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     annotationsRef.current = [];
     setAnnotations([]);
     setPendingAnnotation(null);
+    setEditingAnnotationId(null);
+    setMoveSourceId(null);
+    smartMaskPixelsRef.current.clear();
     pushHistory(before);
     refreshPreview();
   }
@@ -1253,6 +1291,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   const segmentationProgress = Math.round(segmentationProvider?.progress?.() || 0);
   const segmentationCached = Boolean(segmentationProvider?.cached?.());
   const segmentationProviderError = segmentationProvider?.error?.() || '';
+  const selectedMoveAnnotation = moveSourceId ? annotations.find((annotation) => annotation.id === moveSourceId) : null;
   return (
     <div className="mask-editor-backdrop local-edit-backdrop" style={{ zIndex: CANVAS_Z_INDEX.modal }} onMouseDown={(event) => { if (!saving && event.target === event.currentTarget) onCancel(); }}>
       <div className="mask-editor local-edit-workbench surface" role="dialog" aria-modal="true" aria-labelledby="local-edit-title">
@@ -1260,6 +1299,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         <div className="mask-editor-head local-edit-workbench-head">
           <div><span>图片工作台</span><h2 id="local-edit-title">局部编辑</h2><small>透明区域会生成新内容，白色区域保护原图；提交后生成新结果，原图不会被覆盖。</small></div>
           <button type="button" className="icon-button" disabled={saving} onClick={onCancel} aria-label="关闭局部编辑">×</button>
+        </div>
+        <div className="local-edit-mode-switch" role="group" aria-label="局部编辑功能">
+          <span>功能</span>
+          <button type="button" className={mode === 'modify' ? 'active' : ''} aria-pressed={mode === 'modify'} disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => switchLocalEditMode('modify')}>修改</button>
+          <button type="button" className={mode === 'move' ? 'active' : ''} aria-pressed={mode === 'move'} disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => switchLocalEditMode('move')}>移动</button>
+          {mode === 'move' && <small>在画布上直接拖动源选区到目标位置</small>}
         </div>
         <div className="local-edit-workbench-toolbar" role="toolbar" aria-label="局部编辑工具">
           <div className="local-edit-workbench-tool-row">
@@ -1290,7 +1335,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         <div className="local-edit-workbench-body">
           <div ref={canvasStageRef} className="local-edit-canvas-stage" data-preview={previewMode} onWheel={(event) => { event.preventDefault(); zoomBy(event.deltaY > 0 ? -0.1 : 0.1); }}>
             {!ready && <div className="mask-loading">正在读取图片…</div>}
-            <div className="local-edit-canvas-stack" data-tool={tool} style={{ aspectRatio: ratio, width: fitSize.width || undefined, height: fitSize.height || undefined, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
+            <div className="local-edit-canvas-stack" data-tool={tool} data-mode={mode} style={{ aspectRatio: ratio, width: fitSize.width || undefined, height: fitSize.height || undefined, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
               <canvas ref={imageCanvasRef} className="mask-canvas base" aria-label="原图预览" />
               <canvas ref={overlayCanvasRef} className="mask-canvas overlay" aria-label="局部编辑范围" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} onLostPointerCapture={handleLostPointerCapture} />
               <canvas ref={maskCanvasRef} className="mask-canvas mask-data" aria-hidden="true" />
@@ -1327,20 +1372,20 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
                   );
                 })()}
                 {annotations.filter((annotation) => annotation.id !== movingAnnotation?.id).map((annotation, index) => {
-                  const bounds = annotationBounds(annotation);
+                  const bounds = annotationPreviewBounds(annotation);
                   return (
                     <div
                       key={annotation.id}
-                      className="local-edit-annotation"
+                      className={`local-edit-annotation${mode === 'move' ? ' move-enabled' : ''}${moveSourceId === annotation.id ? ' selected' : ''}`}
                       style={{ left: `${bounds.x * 100}%`, top: `${bounds.y * 100}%`, width: `${Math.max(1, bounds.width * 100)}%`, height: `${Math.max(1, bounds.height * 100)}%` }}
-                      onPointerDown={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => { if (mode === 'move') beginMoveAnnotation(event, annotation); else event.stopPropagation(); }}
                     >
                       <span className="local-edit-annotation-index">{index + 1}</span>
-                      <div className="local-edit-annotation-toolbar">
+                      <div className="local-edit-annotation-toolbar" onPointerDown={(event) => event.stopPropagation()}>
                         <span className="local-edit-selection-thumb" role="img" aria-label="选区预览" style={annotationPreviewStyle(annotation, imageUrl)} />
                         <strong title={annotationLabel(annotation)}>{annotationLabel(annotation)}</strong>
                         <button type="button" onClick={() => editAnnotation(annotation)}>修改</button>
-                        <button type="button" onPointerDown={(event) => beginMoveAnnotation(event, annotation)}>移动选区</button>
+                        <button type="button" onClick={() => switchLocalEditMode('move', annotation)}>移动</button>
                         <button type="button" className="danger" onClick={() => deleteAnnotation(annotation)}>删除</button>
                       </div>
                     </div>
@@ -1368,6 +1413,17 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
                 {([['overlay', '叠加预览'], ['original', '原图'], ['range', '编辑范围']] as const).map(([value, label]) => <button key={value} type="button" className={previewMode === value ? 'active' : ''} aria-pressed={previewMode === value} onClick={() => setPreviewMode(value)}>{label}</button>)}
               </div>
             </div>
+            <section className="local-edit-operation-card" data-mode={mode} aria-label={mode === 'move' ? '移动输入区域' : '修改输入区域'}>
+              <div className="local-edit-operation-head"><span>当前功能</span><strong>{mode === 'move' ? '移动' : '修改'}</strong></div>
+              {mode === 'move' ? (
+                <>
+                  <p>先用矩形、椭圆、自由圈选或智能点选创建源选区；已有标记也可以直接拖动。拖动时原位置保持标记，目标位置显示虚线框。</p>
+                  <small>{selectedMoveAnnotation ? `当前源选区：${annotationLabel(selectedMoveAnnotation)}${movingAnnotation ? '（拖动中）' : ''}` : '尚未选择源选区，请先创建或点击画布中的标记。'}</small>
+                </>
+              ) : (
+                <p>在画布上使用工具修改局部编辑范围，完成后可切换到移动功能。</p>
+              )}
+            </section>
             <div className="local-edit-workbench-controls">
               <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
               <label><span>边缘羽化</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather}px</b></label>
@@ -1388,7 +1444,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
              </div>
              <div className="local-edit-annotation-summary" aria-live="polite">
                <span>局部标记</span><b>{annotations.length} / 16</b>
-               {annotations.length > 0 && <div>{annotations.map((annotation, index) => <button key={annotation.id} type="button" title={annotationLabel(annotation)} onClick={() => editAnnotation(annotation)}><span className="local-edit-selection-thumb" aria-hidden="true" style={annotationPreviewStyle(annotation, imageUrl)} /><span>{index + 1} · {annotationLabel(annotation)}</span></button>)}</div>}
+               {annotations.length > 0 && <div>{annotations.map((annotation, index) => <button key={annotation.id} type="button" title={annotationLabel(annotation)} onClick={() => handleAnnotationSummaryClick(annotation)}><span className="local-edit-selection-thumb" aria-hidden="true" style={annotationPreviewStyle(annotation, imageUrl)} /><span>{index + 1} · {annotationLabel(annotation)}</span></button>)}</div>}
              </div>
              {smartError && <div className="local-edit-smart-note" role="status">{smartError}</div>}
              <label className="local-edit-prompt"><span>编辑提示词</span><textarea value={prompt} disabled={saving} onChange={(event) => setPrompt(event.target.value)} placeholder="描述编辑范围内要移除、替换或添加的内容…" /></label>
