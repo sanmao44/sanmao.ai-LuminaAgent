@@ -11090,7 +11090,7 @@ export default function SuperCanvas() {
             id: "copy-group",
             icon: "copy",
             label: "复制组内容",
-            title: "复制整个对象组及组内连线",
+            title: "复制组到剪贴板",
             onClick: close(() => void copySelection()),
           },
           ...primary,

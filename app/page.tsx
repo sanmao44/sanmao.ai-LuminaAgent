@@ -4927,6 +4927,17 @@ export default function Page() {
     const [providerBusy, setProviderBusy] = useState(false);
     const [providerTestBusy, setProviderTestBusy] = useState(false);
     const [providerTestResult, setProviderTestResult] = useState('');
+    const providerTestResultRef = useRef(null);
+    useEffect(()=>{
+        if (!providerTestResult) return;
+        const frame = window.requestAnimationFrame(()=>{
+            const result = providerTestResultRef.current;
+            if (!result) return;
+            const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            result.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
+        });
+        return ()=>window.cancelAnimationFrame(frame);
+    }, [providerTestResult]);
     const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
     const [syncingId, setSyncingId] = useState(null);
     const [providerForm, setProviderForm] = useState(emptyProviderForm);
@@ -14313,6 +14324,7 @@ export default function Page() {
                                                 ]
                                             }),
                                             providerTestResult && /*#__PURE__*/ _jsx("div", {
+                                                ref: providerTestResultRef,
                                                 className: `connection-result ${providerTestResult.startsWith('连接成功') ? 'success' : 'error'}`,
                                                 children: providerTestResult
                                             }),

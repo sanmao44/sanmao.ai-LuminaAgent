@@ -3881,3 +3881,12 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
     max-width:calc(100vw - 16px)!important;
   }
 }
+
+/* Keep crop/grid previews inside a fixed viewport. Zooming and panning only
+   transform this inner layer, so the image editor workbench never resizes
+   while the crop rectangle changes. */
+.canvas-image-editor-preview-area.is-pan-enabled{touch-action:none;cursor:grab;user-select:none}
+.canvas-image-editor-preview-area.is-pan-enabled.is-panning{cursor:grabbing}
+.canvas-image-editor-preview-transform{position:absolute;inset:0;transform-origin:0 0;will-change:transform}
+.canvas-image-editor-preview-transform .image-editor-preview-image{display:block!important;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.canvas-image-editor-preview-zoom{position:absolute;right:7px;bottom:7px;z-index:var(--canvas-z-local-floating);padding:4px 6px;border:1px solid color-mix(in srgb,var(--line) 72%,transparent);border-radius:6px;background:color-mix(in srgb,var(--panel) 78%,transparent);color:var(--muted);font-size:8px;line-height:1;pointer-events:none}

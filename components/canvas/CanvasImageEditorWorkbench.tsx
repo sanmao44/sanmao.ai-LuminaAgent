@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   type CSSProperties,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import type { CanvasDocument, CanvasImageOperation, CanvasNode } from "@/lib/canvas/types";
 import {
@@ -88,6 +89,11 @@ type OutpaintDrag = { side: keyof OutpaintMargins; startX: number; startY: numbe
 type CropDrag = { handle: string; startX: number; startY: number; start: ImageRect; scale: number };
 type GridDrag = { axis: "vertical" | "horizontal"; index: number };
 type GridSelection = GridDrag;
+type PreviewView = { zoom: number; offset: Point };
+type PreviewPan = { startX: number; startY: number; startOffset: Point };
+
+const PREVIEW_MIN_ZOOM = 1;
+const PREVIEW_MAX_ZOOM = 4;
 
 const DEFAULT_OUTPAINT_PROMPT = "扩展画布，保持原图主体、风格和光影自然连续，补全新增区域";
 const TABS: Array<{ id: CanvasImageEditorOperation | "upscale"; label: string; icon: string }> = [
@@ -136,6 +142,15 @@ function formatPixels(value: number) {
   return `${Math.round(value).toLocaleString()} px`;
 }
 
+function clampPreviewOffset(offset: Point, zoom: number, width: number, height: number): Point {
+  const maxX = Math.max(0, width * (zoom - 1));
+  const maxY = Math.max(0, height * (zoom - 1));
+  return {
+    x: Math.min(0, Math.max(-maxX, offset.x)),
+    y: Math.min(0, Math.max(-maxY, offset.y)),
+  };
+}
+
 export default function CanvasImageEditorWorkbench({ node, document, stageRef, onClose, onUpscale, onSave }: Props) {
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState({ left: 20, top: 100, maxHeight: 600 });
@@ -154,10 +169,13 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   const [gridLines, setGridLines] = useState<GridLines>({ vertical: [0.5], horizontal: [0.5] });
   const [gridDrag, setGridDrag] = useState<GridDrag | null>(null);
   const [gridSelection, setGridSelection] = useState<GridSelection | null>(null);
+  const [previewView, setPreviewView] = useState<PreviewView>({ zoom: PREVIEW_MIN_ZOOM, offset: { x: 0, y: 0 } });
+  const [previewPan, setPreviewPan] = useState<PreviewPan | null>(null);
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
   const [flipX, setFlipX] = useState(false);
   const [flipY, setFlipY] = useState(false);
   const [prompt, setPrompt] = useState(DEFAULT_OUTPAINT_PROMPT);
+  const spacePressedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +197,26 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   useEffect(() => {
     setCropRect((current) => cropAspect === "original" ? cropRectForAspect(sourceSize, "original") : cropAspect === "free" ? clampImageRect(current, sourceSize) : cropRectForAspect(sourceSize, cropAspect));
   }, [cropAspect, sourceSize]);
+
+  useEffect(() => {
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.code === "Space") spacePressedRef.current = true;
+    };
+    const keyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") spacePressedRef.current = false;
+    };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    return () => {
+      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener("keyup", keyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    setPreviewView({ zoom: PREVIEW_MIN_ZOOM, offset: { x: 0, y: 0 } });
+    setPreviewPan(null);
+  }, [node.data.url, node.id, operation, sourceSize.height, sourceSize.width]);
 
   useEffect(() => {
     const closeOnOutside = (event: PointerEvent) => {
@@ -272,9 +310,73 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
     return "";
   }, [margins, operation, preview.height, preview.width, resizeLongEdge]);
 
-  const previewScale = useMemo(() => Math.min(1, 520 / Math.max(1, preview.width), 310 / Math.max(1, preview.height)), [preview.height, preview.width]);
+  const isZoomablePreview = operation === "crop" || operation === "grid";
+  const previewScale = useMemo(() => {
+    const fitSize = isZoomablePreview ? sourceSize : preview;
+    return Math.min(1, 520 / Math.max(1, fitSize.width), 310 / Math.max(1, fitSize.height));
+  }, [isZoomablePreview, preview.height, preview.width, sourceSize.height, sourceSize.width]);
   const previewSize = { width: Math.max(1, Math.round(preview.width * previewScale)), height: Math.max(1, Math.round(preview.height * previewScale)) };
   const sourceDisplay = { width: Math.max(1, Math.round(sourceSize.width * previewScale)), height: Math.max(1, Math.round(sourceSize.height * previewScale)) };
+  const sourcePreviewViewport = { width: sourceDisplay.width + 2, height: sourceDisplay.height + 2 };
+
+  const handlePreviewWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!isZoomablePreview) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const viewport = event.currentTarget;
+    const rect = viewport.getBoundingClientRect();
+    const width = Math.max(1, viewport.clientWidth);
+    const height = Math.max(1, viewport.clientHeight);
+    const localX = Math.max(0, Math.min(width, event.clientX - rect.left - viewport.clientLeft));
+    const localY = Math.max(0, Math.min(height, event.clientY - rect.top - viewport.clientTop));
+    setPreviewView((current) => {
+      const nextZoom = Math.min(PREVIEW_MAX_ZOOM, Math.max(PREVIEW_MIN_ZOOM, current.zoom * Math.exp(-event.deltaY * 0.0015)));
+      if (nextZoom === current.zoom) return current;
+      const ratio = nextZoom / current.zoom;
+      return {
+        zoom: nextZoom,
+        offset: clampPreviewOffset({
+          x: localX - (localX - current.offset.x) * ratio,
+          y: localY - (localY - current.offset.y) * ratio,
+        }, nextZoom, width, height),
+      };
+    });
+  };
+
+  const beginPreviewPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isZoomablePreview || (event.button !== 0 && event.button !== 1)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const modifierPressed = spacePressedRef.current || event.altKey || event.shiftKey;
+    if (operation === "crop" && event.button === 0 && !modifierPressed && target?.closest(".image-editor-crop-frame")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPreviewPan({ startX: event.clientX, startY: event.clientY, startOffset: previewView.offset });
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+  };
+
+  useEffect(() => {
+    if (!previewPan) return;
+    const move = (event: PointerEvent) => {
+      const viewport = workbenchRef.current?.querySelector<HTMLElement>("[data-image-editor-preview-viewport]");
+      if (!viewport) return;
+      setPreviewView((current) => ({
+        ...current,
+        offset: clampPreviewOffset({
+          x: previewPan.startOffset.x + event.clientX - previewPan.startX,
+          y: previewPan.startOffset.y + event.clientY - previewPan.startY,
+        }, current.zoom, Math.max(1, viewport.clientWidth), Math.max(1, viewport.clientHeight)),
+      }));
+    };
+    const up = () => setPreviewPan(null);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+    window.addEventListener("pointercancel", up, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, [previewPan]);
 
   useEffect(() => {
     if (!outpaintDrag) return;
@@ -307,9 +409,10 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   useEffect(() => {
     if (!gridDrag) return;
     const move = (event: PointerEvent) => {
-      const viewport = window.document.querySelector<HTMLElement>("[data-image-editor-grid-preview]");
-      if (!viewport) return;
-      const rect = viewport.getBoundingClientRect();
+      const viewport = workbenchRef.current?.querySelector<HTMLElement>("[data-image-editor-preview-viewport]");
+      const previewTransform = workbenchRef.current?.querySelector<HTMLElement>("[data-image-editor-preview-transform]");
+      if (!viewport || !previewTransform) return;
+      const rect = previewTransform.getBoundingClientRect();
       const nextValue = gridDrag.axis === "vertical" ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height;
       setGridLines((current) => ({
         ...current,
@@ -353,12 +456,14 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
   };
 
   const beginCropDrag = (event: ReactPointerEvent<HTMLElement>, handle: string) => {
+    if (event.button !== 0 || spacePressedRef.current || event.altKey || event.shiftKey) return;
     event.preventDefault();
     event.stopPropagation();
-    setCropDrag({ handle, startX: event.clientX, startY: event.clientY, start: cropRect, scale: previewScale });
+    setCropDrag({ handle, startX: event.clientX, startY: event.clientY, start: cropRect, scale: previewScale * previewView.zoom });
   };
 
   const beginGridDrag = (event: ReactPointerEvent<HTMLButtonElement>, axis: "vertical" | "horizontal", index: number) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     setGridSelection({ axis, index });
@@ -408,9 +513,9 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
     : operation === "resize"
       ? "保持原图比例，输出为指定长边分辨率"
       : operation === "crop"
-        ? "拖动选框移动或拉动边角调整范围"
+        ? "滚轮缩放预览；拖动选框裁切，按住空格可平移"
       : operation === "grid"
-          ? "拖动分割线调整范围，或在下方添加横线、竖线"
+          ? "滚轮缩放并拖动预览；拖动分割线调整范围"
           : "本地处理，不消耗模型额度";
 
   const renderGridLine = (axis: "vertical" | "horizontal", value: number, index: number) => {
@@ -489,24 +594,30 @@ export default function CanvasImageEditorWorkbench({ node, document, stageRef, o
             <div className="canvas-image-editor-preview-area contain" style={{ width: previewSize.width, height: previewSize.height }}>{renderImage()}</div>
           )}
           {operation === "crop" && (
-            <div className="canvas-image-editor-preview-area crop" style={{ width: sourceDisplay.width, height: sourceDisplay.height }}>
-              {renderImage("image-editor-preview-image")}
-              <div className="image-editor-crop-dim top" style={{ height: cropFrame.top }} />
-              <div className="image-editor-crop-dim bottom" style={{ top: cropFrame.top + cropFrame.height, height: Math.max(0, sourceDisplay.height - cropFrame.top - cropFrame.height) }} />
-              <div className="image-editor-crop-dim left" style={{ top: cropFrame.top, width: cropFrame.left, height: cropFrame.height }} />
-              <div className="image-editor-crop-dim right" style={{ left: cropFrame.left + cropFrame.width, top: cropFrame.top, width: Math.max(0, sourceDisplay.width - cropFrame.left - cropFrame.width), height: cropFrame.height }} />
-              <div className="image-editor-crop-frame" style={cropFrame} onPointerDown={(event) => beginCropDrag(event, "move")}>
-                <span className="image-editor-rule horizontal" /><span className="image-editor-rule horizontal two" /><span className="image-editor-rule vertical" /><span className="image-editor-rule vertical two" />
-                {(["top-left", "top", "top-right", "left", "right", "bottom-left", "bottom", "bottom-right"] as const).map((handle) => <button type="button" key={handle} className={`image-editor-crop-handle ${handle}`} onPointerDown={(event) => beginCropDrag(event, handle)} aria-label={`调整裁切${handle}`} />)}
+            <div className={`canvas-image-editor-preview-area crop is-pan-enabled ${previewPan ? "is-panning" : ""}`} data-image-editor-preview-viewport style={{ width: sourcePreviewViewport.width, height: sourcePreviewViewport.height }} onPointerDown={beginPreviewPan} onWheel={handlePreviewWheel} aria-label="裁切预览区域，可滚轮缩放">
+              <div className="canvas-image-editor-preview-transform" data-image-editor-preview-transform style={{ transform: `translate3d(${previewView.offset.x}px, ${previewView.offset.y}px, 0) scale(${previewView.zoom})` }}>
+                {renderImage("image-editor-preview-image")}
+                <div className="image-editor-crop-dim top" style={{ height: cropFrame.top }} />
+                <div className="image-editor-crop-dim bottom" style={{ top: cropFrame.top + cropFrame.height, height: Math.max(0, sourceDisplay.height - cropFrame.top - cropFrame.height) }} />
+                <div className="image-editor-crop-dim left" style={{ top: cropFrame.top, width: cropFrame.left, height: cropFrame.height }} />
+                <div className="image-editor-crop-dim right" style={{ left: cropFrame.left + cropFrame.width, top: cropFrame.top, width: Math.max(0, sourceDisplay.width - cropFrame.left - cropFrame.width), height: cropFrame.height }} />
+                <div className="image-editor-crop-frame" style={cropFrame} onPointerDown={(event) => beginCropDrag(event, "move")}>
+                  <span className="image-editor-rule horizontal" /><span className="image-editor-rule horizontal two" /><span className="image-editor-rule vertical" /><span className="image-editor-rule vertical two" />
+                  {["top-left", "top", "top-right", "left", "right", "bottom-left", "bottom", "bottom-right"].map((handle) => <button type="button" key={handle} className={`image-editor-crop-handle ${handle}`} onPointerDown={(event) => beginCropDrag(event, handle)} aria-label={`调整裁切${handle}`} />)}
+                </div>
               </div>
+              <span className="canvas-image-editor-preview-zoom" aria-live="polite">{Math.round(previewView.zoom * 100)}%</span>
             </div>
           )}
           {operation === "grid" && (
-            <div className="canvas-image-editor-preview-area grid" data-image-editor-grid-preview style={{ width: sourceDisplay.width, height: sourceDisplay.height }}>
-              {renderImage("image-editor-preview-image")}
-              <div className="image-editor-grid-cells">{gridPreviewRects.map((rect, index) => <span key={`${rect.x}-${rect.y}`} style={{ left: `${(rect.x / sourceSize.width) * 100}%`, top: `${(rect.y / sourceSize.height) * 100}%`, width: `${(rect.width / sourceSize.width) * 100}%`, height: `${(rect.height / sourceSize.height) * 100}%` }}><b>{index + 1}</b></span>)}</div>
-              {gridLines.vertical.map((value, index) => renderGridLine("vertical", value, index))}
-              {gridLines.horizontal.map((value, index) => renderGridLine("horizontal", value, index))}
+            <div className={`canvas-image-editor-preview-area grid is-pan-enabled ${previewPan ? "is-panning" : ""}`} data-image-editor-preview-viewport data-image-editor-grid-preview style={{ width: sourcePreviewViewport.width, height: sourcePreviewViewport.height }} onPointerDown={beginPreviewPan} onWheel={handlePreviewWheel} aria-label="宫格预览区域，可滚轮缩放和拖动平移">
+              <div className="canvas-image-editor-preview-transform" data-image-editor-preview-transform style={{ transform: `translate3d(${previewView.offset.x}px, ${previewView.offset.y}px, 0) scale(${previewView.zoom})` }}>
+                {renderImage("image-editor-preview-image")}
+                <div className="image-editor-grid-cells">{gridPreviewRects.map((rect, index) => <span key={`${rect.x}-${rect.y}`} style={{ left: `${(rect.x / sourceSize.width) * 100}%`, top: `${(rect.y / sourceSize.height) * 100}%`, width: `${(rect.width / sourceSize.width) * 100}%`, height: `${(rect.height / sourceSize.height) * 100}%` }}><b>{index + 1}</b></span>)}</div>
+                {gridLines.vertical.map((value, index) => renderGridLine("vertical", value, index))}
+                {gridLines.horizontal.map((value, index) => renderGridLine("horizontal", value, index))}
+              </div>
+              <span className="canvas-image-editor-preview-zoom" aria-live="polite">{Math.round(previewView.zoom * 100)}%</span>
             </div>
           )}
           {operation === "transform" && (

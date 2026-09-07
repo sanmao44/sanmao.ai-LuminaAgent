@@ -35,6 +35,22 @@ test("image editor workbench exposes all local image operations and preserves up
   assert.match(workbench, /event\.key !== "Escape"/);
 });
 
+test("crop and grid previews keep a fixed viewport while supporting zoom and pan", () => {
+  assert.match(workbench, /type PreviewView = \{ zoom: number; offset: Point \}/);
+  assert.match(workbench, /const PREVIEW_MAX_ZOOM = 4/);
+  assert.match(workbench, /event\.preventDefault\(\)/);
+  assert.match(workbench, /Math\.exp\(-event\.deltaY/);
+  assert.match(workbench, /data-image-editor-preview-viewport/);
+  assert.match(workbench, /data-image-editor-preview-transform/);
+  assert.match(workbench, /translate3d\(\$\{previewView\.offset\.x\}px/);
+  assert.match(workbench, /scale: previewScale \* previewView\.zoom/);
+  assert.match(workbench, /previewTransform\.getBoundingClientRect\(\)/);
+  assert.match(workbench, /sourcePreviewViewport/);
+  assert.match(workbench, /按住空格可平移/);
+  assert.match(styles, /\.canvas-image-editor-preview-transform\{position:absolute;inset:0;transform-origin:0 0/);
+  assert.match(styles, /\.canvas-image-editor-preview-area\.is-pan-enabled\{touch-action:none/);
+});
+
 test("grid editor supports dynamic presets, custom lines, and deletion", () => {
   assert.match(workbench, /CANVAS_IMAGE_GRID_MAX_LINES/);
   assert.match(workbench, /gridLines\.vertical\.length \+ 1/);

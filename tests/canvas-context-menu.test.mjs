@@ -98,6 +98,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(styles, /\.canvas-node-quick-menu\{width:min\(266px/);
   assert.match(styles, /\.canvas-node-quick-menu-trigger\.open/);
   assert.match(groupContextMenu, /label: "复制组内容"/);
+  assert.match(groupContextMenu, /title: "复制组到剪贴板"/);
   assert.match(groupContextMenu, /const dangerAction = groupQuickActions\.dangerAction/);
   assert.match(groupContextMenu, /label: "删除"/);
   assert.match(groupContextMenu, /label: "复制组内容"/);
