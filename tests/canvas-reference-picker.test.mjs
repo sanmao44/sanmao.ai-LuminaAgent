@@ -65,6 +65,13 @@ test("picker feedback includes cancel, hover/flash styling, and the referencing 
   assert.match(cursorStyles, /is-cursor-referencing/);
 });
 
+test("picker prompt stays above editors and keeps its instruction readable", () => {
+  assert.match(styles, /\.canvas-reference-picker-banner\{[^}]*position:fixed/);
+  assert.match(styles, /\.canvas-reference-picker-banner\{[^}]*z-index:var\(--canvas-z-modal-popover\)/);
+  assert.match(styles, /\.canvas-reference-picker-banner small\{[^}]*overflow-wrap:anywhere/);
+  assert.match(styles, /@media\(max-width:720px\)\{\.canvas-reference-picker-banner\{top:76px/);
+});
+
 test("video frame slots forward their explicit first/last-frame roles", () => {
   assert.match(component, /onPickFromCanvas\?\.\(slotRole\)/);
   assert.match(component, /onPickFromCanvas=\{\(role\) => beginReferencePicker\(/);
