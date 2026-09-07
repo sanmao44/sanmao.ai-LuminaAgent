@@ -520,6 +520,7 @@ type CanvasGenerationRequest = {
   agentTask?: CanvasAgentTask;
   durationSeconds?: number;
   referenceNodeIds?: string[];
+  useCurrentImageAsReference?: boolean;
 };
 type Interaction =
   | {
@@ -6703,9 +6704,13 @@ export default function SuperCanvas() {
     }
   }, [notify, reuseDraft, runtime]);
 
-  const runImageContinuation = useCallback(async (draftInput: CanvasReuseDraft) => {
+  const runImageContinuation = useCallback(async (
+    draftInput: CanvasReuseDraft,
+    options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">,
+  ) => {
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind !== "image") return;
+    const useCurrentImageAsReference = options?.useCurrentImageAsReference !== false;
     const hasTextReference = draft.references.some(
       (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
     );
@@ -6742,7 +6747,13 @@ export default function SuperCanvas() {
       return notify("这个图片续生成任务正在处理，请稍候。", "error");
     }
 
-    const params = copyParams(draft.params, "image", runtime) as ImageCreationSettings;
+    const paramsWithMask = copyParams(draft.params, "image", runtime) as ImageCreationSettings;
+    const params = useCurrentImageAsReference
+      ? paramsWithMask
+      : (() => {
+          const { mask: _mask, ...withoutMask } = paramsWithMask;
+          return withoutMask as ImageCreationSettings;
+        })();
     const createdAt = Date.now();
     const taskId = uid("image-task");
     const outputPosition = {
@@ -6804,11 +6815,13 @@ export default function SuperCanvas() {
       return true;
     };
 
-    addReference(
-      source.id,
-      String(params.mask?.sourceUrl || source.data.url),
-      String(source.data.name || "当前图片"),
-    );
+    if (useCurrentImageAsReference) {
+      addReference(
+        source.id,
+        String(paramsWithMask.mask?.sourceUrl || source.data.url),
+        String(source.data.name || "当前图片"),
+      );
+    }
 
     for (const [index, reference] of selectedReferences.entries()) {
       const existing = reference.nodeId
@@ -6901,7 +6914,7 @@ export default function SuperCanvas() {
         kind: "image",
         prompt,
         params: clone(params),
-        operation: "edit",
+        operation: useCurrentImageAsReference ? "edit" : "generate",
         referenceIds: [...resolvedReferenceIds],
         parentNodeId: source.id,
         reuseSourceNodeId: source.id,
@@ -6968,7 +6981,7 @@ export default function SuperCanvas() {
           : params.backgroundMode === "opaque"
             ? "opaque"
             : undefined,
-        maskUrl: params.mask?.url,
+        ...(params.mask ? { maskUrl: params.mask.url } : {}),
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
@@ -7293,14 +7306,17 @@ export default function SuperCanvas() {
     }
   }, [addLog, commit, notify, openNodePosition, pollVideo, runtime, screenToWorld, selectedSingle, updateDoc]);
 
-  const runReuseGeneration = useCallback(async (draftInput: CanvasReuseDraft) => {
+  const runReuseGeneration = useCallback(async (
+    draftInput: CanvasReuseDraft,
+    options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">,
+  ) => {
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind === "audio") {
       notify("音频节点只能作为视频参考输入，不能复用为生成节点。", "error");
       return;
     }
     if (draft.kind === "image") {
-      await runImageContinuation(draft);
+      await runImageContinuation(draft, options);
       return;
     }
     await runVideoContinuation(draft);
@@ -7352,6 +7368,9 @@ export default function SuperCanvas() {
               dirty: true,
             }
           : draft,
+        request
+          ? { useCurrentImageAsReference: request.useCurrentImageAsReference }
+          : undefined,
       );
       return;
     }
@@ -8600,7 +8619,10 @@ export default function SuperCanvas() {
   );
 
   const runEditorGeneration = useCallback(
-    (node: CanvasNode) => {
+    (
+      node: CanvasNode,
+      options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">,
+    ) => {
       if (node.type === "media" && node.data.kind === "audio") {
         notify("音频节点是独立素材输入，请将它连接到视频节点后生成。", "error");
         return;
@@ -8615,7 +8637,7 @@ export default function SuperCanvas() {
         const draft = cloneReuseDraft(reuseDraft);
         setExpandedEditorId(null);
         setReuseDraft(null);
-        void runReuseGeneration(draft);
+        void runReuseGeneration(draft, options);
         return;
       }
       if (inPlaceVideo)
@@ -8627,6 +8649,9 @@ export default function SuperCanvas() {
         nodeId: currentNode.id,
         prompt,
         ...(params ? { params } : {}),
+        ...(options?.useCurrentImageAsReference !== undefined
+          ? { useCurrentImageAsReference: options.useCurrentImageAsReference }
+          : {}),
       };
       if (draft) {
         commit((valueDoc) => ({
@@ -14265,7 +14290,10 @@ type CanvasNodeEditorPopoverProps = {
   onLocalEdit?: () => void;
   onLocalEditRemove?: () => void;
   onToggleEditor: (node: CanvasNode) => void;
-  onGenerate: (node: CanvasNode) => void;
+  onGenerate: (
+    node: CanvasNode,
+    options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">,
+  ) => void;
   onOneTake: (node: CanvasNode, durationSeconds: number) => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
@@ -14987,6 +15015,7 @@ function CanvasNodeEditorPopover({
   const [promptOptimizing, setPromptOptimizing] = useState(false);
   const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
+  const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(true);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
@@ -15011,6 +15040,11 @@ function CanvasNodeEditorPopover({
   const readyOneTakeReferences = editorReferences.filter(isCanvasReadyImageSource);
   const inPlaceVideo = canvasVideoTargetHasImageReference(document, node);
   const branchReferences = branchDraft?.references || [];
+  const canUseCurrentImageAsReference =
+    node.type === "media" &&
+    data.kind === "image" &&
+    Boolean(data.url) &&
+    !branchDraft;
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
   const imageParams = isImageNode && editorParams && editorParams.kind === "image" ? editorParams : null;
   const imageQualityLabel = imageParams
@@ -15099,6 +15133,10 @@ function CanvasNodeEditorPopover({
       window.setTimeout(() => promptRef.current?.focus(), 0);
       return;
     }
+    if (canUseCurrentImageAsReference) {
+      onGenerate(node, { useCurrentImageAsReference });
+      return;
+    }
     onGenerate(node);
   };
 
@@ -15118,7 +15156,8 @@ function CanvasNodeEditorPopover({
 
   useEffect(() => {
     setPromptBeforeOptimization(null);
-  }, [node.id]);
+    setUseCurrentImageAsReference(true);
+  }, [node.id, Boolean(branchDraft)]);
 
   async function optimizeEditorPrompt() {
     if (!editorPrompt.trim()) return;
@@ -15441,6 +15480,29 @@ function CanvasNodeEditorPopover({
                   )}
                 </div>
               )}
+              {canUseCurrentImageAsReference && (
+                <label className="canvas-current-image-reference-toggle">
+                  <input
+                    type="checkbox"
+                    checked={useCurrentImageAsReference}
+                    onChange={(event) => setUseCurrentImageAsReference(event.currentTarget.checked)}
+                    aria-label="当前图片作参考"
+                  />
+                  <span className="canvas-current-image-reference-switch" aria-hidden="true">
+                    <i />
+                  </span>
+                  <span className="canvas-current-image-reference-copy">
+                    <b>当前图片作参考</b>
+                    <small>
+                      {useCurrentImageAsReference
+                        ? "默认使用当前图片"
+                        : maskState
+                          ? "已关闭，本次不应用局部编辑蒙版"
+                          : "已关闭，本次不提交当前图片"}
+                    </small>
+                  </span>
+                </label>
+              )}
               {node.type === "generator" && (
                 <div className="canvas-node-editor-dock-variant-wrap">
                   <button type="button" className="canvas-node-editor-dock-chip" onClick={() => setImageDockPanel((value) => value === "variant" ? null : "variant")} aria-label="变体要求" aria-expanded={imageDockPanel === "variant"} aria-controls="canvas-node-dock-variant" data-tooltip="变体要求">
@@ -15503,7 +15565,11 @@ function CanvasNodeEditorPopover({
                 onKeyDown={(event) => {
                   if (!promptExpanded && event.key === "Enter" && (isAgentNode ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
                     event.preventDefault();
-                    onGenerate(node);
+                    if (canUseCurrentImageAsReference) {
+                      onGenerate(node, { useCurrentImageAsReference });
+                    } else {
+                      onGenerate(node);
+                    }
                   }
                 }}
                 transformPastedText={(text) => replaceNaturalReferenceLabels(
@@ -15618,7 +15684,11 @@ function CanvasNodeEditorPopover({
                  onKeyDown={(event) => {
                    if (!promptExpanded && event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
                      event.preventDefault();
-                     onGenerate(node);
+                     if (canUseCurrentImageAsReference) {
+                       onGenerate(node, { useCurrentImageAsReference });
+                     } else {
+                       onGenerate(node);
+                     }
                   }
                 }}
                 transformPastedText={(text) => replaceNaturalReferenceLabels(

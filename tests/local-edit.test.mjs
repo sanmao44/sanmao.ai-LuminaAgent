@@ -123,6 +123,8 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /const scale = Math\.min\(availableWidth \/ canvas\.width, availableHeight \/ canvas\.height\)/);
   assert.match(editor, /onClick=\{fitCanvas\}/);
   assert.match(editor, /请先指定编辑区域，再应用局部编辑/);
+  assert.match(editor, /const exported = exportMask\(\);[\s\S]*exported\.coverage <= 0/);
+  assert.doesNotMatch(editor, /disabled=\{[^}]*coverage <= 0/);
   assert.match(editor, /disabled=\{!ready \|\| saving \|\| Boolean\(pendingAnnotation\) \|\| Boolean\(movingAnnotation\)/);
 });
 

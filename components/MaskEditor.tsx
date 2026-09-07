@@ -1217,10 +1217,6 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
 
   async function applyLocalEdit() {
     if (!ready || saving || pendingAnnotation || movingAnnotation || smartBusy) return;
-    if (coverage <= 0) {
-      setError('请先指定编辑区域，再应用局部编辑');
-      return;
-    }
     if (!prompt.trim()) {
       setError('请填写局部编辑提示词，或点击一个快捷模板');
       return;
@@ -1229,6 +1225,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       setError('');
       setSaving(true);
       const exported = exportMask();
+      // Coverage in React state may lag behind the mask canvas after a
+      // pointer gesture. Validate the exact PNG that will be submitted.
+      if (exported.coverage <= 0) {
+        setError('请先指定编辑区域，再应用局部编辑');
+        return;
+      }
       await onApply(
         exported.dataUrl,
         exported.coverage,
@@ -1391,7 +1393,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
              {smartError && <div className="local-edit-smart-note" role="status">{smartError}</div>}
              <label className="local-edit-prompt"><span>编辑提示词</span><textarea value={prompt} disabled={saving} onChange={(event) => setPrompt(event.target.value)} placeholder="描述编辑范围内要移除、替换或添加的内容…" /></label>
             <div className="local-edit-workbench-presets"><button type="button" disabled={!ready || saving} onClick={() => resetAll(true)}>保护全图</button><button type="button" disabled={!ready || saving} onClick={() => resetAll(false)}>编辑全图</button><small>红色区域是编辑范围；橡皮擦会恢复保护。</small></div>
-            <div className="mask-editor-actions local-edit-workbench-actions"><button type="button" className="secondary-action" disabled={saving} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy || coverage <= 0} onClick={() => void applyLocalEdit()}>{saving ? '正在提交…' : '应用局部编辑'}</button></div>
+            <div className="mask-editor-actions local-edit-workbench-actions"><button type="button" className="secondary-action" disabled={saving} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => void applyLocalEdit()}>{saving ? '正在提交…' : '应用局部编辑'}</button></div>
           </div>
         </div>
       </div>

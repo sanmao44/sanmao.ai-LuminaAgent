@@ -321,6 +321,56 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.doesNotMatch(continuation, /createGenerator\(/);
 });
 
+test("completed image editors expose a default-on current-image reference switch", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  const editorEnd = component.indexOf("function CanvasMaskSummary", editorStart);
+  assert.ok(editorStart >= 0 && editorEnd > editorStart, "image editor should be present");
+  const editor = component.slice(editorStart, editorEnd);
+  assert.match(editor, /useCurrentImageAsReference/);
+  assert.match(editor, /useState\(true\)/);
+  assert.match(editor, /checked=\{useCurrentImageAsReference\}/);
+  assert.match(editor, /aria-label="当前图片作参考"/);
+  assert.match(editor, /!branchDraft/);
+  assert.match(editor, /setUseCurrentImageAsReference\(true\)/);
+  assert.match(styles, /\.canvas-current-image-reference-toggle/);
+  assert.match(styles, /input:focus-visible\+\.canvas-current-image-reference-switch/);
+});
+
+test("current-image reference choice reaches repeat generation without changing persisted data", () => {
+  const continuationStart = component.indexOf("const runImageContinuation = useCallback");
+  const continuationEnd = component.indexOf("const runReuseGeneration = useCallback", continuationStart);
+  const editorStart = component.indexOf("const runEditorGeneration = useCallback");
+  const editorEnd = component.indexOf("const updateUpscaleParams", editorStart);
+  assert.ok(continuationStart >= 0 && continuationEnd > continuationStart, "image continuation should be present");
+  assert.ok(editorStart >= 0 && editorEnd > editorStart, "editor generation should be present");
+  const continuation = component.slice(continuationStart, continuationEnd);
+  const editor = component.slice(editorStart, editorEnd);
+  assert.match(component, /useCurrentImageAsReference\?: boolean/);
+  assert.match(editor, /useCurrentImageAsReference: options\.useCurrentImageAsReference/);
+  assert.match(component, /request\.useCurrentImageAsReference/);
+  assert.match(continuation, /options\?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">/);
+  assert.match(continuation, /const useCurrentImageAsReference = options\?\.useCurrentImageAsReference !== false/);
+  assert.match(continuation, /if \(useCurrentImageAsReference\) \{[\s\S]*?addReference\([\s\S]*?source\.id/);
+  assert.match(continuation, /operation: useCurrentImageAsReference \? "edit" : "generate"/);
+  assert.match(continuation, /referenceIds: \[\.\.\.resolvedReferenceIds\]/);
+  assert.match(continuation, /parentNodeId: source\.id/);
+  assert.match(continuation, /reuseSourceNodeId: source\.id/);
+});
+
+test("disabling the current image keeps explicit references and omits the mask for this request", () => {
+  const start = component.indexOf("const runImageContinuation = useCallback");
+  const end = component.indexOf("const runReuseGeneration = useCallback", start);
+  assert.ok(start >= 0 && end > start, "image continuation should be present");
+  const continuation = component.slice(start, end);
+  assert.match(continuation, /const \{ mask: _mask, \.\.\.withoutMask \} = paramsWithMask/);
+  assert.match(continuation, /const params = useCurrentImageAsReference[\s\S]*withoutMask as ImageCreationSettings/);
+  assert.match(continuation, /for \(const \[index, reference\] of selectedReferences\.entries\(\)\)/);
+  assert.match(continuation, /addReference\(existing\.id, url, name\)/);
+  assert.match(continuation, /\.\.\.\(params\.mask \? \{ maskUrl: params\.mask\.url \} : \{\}\)/);
+  assert.match(continuation, /if \(params\.mask\) \{[\s\S]*updateCanvasMaskState\(value, source\.id/);
+  assert.match(continuation, /referenceOrder: \[\.\.\.resolvedReferenceIds\]/);
+});
+
 test("text references can supply the prompt for repeat image and video generation", () => {
   const continuationStart = component.indexOf("const runImageContinuation = useCallback");
   const continuationEnd = component.indexOf("const runReuseGeneration = useCallback", continuationStart);
