@@ -66,13 +66,17 @@ test('converts a default 16:9 result to the requested 21:9 canvas', async () => 
   assert.equal(metadata.height, 720);
 });
 
-test('converts a default landscape result to the requested 9:16 canvas', async () => {
-  const landscapeInput = await sharp({ create: { width: 1536, height: 1024, channels: 3, background: { r: 28, g: 8, b: 56 } } }).png().toBuffer();
-  const images = await orientation.normalizeStarApiLandscapeImages(starApi, 'gpt-image-2', { aspectRatio: '9:16' }, [{ url: `data:image/png;base64,${landscapeInput.toString('base64')}` }]);
+test('crops an upstream native 2:3 portrait result to the requested 9:16 canvas without black bars', async () => {
+  const portraitInput = await sharp({ create: { width: 1024, height: 1536, channels: 3, background: { r: 28, g: 8, b: 56 } } }).png().toBuffer();
+  const images = await orientation.normalizeStarApiLandscapeImages(starApi, 'gpt-image-2', { aspectRatio: '9:16' }, [{ url: `data:image/png;base64,${portraitInput.toString('base64')}` }]);
   const output = Buffer.from(images[0].url.slice(images[0].url.indexOf(',') + 1), 'base64');
   const metadata = await sharp(output).metadata();
   assert.equal(metadata.width, 864);
   assert.equal(metadata.height, 1536);
+  const { data, info } = await sharp(output).raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual([...data.subarray(0, 3)], [28, 8, 56]);
+  const bottomPixel = (info.width * (info.height - 1)) * info.channels;
+  assert.deepEqual([...data.subarray(bottomPixel, bottomPixel + 3)], [28, 8, 56]);
 });
 
 test('honors an explicit custom output size when its ratio matches', async () => {

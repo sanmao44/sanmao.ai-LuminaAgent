@@ -151,9 +151,9 @@ async function imageBuffer(url: string, signal?: AbortSignal) {
 
 /**
  * StarAPI may ignore the requested image ratio and return its default native
- * frame. Preserve the complete source in the requested canvas instead of
- * silently stretching or cropping the subject. This is intentionally scoped
- * to the one incompatible provider/model combination.
+ * frame. Crop the incompatible native frame into the requested canvas instead
+ * of padding it with black bars. This is intentionally scoped to the one
+ * incompatible provider/model combination.
  */
 export async function normalizeStarApiLandscapeImages(provider: ProviderIdentity, rawModelId: string, input: ImageRequest, images: GeneratedImage[], signal?: AbortSignal) {
   const requestedRatio = ratioValue(input);
@@ -171,8 +171,7 @@ export async function normalizeStarApiLandscapeImages(provider: ProviderIdentity
         && metadata.width === requestedSize.width
         && metadata.height === requestedSize.height;
       if (ratioMatches(actualRatio, requestedRatio) && (input.sizeMode !== 'custom' || exactCustomSize)) return image;
-      const background = metadata.hasAlpha ? { r: 0, g: 0, b: 0, alpha: 0 } : { r: 0, g: 0, b: 0, alpha: 1 };
-      const output = await source.resize({ ...requestedSize, fit: 'contain', background }).png().toBuffer();
+      const output = await source.resize({ ...requestedSize, fit: 'cover', position: 'centre' }).png().toBuffer();
       return { ...image, url: `data:image/png;base64,${output.toString('base64')}` };
     } catch { return image; }
   }));
