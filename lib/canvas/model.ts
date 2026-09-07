@@ -23,7 +23,6 @@ import {
 } from "./layers";
 
 export const CANVAS_VERSION = "sanmao-canvas-3";
-export const MAX_CANVAS_VARIANTS = 8;
 
 export function normalizeVariantRequirements(value: unknown): string[] {
   const source = Array.isArray(value)
@@ -33,8 +32,7 @@ export function normalizeVariantRequirements(value: unknown): string[] {
       : [];
   const normalized = source
     .map((item) => String(item || "").trim())
-    .filter(Boolean)
-    .slice(0, MAX_CANVAS_VARIANTS);
+    .filter(Boolean);
   return normalized.length ? normalized : [""];
 }
 
@@ -252,7 +250,6 @@ function normalizeNode(value: unknown): CanvasNode | null {
     if (Array.isArray(data.variantStates)) {
       data.variantStates = data.variantStates
         .filter((item) => Boolean(item && typeof item === "object"))
-        .slice(0, MAX_CANVAS_VARIANTS)
         .map((item, index) => ({
           id: String(item.id || `variant-${index + 1}`),
           instruction: String(

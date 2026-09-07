@@ -905,7 +905,7 @@ test('keeps a member connection scoped to that member instead of its group', () 
   assert.equal(document.edges[0].source, second.id);
 });
 
-test('normalizes variant requirements by removing blank lines and capping at eight', () => {
+test('normalizes variant requirements by removing blank lines', () => {
   const requirements = model.normalizeVariantRequirements(
     '  夜景  \n\n俯拍视角\r\n  \n替换成红色包装\n' +
       Array.from({ length: 8 }, (_, index) => `变体 ${index + 4}`).join('\n'),
@@ -919,6 +919,9 @@ test('normalizes variant requirements by removing blank lines and capping at eig
     '变体 6',
     '变体 7',
     '变体 8',
+    '变体 9',
+    '变体 10',
+    '变体 11',
   ]);
   assert.deepEqual(model.normalizeVariantRequirements([]), ['']);
 });
@@ -997,6 +1000,33 @@ test('normalizes saved variant states and preserves batch metadata', () => {
       resultIds: [],
     },
   ]);
+});
+
+test('keeps variant requirements and states beyond eight entries', () => {
+  const requirements = Array.from({ length: 10 }, (_, index) => `方案 ${index + 1}`).join('\n');
+  const document = model.normalizeDocument({
+    nodes: [
+      {
+        id: 'long-variant-generator',
+        type: 'generator',
+        x: 0,
+        y: 0,
+        data: {
+          kind: 'image',
+          variantRequirementsText: requirements,
+          variantStates: Array.from({ length: 10 }, (_, index) => ({
+            id: `v-${index + 1}`,
+            status: 'pending',
+          })),
+        },
+      },
+    ],
+  });
+  const data = document.nodes[0].data;
+  assert.equal(data.variantRequirements.length, 10);
+  assert.equal(data.variantRequirementsText, requirements);
+  assert.equal(data.variantStates.length, 10);
+  assert.equal(data.variantStates[9].instruction, '方案 10');
 });
 
 test('preserves named variant batch groups and result lineage in stable variant order', () => {

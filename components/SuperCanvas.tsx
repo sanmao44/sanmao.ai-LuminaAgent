@@ -25,7 +25,6 @@ import {
   arrangeCanvas,
   arrangeCanvasGroup,
   CANVAS_GROUP_INSETS,
-  MAX_CANVAS_VARIANTS,
   canvasEdgeEndpoints,
   canConnect,
   clone,
@@ -1505,20 +1504,15 @@ function variantRequirementRowsForEditor(value: string) {
   const compacted = compactVariantRequirementRows(
     String(value || "").replace(/\r\n?/g, "\n").split("\n"),
   );
-  const rows = compacted.slice(0, MAX_CANVAS_VARIANTS);
-  if (rows.length < MAX_CANVAS_VARIANTS && rows[rows.length - 1].trim()) {
+  const rows = compacted.slice();
+  if (rows[rows.length - 1].trim()) {
     rows.push("");
   }
-  return {
-    rows,
-    overflowCount: Math.max(0, compacted.length - MAX_CANVAS_VARIANTS),
-  };
+  return { rows };
 }
 
 function serializeVariantRequirementRows(rows: readonly string[]) {
-  return compactVariantRequirementRows(rows)
-    .slice(0, MAX_CANVAS_VARIANTS)
-    .join("\n");
+  return compactVariantRequirementRows(rows).join("\n");
 }
 
 function focusContentEditableEnd(editor: HTMLDivElement | null) {
@@ -1560,14 +1554,6 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
   );
   const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
   const focusIndexRef = useRef<number | null>(null);
-  const overflowTimerRef = useRef<number | null>(null);
-  const [overflowNotice, setOverflowNotice] = useState<string | null>(null);
-
-  useEffect(() => () => {
-    if (overflowTimerRef.current !== null) {
-      window.clearTimeout(overflowTimerRef.current);
-    }
-  }, []);
 
   useLayoutEffect(() => {
     if (focusIndexRef.current === null) return;
@@ -1579,28 +1565,13 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
     focusContentEditableEnd(rowRefs.current[index] || null);
   }, [rowState.rows]);
 
-  const notifyOverflow = useCallback((message: string) => {
-    setOverflowNotice(message);
-    if (overflowTimerRef.current !== null) {
-      window.clearTimeout(overflowTimerRef.current);
-    }
-    overflowTimerRef.current = window.setTimeout(() => {
-      setOverflowNotice(null);
-      overflowTimerRef.current = null;
-    }, 2400);
-  }, []);
-
   const commitRows = useCallback((nextRows: readonly string[], focusIndex?: number) => {
     const serialized = serializeVariantRequirementRows(nextRows);
     if (typeof focusIndex === "number") {
       focusIndexRef.current = focusIndex;
     }
     onChange(serialized);
-    const overflowCount = compactVariantRequirementRows(nextRows).length - MAX_CANVAS_VARIANTS;
-    if (overflowCount > 0) {
-      notifyOverflow(`超过 ${MAX_CANVAS_VARIANTS} 条，已截断多余内容`);
-    }
-  }, [notifyOverflow, onChange]);
+  }, [onChange]);
 
   const updateRow = useCallback((index: number, nextValue: string) => {
     const nextRows = rowState.rows.slice();
@@ -1620,14 +1591,9 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
       focusContentEditableEnd(rowRefs.current[index + 1] || null);
       return;
     }
-    if (currentRows.length >= MAX_CANVAS_VARIANTS) {
-      notifyOverflow(`超过 ${MAX_CANVAS_VARIANTS} 条，已截断多余内容`);
-      return;
-    }
-
     nextRows.splice(index + 1, 0, "");
     commitRows(nextRows, index + 1);
-  }, [commitRows, notifyOverflow, rowState.rows]);
+  }, [commitRows, rowState.rows]);
 
   const moveRow = useCallback((index: number, direction: -1 | 1) => {
     const currentRows = rowState.rows;
@@ -1659,14 +1625,14 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
     );
     const nextRows = rowState.rows.slice();
     nextRows.splice(index, 1, ...pastedRows);
-    commitRows(nextRows, Math.min(index + pastedRows.length - 1, MAX_CANVAS_VARIANTS - 1));
+    commitRows(nextRows, index + pastedRows.length - 1);
   }, [commitRows, references, rowState.rows]);
 
   return (
     <div className={`canvas-variant-list-editor ${className}`.trim()}>
       <div className="canvas-variant-list">
         {rowState.rows.map((row, index) => {
-          const isTailRow = index === rowState.rows.length - 1 && !row.trim() && rowState.rows.length < MAX_CANVAS_VARIANTS;
+          const isTailRow = index === rowState.rows.length - 1 && !row.trim();
           const isEmpty = !row.trim();
           return (
             <div
@@ -1705,66 +1671,81 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
                 onPaste={(event) => handlePaste(index, event)}
               />
               <div className="canvas-variant-list-actions">
-                <button
-                  type="button"
-                  aria-label={`上移第 ${index + 1} 条`}
-                  title="上移"
-                  disabled={index === 0}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    moveRow(index, -1);
-                  }}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  aria-label={`下移第 ${index + 1} 条`}
-                  title="下移"
-                  disabled={index === rowState.rows.length - 1}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    moveRow(index, 1);
-                  }}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  aria-label={`删除第 ${index + 1} 条`}
-                  title="删除"
-                  disabled={rowState.rows.length === 1 && !row.trim()}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    deleteRow(index);
-                  }}
-                >
-                  ×
-                </button>
+                {isTailRow ? (
+                  <button
+                    type="button"
+                    aria-label={`继续添加第 ${index + 1} 条`}
+                    title="继续添加"
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      focusContentEditableEnd(rowRefs.current[index] || null);
+                    }}
+                  >
+                    +
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={`上移第 ${index + 1} 条`}
+                      title="上移"
+                      disabled={index === 0}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        moveRow(index, -1);
+                      }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`下移第 ${index + 1} 条`}
+                      title="下移"
+                      disabled={index === rowState.rows.length - 1}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        moveRow(index, 1);
+                      }}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`删除第 ${index + 1} 条`}
+                      title="删除"
+                      disabled={rowState.rows.length === 1 && !row.trim()}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        deleteRow(index);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           );
         })}
       </div>
-      {((overflowNotice || rowState.overflowCount > 0) || note) && (
+      {note && (
         <div className="canvas-variant-list-footer">
-          {(overflowNotice || rowState.overflowCount > 0) && (
-            <small className="canvas-variant-list-warning" role="status" aria-live="polite">
-              {overflowNotice || `超过 ${MAX_CANVAS_VARIANTS} 条，已截断多余内容`}
-            </small>
-          )}
           {note && <small className="canvas-variant-list-note">{note}</small>}
         </div>
       )}
@@ -1840,7 +1821,7 @@ function CanvasGeneratorHelp({ kind }: { kind: CanvasMediaKind }) {
                 : "需要参考时，先连接已完成的图片；图片变体生成器不能接收视频作为图片参考。"}
             </li>
             <li>共同提示词会作为每一条变体要求的基础。</li>
-            <li>逐条编辑、回车新增、最多 8 条；空行会自动忽略。</li>
+            <li>逐条编辑、回车新增；空行会自动忽略，也可以继续添加更多条目。</li>
             <li>在每条里输入 @编号，可以指定要使用的引用素材。</li>
             <li>
               {isVideo
@@ -3791,7 +3772,7 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-reference-picker-banner,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       // During reference picking, node clicks stay reserved for selecting a
       // reference. Blank canvas clicks must still be able to pan the viewport.
@@ -10818,9 +10799,6 @@ export default function SuperCanvas() {
   const connectionTargetScreen = connectionTargetBounds
     ? worldToScreen(connectionTargetBounds.x, connectionTargetBounds.y)
     : null;
-  const referencePickerTarget = referencePicker
-    ? nodeById(document, referencePicker.targetId)
-    : undefined;
   // O(1) lookup maps built only when the node/group collections change. The
   // memoized edge visuals use these instead of re-scanning the whole document
   // for source/target geometry and color on every render/frame.
@@ -12063,18 +12041,6 @@ export default function SuperCanvas() {
             <b>松开以导入图片或视频</b>
           </div>
         )}
-        {referencePicker && (
-          <div className="canvas-reference-picker-banner" role="status">
-            <span aria-hidden="true">⌁</span>
-            <div>
-              <b>选择参考对象</b>
-              <small>
-                点击画布节点{referencePickerTarget ? `添加到“${nodeLabel(referencePickerTarget)}”` : ""} · Esc 取消
-              </small>
-            </div>
-            <button type="button" onClick={cancelReferencePicker}>取消</button>
-          </div>
-        )}
         <div className="canvas-grid" />
         {snapGuides.length > 0 && (
           <div className="canvas-snap-guides" aria-hidden="true">
@@ -12870,9 +12836,9 @@ export default function SuperCanvas() {
                     <div className="canvas-variant-editor-head">
                       <div>
                         <b>变体要求</b>
-                        <small>逐条编辑、回车新增、最多 8 条</small>
+                        <small>逐条编辑、回车新增</small>
                       </div>
-                      <span>{variantRequirementsFor(selectedSingle).length}/8</span>
+                      <span>{variantRequirementsFor(selectedSingle).length} 条</span>
                     </div>
                     <CanvasVariantRequirementsEditor
                       ariaLabel="变体要求"
@@ -15622,7 +15588,7 @@ function CanvasNodeEditorPopover({
           : node.type === "media" && data.kind === "image" && data.url
             ? "当前图片作参考 · 右侧生成新图"
             : node.type === "generator"
-              ? "共同提示词 + 逐条编辑、回车新增、最多 8 条"
+              ? "共同提示词 + 逐条编辑、回车新增"
               : "Ctrl/Cmd + Enter 生成";
   const promptPlaceholder = isAgentNode
     ? "输入 Agent 任务… 输入 @ 引用节点"
@@ -16039,10 +16005,10 @@ function CanvasNodeEditorPopover({
                       <div className="canvas-node-editor-dock-popover-head">
                         <div className="canvas-node-editor-dock-variant-title">
                           <b>变体要求</b>
-                          <small>逐条编辑、回车新增、最多 8 条</small>
+                          <small>逐条编辑、回车新增</small>
                         </div>
                         <div className="canvas-node-editor-dock-variant-actions">
-                          <span className="canvas-node-editor-dock-variant-count">{variantRequirements.length}/8</span>
+                          <span className="canvas-node-editor-dock-variant-count">{variantRequirements.length} 条</span>
                           <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
                           <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
                         </div>
@@ -16267,7 +16233,7 @@ function CanvasNodeEditorPopover({
             {node.type === "generator" && (
               <div className="canvas-node-variant-editor">
                 <div className="canvas-node-variant-editor-head">
-                  <label>变体要求 <small>逐条编辑、回车新增、最多 8 条 · {variantRequirements.length}/8</small></label>
+                  <label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>
                   <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
                 </div>
                 <CanvasVariantRequirementsEditor
@@ -16978,7 +16944,7 @@ function CanvasNodeCard({
                   ? "批量处理中…"
                   : data.status === "failed"
                     ? "有失败变体，可单独重试"
-                    : "共同提示词 + 逐条编辑、回车新增、最多 8 条"}
+                    : "共同提示词 + 逐条编辑、回车新增"}
               </small>
             </div>
             <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
@@ -17174,7 +17140,7 @@ function CanvasNodeCard({
           />
           {node.type === "generator" && (
             <div className="canvas-node-variant-editor">
-              <label>变体要求 <small>逐条编辑、回车新增、最多 8 条 · {variantRequirements.length}/8</small></label>
+              <label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>
               <CanvasVariantRequirementsEditor
                 value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                 references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
