@@ -38,6 +38,7 @@ import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
 import { appendTextReferenceContext, normalizeCreativeReference, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
+import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -5157,6 +5158,12 @@ export default function Page() {
     const [upscaleSourceSize, setUpscaleSourceSize] = useState(null);
     const [outpaintEditor, setOutpaintEditor] = useState(null);
     useEffect(()=>{
+        const initial = readStoredTheme();
+        setTheme(initial);
+        applyTheme(initial);
+        return subscribeToThemeChanges(setTheme);
+    }, []);
+    useEffect(()=>{
         if (!providerEditor || !state.providers.length) return;
         const closeOnEscape = (event)=>{
             if (event.key !== 'Escape') return;
@@ -5479,11 +5486,6 @@ export default function Page() {
                 sectionRef.current = savedSection;
                 setSectionState(savedSection);
             }
-            const saved = localStorage.getItem('sanmao-theme');
-            const initial = saved === 'dark' ? 'dark' : 'light';
-            setTheme(initial);
-            document.documentElement.dataset.theme = initial;
-            document.documentElement.style.colorScheme = initial;
             setSuccessSoundEnabled(localStorage.getItem('sanmao-success-sound') === '1');
             const savedWebMode = localStorage.getItem('sanmao-agent-web-mode');
             const savedWebSearch = localStorage.getItem('sanmao-agent-web-search');
@@ -6205,11 +6207,7 @@ export default function Page() {
     }
     function setThemePreference(next) {
         setTheme(next);
-        document.documentElement.dataset.theme = next;
-        document.documentElement.style.colorScheme = next;
-        try {
-            localStorage.setItem('sanmao-theme', next);
-        } catch  {}
+        saveTheme(next);
     }
     function toggleTheme() {
         setThemePreference(theme === 'light' ? 'dark' : 'light');

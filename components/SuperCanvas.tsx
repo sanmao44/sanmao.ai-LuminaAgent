@@ -244,6 +244,7 @@ import {
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
 import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
+import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from "@/lib/theme";
 import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
 import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
@@ -2381,7 +2382,7 @@ export default function SuperCanvas() {
   const [connectionStyle, setConnectionStyle] =
     useState<ConnectionStyle>("curve");
   const [snapEnabled, setSnapEnabled] = useState(true);
-  const [theme, setTheme] = useState<CanvasTheme>("light");
+  const [theme, setTheme] = useState<CanvasTheme>(readStoredTheme);
   const [mentionState, setMentionState] = useState<MentionState>(null);
   const [variantMentionState, setVariantMentionState] = useState<MentionState>(null);
   const [panReady, setPanReady] = useState(false);
@@ -2467,11 +2468,10 @@ export default function SuperCanvas() {
   );
 
   useEffect(() => {
-    setTheme(
-      window.document.documentElement.dataset.theme === "dark"
-        ? "dark"
-        : "light",
-    );
+    const initial = readStoredTheme();
+    setTheme(initial);
+    applyTheme(initial);
+    return subscribeToThemeChanges(setTheme);
   }, []);
 
   useEffect(() => {
@@ -2481,13 +2481,7 @@ export default function SuperCanvas() {
   const toggleTheme = useCallback(() => {
     const next: CanvasTheme = theme === "light" ? "dark" : "light";
     setTheme(next);
-    window.document.documentElement.dataset.theme = next;
-    window.document.documentElement.style.colorScheme = next;
-    try {
-      window.localStorage.setItem("sanmao-theme", next);
-    } catch {
-      /* 主题偏好保存失败不应阻断画布 */
-    }
+    saveTheme(next);
   }, [theme]);
 
   const toggleDeckCollapsed = () =>
