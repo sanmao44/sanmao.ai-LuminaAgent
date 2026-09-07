@@ -5,9 +5,12 @@ import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
 import {
   applyLocalEditAnnotationMask,
+  applyLocalEditGeometryMask,
   calculateEditableCoverage as calculateLocalEditableCoverage,
+  composeLocalEditMoveReference,
   compileLocalEditPrompt,
   featherLocalEditMask,
+  moveLocalEditPixels,
   normalizeLocalEditAnnotations,
   type LocalEditAnnotation,
   type LocalEditAnnotationGeometry,
@@ -28,7 +31,7 @@ export type LocalEditEditorProps = {
   initialPrompt?: string;
   initialAnnotations?: LocalEditAnnotation[];
   initialFeather?: number;
-  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number) => void | Promise<void>;
+  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, sourceImageDataUrl?: string) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -80,6 +83,7 @@ type MovingAnnotation = {
   startY: number;
   initial: LocalEditAnnotation;
   before: HistorySnapshot;
+  selectionMask: Uint8ClampedArray;
   initialSmartMask?: Uint8ClampedArray;
 };
 type MovePreview = {
@@ -158,16 +162,6 @@ function annotationBounds(annotation: LocalEditAnnotation) {
   const minX = Math.min(...xs);
   const minY = Math.min(...ys);
   return { x: minX, y: minY, width: Math.max(0.01, Math.max(...xs) - minX), height: Math.max(0.01, Math.max(...ys) - minY) };
-}
-
-function geometryBounds(geometry: LocalEditAnnotationGeometry) {
-  return annotationBounds({
-    id: 'geometry-preview',
-    kind: geometry.kind,
-    description: '',
-    geometry,
-    createdAt: 0,
-  });
 }
 
 function annotationPreviewBounds(annotation: LocalEditAnnotation) {
@@ -309,6 +303,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const sourceImageRef = useRef<ImageData | null>(null);
   const historyRef = useRef<HistoryState>({ states: [], index: -1 });
   const baseMaskRef = useRef<ImageData | null>(null);
   const protectedPixelsRef = useRef<Uint8Array | null>(null);
@@ -516,6 +511,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     setSmartError('');
     baseMaskRef.current = null;
     protectedPixelsRef.current = null;
+    sourceImageRef.current = null;
     smartMaskPixelsRef.current.clear();
     historyRef.current = { states: [], index: -1 };
     const image = new Image();
@@ -532,6 +528,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       if (base) {
         base.clearRect(0, 0, image.naturalWidth, image.naturalHeight);
         base.drawImage(image, 0, 0);
+        sourceImageRef.current = copyImageData(base.getImageData(0, 0, image.naturalWidth, image.naturalHeight));
       }
       const mask = maskCanvasRef.current;
       const maskContext = mask?.getContext('2d');
@@ -569,6 +566,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         rebuildMask(restoredAnnotations);
         annotationsRef.current = restoredAnnotations;
         setAnnotations(copyAnnotations(restoredAnnotations));
+        renderMovePreview(restoredAnnotations);
         const initial = captureSnapshot(restoredAnnotations);
         if (!initial) return;
         historyRef.current = { states: [initial], index: 0 };
@@ -801,6 +799,36 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     return { ...geometry, x: Math.max(0, Math.min(1 - geometry.width, geometry.x + dx)), y: Math.max(0, Math.min(1 - geometry.height, geometry.y + dy)) };
   }
 
+  function selectionMaskForGeometry(
+    geometry: LocalEditAnnotationGeometry,
+    width: number,
+    height: number,
+    smartPixels?: Uint8ClampedArray,
+  ) {
+    const selection = createProtectedImageData(width, height);
+    applyLocalEditGeometryMask(selection.data, width, height, geometry, 'edit', smartPixels);
+    return selection.data;
+  }
+
+  function renderMovePreview(nextAnnotations = annotationsRef.current) {
+    const source = sourceImageRef.current;
+    const imageCanvas = imageCanvasRef.current;
+    const imageContext = imageCanvas?.getContext('2d');
+    if (!source || !imageCanvas || !imageContext) return false;
+    const hasMove = nextAnnotations.some((annotation) => annotation.move?.from.length);
+    const pixels = hasMove
+      ? composeLocalEditMoveReference(
+          source.data,
+          imageCanvas.width,
+          imageCanvas.height,
+          nextAnnotations,
+          smartMaskPixelsRef.current,
+        )
+      : new Uint8ClampedArray(source.data);
+    imageContext.putImageData(new ImageData(pixels, imageCanvas.width, imageCanvas.height), 0, 0);
+    return hasMove;
+  }
+
   function switchLocalEditMode(nextMode: LocalEditMode, annotation?: LocalEditAnnotation) {
     if (saving || pendingAnnotation || movingAnnotation || smartBusy) return;
     setMode(nextMode);
@@ -822,7 +850,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     event.preventDefault();
     event.stopPropagation();
     const canvas = overlayCanvasRef.current;
-    if (!canvas) return;
+    const maskCanvas = maskCanvasRef.current;
+    if (!canvas || !maskCanvas) return;
     const before = captureSnapshot();
     if (!before) return;
     setMoveSourceId(annotation.id);
@@ -834,6 +863,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       startY: event.clientY,
       initial: annotation,
       before,
+      selectionMask: selectionMaskForGeometry(
+        annotation.geometry,
+        maskCanvas.width,
+        maskCanvas.height,
+        initialSmartMask,
+      ),
       ...(initialSmartMask ? { initialSmartMask: new Uint8ClampedArray(initialSmartMask) } : {}),
     });
     const initialPreview = { id: annotation.id, geometry: copyGeometry(annotation.geometry), dx: 0, dy: 0 };
@@ -852,7 +887,9 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   useEffect(() => {
     if (!movingAnnotation) return;
     const canvas = overlayCanvasRef.current;
-    if (!canvas) return;
+    const imageCanvas = imageCanvasRef.current;
+    const imageContext = imageCanvas?.getContext('2d');
+    if (!canvas || !imageCanvas || !imageContext) return;
     const move = (event: PointerEvent) => {
       if (event.pointerId !== movingAnnotation.pointerId) return;
       const rawDx = (event.clientX - movingAnnotation.startX) / Math.max(1, canvas.getBoundingClientRect().width);
@@ -860,6 +897,15 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       const bounds = annotationPreviewBounds(movingAnnotation.initial);
       const dx = Math.max(-bounds.x, Math.min(1 - bounds.x - bounds.width, rawDx));
       const dy = Math.max(-bounds.y, Math.min(1 - bounds.y - bounds.height, rawDy));
+      const movedPixels = moveLocalEditPixels(
+        movingAnnotation.before.image.data,
+        movingAnnotation.selectionMask,
+        imageCanvas.width,
+        imageCanvas.height,
+        dx * imageCanvas.width,
+        dy * imageCanvas.height,
+      );
+      imageContext.putImageData(new ImageData(movedPixels, imageCanvas.width, imageCanvas.height), 0, 0);
       let targetGeometry = moveGeometry(movingAnnotation.initial.geometry, dx, dy);
       if (targetGeometry.kind === 'smart' && movingAnnotation.initialSmartMask) {
         const translated = translateMaskPixels(
@@ -907,9 +953,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
           allowAnnotationToOverrideProtection(moved);
           annotationsRef.current = next;
           setAnnotations(next);
+          renderMovePreview(next);
           rebuildMask(next);
           pushHistory(movingAnnotation.before);
         }
+      } else {
+        renderMovePreview(annotationsRef.current);
       }
       movePreviewRef.current = null;
       setMovePreview(null);
@@ -1039,6 +1088,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     setAnnotations(next);
     if (moveSourceId === annotation.id) setMoveSourceId(null);
     smartMaskPixelsRef.current.delete(annotation.id);
+    annotation.move?.from.forEach((_, index) => smartMaskPixelsRef.current.delete(`${annotation.id}:from:${index}`));
+    renderMovePreview(next);
     rebuildMask(next);
     pushHistory(before);
   }
@@ -1181,6 +1232,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     setEditingAnnotationId(null);
     setMoveSourceId(null);
     smartMaskPixelsRef.current.clear();
+    renderMovePreview([]);
     pushHistory(before);
     refreshPreview();
   }
@@ -1253,6 +1305,14 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     return { dataUrl: output.toDataURL('image/png'), coverage: calculateLocalEditableCoverage(pixels) };
   }
 
+  function exportMoveSourceImage() {
+    if (!annotationsRef.current.some((annotation) => annotation.move?.from.length)) return undefined;
+    if (!renderMovePreview(annotationsRef.current)) throw new Error('移动参考图导出失败，请重试');
+    const source = imageCanvasRef.current;
+    if (!source) throw new Error('移动参考图导出失败，请重试');
+    return source.toDataURL('image/png');
+  }
+
   async function applyLocalEdit() {
     if (!ready || saving || pendingAnnotation || movingAnnotation || smartBusy) return;
     if (!prompt.trim()) {
@@ -1275,6 +1335,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         compileLocalEditPrompt(prompt, annotations),
         annotations,
         normalizeFeather(feather),
+        exportMoveSourceImage(),
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '局部编辑范围导出失败，图片可能受跨域保护');
@@ -1362,10 +1423,10 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
                         <line x1={`${sourceCenter.x}%`} y1={`${sourceCenter.y}%`} x2={`${targetCenter.x}%`} y2={`${targetCenter.y}%`} />
                       </svg>
                       <div className="local-edit-move-frame source" style={{ left: `${source.x * 100}%`, top: `${source.y * 100}%`, width: `${Math.max(1, source.width * 100)}%`, height: `${Math.max(1, source.height * 100)}%` }}>
-                        <span>原位置</span>
+                        <span>原位置 · 待修补</span>
                       </div>
                       <div className="local-edit-move-frame target" style={{ left: `${target.x * 100}%`, top: `${target.y * 100}%`, width: `${Math.max(1, target.width * 100)}%`, height: `${Math.max(1, target.height * 100)}%` }}>
-                        <span>目标位置 · 松开确认</span>
+                        <span>目标位置 · 移动预览</span>
                       </div>
                       <button type="button" className="local-edit-move-cancel" aria-label="取消移动" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); cancelMoveAnnotation(); }}>取消移动</button>
                     </div>
@@ -1417,8 +1478,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
               <div className="local-edit-operation-head"><span>当前功能</span><strong>{mode === 'move' ? '移动' : '修改'}</strong></div>
               {mode === 'move' ? (
                 <>
-                  <p>先用矩形、椭圆、自由圈选或智能点选创建源选区；已有标记也可以直接拖动。拖动时原位置保持标记，目标位置显示虚线框。</p>
-                  <small>{selectedMoveAnnotation ? `当前源选区：${annotationLabel(selectedMoveAnnotation)}${movingAnnotation ? '（拖动中）' : ''}` : '尚未选择源选区，请先创建或点击画布中的标记。'}</small>
+                  <p>先圈选要移动的物体，再拖动选区到目标位置。拖动时会直接显示剪贴预览；原位置和目标位置都会在生成时自然修补。</p>
+                  <small>{selectedMoveAnnotation ? `当前源选区：${annotationLabel(selectedMoveAnnotation)}${movingAnnotation ? '（移动预览中）' : '，可直接拖到目标位置'}` : '第 1 步：先创建或点击一个源选区。'}</small>
                 </>
               ) : (
                 <p>在画布上使用工具修改局部编辑范围，完成后可切换到移动功能。</p>

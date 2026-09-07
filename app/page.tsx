@@ -1153,6 +1153,17 @@ async function downloadChatFile(file) {
     anchor.remove();
     window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
 }
+function isPreviewableChatFile(file) {
+    const mimeType = String(file?.mimeType || '').split(';', 1)[0].trim().toLowerCase();
+    const name = String(file?.name || '').trim().toLowerCase();
+    return mimeType === 'text/html' || mimeType === 'application/xhtml+xml' || name.endsWith('.html') || name.endsWith('.htm');
+}
+function getChatFilePreviewContent(file) {
+    if (file?.encoding !== 'base64') return String(file?.content || '');
+    const binary = atob(String(file?.content || '').replace(/\s/g, ''));
+    const bytes = Uint8Array.from(binary, (char)=>char.charCodeAt(0));
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+}
 function formatFileSize(size) {
     if (!size || size < 1) return '文件';
     if (size < 1024) return `${size} B`;
@@ -1605,6 +1616,18 @@ function Icon({ name, size = 18 }) {
             children: /*#__PURE__*/ _jsx("path", {
                 d: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
             })
+        }),
+        preview: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M3.5 12s3.1-5 8.5-5 8.5 5 8.5 5-3.1 5-8.5 5-8.5-5-8.5-5Z"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "12",
+                    cy: "12",
+                    r: "2.5"
+                })
+            ]
         }),
         compare: /*#__PURE__*/ _jsxs(_Fragment, {
             children: [
@@ -4282,7 +4305,7 @@ function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify 
         })
     });
 }
-function ChatFileList({ files, onDownload, onRemove }) {
+function ChatFileList({ files, onDownload, onPreview, onRemove }) {
     if (!files.length) return null;
     return /*#__PURE__*/ _jsx("div", {
         className: "message-files",
@@ -4312,16 +4335,34 @@ function ChatFileList({ files, onDownload, onRemove }) {
                             })
                         ]
                     }),
-                    /*#__PURE__*/ _jsxs("button", {
-                        type: "button",
-                        className: "message-file-download",
-                        onClick: ()=>onDownload(file),
+                    /*#__PURE__*/ _jsxs("div", {
+                        className: "message-file-actions",
                         children: [
-                            /*#__PURE__*/ _jsx(Icon, {
-                                name: "download",
-                                size: 14
+                            onPreview && isPreviewableChatFile(file) && /*#__PURE__*/ _jsxs("button", {
+                                type: "button",
+                                className: "message-file-preview",
+                                onClick: ()=>onPreview(file),
+                                title: "预览 HTML",
+                                children: [
+                                    /*#__PURE__*/ _jsx(Icon, {
+                                        name: "preview",
+                                        size: 14
+                                    }),
+                                    "预览"
+                                ]
                             }),
-                            "下载"
+                            /*#__PURE__*/ _jsxs("button", {
+                                type: "button",
+                                className: "message-file-download",
+                                onClick: ()=>onDownload(file),
+                                children: [
+                                    /*#__PURE__*/ _jsx(Icon, {
+                                        name: "download",
+                                        size: 14
+                                    }),
+                                    "下载"
+                                ]
+                            })
                         ]
                     }),
                     onRemove && /*#__PURE__*/ _jsx("button", {
@@ -4336,6 +4377,72 @@ function ChatFileList({ files, onDownload, onRemove }) {
                     })
                 ]
             }, file.id))
+    });
+}
+function ChatFilePreviewDialog({ file, onClose }) {
+    return /*#__PURE__*/ _jsxs("div", {
+        className: "chat-file-preview-backdrop",
+        role: "presentation",
+        onClick: (event)=>{
+            if (event.target === event.currentTarget) onClose();
+        },
+        children: [
+            /*#__PURE__*/ _jsxs("section", {
+                className: "chat-file-preview-modal",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-labelledby": "chat-file-preview-title",
+                children: [
+                    /*#__PURE__*/ _jsxs("header", {
+                        className: "chat-file-preview-head",
+                        children: [
+                            /*#__PURE__*/ _jsxs("div", {
+                                children: [
+                                    /*#__PURE__*/ _jsx("small", {
+                                        children: "HTML 预览"
+                                    }),
+                                    /*#__PURE__*/ _jsx("h2", {
+                                        id: "chat-file-preview-title",
+                                        title: file.name,
+                                        children: file.name
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ _jsx("button", {
+                                type: "button",
+                                className: "chat-file-preview-close",
+                                onClick: onClose,
+                                "aria-label": "关闭 HTML 预览",
+                                title: "关闭预览",
+                                children: /*#__PURE__*/ _jsx(Icon, {
+                                    name: "close",
+                                    size: 18
+                                })
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ _jsx("div", {
+                        className: "chat-file-preview-stage",
+                        children: /*#__PURE__*/ _jsx("iframe", {
+                            className: "chat-file-preview-frame",
+                            title: `${file.name} HTML 预览`,
+                            srcDoc: file.content,
+                            sandbox: "allow-scripts",
+                            referrerPolicy: "no-referrer"
+                        })
+                    }),
+                    /*#__PURE__*/ _jsx("footer", {
+                        className: "chat-file-preview-foot",
+                        children: /*#__PURE__*/ _jsx("button", {
+                            type: "button",
+                            className: "secondary-action compact",
+                            onClick: onClose,
+                            children: "关闭"
+                        })
+                    })
+                ]
+            })
+        ]
     });
 }
 function renderInlineMarkdown(text) {
@@ -4964,6 +5071,7 @@ export default function Page() {
     const [busyChatIds, setBusyChatIds] = useState([]);
     const [agentRefs, setAgentRefs] = useState([]);
     const [messageReferencePreview, setMessageReferencePreview] = useState(null);
+    const [chatFilePreview, setChatFilePreview] = useState(null);
     const [sharePreview, setSharePreview] = useState(null);
     const [shareBusy, setShareBusy] = useState(false);
     const [shareSelectionMode, setShareSelectionMode] = useState(false);
@@ -5030,6 +5138,14 @@ export default function Page() {
     }, [
         messageReferencePreview
     ]);
+    useEffect(()=>{
+        if (!chatFilePreview) return;
+        const onKeyDown = (event)=>{
+            if (event.key === 'Escape') setChatFilePreview(null);
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return ()=>window.removeEventListener('keydown', onKeyDown);
+    }, [chatFilePreview]);
     useEffect(()=>{
         if (!sharePreview) return;
         const onKeyDown = (event)=>{
@@ -5195,7 +5311,7 @@ export default function Page() {
         window.addEventListener('keydown', closeOnEscape);
         return ()=>window.removeEventListener('keydown', closeOnEscape);
     }, [manualModelProvider]);
-    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && (providerEditor || !state.providers.length)));
+    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || chatFilePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && (providerEditor || !state.providers.length)));
     const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
         state.models,
         state.providers
@@ -6097,6 +6213,19 @@ export default function Page() {
             setToast('');
             toastTimerRef.current = null;
         }, 3000);
+    }
+    function openChatFilePreview(file) {
+        if (!isPreviewableChatFile(file)) return;
+        try {
+            const content = getChatFilePreviewContent(file);
+            if (!content.trim()) throw new Error('HTML 文件内容为空');
+            setChatFilePreview({
+                name: file.name || 'HTML 文件',
+                content
+            });
+        } catch  {
+            notify('文件预览失败');
+        }
     }
     function lastChatMessageElement() {
         const lastMessage = messages[messages.length - 1];
@@ -10776,13 +10905,14 @@ export default function Page() {
                                                                     className: message.pending ? 'pending' : '',
                                                                     children: message.content
                                                                 }),
-                                                                message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList, {
-                                                                    files: message.files,
-                                                                    onDownload: (file)=>{
-                                                                        void downloadChatFile(file).catch(()=>notify('文件下载失败'));
-                                                                    }
-                                                                }) : null,
-                                                                 !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsxs("div", {
+                                                                 message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList, {
+                                                                     files: message.files,
+                                                                     onDownload: (file)=>{
+                                                                         void downloadChatFile(file).catch(()=>notify('文件下载失败'));
+                                                                     },
+                                                                     onPreview: message.role === 'assistant' ? openChatFilePreview : undefined
+                                                                 }) : null,
+                                                                  !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsxs("div", {
                                                                     className: `message-tools ${message.role === 'user' ? 'user-message-tools' : ''}`,
                                                                     children: [
                                                                         /*#__PURE__*/ _jsxs("button", {
@@ -12408,13 +12538,14 @@ export default function Page() {
                                 initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
                                 initialFeather: generateMask?.referenceId === generateRefs[0].id ? generateMask.feather || 0 : 0,
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl, coverage, prompt, annotations, feather)=>{
+                                onApply: (dataUrl, coverage, prompt, annotations, feather, sourceImageDataUrl)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
                                         dataUrl,
                                         coverage,
                                         annotations,
-                                        feather
+                                        feather,
+                                        ...(sourceImageDataUrl ? { sourceImageDataUrl } : {})
                                     });
                                     setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
                                     setGeneratePrompt(prompt);
@@ -15443,14 +15574,14 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 initialAnnotations: editor.annotations || [],
                 initialFeather: editor.feather || 0,
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl, coverage, prompt, annotations, feather)=>{
+                onApply: (dataUrl, coverage, prompt, annotations, feather, sourceImageDataUrl)=>{
                     setEditor((current)=>current ? {
                             ...current,
                             mask: dataUrl,
                             prompt,
                             annotations,
                             feather,
-                            sourceImageDataUrl: undefined,
+                            sourceImageDataUrl: sourceImageDataUrl || undefined,
                             sourceUrl: undefined
                         } : current);
                     setEditorMaskOpen(false);
@@ -16021,15 +16152,19 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                     ]
                 })
             }),
-            outpaintEditor && /*#__PURE__*/ _jsx(OutpaintEditor, {
-                item: outpaintEditor.item,
-                model: selectedGenerateModel?.capabilities.includes('generate') ? selectedGenerateModel : defaultImageModel || availableGenerationModels[0] || null,
-                onClose: ()=>setOutpaintEditor(null),
-                onApply: publishOutpaintReference,
-                onApplyLocal: saveLocalImageEdit,
-                onNotify: notify
-            }),
-            messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
+             outpaintEditor && /*#__PURE__*/ _jsx(OutpaintEditor, {
+                 item: outpaintEditor.item,
+                 model: selectedGenerateModel?.capabilities.includes('generate') ? selectedGenerateModel : defaultImageModel || availableGenerationModels[0] || null,
+                 onClose: ()=>setOutpaintEditor(null),
+                 onApply: publishOutpaintReference,
+                 onApplyLocal: saveLocalImageEdit,
+                 onNotify: notify
+             }),
+             chatFilePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(ChatFilePreviewDialog, {
+                 file: chatFilePreview,
+                 onClose: ()=>setChatFilePreview(null)
+             }), document.body),
+             messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
                 className: "reference-preview-backdrop",
                 onClick: ()=>setMessageReferencePreview(null),
                 children: /*#__PURE__*/ _jsxs("div", {

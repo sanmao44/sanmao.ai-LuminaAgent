@@ -146,6 +146,8 @@ textarea:disabled,
 
 .canvas-stage.is-cursor-selecting,
 .canvas-stage.is-cursor-selecting *,
+.canvas-stage.is-cursor-referencing,
+.canvas-stage.is-cursor-referencing *,
 .canvas-stage.is-cursor-connecting,
 .canvas-stage.is-cursor-connecting *,
 .canvas-port,

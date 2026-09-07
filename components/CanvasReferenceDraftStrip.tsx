@@ -13,6 +13,7 @@ export default function CanvasReferenceDraftStrip({
   onRemove,
   onReorder,
   onPaste,
+  onPickFromCanvas,
   onClear,
   onPreview,
   onNodeDrop,
@@ -26,6 +27,7 @@ export default function CanvasReferenceDraftStrip({
   onRemove: (id: string) => void;
   onReorder: (from: number, to: number) => void;
   onPaste?: () => void;
+  onPickFromCanvas?: () => void;
   onClear?: () => void;
   onPreview?: (reference: CanvasReferenceDraft) => void;
   onNodeDrop?: (nodeId: string) => void;
@@ -80,11 +82,19 @@ export default function CanvasReferenceDraftStrip({
           <small>{references.length}/{max}</small>
         </span>
         <div>
+          {onPickFromCanvas && (
+            <button type="button" disabled={disabled} onClick={onPickFromCanvas}>
+              ⌁ 画布点选
+            </button>
+          )}
           {onPaste && (
             <button type="button" disabled={disabled} onClick={onPaste}>
               粘贴
             </button>
           )}
+          <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()}>
+            上传
+          </button>
           {references.length > 0 && onClear && (
             <button type="button" className="danger" disabled={disabled} onClick={onClear}>
               清空
@@ -148,10 +158,13 @@ export default function CanvasReferenceDraftStrip({
             type="button"
             className="canvas-reference-draft-add"
             disabled={disabled}
-            onClick={() => inputRef.current?.click()}
+            onClick={() => {
+              if (onPickFromCanvas) onPickFromCanvas();
+              else inputRef.current?.click();
+            }}
           >
             <span>＋</span>
-            <small>{references.length ? "继续添加" : emptyLabel}</small>
+            <small>{onPickFromCanvas ? "从画布选择" : references.length ? "继续添加" : emptyLabel}</small>
           </button>
         )}
       </div>

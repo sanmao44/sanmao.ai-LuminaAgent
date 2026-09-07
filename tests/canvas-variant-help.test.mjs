@@ -13,7 +13,10 @@ const styles = await readFile(
 
 test("variant generators expose shared contextual help in cards and editors", () => {
   assert.match(component, /function CanvasGeneratorHelp\(\{ kind \}: \{ kind: CanvasMediaKind \}\)/);
+  assert.match(component, /function CanvasVariantRequirementsEditor\(/);
+  assert.match(component, /className=\{\`canvas-variant-list-row/);
   assert.equal((component.match(/<CanvasGeneratorHelp kind=\{data\.kind === "video" \? "video" : "image"\} \/>/g) || []).length, 3);
+  assert.equal((component.match(/<CanvasVariantRequirementsEditor/g) || []).length, 4);
   assert.match(component, /aria-label=\{`查看\$\{label\}使用方法`\}/);
   assert.match(component, /aria-expanded=\{open\}/);
   assert.match(component, /aria-controls=\{panelId\}/);
@@ -21,9 +24,17 @@ test("variant generators expose shared contextual help in cards and editors", ()
   assert.match(component, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/);
   assert.match(component, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
   assert.match(component, /event\.key !== "Escape"/);
+  assert.match(component, /event\.key === "Enter"/);
+  assert.match(component, /event\.key === "Backspace" && isEmpty/);
+  assert.match(component, /const pastedRows = compactVariantRequirementRows\(/);
+  assert.match(component, /type ClipboardEvent as ReactClipboardEvent/);
+  assert.match(component, /event: ReactClipboardEvent<HTMLDivElement>/);
+  assert.match(component, /event\.nativeEvent\.isComposing/);
+  assert.match(component, /slice\(0, MAX_CANVAS_VARIANTS\)/);
+  assert.match(component, /超过 \$\{MAX_CANVAS_VARIANTS\} 条，已截断多余内容/);
   assert.match(component, /共同提示词会作为每一条变体要求的基础/);
-  assert.match(component, /变体要求每行一条，最多 8 条/);
-  assert.match(component, /输入 @编号/);
+  assert.match(component, /逐条编辑、回车新增、最多 8 条；空行会自动忽略/);
+  assert.match(component, /在每条里输入 @编号/);
   assert.match(component, /视频会按变体要求逐条串行生成/);
   assert.match(component, /预计数量 = 变体条数 × 每条图片数量/);
   assert.match(component, /一次重试全部失败项/);
@@ -32,6 +43,7 @@ test("variant generators expose shared contextual help in cards and editors", ()
 test("variant generator help stays in the node flow and supports visual states", () => {
   assert.match(styles, /\.canvas-generator-head\{display:grid;grid-template-columns:auto minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
   assert.match(styles, /\.canvas-node-variant-editor-head\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
+  assert.match(styles, /\.canvas-node-variant-editor-head>label small\{overflow:visible;text-overflow:clip;white-space:normal;line-height:1\.25/);
   assert.match(styles, /\.canvas-generator-help-popover\{[^}]*grid-column:1\/-1;grid-row:2/);
   assert.match(styles, /\.canvas-generator-help-popover\[data-kind="image"\]/);
   assert.match(styles, /\.canvas-generator-help-popover\[data-kind="video"\]/);
@@ -41,7 +53,11 @@ test("variant generator help stays in the node flow and supports visual states",
   assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\) \.canvas-generator-prompt\{[^}]*flex:0 0 auto/);
   assert.match(styles, /\.canvas-generator-section-heading/);
   assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\) \.canvas-generator-head b\{[^}]*font-size:15px/);
-  assert.match(styles, /\.canvas-node-editor-popover \.canvas-node-variant-editor>\.reference-mention-editor \.reference-mention-editor-content\{[^}]*font-size:12px/);
+  assert.match(styles, /\.canvas-variant-list-row\{display:flex;align-items:flex-start;gap:6px/);
+  assert.match(styles, /\.canvas-variant-list-row-editor \.reference-mention-editor-content\{[^}]*white-space:pre;[^}]*overflow-x:auto;[^}]*overflow-y:hidden/);
+  assert.match(styles, /\.canvas-variant-list-actions button:focus-visible:not\(\:disabled\)/);
+  assert.match(styles, /\.canvas-variant-list-warning\{[^}]*color:var\(--warning\)/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-count\{[^}]*font-variant-numeric:tabular-nums/);
   assert.match(styles, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(component, /data-kind=\{kind\}/);
   assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\)\{[^}]*border:1px solid/);

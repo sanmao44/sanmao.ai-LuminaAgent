@@ -107,6 +107,34 @@ export function normalizeLocalEditAnnotations(value: unknown, limit = 16): Local
   });
 }
 
+/** Return a normalized geometry's visual bounds in source-image coordinates. */
+export function localEditGeometryBounds(geometry: LocalEditAnnotationGeometry) {
+  if (geometry.kind === "point") {
+    return {
+      x: geometry.x - geometry.radius,
+      y: geometry.y - geometry.radius,
+      width: geometry.radius * 2,
+      height: geometry.radius * 2,
+    };
+  }
+  if (geometry.kind === "rectangle" || geometry.kind === "ellipse" || geometry.kind === "smart") {
+    return { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height };
+  }
+  if (geometry.kind === "brush" || geometry.kind === "lasso") {
+    const points = geometry.points;
+    if (!points.length) return { x: 0, y: 0, width: 0.01, height: 0.01 };
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    return {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      width: Math.max(0.01, Math.max(...xs) - Math.min(...xs)),
+      height: Math.max(0.01, Math.max(...ys) - Math.min(...ys)),
+    };
+  }
+  return { x: 0, y: 0, width: 0.01, height: 0.01 };
+}
+
 function sourcePoint(point: LocalEditPoint, width: number, height: number) {
   return { x: clampUnit(point.x) * width, y: clampUnit(point.y) * height };
 }
@@ -226,36 +254,6 @@ export function rasterizeLocalEditAnnotations(
   return pixels;
 }
 
-function geometryBounds(geometry: LocalEditAnnotationGeometry) {
-  if (geometry.kind === "point") {
-    return { x: geometry.x - geometry.radius, y: geometry.y - geometry.radius, width: geometry.radius * 2, height: geometry.radius * 2 };
-  }
-  if (geometry.kind === "rectangle" || geometry.kind === "ellipse" || geometry.kind === "smart") {
-    return { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height };
-  }
-  if (geometry.kind !== "brush" && geometry.kind !== "lasso") {
-    return { x: 0, y: 0, width: 0, height: 0 };
-  }
-  if (!geometry.points.length) return { x: 0, y: 0, width: 0, height: 0 };
-  const xs = geometry.points.map((point) => point.x);
-  const ys = geometry.points.map((point) => point.y);
-  const x = Math.min(...xs);
-  const y = Math.min(...ys);
-  return { x, y, width: Math.max(0, Math.max(...xs) - x), height: Math.max(0, Math.max(...ys) - y) };
-}
-
-function movementDirection(annotation: LocalEditAnnotation) {
-  const source = annotation.move?.from[annotation.move.from.length - 1];
-  if (!source) return "";
-  const sourceBounds = geometryBounds(source);
-  const targetBounds = geometryBounds(annotation.geometry);
-  const dx = targetBounds.x + targetBounds.width / 2 - (sourceBounds.x + sourceBounds.width / 2);
-  const dy = targetBounds.y + targetBounds.height / 2 - (sourceBounds.y + sourceBounds.height / 2);
-  const horizontal = Math.abs(dx) >= 0.005 ? (dx > 0 ? "右" : "左") : "";
-  const vertical = Math.abs(dy) >= 0.005 ? (dy > 0 ? "下" : "上") : "";
-  return horizontal || vertical ? `向${vertical}${horizontal}` : "位置微调";
-}
-
 /** Compile the region descriptions into a provider-compatible prompt. */
 export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnnotation[] = []) {
   const base = String(prompt || "").trim().replace(/\n\n局部区域说明：[\s\S]*$/u, "").trim();
@@ -263,11 +261,10 @@ export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnn
     .map((annotation, index) => {
       const description = annotation.description.trim();
       if (annotation.move?.from.length) {
-        const direction = movementDirection(annotation);
         const history = annotation.move.from.length > 1 ? `（含之前的 ${annotation.move.from.length} 个原位置）` : "";
         return {
           index: index + 1,
-          text: `将对象从原位置${history}移动到目标位置（移动方向：${direction}）；原位置智能补齐并自然恢复背景；在目标位置重建主体。${description ? `补充说明：${description}` : ""}`,
+          text: `以移动参考图中的剪贴结果为准，将圈选主体从原位置${history}移到目标位置；仅修补原位置和目标边缘，保持选区外内容不变。${description ? `补充说明：${description}` : ""}`,
         };
       }
       return { index: index + 1, text: description };
@@ -288,6 +285,118 @@ export function calculateEditableCoverage(pixels: Uint8ClampedArray): number {
     if (pixels[index] < 128) editable += 1;
   }
   return editable / (pixels.length / 4);
+}
+
+/**
+ * Create a visual move guide by cutting the selected pixels from their source
+ * position and placing them at the requested target offset. The original
+ * buffer is never mutated, so callers can use this safely for live previews,
+ * undo snapshots, and the edit reference submitted to a provider.
+ */
+export function moveLocalEditPixels(
+  source: Uint8ClampedArray,
+  selectionMask: Uint8ClampedArray,
+  width: number,
+  height: number,
+  dx: number,
+  dy: number,
+) {
+  if (
+    width < 1 ||
+    height < 1 ||
+    source.length !== width * height * 4 ||
+    selectionMask.length !== source.length
+  ) {
+    throw new Error("Local-edit move buffers must match the canvas dimensions");
+  }
+
+  const original = new Uint8ClampedArray(source);
+  const output = new Uint8ClampedArray(source);
+  const offsetX = Math.round(dx);
+  const offsetY = Math.round(dy);
+
+  // First expose the source area as a hole. The submitted edit mask includes
+  // that location, so the provider can naturally repair it instead of leaving
+  // a duplicate behind.
+  for (let index = 0; index < original.length; index += 4) {
+    const weight = 1 - selectionMask[index + 3] / 255;
+    if (weight <= 0) continue;
+    const keep = 1 - weight;
+    output[index] = Math.round(original[index] * keep);
+    output[index + 1] = Math.round(original[index + 1] * keep);
+    output[index + 2] = Math.round(original[index + 2] * keep);
+    output[index + 3] = Math.round(original[index + 3] * keep);
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceIndex = (y * width + x) * 4;
+      const weight = 1 - selectionMask[sourceIndex + 3] / 255;
+      if (weight <= 0) continue;
+      const targetX = x + offsetX;
+      const targetY = y + offsetY;
+      if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height) continue;
+      const targetIndex = (targetY * width + targetX) * 4;
+      if (weight >= 0.999) {
+        output[targetIndex] = original[sourceIndex];
+        output[targetIndex + 1] = original[sourceIndex + 1];
+        output[targetIndex + 2] = original[sourceIndex + 2];
+        output[targetIndex + 3] = original[sourceIndex + 3];
+        continue;
+      }
+      const keep = 1 - weight;
+      for (let channel = 0; channel < 4; channel += 1) {
+        output[targetIndex + channel] = Math.round(
+          output[targetIndex + channel] * keep + original[sourceIndex + channel] * weight,
+        );
+      }
+    }
+  }
+  return output;
+}
+
+/**
+ * Rebuild the submitted moving-image guide from the original source pixels.
+ * Each annotation's first saved position is its actual source; later entries
+ * only record drag history for the editable mask, so the guide has a single
+ * clean cutout at the original position and a paste at the final target.
+ */
+export function composeLocalEditMoveReference(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  annotations: LocalEditAnnotation[] = [],
+  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+) {
+  if (width < 1 || height < 1 || source.length !== width * height * 4) {
+    throw new Error("Local-edit move reference must match the canvas dimensions");
+  }
+
+  let output = new Uint8ClampedArray(source);
+  for (const annotation of normalizeLocalEditAnnotations(annotations)) {
+    const sourceGeometry = annotation.move?.from[0];
+    if (!sourceGeometry) continue;
+    const sourceBounds = localEditGeometryBounds(sourceGeometry);
+    const targetBounds = localEditGeometryBounds(annotation.geometry);
+    const selection = createProtectedMask(width, height);
+    applyLocalEditGeometryMask(
+      selection,
+      width,
+      height,
+      sourceGeometry,
+      "edit",
+      smartMasks?.get(`${annotation.id}:from:0`),
+    );
+    output = moveLocalEditPixels(
+      output,
+      selection,
+      width,
+      height,
+      ((targetBounds.x + targetBounds.width / 2) - (sourceBounds.x + sourceBounds.width / 2)) * width,
+      ((targetBounds.y + targetBounds.height / 2) - (sourceBounds.y + sourceBounds.height / 2)) * height,
+    );
+  }
+  return output;
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   useState,
   type CSSProperties,
   type ChangeEvent as ReactChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -24,6 +25,7 @@ import {
   arrangeCanvas,
   arrangeCanvasGroup,
   CANVAS_GROUP_INSETS,
+  MAX_CANVAS_VARIANTS,
   canvasEdgeEndpoints,
   canConnect,
   clone,
@@ -260,7 +262,13 @@ type CanvasCursorTask =
   | "connecting"
   | "dragging"
   | "resizing"
-  | "copying";
+  | "copying"
+  | "referencing";
+type CanvasReferencePicker = {
+  targetId: string;
+  mode: "connected" | "draft";
+  role?: CanvasInputRole;
+};
 type Point = { x: number; y: number };
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
 const CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS = 140;
@@ -1471,6 +1479,301 @@ function variantStatusLabel(status: CanvasVariantState["status"]) {
         : "等待中";
 }
 
+function sanitizeVariantRequirementRow(value: string) {
+  return String(value || "").replace(/\r\n?/g, " ");
+}
+
+function compactVariantRequirementRows(rows: readonly string[]) {
+  const compacted: string[] = [];
+  rows.forEach((row) => {
+    const value = sanitizeVariantRequirementRow(row);
+    if (!value.trim()) {
+      if (!compacted.length || compacted[compacted.length - 1].trim()) {
+        compacted.push("");
+      }
+      return;
+    }
+    compacted.push(value);
+  });
+  while (compacted.length > 1 && !compacted[compacted.length - 1].trim()) {
+    compacted.pop();
+  }
+  return compacted.length ? compacted : [""];
+}
+
+function variantRequirementRowsForEditor(value: string) {
+  const compacted = compactVariantRequirementRows(
+    String(value || "").replace(/\r\n?/g, "\n").split("\n"),
+  );
+  const rows = compacted.slice(0, MAX_CANVAS_VARIANTS);
+  if (rows.length < MAX_CANVAS_VARIANTS && rows[rows.length - 1].trim()) {
+    rows.push("");
+  }
+  return {
+    rows,
+    overflowCount: Math.max(0, compacted.length - MAX_CANVAS_VARIANTS),
+  };
+}
+
+function serializeVariantRequirementRows(rows: readonly string[]) {
+  return compactVariantRequirementRows(rows)
+    .slice(0, MAX_CANVAS_VARIANTS)
+    .join("\n");
+}
+
+function focusContentEditableEnd(editor: HTMLDivElement | null) {
+  if (!editor) return;
+  editor.focus();
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+type CanvasVariantRequirementsEditorProps = {
+  value: string;
+  references: readonly ReferenceMentionOption[];
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  className?: string;
+  menuClassName?: string;
+  menuPortal?: boolean;
+  note?: ReactNode;
+};
+
+const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsEditor({
+  value,
+  references,
+  onChange,
+  ariaLabel,
+  className = "",
+  menuClassName = "",
+  menuPortal = false,
+  note,
+}: CanvasVariantRequirementsEditorProps) {
+  const rowState = useMemo(
+    () => variantRequirementRowsForEditor(value),
+    [value],
+  );
+  const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const focusIndexRef = useRef<number | null>(null);
+  const overflowTimerRef = useRef<number | null>(null);
+  const [overflowNotice, setOverflowNotice] = useState<string | null>(null);
+
+  useEffect(() => () => {
+    if (overflowTimerRef.current !== null) {
+      window.clearTimeout(overflowTimerRef.current);
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (focusIndexRef.current === null) return;
+    const index = Math.max(
+      0,
+      Math.min(focusIndexRef.current, rowState.rows.length - 1),
+    );
+    focusIndexRef.current = null;
+    focusContentEditableEnd(rowRefs.current[index] || null);
+  }, [rowState.rows]);
+
+  const notifyOverflow = useCallback((message: string) => {
+    setOverflowNotice(message);
+    if (overflowTimerRef.current !== null) {
+      window.clearTimeout(overflowTimerRef.current);
+    }
+    overflowTimerRef.current = window.setTimeout(() => {
+      setOverflowNotice(null);
+      overflowTimerRef.current = null;
+    }, 2400);
+  }, []);
+
+  const commitRows = useCallback((nextRows: readonly string[], focusIndex?: number) => {
+    const serialized = serializeVariantRequirementRows(nextRows);
+    if (typeof focusIndex === "number") {
+      focusIndexRef.current = focusIndex;
+    }
+    onChange(serialized);
+    const overflowCount = compactVariantRequirementRows(nextRows).length - MAX_CANVAS_VARIANTS;
+    if (overflowCount > 0) {
+      notifyOverflow(`超过 ${MAX_CANVAS_VARIANTS} 条，已截断多余内容`);
+    }
+  }, [notifyOverflow, onChange]);
+
+  const updateRow = useCallback((index: number, nextValue: string) => {
+    const nextRows = rowState.rows.slice();
+    nextRows[index] = sanitizeVariantRequirementRow(nextValue);
+    commitRows(nextRows);
+  }, [commitRows, rowState.rows]);
+
+  const insertRowAfter = useCallback((index: number) => {
+    const currentRows = rowState.rows;
+    const nextRows = currentRows.slice();
+    const currentRow = currentRows[index] || "";
+    const isLastRow = index === currentRows.length - 1;
+    const isPenultimateTailRow = index === currentRows.length - 2 && !currentRows[currentRows.length - 1]?.trim();
+
+    if (isLastRow && !currentRow.trim()) return;
+    if (isPenultimateTailRow) {
+      focusContentEditableEnd(rowRefs.current[index + 1] || null);
+      return;
+    }
+    if (currentRows.length >= MAX_CANVAS_VARIANTS) {
+      notifyOverflow(`超过 ${MAX_CANVAS_VARIANTS} 条，已截断多余内容`);
+      return;
+    }
+
+    nextRows.splice(index + 1, 0, "");
+    commitRows(nextRows, index + 1);
+  }, [commitRows, notifyOverflow, rowState.rows]);
+
+  const moveRow = useCallback((index: number, direction: -1 | 1) => {
+    const currentRows = rowState.rows;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= currentRows.length) return;
+    const nextRows = currentRows.slice();
+    const [moved] = nextRows.splice(index, 1);
+    nextRows.splice(nextIndex, 0, moved);
+    commitRows(nextRows, nextIndex);
+  }, [commitRows, rowState.rows]);
+
+  const deleteRow = useCallback((index: number) => {
+    const currentRows = rowState.rows;
+    if (currentRows.length === 1 && !currentRows[0].trim()) return;
+    const nextRows = currentRows.slice();
+    nextRows.splice(index, 1);
+    commitRows(nextRows, Math.max(0, index - 1));
+  }, [commitRows, rowState.rows]);
+
+  const handlePaste = useCallback((index: number, event: ReactClipboardEvent<HTMLDivElement>) => {
+    const pastedText = event.clipboardData.getData("text/plain");
+    if (!pastedText) return;
+    const normalizedText = pastedText.replace(/\r\n?/g, "\n");
+    if (!normalizedText.includes("\n")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pastedRows = compactVariantRequirementRows(
+      replaceNaturalReferenceLabels(normalizedText, references).value.split("\n"),
+    );
+    const nextRows = rowState.rows.slice();
+    nextRows.splice(index, 1, ...pastedRows);
+    commitRows(nextRows, Math.min(index + pastedRows.length - 1, MAX_CANVAS_VARIANTS - 1));
+  }, [commitRows, references, rowState.rows]);
+
+  return (
+    <div className={`canvas-variant-list-editor ${className}`.trim()}>
+      <div className="canvas-variant-list">
+        {rowState.rows.map((row, index) => {
+          const isTailRow = index === rowState.rows.length - 1 && !row.trim() && rowState.rows.length < MAX_CANVAS_VARIANTS;
+          const isEmpty = !row.trim();
+          return (
+            <div
+              className={`canvas-variant-list-row${isTailRow ? " is-tail" : ""}${isEmpty ? " is-empty" : ""}`}
+              key={index}
+            >
+              <span className="canvas-variant-list-index">{index + 1}</span>
+              <ReferenceMentionEditor
+                ref={(element) => {
+                  rowRefs.current[index] = element;
+                }}
+                value={row}
+                references={references}
+                ariaLabel={`${ariaLabel} 第 ${index + 1} 条`}
+                className="canvas-variant-list-row-editor"
+                menuClassName={menuClassName}
+                menuPortal={menuPortal}
+                placeholder={isTailRow ? "按回车新增下一条" : `输入第 ${index + 1} 条`}
+                transformPastedText={(text) => replaceNaturalReferenceLabels(text, references).value}
+                onChange={(nextValue) => updateRow(index, nextValue)}
+                onMentionSelect={(_candidateIndex, nextValue) => updateRow(index, nextValue)}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return;
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    insertRowAfter(index);
+                    return;
+                  }
+                  if (event.key === "Backspace" && isEmpty) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    deleteRow(index);
+                  }
+                }}
+                onPaste={(event) => handlePaste(index, event)}
+              />
+              <div className="canvas-variant-list-actions">
+                <button
+                  type="button"
+                  aria-label={`上移第 ${index + 1} 条`}
+                  title="上移"
+                  disabled={index === 0}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    moveRow(index, -1);
+                  }}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label={`下移第 ${index + 1} 条`}
+                  title="下移"
+                  disabled={index === rowState.rows.length - 1}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    moveRow(index, 1);
+                  }}
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  aria-label={`删除第 ${index + 1} 条`}
+                  title="删除"
+                  disabled={rowState.rows.length === 1 && !row.trim()}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deleteRow(index);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {((overflowNotice || rowState.overflowCount > 0) || note) && (
+        <div className="canvas-variant-list-footer">
+          {(overflowNotice || rowState.overflowCount > 0) && (
+            <small className="canvas-variant-list-warning" role="status" aria-live="polite">
+              {overflowNotice || `超过 ${MAX_CANVAS_VARIANTS} 条，已截断多余内容`}
+            </small>
+          )}
+          {note && <small className="canvas-variant-list-note">{note}</small>}
+        </div>
+      )}
+    </div>
+  );
+});
+
+CanvasVariantRequirementsEditor.displayName = "CanvasVariantRequirementsEditor";
+
 function CanvasGeneratorHelp({ kind }: { kind: CanvasMediaKind }) {
   const [open, setOpen] = useState(false);
   const helpId = useId();
@@ -1537,8 +1840,8 @@ function CanvasGeneratorHelp({ kind }: { kind: CanvasMediaKind }) {
                 : "需要参考时，先连接已完成的图片；图片变体生成器不能接收视频作为图片参考。"}
             </li>
             <li>共同提示词会作为每一条变体要求的基础。</li>
-            <li>变体要求每行一条，最多 8 条，空行会自动忽略。</li>
-            <li>在提示词中输入 @编号，可以指定要使用的引用素材。</li>
+            <li>逐条编辑、回车新增、最多 8 条；空行会自动忽略。</li>
+            <li>在每条里输入 @编号，可以指定要使用的引用素材。</li>
             <li>
               {isVideo
                 ? "视频会按变体要求逐条串行生成，每条对应一段视频；输入方式要和当前模型支持的模式匹配。"
@@ -1914,6 +2217,15 @@ function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | 
   };
 }
 
+function isCanvasReferencePickerCandidate(node: CanvasNode | undefined) {
+  return Boolean(
+    node &&
+      (node.type === "prompt" ||
+        node.type === "generator" ||
+        isCanvasReferenceableNode(node)),
+  );
+}
+
 function canvasReferenceRecordsFromNodes(nodes: CanvasNode[]) {
   const seen = new Set<string>();
   return nodes
@@ -2270,6 +2582,9 @@ export default function SuperCanvas() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [referencePicker, setReferencePicker] = useState<CanvasReferencePicker | null>(null);
+  const [referencePickerHoverNodeId, setReferencePickerHoverNodeId] = useState<string | null>(null);
+  const [referencePickerFlashNodeId, setReferencePickerFlashNodeId] = useState<string | null>(null);
   const [expandedEditorId, setExpandedEditorId] = useState<string | null>(null);
   const [nodeGestureActive, setNodeGestureActive] = useState(false);
   const [quickToolbarNodeId, setQuickToolbarNodeId] = useState<string | null>(
@@ -2775,6 +3090,86 @@ export default function SuperCanvas() {
     },
     [addLog, commit, notify, runtime],
   );
+  const beginReferencePicker = useCallback(
+    (targetId: string, mode: CanvasReferencePicker["mode"], role?: CanvasInputRole) => {
+      const target = nodeById(docRef.current, targetId);
+      const targetKind = target && (target.type === "media" || target.type === "generator")
+        ? target.data.kind
+        : undefined;
+      const supportedTarget = Boolean(
+        target && (
+          target.type === "prompt" ||
+          target.type === "upscale" ||
+          target.type === "generator" ||
+          (target.type === "media" && targetKind !== "audio")
+        ),
+      );
+      if (!target || !supportedTarget) return;
+      setReferencePicker({ targetId, mode, ...(role ? { role } : {}) });
+      setReferencePickerHoverNodeId(null);
+      setReferencePickerFlashNodeId(null);
+      setContextMenu(null);
+      setConnection(null);
+      setConnectionNodePicker(null);
+      setConnectionTargetId(null);
+      setSelectedEdgeId(null);
+      setQuickToolbarNodeId(null);
+      setCursorTask("referencing");
+    },
+    [],
+  );
+  const cancelReferencePicker = useCallback(() => {
+    setReferencePicker(null);
+    setReferencePickerHoverNodeId(null);
+    setReferencePickerFlashNodeId(null);
+    setCursorTask("idle");
+  }, []);
+  const pickReferenceNode = useCallback(
+    (node: CanvasNode) => {
+      const picker = referencePicker;
+      if (!picker) return;
+      if (node.id === picker.targetId) {
+        notify("不能把当前节点作为自己的参考。", "error");
+        return;
+      }
+      if (!isCanvasReferencePickerCandidate(node)) {
+        notify("这个节点暂时不能作为参考对象。", "error");
+        return;
+      }
+
+      let accepted = false;
+      if (picker.mode === "draft") {
+        const reference = canvasReferenceDraftFromNode(node);
+        const current = reuseDraft;
+        if (!reference || !current || current.sourceNodeId !== picker.targetId) {
+          notify("这个节点没有可用的参考内容。", "error");
+          return;
+        }
+        const result = addReferenceDrafts(current.references, [reference]);
+        if (!result.added.length) {
+          notify(current.references.length >= 16 ? "参考图最多 16 张。" : "该节点已经在参考列表中。", "error");
+          return;
+        }
+        setReuseDraft({ ...current, references: result.references, dirty: true });
+        accepted = true;
+      } else {
+        accepted = connectCanvasNodes(
+          node.id,
+          picker.targetId,
+          "right",
+          "left",
+          picker.role,
+        );
+      }
+      if (!accepted) return;
+      setReferencePicker(null);
+      setReferencePickerHoverNodeId(null);
+      setReferencePickerFlashNodeId(node.id);
+      setCursorTask("idle");
+      window.setTimeout(() => setReferencePickerFlashNodeId((current) => current === node.id ? null : current), 520);
+    },
+    [connectCanvasNodes, notify, referencePicker, reuseDraft],
+  );
   const refreshGenerationLogs = useCallback(async () => {
     setGenerationLogsLoading(true);
     try {
@@ -3239,7 +3634,8 @@ export default function SuperCanvas() {
       if (event.code !== "Space" || isEditableTarget(event.target)) return;
       spaceHeldRef.current = true;
       setPanReady(true);
-      if (!interactionRef.current) setCursorTask("idle");
+      if (!interactionRef.current)
+        setCursorTask(referencePicker ? "referencing" : "idle");
       event.preventDefault();
       if (interactionRef.current?.kind === "pan") setPanActive(true);
     };
@@ -3249,13 +3645,14 @@ export default function SuperCanvas() {
       setPanReady(false);
       if (!interactionRef.current) {
         setPanActive(false);
-        setCursorTask("idle");
+        setCursorTask(referencePicker ? "referencing" : "idle");
       }
     };
     const handleWindowBlur = () => {
       spaceHeldRef.current = false;
       setPanReady(false);
       setPanActive(false);
+      cancelReferencePicker();
       setCursorTask("idle");
     };
     window.addEventListener("keydown", handleSpaceDown);
@@ -3266,7 +3663,7 @@ export default function SuperCanvas() {
       window.removeEventListener("keyup", handleSpaceUp);
       window.removeEventListener("blur", handleWindowBlur);
     };
-  }, []);
+  }, [cancelReferencePicker, referencePicker]);
   const openNodePosition = useCallback((position: Point, node: CanvasNode, extraOccupied: CanvasNode[] = []) => {
     const size = nodeSize(node);
     const candidates: Point[] = [{ x: position.x, y: position.y }];
@@ -3394,8 +3791,14 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-reference-picker-banner,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
+      // During reference picking, node clicks stay reserved for selecting a
+      // reference. Blank canvas clicks must still be able to pan the viewport.
+      if (referencePicker && !panIntent && event.button === 0 && overCanvasContent) {
+        event.preventDefault();
+        return;
+      }
       // A normal left-button press on canvas content is handled by that
       // content's own pointer handlers (node/group drag, resize, connect).
       // Don't hijack it into a canvas pan here.
@@ -3424,7 +3827,10 @@ export default function SuperCanvas() {
         camera: document.camera,
         changed: false,
         clearSelectionOnClick:
-          event.button === 0 && !event.shiftKey && !spaceHeldRef.current,
+          event.button === 0 &&
+          !event.shiftKey &&
+          !spaceHeldRef.current &&
+          !referencePicker,
       };
       setCursorTask("panning");
       setPanActive(true);
@@ -3434,6 +3840,7 @@ export default function SuperCanvas() {
       capture,
       document.camera,
       cancelPendingNodeClick,
+      referencePicker,
       startMarquee,
     ],
   );
@@ -3450,6 +3857,12 @@ export default function SuperCanvas() {
       // Holding Space switches to canvas pan mode, so let the pointer event
       // bubble to the stage pan handler instead of starting a node drag.
       if (spaceHeldRef.current) return;
+      if (referencePicker) {
+        event.preventDefault();
+        event.stopPropagation();
+        pickReferenceNode(node);
+        return;
+      }
       focusCanvasStage();
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       event.preventDefault();
@@ -3519,6 +3932,8 @@ export default function SuperCanvas() {
       setNodeGestureActive,
       selectedGroupId,
       selectedIds,
+      pickReferenceNode,
+      referencePicker,
       startMarquee,
     ],
   );
@@ -3529,6 +3944,12 @@ export default function SuperCanvas() {
       // Holding Space switches to canvas pan mode, so let the pointer event
       // bubble to the stage pan handler instead of starting a group drag.
       if (spaceHeldRef.current) return;
+      if (referencePicker) {
+        event.preventDefault();
+        event.stopPropagation();
+        notify("对象组暂不支持作为单个参考对象，请点击具体节点。", "error");
+        return;
+      }
       focusCanvasStage();
       event.preventDefault();
       event.stopPropagation();
@@ -3573,11 +3994,12 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture, focusCanvasStage, selectedIds, startMarquee],
+    [capture, focusCanvasStage, notify, referencePicker, selectedIds, startMarquee],
   );
 
   const startGroupResize = useCallback(
     (event: ReactPointerEvent, group: CanvasGroup) => {
+      if (referencePicker) return;
       event.preventDefault();
       event.stopPropagation();
       setCursorTask("resizing");
@@ -3611,11 +4033,12 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture],
+    [capture, referencePicker],
   );
 
   const startResize = useCallback(
     (event: ReactPointerEvent, node: CanvasNode) => {
+      if (referencePicker) return;
       event.preventDefault();
       event.stopPropagation();
       setCursorTask("resizing");
@@ -3634,10 +4057,11 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture],
+    [capture, referencePicker],
   );
   const startConnection = useCallback(
     (event: ReactPointerEvent, nodeId: string, port: "left" | "right") => {
+      if (referencePicker) return;
       event.preventDefault();
       event.stopPropagation();
       setCursorTask("connecting");
@@ -3661,7 +4085,7 @@ export default function SuperCanvas() {
       };
       capture(event);
     },
-    [capture, stagePoint],
+    [capture, referencePicker, stagePoint],
   );
 
   const cancelConnection = useCallback(
@@ -4158,7 +4582,7 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
-      setCursorTask("idle");
+      setCursorTask(referencePicker ? "referencing" : "idle");
       setMarquee(null);
       try {
         stageRef.current?.releasePointerCapture(event.pointerId);
@@ -4174,6 +4598,7 @@ export default function SuperCanvas() {
       clearSelection,
       notify,
       cancelPendingNodeClick,
+      referencePicker,
       reuseDraft,
       stagePoint,
       stageToWorld,
@@ -4194,7 +4619,7 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
       setPanActive(false);
-      setCursorTask("idle");
+      setCursorTask(referencePicker ? "referencing" : "idle");
       setMarquee(null);
       setConnection(null);
       setConnectionNodePicker(null);
@@ -4205,7 +4630,7 @@ export default function SuperCanvas() {
         /* pointer capture already released */
       }
     },
-    [],
+    [referencePicker],
   );
 
   useEffect(() => {
@@ -8716,7 +9141,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, sourceImageDataUrl?: string) => {
       const node = maskNodeId
         ? nodeById(docRef.current, maskNodeId)
         : undefined;
@@ -8747,8 +9172,12 @@ export default function SuperCanvas() {
         const uploaded = await uploadCanvasAsset(
           dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
         );
+        const movedSource = sourceImageDataUrl
+          ? await uploadCanvasAsset(dataUrlFile(sourceImageDataUrl, `moved-source-${node.id}.png`))
+          : undefined;
+        const liveDraft = editorDrafts[node.id];
         const settings = copyParams(
-          existingDraft.params,
+          liveDraft?.params || existingDraft.params,
           "image",
           runtime,
         ) as ImageCreationSettings;
@@ -8758,15 +9187,17 @@ export default function SuperCanvas() {
           mask: {
             assetId: uploaded.id,
             url: uploaded.url,
+            ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
             ...(annotations.length ? { annotations } : {}),
             feather: maskFeather,
           },
         } satisfies ImageCreationSettings;
-        const nextPrompt = prompt?.trim() || existingDraft.prompt;
+        const nextPrompt = prompt?.trim() || liveDraft?.prompt?.trim() || existingDraft.prompt;
         const maskCoverage = Math.max(0, Math.min(1, coverage));
         const mask: CanvasMaskState = {
           assetId: uploaded.id,
           url: uploaded.url,
+          ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
           status: "pending",
           coverage: maskCoverage,
           ...(annotations.length ? { annotations } : {}),
@@ -8781,15 +9212,16 @@ export default function SuperCanvas() {
               ? {
                   ...item,
                   data: {
-                    ...item.data,
-                    ...(nextPrompt ? { prompt: nextPrompt } : {}),
+                  ...item.data,
+                    prompt: nextPrompt,
                     mask,
                     params: clone(params),
+                    editor: { ...item.data.editor, dirty: true, draftPrompt: nextPrompt, draftParams: clone(params) },
                     ...(item.data.generation
                       ? {
                           generation: {
                             ...item.data.generation,
-                            ...(nextPrompt ? { prompt: nextPrompt } : {}),
+                            prompt: nextPrompt,
                             params: clone(params),
                           },
                         }
@@ -8799,9 +9231,18 @@ export default function SuperCanvas() {
               : item,
           ),
         }));
-        if (reuseDraft?.sourceNodeId === node.id) {
-          setReuseDraft({ ...existingDraft, prompt: nextPrompt, params, dirty: true });
-        }
+        setEditorDrafts((current) => ({
+          ...current,
+          [node.id]: {
+            ...current[node.id],
+            prompt: nextPrompt,
+            params: clone(params),
+            dirty: true,
+          },
+        }));
+        setReuseDraft((current) => current?.sourceNodeId === node.id
+          ? { ...current, prompt: nextPrompt, params: clone(params), dirty: true }
+          : current);
         // Applying a local edit completes the mask dialog. Do not reopen the
         // generic image prompt editor here: the local-edit chip is the single
         // entry point for reviewing or changing this mask again.
@@ -8821,7 +9262,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [maskNodeId, notify, reuseDraft, runtime, updateDoc],
+    [editorDrafts, maskNodeId, notify, reuseDraft, runtime, updateDoc],
   );
 
   const removeCanvasMask = useCallback(
@@ -9635,6 +10076,10 @@ export default function SuperCanvas() {
         )) return;
         event.preventDefault();
         event.stopPropagation();
+        if (referencePicker) {
+          cancelReferencePicker();
+          return;
+        }
         if (mentionState) {
           setMentionState(null);
           return;
@@ -9754,6 +10199,7 @@ export default function SuperCanvas() {
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     breakGroup,
+    cancelReferencePicker,
     clearSelection,
     commit,
     contextMenu,
@@ -9776,6 +10222,7 @@ export default function SuperCanvas() {
     lightbox,
     maskNodeId,
     reusePreview,
+    referencePicker,
     selectedEdgeId,
     stageSize.height,
     stageSize.width,
@@ -9787,6 +10234,10 @@ export default function SuperCanvas() {
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
+      if (referencePicker) {
+        event.preventDefault();
+        return;
+      }
       const target = event.target;
       const element = target instanceof Element ? target : null;
       const nodeElement = element?.closest<HTMLElement>("[data-canvas-node-id]");
@@ -9854,7 +10305,7 @@ export default function SuperCanvas() {
         },
       });
     },
-    [document.camera, selectNode, selectedIds, stagePoint],
+    [document.camera, referencePicker, selectNode, selectedIds, stagePoint],
   );
   const deck = deckSource();
   const selectedAudioNode = selectedSingle?.type === "media" && selectedSingle.data.kind === "audio";
@@ -10367,6 +10818,9 @@ export default function SuperCanvas() {
   const connectionTargetScreen = connectionTargetBounds
     ? worldToScreen(connectionTargetBounds.x, connectionTargetBounds.y)
     : null;
+  const referencePickerTarget = referencePicker
+    ? nodeById(document, referencePicker.targetId)
+    : undefined;
   // O(1) lookup maps built only when the node/group collections change. The
   // memoized edge visuals use these instead of re-scanning the whole document
   // for source/target geometry and color on every render/frame.
@@ -11469,7 +11923,21 @@ export default function SuperCanvas() {
         aria-keyshortcuts="Delete"
         onPointerDown={handleStagePointerDown}
         onPointerDownCapture={handleStagePointerDownCapture}
-        onPointerMove={moveInteraction}
+        onPointerMove={(event) => {
+          if (referencePicker) {
+            const hit = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-canvas-node-id]");
+            const nodeId = hit?.dataset.canvasNodeId || null;
+            const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+            setReferencePickerHoverNodeId(
+              node && node.id !== referencePicker.targetId && isCanvasReferencePickerCandidate(node)
+                ? node.id
+                : null,
+            );
+            if (interactionRef.current?.kind === "pan") moveInteraction(event);
+            return;
+          }
+          moveInteraction(event);
+        }}
         onPointerUp={finishInteraction}
         onPointerCancel={cancelPointerInteraction}
         onLostPointerCapture={cancelPointerInteraction}
@@ -11516,6 +11984,10 @@ export default function SuperCanvas() {
           }
         }}
         onDragStart={(event) => {
+          if (referencePicker) {
+            event.preventDefault();
+            return;
+          }
           const target = event.target as HTMLElement;
           const isReferenceDrag = Boolean(
             target.closest(".canvas-reference-item"),
@@ -11589,6 +12061,18 @@ export default function SuperCanvas() {
           <div className="canvas-file-drop-hint" aria-hidden="true">
             <span>↥</span>
             <b>松开以导入图片或视频</b>
+          </div>
+        )}
+        {referencePicker && (
+          <div className="canvas-reference-picker-banner" role="status">
+            <span aria-hidden="true">⌁</span>
+            <div>
+              <b>选择参考对象</b>
+              <small>
+                点击画布节点{referencePickerTarget ? `添加到“${nodeLabel(referencePickerTarget)}”` : ""} · Esc 取消
+              </small>
+            </div>
+            <button type="button" onClick={cancelReferencePicker}>取消</button>
           </div>
         )}
         <div className="canvas-grid" />
@@ -11793,6 +12277,10 @@ export default function SuperCanvas() {
                   node={node}
                   selected={selectedIds.has(node.id)}
                   dragging={draggingNodeIds.has(node.id)}
+                  referencePickerActive={Boolean(referencePicker)}
+                  referencePickerTargetId={referencePicker?.targetId || null}
+                  referencePickerHoverNodeId={referencePickerHoverNodeId}
+                  referencePickerFlashNodeId={referencePickerFlashNodeId}
                   document={document}
                   onPointerDown={startNodeDrag}
                   onResize={startResize}
@@ -11929,6 +12417,11 @@ export default function SuperCanvas() {
               onReferenceRemove={removeNodeReference}
               onReferenceDrop={addNodeReference}
               onAddReferenceFiles={addEditorReferenceFiles}
+              onPickFromCanvas={(role) => beginReferencePicker(
+                editorNode.id,
+                reuseDraft?.sourceNodeId === editorNode.id ? "draft" : "connected",
+                role,
+              )}
               onRestoreAutomatic={restoreAutomaticVideoInputMode}
               maskState={maskStateForNode(editorNode)}
               onLocalEdit={() => openCanvasMaskEditor(editorNode.id)}
@@ -12377,33 +12870,21 @@ export default function SuperCanvas() {
                     <div className="canvas-variant-editor-head">
                       <div>
                         <b>变体要求</b>
-                        <small>每行一条要求，空行自动忽略，最多 8 条</small>
+                        <small>逐条编辑、回车新增、最多 8 条</small>
                       </div>
                       <span>{variantRequirementsFor(selectedSingle).length}/8</span>
                     </div>
-                    <ReferenceMentionEditor
-                      ariaLabel="变体要求，每行一条"
+                    <CanvasVariantRequirementsEditor
+                      ariaLabel="变体要求"
                       value={
                         selectedSingle.data.variantRequirementsText ??
                         variantRequirementsFor(selectedSingle).join("\n")
                       }
                       references={mentionCandidates.map((node, index) => canvasMentionOption(document, node, index))}
-                      className="canvas-variant-requirements-editor"
                       menuClassName="canvas-mention-menu canvas-variant-mention-menu"
-                      onChange={(value) => updateVariantRequirements(value)}
-                      onMentionSelect={(index, value) => applyDeckVariantMention(index, value)}
-                      placeholder="改成夜景\n改为俯拍视角\n替换成红色包装"
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") setVariantMentionState(null);
-                      }}
-                      transformPastedText={(text) => replaceNaturalReferenceLabels(
-                        text,
-                        mentionCandidates.map((node, index) => canvasMentionOption(document, node, index)),
-                      ).value}
+                      onChange={updateVariantRequirements}
+                      note="每条要求都会叠加到共同提示词，并按顺序生成独立结果。"
                     />
-                    <small className="canvas-variant-editor-note">
-                      每条要求都会叠加到共同提示词，并按顺序生成独立结果。
-                    </small>
                   </div>
                 )}
                 <CreationParameterEditor
@@ -12726,7 +13207,7 @@ export default function SuperCanvas() {
           initialPrompt={editorPromptFor(maskNode)}
           initialAnnotations={maskNode.data.mask?.annotations || maskSettings?.mask?.annotations || []}
           initialFeather={maskNode.data.mask?.feather ?? maskSettings?.mask?.feather ?? 0}
-          onApply={(value, coverage, prompt, annotations, feather) => applyCanvasMask(value, coverage, prompt, annotations, feather)}
+          onApply={(value, coverage, prompt, annotations, feather, sourceImageDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, sourceImageDataUrl)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}
@@ -13767,6 +14248,7 @@ function CanvasNodeReferenceStrip({
   onRemove,
   onDrop,
   onAddFiles,
+  onPickFromCanvas,
   onPreview,
   onTextPreview,
   onRestoreAutomatic,
@@ -13780,6 +14262,7 @@ function CanvasNodeReferenceStrip({
   onRemove: (ownerId: string, sourceId: string) => void;
   onDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
   onAddFiles: (ownerId: string, files: File[]) => void;
+  onPickFromCanvas?: (role?: CanvasInputRole) => void;
   onPreview: (node: CanvasNode) => void;
   onTextPreview: (node: CanvasNode) => void;
   onRestoreAutomatic?: (targetId: string) => void;
@@ -13863,7 +14346,11 @@ function CanvasNodeReferenceStrip({
       onDrop={(event) => handleDrop(event, reference?.id || "__slot__", slotRole)}
     >
       <span className="canvas-editor-slot-label"><b>{label}</b><small>{reference ? "已连接" : "拖入图片"}</small></span>
-      {reference ? renderItem(reference, references.findIndex((item) => item.id === reference.id), "slot-item", slotRole) : <span className="canvas-editor-frame-slot-empty">＋ 添加图片</span>}
+      {reference ? renderItem(reference, references.findIndex((item) => item.id === reference.id), "slot-item", slotRole) : (
+        <button type="button" className="canvas-editor-frame-slot-empty" onClick={() => onPickFromCanvas?.(slotRole)}>
+          ＋ 从画布选择
+        </button>
+      )}
     </div>
   );
 
@@ -13889,6 +14376,7 @@ function CanvasNodeReferenceStrip({
            {isVideoTarget && connectedVideos.length > 0 && <small>视频输入 {connectedVideos.length}/{videoLimits?.maxReferenceVideos ?? 10}</small>}
            {isVideoTarget && references.some((item) => item.data.kind === "audio") && <small>音频输入 {references.filter((item) => item.data.kind === "audio").length}/{videoLimits?.maxAudios ?? 10}</small>}
           {isVideoTarget && target.data.videoInputModeAuto === false && onRestoreAutomatic && <button type="button" onClick={() => onRestoreAutomatic(target.id)}>恢复自动</button>}
+          {onPickFromCanvas && <button type="button" onClick={() => onPickFromCanvas()}>⌁ 画布点选</button>}
           <button type="button" onClick={() => inputRef.current?.click()}>＋ 添加</button>
         </div>
       </div>
@@ -14336,6 +14824,7 @@ type CanvasNodeEditorPopoverProps = {
   onReferenceRemove: (ownerId: string, sourceId: string) => void;
   onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
   onAddReferenceFiles: (ownerId: string, files: File[]) => void;
+  onPickFromCanvas?: (role?: CanvasInputRole) => void;
   onRestoreAutomatic: (targetId: string) => void;
   branchDraft?: CanvasReuseDraft | null;
   onDraftReferenceFiles?: (files: File[]) => void;
@@ -15021,6 +15510,7 @@ function CanvasNodeEditorPopover({
   onReferenceRemove,
   onReferenceDrop,
   onAddReferenceFiles,
+  onPickFromCanvas,
   onRestoreAutomatic,
   branchDraft,
   onDraftReferenceFiles,
@@ -15132,7 +15622,7 @@ function CanvasNodeEditorPopover({
           : node.type === "media" && data.kind === "image" && data.url
             ? "当前图片作参考 · 右侧生成新图"
             : node.type === "generator"
-              ? "共同提示词 + 多行变体要求"
+              ? "共同提示词 + 逐条编辑、回车新增、最多 8 条"
               : "Ctrl/Cmd + Enter 生成";
   const promptPlaceholder = isAgentNode
     ? "输入 Agent 任务… 输入 @ 引用节点"
@@ -15488,9 +15978,12 @@ function CanvasNodeEditorPopover({
           ) : isDockNode ? (
            <div className="canvas-node-editor-image-dock">
             <div className="canvas-node-editor-dock-chips">
-              <button type="button" className="canvas-node-editor-dock-chip" onClick={() => imageDockFileRef.current?.click()} aria-label="添加参考素材" data-tooltip="添加参考素材">
-                <span aria-hidden="true">＋</span> 参考
+              <button type="button" className="canvas-node-editor-dock-chip" onClick={() => onPickFromCanvas ? onPickFromCanvas() : imageDockFileRef.current?.click()} aria-label="从画布选择参考素材" data-tooltip="从画布选择参考素材">
+                <span aria-hidden="true">⌁</span> 参考
               </button>
+              {onPickFromCanvas && <button type="button" className="canvas-node-editor-dock-chip" onClick={() => imageDockFileRef.current?.click()} aria-label="上传参考素材" data-tooltip="上传参考素材">
+                <span aria-hidden="true">↥</span> 上传
+              </button>}
               {node.type === "media" && node.data.kind === "image" && node.data.url && onLocalEdit && maskState && (
                 <div className="canvas-node-editor-dock-local-edit" role="group" aria-label="局部编辑操作">
                   <button type="button" className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-edit" onClick={() => onLocalEdit()} aria-label="局部编辑" data-tooltip="局部编辑">
@@ -15546,28 +16039,22 @@ function CanvasNodeEditorPopover({
                       <div className="canvas-node-editor-dock-popover-head">
                         <div className="canvas-node-editor-dock-variant-title">
                           <b>变体要求</b>
-                          <small>每行一条，最多 8 条</small>
+                          <small>逐条编辑、回车新增、最多 8 条</small>
                         </div>
                         <div className="canvas-node-editor-dock-variant-actions">
+                          <span className="canvas-node-editor-dock-variant-count">{variantRequirements.length}/8</span>
                           <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
                           <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
                         </div>
                       </div>
                       <div className="canvas-node-variant-editor">
-                        <ReferenceMentionEditor
+                        <CanvasVariantRequirementsEditor
                           value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                           references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
                           ariaLabel={`${nodeLabel(node)}变体要求`}
-                          className="canvas-node-variant-requirements-editor"
                           menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
                           menuPortal
                           onChange={(value) => onVariantRequirementsChange(node, value)}
-                          onMentionSelect={(_candidateIndex, value) => onVariantRequirementsChange(node, value)}
-                          placeholder="改成夜景\n改为俯拍视角"
-                          transformPastedText={(text) => replaceNaturalReferenceLabels(
-                            text,
-                            mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
-                          ).value}
                         />
                       </div>
                     </div>
@@ -15619,11 +16106,15 @@ function CanvasNodeEditorPopover({
                 onReorder={onDraftReferenceReorder || (() => undefined)}
                 onNodeDrop={onDraftReferenceNodeDrop}
                 onPaste={onDraftReferencePaste}
+                onPickFromCanvas={onPickFromCanvas ? () => onPickFromCanvas() : undefined}
                 onPreview={onDraftReferencePreview}
                 emptyLabel="添加画布参考"
               />
             ) : isUpscaleNode ? (
-              <div className="canvas-upscale-input-note">输入：{upscaleSourceUrl ? "已连接一张图片" : "未连接图片"}</div>
+              <div className="canvas-upscale-input-note">
+                <span>输入：{upscaleSourceUrl ? "已连接一张图片" : "未连接图片"}</span>
+                {onPickFromCanvas && <button type="button" onClick={() => onPickFromCanvas()}>⌁ 画布点选</button>}
+              </div>
             ) : (
               <CanvasNodeReferenceStrip
                 target={node}
@@ -15635,6 +16126,7 @@ function CanvasNodeEditorPopover({
                 onRemove={onReferenceRemove}
                 onDrop={onReferenceDrop}
                 onAddFiles={onAddReferenceFiles}
+                onPickFromCanvas={onPickFromCanvas}
                 onPreview={onOutputPreview}
                 onTextPreview={onTextPreview}
                 onRestoreAutomatic={onRestoreAutomatic}
@@ -15744,11 +16236,15 @@ function CanvasNodeEditorPopover({
                 onReorder={onDraftReferenceReorder || (() => undefined)}
                 onNodeDrop={onDraftReferenceNodeDrop}
                 onPaste={onDraftReferencePaste}
+                onPickFromCanvas={onPickFromCanvas ? () => onPickFromCanvas() : undefined}
                 onPreview={onDraftReferencePreview}
                 emptyLabel="添加画布参考"
               />
             ) : node.type === "upscale" ? (
-              <div className="canvas-upscale-input-note">输入：{upscaleSourceUrl ? "已连接一张图片" : "未连接图片"}</div>
+              <div className="canvas-upscale-input-note">
+                <span>输入：{upscaleSourceUrl ? "已连接一张图片" : "未连接图片"}</span>
+                {onPickFromCanvas && <button type="button" onClick={() => onPickFromCanvas()}>⌁ 画布点选</button>}
+              </div>
             ) : (
               <CanvasNodeReferenceStrip
                 target={node}
@@ -15760,6 +16256,7 @@ function CanvasNodeEditorPopover({
                 onRemove={onReferenceRemove}
                 onDrop={onReferenceDrop}
                 onAddFiles={onAddReferenceFiles}
+                onPickFromCanvas={onPickFromCanvas}
                 onPreview={onOutputPreview}
                 onTextPreview={onTextPreview}
                 onRestoreAutomatic={onRestoreAutomatic}
@@ -15770,23 +16267,16 @@ function CanvasNodeEditorPopover({
             {node.type === "generator" && (
               <div className="canvas-node-variant-editor">
                 <div className="canvas-node-variant-editor-head">
-                  <label>变体要求 <small>每行一条，最多 8 条</small></label>
+                  <label>变体要求 <small>逐条编辑、回车新增、最多 8 条 · {variantRequirements.length}/8</small></label>
                   <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
                 </div>
-                <ReferenceMentionEditor
+                <CanvasVariantRequirementsEditor
                   value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                   references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
                   ariaLabel={`${nodeLabel(node)}变体要求`}
-                  className="canvas-node-variant-requirements-editor"
                   menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
                   menuPortal
                   onChange={(value) => onVariantRequirementsChange(node, value)}
-                  onMentionSelect={(_candidateIndex, value) => onVariantRequirementsChange(node, value)}
-                  placeholder="改成夜景\n改为俯拍视角"
-                  transformPastedText={(text) => replaceNaturalReferenceLabels(
-                    text,
-                    mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index)),
-                  ).value}
                 />
               </div>
             )}
@@ -15874,6 +16364,10 @@ function CanvasNodeCard({
   node,
   selected,
   dragging,
+  referencePickerActive,
+  referencePickerTargetId,
+  referencePickerHoverNodeId,
+  referencePickerFlashNodeId,
   document,
   onPointerDown,
   onResize,
@@ -15911,6 +16405,10 @@ function CanvasNodeCard({
   node: CanvasNode;
   selected: boolean;
   dragging: boolean;
+  referencePickerActive: boolean;
+  referencePickerTargetId: string | null;
+  referencePickerHoverNodeId: string | null;
+  referencePickerFlashNodeId: string | null;
   document: CanvasDocument;
   onPointerDown: (event: ReactPointerEvent, node: CanvasNode) => void;
   onResize: (event: ReactPointerEvent, node: CanvasNode) => void;
@@ -16106,7 +16604,7 @@ function CanvasNodeCard({
   };
   return (
     <article
-      className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}`}
+      className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}${referencePickerActive && referencePickerTargetId === node.id ? " reference-picker-target" : ""}${referencePickerActive && referencePickerHoverNodeId === node.id ? " reference-picker-hover" : ""}${referencePickerFlashNodeId === node.id ? " reference-picker-flash" : ""}`}
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
@@ -16131,6 +16629,7 @@ function CanvasNodeCard({
       onPointerDown={(event) => onPointerDown(event, node)}
       onDoubleClick={(event) => {
         event.stopPropagation();
+        if (referencePickerActive) return;
         if (node.type === "prompt") onEdit(true);
         else if (node.type === "media" && node.data.kind === "audio") onToggleEditor(node);
         else if (isCanvasReferenceableNode(node)) onPreview();
@@ -16479,7 +16978,7 @@ function CanvasNodeCard({
                   ? "批量处理中…"
                   : data.status === "failed"
                     ? "有失败变体，可单独重试"
-                    : "共同提示词 + 多行变体要求"}
+                    : "共同提示词 + 逐条编辑、回车新增、最多 8 条"}
               </small>
             </div>
             <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
@@ -16675,12 +17174,14 @@ function CanvasNodeCard({
           />
           {node.type === "generator" && (
             <div className="canvas-node-variant-editor">
-              <label>变体要求 <small>每行一条，最多 8 条</small></label>
-              <textarea
-                rows={2}
+              <label>变体要求 <small>逐条编辑、回车新增、最多 8 条 · {variantRequirements.length}/8</small></label>
+              <CanvasVariantRequirementsEditor
                 value={data.variantRequirementsText ?? variantRequirements.join("\n")}
-                placeholder="改成夜景\n改为俯拍视角"
-                onChange={(event) => onVariantRequirementsChange(node, event.target.value)}
+                references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+                ariaLabel={`${nodeLabel(node)}变体要求`}
+                menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
+                menuPortal
+                onChange={(value) => onVariantRequirementsChange(node, value)}
               />
             </div>
           )}
@@ -16734,6 +17235,10 @@ const MemoizedCanvasNodeCard = memo(
     previous.node === next.node &&
     previous.selected === next.selected &&
     previous.dragging === next.dragging &&
+    previous.referencePickerActive === next.referencePickerActive &&
+    previous.referencePickerTargetId === next.referencePickerTargetId &&
+    previous.referencePickerHoverNodeId === next.referencePickerHoverNodeId &&
+    previous.referencePickerFlashNodeId === next.referencePickerFlashNodeId &&
     previous.document.nodes === next.document.nodes &&
     previous.document.edges === next.document.edges &&
     previous.document.groups === next.document.groups &&

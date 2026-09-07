@@ -2,7 +2,7 @@
 
 import {
   forwardRef,
-  type ClipboardEvent,
+  type ClipboardEvent as ReactClipboardEvent,
   type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -218,7 +218,7 @@ type ReferenceMentionEditorProps = {
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
   onFocus?: (event: FocusEvent<HTMLDivElement>) => void;
   onBlur?: (event: FocusEvent<HTMLDivElement>) => void;
-  onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void;
+  onPaste?: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   autoFocus?: boolean;
   placeholder?: string;
   ariaLabel?: string;
@@ -428,7 +428,7 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     else onChange(inserted.value, inserted.cursor);
   };
 
-  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+  const handlePaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
     onPaste?.(event);
     if (event.defaultPrevented) return;
     const pastedText = event.clipboardData.getData("text/plain");

@@ -59,7 +59,7 @@ test("editor generation forwards its draft without waiting for selection state",
   assert.match(editor, /const generationRequest: CanvasGenerationRequest/);
   assert.match(editor, /nodeId: currentNode\.id/);
   assert.match(editor, /const prompt = draft\?\.prompt\?\.trim\(\) \? draft\.prompt : editorPromptFor\(currentNode\)/);
-  assert.match(editor, /prompt,\n\s*\.\.\.\(params/);
+  assert.match(editor, /prompt,[\s\S]*\.\.\.\(params \? \{ params \} : \{\}\),/);
   assert.match(editor, /runGenerationRef\.current\?\.\(generationRequest\)/);
   assert.doesNotMatch(editor, /setTimeout/);
 
@@ -206,6 +206,8 @@ test("editor keeps references, variant requirements, parameters, mentions and ge
   assert.match(component, /<CanvasReferenceDraftStrip/);
   assert.match(component, /<CreationParameterEditor/);
   assert.match(component, /className="canvas-node-variant-editor"/);
+  assert.match(component, /<CanvasVariantRequirementsEditor/);
+  assert.match(component, /className=\{\`canvas-variant-list-row/);
   assert.match(component, /className="canvas-node-mention-menu"/);
   assert.match(component, /onGenerate\(node\)/);
   assert.match(component, /setMentionState\(null\)/);
@@ -222,8 +224,9 @@ test("video variant generators reuse the compact image-variant dock", () => {
   assert.match(editor, /id="canvas-node-dock-variant"/);
   assert.match(editor, /canvas-node-editor-dock-variant-title/);
   assert.match(editor, /canvas-node-editor-dock-variant-actions/);
+  assert.match(editor, /canvas-node-editor-dock-variant-count/);
   const dockVariantStart = editor.indexOf('id="canvas-node-dock-variant"');
-  const dockVariantInput = editor.indexOf("<ReferenceMentionEditor", dockVariantStart);
+  const dockVariantInput = editor.indexOf("<CanvasVariantRequirementsEditor", dockVariantStart);
   assert.ok(dockVariantStart >= 0 && dockVariantInput > dockVariantStart, "compact variant drawer should contain an input");
   assert.doesNotMatch(editor.slice(dockVariantStart, dockVariantInput), /canvas-node-variant-editor-head/);
   assert.doesNotMatch(editor, /imageDockPanel === "variant" && createPortal/);
@@ -232,6 +235,8 @@ test("video variant generators reuse the compact image-variant dock", () => {
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*width:min\(540px,calc\(100vw - 32px\)\)/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{[\s\S]*position:relative/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-actions\{[\s\S]*position:relative/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-count\{[^}]*font-variant-numeric:tabular-nums/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-title small\{[^}]*white-space:normal/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-actions>\.canvas-generator-help-popover\{[\s\S]*position:absolute[\s\S]*bottom:calc\(100% \+ 10px\)/);
 });
 
@@ -566,7 +571,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather\) => applyCanvasMask\(value, coverage, prompt, annotations, feather\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, sourceImageDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, sourceImageDataUrl\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /initialFeather=\{maskNode\.data\.mask\?\.feather \?\? maskSettings\?\.mask\?\.feather \?\? 0\}/);
   assert.match(component, /status: "pending"/);
@@ -582,6 +587,16 @@ test("applying a local edit closes both editors instead of reopening the node pr
   assert.ok(applyStart >= 0 && applyEnd > applyStart, "canvas mask apply handler should be present");
   assert.match(apply, /setExpandedEditorId\(null\)/);
   assert.match(apply, /setMaskNodeId\(null\)/);
+  assert.match(apply, /const movedSource = sourceImageDataUrl/);
+  assert.match(apply, /sourceAssetId: movedSource\.id, sourceUrl: movedSource\.url/);
+  assert.match(apply, /const liveDraft = editorDrafts\[node\.id\]/);
+  assert.match(apply, /liveDraft\?\.params \|\| existingDraft\.params/);
+  assert.match(apply, /const nextPrompt = prompt\?\.trim\(\) \|\| liveDraft\?\.prompt\?\.trim\(\) \|\| existingDraft\.prompt/);
+  assert.match(apply, /prompt: nextPrompt,[\s\S]*mask,[\s\S]*params: clone\(params\)/);
+  assert.match(apply, /generation: \{[\s\S]*prompt: nextPrompt,[\s\S]*params: clone\(params\)/);
+  assert.match(apply, /editor: \{ \.\.\.item\.data\.editor, dirty: true, draftPrompt: nextPrompt, draftParams: clone\(params\) \}/);
+  assert.match(apply, /setEditorDrafts\(\(current\) => \(\{[\s\S]*prompt: nextPrompt,[\s\S]*params: clone\(params\),[\s\S]*dirty: true/);
+  assert.match(apply, /setReuseDraft\(\(current\) => current\?\.sourceNodeId === node\.id[\s\S]*prompt: nextPrompt,[\s\S]*params: clone\(params\),[\s\S]*dirty: true/);
   assert.doesNotMatch(apply, /openImageEditor\(node, \{ params, prompt: nextPrompt \}\)/);
 });
 

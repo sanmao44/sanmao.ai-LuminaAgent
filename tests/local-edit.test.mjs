@@ -159,7 +159,7 @@ test("pixel feathering creates a real alpha transition around an editable region
   assert.equal(alphaAt(10, 10) < alphaAt(4, 10), true);
 });
 
-test("moving a selection masks both source and target without changing the source image", () => {
+test("moving a selection masks both source and target while compiling a visual-guide prompt", () => {
   const source = Uint8ClampedArray.from([
     255, 0, 0, 255,
     0, 255, 0, 255,
@@ -193,9 +193,76 @@ test("moving a selection masks both source and target without changing the sourc
   assert.equal(repeatedMask[(1 * 10 + 6) * 4 + 3], 0);
   assert.equal(repeatedMask[(1 * 10 + 8) * 4 + 3], 0);
   const compiled = raster.compileLocalEditPrompt("保持光影自然", [moved]);
-  assert.match(compiled, /将对象从原位置移动到目标位置/);
-  assert.match(compiled, /移动方向：向右/);
+  assert.match(compiled, /以移动参考图中的剪贴结果为准/);
+  assert.match(compiled, /仅修补原位置和目标边缘/);
+  assert.doesNotMatch(compiled, /移动方向/);
   assert.match(compiled, /补充说明：把物体移到右侧/);
+});
+
+test("moving a selection produces a real cut-and-paste reference without mutating the source", () => {
+  const source = Uint8ClampedArray.from([
+    255, 0, 0, 255,
+    0, 255, 0, 255,
+    0, 0, 255, 255,
+    255, 255, 255, 255,
+  ]);
+  const original = new Uint8ClampedArray(source);
+  const selection = raster.createProtectedMask(4, 1);
+  selection[7] = 0;
+  const moved = raster.moveLocalEditPixels(source, selection, 4, 1, 2, 0);
+  assert.deepEqual([...source], [...original]);
+  assert.deepEqual([...moved.subarray(4, 8)], [0, 0, 0, 0]);
+  assert.deepEqual([...moved.subarray(12, 16)], [0, 255, 0, 255]);
+
+  const secondSelection = raster.createProtectedMask(4, 1);
+  secondSelection[15] = 0;
+  const movedAgain = raster.moveLocalEditPixels(moved, secondSelection, 4, 1, -2, 0);
+  assert.deepEqual([...movedAgain.subarray(4, 8)], [0, 255, 0, 255]);
+  assert.deepEqual([...movedAgain.subarray(12, 16)], [0, 0, 0, 0]);
+});
+
+test("move reference rebuilds normal, smart, repeated, and multiple drags from source pixels", () => {
+  const source = Uint8ClampedArray.from([
+    1, 0, 0, 255,
+    2, 0, 0, 255,
+    3, 0, 0, 255,
+    4, 0, 0, 255,
+    5, 0, 0, 255,
+    6, 0, 0, 255,
+    7, 0, 0, 255,
+    8, 0, 0, 255,
+    9, 0, 0, 255,
+    10, 0, 0, 255,
+  ]);
+  const original = new Uint8ClampedArray(source);
+  const rectangle = (x) => ({ kind: "rectangle", x, y: 0, width: 0.1, height: 1 });
+  const smartSource = raster.createProtectedMask(10, 1);
+  smartSource[(3 * 4) + 3] = 0;
+  const moved = raster.composeLocalEditMoveReference(source, 10, 1, [
+    {
+      id: "repeat",
+      kind: "rectangle",
+      description: "",
+      geometry: rectangle(0.6),
+      move: { from: [rectangle(0.1), rectangle(0.4)] },
+      createdAt: 1,
+    },
+    {
+      id: "smart",
+      kind: "smart",
+      description: "",
+      geometry: { kind: "smart", x: 0.8, y: 0, width: 0.1, height: 1 },
+      move: { from: [{ kind: "smart", x: 0.3, y: 0, width: 0.1, height: 1 }] },
+      createdAt: 2,
+    },
+  ], new Map([["smart:from:0", smartSource]]));
+
+  assert.deepEqual([...source], [...original]);
+  assert.deepEqual([...moved.subarray(4, 8)], [0, 0, 0, 0]);
+  assert.deepEqual([...moved.subarray(12, 16)], [0, 0, 0, 0]);
+  assert.deepEqual([...moved.subarray(24, 28)], [2, 0, 0, 255]);
+  assert.deepEqual([...moved.subarray(32, 36)], [4, 0, 0, 255]);
+  assert.deepEqual([...moved.subarray(16, 20)], [5, 0, 0, 255]);
 });
 
 test("moving a smart selection masks its original and translated smart pixels", () => {
@@ -233,7 +300,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /event\.preventDefault\(\);/);
   assert.match(editor, /onLostPointerCapture=\{handleLostPointerCapture\}/);
   assert.match(editor, /context\.clearRect\(0, 0, canvas\.width, canvas\.height\);/);
-  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number\)/);
+  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number, sourceImageDataUrl\?: string\)/);
   assert.match(editor, /initialFeather\?: number/);
   assert.match(editor, /normalizeFeather\(feather\)/);
   assert.match(editor, /function beginMoveAnnotation/);
@@ -247,8 +314,10 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /local-edit-move-frame target/);
   assert.match(editor, /move: \{ from:/);
   assert.match(editor, /取消移动/);
-  assert.doesNotMatch(editor, /moveLocalEditPixels\(/);
-  assert.doesNotMatch(editor, /sourceImageChangedRef/);
+  assert.match(editor, /moveLocalEditPixels\(/);
+  assert.match(editor, /composeLocalEditMoveReference\(/);
+  assert.match(editor, /function exportMoveSourceImage\(\)/);
+  assert.match(editor, /原位置 · 待修补/);
   assert.match(editor, /function deleteAnnotation/);
   assert.match(editor, /补充.*说明/);
   assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);
@@ -278,6 +347,9 @@ test("all image entry points use local edit wording while persisted field remain
   assert.match(page, /const restoredMask = typeof legacySavedMask === 'string'/);
   assert.match(page, /mask: currentEditor\.mask \|\| undefined/);
   assert.match(page, /annotations: currentEditor\.mode === 'edit'/);
+  assert.match(page, /onApply: \(dataUrl, coverage, prompt, annotations, feather, sourceImageDataUrl\)=>/);
+  assert.match(page, /\.\.\.\(sourceImageDataUrl \? \{ sourceImageDataUrl \} : \{\}\)/);
+  assert.match(page, /sourceImageDataUrl: sourceImageDataUrl \|\| undefined/);
   assert.match(canvas, /initialAnnotations=/);
   assert.match(canvas, /annotations\.length \? \{ annotations \} : \{\}/);
 });
