@@ -12866,15 +12866,14 @@ function CanvasAssetCollectionPicker({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  // Keep the picker in the same order and vocabulary as the asset drawer.
-  // Smart collections are useful filters, but they are derived views rather
-  // than writable category assignments, so show them disabled instead of
-  // silently hiding them from this selector.
-  const collectionOptions = collections.map((item) => ({
-    id: item.id,
-    name: item.name,
-    assignable: isAssignableCanvasAssetCollection(item.id),
-  }));
+  // Smart collections are derived views, so they are not valid targets for
+  // adding an asset and should not take up space in this picker.
+  const collectionOptions = collections
+    .filter((item) => isAssignableCanvasAssetCollection(item.id))
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+    }));
   const selectedCollection =
     collectionOptions.find((item) => item.id === collectionId) ||
     collectionOptions.find((item) => item.id === CANVAS_ASSET_UNCATEGORIZED_ID);
@@ -12963,8 +12962,6 @@ function CanvasAssetCollectionPicker({
               options={collectionOptions.map((item) => ({
                 value: item.id,
                 label: item.name,
-                disabled: !item.assignable,
-                description: item.assignable ? undefined : "智能筛选视图不可直接归类",
               }))}
             />
           </label>
