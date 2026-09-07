@@ -37,6 +37,7 @@ import {
   createUpscaleNode,
   detachNodesFromGroups,
   distributeCanvasNodes,
+  edgeRouteLaneOffset,
   edgeTouchesSelection,
   edgePath,
   entityBounds,
@@ -278,6 +279,7 @@ function canvasEdgeMidpoint(document: CanvasDocument, edge: CanvasEdge): Point {
   const end = entityPortPoint(document, endpoints.target, edge.targetPort || "left");
   const sourceDirection = (edge.sourcePort || "right") === "right" ? 1 : -1;
   const targetDirection = (edge.targetPort || "left") === "left" ? -1 : 1;
+  const laneOffset = edgeRouteLaneOffset(document, edge);
   const dx = Math.max(72, Math.abs(end.x - start.x) * 0.42);
   const t = 0.5;
   const inverse = 1 - t;
@@ -289,8 +291,8 @@ function canvasEdgeMidpoint(document: CanvasDocument, edge: CanvasEdge): Point {
       t ** 3 * end.x,
     y:
       inverse ** 3 * start.y +
-      3 * inverse ** 2 * t * start.y +
-      3 * inverse * t ** 2 * end.y +
+       3 * inverse ** 2 * t * (start.y + laneOffset) +
+       3 * inverse * t ** 2 * (end.y + laneOffset) +
       t ** 3 * end.y,
   };
 }
@@ -2437,6 +2439,7 @@ function CanvasEdgeVisual({
   style,
   selected,
   colorKey,
+  routeLaneOffset,
   sourceKey,
   targetKey,
   onSelect,
@@ -2450,13 +2453,14 @@ function CanvasEdgeVisual({
   style: ConnectionStyle;
   selected: boolean;
   colorKey: CanvasNodeColorKey;
+  routeLaneOffset: number;
   sourceKey: string;
   targetKey: string;
   onSelect: () => void;
   onHover: (event: ReactPointerEvent<SVGPathElement>) => void;
   onLeave: () => void;
 }) {
-  const path = edgePath(document, edge, style);
+  const path = edgePath(document, edge, style, routeLaneOffset);
   const handlePointerDown = (event: ReactPointerEvent<SVGPathElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -2518,6 +2522,7 @@ const MemoizedCanvasEdgeVisual = memo(
     previous.animateRelated === next.animateRelated &&
     previous.selected === next.selected &&
     previous.style === next.style &&
+    previous.routeLaneOffset === next.routeLaneOffset &&
     previous.colorKey === next.colorKey &&
     previous.sourceKey === next.sourceKey &&
     previous.targetKey === next.targetKey,
@@ -12117,6 +12122,7 @@ export default function SuperCanvas() {
                   style={connectionStyle}
                   selected={selectedEdgeId === edge.id}
                   colorKey={canvasColorKeyById.get(edge.source) ?? "image"}
+                  routeLaneOffset={edgeRouteLaneOffset(document, edge)}
                   sourceKey={canvasEntityGeometryKeyById.get(edge.source) ?? edge.source}
                   targetKey={canvasEntityGeometryKeyById.get(edge.target) ?? edge.target}
                   onSelect={() => {
@@ -17627,6 +17633,7 @@ function CanvasMinimap({
                   sourcePort,
                   targetPort,
                   mapScale,
+                  edgeRouteLaneOffset(document, edge),
                 )}
               />
             );

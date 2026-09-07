@@ -1085,6 +1085,29 @@ test('supports selectable canvas edge path styles', () => {
   assert.match(model.edgePath(document, edge, 'orthogonal'), / H .* V .* H /);
 });
 
+test('separates reciprocal canvas edges into stable visual lanes', () => {
+  const empty = model.normalizeDocument(null);
+  const first = model.createPrompt({ x: 0, y: 0 }, '第一节点');
+  const second = model.createGenerator('image', { x: 520, y: 0 });
+  const document = model.normalizeDocument({
+    ...empty,
+    nodes: [first, second],
+    edges: [
+      { id: 'forward', source: first.id, target: second.id },
+      { id: 'backward', source: second.id, target: first.id },
+    ],
+  });
+  const forward = document.edges[0];
+  const backward = document.edges[1];
+
+  assert.equal(model.edgeRouteLaneOffset(document, forward), -12);
+  assert.equal(model.edgeRouteLaneOffset(document, backward), 12);
+  assert.notEqual(
+    model.edgePath(document, forward),
+    model.edgePath(document, backward),
+  );
+});
+
 test('marks directly related node and group connections for selected-edge effects', () => {
   const empty = model.normalizeDocument(null);
   const source = model.createPrompt({ x: 0, y: 0 }, '来源');
@@ -1472,6 +1495,31 @@ test('arranges a directed workflow from inputs to outputs without overlap', () =
   assert.ok(byId(source.id).x < byId(generator.id).x);
   assert.ok(byId(generator.id).x < byId(result.id).x);
   assert.equal(overlaps(byId(prompt.id), byId(source.id)), false);
+});
+
+test('reduces crossings by reordering each connected layer around its parents', () => {
+  const firstInput = model.createPrompt({ x: 0, y: 0 }, '输入一');
+  const secondInput = model.createPrompt({ x: 0, y: 640 }, '输入二');
+  const upperOutput = model.createGenerator('image', { x: 620, y: 0 });
+  const lowerOutput = model.createGenerator('image', { x: 620, y: 640 });
+  const document = arrangeDocument(
+    [firstInput, secondInput, upperOutput, lowerOutput],
+    [
+      { id: 'first-lower', source: firstInput.id, target: lowerOutput.id },
+      { id: 'second-upper', source: secondInput.id, target: upperOutput.id },
+    ],
+  );
+  const arranged = model.arrangeCanvas(document).document;
+  const byId = (id) => arranged.nodes.find((node) => node.id === id);
+  const firstEdge = arranged.edges.find((edge) => edge.id === 'first-lower');
+  const secondEdge = arranged.edges.find((edge) => edge.id === 'second-upper');
+
+  assert.ok(byId(firstInput.id).y < byId(secondInput.id).y);
+  assert.ok(byId(firstEdge.target).y < byId(secondEdge.target).y);
+  assert.equal(firstEdge.sourcePort, 'right');
+  assert.equal(firstEdge.targetPort, 'left');
+  assert.equal(secondEdge.sourcePort, 'right');
+  assert.equal(secondEdge.targetPort, 'left');
 });
 
 test('arranges unconnected nodes in a non-overlapping grid', () => {

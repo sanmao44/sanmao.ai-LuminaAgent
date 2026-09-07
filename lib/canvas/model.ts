@@ -1136,6 +1136,12 @@ type ArrangeEntity = {
 
 type ArrangePoint = { x: number; y: number };
 
+type ArrangeGraphEdge = {
+  source: string;
+  target: string;
+  order?: number;
+};
+
 const ARRANGE_GAP_X = 72;
 const ARRANGE_GAP_Y = 48;
 
@@ -1255,7 +1261,7 @@ function arrangeExplicit(
 function arrangeLayered(
   document: CanvasDocument,
   entities: ArrangeEntity[],
-  edges: Array<{ source: string; target: string }>,
+  edges: ArrangeGraphEdge[],
   origin: ArrangePoint,
 ) {
   if (!entities.length)
@@ -1270,6 +1276,9 @@ function arrangeLayered(
     indegree.set(entity.id, 0);
   });
   const edgeKeys = new Set<string>();
+  const graphEdges: ArrangeGraphEdge[] = [];
+  const inputOrder = new Map<string, number>();
+  const outputOrder = new Map<string, number>();
   edges.forEach((edge) => {
     if (
       !byId.has(edge.source) ||
@@ -1280,9 +1289,26 @@ function arrangeLayered(
     const key = `${edge.source}\u0000${edge.target}`;
     if (edgeKeys.has(key)) return;
     edgeKeys.add(key);
+    graphEdges.push(edge);
     outgoing.get(edge.source)!.push(edge.target);
     predecessors.get(edge.target)!.push(edge.source);
     indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
+    if (Number.isFinite(edge.order)) {
+      const currentInputOrder = inputOrder.get(edge.target);
+      const currentOutputOrder = outputOrder.get(edge.source);
+      inputOrder.set(
+        edge.target,
+        currentInputOrder === undefined
+          ? edge.order!
+          : Math.min(currentInputOrder, edge.order!),
+      );
+      outputOrder.set(
+        edge.source,
+        currentOutputOrder === undefined
+          ? edge.order!
+          : Math.min(currentOutputOrder, edge.order!),
+      );
+    }
   });
   const sortQueue = (left: string, right: string) =>
     compareArrangeEntities(document, byId.get(left)!, byId.get(right)!);
@@ -1322,40 +1348,135 @@ function arrangeLayered(
     const level = levels.get(entity.id) || 0;
     layerIds.set(level, [...(layerIds.get(level) || []), entity.id]);
   });
-  const rowIndex = new Map<string, number>();
   const orderedLayers = [...layerIds.keys()]
     .sort((left, right) => left - right)
-    .map((level) => {
-      const ids = layerIds.get(level)!;
-      ids.sort((left, right) => {
-        const leftPreds = (predecessors.get(left) || [])
-          .map((id) => rowIndex.get(id))
-          .filter((value): value is number => value !== undefined);
-        const rightPreds = (predecessors.get(right) || [])
-          .map((id) => rowIndex.get(id))
-          .filter((value): value is number => value !== undefined);
-        const leftBarycenter = leftPreds.length
-          ? leftPreds.reduce((total, value) => total + value, 0) /
-            leftPreds.length
-          : Number.POSITIVE_INFINITY;
-        const rightBarycenter = rightPreds.length
-          ? rightPreds.reduce((total, value) => total + value, 0) /
-            rightPreds.length
-          : Number.POSITIVE_INFINITY;
-        if (leftBarycenter !== rightBarycenter)
-          return leftBarycenter - rightBarycenter;
-        const leftEntity = byId.get(left)!;
-        const rightEntity = byId.get(right)!;
-        if (leftEntity.y !== rightEntity.y) return leftEntity.y - rightEntity.y;
-        return compareArrangeEntities(document, leftEntity, rightEntity);
-      });
-      ids.forEach((id, index) => rowIndex.set(id, index));
-      return ids;
+    .map((level) =>
+      [...(layerIds.get(level) || [])].sort((left, right) =>
+        compareArrangeEntities(document, byId.get(left)!, byId.get(right)!),
+      ),
+    );
+  const layerIndex = new Map<string, number>();
+  orderedLayers.forEach((ids, index) =>
+    ids.forEach((id) => layerIndex.set(id, index)),
+  );
+
+  const compareStableOrder = (left: string, right: string) => {
+    const leftInput = inputOrder.get(left);
+    const rightInput = inputOrder.get(right);
+    if (leftInput !== undefined && rightInput !== undefined && leftInput !== rightInput)
+      return leftInput - rightInput;
+    const leftOutput = outputOrder.get(left);
+    const rightOutput = outputOrder.get(right);
+    if (leftOutput !== undefined && rightOutput !== undefined && leftOutput !== rightOutput)
+      return leftOutput - rightOutput;
+    return compareArrangeEntities(document, byId.get(left)!, byId.get(right)!);
+  };
+
+  const crossingCount = (leftLayerIndex: number, rightLayerIndex: number) => {
+    const leftIds = orderedLayers[leftLayerIndex] || [];
+    const rightIds = orderedLayers[rightLayerIndex] || [];
+    const leftRows = new Map(leftIds.map((id, index) => [id, index]));
+    const rightRows = new Map(rightIds.map((id, index) => [id, index]));
+    const localEdges = graphEdges.filter(
+      (edge) =>
+        layerIndex.get(edge.source) === leftLayerIndex &&
+        layerIndex.get(edge.target) === rightLayerIndex,
+    );
+    let crossings = 0;
+    for (let leftIndex = 0; leftIndex < localEdges.length; leftIndex += 1) {
+      const first = localEdges[leftIndex];
+      for (let rightIndex = leftIndex + 1; rightIndex < localEdges.length; rightIndex += 1) {
+        const second = localEdges[rightIndex];
+        const sourceDelta =
+          leftRows.get(first.source)! - leftRows.get(second.source)!;
+        const targetDelta =
+          rightRows.get(first.target)! - rightRows.get(second.target)!;
+        if (sourceDelta * targetDelta < 0) crossings += 1;
+      }
+    }
+    return crossings;
+  };
+
+  const reorderLayer = (index: number, direction: "forward" | "backward") => {
+    const ids = orderedLayers[index];
+    if (!ids || ids.length < 2) return;
+    const before = [...ids];
+    const adjacentLayer = direction === "forward" ? index - 1 : index + 1;
+    const beforeCrossings =
+      adjacentLayer >= 0 && adjacentLayer < orderedLayers.length
+        ? crossingCount(
+            Math.min(index, adjacentLayer),
+            Math.max(index, adjacentLayer),
+          )
+        : 0;
+    const rows = new Map<string, number>();
+    orderedLayers.forEach((layer) =>
+      layer.forEach((id, row) => rows.set(id, row)),
+    );
+    const neighbors = direction === "forward" ? predecessors : outgoing;
+    const ranked = ids.map((id, originalIndex) => {
+      const values = (neighbors.get(id) || [])
+        .map((neighbor) => rows.get(neighbor))
+        .filter((value): value is number => value !== undefined);
+      return {
+        id,
+        originalIndex,
+        hasNeighbors: values.length > 0,
+        barycenter: values.length
+          ? values.reduce((total, value) => total + value, 0) / values.length
+          : 0,
+      };
     });
+    ranked.sort((left, right) => {
+      if (left.hasNeighbors !== right.hasNeighbors)
+        return left.hasNeighbors ? -1 : 1;
+      if (left.hasNeighbors && left.barycenter !== right.barycenter)
+        return left.barycenter - right.barycenter;
+      return compareStableOrder(left.id, right.id) || left.originalIndex - right.originalIndex;
+    });
+    orderedLayers[index] = ranked.map((item) => item.id);
+    if (
+      adjacentLayer >= 0 &&
+      adjacentLayer < orderedLayers.length &&
+      crossingCount(
+        Math.min(index, adjacentLayer),
+        Math.max(index, adjacentLayer),
+      ) >
+        beforeCrossings
+    ) {
+      orderedLayers[index] = before;
+    }
+  };
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (let index = 1; index < orderedLayers.length; index += 1)
+      reorderLayer(index, "forward");
+    for (let index = orderedLayers.length - 2; index >= 0; index -= 1)
+      reorderLayer(index, "backward");
+  }
+
+  const maxLayerSize = Math.max(...orderedLayers.map((ids) => ids.length), 1);
+  const maxFan = Math.max(
+    ...entities.map((entity) =>
+      Math.max(
+        outgoing.get(entity.id)?.length || 0,
+        predecessors.get(entity.id)?.length || 0,
+      ),
+    ),
+    1,
+  );
+  const arrangeGapX = Math.min(
+    144,
+    ARRANGE_GAP_X + Math.max(0, maxFan - 2) * 12,
+  );
+  const arrangeGapY = Math.min(
+    96,
+    ARRANGE_GAP_Y + Math.max(0, Math.ceil(maxLayerSize / 4) - 1) * 8,
+  );
   const layerHeights = orderedLayers.map((ids) =>
     ids.reduce(
       (total, id, index) =>
-        total + byId.get(id)!.h + (index ? ARRANGE_GAP_Y : 0),
+        total + byId.get(id)!.h + (index ? arrangeGapY : 0),
       0,
     ),
   );
@@ -1369,17 +1490,43 @@ function arrangeLayered(
     let y = origin.y + (maxLayerHeight - layerHeights[layerIndex]) / 2;
     ids.forEach((id) => {
       positions.set(id, { x, y });
-      y += byId.get(id)!.h + ARRANGE_GAP_Y;
+      y += byId.get(id)!.h + arrangeGapY;
     });
-    x += layerWidths[layerIndex] + ARRANGE_GAP_X;
+    x += layerWidths[layerIndex] + arrangeGapX;
   });
   return {
     positions,
     width:
       layerWidths.reduce((total, width) => total + width, 0) +
-      ARRANGE_GAP_X * Math.max(0, layerWidths.length - 1),
+      arrangeGapX * Math.max(0, layerWidths.length - 1),
     height: maxLayerHeight,
   };
+}
+
+function orientArrangedEdgePorts(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+  arrangedEntityIds: Set<string>,
+) {
+  if (!isCanvasEdgeVisible(document, edge)) return edge;
+  const endpoints = canvasEdgeEndpoints(document, edge);
+  if (
+    !arrangedEntityIds.has(endpoints.source) ||
+    !arrangedEntityIds.has(endpoints.target)
+  )
+    return edge;
+  const source = entityBounds(document, endpoints.source);
+  const target = entityBounds(document, endpoints.target);
+  const sourceCenterX = source.x + source.w / 2;
+  const targetCenterX = target.x + target.w / 2;
+  if (sourceCenterX === targetCenterX) return edge;
+  const sourcePort: CanvasEdge["sourcePort"] =
+    sourceCenterX < targetCenterX ? "right" : "left";
+  const targetPort: CanvasEdge["targetPort"] =
+    sourcePort === "right" ? "left" : "right";
+  if (edge.sourcePort === sourcePort && edge.targetPort === targetPort)
+    return edge;
+  return { ...edge, sourcePort, targetPort };
 }
 
 function arrangeCanvasSelection(
@@ -1433,13 +1580,14 @@ function arrangeCanvasSelection(
     return node ? nodeToEntity.get(node.id) : undefined;
   };
   const graphEdges = document.edges
-    .map((edge) => ({
-      source: resolveEntity(edge.source),
-      target: resolveEntity(edge.target),
-    }))
-    .filter((edge): edge is { source: string; target: string } =>
-      Boolean(edge.source && edge.target && edge.source !== edge.target),
-    );
+    .filter((edge) => isCanvasEdgeVisible(document, edge))
+    .flatMap((edge, index) => {
+      const source = resolveEntity(edge.source);
+      const target = resolveEntity(edge.target);
+      return source && target && source !== target
+        ? [{ source, target, order: edge.order }]
+        : [];
+    });
   const connectedIds = new Set(
     graphEdges.flatMap((edge) => [edge.source, edge.target]),
   );
@@ -1484,6 +1632,18 @@ function arrangeCanvasSelection(
     if (x !== node.x || y !== node.y) changed = true;
     return { ...node, x, y };
   });
+  const originalEdges = next.edges;
+  next.edges = originalEdges.map((edge) =>
+    orientArrangedEdgePorts(next, edge, entityIds),
+  );
+  if (
+    next.edges.some(
+      (edge, index) =>
+        edge.sourcePort !== originalEdges[index].sourcePort ||
+        edge.targetPort !== originalEdges[index].targetPort,
+    )
+  )
+    changed = true;
   return { document: next, arrangedIds: [...selected], changed };
 }
 
@@ -1570,6 +1730,33 @@ export function entityPortPoint(
   };
 }
 
+/** Separate reciprocal or parallel visible edges into stable visual lanes. */
+export function edgeRouteLaneOffset(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  const endpoints = canvasEdgeEndpoints(document, edge);
+  const peers = document.edges
+    .filter((candidate) => isCanvasEdgeVisible(document, candidate))
+    .filter((candidate) => {
+      const candidateEndpoints = canvasEdgeEndpoints(document, candidate);
+      return (
+        (candidateEndpoints.source === endpoints.source &&
+          candidateEndpoints.target === endpoints.target) ||
+        (candidateEndpoints.source === endpoints.target &&
+          candidateEndpoints.target === endpoints.source)
+      );
+    })
+    .sort(
+      (left, right) =>
+        document.edges.indexOf(left) - document.edges.indexOf(right),
+    );
+  if (peers.length < 2) return 0;
+  const index = peers.findIndex((candidate) => candidate.id === edge.id);
+  if (index < 0) return 0;
+  return (index - (peers.length - 1) / 2) * 24;
+}
+
 /**
  * Build a connection path from two already-resolved port points.
  *
@@ -1585,8 +1772,12 @@ export function connectionPath(
   sourcePort: "left" | "right" = "right",
   targetPort: "left" | "right" = "left",
   scale = 1,
+  laneOffset = 0,
 ) {
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const scaledLaneOffset = Number.isFinite(laneOffset)
+    ? laneOffset * safeScale
+    : 0;
   const format = (value: number) =>
     String(Number.isFinite(value) ? Number(value.toFixed(4)) : 0);
   const sourceDirection = sourcePort === "right" ? 1 : -1;
@@ -1607,17 +1798,21 @@ export function connectionPath(
           ? Math.max(a.x, b.x) + gap
           : Math.min(a.x, b.x) - gap
         : (a.x + b.x) / 2;
-    return `M ${format(a.x)} ${format(a.y)} H ${format(bendX)} V ${format(b.y)} H ${format(b.x)}`;
+    if (!scaledLaneOffset)
+      return `M ${format(a.x)} ${format(a.y)} H ${format(bendX)} V ${format(b.y)} H ${format(b.x)}`;
+    const laneY = (a.y + b.y) / 2 + scaledLaneOffset;
+    return `M ${format(a.x)} ${format(a.y)} H ${format(bendX)} V ${format(laneY)} H ${format(bendX)} V ${format(b.y)} H ${format(b.x)}`;
   }
 
   const controlDistance = Math.max(72 * safeScale, distance * 0.42);
-  return `M ${format(a.x)} ${format(a.y)} C ${format(a.x + controlDistance * sourceDirection)} ${format(a.y)}, ${format(b.x + controlDistance * targetDirection)} ${format(b.y)}, ${format(b.x)} ${format(b.y)}`;
+  return `M ${format(a.x)} ${format(a.y)} C ${format(a.x + controlDistance * sourceDirection)} ${format(a.y + scaledLaneOffset)}, ${format(b.x + controlDistance * targetDirection)} ${format(b.y + scaledLaneOffset)}, ${format(b.x)} ${format(b.y)}`;
 }
 
 export function edgePath(
   document: CanvasDocument,
   edge: CanvasEdge,
   style: CanvasConnectionStyle = "curve",
+  laneOffset = edgeRouteLaneOffset(document, edge),
 ) {
   const sourcePort = edge.sourcePort || "right";
   const targetPort = edge.targetPort || "left";
@@ -1628,6 +1823,8 @@ export function edgePath(
     style,
     sourcePort,
     targetPort,
+    1,
+    laneOffset,
   );
 }
 
