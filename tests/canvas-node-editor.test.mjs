@@ -727,3 +727,19 @@ test("canvas stacking rules are tokenized instead of using historical hard-coded
   const nonTokenCss = styles.replace(/--[\w-]+\s*:\s*-?\d+!?/g, "");
   assert.doesNotMatch(nonTokenCss, /z-index\s*:\s*-?\d+!?/);
 });
+
+test("upscale result quick toolbar exposes image actions", () => {
+  const quickActionsStart = component.indexOf("const quickActions = useMemo");
+  const contextMenuStart = component.indexOf("const contextMenuGroups = useMemo", quickActionsStart);
+  assert.ok(quickActionsStart >= 0 && contextMenuStart > quickActionsStart);
+  const quickActions = component.slice(quickActionsStart, contextMenuStart);
+  const upscaleActionsStart = quickActions.indexOf('if (node.type === "upscale")');
+  assert.ok(upscaleActionsStart >= 0, "upscale quick actions should be defined");
+  const upscaleActions = quickActions.slice(upscaleActionsStart);
+  ['id: "mask"', 'id: "image-operations"', 'id: "download"', 'id: "asset"'].forEach((id) => {
+    assert.ok(upscaleActions.includes(id), "missing upscale action: " + id);
+  });
+  assert.match(upscaleActions, /dangerAction:\s*\{[\s\S]*id: "delete"/);
+  assert.match(component, /if \(!imageEditorNode \|\| \(imageEditorNode\.type !== "media" && imageEditorNode\.type !== "upscale"\)/);
+  assert.match(component, /if \(!pickerNode \|\| !canAddCanvasAsset\(pickerNode\)\)/);
+});

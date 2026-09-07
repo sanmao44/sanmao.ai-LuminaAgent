@@ -378,7 +378,8 @@ function isAssignableCanvasAssetCollection(collectionId: string) {
 
 function canAddCanvasAsset(node: CanvasNode) {
   return (
-    node.type === "media" &&
+    ((node.type === "media" && Boolean(node.data.kind)) ||
+      (node.type === "upscale" && node.data.kind === "image")) &&
     Boolean(node.data.url) &&
     !CANVAS_ASSET_NON_READY_STATUSES.has(String(node.data.status || ""))
   );
@@ -8892,7 +8893,7 @@ export default function SuperCanvas() {
   }, [commit, notify, selectedSingle]);
 
   const openImageOperations = useCallback((node: CanvasNode) => {
-    if (node.type !== "media" || node.data.kind !== "image" || !node.data.url)
+    if ((node.type !== "media" && node.type !== "upscale") || node.data.kind !== "image" || !node.data.url)
       return notify("请先选择一张已完成的图片", "error");
     setImageEditorNodeId(node.id);
     setQuickToolbarNodeId(null);
@@ -9111,11 +9112,13 @@ export default function SuperCanvas() {
     const source = imageEditorNodeId
       ? nodeById(docRef.current, imageEditorNodeId)
       : undefined;
-    if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url)
+    if (!source || (source.type !== "media" && source.type !== "upscale") || source.data.kind !== "image" || !source.data.url)
       throw new Error("当前图片节点已不存在，请重新选择图片");
 
     const sourceDataUrl = await asDataUrl(String(source.data.url));
-    const sourceParams = source.data.generation?.params || source.data.params || defaultParams("image", runtime);
+    const sourceParams = source.type === "upscale"
+      ? defaultParams("image", runtime)
+      : source.data.generation?.params || source.data.params || defaultParams("image", runtime);
     const sourceName = String(source.data.name || "图片");
     const createdAt = Date.now();
     const operationLabel = request.operation === "outpaint"
@@ -10685,8 +10688,26 @@ export default function SuperCanvas() {
     }
     if (node.type === "upscale") {
       const hasResult = Boolean(node.data.url);
+      const canAddAsset = canAddCanvasAsset(node);
       return {
         primaryActions: [
+          {
+            id: "mask",
+            icon: "mask",
+            label: node.data.mask ? "查看局部编辑" : "局部编辑",
+            title: node.data.mask
+              ? `局部编辑 · ${canvasMaskStatusLabel(node.data.mask.status)}`
+              : "为当前超分结果指定局部编辑范围",
+            disabled: !hasResult,
+            onClick: () => openCanvasMaskEditor(node.id),
+          },
+          {
+            id: "image-operations",
+            icon: "image-operations",
+            label: "图片编辑",
+            disabled: !hasResult,
+            onClick: () => openImageOperations(node),
+          },
           {
             id: "download",
             icon: "download",
@@ -10695,8 +10716,22 @@ export default function SuperCanvas() {
             disabled: !hasResult,
             onClick: () => downloadCanvasNode(node),
           },
+          {
+            id: "asset",
+            icon: "asset",
+            label: "加入资产",
+            disabled: !canAddAsset,
+            onClick: () => openAssetCollectionPicker(node),
+          },
         ],
         menuGroups: [],
+        dangerAction: {
+          id: "delete",
+          icon: "delete",
+          label: "删除",
+          danger: true,
+          onClick: deleteSelection,
+        },
       };
     }
     const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
@@ -11832,7 +11867,7 @@ export default function SuperCanvas() {
         )}
         {imageEditorNodeId && !nodeGestureActive && (() => {
           const imageEditorNode = document.nodes.find((item) => item.id === imageEditorNodeId);
-          if (!imageEditorNode || imageEditorNode.type !== "media" || imageEditorNode.data.kind !== "image" || !imageEditorNode.data.url) return null;
+          if (!imageEditorNode || (imageEditorNode.type !== "media" && imageEditorNode.type !== "upscale") || imageEditorNode.data.kind !== "image" || !imageEditorNode.data.url) return null;
           return (
             <CanvasImageEditorWorkbench
               node={imageEditorNode}
@@ -12697,7 +12732,7 @@ export default function SuperCanvas() {
       )}
       {assetCollectionPickerNodeId && (() => {
         const pickerNode = nodeById(document, assetCollectionPickerNodeId);
-        if (!pickerNode || pickerNode.type !== "media" || !pickerNode.data.url)
+        if (!pickerNode || !canAddCanvasAsset(pickerNode))
           return null;
         return (
           <CanvasAssetCollectionPicker
