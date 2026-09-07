@@ -734,6 +734,12 @@ const CONNECTION_NODE_OPTIONS: Array<{
     description: "连接对话上下文并调用对话模型",
   },
   {
+    kind: "upscale",
+    icon: "↗",
+    label: "超分节点",
+    description: "连接一张已完成图片并打开超分设置",
+  },
+  {
     kind: "workflowImage",
     icon: "✧",
     label: "图片变体生成器",
@@ -744,12 +750,6 @@ const CONNECTION_NODE_OPTIONS: Array<{
     icon: "◆",
     label: "视频变体生成器",
     description: "按多条要求串行生成视频变体",
-  },
-  {
-    kind: "upscale",
-    icon: "↗",
-    label: "超分节点",
-    description: "连接一张已完成图片并打开超分设置",
   },
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [

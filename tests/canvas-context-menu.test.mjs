@@ -226,3 +226,13 @@ test("create menu uses separators instead of spacious group headings", () => {
   assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\{[^}]*border-top:1px solid/);
   assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\+\.canvas-menu-group\{[^}]*border-top:1px solid/);
 });
+
+test("connection picker places upscale before image variants", () => {
+  const optionsStart = component.indexOf("const CONNECTION_NODE_OPTIONS");
+  const optionsEnd = component.indexOf("const CANVAS_SHORTCUTS", optionsStart);
+  assert.ok(optionsStart >= 0 && optionsEnd > optionsStart, "connection node options should be present");
+  const options = component.slice(optionsStart, optionsEnd);
+  const upscalePosition = options.indexOf('kind: "upscale"');
+  const imageVariantPosition = options.indexOf('kind: "workflowImage"');
+  assert.ok(upscalePosition >= 0 && imageVariantPosition > upscalePosition, "upscale should appear before image variants");
+});
