@@ -74,7 +74,14 @@ export function isCompletedUpdateProgressStale(progress: Pick<UpdateProgress, 's
   return progress.stage === 'completed' && Boolean(currentVersion) && compareVersions(currentVersion, progress.version) >= 0;
 }
 
-export function isUpdateProgressStale(progress: Pick<UpdateProgress, 'stage' | 'version'>, currentVersion: string) {
+export function isUpdateProgressStale(
+  progress: Pick<UpdateProgress, 'stage' | 'version'> & Partial<Pick<UpdateProgress, 'message'>>,
+  currentVersion: string,
+) {
+  // Older clients incorrectly marked the updater as completed immediately
+  // after launch. That record cannot describe a finished update and would
+  // otherwise survive a failed rollback forever.
+  if (progress.stage === 'completed' && progress.message === '更新程序已启动，应用正在重启…') return true;
   if (!currentVersion) return false;
   // Once the running app already equals/exceeds the update target, the record is
   // no longer relevant - including a failed one. Without this, a stale
@@ -544,7 +551,9 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
     updaterSpawned = true;
     await waitForUpdaterHandshake(logPath);
     child.unref();
-    setUpdateProgress(jobId, { stage: 'completed', message: '更新程序已启动，应用正在重启…', percent: 100 });
+    // The detached updater owns the terminal progress state. Its initial
+    // handshake only proves that it started; it may still fail while backing
+    // up files, rebuilding, or waiting for the new service to become ready.
     return { started: true, version: status.latestVersion, port };
   } catch (error) {
     setUpdateProgress(jobId, {

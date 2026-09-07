@@ -38,17 +38,19 @@ test('progress is stale once the running app reaches the recorded version', () =
   assert.equal(local.isUpdateProgressStale({ stage: 'verifying', version: '0.7.13' }, '0.7.14'), true);
   assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.13' }, '0.7.14'), true);
   assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.14' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'completed', version: '0.7.32', message: '更新程序已启动，应用正在重启…' }, '0.7.31'), true);
   // A target still newer than the installed version is kept, even when failed.
   assert.equal(local.isUpdateProgressStale({ stage: 'starting', version: '0.7.15' }, '0.7.14'), false);
   assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.15' }, '0.7.14'), false);
 });
 
 test('update archives remain the single source of installed updater code', async () => {
-  const [localUpdate, windowsUpdater, windowsUpdaterCore, windowsUpdaterBootstrap, launcher, progressRoute] = await Promise.all([
+  const [localUpdate, windowsUpdater, windowsUpdaterCore, windowsUpdaterBootstrap, unixUpdater, launcher, progressRoute] = await Promise.all([
     readFile(new URL('../lib/local-update.ts', import.meta.url), 'utf8'),
     readFile(new URL('../scripts/apply-update.ps1', import.meta.url), 'utf8'),
     readFile(new URL('../scripts/apply-update-core.ps1', import.meta.url), 'utf8'),
     readFile(new URL('../scripts/apply-update-bootstrap.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update.sh', import.meta.url), 'utf8'),
     readFile(new URL('../scripts/start.ps1', import.meta.url), 'utf8'),
     readFile(new URL('../app/api/update/progress/route.ts', import.meta.url), 'utf8'),
   ]);
@@ -62,6 +64,9 @@ test('update archives remain the single source of installed updater code', async
   assert.match(windowsUpdaterCore, /Move-Item -LiteralPath \$_.FullName -Destination \$backupPath -Force/);
   assert.match(windowsUpdaterCore, /programBackupComplete/);
   assert.match(windowsUpdaterCore, /if \(\$destination -eq \$PSCommandPath\) \{ return \}/);
+  assert.match(windowsUpdaterCore, /Where-Object \{ \$_.Name -ne '\.agents' \}/);
+  assert.match(unixUpdater, /! -name \.agents/);
+  assert.doesNotMatch(localUpdate, /setUpdateProgress\(jobId, \{ stage: 'completed', message: '更新程序已启动/);
   assert.match(windowsUpdater, /apply-update-core\.ps1/);
   assert.match(windowsUpdaterBootstrap, /apply-update-core\.ps1/);
   assert.equal(launcher.charCodeAt(0), 0xFEFF, 'Windows launcher must keep a UTF-8 BOM for Windows PowerShell');

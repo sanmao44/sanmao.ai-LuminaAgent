@@ -80,7 +80,7 @@ function Backup-CurrentProgram {
   $script:programBackupComplete = $false
   try {
     Get-ChildItem -LiteralPath $TargetPath -Force |
-      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -notlike '.env*' } |
+      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
       ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $backupPath -Force }
     $script:programBackupComplete = $true
   } catch {
@@ -94,7 +94,7 @@ function Restore-PreviousProgram {
   if (-not $script:programBackedUp -or -not (Test-Path -LiteralPath $backupPath)) { return $false }
   if ($script:programBackupComplete) {
     Get-ChildItem -LiteralPath $TargetPath -Force |
-      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -notlike '.env*' } |
+      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
       Remove-Item -Recurse -Force
   }
   Get-ChildItem -LiteralPath $backupPath -Force | ForEach-Object {
@@ -199,7 +199,9 @@ try {
   # a runnable version before releasing the shared operation lock.
   Backup-CurrentProgram
 
-  Get-ChildItem -LiteralPath $packageRoot -Force | ForEach-Object {
+  Get-ChildItem -LiteralPath $packageRoot -Force |
+    Where-Object { $_.Name -ne '.agents' } |
+    ForEach-Object {
     $destination = Join-Path $TargetPath $_.Name
     # Copying a file onto the process' executing script aborts PowerShell.
     # The restarted launcher restores the tiny fixed bootstrap immediately.

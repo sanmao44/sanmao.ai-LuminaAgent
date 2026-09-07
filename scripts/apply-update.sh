@@ -97,7 +97,7 @@ rollback_update() {
   fi
   if [ "$BACKUP_COMPLETE" -eq 1 ]; then
     find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
-      ! -name .data ! -name node_modules ! -name .git ! -name '.env*' \
+      ! -name .data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
       -exec rm -rf {} +
   fi
   find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -exec mv {} "$TARGET_PATH"/ \;
@@ -157,14 +157,14 @@ fi
 mkdir -p "$BACKUP_DIR"
 BACKUP_CREATED=1
 if ! find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
-  ! -name .data ! -name node_modules ! -name .git ! -name '.env*' \
+  ! -name .data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
   -exec mv {} "$BACKUP_DIR"/ \;
 then
   rollback_update || true
   exit 1
 fi
 BACKUP_COMPLETE=1
-if ! cp -R "$PACKAGE_ROOT"/. "$TARGET_PATH"/; then
+if ! find "$PACKAGE_ROOT" -mindepth 1 -maxdepth 1 ! -name .agents -exec cp -R {} "$TARGET_PATH"/ \;; then
   rollback_update || true
   exit 1
 fi
