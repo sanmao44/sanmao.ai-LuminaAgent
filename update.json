@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.32/SANMAO.AI-0.7.32.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.32/SANMAO.AI-0.7.32.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "d5ffbc3f713dff77c0885e0b7dedd14e97b4c14a8c679becc6ddca57402c5d7e",
   "publishedAt": "2026-09-07T19:08:02+08:00",
   "notes": [
     "局部编辑新增修改 / 移动双模式，支持直接拖动源选区并显示原位置和目标虚线框。",
