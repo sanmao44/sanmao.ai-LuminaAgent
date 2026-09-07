@@ -233,6 +233,7 @@ test("video variant generators reuse the compact image-variant dock", () => {
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*position:absolute[\s\S]*left:0[\s\S]*bottom:calc\(100% \+ 8px\)/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*width:min\(540px,calc\(100vw - 32px\)\)/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock[\s\S]*\.canvas-variant-list\{[\s\S]*max-height:min\(240px,calc\(100vh - 188px\)\)[\s\S]*overflow-y:auto/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{[\s\S]*position:relative/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-actions\{[\s\S]*position:relative/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-count\{[^}]*font-variant-numeric:tabular-nums/);
