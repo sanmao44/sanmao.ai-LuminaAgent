@@ -2128,6 +2128,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-image-dock{display:grid;gap:7px;min-width:0}
 
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chips{display:flex;align-items:center;gap:6px;min-width:0;overflow:visible}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chips{position:relative;z-index:var(--canvas-z-expanded-editor)}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip{flex:none;display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent-soft) 58%,var(--panel));color:var(--accent-text);font:inherit;font-size:8px;font-weight:800;cursor:pointer;white-space:nowrap;transition:border-color .16s ease,background .16s ease}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip:hover{border-color:color-mix(in srgb,var(--accent) 54%,var(--line));background:color-mix(in srgb,var(--accent-soft) 80%,var(--panel))}
 .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip span{font-size:10px;line-height:1}
@@ -2309,6 +2310,17 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   opacity:1;
   visibility:visible;
   transform:translate(-50%,0);
+}
+/* Top-row controls open upward so their helper text stays above the prompt. */
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip[data-tooltip]::after{
+  left:0;
+  top:auto;
+  bottom:calc(100% + 8px);
+  transform:translate(0,4px);
+}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip[data-tooltip]:hover::after,
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip[data-tooltip]:focus-visible::after{
+  transform:translate(0,0);
 }
 /*
   Tooltips on bottom-row controls (generate / params) open upward so they stay

@@ -56,20 +56,19 @@ test("reference controls expose canvas picking while keeping file upload availab
   assert.match(component, /上传参考素材/);
 });
 
-test("picker feedback includes cancel, hover/flash styling, and the referencing cursor", () => {
-  assert.match(component, /canvas-reference-picker-banner/);
+test("picker feedback uses hover/flash styling and the referencing cursor without an overlay prompt", () => {
   assert.match(component, /cancelReferencePicker\(\)/);
+  assert.doesNotMatch(component, /canvas-reference-picker-banner/);
   assert.match(styles, /reference-picker-target/);
   assert.match(styles, /reference-picker-hover/);
   assert.match(styles, /reference-picker-flash/);
   assert.match(cursorStyles, /is-cursor-referencing/);
 });
 
-test("picker prompt stays above editors and keeps its instruction readable", () => {
-  assert.match(styles, /\.canvas-reference-picker-banner\{[^}]*position:fixed/);
-  assert.match(styles, /\.canvas-reference-picker-banner\{[^}]*z-index:var\(--canvas-z-modal-popover\)/);
-  assert.match(styles, /\.canvas-reference-picker-banner small\{[^}]*overflow-wrap:anywhere/);
-  assert.match(styles, /@media\(max-width:720px\)\{\.canvas-reference-picker-banner\{top:76px/);
+test("picker has no fixed prompt layer that can cover narrow editors", () => {
+  assert.doesNotMatch(component, /canvas-reference-picker-banner/);
+  assert.doesNotMatch(styles, /canvas-reference-picker-banner/);
+  assert.doesNotMatch(styles, /canvas-z-reference-picker/);
 });
 
 test("video frame slots forward their explicit first/last-frame roles", () => {

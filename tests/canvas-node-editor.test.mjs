@@ -27,6 +27,17 @@ test("node editor exposes an accessible expand/collapse control", () => {
   assert.match(component, /data-prompt-expanded=\{promptExpanded \? "true" : "false"\}/);
 });
 
+test("image dock top-row tooltips stay above the prompt content", () => {
+  assert.match(
+    styles,
+    /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-chips\{[^}]*z-index:var\(--canvas-z-expanded-editor\)/,
+  );
+  assert.match(
+    styles,
+    /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-chip\[data-tooltip\]::after\{[\s\S]*left:0;[\s\S]*bottom:calc\(100% \+ 8px\)[\s\S]*transform:translate\(0,4px\)/,
+  );
+});
+
 test("completed media cards always generate a new result branch", () => {
   assert.match(component, /shouldGenerateVideoInPlace/);
   assert.match(component, /if \(selectedMediaTarget\?\.data\.url\)/);
