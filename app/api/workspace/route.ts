@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { type WorkspaceSnapshot } from '@/lib/workspace-types';
@@ -9,14 +9,46 @@ export const runtime = 'nodejs';
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const workspacePath = path.join(dataDir, 'workspace.json');
 const maxWorkspaceBytes = 80 * 1024 * 1024;
+const workspaceTempPattern = /^workspace\.json\.\d+\.\d+\.tmp$/;
+
+function parseWorkspace(raw: string) {
+  if (!raw.trim()) return null;
+  return validateWorkspaceShape(JSON.parse(raw)) as unknown as WorkspaceSnapshot;
+}
+
+async function recoverWorkspace() {
+  const entries = await readdir(dataDir, { withFileTypes: true }).catch(() => []);
+  const candidates = (await Promise.all(entries
+    .filter((entry) => entry.isFile() && workspaceTempPattern.test(entry.name))
+    .map(async (entry) => {
+      const file = path.join(dataDir, entry.name);
+      try { return { file, mtimeMs: (await stat(file)).mtimeMs }; }
+      catch { return null; }
+    })))
+    .filter((candidate): candidate is { file: string; mtimeMs: number } => Boolean(candidate))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, 32);
+
+  for (const candidate of candidates) {
+    try {
+      const raw = await readFile(candidate.file, 'utf8');
+      const workspace = parseWorkspace(raw);
+      if (!workspace) continue;
+      await writeAtomic(raw);
+      return workspace;
+    } catch {}
+  }
+  return null;
+}
 
 async function readWorkspace() {
   try {
     const raw = await readFile(workspacePath, 'utf8');
-    if (!raw.trim()) return null;
-    return validateWorkspaceShape(JSON.parse(raw)) as unknown as WorkspaceSnapshot;
+    return parseWorkspace(raw);
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    const recovered = await recoverWorkspace();
+    if (recovered) return recovered;
     throw error;
   }
 }
@@ -24,7 +56,8 @@ async function readWorkspace() {
 async function writeAtomic(content: string) {
   await mkdir(dataDir, { recursive: true });
   const temporary = `${workspacePath}.${Date.now()}.${process.pid}.tmp`;
-  await writeFile(temporary, content, 'utf8');
+  await writeFile(temporary, content, { encoding: 'utf8', flush: true });
+  parseWorkspace(await readFile(temporary, 'utf8'));
   await rename(temporary, workspacePath);
 }
 
