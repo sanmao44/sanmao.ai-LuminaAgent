@@ -169,6 +169,9 @@ test("completed marks stay editable without opening a text dialog", () => {
   assert.doesNotMatch(editor, /local-edit-annotation-toolbar/);
   assert.match(editor, /className="local-edit-annotation-edit-icon"/);
   assert.match(editor, /onClick=\{\(\) => editAnnotation\(annotation\)\}/);
+  assert.match(editor, /className="local-edit-annotation-delete-icon danger"/);
+  assert.match(editor, /删除整个局部标记（可撤销）/);
+  assert.match(editor, /onClick=\{\(\) => deleteAnnotation\(annotation\)\}/);
   assert.match(editor, /local-edit-annotation-summary-select/);
   assert.match(styles, /\.local-edit-selection-thumb\{[^}]*background-repeat:no-repeat/);
 });
@@ -421,6 +424,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(styles, /\.local-edit-workbench-body\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(260px,320px\)/);
   assert.match(styles, /\.local-edit-move-frame\.target[^}]*pointer-events:auto/);
   assert.match(styles, /\.local-edit-annotation-edit-icon/);
+  assert.match(styles, /\.local-edit-annotation-delete-icon/);
   assert.doesNotMatch(styles, /marker-end:url\(#local-edit-move-arrow\)/);
 });
 

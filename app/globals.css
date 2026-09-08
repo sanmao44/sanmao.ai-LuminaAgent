@@ -3517,6 +3517,8 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .local-edit-annotation-summary-item .local-edit-annotation-summary-select{flex:1;min-width:0}
 .local-edit-annotation-edit-icon{flex:0 0 28px!important;width:28px;min-width:28px!important;min-height:28px!important;height:28px!important;padding:0!important;display:grid!important;place-items:center;border-color:color-mix(in srgb,var(--accent) 28%,var(--line))!important;color:var(--accent-text)!important}
 .local-edit-annotation-edit-icon svg{width:13px;height:13px;display:block}
+.local-edit-annotation-delete-icon{flex:0 0 28px!important;width:28px;min-width:28px!important;min-height:28px!important;height:28px!important;padding:0!important;display:grid!important;place-items:center;border-color:color-mix(in srgb,var(--danger) 30%,var(--line))!important;color:var(--danger)!important}
+.local-edit-annotation-delete-icon svg{width:13px;height:13px;display:block}
  .local-edit-annotation-summary button{display:flex;align-items:center;gap:5px;max-width:100%;min-width:0;min-height:36px;height:auto;padding:3px 7px 3px 3px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text-2);font:inherit;font-size:8px;text-align:left}
  .local-edit-annotation-summary button>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .local-edit-annotation-summary button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}

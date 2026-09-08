@@ -1764,8 +1764,11 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
                  </button>
                  <button type="button" className="local-edit-annotation-edit-icon" aria-label={`编辑第 ${index + 1} 个局部标记`} title="编辑局部标记" onClick={() => editAnnotation(annotation)}>
                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.8V20h3.2L18.5 8.7l-3.2-3.2L4 16.8Zm15.7-9.9c.4-.4.4-1 0-1.4l-1.2-1.2c-.4-.4-1-.4-1.4 0l-1.6 1.6 3.2 3.2 1-1.1Z" fill="currentColor" /></svg>
-                 </button>
-               </div>)}</div>}
+                  </button>
+                  <button type="button" className="local-edit-annotation-delete-icon danger" aria-label={`删除第 ${index + 1} 个局部标记`} title="删除整个局部标记（可撤销）" disabled={saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation)} onClick={() => deleteAnnotation(annotation)}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2m-8 0 1 12h6l1-12M10 10v6m4-6v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
+                </div>)}</div>}
              </div>
              {smartError && <div className="local-edit-smart-note" role="status">{smartError}</div>}
              <label className="local-edit-prompt"><span>局部编辑补充说明（可选）</span><textarea value={prompt} disabled={saving} onChange={(event) => setPrompt(event.target.value)} placeholder="可选：补充本次局部编辑要移除、替换或添加的内容…" /></label>
