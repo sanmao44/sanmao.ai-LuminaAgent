@@ -14,6 +14,7 @@ const storeCompiled = ts.transpileModule(storeSource, {
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-pagination-'));
 process.env.SANMAO_DATA_DIR = dataDir;
 const store = await import(`data:text/javascript;base64,${Buffer.from(storeCompiled).toString('base64')}`);
+const styles = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
 
 function task(prompt, source, id) {
   return {
@@ -68,8 +69,17 @@ test('video task API exposes page metadata and filter parameters', async () => {
   assert.match(route, /source,/);
   assert.match(route, /media,/);
   assert.match(route, /return Response\.json\(\{ \.\.\.result, tasks:/);
-  assert.match(page, /const videoPageSize = 14/);
+  assert.match(page, /const DEFAULT_HISTORY_PAGE_SIZE = 12/);
+  assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ pageSize\)\)/);
+  assert.match(page, /pageSize: String\(pageSize\)/);
+  assert.match(page, /每页 \$\{pageSize\} 项/);
   assert.match(page, /setVideoPage\(1\)/);
   assert.match(page, /className: "pagination creative-video-pagination"/);
   assert.match(page, /共 ", videoTotal, " 段 · 第 ", visibleVideoPage/);
+});
+
+test('wide desktop video history uses six columns for complete 12-item rows', () => {
+  assert.match(styles, /@media\(min-width:1600px\)\{\.creative-video-grid\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)\}\}/);
+  assert.match(styles, /@media\(max-width:760px\)[\s\S]*?\.creative-video-grid\{grid-template-columns:1fr 1fr\}/);
+  assert.match(styles, /@media\(max-width:480px\)\{\.creative-video-grid\{grid-template-columns:1fr\}/);
 });

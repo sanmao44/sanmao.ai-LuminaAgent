@@ -3738,9 +3738,10 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .creative-record-group-heading>div{display:grid;gap:3px;min-width:0}
 .creative-record-group-heading strong{color:var(--text);font-size:14px}
 .creative-record-group-heading small,.creative-record-group-heading>span{color:var(--muted);font-size:10px}
- /* Collapse unused tracks so a partially filled page still distributes the
-    available width across the cards, including wide 4K viewports. */
+ /* Keep the wide desktop works grid at six columns so common page sizes form
+    complete rows while preserving the existing intrinsic card width below it. */
  .creative-video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+@media(min-width:1600px){.creative-video-grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
 .creative-video-card{min-width:0;height:100%;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--panel-2);box-shadow:var(--shadow-soft,0 8px 24px rgba(20,24,40,.08))}
 .creative-video-preview{position:relative;flex:none;aspect-ratio:16/9;overflow:hidden;background:var(--bg-2);border-radius:15px 15px 0 0}
 .creative-video-preview video{display:block;width:100%;height:100%;object-fit:contain;background:#000}

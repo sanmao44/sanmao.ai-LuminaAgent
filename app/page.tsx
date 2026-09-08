@@ -104,17 +104,19 @@ const examples = [
     '让这个创意看起来更高级、更有质感',
     '我只说目标，创意、模型和出图都交给你'
 ];
-const pageSizeOptions = [
+const HISTORY_PAGE_SIZE_OPTIONS = [
     12,
     24,
     48,
     96
-].map((value)=>({
+];
+const DEFAULT_HISTORY_PAGE_SIZE = 12;
+const HISTORY_PAGE_SIZE_STORAGE_KEY = 'sanmao-history-page-size';
+const pageSizeOptions = HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
         value: String(value),
-        label: `每页 ${value} 张`
+        label: `每页 ${value} 项`
     }));
 const generationLogPageSize = 16;
-const videoPageSize = 14;
 const qualityOptions = IMAGE_QUALITY_OPTIONS.map((item)=>({ value: item.value, label: item.label, meta: item.description }));
 const upscaleScales = [
     1,
@@ -5292,7 +5294,7 @@ export default function Page() {
     const [historyFilter, setHistoryFilter] = useState('all');
     const [historyMediaFilter, setHistoryMediaFilter] = useState('all');
     const [recordTab, setRecordTab] = useState('works');
-    const [pageSize, setPageSize] = useState(24);
+    const [pageSize, setPageSize] = useState(DEFAULT_HISTORY_PAGE_SIZE);
     const [page, setPage] = useState(1);
     const [videoPage, setVideoPage] = useState(1);
     const [videoTotal, setVideoTotal] = useState(0);
@@ -5568,7 +5570,7 @@ export default function Page() {
     ]);
     const activeAgentIntent = liveAgentIntent;
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
-    const videoTotalPages = Math.max(1, Math.ceil(videoTotal / videoPageSize));
+    const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
     const visibleVideoPage = Math.min(videoPage, videoTotalPages);
     const pagedGallery = useMemo(()=>filteredGallery.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), [
         filteredGallery,
@@ -5659,13 +5661,8 @@ export default function Page() {
             const savedWebSearch = localStorage.getItem('sanmao-agent-web-search');
             if (savedWebMode === 'auto' || savedWebMode === 'always' || savedWebMode === 'off') setAgentWebMode(savedWebMode);
             else if (savedWebSearch !== null) setAgentWebMode(savedWebSearch === '0' ? 'off' : 'auto');
-            const savedSize = Number(localStorage.getItem('sanmao-history-page-size') || 24);
-            if ([
-                12,
-                24,
-                48,
-                96
-            ].includes(savedSize)) setPageSize(savedSize);
+            const savedSize = Number(localStorage.getItem(HISTORY_PAGE_SIZE_STORAGE_KEY) || DEFAULT_HISTORY_PAGE_SIZE);
+            if (HISTORY_PAGE_SIZE_OPTIONS.includes(savedSize)) setPageSize(savedSize);
             const savedGeneration = JSON.parse(localStorage.getItem('sanmao-generate-settings') || 'null');
             if (savedGeneration) {
                 // 模型选择由提交后的统一偏好记录恢复；不能因为旧版参数缓存而覆盖“自动”模式。
@@ -5978,7 +5975,8 @@ export default function Page() {
         recordTab,
         historySearch,
         historyFilter,
-        historyMediaFilter
+        historyMediaFilter,
+        pageSize
     ]);
     useEffect(()=>{
         setLogPage(1);
@@ -6587,7 +6585,7 @@ export default function Page() {
         try {
             const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
             const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
-            const params = new URLSearchParams({ page: String(Math.max(1, Math.round(Number(requestedPage) || 1))), pageSize: String(videoPageSize), source, media });
+            const params = new URLSearchParams({ page: String(Math.max(1, Math.round(Number(requestedPage) || 1))), pageSize: String(pageSize), source, media });
             if (historySearch.trim()) params.set('search', historySearch.trim());
             const res = await fetch(`/api/video/tasks?${params.toString()}`, { cache: 'no-store' });
             if (!res.ok) return;
@@ -6755,7 +6753,7 @@ export default function Page() {
             const preferenceKeys = [
                 'sanmao-theme',
                 'sanmao-success-sound',
-                'sanmao-history-page-size',
+                HISTORY_PAGE_SIZE_STORAGE_KEY,
                 'sanmao-generate-settings',
                 'sanmao-generate-tasks'
             ];
@@ -6803,7 +6801,7 @@ export default function Page() {
         const preferenceKeys = [
             'sanmao-theme',
             'sanmao-success-sound',
-            'sanmao-history-page-size',
+            HISTORY_PAGE_SIZE_STORAGE_KEY,
             'sanmao-generate-settings',
             'sanmao-generate-tasks'
         ];
@@ -12720,7 +12718,7 @@ export default function Page() {
                                                             const n = Number(v);
                                                             setPageSize(n);
                                                             try {
-                                                                localStorage.setItem('sanmao-history-page-size', v);
+                                                                localStorage.setItem(HISTORY_PAGE_SIZE_STORAGE_KEY, v);
                                                             } catch  {}
                                                         },
                                                         className: "page-size-dropdown"
@@ -12791,7 +12789,7 @@ export default function Page() {
                                         className: "creative-record-group",
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", { className: "creative-record-group-heading", children: [
-                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: "已完成的视频会自动保存在这里 · 每页 14 段" })] }),
+                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${pageSize} 项` })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
                                             /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task) }, task.id)) }),
