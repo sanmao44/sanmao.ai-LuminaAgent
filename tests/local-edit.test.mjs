@@ -166,7 +166,10 @@ test("completed marks stay editable without opening a text dialog", () => {
   assert.match(editor, /function saveEditedAnnotation\(\)/);
   assert.match(editor, /function annotationPreviewStyle\(annotation: LocalEditAnnotation, imageUrl: string\)/);
   assert.match(editor, /className="local-edit-selection-thumb"/);
-  assert.match(editor, /<button type="button" onClick=\{\(\) => editAnnotation\(annotation\)\}>修改<\/button>/);
+  assert.doesNotMatch(editor, /local-edit-annotation-toolbar/);
+  assert.match(editor, /className="local-edit-annotation-edit-icon"/);
+  assert.match(editor, /onClick=\{\(\) => editAnnotation\(annotation\)\}/);
+  assert.match(editor, /local-edit-annotation-summary-select/);
   assert.match(styles, /\.local-edit-selection-thumb\{[^}]*background-repeat:no-repeat/);
 });
 
@@ -367,6 +370,18 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /localEditFusionFeather\(feather\)/);
   assert.match(editor, /function beginMoveAnnotation/);
   assert.match(editor, /function beginPendingMove/);
+  assert.match(editor, /pendingSelectionRef = useRef<ImageData \| null>\(null\)/);
+  assert.match(editor, /function rebuildMaskWithPending\(pending: PendingAnnotation \| null\)/);
+  assert.match(editor, /function updatePendingModifySelection\(geometry: LocalEditAnnotationGeometry, rasterMode: 'edit' \| 'protect'\)/);
+  assert.match(editor, /const canContinueModifyDraft = pendingAnnotation\?\.stage === 'modify' && !pendingAnnotation\.isExisting/);
+  assert.match(editor, /tool === 'eraser' \? 'protect' : 'edit'/);
+  assert.match(editor, /中键拖动画布/);
+  assert.match(editor, /stage: 'modify' \| 'move-source' \| 'move-target'/);
+  assert.match(editor, /setAnnotationPending\(moveAnnotation, gesture\.before, 'move-source'/);
+  assert.match(editor, /pending\.stage !== 'move-source' && pending\.stage !== 'move-target'/);
+  assert.match(editor, /stage: 'move-target'/);
+  assert.match(editor, /pendingIsExisting: pending\.isExisting/);
+  assert.match(editor, /isExisting: movingAnnotation\.pendingIsExisting/);
   assert.match(editor, /dragImage: copyImageData\(dragBefore\.image\)/);
   assert.match(editor, /isPendingDraft: true/);
   assert.match(editor, /setPendingAnnotation\(pending\)/);
@@ -377,8 +392,10 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /aria-label="局部编辑功能"/);
   assert.match(editor, /圈选要移动的物体，再拖到目标位置，并补充移动要求/);
   assert.match(editor, /圈选要修改的区域，并补充要移除、替换或添加的内容/);
-  assert.match(editor, /placeholder=\{mode === 'move' \? '补充移动说明' : '补充修改说明'\}/);
-  assert.match(editor, /aria-label=\{mode === 'move' \? '移动说明' : '修改说明'\}/);
+  assert.match(editor, /const pendingAnnotationInput = pendingAnnotation\?\.stage !== 'move-source'/);
+  assert.match(editor, /\{pendingAnnotationInput && \(\(\) => \{/);
+  assert.match(editor, /placeholder=\{pendingAnnotationInput\.stage === 'move-target' \? '补充移动说明' : '补充修改说明'\}/);
+  assert.match(editor, /aria-label=\{pendingAnnotationInput\.stage === 'move-target' \? '移动说明' : '修改说明'\}/);
   assert.match(editor, /strong>\{mode === 'move' \? '移动说明' : '修改说明'\}<\/strong>/);
   assert.match(editor, /mode === 'move'\) beginMoveAnnotation\(event, annotation\)/);
   assert.match(editor, /className=\{`local-edit-annotation\$\{mode === 'move' \? ' move-enabled' : ''\}/);
@@ -388,6 +405,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /onPointerDown=\{pendingMove \? \(event\) => beginPendingMove\(event, pendingMove\) : undefined\}/);
   assert.match(editor, /x1=\{`\$\{source\.x \* 100\}%`\} y1=\{`\$\{source\.y \* 100\}%`\} x2=\{`\$\{target\.x \* 100\}%`\} y2=\{`\$\{target\.y \* 100\}%`\}/);
   assert.match(editor, /x1=\{`\$\{\(source\.x \+ source\.width\) \* 100\}%`\}/);
+  assert.doesNotMatch(editor, /local-edit-move-arrow/);
   assert.match(editor, /move: \{ from:/);
   assert.match(editor, /取消移动/);
   assert.match(editor, /moveLocalEditPixels\(/);
@@ -402,6 +420,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);
   assert.match(styles, /\.local-edit-workbench-body\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(260px,320px\)/);
   assert.match(styles, /\.local-edit-move-frame\.target[^}]*pointer-events:auto/);
+  assert.match(styles, /\.local-edit-annotation-edit-icon/);
   assert.doesNotMatch(styles, /marker-end:url\(#local-edit-move-arrow\)/);
 });
 
