@@ -421,7 +421,12 @@ export function canvasGroupPaintZIndex(
   group: CanvasGroup,
   interaction = false,
 ) {
-  const layer = finiteLayer(group.zIndex) ?? rawGroupLayer(document, group, document.groups.indexOf(group));
+  // Legacy documents can contain a zero or negative group layer. Keep the
+  // entity above the edge layer even before the next persistence pass.
+  const layer = Math.max(
+    CANVAS_Z_INDEX.group,
+    finiteLayer(group.zIndex) ?? rawGroupLayer(document, group, document.groups.indexOf(group)),
+  );
   return layer * CANVAS_ENTITY_LAYER_STRIDE + (interaction ? CANVAS_ENTITY_INTERACTION_OFFSET : 0);
 }
 
@@ -433,7 +438,10 @@ export function canvasNodePaintZIndex(
 ) {
   const group = document.groups.find((candidate) => candidate.id === node.groupId || candidate.nodeIds.includes(node.id));
   if (!group) {
-    const layer = finiteLayer(node.zIndex) ?? CANVAS_NODE_BASE_Z_INDEX;
+    const layer = Math.max(
+      CANVAS_NODE_BASE_Z_INDEX,
+      finiteLayer(node.zIndex) ?? CANVAS_NODE_BASE_Z_INDEX,
+    );
     return layer * CANVAS_ENTITY_LAYER_STRIDE + (interaction ? CANVAS_ENTITY_INTERACTION_OFFSET : 0);
   }
   const members = sortGroupMembersByLayer(document, group);

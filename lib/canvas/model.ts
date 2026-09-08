@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import { normalizeCreationSettings } from "../creation/settings";
 import { normalizeCanvasMaskState } from "./mask";
+import { createVideoEditorState, normalizeVideoEditorState } from "./video-editor";
 import {
   normalizeCanvasEntityLayers,
   normalizeCanvasNodeLayers,
@@ -68,7 +69,7 @@ export function normalizeCamera(
 }
 
 function nodeType(value: unknown): CanvasNode["type"] {
-  return value === "prompt" || value === "generator" || value === "upscale" ? value : "media";
+  return value === "prompt" || value === "generator" || value === "upscale" || value === "video-editor" ? value : "media";
 }
 
 function mediaKind(value: unknown): CanvasMediaKind {
@@ -277,6 +278,12 @@ function normalizeNode(value: unknown): CanvasNode | null {
         }));
     }
   }
+  if (type === "video-editor") {
+    data.videoEditor = normalizeVideoEditorState(data.videoEditor);
+    data.role = data.role || "编辑计划";
+    data.status = data.status || "idle";
+    data.statusLabel = data.statusLabel || "连接素材后自动入轨";
+  }
   if (type === "media" && data.kind === "video")
     normalizeVideoInputModeState(data);
   if (type === "media" && data.generation) {
@@ -432,9 +439,21 @@ export function canConnect(
   const sourceNode = nodeById(document, source);
   const sourceGroup = groupById(document, source);
   const targetNode = nodeById(document, target);
+  if (sourceNode?.type === "video-editor")
+    return { ok: false, reason: "视频编辑节点当前只保存编辑计划，暂不输出视频素材。" };
   const targetKind = targetNode && (targetNode.type === "media" || targetNode.type === "generator")
     ? targetNode.data.kind
     : undefined;
+  if (targetNode?.type === "video-editor") {
+    const sourceInputs = sourceGroup
+      ? groupNodes(document, sourceGroup.id).filter(isCanvasReferenceableNode)
+      : sourceNode && isCanvasReferenceableNode(sourceNode)
+        ? [sourceNode]
+        : [];
+    if (!sourceInputs.length)
+      return { ok: false, reason: "视频编辑节点只接受已有素材或素材组。" };
+    return { ok: true as const };
+  }
   const sourceHasAudio = Boolean(
     (sourceNode && sourceNode.data.kind === "audio") ||
     sourceGroup?.nodeIds.some((nodeId) => nodeById(document, nodeId)?.data.kind === "audio"),
@@ -824,10 +843,10 @@ export function nodeSize(node: Pick<CanvasNode, "type" | "w" | "h">) {
   return {
     w:
       node.w ||
-      (node.type === "media" ? 320 : node.type === "prompt" ? 270 : node.type === "upscale" ? 360 : 306),
+      (node.type === "media" ? 320 : node.type === "prompt" ? 270 : node.type === "upscale" ? 360 : node.type === "video-editor" ? 360 : 306),
     h:
       node.h ||
-      (node.type === "media" ? 220 : node.type === "prompt" ? 170 : node.type === "upscale" ? 260 : 238),
+      (node.type === "media" ? 220 : node.type === "prompt" ? 170 : node.type === "upscale" ? 260 : node.type === "video-editor" ? 250 : 238),
   };
 }
 
@@ -2254,6 +2273,25 @@ export function createUpscaleNode(position: { x: number; y: number } = { x: 0, y
         referenceIds: [],
         createdAt: Date.now(),
       },
+    },
+  };
+}
+
+export function createVideoEditorNode(
+  position: { x: number; y: number } = { x: 0, y: 0 },
+): CanvasNode {
+  return {
+    id: uid("node"),
+    type: "video-editor",
+    x: position.x,
+    y: position.y,
+    w: 360,
+    h: 250,
+    data: {
+      role: "编辑计划",
+      status: "idle",
+      statusLabel: "连接素材后自动入轨",
+      videoEditor: createVideoEditorState(),
     },
   };
 }

@@ -17,6 +17,7 @@ test('maps every canvas node category to a stable semantic color key', () => {
   const cases = [
     [{ type: 'media', data: { kind: 'image' } }, 'image'],
     [{ type: 'media', data: { kind: 'video' } }, 'video'],
+    [{ type: 'video-editor', data: {} }, 'video-editor'],
     [{ type: 'prompt', data: {} }, 'agent'],
     [{ type: 'generator', data: { kind: 'image' } }, 'image-generator'],
     [{ type: 'generator', data: { kind: 'video' } }, 'video-generator'],

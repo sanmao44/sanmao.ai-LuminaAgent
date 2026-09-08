@@ -35,6 +35,7 @@ import {
   createMedia,
   createPrompt,
   createUpscaleNode,
+  createVideoEditorNode,
   detachNodesFromGroups,
   distributeCanvasNodes,
   edgeRouteLaneOffset,
@@ -218,7 +219,13 @@ import type {
   CanvasSnapshot,
   CanvasVariantState,
   CanvasUpscaleParams,
+  CanvasVideoEditorState,
 } from "@/lib/canvas/types";
+import {
+  normalizeVideoEditorState,
+  syncVideoEditorInputs,
+  type CanvasVideoEditorInput,
+} from "@/lib/canvas/video-editor";
 import {
   renderCanvasImageGrid,
   renderCanvasImageGridComposite,
@@ -253,6 +260,8 @@ import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from 
 import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
 import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
+import VideoEditorNode from "@/components/VideoEditorNode";
+import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
 
 type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
 type Mode = CanvasGenerationMode | "text";
@@ -624,7 +633,8 @@ type ConnectableNodeKind =
   | "text"
   | "workflowImage"
   | "workflowVideo"
-  | "upscale";
+  | "upscale"
+  | "videoEditor";
 type ConnectionNodePicker = {
   x: number;
   y: number;
@@ -764,6 +774,12 @@ const CONNECTION_NODE_OPTIONS: Array<{
     icon: "◆",
     label: "视频变体生成器",
     description: "按多条要求串行生成视频变体",
+  },
+  {
+    kind: "videoEditor",
+    icon: "✂",
+    label: "视频编辑节点",
+    description: "连接素材并打开多轨编辑工作台",
   },
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
@@ -947,6 +963,9 @@ function connectCanvasNodesInDocument(
     : undefined;
   const target = nodeById(document, targetId);
   if ((!source && !sourceGroup) || !target) return { ok: false, document, reason: "源节点或目标节点不存在。" };
+  if (source?.type === "video-editor") {
+    return { ok: false, document, reason: "视频编辑节点当前只保存编辑计划，暂不输出视频素材。" };
+  }
   if (
     source?.id === target.id ||
     sourceGroup?.nodeIds.includes(target.id) ||
@@ -969,6 +988,27 @@ function connectCanvasNodesInDocument(
   let inputRole = requestedRole;
   let videoMode: CanvasVideoInputMode | undefined;
   let next = document;
+
+  if (target.type === "video-editor") {
+    if (!sourceInputs.length) {
+      return { ok: false, document, reason: "视频编辑节点只接受已有素材或素材组。" };
+    }
+    inputRole = sourceHasAudio && !sourceHasImage && !sourceHasVideo
+      ? "audio"
+      : sourceHasVideo && !sourceHasImage && !sourceHasAudio
+        ? "video"
+        : "reference-image";
+    const beforeEdges = next.edges.length;
+    next = addEdge(next, sourceId, targetId, sourcePort, targetPort, "reference", inputRole, incomingContext(next, targetId).length);
+    if (next.edges.length === beforeEdges) {
+      const existingEdge = next.edges.find(
+        (edge) => edge.source === sourceId && edge.target === targetId && edge.sourcePort === sourcePort && edge.targetPort === targetPort,
+      );
+      if (existingEdge) return { ok: true, document: syncCanvasVideoEditorReferences(next), inputRole: existingEdge.inputRole || inputRole };
+      return { ok: false, document, reason: "这条连线已存在，或不符合当前节点的输入规则。" };
+    }
+    return { ok: true, document: syncCanvasVideoEditorReferences(next), inputRole };
+  }
 
   if (targetKind === "image" && (sourceKind === "video" || sourceHasVideo)) {
     return { ok: false, document, reason: "图片节点不能接收视频作为图片参考。" };
@@ -1245,6 +1285,7 @@ function dataUrlFile(dataUrl: string, name: string) {
 }
 
 function nodeLabel(node: CanvasNode) {
+  if (node.type === "video-editor") return "视频编辑节点";
   if (node.type === "upscale") return "图片超分";
   if (node.type === "prompt") return "Agent 节点";
   if (node.type === "generator")
@@ -2137,6 +2178,38 @@ function syncCanvasVideoReferences(
   return next;
 }
 
+/** Reconcile connected media into the persisted video editing plan. */
+function syncCanvasVideoEditorReferences(document: CanvasDocument) {
+  let next = document;
+  for (const initialTarget of document.nodes) {
+    if (initialTarget.type !== "video-editor") continue;
+    const target = nodeById(next, initialTarget.id);
+    if (!target || target.type !== "video-editor") continue;
+    const inputs: CanvasVideoEditorInput[] = incomingContext(next, target.id)
+      .filter(isCanvasReferenceableNode)
+      .map((source) => ({
+        nodeId: source.id,
+        kind: source.data.kind || "image",
+        name: String(source.data.name || "素材"),
+        ...(Number(source.data.durationMs) > 0
+          ? { durationSeconds: Number(source.data.durationMs) / 1000 }
+          : {}),
+      }));
+    const current = normalizeVideoEditorState(target.data.videoEditor);
+    const updated = syncVideoEditorInputs(current, inputs);
+    if (JSON.stringify(updated) === JSON.stringify(current) && target.data.videoEditor) continue;
+    next = {
+      ...next,
+      nodes: next.nodes.map((node) =>
+        node.id === target.id
+          ? { ...node, data: { ...node.data, videoEditor: updated } }
+          : node,
+      ),
+    };
+  }
+  return next;
+}
+
 function CanvasReferenceMentionMenu({
   document,
   candidates,
@@ -2597,6 +2670,7 @@ export default function SuperCanvas() {
     null,
   );
   const [imageEditorNodeId, setImageEditorNodeId] = useState<string | null>(null);
+  const [videoEditorNodeId, setVideoEditorNodeId] = useState<string | null>(null);
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
@@ -2730,6 +2804,7 @@ export default function SuperCanvas() {
     setLightbox(null);
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
+    setVideoEditorNodeId(null);
     setAssetCollectionPickerNodeId(null);
     setActivePanel(null);
     setArrangeGroupMenuOpen(false);
@@ -2779,6 +2854,15 @@ export default function SuperCanvas() {
       setExpandedEditorId(nodeId);
       setLightbox(null);
       setReuseDraft(null);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasVideoEditor = useCallback(
+    (nodeId: string) => {
+      closeCanvasOverlayConflicts();
+      setSelectedIds(new Set([nodeId]));
+      setSelectedGroupId(null);
+      setVideoEditorNodeId(nodeId);
     },
     [closeCanvasOverlayConflicts],
   );
@@ -2993,14 +3077,14 @@ export default function SuperCanvas() {
     }
     const normalized = normalizeCanvasDocumentLayers(
       previous,
-      syncCanvasVideoReferences(next, runtime),
+      syncCanvasVideoEditorReferences(syncCanvasVideoReferences(next, runtime)),
     );
     setEditorDrafts((current) => syncCanvasEditorDraftInputModes(current, normalized, runtime));
     docRef.current = normalized;
     setDocument(normalized);
   }, [runtime]);
   const replaceDoc = useCallback((next: CanvasDocument) => {
-    const normalized = syncCanvasVideoReferences(normalizeDocument(next), runtime);
+    const normalized = syncCanvasVideoEditorReferences(syncCanvasVideoReferences(normalizeDocument(next), runtime));
     docRef.current = normalized;
     setDocument(normalized);
   }, [runtime]);
@@ -3020,6 +3104,28 @@ export default function SuperCanvas() {
       updateDoc(updater);
     },
     [updateDoc],
+  );
+  const updateVideoEditorNodeState = useCallback(
+    (nodeId: string, videoEditor: CanvasVideoEditorState) => {
+      commit((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) =>
+          node.id === nodeId && node.type === "video-editor"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  videoEditor,
+                  statusLabel: videoEditor.clips.length
+                    ? `${videoEditor.clips.length} 个片段 · 编辑计划`
+                    : "连接素材后自动入轨",
+                },
+              }
+            : node,
+        ),
+      }));
+    },
+    [commit],
   );
   const addLog = useCallback(
     (message: string) => {
@@ -3216,8 +3322,9 @@ export default function SuperCanvas() {
       const storage = ensureCanvasStorage();
       const initial = loadCanvasDocument(storage.activeId);
       const recovered = recoverInterruptedCanvasDocument(initial);
-      docRef.current = recovered.document;
-      setDocument(recovered.document);
+      const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
+      docRef.current = initialDocument;
+      setDocument(initialDocument);
       setProjects(storage.projects);
       setActiveProjectId(storage.activeId);
       setReady(true);
@@ -3265,7 +3372,7 @@ export default function SuperCanvas() {
 
   useEffect(() => {
     if (!ready || !runtime) return;
-    const synchronized = syncCanvasVideoReferences(docRef.current, runtime);
+    const synchronized = syncCanvasVideoEditorReferences(syncCanvasVideoReferences(docRef.current, runtime));
     if (synchronized !== docRef.current) {
       const normalized = normalizeCanvasDocumentLayers(docRef.current, synchronized);
       docRef.current = normalized;
@@ -4404,7 +4511,9 @@ export default function SuperCanvas() {
             setQuickToolbarNodeId(null);
             setExpandedEditorId(null);
             if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
-            if (node.type === "media" && node.data.kind === "audio") {
+            if (node.type === "video-editor") {
+              openCanvasVideoEditor(node.id);
+            } else if (node.type === "media" && node.data.kind === "audio") {
               setSelectedIds(new Set([node.id]));
               setSelectedGroupId(null);
               setQuickToolbarNodeId(null);
@@ -4604,6 +4713,7 @@ export default function SuperCanvas() {
       clearSelection,
       notify,
       cancelPendingNodeClick,
+      openCanvasVideoEditor,
       referencePicker,
       reuseDraft,
       stagePoint,
@@ -4975,7 +5085,7 @@ export default function SuperCanvas() {
 
   const addNode = useCallback(
     (
-      kind: "image" | "video" | "audio" | "text" | "workflowImage" | "workflowVideo" | "upscale",
+      kind: "image" | "video" | "audio" | "text" | "workflowImage" | "workflowVideo" | "upscale" | "videoEditor",
       position?: Point,
     ) => {
       if (kind === "upscale") {
@@ -4998,7 +5108,9 @@ export default function SuperCanvas() {
       const seed =
         position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
       const draft =
-        kind === "text"
+        kind === "videoEditor"
+          ? createVideoEditorNode(seed)
+          : kind === "text"
           ? createPrompt(seed)
           : kind === "workflowImage"
             ? createGenerator("image", seed, defaultParams("image", runtime))
@@ -5015,11 +5127,11 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       if (kind === "text") setMode("text");
-      else if (mediaKind !== "audio") setMode(mediaKind);
+      else if (mediaKind !== "audio" && kind !== "videoEditor") setMode(mediaKind);
       if (mediaKind === "audio") setExpandedEditorId(node.id);
       setContextMenu(null);
       notify(
-        `已添加${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
+        `已添加${kind === "videoEditor" ? "视频编辑" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [
@@ -5057,7 +5169,9 @@ export default function SuperCanvas() {
       const mediaKind =
         kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const draft =
-        kind === "upscale"
+        kind === "videoEditor"
+          ? createVideoEditorNode(picker.world)
+          : kind === "upscale"
           ? createUpscaleNode(picker.world)
           : kind === "text"
           ? createPrompt(picker.world)
@@ -5095,11 +5209,11 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       if (kind === "text") setMode("text");
-      else if (mediaKind !== "audio") setMode(mediaKind);
+      else if (mediaKind !== "audio" && kind !== "videoEditor") setMode(mediaKind);
       if (mediaKind === "audio") setExpandedEditorId(node.id);
       if (kind === "upscale") setExpandedEditorId(node.id);
       notify(
-        `已添加并连接${kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
+        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [commit, notify, openNodePosition, runtime],
@@ -11196,6 +11310,26 @@ export default function SuperCanvas() {
         },
       };
     }
+    if (node.type === "video-editor") {
+      return {
+        primaryActions: [
+          {
+            id: "open-video-editor",
+            icon: "edit",
+            label: "打开编辑器",
+            onClick: () => openCanvasVideoEditor(node.id),
+          },
+        ],
+        menuGroups: [],
+        dangerAction: {
+          id: "delete-video-editor",
+          icon: "delete",
+          label: "删除",
+          danger: true,
+          onClick: deleteSelection,
+        },
+      };
+    }
     const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
     return {
       primaryActions: [
@@ -11216,6 +11350,7 @@ export default function SuperCanvas() {
     openCanvasMaskEditor,
     openCanvasTextViewer,
     openCanvasAudioPanel,
+    openCanvasVideoEditor,
     continueFromMedia,
     deleteSelection,
     downloadCanvasNode,
@@ -11563,6 +11698,23 @@ export default function SuperCanvas() {
         layerGroup,
       ];
     }
+    if (node.type === "video-editor") {
+      return [
+        {
+          label: "编辑计划",
+          actions: [
+            {
+              id: "open-video-editor",
+              icon: "✂",
+              label: "打开编辑器",
+              onClick: close(() => openCanvasVideoEditor(node.id)),
+            },
+          ],
+        },
+        { label: "复制与整理", actions: canvasActions },
+        layerGroup,
+      ];
+    }
     return [
       { label: "复制与整理", actions: canvasActions },
       layerGroup,
@@ -11570,6 +11722,7 @@ export default function SuperCanvas() {
   }, [
     openAssetCollectionPicker,
     openCanvasAudioPanel,
+    openCanvasVideoEditor,
     contextNode,
     contextMenu?.world,
     continueFromMedia,
@@ -12297,6 +12450,7 @@ export default function SuperCanvas() {
                   onPreview={() =>
                     openCanvasMediaViewer(node.id)
                   }
+                  onOpenVideoEditor={() => openCanvasVideoEditor(node.id)}
                   onOutputPreview={(output) => openCanvasMediaViewer(output.id)}
                   onLocalEdit={() => openCanvasMaskEditor(node.id)}
                   onTextPreview={() => openCanvasTextViewer(node.id)}
@@ -12374,6 +12528,18 @@ export default function SuperCanvas() {
                 createUpscaleFromSource(imageEditorNode);
               }}
               onSave={saveImageOperation}
+            />
+          );
+        })()}
+        {videoEditorNodeId && !nodeGestureActive && (() => {
+          const videoEditorNode = document.nodes.find((item) => item.id === videoEditorNodeId);
+          if (!videoEditorNode || videoEditorNode.type !== "video-editor") return null;
+          return (
+            <VideoEditorWorkbench
+              node={videoEditorNode}
+              document={document}
+              onClose={() => setVideoEditorNodeId(null)}
+              onChange={(videoEditor) => updateVideoEditorNodeState(videoEditorNode.id, videoEditor)}
             />
           );
         })()}
@@ -12985,6 +13151,18 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-copy">
                   <b>音频节点</b>
                   <small>导入后连接到视频作为参考音频</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-video-editor"
+                onClick={() => addNode("videoEditor", contextMenu.world)}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">✂</span>
+                <span className="canvas-menu-copy">
+                  <b>视频编辑节点</b>
+                  <small>多轨剪辑、裁剪、分割和字幕</small>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
@@ -16382,6 +16560,7 @@ function CanvasNodeCard({
   onSelect,
   onRemoveFromGroup,
   onPreview,
+  onOpenVideoEditor,
   onTextPreview,
   onLocalEdit,
   onUseAsImagePrompt,
@@ -16427,6 +16606,7 @@ function CanvasNodeCard({
   onSelect: (event: ReactPointerEvent) => void;
   onRemoveFromGroup: () => void;
   onPreview: () => void;
+  onOpenVideoEditor: () => void;
   onTextPreview: () => void;
   onLocalEdit: () => void;
   onUseAsImagePrompt: () => void;
@@ -16615,7 +16795,7 @@ function CanvasNodeCard({
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
-      data-node-kind={node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
+      data-node-kind={node.type === "video-editor" ? "video-editor" : node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       aria-busy={pending}
       style={{
         left: node.x,
@@ -16637,7 +16817,8 @@ function CanvasNodeCard({
       onDoubleClick={(event) => {
         event.stopPropagation();
         if (referencePickerActive) return;
-        if (node.type === "prompt") onEdit(true);
+        if (node.type === "video-editor") onOpenVideoEditor();
+        else if (node.type === "prompt") onEdit(true);
         else if (node.type === "media" && node.data.kind === "audio") onToggleEditor(node);
         else if (isCanvasReferenceableNode(node)) onPreview();
         else onToggleEditor(node);
@@ -16664,7 +16845,14 @@ function CanvasNodeCard({
         aria-label="左侧连接端口"
         onPointerDown={(event) => onConnect(event, node.id, "left")}
       />
-      {node.type === "media" && (
+      {node.type === "video-editor" ? (
+        <VideoEditorNode
+          node={node}
+          state={data.videoEditor}
+          inputs={incomingContext(document, node.id).filter(isCanvasReferenceableNode)}
+          onOpen={onOpenVideoEditor}
+        />
+      ) : node.type === "media" && (
         <div className={`canvas-media-card${data.kind === "video" ? " video" : data.kind === "audio" ? " audio" : ""}`}>
           <div className="canvas-media-stage">
             {pending ? (

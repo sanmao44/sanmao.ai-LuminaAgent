@@ -2,8 +2,37 @@ import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } f
 import type { PublicState, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
 
-export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale';
+export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor';
 export type CanvasMediaKind = 'image' | 'video' | 'audio';
+export type CanvasVideoEditorTrack = 'video' | 'audio' | 'caption';
+export type CanvasVideoEditorClipType = 'image' | 'video' | 'audio' | 'caption';
+
+export type CanvasVideoEditorClip = {
+  id: string;
+  sourceNodeId?: string;
+  track: CanvasVideoEditorTrack;
+  type: CanvasVideoEditorClipType;
+  name: string;
+  start: number;
+  duration: number;
+  sourceOffset: number;
+  text?: string;
+  scale?: number;
+  opacity?: number;
+  x?: number;
+  y?: number;
+  volume?: number;
+  fadeIn?: number;
+};
+
+export type CanvasVideoEditorState = {
+  version: 1;
+  projectDuration: number;
+  fps: number;
+  aspect: string;
+  clips: CanvasVideoEditorClip[];
+  mutedTracks: CanvasVideoEditorTrack[];
+};
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -180,6 +209,8 @@ export type CanvasNodeData = {
   maskSourceNodeId?: string;
   /** Metadata for a locally rendered image transform. */
   imageOperation?: CanvasImageOperationMeta;
+  /** Persisted edit plan for a video-editor node; it is not a rendered media URL. */
+  videoEditor?: CanvasVideoEditorState;
   [key: string]: unknown;
 };
 

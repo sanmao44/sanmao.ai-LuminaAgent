@@ -14,10 +14,12 @@ async function loadTypeScript(path) {
     const settingsUrl = new URL('../lib/creation/settings.ts', import.meta.url);
     const maskUrl = new URL('../lib/canvas/mask.ts', import.meta.url);
     const layersUrl = new URL('../lib/canvas/layers.ts', import.meta.url);
+    const videoEditorUrl = new URL('../lib/canvas/video-editor.ts', import.meta.url);
     const localEditUrl = new URL('../lib/local-edit.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
     const maskSource = await readFile(maskUrl, 'utf8');
     const layersSource = await readFile(layersUrl, 'utf8');
+    const videoEditorSource = await readFile(videoEditorUrl, 'utf8');
     const localEditSource = await readFile(localEditUrl, 'utf8');
     const localEditRuntime = ts.transpileModule(localEditSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -56,6 +58,10 @@ async function loadTypeScript(path) {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: layersUrl.pathname,
     }).outputText;
+    const videoEditorCompiled = ts.transpileModule(videoEditorSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: videoEditorUrl.pathname,
+    }).outputText;
     const modelCompiled = compiled.replace(
       /^\s*import\s+\{\s*normalizeCreationSettings\s*\}\s+from\s+["']\.\.\/creation\/settings["'];?\s*$/m,
       '',
@@ -65,8 +71,11 @@ async function loadTypeScript(path) {
     ).replace(
       /^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/layers["'];?\s*$/m,
       '',
+    ).replace(
+      /^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/video-editor["'];?\s*$/m,
+      '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
@@ -534,6 +543,18 @@ test('legacy groups without zIndex derive their top-level layer from members', (
     model.sortCanvasNodesByLayer(result.nodes.filter((node) => node.groupId === group.id)).map((node) => node.id),
     ['group-low', 'group-high'],
   );
+});
+
+test('paint layers keep legacy nodes and groups above connection edges', () => {
+  const node = layerNode('legacy-node', 0);
+  const groupMember = layerNode('legacy-member', 0);
+  const document = {
+    ...layerDocument([node, groupMember]),
+    groups: [{ id: 'legacy-group', name: '旧组', nodeIds: ['legacy-member'], zIndex: 0 }],
+  };
+  assert.ok(model.canvasNodePaintZIndex(document, node) > 10);
+  assert.ok(model.canvasGroupPaintZIndex(document, document.groups[0]) > 10);
+  assert.ok(model.canvasNodePaintZIndex(document, groupMember) > 10);
 });
 
 test('group creation, copying, ungrouping, and member removal keep stable top-level positions', () => {

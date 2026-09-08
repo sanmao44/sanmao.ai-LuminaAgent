@@ -3,6 +3,7 @@ import type { CanvasDocument, CanvasNode } from "./types";
 export const CANVAS_NODE_COLOR_KEYS = [
   "image",
   "video",
+  "video-editor",
   "agent",
   "image-generator",
   "video-generator",
@@ -14,6 +15,7 @@ export function canvasNodeColorKey(
   node: Pick<CanvasNode, "type" | "data">,
 ): CanvasNodeColorKey {
   if (node.type === "prompt") return "agent";
+  if (node.type === "video-editor") return "video-editor";
   if (node.type === "generator")
     return node.data.kind === "video"
       ? "video-generator"
