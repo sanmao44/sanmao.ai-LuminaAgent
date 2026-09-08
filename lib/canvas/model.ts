@@ -1125,6 +1125,10 @@ export type CanvasArrangeResult = {
 
 export type CanvasArrangeMode = "horizontal" | "vertical" | "grid";
 
+export type CanvasArrangeOptions = {
+  aspectRatio?: number;
+};
+
 type ArrangeEntity = {
   id: string;
   nodeIds: string[];
@@ -1144,6 +1148,14 @@ type ArrangeGraphEdge = {
 
 const ARRANGE_GAP_X = 72;
 const ARRANGE_GAP_Y = 48;
+const ARRANGE_COMPONENT_GAP_X = ARRANGE_GAP_X * 2;
+const ARRANGE_COMPONENT_GAP_Y = ARRANGE_GAP_Y * 2;
+const DEFAULT_ARRANGE_ASPECT_RATIO = 1.6;
+
+function stableArrangeCoordinate(value: number) {
+  const direction = value < 0 ? -1 : 1;
+  return Math.round(value + direction * 1e-6);
+}
 
 function arrangeTypeRank(document: CanvasDocument, entity: ArrangeEntity) {
   const node = nodeById(document, entity.nodeIds[0]);
@@ -1263,6 +1275,7 @@ function arrangeLayered(
   entities: ArrangeEntity[],
   edges: ArrangeGraphEdge[],
   origin: ArrangePoint,
+  stableOrder?: Map<string, number>,
 ) {
   if (!entities.length)
     return { positions: new Map<string, ArrangePoint>(), width: 0, height: 0 };
@@ -1310,8 +1323,17 @@ function arrangeLayered(
       );
     }
   });
+  const compareLayerEntities = (left: string, right: string) => {
+    if (stableOrder) {
+      const orderDifference =
+        (stableOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+        (stableOrder.get(right) ?? Number.MAX_SAFE_INTEGER);
+      if (orderDifference) return orderDifference;
+    }
+    return compareArrangeEntities(document, byId.get(left)!, byId.get(right)!);
+  };
   const sortQueue = (left: string, right: string) =>
-    compareArrangeEntities(document, byId.get(left)!, byId.get(right)!);
+    compareLayerEntities(left, right);
   const queue = [...entities]
     .filter((entity) => indegree.get(entity.id) === 0)
     .map((entity) => entity.id)
@@ -1352,7 +1374,7 @@ function arrangeLayered(
     .sort((left, right) => left - right)
     .map((level) =>
       [...(layerIds.get(level) || [])].sort((left, right) =>
-        compareArrangeEntities(document, byId.get(left)!, byId.get(right)!),
+        compareLayerEntities(left, right),
       ),
     );
   const layerIndex = new Map<string, number>();
@@ -1369,7 +1391,7 @@ function arrangeLayered(
     const rightOutput = outputOrder.get(right);
     if (leftOutput !== undefined && rightOutput !== undefined && leftOutput !== rightOutput)
       return leftOutput - rightOutput;
-    return compareArrangeEntities(document, byId.get(left)!, byId.get(right)!);
+    return compareLayerEntities(left, right);
   };
 
   const crossingCount = (leftLayerIndex: number, rightLayerIndex: number) => {
@@ -1503,6 +1525,143 @@ function arrangeLayered(
   };
 }
 
+type ArrangeBlock = {
+  entities: ArrangeEntity[];
+  positions: Map<string, ArrangePoint>;
+  width: number;
+  height: number;
+  order: number;
+};
+
+function compareArrangeBlocks(left: ArrangeBlock, right: ArrangeBlock) {
+  return left.order - right.order;
+}
+
+function arrangeFlowBlocks(
+  document: CanvasDocument,
+  entities: ArrangeEntity[],
+  edges: ArrangeGraphEdge[],
+  origin: ArrangePoint,
+  aspectRatio = DEFAULT_ARRANGE_ASPECT_RATIO,
+) {
+  if (!entities.length)
+    return { positions: new Map<string, ArrangePoint>(), width: 0, height: 0 };
+
+  const entityIndex = new Map(
+    entities.map((entity, index) => [entity.id, index]),
+  );
+  const neighbors = new Map<string, Set<string>>(
+    entities.map((entity) => [entity.id, new Set<string>()]),
+  );
+  edges.forEach((edge) => {
+    if (!neighbors.has(edge.source) || !neighbors.has(edge.target)) return;
+    neighbors.get(edge.source)!.add(edge.target);
+    neighbors.get(edge.target)!.add(edge.source);
+  });
+
+  const blocks: ArrangeBlock[] = [];
+  const visited = new Set<string>();
+  entities.forEach((entity) => {
+    if (visited.has(entity.id)) return;
+    const ids: string[] = [];
+    const queue = [entity.id];
+    visited.add(entity.id);
+    while (queue.length) {
+      const current = queue.shift()!;
+      ids.push(current);
+      (neighbors.get(current) || []).forEach((neighbor) => {
+        if (visited.has(neighbor)) return;
+        visited.add(neighbor);
+        queue.push(neighbor);
+      });
+    }
+    ids.sort((left, right) => entityIndex.get(left)! - entityIndex.get(right)!);
+    const blockEntities = ids.map(
+      (id) => entities[entityIndex.get(id)!],
+    );
+    const blockEdges = edges.filter(
+      (edge) => ids.includes(edge.source) && ids.includes(edge.target),
+    );
+    const layout =
+      blockEntities.length === 1
+        ? arrangeGrid(blockEntities, { x: 0, y: 0 })
+        : arrangeLayered(
+            document,
+            blockEntities,
+            blockEdges,
+            { x: 0, y: 0 },
+            entityIndex,
+          );
+    blocks.push({
+      entities: blockEntities,
+      positions: layout.positions,
+      width: layout.width,
+      height: layout.height,
+      order:
+        blockEntities.length === 1
+          ? entityIndex.get(blockEntities[0].id)!
+          : Math.min(...ids.map((id) => entityIndex.get(id)!)),
+    });
+  });
+  blocks.sort(compareArrangeBlocks);
+
+  const safeAspectRatio =
+    Number.isFinite(aspectRatio) && aspectRatio > 0
+      ? aspectRatio
+      : DEFAULT_ARRANGE_ASPECT_RATIO;
+  let best:
+    | {
+        positions: Map<string, ArrangePoint>;
+        width: number;
+        height: number;
+        fit: number;
+        area: number;
+      }
+    | undefined;
+
+  for (let columns = 1; columns <= blocks.length; columns += 1) {
+    const positions = new Map<string, ArrangePoint>();
+    let y = origin.y;
+    let maxWidth = 0;
+    let rowStart = 0;
+    while (rowStart < blocks.length) {
+      const row = blocks.slice(rowStart, rowStart + columns);
+      const rowHeight = Math.max(...row.map((block) => block.height), 0);
+      let x = origin.x;
+      row.forEach((block) => {
+        block.positions.forEach((position, id) =>
+          positions.set(id, {
+            x: stableArrangeCoordinate(x + position.x),
+            y: stableArrangeCoordinate(y + position.y),
+          }),
+        );
+        x += block.width + ARRANGE_COMPONENT_GAP_X;
+      });
+      const rowWidth =
+        row.reduce((total, block) => total + block.width, 0) +
+        ARRANGE_COMPONENT_GAP_X * Math.max(0, row.length - 1);
+      maxWidth = Math.max(maxWidth, rowWidth);
+      y += rowHeight + ARRANGE_COMPONENT_GAP_Y;
+      rowStart += columns;
+    }
+    const height =
+      y - origin.y - (blocks.length ? ARRANGE_COMPONENT_GAP_Y : 0);
+    const fit = Math.min(safeAspectRatio / Math.max(1, maxWidth), 1 / Math.max(1, height));
+    const area = maxWidth * height;
+    if (
+      !best ||
+      fit > best.fit + 1e-9 ||
+      (Math.abs(fit - best.fit) <= 1e-9 && area < best.area)
+    ) {
+      best = { positions, width: maxWidth, height, fit, area };
+    }
+  }
+
+  return best
+    ? { positions: best.positions, width: best.width, height: best.height }
+    : { positions: new Map<string, ArrangePoint>(), width: 0, height: 0 };
+}
+
 function orientArrangedEdgePorts(
   document: CanvasDocument,
   edge: CanvasEdge,
@@ -1534,6 +1693,7 @@ function arrangeCanvasSelection(
   selected: Set<string>,
   collapseFullGroups: boolean,
   mode?: CanvasArrangeMode,
+  options?: CanvasArrangeOptions,
 ): CanvasArrangeResult {
   const allNodes = document.nodes;
   if (!selected.size)
@@ -1607,17 +1767,33 @@ function arrangeCanvasSelection(
     });
     explicitLayout.positions.forEach((position, id) => positions.set(id, position));
   } else {
-    const isolatedLayout = arrangeGrid(isolated, { x: minX, y: minY });
-    isolatedLayout.positions.forEach((position, id) =>
-      positions.set(id, position),
-    );
-    const layeredLayout = arrangeLayered(document, connected, graphEdges, {
-      x: minX + (isolated.length ? isolatedLayout.width + ARRANGE_GAP_X : 0),
-      y: minY,
-    });
-    layeredLayout.positions.forEach((position, id) =>
-      positions.set(id, position),
-    );
+    if (collapseFullGroups) {
+      const flowLayout = arrangeFlowBlocks(
+        document,
+        entities,
+        graphEdges,
+        {
+          x: stableArrangeCoordinate(minX),
+          y: stableArrangeCoordinate(minY),
+        },
+        options?.aspectRatio,
+      );
+      flowLayout.positions.forEach((position, id) =>
+        positions.set(id, position),
+      );
+    } else {
+      const isolatedLayout = arrangeGrid(isolated, { x: minX, y: minY });
+      isolatedLayout.positions.forEach((position, id) =>
+        positions.set(id, position),
+      );
+      const layeredLayout = arrangeLayered(document, connected, graphEdges, {
+        x: minX + (isolated.length ? isolatedLayout.width + ARRANGE_GAP_X : 0),
+        y: minY,
+      });
+      layeredLayout.positions.forEach((position, id) =>
+        positions.set(id, position),
+      );
+    }
   }
   const next = clone(document);
   let changed = false;
@@ -1626,9 +1802,18 @@ function arrangeCanvasSelection(
     const target = entityId ? positions.get(entityId) : undefined;
     if (!target) return node;
     const entity = entities.find((item) => item.id === entityId)!;
-    const offset = { x: target.x - entity.x, y: target.y - entity.y };
-    const x = node.x + offset.x;
-    const y = node.y + offset.y;
+    const group = entity.nodeIds.length > 1 ? groupById(document, entity.id) : undefined;
+    const sourceOrigin = group
+      ? groupContentBounds(document, group.id)
+      : { x: entity.x, y: entity.y };
+    const targetOrigin = group
+      ? {
+          x: target.x + CANVAS_GROUP_INSETS.left,
+          y: target.y + CANVAS_GROUP_INSETS.top,
+        }
+      : target;
+    const x = stableArrangeCoordinate(node.x + targetOrigin.x - sourceOrigin.x);
+    const y = stableArrangeCoordinate(node.y + targetOrigin.y - sourceOrigin.y);
     if (x !== node.x || y !== node.y) changed = true;
     return { ...node, x, y };
   });
@@ -1651,12 +1836,13 @@ export function arrangeCanvas(
   document: CanvasDocument,
   selectedIds?: string[],
   mode?: CanvasArrangeMode,
+  options?: CanvasArrangeOptions,
 ): CanvasArrangeResult {
   const selected =
     selectedIds === undefined
       ? new Set(document.nodes.map((node) => node.id))
       : new Set(selectedIds.filter((id) => nodeById(document, id)));
-  return arrangeCanvasSelection(document, selected, true, mode);
+  return arrangeCanvasSelection(document, selected, true, mode, options);
 }
 
 /** Arranges every node inside one group without moving the group as an entity. */

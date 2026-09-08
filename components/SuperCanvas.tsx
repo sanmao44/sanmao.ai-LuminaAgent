@@ -4818,9 +4818,12 @@ export default function SuperCanvas() {
       ? groupById(docRef.current, selectedGroupId)
       : undefined;
     const mode = activeGroup ? modeOverride || arrangeMode : undefined;
+    const stageRect = stageRef.current?.getBoundingClientRect();
+    const aspectRatio =
+      stageRect && stageRect.height > 0 ? stageRect.width / stageRect.height : 1.6;
     const result = activeGroup
       ? arrangeCanvasGroup(docRef.current, activeGroup.id, mode)
-      : arrangeCanvas(docRef.current, selected);
+      : arrangeCanvas(docRef.current, selected, undefined, { aspectRatio });
     if (result.changed) {
       const previous = snapshot(docRef.current);
       setUndoStack((items) => [...items, previous].slice(-60));

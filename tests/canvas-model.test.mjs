@@ -1531,6 +1531,78 @@ test('arranges unconnected nodes in a non-overlapping grid', () => {
   }
 });
 
+test('arranges independent workflows as separate packed blocks', () => {
+  const firstInput = model.createPrompt({ x: 900, y: 900 }, '流程一输入');
+  const firstOutput = model.createGenerator('image', { x: -900, y: -900 });
+  const secondInput = model.createPrompt({ x: 1200, y: 900 }, '流程二输入');
+  const secondOutput = model.createGenerator('image', { x: -1200, y: -900 });
+  const thirdInput = model.createPrompt({ x: 1500, y: 900 }, '流程三输入');
+  const thirdOutput = model.createGenerator('image', { x: -1500, y: -900 });
+  let document = arrangeDocument([
+    firstInput,
+    firstOutput,
+    secondInput,
+    secondOutput,
+    thirdInput,
+    thirdOutput,
+  ]);
+  document = model.addEdge(document, firstInput.id, firstOutput.id);
+  document = model.addEdge(document, secondInput.id, secondOutput.id);
+  document = model.addEdge(document, thirdInput.id, thirdOutput.id);
+  const arranged = model.arrangeCanvas(document, undefined, undefined, { aspectRatio: 2.4 }).document;
+  const componentBounds = [
+    [firstInput, firstOutput],
+    [secondInput, secondOutput],
+    [thirdInput, thirdOutput],
+  ].map((nodes) => {
+    const bounds = nodes.map((node) => model.entityBounds(arranged, node.id));
+    return {
+      minX: Math.min(...bounds.map((item) => item.x)),
+      minY: Math.min(...bounds.map((item) => item.y)),
+      maxX: Math.max(...bounds.map((item) => item.x + item.w)),
+      maxY: Math.max(...bounds.map((item) => item.y + item.h)),
+    };
+  });
+  for (let left = 0; left < componentBounds.length; left += 1) {
+    for (let right = left + 1; right < componentBounds.length; right += 1) {
+      const a = componentBounds[left];
+      const b = componentBounds[right];
+      assert.equal(a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY, false);
+    }
+  }
+  const allBounds = componentBounds.reduce(
+    (result, bounds) => ({
+      minX: Math.min(result.minX, bounds.minX),
+      minY: Math.min(result.minY, bounds.minY),
+      maxX: Math.max(result.maxX, bounds.maxX),
+      maxY: Math.max(result.maxY, bounds.maxY),
+    }),
+    { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+  );
+  assert.ok((allBounds.maxX - allBounds.minX) / (allBounds.maxY - allBounds.minY) > 1);
+  const repeated = model.arrangeCanvas(arranged, undefined, undefined, { aspectRatio: 2.4 }).document;
+  assert.deepEqual(
+    repeated.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y })),
+    arranged.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y })),
+  );
+});
+
+test('shared inputs remain in one workflow block', () => {
+  const input = model.createPrompt({ x: 900, y: 900 }, '共享输入');
+  const firstOutput = model.createGenerator('image', { x: -900, y: -900 });
+  const secondOutput = model.createGenerator('image', { x: -1200, y: -900 });
+  let document = arrangeDocument([input, firstOutput, secondOutput]);
+  document = model.addEdge(document, input.id, firstOutput.id);
+  document = model.addEdge(document, input.id, secondOutput.id);
+  const arranged = model.arrangeCanvas(document).document;
+  assert.ok(arranged.nodes.find((node) => node.id === firstOutput.id).x > arranged.nodes.find((node) => node.id === input.id).x);
+  assert.ok(arranged.nodes.find((node) => node.id === secondOutput.id).x > arranged.nodes.find((node) => node.id === input.id).x);
+  assert.equal(overlaps(
+    arranged.nodes.find((node) => node.id === firstOutput.id),
+    arranged.nodes.find((node) => node.id === secondOutput.id),
+  ), false);
+});
+
 test('selection-only arrangement leaves unselected nodes and external edges unchanged', () => {
   const first = model.createPrompt({ x: 800, y: 800 }, '输入');
   const second = model.createGenerator('image', { x: -800, y: -800 });
