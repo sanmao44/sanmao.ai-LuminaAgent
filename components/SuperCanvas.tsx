@@ -11576,6 +11576,7 @@ export default function SuperCanvas() {
     copyCanvasImage,
     copySelection,
     createUpscaleFromSource,
+    deleteSelection,
     openImageOperations,
     downloadCanvasNode,
     duplicateSelection,

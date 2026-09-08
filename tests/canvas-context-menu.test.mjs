@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import ts from "typescript";
 
 const component = await readFile(
   new URL("../components/SuperCanvas.tsx", import.meta.url),
@@ -10,6 +11,40 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+
+test("node context menu has no duplicate exact type branches or stale selection handlers", () => {
+  const source = ts.createSourceFile(
+    "SuperCanvas.tsx", component, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX,
+  );
+  let menu;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === "contextMenuGroups") {
+      menu = node.initializer;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.ok(menu && ts.isCallExpression(menu), "node context menu memo must exist");
+  const [builder, dependencies] = menu.arguments;
+  assert.ok(ts.isArrowFunction(builder) && ts.isBlock(builder.body));
+  const types = builder.body.statements.flatMap((statement) => {
+    if (!ts.isIfStatement(statement)) return [];
+    const condition = statement.expression;
+    if (!ts.isBinaryExpression(condition)
+      || condition.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken
+      || !ts.isPropertyAccessExpression(condition.left)
+      || condition.left.expression.getText(source) !== "node"
+      || condition.left.name.text !== "type"
+      || !ts.isStringLiteral(condition.right)) return [];
+    return [condition.right.text];
+  });
+  assert.ok(types.length > 0, "node type branches must be checked");
+  assert.equal(new Set(types).size, types.length, "duplicate type branches can become unreachable");
+  assert.ok(ts.isArrayLiteralExpression(dependencies));
+  const names = dependencies.elements.map((element) => element.getText(source));
+  assert.equal(new Set(names).size, names.length, "memo dependencies must not be duplicated");
+  assert.ok(names.includes("deleteSelection"), "menu must track the current selection handler");
+});
 
 test("card context menus select the target and preserve selected multi-actions", () => {
   const contextMenuStart = component.indexOf("const contextMenuGroups = useMemo");

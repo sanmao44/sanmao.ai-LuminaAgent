@@ -7,6 +7,8 @@
     "build": "next build --webpack",
     "start": "next start -p 3210",
     "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit --incremental false",
+    "check": "npm run typecheck && npm test && npm run build",
     "generate:launcher-icons": "node scripts/generate-launcher-icons.mjs"
   },
   "dependencies": {
