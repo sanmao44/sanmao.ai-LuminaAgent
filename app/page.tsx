@@ -5987,6 +5987,17 @@ export default function Page() {
         historyMediaFilter
     ]);
     useEffect(()=>{
+        const isPagedRecordsView = section === 'history' && recordTab === 'works' || section === 'logs' && recordTab === 'tasks';
+        if (!isPagedRecordsView) return;
+        scrollPaginationToTop();
+    }, [
+        section,
+        recordTab,
+        page,
+        videoPage,
+        logPage
+    ]);
+    useEffect(()=>{
         if (logPage > logTotalPages) setLogPage(logTotalPages);
     }, [
         logPage,
@@ -9995,6 +10006,14 @@ export default function Page() {
         window.scrollTo({
             top: position === 'bottom' ? document.documentElement.scrollHeight : 0,
             behavior: 'smooth'
+        });
+    }
+    function scrollPaginationToTop() {
+        if (typeof window === 'undefined') return;
+        window.scrollTo({
+            top: 0,
+            left: 0,
+            behavior: 'auto'
         });
     }
     function renderModelCard(model) {
