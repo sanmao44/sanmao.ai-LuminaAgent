@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.35/SANMAO.AI-0.7.35.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.35/SANMAO.AI-0.7.35.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "11c83a2c01681e74be7a3ddb008be9337ef8ac09e1d14f633522b787e440044a",
   "publishedAt": "2026-09-08T00:00:00+08:00",
   "notes": [
     "新增超级画布视频编辑节点，支持图片、视频和音频自动入轨，以及播放头、播放、分割、裁剪、排序、字幕和静音。",
