@@ -2460,6 +2460,238 @@ html[data-theme="dark"] .super-canvas-entry-badge{
 .angle-three-host.is-light-control{cursor:crosshair}.angle-three-host.is-light-control canvas{cursor:crosshair}
 @media(max-width:620px){.angle-reference-presets{grid-template-columns:repeat(4,minmax(66px,1fr));overflow-x:auto}.angle-light-presets{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
+/* Keep angle-console menus outside clipped panels and give every choice the same
+   readable surface, including native-scale text on short mobile viewports. */
+.angle-select{position:relative;min-width:0;width:100%}
+.angle-select-trigger{width:100%;min-width:0;height:36px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 10px;border:1px solid var(--angle-line);border-radius:9px;background:var(--angle-stage-deep);color:var(--angle-text);text-align:left;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease}
+.angle-select-trigger:hover,.angle-select-trigger.open,.angle-select-trigger:focus-visible{border-color:var(--angle-accent);background:color-mix(in srgb,var(--angle-accent-soft) 38%,var(--angle-stage-deep));box-shadow:0 0 0 3px color-mix(in srgb,var(--angle-accent) 13%,transparent);outline:0}
+.angle-select-trigger:disabled{cursor:not-allowed;opacity:.52}
+.angle-select-trigger-copy{display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden}
+.angle-select-trigger-copy>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--angle-text);font-size:12px;font-weight:600}
+.angle-select-trigger-copy>small{flex:none;color:var(--angle-muted);font-size:9px;font-weight:700}
+.angle-select-trigger>i{width:8px;height:8px;flex:none;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);color:var(--angle-muted);transition:transform .15s ease,color .15s ease}
+.angle-select-trigger.open>i{transform:rotate(225deg) translate(-1px,-1px);color:var(--angle-accent)}
+.angle-select-menu{position:fixed;z-index:220;box-sizing:border-box;display:flex;flex-direction:column;min-width:220px;overflow:hidden;padding:5px;border:1px solid color-mix(in srgb,var(--angle-accent) 34%,var(--angle-line));border-radius:11px;background:color-mix(in srgb,var(--angle-panel) 98%,transparent);box-shadow:0 18px 42px rgba(5,12,24,.34),0 0 0 1px color-mix(in srgb,var(--angle-text) 5%,transparent);backdrop-filter:blur(16px);animation:angle-select-menu-in .14s ease-out}
+.angle-select-menu-scroll{min-height:0;max-height:inherit;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--angle-line) transparent}
+.angle-select-option{width:100%;min-width:0;min-height:40px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 9px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--angle-text-2);text-align:left}
+.angle-select-option:hover,.angle-select-option.active,.angle-select-option:focus-visible{border-color:color-mix(in srgb,var(--angle-accent) 42%,transparent);background:var(--angle-accent-soft);color:var(--angle-text);outline:0}
+.angle-select-option>span{min-width:0;display:grid;gap:2px}
+.angle-select-option b{min-width:0;overflow-wrap:anywhere;font-size:11px;font-weight:650;line-height:1.35}
+.angle-select-option small{min-width:0;overflow-wrap:anywhere;color:var(--angle-muted);font-size:9px;line-height:1.3}
+.angle-select-option.active small{color:var(--angle-accent-2)}
+.angle-select-option>i{flex:none;color:var(--angle-accent-2);font-size:14px;font-style:normal;font-weight:900}
+.angle-preview-object-menu{width:180px;flex:none}
+.angle-preview-object-menu .angle-select-trigger{height:30px;padding-inline:8px;border-radius:8px;background:color-mix(in srgb,var(--angle-panel) 78%,transparent)}
+.angle-preview-object-menu .angle-select-trigger-copy{display:grid;align-items:start;gap:1px}
+.angle-preview-object-menu .angle-select-trigger-copy>small{font-size:7px;line-height:1}
+.angle-preview-object-menu .angle-select-trigger-copy>b{font-size:9px}
+.angle-preview-object-menu .angle-select-menu{min-width:220px}
+@keyframes angle-select-menu-in{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:620px){
+  .angle-select-trigger-copy>b{font-size:11px}
+  .angle-preview-object-menu{width:min(180px,calc(100% - 112px))}
+  .angle-preview-object-menu .angle-select-trigger-copy>b{font-size:9px}
+  .angle-select-menu{min-width:0;max-width:calc(100vw - 24px);border-radius:10px}
+}
+
+/* The help sheet is a task guide: readable at a glance, scrollable as a whole,
+   and independent from the angle panel's own overflow rules. */
+.angle-help-modal{position:fixed;inset:0;z-index:180;display:grid;place-items:center;padding:24px;background:rgba(3,7,12,.78);backdrop-filter:blur(14px)}
+.angle-help-dialog{width:min(880px,calc(100vw - 32px));height:min(820px,calc(100dvh - 32px));min-height:520px;display:grid;grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden;border:1px solid color-mix(in srgb,var(--angle-accent) 35%,var(--angle-line));border-radius:18px;background:var(--angle-panel);box-shadow:0 30px 90px rgba(3,10,22,.4),0 0 0 1px color-mix(in srgb,var(--angle-text) 5%,transparent)}
+.angle-help-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:22px 24px 18px;border-bottom:1px solid var(--angle-line);background:linear-gradient(135deg,color-mix(in srgb,var(--angle-accent-soft) 72%,var(--angle-panel)),var(--angle-panel))}
+.angle-help-head>div{min-width:0}.angle-help-head>div>span,.angle-help-section-head>span{display:block;color:var(--angle-accent-2);font-size:9px;font-weight:900;letter-spacing:.1em}
+.angle-help-head h2{margin:6px 0 7px;color:var(--angle-text);font-size:24px;line-height:1.2;letter-spacing:0}
+.angle-help-head p{max-width:650px;margin:0;color:var(--angle-text-2);font-size:11px;line-height:1.65}
+.angle-help-close{width:34px;height:34px;display:grid;place-items:center;flex:none;border:1px solid var(--angle-line);border-radius:9px;background:var(--angle-panel-2);color:var(--angle-muted);font-size:21px;line-height:1}
+.angle-help-close:hover,.angle-help-close:focus-visible{border-color:var(--angle-accent);background:var(--angle-accent-soft);color:var(--angle-text);outline:0}
+.angle-help-scroll{min-height:0;overflow:auto;padding:20px 24px 24px;scrollbar-color:var(--angle-line) transparent}
+.angle-help-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
+.angle-help-steps li{display:grid;grid-template-columns:30px minmax(0,1fr);gap:10px;min-width:0;padding:14px;border:1px solid color-mix(in srgb,var(--angle-accent) 22%,var(--angle-line));border-radius:11px;background:color-mix(in srgb,var(--angle-accent-soft) 45%,var(--angle-panel-2))}
+.angle-help-steps li>i{width:30px;height:30px;display:grid;place-items:center;border-radius:50%;background:var(--angle-accent);color:#07101c;font-size:13px;font-style:normal;font-weight:900}
+.angle-help-steps b,.angle-help-guide-grid b{display:block;color:var(--angle-text);font-size:12px;line-height:1.35}
+.angle-help-steps p,.angle-help-guide-grid p,.angle-help-tips p{margin:6px 0 0;color:var(--angle-text-2);font-size:10px;line-height:1.65}
+.angle-help-section{margin-top:24px}.angle-help-section-head{display:flex;align-items:baseline;gap:9px;margin-bottom:10px}.angle-help-section-head h3{margin:0;color:var(--angle-text);font-size:15px;line-height:1.3}
+.angle-help-guide-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:1px solid var(--angle-line);border-radius:11px;overflow:hidden}
+.angle-help-guide-grid article{min-width:0;padding:14px;background:var(--angle-panel-2)}.angle-help-guide-grid article+article{border-left:1px solid var(--angle-line)}
+.angle-help-guide-grid strong{color:var(--angle-accent-2);font-size:12px}
+.angle-help-mode-compare{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.angle-help-mode-compare article{display:grid;gap:4px;min-width:0;padding:14px;border:1px solid color-mix(in srgb,var(--angle-accent) 28%,var(--angle-line));border-radius:11px;background:color-mix(in srgb,var(--angle-accent-soft) 34%,var(--angle-panel-2))}
+.angle-help-mode-compare article+article{border-color:color-mix(in srgb,#4b9dd3 42%,var(--angle-line));background:color-mix(in srgb,#23445d 58%,var(--angle-panel-2))}
+.angle-help-mode-compare strong{color:var(--angle-accent-2);font-size:10px}
+.angle-help-mode-compare article+article strong{color:#8cccf0}
+.angle-help-mode-compare b{color:var(--angle-text);font-size:13px;line-height:1.35}
+.angle-help-mode-compare p{margin:2px 0 0;color:var(--angle-text-2);font-size:10px;line-height:1.65}
+.angle-help-mode-compare em{display:block;margin-bottom:2px;color:var(--angle-accent-2);font-style:normal;font-weight:800}
+.angle-help-mode-note{margin:8px 0 0;padding:10px 12px;border:1px solid var(--angle-line);border-radius:9px;background:var(--angle-panel-2);color:var(--angle-text-2);font-size:10px;line-height:1.65}
+.angle-help-mode-note b{color:var(--angle-text)}
+.angle-help-tips{display:grid;grid-template-columns:1fr 1fr;gap:8px 20px;padding:14px 16px;border:1px solid var(--angle-line);border-radius:11px;background:color-mix(in srgb,var(--angle-panel-2) 82%,transparent)}
+.angle-help-tips p{margin:0}.angle-help-tips b{color:var(--angle-text)}
+.angle-help-readout{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:20px}
+.angle-help-readout div{display:grid;gap:3px;min-width:0;padding:10px 11px;border:1px solid color-mix(in srgb,var(--angle-line) 82%,transparent);border-radius:9px;background:var(--angle-stage-deep)}
+.angle-help-readout strong{color:var(--angle-accent-2);font-size:14px;line-height:1.2}.angle-help-readout span{color:var(--angle-muted);font-size:9px}
+.angle-help-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 24px;border-top:1px solid var(--angle-line);background:var(--angle-panel-2)}
+.angle-help-foot>span{min-width:0;color:var(--angle-muted);font-size:9px;line-height:1.45}.angle-help-foot .primary-small{min-width:94px;height:34px;flex:none}
+@media(max-width:680px){
+  .angle-help-modal{padding:9px}
+  .angle-help-dialog{width:100%;height:calc(100dvh - 18px);min-height:0;border-radius:14px}
+  .angle-help-head{gap:10px;padding:17px 16px 14px}.angle-help-head h2{font-size:20px}.angle-help-head p{font-size:10px}
+  .angle-help-scroll{padding:15px 16px 18px}.angle-help-steps,.angle-help-guide-grid,.angle-help-mode-compare,.angle-help-tips{grid-template-columns:1fr}
+  .angle-help-guide-grid article+article{border-top:1px solid var(--angle-line);border-left:0}
+  .angle-help-tips{gap:8px;padding:12px 13px}.angle-help-readout{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:16px}
+  .angle-help-foot{align-items:stretch;flex-direction:column;padding:11px 16px}.angle-help-foot .primary-small{width:100%}
+}
+
+/* Light mode needs clear surfaces, not a washed-out white-on-light stack. */
+html[data-theme="light"] .angle-viewpoint-console{
+  --angle-bg:#f1f3f7;
+  --angle-panel:#ffffff;
+  --angle-panel-2:#f8f9fc;
+  --angle-stage:#e7eaf0;
+  --angle-stage-deep:#f7f8fb;
+  --angle-line:#d5dae4;
+  --angle-line-strong:#bcc4d2;
+  --angle-text:#171b26;
+  --angle-text-2:#354052;
+  --angle-muted:#667085;
+  --angle-accent:#5a4fe2;
+  --angle-accent-2:#6659e9;
+  --angle-accent-soft:#eceaff;
+  --angle-overlay:rgba(255,255,255,.9);
+  background:linear-gradient(180deg,#f5f6f9 0%,#edf0f5 100%);
+}
+html[data-theme="light"] .angle-viewpoint-console .surface{
+  border-color:#cbd1dd;
+  background:#ffffff;
+  box-shadow:0 12px 30px rgba(44,55,78,.09),0 1px 2px rgba(44,55,78,.05);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-console-topbar,
+html[data-theme="light"] .angle-viewpoint-console .angle-workspace-head,
+html[data-theme="light"] .angle-viewpoint-console .angle-panel-head{
+  border-color:#d4d9e3;
+  background:#ffffff;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-preview-grid{
+  background:#e5e8ee;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-preview-pane{
+  border-color:#b9c1ce;
+  background:#f8f9fb;
+  box-shadow:0 10px 26px rgba(47,58,81,.12);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-reference-pane .angle-image-frame{
+  background:linear-gradient(180deg,#fbfcfe 0%,#f2f4f8 100%);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-model-pane{
+  background:linear-gradient(180deg,#f7f8fb 0%,#edf0f5 100%);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-view-rail{
+  border-color:#c8ceda;
+  background:#f8f9fb;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 8px 20px rgba(47,58,81,.07);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-rail-status{
+  border-color:#d1d6e0;
+  background:#ffffff;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-panel-scroll{
+  background:#fbfcfe;
+  scrollbar-color:#b9c1ce transparent;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-select-trigger,
+html[data-theme="light"] .angle-viewpoint-console .angle-control-row .angle-number,
+html[data-theme="light"] .angle-viewpoint-console .angle-note,
+html[data-theme="light"] .angle-viewpoint-console .angle-toggle,
+html[data-theme="light"] .angle-viewpoint-console .angle-lenses button,
+html[data-theme="light"] .angle-viewpoint-console .angle-light-presets button,
+html[data-theme="light"] .angle-viewpoint-console .angle-reference-presets button{
+  border-color:#cbd1dd;
+  background:#ffffff;
+  color:var(--angle-text);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-select-trigger:hover,
+html[data-theme="light"] .angle-viewpoint-console .angle-select-trigger.open,
+html[data-theme="light"] .angle-viewpoint-console .angle-select-trigger:focus-visible,
+html[data-theme="light"] .angle-viewpoint-console .angle-toggle:hover,
+html[data-theme="light"] .angle-viewpoint-console .angle-toggle.active,
+html[data-theme="light"] .angle-viewpoint-console .angle-lenses button:hover,
+html[data-theme="light"] .angle-viewpoint-console .angle-lenses button.active,
+html[data-theme="light"] .angle-viewpoint-console .angle-light-presets button:hover,
+html[data-theme="light"] .angle-viewpoint-console .angle-reference-presets button:hover,
+html[data-theme="light"] .angle-viewpoint-console .angle-reference-presets button.active{
+  border-color:#756bf0;
+  background:#eeecff;
+  color:#2d267f;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-select-menu{
+  border-color:#b8b1f1;
+  background:#ffffff;
+  box-shadow:0 18px 42px rgba(39,47,72,.2),0 0 0 1px rgba(90,79,226,.08);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-select-option{
+  color:#354052;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-select-option:hover,
+html[data-theme="light"] .angle-viewpoint-console .angle-select-option.active,
+html[data-theme="light"] .angle-viewpoint-console .angle-select-option:focus-visible{
+  border-color:#b9b2f2;
+  background:#eeecff;
+  color:#211b66;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-select-option small,
+html[data-theme="light"] .angle-viewpoint-console .angle-select-option.active small{
+  color:#667085;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-preset-strip{
+  border-color:#d1d6e0;
+  background:#f8f9fc;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-preset-options button{
+  border-color:#cbd1dd;
+  background:#ffffff;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-preset-options button:hover,
+html[data-theme="light"] .angle-viewpoint-console .angle-preset-options button.active{
+  border-color:#756bf0;
+  background:#eeecff;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-submit{
+  border-color:#d1d6e0;
+  background:#ffffff;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-submit-state{
+  background:#fff8f0;
+  border-color:#e7c795;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-submit-state>i{
+  background:#fff0d8;
+  color:#a66a13;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-submit-state.ready{
+  background:#f1fbf6;
+  border-color:#a9ddc4;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-submit-state.ready>i{
+  background:#daf4e7;
+  color:#176b4e;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-help-dialog{
+  border-color:#bdb6f2;
+  box-shadow:0 30px 90px rgba(39,47,72,.26),0 0 0 1px rgba(90,79,226,.08);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-help-head{
+  background:linear-gradient(135deg,#f1efff 0%,#ffffff 72%);
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-help-mode-compare article+article{
+  border-color:color-mix(in srgb,#4b9dd3 34%,var(--angle-line));
+  background:color-mix(in srgb,#e7f4fc 62%,var(--angle-panel-2));
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-help-mode-compare article+article strong{
+  color:#28749f;
+}
+html[data-theme="light"] .angle-viewpoint-console .angle-help-mode-compare em{
+  color:#5146c8;
+}
+
 /* Reserve the submit row before allocating the scrollable parameter sheet. */
 .angle-app-shell .angle-viewpoint-console{box-sizing:border-box;height:100dvh;max-height:100dvh;min-height:0;grid-template-rows:56px minmax(0,1fr)}
 .angle-app-shell .angle-viewpoint-console .angle-panel{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%;min-height:0;max-height:100%;overflow:hidden}
@@ -2493,9 +2725,10 @@ html[data-theme="dark"] .super-canvas-entry-badge{
 .angle-viewpoint-console .angle-reference-remove{bottom:45px}
 .angle-viewpoint-console .angle-preview-toolbar{position:relative;z-index:8;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:46px;padding:8px}
 .angle-viewpoint-console .angle-preview-toolbar .angle-segmented{min-width:106px}
+.angle-viewpoint-console .angle-preview-calibration-note{position:relative;z-index:8;min-height:24px;display:flex;align-items:center;padding:0 9px;border-top:1px solid var(--angle-line);border-bottom:1px solid var(--angle-line);background:color-mix(in srgb,var(--angle-panel) 82%,transparent);color:var(--angle-muted);font-size:9px;line-height:1.35;overflow-wrap:anywhere}
 .angle-viewpoint-console .angle-guide-display{position:relative;inset:auto;margin:0;min-width:0}
 .angle-viewpoint-console .angle-guide-display>div{position:absolute;right:0;left:auto;top:100%;width:180px;max-width:calc(100vw - 60px);background:var(--angle-panel);border:1px solid var(--angle-line);border-radius:8px}
-.angle-viewpoint-console .angle-three-host{position:absolute;inset:56px 0 0;touch-action:none}
+.angle-viewpoint-console .angle-three-host{position:absolute;inset:80px 0 0;touch-action:none}
 .angle-viewpoint-console .angle-output-frame>span{max-width:calc(100% - 12px);white-space:normal;overflow-wrap:anywhere}
 .angle-viewpoint-console .angle-rail-status{overflow:auto}
 .angle-viewpoint-console .angle-rail-status-head{flex-wrap:wrap}
@@ -2504,6 +2737,20 @@ html[data-theme="dark"] .super-canvas-entry-badge{
 .angle-viewpoint-console .angle-workflow{display:none}
 .angle-viewpoint-console .angle-section{border-radius:0}
 .angle-viewpoint-console .angle-light-section,.angle-viewpoint-console .angle-viewpoint-section{padding-block:10px;border-bottom:1px solid var(--angle-line)}
+.angle-viewpoint-console .angle-reference-type-explain,.angle-viewpoint-console .angle-mode-explain{display:block;margin-top:-3px;color:var(--angle-muted);font-size:10px;line-height:1.5}
+.angle-viewpoint-console .angle-viewpoint-section .angle-select-label{grid-template-columns:60px minmax(0,1fr)}
+.angle-viewpoint-console .angle-mode-policy{display:grid;gap:5px;padding:9px 0;border-block:1px solid var(--angle-line)}
+.angle-viewpoint-console .angle-mode-policy>div{display:flex;align-items:center;gap:7px;min-width:0}
+.angle-viewpoint-console .angle-mode-policy span{color:var(--angle-muted);font-size:10px}
+.angle-viewpoint-console .angle-mode-policy b{color:var(--angle-accent-2);font-size:10px}
+.angle-viewpoint-console .angle-mode-policy small{color:var(--angle-muted);font-size:10px;line-height:1.5}
+.angle-viewpoint-console .angle-reference-baseline{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:5px 8px;padding:10px 0;border-block:1px solid var(--angle-line)}
+.angle-viewpoint-console .angle-reference-baseline>div{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+.angle-viewpoint-console .angle-reference-baseline span{color:var(--angle-muted);font-size:10px}
+.angle-viewpoint-console .angle-reference-baseline b{color:var(--angle-accent-2);font-size:10px}
+.angle-viewpoint-console .angle-reference-baseline small{grid-column:1/-1;grid-row:2;min-width:0;color:var(--angle-muted);font-size:10px;line-height:1.5;overflow-wrap:anywhere}
+.angle-viewpoint-console .angle-reference-baseline button{grid-column:2;grid-row:1;min-height:30px;padding:0 8px;border:1px solid var(--angle-line);border-radius:7px;background:var(--angle-panel-2);color:var(--angle-text-2);font-size:10px;white-space:nowrap}
+.angle-viewpoint-console .angle-reference-baseline button:hover{border-color:var(--angle-accent);background:var(--angle-accent-soft);color:var(--angle-text)}
 .angle-viewpoint-console .angle-panel-scroll *{letter-spacing:0}
 .angle-viewpoint-console .angle-control-tabs{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:0;margin:12px 0 14px;border-bottom:1px solid var(--angle-line)}
 .angle-viewpoint-console .angle-control-tabs button{min-height:36px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--angle-muted);font-size:12px}
@@ -2571,6 +2818,10 @@ html[data-theme="dark"] .super-canvas-entry-badge{
   .angle-viewpoint-console .angle-panel-head h2{font-size:14px}
   .angle-viewpoint-console .angle-section h3{font-size:11px}
   .angle-viewpoint-console .angle-control-row>span,.angle-viewpoint-console .angle-number,.angle-viewpoint-console .angle-toggle,.angle-viewpoint-console .angle-light-presets button{font-size:11px}
+  .angle-viewpoint-console .angle-reference-type-explain,.angle-viewpoint-console .angle-mode-explain{font-size:10px}
+  .angle-viewpoint-console .angle-reference-baseline{padding:10px 0}
+  .angle-viewpoint-console .angle-reference-baseline button{font-size:10px;padding-inline:7px}
+  .angle-viewpoint-console .angle-preview-calibration-note{min-height:28px;font-size:8px}
   .angle-viewpoint-console .angle-light-presets button,.angle-viewpoint-console .angle-toggle{min-height:34px}
   .angle-viewpoint-console .angle-preset-options b{font-size:10px}
   .angle-viewpoint-console .angle-result-shell{height:calc(100dvh - 16px);max-height:calc(100dvh - 16px)}
@@ -3490,31 +3741,35 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
  /* Collapse unused tracks so a partially filled page still distributes the
     available width across the cards, including wide 4K viewports. */
  .creative-video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
-.creative-video-card{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--panel-2);box-shadow:var(--shadow-soft,0 8px 24px rgba(20,24,40,.08))}
-.creative-video-preview{position:relative;aspect-ratio:16/9;overflow:hidden;background:var(--bg-2);border-radius:15px 15px 0 0}
+.creative-video-card{min-width:0;height:100%;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--panel-2);box-shadow:var(--shadow-soft,0 8px 24px rgba(20,24,40,.08))}
+.creative-video-preview{position:relative;flex:none;aspect-ratio:16/9;overflow:hidden;background:var(--bg-2);border-radius:15px 15px 0 0}
 .creative-video-preview video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
 .creative-video-placeholder{display:grid;place-items:center;align-content:center;gap:7px;width:100%;height:100%;color:var(--muted);font-size:12px}
 .creative-video-placeholder span{display:grid;place-items:center;width:34px;height:34px;border-radius:999px;background:var(--accent-soft);color:var(--accent-text);font-size:14px}
 .creative-video-placeholder small{font-size:10px}
 .creative-media-badge{position:absolute;left:9px;top:9px;padding:4px 8px;border-radius:999px;background:color-mix(in srgb,var(--panel) 72%,transparent);backdrop-filter:blur(8px);color:var(--text);font-size:9px;font-weight:850}
-.creative-video-body{display:grid;gap:7px;padding:12px}
+.creative-video-body{display:flex;flex:1;min-height:0;flex-direction:column;gap:7px;padding:12px}
 .creative-video-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:9px}
 .creative-status-pill{padding:4px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-text);font-weight:850}
 .creative-status-pill.failed{background:var(--danger-soft);color:var(--danger)}
 .creative-status-pill.running,.creative-status-pill.pending{background:var(--warning-soft,var(--accent-soft));color:var(--warning,var(--accent-text))}
-.creative-video-body>strong{display:-webkit-box;overflow:hidden;color:var(--text);font-size:11px;line-height:1.45;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.creative-video-body>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:9px}
+.creative-video-body>strong{display:-webkit-box;min-height:32px;overflow:hidden;color:var(--text);font-size:11px;line-height:1.45;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.creative-video-body>small{min-height:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:9px}
 .creative-video-error{margin:0;color:var(--danger);font-size:9px;line-height:1.45}
 .creative-video-actions{display:flex;gap:6px;margin-top:2px}
 .creative-video-actions a,.creative-video-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:27px;padding:0 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--accent-text);font-size:9px;font-weight:800;text-decoration:none;cursor:pointer}
 .creative-video-actions a:hover,.creative-video-actions button:hover{border-color:var(--accent);background:var(--accent-soft)}
 .creative-video-actions .creative-video-delete{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,var(--line))}
 .creative-video-actions .creative-video-delete:hover{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
-.creative-video-actions{align-items:center;gap:6px;margin-top:4px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent)}
+.creative-video-actions{align-items:center;gap:6px;width:100%;margin-top:auto;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent);flex-wrap:wrap}
 .creative-video-actions a,.creative-video-actions button{min-height:30px;gap:5px;padding:0 10px;border-radius:9px;white-space:nowrap;transition:border-color .16s,background .16s,color .16s,transform .16s}
 .creative-video-actions a:hover,.creative-video-actions button:hover{transform:translateY(-1px)}
 .creative-video-actions .creative-action-icon{display:grid;place-items:center;min-width:13px;font-size:13px;line-height:1}
 .creative-video-actions .creative-video-delete{margin-left:auto}
+.creative-video-parameter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.creative-video-parameter-grid span{min-height:44px;white-space:normal}
+.creative-video-parameter-grid b{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:700px){.creative-video-parameter-grid{grid-template-columns:1fr}}
 .log-video-preview{display:grid;place-items:center;overflow:hidden;background:var(--bg-2)}
 .log-video-preview video{width:100%;height:100%;max-height:94px;object-fit:contain;background:#000;border-radius:11px}
 .log-detail-video{overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--bg-2)}

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MutableRefObject, PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MutableRefObject, PointerEvent as ReactPointerEvent } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -11,7 +12,7 @@ import ModelPicker from '@/components/ModelPicker';
 import { getLastModelCall, recordModelCall } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
-import { ANGLE_DEFAULTS, angleName, buildAnglePayload, buildAngleTargetSemantic, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, createViewpointCamera, defaultViewMode, flipHorizontalYaw, generationCamera, LIGHTING_DEFAULTS, LIGHTING_PRESETS, lightingDirection, lightingDirectionLabel, normalizeAngleState, normalizeViewpointOptions, REFERENCE_VIEW_PRESETS, referenceViewLabel, shouldWarnLiteForAngle, SUBJECT_OPTIONS, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec, type LightingState, type ViewpointOptions } from '@/lib/angle-control';
+import { ANGLE_DEFAULTS, angleName, buildAnglePayload, buildAngleTargetSemantic, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, createViewpointCamera, defaultViewMode, flipHorizontalYaw, generationCamera, LIGHTING_DEFAULTS, LIGHTING_PRESETS, lightingDirection, lightingDirectionLabel, normalizeAngleState, normalizeViewpointOptions, REFERENCE_VIEW_PRESETS, referenceViewLabel, resetViewpointCamera, shouldWarnLiteForAngle, SUBJECT_OPTIONS, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec, type LightingState, type ViewpointOptions } from '@/lib/angle-control';
 
 type AngleConsoleProps = {
   theme: 'light' | 'dark';
@@ -76,6 +77,195 @@ type ThreePreviewRuntime = {
   ambientLight: THREE.HemisphereLight;
   lightMarker: THREE.Mesh;
 };
+
+type AngleMenuOption<T extends string> = {
+  value: T;
+  label: string;
+  hint?: string;
+};
+
+type AngleMenuProps<T extends string> = {
+  label: string;
+  value: T;
+  options: AngleMenuOption<T>[];
+  onChange: (value: T) => void;
+  ariaLabel: string;
+  className?: string;
+  disabled?: boolean;
+  showLabel?: boolean;
+};
+
+const PREVIEW_OBJECT_OPTIONS: AngleMenuOption<HumanMode>[] = [
+  { value: 'object', label: '通用主体', hint: '适合商品、车辆和建筑' },
+  { value: 'scene', label: '复杂场景', hint: '适合室内、街景和风景' },
+  { value: 'gray', label: '人物轮廓', hint: '只显示中性人体比例' },
+  { value: 'default', label: '人物模型', hint: '用于人物姿态导引' },
+  { value: 'custom', label: '导入 GLB', hint: '载入自定义三维参考' },
+];
+
+const LIGHT_ANCHOR_OPTIONS: AngleMenuOption<LightingState['anchor']>[] = [
+  { value: 'camera', label: '跟随当前相机', hint: '光位随视角一起移动' },
+  { value: 'reference', label: '固定在原图方向', hint: '保持原图世界方向' },
+];
+
+function AngleMenu<T extends string>({ label, value, options, onChange, ariaLabel, className = '', disabled = false, showLabel = false }: AngleMenuProps<T>) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(() => Math.max(0, options.findIndex((option) => option.value === value)));
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({ visibility: 'hidden' });
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const selected = options.find((option) => option.value === value) || options[0];
+  const menuId = `angle-menu-${label.replace(/\s+/g, '-')}`;
+
+  function updatePosition() {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const margin = 12;
+    const gap = 6;
+    const width = Math.min(window.innerWidth - margin * 2, Math.max(rect.width, 220));
+    const availableAbove = Math.max(0, rect.top - margin - gap);
+    const availableBelow = Math.max(0, window.innerHeight - rect.bottom - margin - gap);
+    const openAbove = availableAbove > availableBelow && availableAbove >= 160;
+    const maxHeight = Math.max(112, Math.min(320, openAbove ? availableAbove : availableBelow));
+    const left = Math.min(Math.max(margin, rect.left), Math.max(margin, window.innerWidth - width - margin));
+    setMenuStyle({
+      visibility: 'visible',
+      left: Math.round(left),
+      width: Math.round(width),
+      maxHeight: Math.round(maxHeight),
+      top: openAbove ? 'auto' : Math.round(rect.bottom + gap),
+      bottom: openAbove ? Math.round(window.innerHeight - rect.top + gap) : 'auto',
+    });
+  }
+
+  useEffect(() => {
+    const nextIndex = Math.max(0, options.findIndex((option) => option.value === value));
+    setActiveIndex(nextIndex);
+  }, [options, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      updatePosition();
+      optionRefs.current[activeIndex]?.focus();
+    });
+    const handleViewportChange = () => updatePosition();
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && !rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+    document.addEventListener('keydown', handleEscape);
+    document.addEventListener('pointerdown', handleOutsidePointer);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+      document.removeEventListener('keydown', handleEscape);
+      document.removeEventListener('pointerdown', handleOutsidePointer);
+    };
+  }, [activeIndex, open]);
+
+  function choose(nextValue: T, index: number) {
+    onChange(nextValue);
+    setActiveIndex(index);
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function handleTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (disabled) return;
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      setOpen(true);
+    }
+  }
+
+  function handleMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!options.length) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = (activeIndex + direction + options.length) % options.length;
+      setActiveIndex(nextIndex);
+      optionRefs.current[nextIndex]?.focus();
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      const nextIndex = event.key === 'Home' ? 0 : options.length - 1;
+      setActiveIndex(nextIndex);
+      optionRefs.current[nextIndex]?.focus();
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      const option = options[activeIndex];
+      if (option) choose(option.value, activeIndex);
+    } else if (event.key === 'Tab') {
+      setOpen(false);
+    }
+  }
+
+  const menu = open && typeof document !== 'undefined' ? createPortal(
+    <div
+      ref={menuRef}
+      className="angle-select-menu"
+      style={menuStyle}
+      id={menuId}
+      role="listbox"
+      aria-label={ariaLabel}
+      aria-activedescendant={`${menuId}-option-${activeIndex}`}
+      onKeyDown={handleMenuKeyDown}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="angle-select-menu-scroll">
+        {options.map((option, index) => (
+          <div
+            ref={(node) => { optionRefs.current[index] = node; }}
+            role="option"
+            tabIndex={0}
+            id={`${menuId}-option-${index}`}
+            aria-selected={option.value === value}
+            className={`angle-select-option ${option.value === value ? 'active' : ''}`}
+            key={option.value}
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => choose(option.value, index)}
+          >
+            <span><b>{option.label}</b>{option.hint && <small>{option.hint}</small>}</span>
+            {option.value === value && <i aria-hidden="true">✓</i>}
+          </div>
+        ))}
+      </div>
+    </div>,
+    document.body,
+  ) : null;
+
+  return <div className={`angle-select ${className}`} ref={rootRef}>
+    <button
+      ref={triggerRef}
+      type="button"
+      className={`angle-select-trigger ${open ? 'open' : ''}`}
+      onClick={() => { if (!disabled) setOpen((current) => !current); }}
+      onKeyDown={handleTriggerKeyDown}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      aria-controls={menuId}
+      aria-label={ariaLabel}
+      disabled={disabled}
+    >
+      <span className="angle-select-trigger-copy">{showLabel && <small>{label}</small>}<b>{selected?.label || '请选择'}</b></span>
+      <i aria-hidden="true" />
+    </button>
+    {menu}
+  </div>;
+}
 
 const DEFAULT_HUMAN_URL = '/models/sanmao-default-soldier.glb';
 const SUBJECT_CENTER = new THREE.Vector3(0, 1.08, 0);
@@ -510,7 +700,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
       controls.enableDamping = true;
       controls.dampingFactor = 0.075;
       // Keep dragging within the same bounds as the controls and request.
-      controls.enablePan = true;
+      controls.enablePan = false;
       controls.screenSpacePanning = true;
       controls.panSpeed = 0.82;
       controls.minDistance = 1.35;
@@ -634,7 +824,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
         orbitCamera.lookAt(target);
         orbitCamera.rotateZ(THREE.MathUtils.degToRad(state.roll));
         orbitCamera.updateMatrixWorld(true);
-        controls.enablePan = true;
+    controls.enablePan = false;
         controls.update();
         syncingRef.current = false;
         syncVirtualCamera(state, target);
@@ -837,6 +1027,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.controls.enabled = interaction === 'camera' && camera.viewpoint?.changeView !== false;
+    runtime.controls.enablePan = false;
   }, [interaction, camera.viewpoint?.changeView]);
 
   useEffect(() => {
@@ -874,7 +1065,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
     pendingPatchRef.current = null;
     syncingRef.current = true;
     runtime.controls.target.copy(target);
-    runtime.controls.enablePan = true;
+    runtime.controls.enablePan = false;
     runtime.orbitCamera.position.copy(target).add(basis.offset);
     runtime.orbitCamera.setFocalLength(camera.focal);
     runtime.orbitCamera.updateProjectionMatrix();
@@ -950,7 +1141,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
     onPointerCancel={() => { lightDragRef.current = null; }}>
     {fallback && <div className="angle-three-fallback"><strong>空间预览不可用</strong><span>数值控制仍可生成</span></div>}
     <div className="angle-output-mask" aria-hidden><i style={{ left: 0, top: 0, right: 0, height: frameRect.top }}/><i style={{ left: 0, top: frameRect.top + frameRect.height, right: 0, bottom: 0 }}/><i style={{ left: 0, top: frameRect.top, width: frameRect.left, height: frameRect.height }}/><i style={{ left: frameRect.left + frameRect.width, right: 0, top: frameRect.top, height: frameRect.height }}/></div>
-    <div className="angle-output-frame" style={{ left: frameRect.left, top: frameRect.top, width: frameRect.width, height: frameRect.height }}><span>最终输出 {output.width}×{output.height}</span></div>
+    <div className="angle-output-frame" style={{ left: frameRect.left, top: frameRect.top, width: frameRect.width, height: frameRect.height }}><span>导引画框 {output.width}×{output.height}</span></div>
     <div className={`angle-three-loading ${hasInteracted ? 'is-muted' : ''}`}>{interaction === 'light' ? lightingDirectionLabel(normalizeViewpointOptions(camera.viewpoint).lighting) : referenceViewLabel(camera.yaw)}</div>
   </div>;
 }
@@ -966,7 +1157,8 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
   const [interactionMode, setInteractionMode] = useState<'camera' | 'light'>('camera');
   const [resultMode, setResultMode] = useState<ResultMode>('single');
   const [resultModalOpen, setResultModalOpen] = useState(false);
-  useBodyScrollLock(resultModalOpen);
+  const [helpOpen, setHelpOpen] = useState(false);
+  useBodyScrollLock(resultModalOpen || helpOpen);
   const [viewedResult, setViewedResult] = useState<GalleryItem | null>(null);
   const [resultNoticeId, setResultNoticeId] = useState<string | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -975,6 +1167,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
   const [angleOutput, setAngleOutput] = useState<AngleOutputSpec>(() => angleOutputFromDimensions(1, 1));
   const referenceInputRef = useRef<HTMLInputElement | null>(null);
   const humanInputRef = useRef<HTMLInputElement | null>(null);
+  const helpDialogRef = useRef<HTMLElement | null>(null);
   const compareStageRef = useRef<HTMLDivElement | null>(null);
   const compareDragRef = useRef(false);
   const latestResultIdRef = useRef<string | null>(null);
@@ -985,6 +1178,17 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
   const preferenceRestoredRef = useRef(false);
   const previousReferenceIdRef = useRef<string | null | undefined>(reference?.id);
   const submittingRef = useRef(false);
+
+  useEffect(() => {
+    if (!helpOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialog = helpDialogRef.current;
+    const closeButton = dialog?.querySelector<HTMLElement>('[data-angle-help-close]');
+    closeButton?.focus();
+    return () => {
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [helpOpen]);
 
   const modelOptions = useMemo(() => models.filter((model) => model.enabled && model.published && model.capabilities.includes('edit')), [models]);
   const resolvedModel = camera.modelId === 'auto'
@@ -1145,6 +1349,12 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
     updateCamera({ yaw, pitch });
   }
 
+  function resetCameraToReference() {
+    setCamera(current => resetViewpointCamera(current));
+    setFramingStatus(GUIDE_FRAMING_PENDING);
+    onNotify('已重置相对机位；参考类型、模式、灯光、模型和补充要求不变。');
+  }
+
   function flipHorizontalTarget() {
     const nextYaw = flipHorizontalYaw(camera.yaw);
     if (nextYaw === camera.yaw) return onNotify(Math.abs(camera.yaw) < 1 ? '正面机位没有左右方向可切换。' : '背面机位没有可见的正面方向可切换。');
@@ -1261,6 +1471,33 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
+  function handleHelpKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setHelpOpen(false);
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const dialog = helpDialogRef.current;
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const current = document.activeElement;
+    if (event.shiftKey && current === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && current === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   const renderQuickControl = (key: AngleNumericKey, label: string, min: number, max: number, step = 1, suffix = '°') => {
     const scale = key === 'distance' ? ANGLE_DEFAULTS.distance : 1;
     const value = roundViewportValue(previewCamera[key] / scale, 3);
@@ -1290,6 +1527,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
     <header className="angle-console-topbar">
       <div className="angle-console-brand-group"><button type="button" className="angle-brand" onClick={onExit} title="返回 SANMAO.AI"><div className="angle-logo"><img src="/brand-mark.png" alt="" /></div><div><b>ANGLE CONTROL</b><small>CAMERA VIEW GENERATOR</small></div></button><button type="button" className="angle-exit-button" onClick={onExit} title="返回 SANMAO.AI"><span className="angle-exit-icon" aria-hidden="true"><svg viewBox="0 0 18 18" focusable="false"><path d="M8 4.5 4.5 8 8 11.5" /><path d="M4.8 8H13.5" /></svg></span><span className="angle-exit-label">返回 SANMAO.AI</span></button></div>
       <div className="angle-console-actions">
+        <button type="button" className="angle-top-button angle-top-help" onClick={() => setHelpOpen(true)} aria-haspopup="dialog" aria-expanded={helpOpen}><span aria-hidden="true">?</span>使用说明</button>
         <button type="button" className={`angle-top-button angle-top-history ${resultNoticeId === latestResult?.id ? 'has-new-result' : ''}`} onClick={openHistoryPanel}>查看结果{results.length ? ` · ${results.length}` : ''}</button>
         <input ref={referenceInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { if (event.target.files?.length) replaceReferenceFiles(event.target.files); event.currentTarget.value = ''; }}/>
       </div>
@@ -1311,14 +1549,17 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
               <button type="button" aria-pressed={interactionMode === 'camera'} className={interactionMode === 'camera' ? 'active' : ''} onClick={() => setInteractionMode('camera')}>机位</button>
               <button type="button" aria-pressed={interactionMode === 'light'} className={interactionMode === 'light' ? 'active' : ''} onClick={() => { setInteractionMode('light'); setControlTab('lighting'); setPanelTab('controls'); updateLighting({ enabled: true }); }}>光源</button>
             </div>
-            <details className="angle-guide-display"><summary>预览对象</summary><div>
-              <button type="button" className={humanMode === 'object' ? 'active' : ''} onClick={() => setHumanMode('object')}>通用主体</button>
-              <button type="button" className={humanMode === 'scene' ? 'active' : ''} onClick={() => setHumanMode('scene')}>复杂场景</button>
-              <button type="button" className={humanMode === 'gray' ? 'active' : ''} onClick={() => setHumanMode('gray')}>人物轮廓</button>
-              <button type="button" className={humanMode === 'default' ? 'active' : ''} onClick={() => setHumanMode('default')}>人物模型</button>
-              <button type="button" className={humanMode === 'custom' ? 'active' : ''} onClick={() => humanInputRef.current?.click()}>导入 GLB</button>
-            </div></details>
+            <AngleMenu
+              label="预览对象"
+              value={humanMode}
+              options={PREVIEW_OBJECT_OPTIONS}
+              onChange={(value) => { if (value === 'custom') humanInputRef.current?.click(); else setHumanMode(value); }}
+              ariaLabel="预览对象"
+              className="angle-preview-object-menu"
+              showLabel
+            />
           </div>
+          <div className="angle-preview-calibration-note">方向示意 · 未对齐原图 · 灰模不能代表真实相机位置</div>
           <ThreeCameraPreview camera={previewCamera} output={angleOutput} theme={theme} humanMode={humanMode} customHumanFile={customHumanFile} interaction={interactionMode} captureApiRef={guideCaptureApiRef} miniHostRef={cameraMapHostRef} onCameraChange={update3dCamera} onFramingStatus={setFramingStatus} onNotify={onNotify}/>
           <input ref={humanInputRef} hidden type="file" accept=".glb,model/gltf-binary" onChange={(event) => { const file = event.target.files?.[0] || null; if (file) { setCustomHumanFile(file); setHumanMode('custom'); } event.currentTarget.value = ''; }}/>
         </div>
@@ -1328,7 +1569,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
           <div className={`angle-rail-status ${hasReadyReference ? framingStatus.level : 'unknown'}`}>
             <div className="angle-rail-status-head"><span>当前状态</span><b>{!hasReadyReference ? '等待原始参考图' : viewpoint.guide && viewpoint.changeView ? guideFramingLabel(framingStatus.level) : '原图已就绪'}</b></div>
             <strong>{referenceViewLabel(previewCamera.yaw)}</strong>
-            <div className="angle-rail-readout"><span>{roundViewportValue(previewCamera.yaw)}° / {roundViewportValue(previewCamera.pitch)}°</span><span>{SUBJECT_OPTIONS.find(option => option.value === viewpoint.subjectType)?.label} · {viewpoint.mode === 'camera-view' ? '移动镜头' : '围绕主体'}</span><span>{viewpoint.lighting.enabled ? lightingDirectionLabel(viewpoint.lighting) : '原始光照'}</span><span>{viewpoint.guide && viewpoint.changeView ? '原图 + 构图导引' : '仅原图'}</span><span>{angleOutput.width} × {angleOutput.height}</span></div>
+            <div className="angle-rail-readout"><span>{roundViewportValue(previewCamera.yaw)}° / {roundViewportValue(previewCamera.pitch)}°</span><span>{SUBJECT_OPTIONS.find(option => option.value === viewpoint.subjectType)?.label} · {viewpoint.mode === 'camera-view' ? '空间保持' : '主体保持'}</span><span>{viewpoint.lighting.enabled ? lightingDirectionLabel(viewpoint.lighting) : '原始光照'}</span><span>{viewpoint.guide && viewpoint.changeView ? '原图 + 构图导引' : '仅原图'}</span><span>{angleOutput.width} × {angleOutput.height}</span></div>
           </div>
         </aside>
       </div>
@@ -1341,10 +1582,13 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
         {panelTab === 'controls' ? <>
           <div className="angle-model-compact"><span>改图模型</span><ModelPicker models={models} value={camera.modelId} capability="edit" defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} defaultModelId={defaultModelId} onChange={(value) => updateCamera({ modelId: value })}/></div>
           <section className="angle-section angle-viewpoint-section"><h3>视角策略</h3>
-            <label className="angle-select-label"><span>主体</span><select value={viewpoint.subjectType} onChange={(event) => { const subjectType = event.target.value as ViewpointOptions['subjectType']; updateViewpoint({ subjectType, mode: viewpoint.modeSource === 'auto' ? defaultViewMode(subjectType) : viewpoint.mode }); }} aria-label="参考图主体类型">{SUBJECT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-            <div className="angle-segmented" role="group" aria-label="视角模式">
-              <button type="button" aria-pressed={viewpoint.mode === 'object-orbit'} className={viewpoint.mode === 'object-orbit' ? 'active' : ''} onClick={() => updateViewpoint({ mode: 'object-orbit', modeSource: 'manual' })}>围绕主体</button>
-              <button type="button" aria-pressed={viewpoint.mode === 'camera-view'} className={viewpoint.mode === 'camera-view' ? 'active' : ''} onClick={() => updateViewpoint({ mode: 'camera-view', modeSource: 'manual' })}>移动镜头</button>
+            <div className="angle-select-label"><span>参考类型</span><AngleMenu label="参考类型" value={viewpoint.subjectType} options={SUBJECT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} onChange={(subjectType) => updateViewpoint({ subjectType, mode: defaultViewMode(subjectType), modeSource: 'auto' })} ariaLabel="参考图类型，只用于选择内容类别，不会替换原图主体"/></div>
+            <small className="angle-reference-type-explain">这里只选择原图里的内容类别，不会让模型换一个主体。</small>
+            <div className="angle-mode-policy"><div><span>相机策略</span><b>{viewpoint.modeSource === 'manual' ? '历史设置' : '系统自动选择'}</b></div><small>{viewpoint.mode === 'camera-view' ? '空间类内容优先保持场景布局；预览只用于看方向和构图。' : '主体类内容优先保持主体外形；预览只用于看方向和构图。'}</small></div>
+            <div className="angle-reference-baseline">
+              <div><span>起始基准</span><b>{hasReadyReference ? '原始参考图' : '等待参考图'}</b></div>
+              <button type="button" onClick={resetCameraToReference} aria-label="重置相对机位" title="重置角度、距离、焦距和构图；保留类型、模式、灯光与补充要求">回到起点</button>
+              <small>0° = 原图方向 · 仅将目标参数清零，不会让灰模自动对齐原图</small>
             </div>
             <div className="angle-action-row">
               <button type="button" role="switch" aria-label="改变观察角度" aria-checked={viewpoint.changeView} className={`angle-toggle ${viewpoint.changeView ? 'active' : ''}`} onClick={() => updateViewpoint({ changeView: !viewpoint.changeView })}><i/>{viewpoint.changeView ? '改变观察角度' : '保持原机位'}</button>
@@ -1379,7 +1623,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
             <div className="angle-light-head"><button type="button" role="switch" aria-label="重新布光" aria-checked={viewpoint.lighting.enabled} className={`angle-toggle ${viewpoint.lighting.enabled ? 'active' : ''}`} onClick={() => { updateLighting({ enabled: !viewpoint.lighting.enabled }); if (viewpoint.lighting.enabled) setInteractionMode('camera'); }}><i/>{viewpoint.lighting.enabled ? '使用目标光影' : '保留原始光影'}</button></div>
             {viewpoint.lighting.enabled && <><div className="angle-light-presets">{LIGHTING_PRESETS.map((preset) => <button type="button" key={preset.name} onClick={() => updateLighting({ ...preset, enabled: true })}>{preset.name}</button>)}</div>
               {renderLightControl('azimuth', '光源水平', -180, 180, 1, '°')}{renderLightControl('elevation', '光源高度', 0, 90, 1, '°')}{renderLightControl('intensity', '主光强度', 0.1, 2, 0.1, '×')}{renderLightControl('softness', '阴影柔和', 0, 1, 0.05, '')}{renderLightControl('temperature', '色温', 2500, 10000, 100, 'K')}{renderLightControl('fill', '补光比例', 0, 1, 0.05, '')}
-              <label className="angle-select-label"><span>光源基准</span><select aria-label="光源基准" value={viewpoint.lighting.anchor} onChange={(event) => updateLighting({ anchor: event.target.value as LightingState['anchor'] })}><option value="camera">跟随当前相机</option><option value="reference">固定在原图方向</option></select></label>
+              <div className="angle-select-label"><span>光源基准</span><AngleMenu label="光源基准" value={viewpoint.lighting.anchor} options={LIGHT_ANCHOR_OPTIONS} onChange={(anchor) => updateLighting({ anchor })} ariaLabel="光源基准"/></div>
             </>}
           </section>
           </div>
@@ -1402,6 +1646,63 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
         {viewpoint.changeView && (targetDifficulty === 'high' || liteLargeAngleWarning) && <small className="angle-submit-warning">原图未展示区域需要模型推断，无法保证绝对几何准确。</small>}
       </div>
     </aside>
+
+    {helpOpen && <div className="angle-help-modal" role="presentation" onClick={() => setHelpOpen(false)} onKeyDown={handleHelpKeyDown}>
+      <section ref={helpDialogRef} className="angle-help-dialog" role="dialog" aria-modal="true" aria-label="角度控制台使用说明" aria-labelledby="angle-help-title" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
+        <header className="angle-help-head">
+          <div><span>QUICK START</span><h2 id="angle-help-title">三步掌握视角与光影</h2><p>以原始参考图为起点，告诉模型想从哪里看、如何布光。三维预览是方向和构图示意，不是原图的三维还原。</p></div>
+          <button type="button" className="angle-help-close" data-angle-help-close onClick={() => setHelpOpen(false)} aria-label="关闭使用说明">×</button>
+        </header>
+        <div className="angle-help-scroll">
+          <ol className="angle-help-steps">
+            <li><i>1</i><div><b>放入原始参考图</b><p>粘贴、拖入或选择一张图片。第 1 张图始终是主体、结构和风格的依据，不会用上一轮生成结果继续叠加。</p></div></li>
+            <li><i>2</i><div><b>调整目标机位</b><p>先选主体类型，再调整水平角度、上下角度、距离和焦距。预览中的“机位”拖动会同步右侧参数。</p></div></li>
+            <li><i>3</i><div><b>需要时重新布光，然后生成</b><p>关闭光影时保留原始光照；开启后，模型会重建高光、反射、接触阴影和投影方向。</p></div></li>
+          </ol>
+          <section className="angle-help-section">
+            <div className="angle-help-section-head"><span>HOW IT WORKS</span><h3>参数怎么理解</h3></div>
+            <div className="angle-help-guide-grid">
+              <article><b>机位</b><p><strong>0°</strong> 就是原图观察方向；负数向左，正数向右。上下角度决定高机位或低机位，不能用来转动人物头部或改变姿态。</p></article>
+              <article><b>光影</b><p>“保留原始光影”适合只换视角；“使用目标光影”适合指定左侧、右侧、逆光、落日等效果。光源基准决定它跟随当前相机还是固定在原图方向。</p></article>
+              <article><b>构图与导引</b><p>焦距影响透视感，距离影响主体大小。只有灰模画框已经接近目标构图时才打开空间导引；灰模没对齐时请保持关闭，避免把错误构图交给模型。</p></article>
+            </div>
+          </section>
+          <section className="angle-help-section">
+            <div className="angle-help-section-head"><span>HOW THE SYSTEM CHOOSES</span><h3>为什么不让你手动选“绕圈”或“换站位”</h3></div>
+            <div className="angle-help-mode-compare">
+              <article><strong>人物、商品、车辆</strong><b>主体保持策略</b><p><em>模型优先保持同一主体的外形。</em> 比如从车头方向生成车侧视角，车辆本身不应被当成另一个物体。预览只帮助你判断左右、高低和画面大小。</p></article>
+              <article><strong>室内、建筑、风景、街景</strong><b>空间保持策略</b><p><em>模型优先保持同一场景的布局。</em> 比如从房间另一侧生成画面，房间关系不应整块旋转。当前版本没有真实深度和相机坐标，不能用灰模判断“走了几米”。</p></article>
+            </div>
+            <p className="angle-help-mode-note"><b>你不需要判断这两个词：</b>系统会根据参考类型自动采用对应的保持策略。两者都以原图为第一依据，当前三维预览不是原图的三维还原。</p>
+          </section>
+          <section className="angle-help-section">
+            <div className="angle-help-section-head"><span>REFERENCE START</span><h3>起始画面没对齐，怎么知道相机移到哪</h3></div>
+            <div className="angle-help-guide-grid">
+              <article><b>先说结论：目前不能准确预判</b><p>如果首帧构图没有和原图对齐，单看通用灰模就不知道相机真实该移几米、转多少度。这里的 0° 是“相对原图描述目标”，不是已经测出的三维相机坐标。</p></article>
+              <article><b>现在可以控制什么</b><p>水平角度、上下角度、距离、焦距和画面位置，都是给模型的视觉目标。它们能表达“从左侧看、从上方看、近一点”，但不会让灰模自动对齐原图。</p></article>
+              <article><b>要精确移动，需要先标定</b><p>必须先用真实场景几何或目标视角图，把场景和起始相机对齐，再记录起点并计算位移。当前版本没有这套三维校准流程，因此空间导引只适合粗略表达方向和构图。</p></article>
+            </div>
+            <p className="angle-help-mode-note"><b>实际用法：</b>把原始参考图当作唯一内容依据；只需要“方向变化”时关闭空间导引，使用快捷视角或角度参数；只有当灰模画框确实接近你想要的构图时，才提交空间导引。真正换一张参考图后，以新原图为起点；生成结果不会自动成为下一轮起点。</p>
+          </section>
+          <section className="angle-help-section">
+            <div className="angle-help-section-head"><span>SUCCESS TIPS</span><h3>想要更稳定的结果</h3></div>
+            <div className="angle-help-tips">
+              <p><b>小角度优先：</b>左右 45° 以内通常更容易保持身份、材质和空间连续性。</p>
+              <p><b>大角度要有预期：</b>超过 90° 会出现原图未展示区域，模型只能根据可见信息保守推断。</p>
+              <p><b>不要混淆任务：</b>只想改光线就关闭“改变观察角度”；只想换视角就关闭“使用目标光影”。</p>
+              <p><b>结果不理想时：</b>回到原始参考图，先用快捷视角或预设，再逐步微调，不要连续拿生成结果继续生成。</p>
+            </div>
+          </section>
+          <div className="angle-help-readout" aria-label="快速记忆">
+            <div><strong>0°</strong><span>原图方向</span></div>
+            <div><strong>−</strong><span>向左看</span></div>
+            <div><strong>＋</strong><span>向右看</span></div>
+            <div><strong>光影关闭</strong><span>保留原光照</span></div>
+          </div>
+        </div>
+        <footer className="angle-help-foot"><span>所有生成都以原始参考图为第一依据。</span><button type="button" className="primary-small" onClick={() => setHelpOpen(false)}>开始使用</button></footer>
+      </section>
+    </div>}
 
     {resultModalOpen && viewedResult && reference && <div className="angle-result-modal" role="dialog" aria-modal="true" aria-label="生成结果" onClick={() => setResultModalOpen(false)} onKeyDown={event => { if (event.key === 'Escape') setResultModalOpen(false); }}>
       <div className="angle-result-shell" onClick={(event) => event.stopPropagation()}>

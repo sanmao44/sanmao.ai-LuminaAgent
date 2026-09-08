@@ -295,6 +295,15 @@ export function createViewpointCamera(input?: Partial<AngleCameraState> | null):
     : { ...ANGLE_DEFAULTS, modelId: input?.modelId || 'auto', viewpoint: normalizeViewpointOptions() });
 }
 
+export function resetViewpointCamera(input: AngleCameraState): AngleCameraState {
+  return normalizeAngleState({
+    ...ANGLE_DEFAULTS,
+    modelId: input.modelId,
+    compositionLock: input.compositionLock,
+    viewpoint: normalizeViewpointOptions(input.viewpoint),
+  });
+}
+
 export function referenceViewLabel(yaw: number) {
   const angle = effectiveAngle(yaw);
   if (Math.abs(angle) < 0.1) return '原图观察方向';
@@ -646,6 +655,7 @@ export function buildReferenceViewpointPrompt(note: string, input: AngleCameraSt
       'REFERENCE IDENTITY',
       'Image 1 is the ORIGINAL primary reference, not an intermediate generated view.',
       SUBJECT_CONSISTENCY[view.subjectType],
+      'Camera values are approximate visual targets, not measured camera coordinates or a calibrated reconstruction of Image 1.',
       'Do not redesign or replace recognizable content. An explicit user-requested redesign is an exception only for the requested attributes.',
       hasGuideReference ? 'Image 2 is an OPTIONAL abstract CAMERA COMPOSITION guide only. Never copy its proxy geometry, identity, materials, lighting, background or render style. Where proxy shape conflicts with Image 1, preserve Image 1.' : '',
     ].filter(Boolean).join('\n'),
@@ -871,6 +881,11 @@ export function buildAnglePayload(camera: AngleCameraState, modelLabel?: string,
         coordinate_system: 'reference-relative-v2',
         viewpoint: target.viewpoint,
         semantic_target: buildAngleTargetSemantic(target, output),
+      },
+      reference_baseline: {
+        source: 'original_image',
+        calibration: 'not_calibrated',
+        preview_role: 'direction_and_composition_proxy',
       },
       lighting_direction: lightingDirection(target.viewpoint!.lighting, target.yaw),
       instruction: 'reference_viewpoint_reconstruction',

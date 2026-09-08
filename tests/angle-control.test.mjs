@@ -190,6 +190,37 @@ test('migrates legacy subject rotation into the final yaw once', () => {
   assert.equal(angle.normalizeAngleState(migrated).yaw, -16.4);
 });
 
+test('resets the relative camera without changing reference strategy or lighting', () => {
+  const state = angle.normalizeAngleState({
+    yaw: 84,
+    pitch: -22,
+    roll: 12,
+    focal: 85,
+    distance: 1.1,
+    frameX: 18,
+    frameY: -12,
+    compositionLock: true,
+    modelId: 'gpt-image-2',
+    viewpoint: {
+      version: 2,
+      subjectType: 'building',
+      mode: 'camera-view',
+      modeSource: 'auto',
+      changeView: true,
+      guide: true,
+      lighting: { ...angle.LIGHTING_DEFAULTS, enabled: true, azimuth: 60, temperature: 3200 },
+    },
+  });
+  const reset = angle.resetViewpointCamera(state);
+  assert.deepEqual([reset.yaw, reset.pitch, reset.roll, reset.focal, reset.distance, reset.frameX, reset.frameY], [0, 0, 0, 50, 2.2, 0, 0]);
+  assert.equal(reset.compositionLock, true);
+  assert.equal(reset.modelId, 'gpt-image-2');
+  assert.equal(reset.viewpoint.subjectType, 'building');
+  assert.equal(reset.viewpoint.mode, 'camera-view');
+  assert.equal(reset.viewpoint.lighting.azimuth, 60);
+  assert.equal(reset.viewpoint.lighting.temperature, 3200);
+});
+
 test('default parameters stay concise and optional parameters are dynamic', () => {
   const defaultPrompt = angle.compileAngleTargetPrompt('', camera({ yaw: 30 }), { hasGuideReference: true });
   assert.match(defaultPrompt, /clear, obvious right three-quarter view/);
@@ -377,6 +408,18 @@ test('new relative directions cover both sides without anatomical assumptions', 
     if (Math.abs(yaw) > 90) assert.match(prompt, /Infer unseen surfaces conservatively/);
     assert.equal(prompt.match(/保留所有标识/g).length, 1);
   }
+});
+
+test('reference-relative controls do not claim a calibrated source camera', () => {
+  const state = angle.createViewpointCamera();
+  const prompt = angle.compileAngleTargetPrompt('', state);
+  assert.match(prompt, /approximate visual targets, not measured camera coordinates/);
+  const payload = angle.buildAnglePayload(state);
+  assert.deepEqual(payload.reference_baseline, {
+    source: 'original_image',
+    calibration: 'not_calibrated',
+    preview_role: 'direction_and_composition_proxy',
+  });
 });
 
 test('distance multiplier and focal presets agree between prompt and audit', () => {
