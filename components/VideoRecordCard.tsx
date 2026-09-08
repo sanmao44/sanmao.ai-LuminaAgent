@@ -79,7 +79,7 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore }:
       <div className="creative-video-actions">
         <button type="button" className="creative-video-view-parameters" onClick={() => setParametersOpen(true)} title="查看这条任务的生成参数" aria-label="查看这条任务的生成参数"><span className="creative-action-icon" aria-hidden="true">⌕</span><span>查看参数</span></button>
         {canRestore && onRestore && <button type="button" className="creative-video-restore" onClick={() => void onRestore()} title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数"><span className="creative-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button>}
-        {url && <a href={url} download target="_blank" rel="noreferrer" title="下载生成的视频" aria-label="下载生成的视频"><span className="creative-action-icon" aria-hidden="true">↓</span><span>下载</span></a>}
+        {url && <a className="creative-video-download" href={url} download target="_blank" rel="noreferrer" title="下载生成的视频" aria-label="下载生成的视频"><span className="creative-action-icon" aria-hidden="true">↓</span></a>}
         <button type="button" className="creative-video-delete" onClick={handleDelete} title={canDelete ? '删除视频任务' : '视频生成完成或失败后可删除'} aria-label="删除视频任务"><span className="creative-action-icon" aria-hidden="true">⌫</span><span>删除</span></button>
       </div>
     </div>

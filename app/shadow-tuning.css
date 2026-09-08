@@ -328,7 +328,7 @@ html[data-theme="light"] .provider-card,
 html[data-theme="light"] .upscale-connection-card,
 html[data-theme="light"] .models-page .model-card,
 html[data-theme="light"] .logs-page .log-row,
-html[data-theme="light"] .video-task-card,
+html[data-theme="light"] .video-task-card:not(.done),
 html[data-theme="light"] .runtime-card,
 html[data-theme="light"] .canvas-global-asset-card,
 html[data-theme="light"] .canvas-task-log-card {
@@ -379,6 +379,10 @@ html[data-theme="light"] .video-task-card.done,
 html[data-theme="light"] .logs-page .log-row.success,
 html[data-theme="light"] .canvas-task-log-card.success {
   border-color:color-mix(in srgb,var(--success) 28%,var(--surface-card-border));
+}
+
+html[data-theme="light"] .video-task-card.done {
+  background:var(--success-soft);
 }
 
 html[data-theme="light"] .creative-video-card.running,

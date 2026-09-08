@@ -77,13 +77,22 @@ html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height
 
 /* The task panel keeps its heading fixed while only the recent-task body scrolls. */
 .video-task-list{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0;overflow:hidden!important}
-.video-task-list-heading{position:relative;z-index:1;margin-bottom:0;padding-bottom:12px;background:var(--panel)}
+.video-task-list-heading{position:relative;z-index:1;display:flex;margin-bottom:0;padding-bottom:12px;background:transparent}
+.video-task-list-heading>div:first-child{min-width:0;display:grid;gap:4px}
+.video-task-status-filter{display:flex;align-items:center;gap:3px;flex:none;padding:3px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:9px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 72%,var(--panel)),color-mix(in srgb,var(--accent-2) 12%,var(--panel-2)))}
+.video-task-status-filter button{height:24px;display:inline-flex;align-items:center;gap:4px;padding:0 7px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);font-size:8px;font-weight:850;white-space:nowrap;cursor:pointer}
+.video-task-status-filter button:hover{border-color:var(--control-hover-border,var(--accent));background:var(--control-hover-bg,var(--accent-soft));color:var(--accent-text)}
+.video-task-status-filter button.active{border-color:var(--control-border,var(--accent));background:var(--control-active-bg,var(--accent-soft));color:var(--accent-text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent)}
+.video-task-status-filter button[data-status="done"].active{border-color:color-mix(in srgb,var(--success) 42%,var(--line));background:color-mix(in srgb,var(--success-soft) 78%,var(--panel));color:var(--success)}
+.video-task-status-filter b{font-size:8px;font-variant-numeric:tabular-nums}
 .video-task-list-scroll{min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:4px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
 .video-task-list-scroll::-webkit-scrollbar{width:7px}.video-task-list-scroll::-webkit-scrollbar-thumb{border-radius:999px;background:var(--line-strong)}
 .video-task-card{cursor:pointer;transition:border-color .16s,box-shadow .16s,background .16s;outline:none}
 .video-task-card:hover{border-color:color-mix(in srgb,var(--accent) 52%,var(--line));background:color-mix(in srgb,var(--accent-soft) 26%,var(--panel-2))}
 .video-task-card:focus-visible{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
 .video-task-card.selected{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 20%,transparent);background:color-mix(in srgb,var(--accent-soft) 38%,var(--panel-2))}
+.video-task-card.done{background:linear-gradient(135deg,var(--success-soft),var(--panel))}
+html[data-theme="light"] .video-task-card.done{background:var(--success-soft)}
 .video-task-param-summary{color:var(--accent-text)!important;font-variant-numeric:tabular-nums}
 .video-task-actions{flex-wrap:wrap}.video-task-actions .video-task-restore{background:var(--accent);color:#fff}
 .video-preview-empty.video-preview-pending,.video-preview-empty.video-preview-running{color:var(--accent-text)}
@@ -101,6 +110,10 @@ html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height
 .video-task-actions .video-task-restore{border-color:transparent;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 6px 14px color-mix(in srgb,var(--accent) 18%,transparent)}
 .video-task-actions .video-task-restore:hover{border-color:transparent;background:linear-gradient(135deg,var(--accent-2),var(--accent));color:#fff;filter:brightness(1.05)}
 .video-task-actions .video-action-icon{display:grid;place-items:center;min-width:13px;font-size:13px;line-height:1}
+.video-restore-confirm-dialog .video-task-dialog-inner{width:min(460px,calc(100vw - 32px))}
+.video-restore-confirm-copy{margin:0;color:var(--text-2);font-size:12px;line-height:1.7}
+.video-restore-confirm-actions{display:flex;justify-content:flex-end;gap:8px}
+.video-restore-confirm-actions .video-quiet-button,.video-restore-confirm-actions .video-primary-button{min-height:34px;padding:0 13px;font-size:10px}
 
 
 /* Uploaded frame previews must preserve the complete source image. */
@@ -633,4 +646,47 @@ html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webki
   .video-task-dialog-content pre{min-height:100px;max-height:34dvh;padding:13px 14px;font-size:11px;line-height:1.7}
   .video-task-dialog-meta{gap:9px}
   .video-task-dialog-meta span{min-height:56px;padding:10px 12px}
+}
+
+/* Keep the thumbnail in its own column so it can never cover task text or actions. */
+.video-task-card{grid-template-columns:minmax(0,1fr) 94px;grid-auto-rows:max-content;column-gap:9px;row-gap:0;align-items:start;align-content:start;min-height:0;height:auto;padding:7px 9px}
+.video-task-card>.video-task-thumbnail{position:relative;grid-column:2;grid-row:1;width:94px;height:66px;align-self:start}
+.video-task-thumbnail{pointer-events:none}
+.video-task-card-content{grid-column:1;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"meta meta" "copy actions" "error error" "waiting waiting";column-gap:8px;row-gap:3px;align-content:start}
+.video-task-card-content>.video-task-meta{grid-area:meta;min-width:0}
+.video-task-card-content>.video-task-copy{grid-area:copy;width:100%;min-width:0}
+.video-task-card-content>.video-task-error{grid-area:error;min-width:0}
+.video-task-card-content>.video-task-waiting{grid-area:waiting;min-width:0}
+.video-task-card-content>.video-task-actions{grid-area:actions;align-self:end;justify-self:end;min-width:0;max-width:100%;margin-top:0;padding-top:0;border-top:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.video-task-card-content>.video-task-actions::-webkit-scrollbar{display:none}
+.video-task-card-content>.video-task-actions .video-task-download{width:29px;padding-inline:0}
+@media(max-width:620px){
+  .video-task-list-heading{align-items:flex-start;flex-wrap:wrap;gap:7px}
+  .video-task-status-filter{width:100%;justify-content:stretch}
+  .video-task-status-filter button{flex:1;justify-content:center}
+  .video-task-card{grid-template-columns:minmax(0,1fr) 78px;column-gap:8px;padding:7px 8px}
+  .video-task-card>.video-task-thumbnail{width:78px;height:58px}
+  .video-task-card-content{grid-template-columns:minmax(0,1fr);grid-template-areas:"meta" "copy" "error" "waiting" "actions";column-gap:0}
+  .video-task-card-content>.video-task-actions{justify-self:start;max-width:100%;margin-top:0;padding-top:4px;border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent);overflow-x:auto}
+}
+@media(max-width:420px){
+  .video-task-card{grid-template-columns:minmax(0,1fr) 68px;column-gap:7px;padding:6px 7px}
+  .video-task-card>.video-task-thumbnail{width:68px;height:51px}
+}
+
+/* Prefer one-line summaries in the task list; the detail dialog keeps the full text. */
+@media(min-width:621px){
+  .video-task-title-row{align-items:center}
+  .video-task-copy{gap:3px}
+  .video-task-title-row{gap:7px}
+  .video-task-title-row strong{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1;font-size:11px;line-height:1.25}
+  .video-task-detail{height:24px;padding-inline:7px;font-size:8px}
+  .video-task-details{display:flex;align-items:center;flex-wrap:nowrap;gap:4px 9px;overflow:hidden}
+  .video-task-details small{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;line-height:1.2}
+  .video-task-details small:first-child{flex:0 1 48%;max-width:48%}
+  .video-task-details .video-task-param-summary{flex:1 1 auto}
+  .video-task-error{-webkit-line-clamp:1}
+  .video-task-actions{gap:5px;margin-top:0;padding-top:4px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  .video-task-actions::-webkit-scrollbar{display:none}
+  .video-task-actions a,.video-task-actions button{flex:none;min-height:25px;padding-inline:8px;font-size:9px;white-space:nowrap}
 }

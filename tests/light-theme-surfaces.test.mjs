@@ -27,6 +27,7 @@ test('light theme applies subtle gradients to shared shells and repeated cards',
     assert.ok(tuning.includes(`html[data-theme="light"] ${selector}`), `missing light surface rule for ${selector}`);
   }
   assert.match(tuning, /html\[data-theme="light"\] \.canvas-context-menu,[\s\S]*background:linear-gradient\(155deg,var\(--surface-popover-start\),var\(--surface-popover-end\)\)/);
+  assert.match(tuning, /html\[data-theme="light"\] \.video-task-card\.done\s*\{[\s\S]*background:var\(--success-soft\)/);
   assert.match(tuning, /html\[data-theme="light"\] \.search-box,[\s\S]*background:var\(--surface-control\)/);
   assert.match(tuning, /html\[data-theme="light"\] \.canvas-node\s*\{[\s\S]*var\(--node-effective,var\(--accent\)\)/);
 });

@@ -3766,6 +3766,7 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .creative-video-actions a,.creative-video-actions button{min-height:30px;gap:5px;padding:0 10px;border-radius:9px;white-space:nowrap;transition:border-color .16s,background .16s,color .16s,transform .16s}
 .creative-video-actions a:hover,.creative-video-actions button:hover{transform:translateY(-1px)}
 .creative-video-actions .creative-action-icon{display:grid;place-items:center;min-width:13px;font-size:13px;line-height:1}
+.creative-video-actions .creative-video-download{width:34px;padding-inline:0}
 .creative-video-actions .creative-video-delete{margin-left:auto}
 .creative-video-parameter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .creative-video-parameter-grid span{min-height:44px;white-space:normal}
