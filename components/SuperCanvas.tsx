@@ -12068,6 +12068,15 @@ export default function SuperCanvas() {
             <b>松开以导入图片或视频</b>
           </div>
         )}
+        {referencePicker && (
+          <div className="canvas-hint canvas-reference-picker-hint" role="status" aria-live="polite">
+            <span aria-hidden="true">⌁</span>
+            <div>
+              <b>正在选择参考素材</b>
+              <small>点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消</small>
+            </div>
+          </div>
+        )}
         <div className="canvas-grid" />
         {snapGuides.length > 0 && (
           <div className="canvas-snap-guides" aria-hidden="true">
