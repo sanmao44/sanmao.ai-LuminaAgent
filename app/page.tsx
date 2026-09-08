@@ -1162,7 +1162,26 @@ function getChatFilePreviewContent(file) {
     if (file?.encoding !== 'base64') return String(file?.content || '');
     const binary = atob(String(file?.content || '').replace(/\s/g, ''));
     const bytes = Uint8Array.from(binary, (char)=>char.charCodeAt(0));
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+        // Keep previewing files with a legacy Chinese encoding when the runtime
+        // exposes that decoder; otherwise fall back to replacement decoding.
+        try {
+            return new TextDecoder('gb18030').decode(bytes);
+        } catch {
+            return new TextDecoder('utf-8').decode(bytes);
+        }
+    }
+}
+function buildChatFilePreviewContent(content) {
+    const source = String(content || '').replace(/prefers-reduced-motion\s*:\s*reduce/gi, 'prefers-reduced-motion: no-preference');
+    const bootstrap = '<script data-sanmao-preview-motion>(function(){try{var nativeMatchMedia=window.matchMedia&&window.matchMedia.bind(window);window.matchMedia=function(query){var text=String(query);if(/prefers-reduced-motion/i.test(text))return{media:text,matches:false,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}};return nativeMatchMedia?nativeMatchMedia(text):{media:text,matches:false,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}}};}catch(e){}})();</script>';
+    const head = source.match(/<head\b[^>]*>/i);
+    if (head) return source.replace(head[0], `${head[0]}${bootstrap}`);
+    const doctype = source.match(/^\s*<!doctype\b[^>]*>\s*/i);
+    if (doctype) return `${doctype[0]}${bootstrap}${source.slice(doctype[0].length)}`;
+    return `${bootstrap}${source}`;
 }
 function formatFileSize(size) {
     if (!size || size < 1) return '文件';
@@ -4380,6 +4399,23 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
     });
 }
 function ChatFilePreviewDialog({ file, onClose }) {
+    const [previewUrl, setPreviewUrl] = useState('');
+    useEffect(()=>{
+        let url = '';
+        try {
+            if (typeof URL !== 'undefined' && typeof Blob !== 'undefined') {
+                url = URL.createObjectURL(new Blob([
+                    file.content
+                ], {
+                    type: 'text/html;charset=utf-8'
+                }));
+            }
+        } catch {}
+        setPreviewUrl(url);
+        return ()=>{
+            if (url) URL.revokeObjectURL(url);
+        };
+    }, [file.content]);
     return /*#__PURE__*/ _jsxs("div", {
         className: "chat-file-preview-backdrop",
         role: "presentation",
@@ -4427,7 +4463,10 @@ function ChatFilePreviewDialog({ file, onClose }) {
                             className: "chat-file-preview-frame",
                             title: `${file.name} HTML 预览`,
                             srcDoc: file.content,
+                            src: previewUrl || undefined,
                             sandbox: "allow-scripts",
+                            allow: "autoplay; fullscreen",
+                            loading: "eager",
                             referrerPolicy: "no-referrer"
                         })
                     }),
@@ -5215,6 +5254,7 @@ export default function Page() {
     const [lastGenerateInfo, setLastGenerateInfo] = useState('');
     const [angleReference, setAngleReference] = useState(null);
     const [angleCameraSeed, setAngleCameraSeed] = useState(null);
+    const [angleNoteSeed, setAngleNoteSeed] = useState(undefined);
     const [angleCameraStartSeed, setAngleCameraStartSeed] = useState(null);
     const [angleResults, setAngleResults] = useState([]);
     const [angleBusy, setAngleBusy] = useState(false);
@@ -6217,7 +6257,7 @@ export default function Page() {
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
         try {
-            const content = getChatFilePreviewContent(file);
+            const content = buildChatFilePreviewContent(getChatFilePreviewContent(file));
             if (!content.trim()) throw new Error('HTML 文件内容为空');
             setChatFilePreview({
                 name: file.name || 'HTML 文件',
@@ -7718,10 +7758,11 @@ export default function Page() {
         if (request.angle) {
             setAngleReference(request.references?.[0] || null);
             setAngleCameraSeed(request.angle);
-            setAngleCameraStartSeed(request.angleStart || null);
+            setAngleNoteSeed(request.angleNote || '');
+            setAngleCameraStartSeed(null);
             setAngleResults(task.items || []);
             setSection('angle');
-            notify(request.referencesOmitted ? '角度参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : '已恢复这一轮的角度参数');
+            notify(request.referencesOmitted ? '视角参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : request.angle.viewpoint?.version === 2 ? '已恢复这一轮的视角与光影参数' : '旧版参数无法换算相对视角，已回到原图机位');
             return;
         }
         setGeneratePrompt(task.prompt === 'Upscale this image' ? '' : task.prompt);
@@ -7803,12 +7844,12 @@ export default function Page() {
         if (submittedRefs.some((reference)=>reference.kind === 'video')) return notify('图片生成不能接收视频引用；请移除视频，或切换到视频工作台。');
         const submittedImageRefs = submittedRefs.filter((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference));
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
-        const hasLocalEditMask = Boolean((savedRequest ? savedRequest.mask?.dataUrl : generateMask?.dataUrl) && submittedImageRefs.length === 1);
-        const submittedImageModelOptions = hasLocalEditMask ? availableEditModels : availableGenerationModels;
+        const hasLocalEditMask = !isAngleGeneration && Boolean((savedRequest ? savedRequest.mask?.dataUrl : generateMask?.dataUrl) && submittedImageRefs.length === 1);
+        const submittedImageModelOptions = isAngleGeneration || hasLocalEditMask ? availableEditModels : availableGenerationModels;
         const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
         const submittedModelId = !submittedUpscaleMode && hasLocalEditMask && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId) ? 'auto' : requestedModelId;
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-        const moveGuideDataUrl = submittedImageRefs.length === 1
+        const moveGuideDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
             ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
             : '';
         const submittedImageReferenceUrls = submittedImageRefs.map((reference)=>creativeReferenceUrl(reference)).filter(Boolean);
@@ -7818,7 +7859,7 @@ export default function Page() {
         if (submittedRefs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再提交');
         if (!submittedUpscaleMode && !submittedPrompt) return notify('先描述你想生成什么');
         if (!submittedUpscaleMode && !isAngleGeneration && submittedSizeMode === 'custom' && (submittedCustomWidth < 1 || submittedCustomHeight < 1)) return notify('请输入有效的自定义宽高');
-        const hasAvailableModel = isAngleGeneration ? availableGenerationModels.length > 0 : submittedUpscaleMode ? availableUpscaleModels.length > 0 : submittedImageModelOptions.length > 0;
+        const hasAvailableModel = submittedUpscaleMode ? availableUpscaleModels.length > 0 : submittedImageModelOptions.length > 0;
         if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : hasLocalEditMask ? '还没有支持局部编辑的图片模型，请先到模型库启用带“修改”能力的图片模型' : '还没有可用图片模型，请先到模型库启用模型');
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
@@ -7842,7 +7883,7 @@ export default function Page() {
         const taskQuality = isAngleGeneration ? '自动' : savedRequest?.quality || quality;
         const taskOutputFormat = isAngleGeneration ? 'png' : savedRequest?.outputFormat || outputFormat;
         const taskBackgroundMode = isAngleGeneration ? 'auto' : savedRequest?.backgroundMode || backgroundMode;
-        const taskMaskAsset = savedRequest ? savedRequest.mask : generateMask;
+        const taskMaskAsset = isAngleGeneration ? null : savedRequest ? savedRequest.mask : generateMask;
         const taskMask = taskMaskAsset?.dataUrl;
         const taskUpscaleScale = savedRequest?.upscaleScale || generateUpscaleScale;
         const taskUpscaleTarget = savedRequest?.upscaleTarget || generateUpscaleTarget;
@@ -8214,6 +8255,7 @@ export default function Page() {
                 source: submittedImageRefs.length ? 'edit' : 'generate',
                  references: referenceRecords,
                   angle: taskRequest.angle,
+                  angleNote: isAngleGeneration ? taskRequest.angleNote : undefined,
                   annotations: taskMaskAsset?.annotations,
                   mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations, ...(taskMaskAsset.sourceImageDataUrl ? { sourceImageDataUrl: taskMaskAsset.sourceImageDataUrl } : {}) } : undefined
             });
@@ -8229,8 +8271,7 @@ export default function Page() {
                 items
             });
             if (isAngleGeneration) {
-                setAngleResults(items);
-                setAngleReference(taskRefs[0] || null);
+                setAngleResults(previous => [...items, ...previous].slice(0, 100));
                 if (items.length) {
                     setAngleResultToast(items[0]);
                     setAngleSuppressAutoOpenId(items[0].id);
@@ -8260,13 +8301,13 @@ export default function Page() {
                 prompt: input.prompt,
                 references: [
                     input.reference,
-                    input.guideReference
+                    ...(input.guideReference ? [input.guideReference] : [])
                 ],
                 modelId: input.camera.modelId,
                 angle: input.camera,
                 angleStart: input.cameraStart || undefined,
                 angleNote: input.note,
-                angleGuide: true,
+                angleGuide: Boolean(input.guideReference),
                 angleOutput: input.output
             });
         } finally{
@@ -9235,17 +9276,21 @@ export default function Page() {
     }
     async function openAngleConsole(item) {
         markHistoryImageViewed(item);
+        const originalUrl = item.angle ? item.references?.[0]?.url : item.url;
+        if (!originalUrl) return notify('这张结果没有保存原始参考图，请重新添加原图后调整视角');
+        const sourceItem = { ...item, url: originalUrl };
         const requestId = uid('angle-open');
-        const hasImmediateImage = item.url.startsWith('data:image/');
+        const hasImmediateImage = originalUrl.startsWith('data:image/');
         const optimisticRef = {
             id: uid('ref'),
             name: `历史-${item.id.slice(-6)}`,
-            dataUrl: item.url,
+            dataUrl: originalUrl,
             pending: true
         };
         angleOpenRequestRef.current = requestId;
         setAngleReference(optimisticRef);
         setAngleCameraSeed(item.angle || null);
+        setAngleNoteSeed(item.angleNote || '');
         setAngleCameraStartSeed(null);
         setAngleResults([]);
         setAngleOpenBusy(true);
@@ -9264,7 +9309,7 @@ export default function Page() {
             return;
         }
         try {
-            const ref = await galleryItemToReference(item);
+            const ref = await galleryItemToReference(sourceItem);
             if (angleOpenRequestRef.current !== requestId) return;
             setAngleReference({
                 ...ref,
@@ -11432,8 +11477,9 @@ export default function Page() {
                                 theme: theme,
                                 reference: angleReference,
                                 initialCamera: angleCameraSeed,
+                                initialNote: angleNoteSeed,
                                 initialCameraStart: angleCameraStartSeed,
-                                models: availableGenerationModels,
+                                models: availableEditModels,
                                 defaultProviderId: state.settings.defaultProviderId,
                                 defaultProviderName: defaultProvider?.name,
                                 defaultModelId: state.settings.defaultImageModelId,
@@ -11463,7 +11509,6 @@ export default function Page() {
                                 onBrowseHistory: ()=>{ setRecordTab('works'); setSection('history'); },
                                 onGenerate: submitAngleGeneration,
                                 onOpenResult: (item)=>openViewer(item),
-                                onUseResult: openAngleConsole,
                                 onDownloadResult: (item)=>downloadUrl(item.url, `SANMAO-${item.id}.png`),
                                 onDownloadShare: (item)=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                 onNotify: notify

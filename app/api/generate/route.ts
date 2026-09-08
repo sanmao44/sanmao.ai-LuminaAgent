@@ -2,7 +2,7 @@ import { editImage, generateImage } from '@/lib/providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
-import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, normalizeAngleState } from '@/lib/angle-control';
+import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, generationCamera, normalizeAngleState, readViewpointOptions, VIEWPOINT_LIMITS } from '@/lib/angle-control';
 import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
@@ -27,6 +27,15 @@ function readCamera(value: unknown, label = 'camera') {
   const raw = value as Record<string, unknown>;
   const modelId = raw.modelId === undefined ? undefined : String(raw.modelId);
   if (raw.modelId !== undefined && !modelId) throw new Error(`${label}.modelId must not be empty`);
+  const viewpoint = readViewpointOptions(raw.viewpoint);
+  if (viewpoint) {
+    for (const [key, [min, max]] of Object.entries(VIEWPOINT_LIMITS)) {
+      const number = readCameraNumber(raw[key], `${label}.${key}`);
+      if (number !== undefined && (number < min || number > max)) throw new Error(`${label}.${key} must be between ${min} and ${max}`);
+    }
+    if (raw.compositionLock !== undefined && typeof raw.compositionLock !== 'boolean') throw new Error(`${label}.compositionLock must be boolean`);
+    if (raw.subjectYaw !== undefined) throw new Error('subjectYaw is only supported for legacy camera requests');
+  }
   return normalizeAngleState({
     yaw: readCameraNumber(raw.yaw, `${label}.yaw`),
     pitch: readCameraNumber(raw.pitch, `${label}.pitch`),
@@ -38,6 +47,7 @@ function readCamera(value: unknown, label = 'camera') {
     frameY: readCameraNumber(raw.frameY, `${label}.frameY`),
     compositionLock: raw.compositionLock === undefined ? undefined : Boolean(raw.compositionLock),
     modelId,
+    viewpoint,
   });
 }
 
@@ -93,22 +103,31 @@ export async function POST(request: Request) {
       cameraStart = readCamera(body.cameraStart, 'cameraStart');
     }
     catch (error) { return Response.json({ error: error instanceof Error ? error.message : 'Invalid camera parameters' }, { status: 400 }); }
-    const angleNote = typeof body.angleNote === 'string' ? body.angleNote : '';
+    const angleNote = typeof body.angleNote === 'string' ? body.angleNote : camera?.viewpoint ? prompt : '';
+    const hasAngleGuide = camera?.viewpoint
+      ? camera.viewpoint.guide && camera.viewpoint.changeView
+      : body.angleGuide === true;
+    if (camera?.viewpoint && (body.width !== undefined || body.height !== undefined)) {
+      if (![body.width, body.height].every(value => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 8192)) {
+        return Response.json({ error: '输出宽高必须是 1 到 8192 之间的整数。' }, { status: 400 });
+      }
+    }
     const angleOutput = camera && Number(body.width) > 0 && Number(body.height) > 0
       ? { aspectRatio: String(body.aspectRatio || '自动'), width: Number(body.width), height: Number(body.height) }
       : undefined;
     const cameraPayload = camera ? buildAnglePayload(camera, undefined, cameraStart, angleOutput) : undefined;
-    if (camera && body.angleGuide === true && !angleOutput) return Response.json({ error: '3D 构图导引必须提供有效的输出宽高。' }, { status: 400 });
+    if (camera && hasAngleGuide && !angleOutput) return Response.json({ error: '构图导引必须提供有效的输出宽高。' }, { status: 400 });
     const baseGenerationPrompt = camera
-      ? compileAngleTargetPrompt(angleNote, camera, { hasGuideReference: body.angleGuide === true, output: angleOutput, cameraStart })
+      ? compileAngleTargetPrompt(angleNote, camera, { hasGuideReference: hasAngleGuide, output: angleOutput, cameraStart })
       : prompt;
     if (!baseGenerationPrompt) return Response.json({ error: '请输入生图描述。' }, { status: 400 });
     const references = Array.isArray(body.references)
       ? body.references.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 16)
       : [];
+    if (camera?.viewpoint && references.length !== (hasAngleGuide ? 2 : 1)) return Response.json({ error: hasAngleGuide ? '请提交原始参考图和一张构图导引，原图必须排在第一张。' : '请提交一张原始参考图。' }, { status: 400 });
     const hasEditInput = references.length > 0 || (typeof body.mask === 'string' && body.mask.trim().length > 0) || (typeof body.moveGuide === 'string' && body.moveGuide.trim().length > 0);
     const runtime = hasEditInput
-      ? await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit') || await getRuntimeImageModelForCapability('auto', 'edit')
+      ? await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit') || (camera && body.model && body.model !== 'auto' ? null : await getRuntimeImageModelForCapability('auto', 'edit'))
       : await getRuntimeImageGenerationModel(String(body.model || 'auto'));
     if (!runtime) return Response.json({ error: hasEditInput ? '没有可用的改图模型，请启用带 edit 能力的图片模型' : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;
@@ -121,7 +140,7 @@ export async function POST(request: Request) {
     });
     promptForLog = generationPrompt;
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
-    if (camera && body.angleGuide === true && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始人物参考和 3D 构图导引。' }, { status: 400 });
+    if (camera && hasAngleGuide && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始参考和构图导引。' }, { status: 400 });
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
     const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
     const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
@@ -154,7 +173,7 @@ export async function POST(request: Request) {
     logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const storagePath = (await getPublicState()).settings.imageStoragePath;
     const providerImages = references.length
-      ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
+      ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
       : await generateImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
     const maskSafeImages = mask
       ? await enforceLocalEditMask(providerImages, references[0], mask, {
@@ -164,7 +183,7 @@ export async function POST(request: Request) {
       : providerImages;
     const orientationSafeImages = await normalizeStarApiLandscapeImages(runtime.provider, runtime.model.rawId, input, maskSafeImages, requestController.signal);
     const normalizedImages = camera && angleOutput
-      ? await normalizeAngleOutputSize(orientationSafeImages, angleOutput.width, angleOutput.height, effectiveAngle(camera.roll), requestController.signal)
+      ? await normalizeAngleOutputSize(orientationSafeImages, angleOutput.width, angleOutput.height, effectiveAngle(generationCamera(camera).roll), requestController.signal)
       : orientationSafeImages;
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();

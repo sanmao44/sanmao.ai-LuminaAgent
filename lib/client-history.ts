@@ -39,6 +39,7 @@ export type GalleryItem = {
   compareReferenceUrl?: string;
   compareReferenceName?: string;
   angle?: AngleCameraState;
+  angleNote?: string;
   annotations?: LocalEditAnnotation[];
   /** Mask metadata used for the edit, kept so the history editor can reopen it. */
   mask?: string | GalleryLocalEditMask;

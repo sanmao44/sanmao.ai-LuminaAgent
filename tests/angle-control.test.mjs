@@ -275,3 +275,152 @@ test('warns only for Lite at final absolute yaw of at least 30 degrees', () => {
   assert.equal(angle.shouldWarnLiteForAngle('gpt-image-2-lite', -60), true);
   assert.equal(angle.shouldWarnLiteForAngle('gpt-image-2', 60), false);
 });
+
+test('builds reference-relative universal viewpoint prompts', () => {
+  const state = angle.normalizeAngleState({
+    yaw: 45,
+    pitch: -15,
+    focal: 50,
+    distance: 2.2,
+    viewpoint: {
+      version: 2,
+      subjectType: 'product',
+      mode: 'object-orbit',
+      modeSource: 'manual',
+      changeView: true,
+      guide: false,
+      lighting: angle.LIGHTING_DEFAULTS,
+    },
+  });
+  const prompt = angle.compileAngleTargetPrompt('放在白色背景上', state, { output: { width: 1024, height: 1024, aspectRatio: '1:1' } });
+  assert.match(prompt, /Image 1 is the ORIGINAL primary reference/);
+  assert.match(prompt, /exact same product/);
+  assert.match(prompt, /RELATIVE to the original reference camera/);
+  assert.match(prompt, /approximately 45 degrees to the RIGHT/);
+  assert.match(prompt, /approximately 15 degrees/);
+  assert.match(prompt, /Preserve the original world-space illumination/);
+  assert.match(prompt, /USER REQUEST/);
+  assert.doesNotMatch(prompt, /Image 2 is/);
+});
+
+test('builds scene-camera semantics and explicit lighting instructions', () => {
+  const state = angle.normalizeAngleState({
+    yaw: -90,
+    pitch: 20,
+    focal: 35,
+    distance: 4.4,
+    viewpoint: {
+      version: 2,
+      subjectType: 'interior',
+      mode: 'camera-view',
+      modeSource: 'manual',
+      changeView: true,
+      guide: true,
+      lighting: {
+        ...angle.LIGHTING_DEFAULTS,
+        enabled: true,
+        azimuth: -60,
+        elevation: 25,
+        softness: 0.2,
+        temperature: 3200,
+        fill: 0.15,
+      },
+    },
+  });
+  const prompt = angle.compileAngleTargetPrompt('', state, { hasGuideReference: true });
+  assert.match(prompt, /same interior/);
+  assert.match(prompt, /Move the CAMERA approximately 90 degrees to the LEFT/);
+  assert.match(prompt, /Move the camera LOWER, looking UPWARD/);
+  assert.match(prompt, /Image 2 is an OPTIONAL abstract CAMERA COMPOSITION guide only/);
+  assert.match(prompt, /RELIGHT the same content/);
+  assert.match(prompt, /approximately 60 degrees left/);
+  assert.match(prompt, /3200K/);
+  assert.match(prompt, /crisp shadow edges/);
+  assert.match(prompt, /Do not rotate the room, furniture/);
+});
+
+test('keeps camera fixed when lighting-only mode is selected', () => {
+  const state = angle.normalizeAngleState({
+    yaw: 120,
+    pitch: -20,
+    focal: 85,
+    distance: 3.1,
+    viewpoint: {
+      version: 2,
+      subjectType: 'unknown',
+      mode: 'object-orbit',
+      modeSource: 'auto',
+      changeView: false,
+      guide: true,
+      lighting: { ...angle.LIGHTING_DEFAULTS, enabled: true, azimuth: 60 },
+    },
+  });
+  const semantic = angle.buildAngleTargetSemantic(state);
+  const prompt = angle.compileAngleTargetPrompt('', state);
+  const payload = angle.buildAnglePayload(state, 'gpt-image-2');
+  assert.equal(semantic.camera_motion, 'none');
+  assert.match(prompt, /keeping its camera viewpoint, perspective, framing/);
+  assert.doesNotMatch(prompt, /CAMERA VIEWPOINT/);
+  assert.equal(payload.instruction, 'reference_viewpoint_reconstruction');
+  assert.equal(payload.camera.viewpoint.changeView, false);
+  assert.equal(payload.camera.yaw_deg, 0);
+  assert.equal(payload.camera.pitch_deg, 0);
+});
+
+test('new relative directions cover both sides without anatomical assumptions', () => {
+  for (const yaw of [-135, -90, -45, 0, 45, 90, 135, 180]) {
+    const state = angle.createViewpointCamera();
+    state.yaw = yaw;
+    const prompt = angle.compileAngleTargetPrompt('保留所有标识', state);
+    assert.match(prompt, /Zero means the reference view/);
+    if (yaw) assert.ok(prompt.includes(`${Math.abs(yaw)} degrees to the ${yaw < 0 ? 'LEFT' : 'RIGHT'}`));
+    if (Math.abs(yaw) > 90) assert.match(prompt, /Infer unseen surfaces conservatively/);
+    assert.equal(prompt.match(/保留所有标识/g).length, 1);
+  }
+});
+
+test('distance multiplier and focal presets agree between prompt and audit', () => {
+  for (const [distance, ratio] of [[1.43, 0.65], [2.2, 1], [4.4, 2]]) {
+    for (const focal of [24, 50, 135]) {
+      const state = angle.createViewpointCamera();
+      Object.assign(state, { distance, focal });
+      const normalized = angle.normalizeAngleState(state);
+      assert.equal(normalized.distance, distance);
+      assert.equal(angle.buildAngleTargetSemantic(normalized).perspective.distance_multiplier, ratio);
+      const prompt = angle.compileAngleTargetPrompt('', state);
+      if (focal !== 50) assert.match(prompt, new RegExp(`${focal}mm-equivalent`));
+      if (ratio !== 1) assert.match(prompt, new RegExp(`${ratio}x the reference camera distance`));
+    }
+  }
+});
+
+test('scene defaults and legacy migration keep the original-relative baseline separate', () => {
+  for (const subject of ['interior', 'building', 'landscape', 'street', 'scene']) {
+    assert.equal(angle.normalizeViewpointOptions({ subjectType: subject }).mode, 'camera-view');
+  }
+  for (const subject of ['person', 'product', 'vehicle', 'object']) {
+    assert.equal(angle.normalizeViewpointOptions({ subjectType: subject }).mode, 'object-orbit');
+  }
+  const migrated = angle.createViewpointCamera({ yaw: 135, pitch: -40, subjectYaw: 30, modelId: 'saved-model' });
+  assert.equal(migrated.yaw, 0);
+  assert.equal(migrated.pitch, 0);
+  assert.equal(migrated.modelId, 'saved-model');
+  assert.equal(migrated.viewpoint.guide, false);
+  assert.equal(migrated.viewpoint.lighting.enabled, false);
+});
+
+test('lighting directions, anchors and all presets retain coherent light and shadow constraints', () => {
+  for (const preset of angle.LIGHTING_PRESETS) {
+    const light = angle.normalizeViewpointOptions({ lighting: { ...preset, enabled: true } }).lighting;
+    const prompt = angle.buildLightingPrompt(light);
+    assert.match(prompt, /highlights, reflections, contact shadows and cast shadows/);
+    assert.ok(prompt.includes(`${preset.temperature}K`));
+    assert.ok(prompt.includes(`${Math.round(preset.fill * 100)}%`));
+  }
+  const light = { ...angle.LIGHTING_DEFAULTS, azimuth: 0, elevation: 0 };
+  assert.ok(Math.abs(angle.lightingDirection(light, 90).x - 1) < 1e-9);
+  assert.equal(angle.lightingDirection({ ...light, anchor: 'reference' }, 90).z, 1);
+  for (const [key, value] of [['temperature', 2499], ['fill', 1.1], ['softness', -0.1], ['enabled', 'yes'], ['anchor', 'world']]) {
+    assert.throws(() => angle.readViewpointOptions({ version: 2, lighting: { [key]: value } }));
+  }
+});

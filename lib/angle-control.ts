@@ -1,5 +1,58 @@
 import type { ClientReferenceImage } from '@/lib/types';
 
+export type SubjectType = 'unknown' | 'person' | 'character' | 'product' | 'object' | 'vehicle' | 'building' | 'interior' | 'landscape' | 'street' | 'scene';
+export type ViewMode = 'object-orbit' | 'camera-view';
+export type LightingState = {
+  enabled: boolean;
+  azimuth: number;
+  elevation: number;
+  intensity: number;
+  softness: number;
+  temperature: number;
+  fill: number;
+  anchor: 'camera' | 'reference';
+};
+export type ViewpointOptions = {
+  version: 2;
+  subjectType: SubjectType;
+  mode: ViewMode;
+  modeSource: 'auto' | 'manual';
+  changeView: boolean;
+  guide: boolean;
+  lighting: LightingState;
+};
+
+export const SUBJECT_OPTIONS: { value: SubjectType; label: string }[] = [
+  { value: 'unknown', label: '通用' }, { value: 'person', label: '人物' },
+  { value: 'character', label: '角色' }, { value: 'product', label: '商品' },
+  { value: 'object', label: '物体' }, { value: 'vehicle', label: '车辆' },
+  { value: 'building', label: '建筑' }, { value: 'interior', label: '室内' },
+  { value: 'landscape', label: '风景' }, { value: 'street', label: '街道' },
+  { value: 'scene', label: '复杂场景' },
+];
+export const LIGHTING_DEFAULTS: LightingState = {
+  enabled: false, azimuth: -45, elevation: 35, intensity: 1, softness: 0.6,
+  temperature: 5500, fill: 0.3, anchor: 'camera',
+};
+export const LIGHTING_PRESETS = [
+  { name: '柔和正光', azimuth: 0, elevation: 25, softness: 0.85, temperature: 5500, fill: 0.6, intensity: 1 },
+  { name: '左侧塑形', azimuth: -60, elevation: 35, softness: 0.35, temperature: 5500, fill: 0.15, intensity: 1 },
+  { name: '右侧塑形', azimuth: 60, elevation: 35, softness: 0.35, temperature: 5500, fill: 0.15, intensity: 1 },
+  { name: '逆光轮廓', azimuth: 160, elevation: 20, softness: 0.25, temperature: 6000, fill: 0.2, intensity: 1.4 },
+  { name: '落日光', azimuth: -70, elevation: 12, softness: 0.2, temperature: 3200, fill: 0.2, intensity: 1.2 },
+  { name: '阴天漫射', azimuth: 0, elevation: 70, softness: 1, temperature: 6500, fill: 0.85, intensity: 0.8 },
+];
+export const REFERENCE_VIEW_PRESETS: AnglePreset[] = [
+  { id: 'reference', label: '原图视角', yaw: 0, pitch: 0 },
+  { id: 'left-front', label: '左转 45°', yaw: -45, pitch: 0 },
+  { id: 'right-front', label: '右转 45°', yaw: 45, pitch: 0 },
+  { id: 'left', label: '左转 90°', yaw: -90, pitch: 0 },
+  { id: 'right', label: '右转 90°', yaw: 90, pitch: 0 },
+  { id: 'rear-left', label: '左转 135°', yaw: -135, pitch: 0 },
+  { id: 'rear-right', label: '右转 135°', yaw: 135, pitch: 0 },
+  { id: 'rear', label: '反向 180°', yaw: 180, pitch: 0 },
+];
+
 export type AngleCameraState = {
   yaw: number;
   pitch: number;
@@ -10,6 +63,8 @@ export type AngleCameraState = {
   frameY: number;
   compositionLock: boolean;
   modelId: string;
+  /** Missing on legacy, anatomical-coordinate records. Never reinterpret those as relative angles. */
+  viewpoint?: ViewpointOptions;
 };
 
 export type LegacyAngleCameraInput = Partial<AngleCameraState> & {
@@ -19,7 +74,7 @@ export type LegacyAngleCameraInput = Partial<AngleCameraState> & {
 
 export type AngleGenerationInput = {
   reference: ClientReferenceImage;
-  guideReference: ClientReferenceImage;
+  guideReference?: ClientReferenceImage;
   output: AngleOutputSpec;
   camera: AngleCameraState;
   /** The camera state aligned to the original reference before adjustments. */
@@ -43,12 +98,12 @@ export type AngleTargetSemantic = {
     pitch_abs_deg: number;
     reason: 'small_reprojection' | 'moderate_reprojection' | 'large_reprojection';
   };
-  camera_motion: 'orbit_only';
+  camera_motion: 'orbit_only' | 'camera_view' | 'none';
   subject_motion: 'none';
   horizontal_view: {
     class: 'frontal' | 'three_quarter' | 'profile' | 'rear_three_quarter' | 'rear';
     strength: 'near' | 'slight' | 'clear' | 'strong' | 'dominant';
-    side: 'front' | 'anatomical_right' | 'anatomical_left' | 'back';
+    side: 'front' | 'anatomical_right' | 'anatomical_left' | 'back' | 'reference_right' | 'reference_left';
     angle_deg: number;
     instruction: string;
   };
@@ -115,6 +170,11 @@ export const ANGLE_PRESETS: AnglePreset[] = [
 
 export type AngleNumericKey = 'yaw' | 'pitch' | 'roll' | 'focal' | 'distance' | 'frameX' | 'frameY';
 
+export const VIEWPOINT_LIMITS: Record<AngleNumericKey, readonly [number, number]> = {
+  yaw: [-180, 180], pitch: [-60, 60], roll: [-45, 45], focal: [14, 200],
+  distance: [0.55, 11], frameX: [-50, 50], frameY: [-50, 50],
+};
+
 export type AngleCameraDelta = Pick<Record<AngleNumericKey, number>, AngleNumericKey>;
 
 /**
@@ -147,10 +207,10 @@ function roundAngleRecordValue(value: number) {
  */
 export function normalizeAngleState(input?: LegacyAngleCameraInput): AngleCameraState {
   const raw = input || {};
-  const legacySubjectYaw = typeof raw.subjectYaw === 'number' && Number.isFinite(raw.subjectYaw) ? raw.subjectYaw : 0;
+  const legacySubjectYaw = !raw.viewpoint && typeof raw.subjectYaw === 'number' && Number.isFinite(raw.subjectYaw) ? raw.subjectYaw : 0;
   const rawYaw = typeof raw.yaw === 'number' ? raw.yaw : ANGLE_DEFAULTS.yaw;
   const next = { ...ANGLE_DEFAULTS, ...raw, yaw: rawYaw - legacySubjectYaw };
-  return {
+  const normalized: AngleCameraState = {
     yaw: clampAngleValue('yaw', next.yaw),
     pitch: clampAngleValue('pitch', next.pitch),
     roll: clampAngleValue('roll', next.roll),
@@ -161,6 +221,100 @@ export function normalizeAngleState(input?: LegacyAngleCameraInput): AngleCamera
     compositionLock: Boolean(next.compositionLock),
     modelId: typeof next.modelId === 'string' && next.modelId ? next.modelId : 'auto',
   };
+  if (raw.viewpoint?.version === 2) {
+    normalized.viewpoint = normalizeViewpointOptions(raw.viewpoint);
+    normalized.yaw = effectiveAngle(normalized.yaw);
+    for (const key of ['pitch', 'focal', 'distance', 'frameX', 'frameY', 'roll'] as const) {
+      const [min, max] = VIEWPOINT_LIMITS[key];
+      normalized[key] = bounded(next[key], ANGLE_DEFAULTS[key], min, max);
+    }
+  }
+  return normalized;
+}
+
+function bounded(value: unknown, fallback: number, min: number, max: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+}
+
+export function defaultViewMode(subjectType: SubjectType): ViewMode {
+  return ['building', 'interior', 'landscape', 'street', 'scene'].includes(subjectType) ? 'camera-view' : 'object-orbit';
+}
+
+export function normalizeViewpointOptions(input?: Partial<Omit<ViewpointOptions, 'lighting'>> & { lighting?: Partial<LightingState> }): ViewpointOptions {
+  const light = input?.lighting || {};
+  const subjectType = SUBJECT_OPTIONS.some((option) => option.value === input?.subjectType) ? input!.subjectType! : 'unknown';
+  return {
+    version: 2,
+    subjectType,
+    mode: input?.mode === 'camera-view' || input?.mode === 'object-orbit' ? input.mode : defaultViewMode(subjectType),
+    modeSource: input?.modeSource === 'manual' ? 'manual' : 'auto',
+    changeView: input?.changeView !== false,
+    guide: input?.guide === true,
+    lighting: {
+      enabled: light.enabled === true,
+      azimuth: bounded(light.azimuth, LIGHTING_DEFAULTS.azimuth, -180, 180),
+      elevation: bounded(light.elevation, LIGHTING_DEFAULTS.elevation, 0, 90),
+      intensity: bounded(light.intensity, LIGHTING_DEFAULTS.intensity, 0.1, 2),
+      softness: bounded(light.softness, LIGHTING_DEFAULTS.softness, 0, 1),
+      temperature: bounded(light.temperature, LIGHTING_DEFAULTS.temperature, 2500, 10000),
+      fill: bounded(light.fill, LIGHTING_DEFAULTS.fill, 0, 1),
+      anchor: light.anchor === 'reference' ? 'reference' : 'camera',
+    },
+  };
+}
+
+/** Strict request boundary; stored settings use the tolerant normalizer instead. */
+export function readViewpointOptions(value: unknown): ViewpointOptions | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('camera.viewpoint must be an object');
+  const raw = value as Record<string, unknown>;
+  if (raw.version !== 2) throw new Error('Unsupported viewpoint version');
+  if (raw.subjectType !== undefined && !SUBJECT_OPTIONS.some((option) => option.value === raw.subjectType)) throw new Error('Invalid subject type');
+  if (raw.mode !== undefined && raw.mode !== 'object-orbit' && raw.mode !== 'camera-view') throw new Error('Invalid view mode');
+  if (raw.modeSource !== undefined && raw.modeSource !== 'auto' && raw.modeSource !== 'manual') throw new Error('Invalid mode source');
+  for (const name of ['changeView', 'guide']) {
+    if (raw[name] !== undefined && typeof raw[name] !== 'boolean') throw new Error(`camera.viewpoint.${name} must be boolean`);
+  }
+  if (raw.lighting !== undefined) {
+    if (!raw.lighting || typeof raw.lighting !== 'object' || Array.isArray(raw.lighting)) throw new Error('Invalid lighting');
+    const light = raw.lighting as Record<string, unknown>;
+    if (light.enabled !== undefined && typeof light.enabled !== 'boolean') throw new Error('lighting.enabled must be boolean');
+    if (light.anchor !== undefined && light.anchor !== 'camera' && light.anchor !== 'reference') throw new Error('Invalid lighting anchor');
+    for (const [name, min, max] of [['azimuth', -180, 180], ['elevation', 0, 90], ['intensity', 0.1, 2], ['softness', 0, 1], ['temperature', 2500, 10000], ['fill', 0, 1]] as const) {
+      const number = light[name];
+      if (number !== undefined && (typeof number !== 'number' || !Number.isFinite(number) || number < min || number > max)) throw new Error(`lighting.${name} must be between ${min} and ${max}`);
+    }
+  }
+  return normalizeViewpointOptions(raw as Partial<ViewpointOptions>);
+}
+
+export function createViewpointCamera(input?: Partial<AngleCameraState> | null): AngleCameraState {
+  // Legacy absolute angles cannot identify the source camera. Start a fresh relative view.
+  return normalizeAngleState(input?.viewpoint?.version === 2
+    ? input
+    : { ...ANGLE_DEFAULTS, modelId: input?.modelId || 'auto', viewpoint: normalizeViewpointOptions() });
+}
+
+export function referenceViewLabel(yaw: number) {
+  const angle = effectiveAngle(yaw);
+  if (Math.abs(angle) < 0.1) return '原图观察方向';
+  if (angle === 180) return '相对原图反向观察';
+  return `相对原图向${angle > 0 ? '右' : '左'} ${recordNumber(Math.abs(angle))}°`;
+}
+
+export function lightingDirectionLabel(light: LightingState) {
+  const angle = effectiveAngle(light.azimuth);
+  const side = angle < 0 ? '左' : '右';
+  const magnitude = Math.abs(angle);
+  const horizontal = magnitude < 15 ? '正前方' : magnitude < 75 ? `${side}前方` : magnitude < 105 ? `${side}侧` : magnitude < 165 ? `${side}后方` : '后方逆光';
+  return `${horizontal} · 高度 ${recordNumber(light.elevation)}°`;
+}
+
+/** Shared reference-frame light direction for the preview and request audit. */
+export function lightingDirection(light: LightingState, cameraYaw: number) {
+  const yaw = (light.azimuth + (light.anchor === 'camera' ? cameraYaw : 0)) * Math.PI / 180;
+  const elevation = light.elevation * Math.PI / 180;
+  return { x: Math.sin(yaw) * Math.cos(elevation), y: Math.sin(elevation), z: Math.cos(yaw) * Math.cos(elevation) };
 }
 
 export function focalLengthToFov(focal: number) {
@@ -399,15 +553,31 @@ function distanceClass(distance: number): AngleTargetSemantic['perspective']['di
   return 'environmental';
 }
 
-export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 'pitch' | 'roll' | 'focal' | 'distance' | 'frameX' | 'frameY'>, output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'>): AngleTargetSemantic {
-  const target = normalizeAngleState(camera);
+export function generationCamera(camera: AngleCameraState): AngleCameraState {
+  return camera.viewpoint && !camera.viewpoint.changeView
+    ? normalizeAngleState({ ...camera, ...ANGLE_DEFAULTS, modelId: camera.modelId, viewpoint: camera.viewpoint })
+    : normalizeAngleState(camera);
+}
+
+export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 'pitch' | 'roll' | 'focal' | 'distance' | 'frameX' | 'frameY' | 'viewpoint'>, output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'>): AngleTargetSemantic {
+  const target = generationCamera(normalizeAngleState(camera));
   const focal = Math.max(0.1, Number(target.focal) || ANGLE_DEFAULTS.focal);
   const distance = Math.max(0.05, Number(target.distance) || ANGLE_DEFAULTS.distance);
   const horizontal = horizontalTargetSemantic(target.yaw);
   const vertical = verticalTargetSemantic(target.pitch);
+  if (target.viewpoint) {
+    const yaw = effectiveAngle(target.yaw);
+    horizontal.side = Math.abs(yaw) < 0.1 ? 'front' : yaw >= 0 ? 'reference_right' : 'reference_left';
+    horizontal.instruction = Math.abs(yaw) < 0.1
+      ? 'Keep the horizontal camera direction of the reference image.'
+      : `Move the CAMERA approximately ${recordNumber(Math.abs(yaw))} degrees to the ${yaw > 0 ? 'RIGHT' : 'LEFT'} relative to the reference camera viewpoint, not the subject's assumed front.`;
+    vertical.instruction = Math.abs(target.pitch) < 0.1
+      ? 'Keep the camera elevation of the reference image.'
+      : `Move the camera ${target.pitch < 0 ? 'HIGHER, looking DOWNWARD' : 'LOWER, looking UPWARD'} by approximately ${recordNumber(Math.abs(target.pitch))} degrees relative to the reference viewpoint.`;
+  }
   return {
     difficulty: targetDifficultySemantic(target),
-    camera_motion: 'orbit_only',
+    camera_motion: target.viewpoint?.changeView === false ? 'none' : target.viewpoint?.mode === 'camera-view' ? 'camera_view' : 'orbit_only',
     subject_motion: 'none',
     horizontal_view: horizontal,
     vertical_view: vertical,
@@ -415,7 +585,7 @@ export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 
       focal_length_mm: Math.round(focal),
       focal_class: focalClass(focal),
       focal_instruction: focalViewDescription(focal),
-      distance_multiplier: Number(distance.toFixed(1)),
+      distance_multiplier: Number((target.viewpoint ? distance / ANGLE_DEFAULTS.distance : distance).toFixed(3)),
       distance_class: distanceClass(distance),
       distance_instruction: distanceViewDescription(distance),
     },
@@ -429,6 +599,89 @@ export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 
       postprocess_degrees: Number(effectiveAngle(target.roll).toFixed(1)),
     },
   };
+}
+
+const SUBJECT_CONSISTENCY: Record<SubjectType, string> = {
+  unknown: 'Preserve the recognizable primary content, identity, structure, proportions, materials, colors, layout and spatial relationships.',
+  person: 'Preserve the same person: identity, facial structure, hairstyle, skin tone, clothing, accessories, body proportions and world-space pose.',
+  character: 'Preserve the same character: recognizable design, face, hair, costume, accessories, proportions, materials and world-space pose.',
+  product: 'Preserve the exact same product: geometry, construction, materials, textures, colors, logos, branding and design details. Do not substitute another product.',
+  object: 'Preserve the same object: shape, geometry, proportions, construction, materials, colors and distinguishing details.',
+  vehicle: 'Preserve the exact same vehicle model, body shape, proportions, wheels, lights, windows, paint and trim. Do not substitute another vehicle.',
+  building: 'Preserve the same building: architecture, facade, windows, entrances, materials, proportions, site and surrounding context.',
+  interior: 'Preserve the same interior: room geometry, walls, windows, doors, furniture arrangement, materials and major objects.',
+  landscape: 'Preserve the same landscape: terrain, vegetation, landmarks, structures and environmental identity.',
+  street: 'Preserve the same street: roads, buildings, landmarks, major objects and their spatial relationships.',
+  scene: 'Preserve the same environment, major subjects, recognizable landmarks, structures and spatial relationships.',
+};
+
+export function buildLightingPrompt(light: LightingState) {
+  if (!light.enabled) return 'Preserve the original world-space illumination, light sources and shadow relationships unless the USER REQUEST explicitly asks to change them.';
+  const angle = effectiveAngle(light.azimuth);
+  const magnitude = Math.abs(angle);
+  const side = angle < 0 ? 'LEFT' : 'RIGHT';
+  const direction = magnitude < 15 ? 'FRONT' : magnitude < 75 ? `FRONT-${side}` : magnitude < 105 ? side : magnitude < 165 ? `REAR-${side}` : 'REAR (backlighting)';
+  return [
+    `RELIGHT the same content. Replace the original dominant lighting with a key light from ${direction}, approximately ${recordNumber(magnitude)} degrees ${angle < 0 ? 'left' : 'right'} of ${light.anchor === 'camera' ? 'the FINAL camera horizontal bearing' : 'the ORIGINAL reference camera horizontal bearing, fixed in the scene even when the camera moves'}.`,
+    `Light source elevation: ${recordNumber(light.elevation)} degrees above the scene's horizontal plane. ${light.elevation <= 20 ? 'Use low grazing light and longer plausible cast shadows.' : light.elevation >= 65 ? 'Use overhead illumination with shorter ground shadows.' : 'Use elevated directional illumination with coherent cast shadows.'}`,
+    `Key light strength: ${recordNumber(light.intensity)}x relative creative exposure, ${light.intensity < 0.7 ? 'subdued' : light.intensity > 1.3 ? 'strong' : 'balanced'}. Preserve highlight detail; do not change material colors to simulate exposure.`,
+    `Source softness: ${Math.round(light.softness * 100)}%. ${light.softness < 0.3 ? 'Small hard source, crisp shadow edges.' : light.softness > 0.7 ? 'Large diffuse source, soft broad shadow transitions.' : 'Moderately soft source with readable shadow boundaries.'}`,
+    `Approximate key color temperature: ${Math.round(light.temperature)}K, ${light.temperature < 4200 ? 'warm light' : light.temperature > 6500 ? 'cool light' : 'neutral daylight'}. Keep intrinsic surface colors recognizable.`,
+    `Ambient fill: ${Math.round(light.fill * 100)}% of key strength. ${light.fill < 0.25 ? 'Deep shadow contrast with readable detail.' : light.fill > 0.65 ? 'Lifted shadows and low contrast.' : 'Balanced light-to-shadow contrast.'}`,
+    'Recompute illumination, highlights, reflections, contact shadows and cast shadows coherently on the subject AND surrounding surfaces. Shadows fall away from the light and respect geometry and occlusion; do not paint a flat gradient or keep contradictory original shadows.',
+    'Do not introduce a visible lamp, sun, light diagram or extra object. Lighting values are creative targets, not measured photometric reconstruction.',
+  ].join('\n');
+}
+
+export function buildReferenceViewpointPrompt(note: string, input: AngleCameraState, options?: { hasGuideReference?: boolean; output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'> }) {
+  const camera = generationCamera(input);
+  const view = normalizeViewpointOptions(camera.viewpoint);
+  const hasGuideReference = view.changeView && view.guide && options?.hasGuideReference === true;
+  const semantic = buildAngleTargetSemantic(camera, options?.output);
+  const magnitude = Math.max(Math.abs(camera.yaw), Math.abs(camera.pitch));
+  const distance = camera.distance / ANGLE_DEFAULTS.distance;
+  return [
+    `TASK\n${view.changeView ? 'Reconstruct a new camera view of the SAME content shown in Image 1.' : 'Relight or edit Image 1 while keeping its camera viewpoint, perspective, framing, composition and all object positions unchanged.'}`,
+    [
+      'REFERENCE IDENTITY',
+      'Image 1 is the ORIGINAL primary reference, not an intermediate generated view.',
+      SUBJECT_CONSISTENCY[view.subjectType],
+      'Do not redesign or replace recognizable content. An explicit user-requested redesign is an exception only for the requested attributes.',
+      hasGuideReference ? 'Image 2 is an OPTIONAL abstract CAMERA COMPOSITION guide only. Never copy its proxy geometry, identity, materials, lighting, background or render style. Where proxy shape conflicts with Image 1, preserve Image 1.' : '',
+    ].filter(Boolean).join('\n'),
+    view.changeView ? [
+      'CAMERA VIEWPOINT',
+      'All angles are RELATIVE to the original reference camera. Zero means the reference view, NOT an assumed anatomical or product front.',
+      view.mode === 'object-orbit'
+        ? 'Orbit the CAMERA around the stationary primary subject. Keep subject pose and surrounding objects fixed in world space; change visibility, overlap and perspective naturally.'
+        : 'Move the CAMERA within the same physical environment and redirect its view toward overlapping scene landmarks. Do not rotate the room, furniture, landscape or entire scene as an object.',
+      semantic.horizontal_view.instruction,
+      semantic.vertical_view.instruction,
+      'This is a camera change, not a head turn, subject rotation, mirror flip, flat image rotation, crop or perspective warp.',
+    ].join('\n') : '',
+    view.changeView ? [
+      'DISTANCE AND FRAMING',
+      Math.abs(distance - 1) < 0.02
+        ? 'Keep a natural camera distance and framing comparable to Image 1.'
+        : `Use approximately ${Number(distance.toFixed(3))}x the reference camera distance: ${distance < 1 ? view.mode === 'camera-view' ? 'move closer into the environment, with tighter framing' : 'move closer to the subject, with tighter framing' : 'pull the camera back and reveal more surrounding context'}.`,
+      camera.focal === 50 ? 'Use a natural perspective consistent with the reference.' : `Use approximately ${recordNumber(camera.focal)}mm-equivalent lens language: ${focalViewDescription(camera.focal)}.`,
+      camera.frameX || camera.frameY ? `Place the primary subject ${recordNumber(Math.abs(camera.frameX))}% ${camera.frameX < 0 ? 'left' : 'right'} and ${recordNumber(Math.abs(camera.frameY))}% ${camera.frameY < 0 ? 'down' : 'up'} of frame center.` : 'Keep composition natural without unnecessary recentering.',
+      hasGuideReference ? 'Use Image 2 only to assist target camera perspective and approximate framing; its generic silhouette is not a shape constraint.' : '',
+    ].filter(Boolean).join('\n') : '',
+    `LIGHTING\n${buildLightingPrompt(view.lighting)}`,
+    note.trim() ? `USER REQUEST\n${note.trim()}\nApply these explicit edits while respecting the selected camera and lighting targets; otherwise preserve the reference content.` : '',
+    view.changeView ? [
+      'RECONSTRUCTION',
+      magnitude <= 30 ? 'Make only the necessary camera change; maintain extremely high consistency with the reference.' : magnitude <= 90 ? 'Preserve visible identity and structural details while reconstructing newly visible surfaces.' : 'This view exposes substantial areas absent from the reference. Infer unseen surfaces conservatively from visible structural and design cues. Avoid unnecessary new details.',
+      'Produce one coherent image with plausible geometry, occlusion and spatial continuity. Do not force an originally visible face or facade to remain visible from behind.',
+    ].join('\n') : '',
+    [
+      'OUTPUT',
+      options?.output ? `Output frame: ${options.output.width} x ${options.output.height}.` : '',
+      !view.changeView ? 'Preserve the original image orientation. Do not level, rotate or crop the frame.' : compactRollDescription(camera.roll) || 'Generate a level frame without additional image roll.',
+      'Return the finished image only, without diagrams, labels, text overlays or comparison panels.',
+    ].filter(Boolean).join('\n'),
+  ].filter(Boolean).join('\n\n');
 }
 
 export function cameraSemanticSummary(camera: Pick<AngleCameraState, 'yaw' | 'pitch' | 'focal' | 'distance'>) {
@@ -504,6 +757,7 @@ function compactRollDescription(roll: number) {
 
 /** Shared provider prompt describing one authoritative final camera state. */
 export function compileAngleTargetPrompt(note: string, camera: AngleCameraState, options?: { hasGuideReference?: boolean; output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'>; cameraStart?: AngleCameraState | null }) {
+  if (camera.viewpoint?.version === 2) return buildReferenceViewpointPrompt(note, camera, options);
   const target = normalizeAngleState(camera);
   const semantic = buildAngleTargetSemantic(target, options?.output);
   const userNote = note.trim();
@@ -607,6 +861,21 @@ function compactCameraPayload(state: AngleCameraState) {
 }
 
 export function buildAnglePayload(camera: AngleCameraState, modelLabel?: string, cameraStart?: AngleCameraState | null, output?: Pick<AngleOutputSpec, 'aspectRatio' | 'width' | 'height'>) {
+  if (camera.viewpoint?.version === 2) {
+    const target = generationCamera(camera);
+    return {
+      model: { id: target.modelId, label: modelLabel || target.modelId },
+      camera: {
+        ...compactCameraPayload(target),
+        elevation_deg: -target.pitch,
+        coordinate_system: 'reference-relative-v2',
+        viewpoint: target.viewpoint,
+        semantic_target: buildAngleTargetSemantic(target, output),
+      },
+      lighting_direction: lightingDirection(target.viewpoint!.lighting, target.yaw),
+      instruction: 'reference_viewpoint_reconstruction',
+    };
+  }
   const rawState = normalizeAngleState(camera);
   const state = { ...rawState, yaw: effectiveAngle(rawState.yaw), pitch: effectiveAngle(rawState.pitch), roll: effectiveAngle(rawState.roll) };
   const startState = cameraStart ? normalizeAngleState(cameraStart) : null;
