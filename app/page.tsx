@@ -5146,6 +5146,7 @@ export default function Page() {
     const [selectedChatSessions, setSelectedChatSessions] = useState(new Set());
     const [selectionPush, setSelectionPush] = useState(null);
     const [videoPromptPrefill, setVideoPromptPrefill] = useState(null);
+    const [videoTaskPrefill, setVideoTaskPrefill] = useState(null);
     const [videoDurationPrefill, setVideoDurationPrefill] = useState(null);
     const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
     const [videoReferenceQueue, setVideoReferenceQueue] = useState([]);
@@ -9859,6 +9860,10 @@ export default function Page() {
             notify('已追加到视频提示词，可继续选择内容');
         }
     }
+    function restoreVideoTask(task) {
+        setVideoTaskPrefill(task);
+        setSection('video');
+    }
     function resetViewerView() {
         setViewerZoom(1);
         setViewerPan({
@@ -11538,6 +11543,8 @@ export default function Page() {
                                 defaultModelId: state.settings.defaultVideoModelId,
                                 promptPrefill: videoPromptPrefill,
                                 onPromptPrefillConsumed: ()=>setVideoPromptPrefill(null),
+                                taskPrefill: videoTaskPrefill,
+                                onTaskPrefillConsumed: ()=>setVideoTaskPrefill(null),
                                 durationPrefill: videoDurationPrefill,
                                 onDurationPrefillConsumed: ()=>setVideoDurationPrefill(null),
                                 mediaPrefill: videoMediaPrefill,
@@ -12787,7 +12794,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: "已完成的视频会自动保存在这里 · 每页 14 段" })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onDelete: ()=>askDeleteVideoTask(task) }, task.id)) }),
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task) }, task.id)) }),
                                             /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
                                                 /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
                                                 /*#__PURE__*/ _jsxs("div", { children: [

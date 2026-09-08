@@ -34,6 +34,8 @@ type Props = {
   defaultModelId?: string | null;
   promptPrefill?: string | null;
   onPromptPrefillConsumed?: () => void;
+  taskPrefill?: VideoTask | null;
+  onTaskPrefillConsumed?: () => void;
   durationPrefill?: number | null;
   onDurationPrefillConsumed?: () => void;
   mediaPrefill?: { name: string; url: string; kind: 'image' }[];
@@ -352,7 +354,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   };
 }
 
-export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, durationPrefill, onDurationPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, agentAvailable, agentModelId, onOpenModels, onOpenProviders, onNotify }: Props) {
+export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, taskPrefill, onTaskPrefillConsumed, durationPrefill, onDurationPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, agentAvailable, agentModelId, onOpenModels, onOpenProviders, onNotify }: Props) {
   const [prompt, setPrompt] = useState('');
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOptimizing, setPromptOptimizing] = useState(false);
@@ -411,6 +413,23 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       window.removeEventListener('keydown', closeOnEscape);
     };
   }, [promptExpanded]);
+
+  useEffect(() => {
+    if (!taskDetail) return;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTaskDetail(null);
+    };
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [taskDetail]);
 
   function closePromptEditor() {
     setPromptExpanded(false);
@@ -801,9 +820,16 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setAgnesNumFrames(plan.agnesNumFrames);
     setAgnesFrameRate(plan.agnesFrameRate);
     setPreviewImage(null);
+    setTasks((current) => current.some((item) => item.id === task.id) ? current : [task, ...current].slice(0, 30));
     setSelectedTaskId(task.id);
     onNotify(plan.warnings.length ? `已恢复参数；${plan.warnings.join('；')}` : '已恢复这条任务的全部参数');
   }
+
+  useEffect(() => {
+    if (!taskPrefill) return;
+    restoreTask(taskPrefill);
+    onTaskPrefillConsumed?.();
+  }, [taskPrefill]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -1004,18 +1030,20 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       <aside className={`video-preview-column ${mobilePanel === 'preview' || mobilePanel === 'tasks' ? 'is-active' : ''}`}>
         <div className={`video-preview-card ${mobilePanel === 'preview' ? 'mobile-panel-visible' : ''}`}>
           <div className="video-card-heading"><div><span>预览与任务</span><small>{selectedTask ? `${selectedTask.modelName || '自动模型'} · ${statusLabel(selectedTask.status)}` : tasks.length ? `${tasks.length} 个本地任务` : '生成后会显示在这里'}</small></div><button className="video-quiet-button" type="button" onClick={() => void refreshTasks()}>刷新</button></div>
-          {previewTask ? <video className="video-preview-player" src={previewTask.videoUrls?.[0]} controls playsInline /> : <div className={`video-preview-empty ${selectedTask ? `video-preview-${selectedTask.status}` : ''}`}><div className="video-play-orb">{selectedTask?.status === 'failed' ? '!' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '…' : '▶'}</div><span>{selectedTask?.status === 'failed' ? '视频任务失败' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '正在等待服务商完成…' : selectedTask ? '任务已完成，但没有可预览的视频' : '完成的视频会自动出现在这里'}</span><small>{selectedTask?.error || (selectedTask ? '可点击“恢复参数”继续创作' : '支持下载、复制地址与再次生成')}</small></div>}
+          {previewTask ? <video className="video-preview-player" src={previewTask.videoUrls?.[0]} controls playsInline /> : <div className={`video-preview-empty ${selectedTask ? `video-preview-${selectedTask.status}` : ''}`}><div className="video-play-orb">{selectedTask?.status === 'failed' ? '!' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '…' : '▶'}</div><span>{selectedTask?.status === 'failed' ? '视频任务失败' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '正在等待服务商完成…' : selectedTask ? '任务已完成，但没有可预览的视频' : '完成的视频会自动出现在这里'}</span><small>{selectedTask?.error || (selectedTask ? '可点击“恢复参数”继续创作' : '支持下载与再次生成')}</small></div>}
         </div>
         <div className={`video-task-list ${mobilePanel === 'tasks' ? 'mobile-panel-visible' : ''}`}>
           <div className="video-task-list-heading"><span>最近任务</span><small>点击任务切换预览 · 列表可滚动</small></div>
           <div className="video-task-list-scroll">
             {tasks.length ? tasks.slice(0, 8).map((task) => {
               const selected = task.id === selectedTaskId;
+              const thumbnailUrl = task.videoUrls?.[0] || task.remoteVideoUrls?.[0] || '';
               return <article className={`video-task-card ${task.status} ${selected ? 'selected' : ''}`} key={task.id} role="button" tabIndex={0} aria-pressed={selected} onClick={() => setSelectedTaskId(task.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedTaskId(task.id); } }}>
                 {task.status !== 'done' && <span className="video-task-scan" aria-hidden="true" />}
+                {thumbnailUrl ? <div className="video-task-thumbnail" aria-hidden="true"><video src={thumbnailUrl} muted playsInline preload="metadata" /><span>▶</span></div> : <div className={`video-task-thumbnail video-task-thumbnail-placeholder ${task.status}`} aria-hidden="true"><span>{task.status === 'failed' ? '!' : task.status === 'done' ? '—' : '…'}</span></div>}
                 <div className="video-task-meta"><span className="video-status-pill">{statusLabel(task.status)}</span><time>{formatTime(task.createdAt)}</time></div>
                 <div className="video-task-copy"><div className="video-task-title-row"><strong>{task.input?.prompt || '未命名视频任务'}</strong><button type="button" className="video-task-detail" onClick={(event) => { event.stopPropagation(); setTaskDetail(task); }}>详情</button></div><div className="video-task-details"><small>{task.modelName || '自动模型'} · {operationLabel(task.operation)}</small><small className="video-task-param-summary">{taskParameterSummary(task)}</small></div></div>
-                {task.status === 'done' && task.videoUrls?.length ? <>{task.error && <p className="video-task-error">远程完成，但本地保存失败：{task.error}</p>}<div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button><a href={task.videoUrls[0]} download target="_blank" rel="noreferrer" title="下载生成的视频" aria-label="下载生成的视频"><span className="video-action-icon" aria-hidden="true">↓</span><span>下载</span></a><button type="button" title="复制视频地址" aria-label="复制视频地址" onClick={() => void navigator.clipboard?.writeText(task.remoteVideoUrls?.[0] || task.videoUrls?.[0] || '').then(() => onNotify('视频地址已复制'))}><span className="video-action-icon" aria-hidden="true">⧉</span><span>复制</span></button>{task.error && <button type="button" title="再次保存本地视频" aria-label="再次保存本地视频" onClick={async () => { const response = await fetch(`/api/video/tasks/${task.id}`, { method: 'POST' }); const data = await response.json().catch(() => ({})); if (!response.ok) onNotify(data.error || '再次保存失败'); else { onNotify('已再次保存视频'); void refreshTasks(); } }}><span className="video-action-icon" aria-hidden="true">↻</span><span>再次保存</span></button>}</div></> : task.status === 'failed' ? <><p className="video-task-error">{task.error || '视频任务失败'}</p><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条失败任务的生成参数" aria-label="恢复这条失败任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></> : <><small className="video-task-waiting">正在等待服务商完成…</small><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></>}
+                {task.status === 'done' && task.videoUrls?.length ? <>{task.error && <p className="video-task-error">远程完成，但本地保存失败：{task.error}</p>}<div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button><a href={task.videoUrls[0]} download target="_blank" rel="noreferrer" title="下载生成的视频" aria-label="下载生成的视频"><span className="video-action-icon" aria-hidden="true">↓</span><span>下载</span></a>{task.error && <button type="button" title="再次保存本地视频" aria-label="再次保存本地视频" onClick={async () => { const response = await fetch(`/api/video/tasks/${task.id}`, { method: 'POST' }); const data = await response.json().catch(() => ({})); if (!response.ok) onNotify(data.error || '再次保存失败'); else { onNotify('已再次保存视频'); void refreshTasks(); } }}><span className="video-action-icon" aria-hidden="true">↻</span><span>再次保存</span></button>}</div></> : task.status === 'failed' ? <><p className="video-task-error">{task.error || '视频任务失败'}</p><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条失败任务的生成参数" aria-label="恢复这条失败任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></> : <><small className="video-task-waiting">正在等待服务商完成…</small><div className="video-task-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></>}
               </article>;
             }) : <div className="video-task-list-empty">暂无任务，提交第一段视频吧。</div>}
           </div>
