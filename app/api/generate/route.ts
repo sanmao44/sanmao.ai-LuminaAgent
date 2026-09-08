@@ -106,7 +106,7 @@ export async function POST(request: Request) {
     const references = Array.isArray(body.references)
       ? body.references.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 16)
       : [];
-    const hasEditInput = references.length > 0 || (typeof body.mask === 'string' && body.mask.trim().length > 0);
+    const hasEditInput = references.length > 0 || (typeof body.mask === 'string' && body.mask.trim().length > 0) || (typeof body.moveGuide === 'string' && body.moveGuide.trim().length > 0);
     const runtime = hasEditInput
       ? await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit') || await getRuntimeImageModelForCapability('auto', 'edit')
       : await getRuntimeImageGenerationModel(String(body.model || 'auto'));
@@ -124,8 +124,13 @@ export async function POST(request: Request) {
     if (camera && body.angleGuide === true && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始人物参考和 3D 构图导引。' }, { status: 400 });
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
     const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
+    const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
+    const moveGuide = rawMoveGuide.startsWith('data:image/') ? rawMoveGuide : undefined;
     if (rawMask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
     if (mask && !references.length) return Response.json({ error: '使用局部编辑前请先添加一张参考图。' }, { status: 400 });
+    if (rawMoveGuide && !moveGuide) return Response.json({ error: '移动引导图必须是图片数据。' }, { status: 400 });
+    if (moveGuide && (!mask || !references.length)) return Response.json({ error: '移动引导图需要同时提交原图和局部编辑范围。' }, { status: 400 });
+    const providerReferences = moveGuide ? [moveGuide, ...references.slice(1)] : references;
     const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
     const responseFormat = ['url', 'b64_json'].includes(String(body.responseFormat || '').toLowerCase()) ? String(body.responseFormat).toLowerCase() as 'url' | 'b64_json' : undefined;
     const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
@@ -149,7 +154,7 @@ export async function POST(request: Request) {
     logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const storagePath = (await getPublicState()).settings.imageStoragePath;
     const providerImages = references.length
-      ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references, mask, fidelity: camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
+      ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
       : await generateImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
     const maskSafeImages = mask
       ? await enforceLocalEditMask(providerImages, references[0], mask, {

@@ -32,12 +32,14 @@ export async function POST(request: Request) {
     const references: string[] = Array.isArray(body.references) ? body.references.filter((v: unknown): v is string => typeof v === 'string').slice(0, 16) : [];
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
     const mask = typeof body.mask === 'string' && body.mask.startsWith('data:image/png') ? body.mask : undefined;
+    const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
     const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
     const responseFormat = ['url', 'b64_json'].includes(String(body.responseFormat || '').toLowerCase()) ? String(body.responseFormat).toLowerCase() as 'url' | 'b64_json' : undefined;
     const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
     if (!prompt) return Response.json({ error: '请输入你想怎么修改图片。' }, { status: 400 });
     if (!references.length) return Response.json({ error: '请至少添加一张参考图。' }, { status: 400 });
     if (body.mask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
+    if (rawMoveGuide && !mask) return Response.json({ error: '移动引导图需要同时提交局部编辑范围。' }, { status: 400 });
     const runtime = await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit');
     if (!runtime) return Response.json({ error: '没有支持图片修改的可用模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;
@@ -45,6 +47,8 @@ export async function POST(request: Request) {
     const publicState = await getPublicState();
     const storagePath = publicState.settings.imageStoragePath;
     const resolvedReferences = await Promise.all(references.map((reference) => resolveStoredImageReference(reference, storagePath)));
+    const moveGuide = rawMoveGuide ? await resolveStoredImageReference(rawMoveGuide, storagePath) : undefined;
+    const providerReferences = moveGuide ? [moveGuide, ...resolvedReferences.slice(1)] : resolvedReferences;
     const generationPrompt = normalizeStarApiLandscapePrompt(runtime.provider, runtime.model.rawId, prompt, {
       aspectRatio: String(body.aspectRatio || '自动'),
       width: Number(body.width || 0),
@@ -53,7 +57,7 @@ export async function POST(request: Request) {
     });
     const input: ImageEditInput = {
       prompt: generationPrompt,
-      references: resolvedReferences,
+      references: providerReferences,
       aspectRatio: String(body.aspectRatio || '自动'),
       count: Number(body.count || 1),
       width: Number(body.width || 0),

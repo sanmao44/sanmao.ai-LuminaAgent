@@ -396,9 +396,11 @@ export async function generateCanvasImage(input: {
   outputFormat?: "png" | "jpeg" | "webp";
   background?: "transparent" | "opaque";
   maskUrl?: string;
+  moveGuideUrl?: string;
   references?: Array<{ url: string; name?: string }>;
 }) {
   const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
+  const moveGuide = input.moveGuideUrl ? await asDataUrl(input.moveGuideUrl) : undefined;
   const references = await Promise.all(
     (input.references || [])
       .slice(0, 16)
@@ -432,6 +434,7 @@ export async function generateCanvasImage(input: {
       ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
       ...(input.background ? { background: input.background } : {}),
       ...(mask ? { mask } : {}),
+      ...(moveGuide ? { moveGuide } : {}),
       references,
       referenceImages: (input.references || [])
         .slice(0, 16)

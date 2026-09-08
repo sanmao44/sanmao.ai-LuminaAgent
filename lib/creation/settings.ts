@@ -17,10 +17,10 @@ export type AgentWebMode = "off" | "auto" | "always";
 export type CanvasMaskAsset = {
   assetId?: string;
   url: string;
-  /** A locally moved source image that must replace the original first reference. */
+  /** A locally composed move guide sent to the provider beside the original source. */
   sourceAssetId?: string;
   sourceUrl?: string;
-  /** Legacy editor output kept readable for old saved requests. */
+  /** Inline form of the locally composed move guide for non-canvas requests. */
   sourceImageDataUrl?: string;
   referenceId?: string;
   annotations?: LocalEditAnnotation[];

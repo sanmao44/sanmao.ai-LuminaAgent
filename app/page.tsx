@@ -5874,7 +5874,7 @@ export default function Page() {
                      upscaleScale: task.request?.upscaleScale || 2,
                      upscaleTaskId: task.upscaleTaskId,
                       annotations: task.request?.mask?.annotations,
-                      mask: task.request?.mask?.dataUrl ? { dataUrl: task.request.mask.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(task.request.mask.feather) || 0))), annotations: task.request.mask.annotations } : undefined
+                      mask: task.request?.mask?.dataUrl ? { dataUrl: task.request.mask.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(task.request.mask.feather) || 0))), annotations: task.request.mask.annotations, ...(task.request.mask.sourceImageDataUrl ? { sourceImageDataUrl: task.request.mask.sourceImageDataUrl } : {}) } : undefined
                 });
                 setResultItems((old)=>[...items, ...old]);
                 patchGenerateTask(task.id, { status: 'success', completedAt: Date.now(), items, itemIds: items.map((item)=>item.id), info: `${data.model?.name || '高清放大'} · 已恢复完成` });
@@ -7808,10 +7808,10 @@ export default function Page() {
         const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
         const submittedModelId = !submittedUpscaleMode && hasLocalEditMask && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId) ? 'auto' : requestedModelId;
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-        const movedSourceDataUrl = submittedImageRefs.length === 1
+        const moveGuideDataUrl = submittedImageRefs.length === 1
             ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
             : '';
-        const submittedImageReferenceUrls = submittedImageRefs.map((reference, index)=>index === 0 && movedSourceDataUrl ? movedSourceDataUrl : creativeReferenceUrl(reference)).filter(Boolean);
+        const submittedImageReferenceUrls = submittedImageRefs.map((reference)=>creativeReferenceUrl(reference)).filter(Boolean);
         const submittedSizeMode = savedRequest?.sizeMode || sizeMode;
         const submittedCustomWidth = savedRequest?.customWidth || customWidth;
         const submittedCustomHeight = savedRequest?.customHeight || customHeight;
@@ -7823,7 +7823,7 @@ export default function Page() {
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
-        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : savedRequest ? (savedRequest.mask?.dataUrl.length || 0) + (savedRequest.mask?.sourceImageDataUrl?.length || 0) : (generateMask?.dataUrl.length || 0) + (generateMask?.sourceImageDataUrl?.length || 0));
+        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : (savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0) + moveGuideDataUrl.length);
         if (taskReferenceBytes > 7000000) return notify('参考图和局部编辑范围总大小过大，已停止提交；请减少图片数量或重新上传后再试');
         if (submittedUpscaleMode && (submittedRefs.some((reference)=>reference.kind !== 'image') || submittedImageRefs.length !== 1)) return notify('本地超分需要恰好 1 张图片引用，文本或视频不能用于超分');
         const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
@@ -8021,7 +8021,7 @@ export default function Page() {
                      upscaleTaskId: upscaleData.taskId,
                      references: referenceRecords,
                      annotations: taskMaskAsset?.annotations,
-                     mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations } : undefined
+                     mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations, ...(taskMaskAsset.sourceImageDataUrl ? { sourceImageDataUrl: taskMaskAsset.sourceImageDataUrl } : {}) } : undefined
                 });
                 const info = `${upscaleData.model?.name || '超分模型'} · ${taskUpscaleScale}× · 图片超分 · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
                 setResultItems((old)=>[
@@ -8074,9 +8074,10 @@ export default function Page() {
                                     quality: taskQuality,
                                     fidelity: isAngleGeneration ? 'low' : 'high',
                                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
-                                    background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
-                                    mask: taskMask,
-                                     references: submittedImageReferenceUrls,
+                                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
+                                     mask: taskMask,
+                                     moveGuide: moveGuideDataUrl || undefined,
+                                      references: submittedImageReferenceUrls,
                                     referenceImages: referenceRecords,
                                     camera: isAngleGeneration ? taskRequest.angle : undefined,
                                     cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
@@ -8116,7 +8117,7 @@ export default function Page() {
                                  references: referenceRecords,
                                  angle: taskRequest.angle,
                   annotations: taskMaskAsset?.annotations,
-                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations } : undefined
+                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations, ...(taskMaskAsset.sourceImageDataUrl ? { sourceImageDataUrl: taskMaskAsset.sourceImageDataUrl } : {}) } : undefined
                             });
                             completedCount += items.length;
                             resolvedModelName = childData.model?.name || resolvedModelName;
@@ -8174,6 +8175,7 @@ export default function Page() {
                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                     mask: taskMask,
+                    moveGuide: moveGuideDataUrl || undefined,
                     references: submittedImageReferenceUrls,
                     referenceImages: referenceRecords,
                     camera: isAngleGeneration ? taskRequest.angle : undefined,
@@ -8213,7 +8215,7 @@ export default function Page() {
                  references: referenceRecords,
                   angle: taskRequest.angle,
                   annotations: taskMaskAsset?.annotations,
-                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations } : undefined
+                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations, ...(taskMaskAsset.sourceImageDataUrl ? { sourceImageDataUrl: taskMaskAsset.sourceImageDataUrl } : {}) } : undefined
             });
             const info = `${data.model?.name || '图片模型'} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
@@ -9494,7 +9496,7 @@ export default function Page() {
                         customWidth: currentEditor.customWidth,
                         customHeight: currentEditor.customHeight,
                         references: [{ id: currentEditor.item.id, kind: 'image', name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }],
-                         mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [], feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))) } : null
+                         mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [], feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))), ...(currentEditor.sourceImageDataUrl ? { sourceImageDataUrl: currentEditor.sourceImageDataUrl } : {}) } : null
                     }
                 },
                 ...old
@@ -9523,7 +9525,7 @@ export default function Page() {
         const editorReference = {
             id: currentEditor.item.id,
             name: `上一版-${currentEditor.item.id.slice(-6)}`,
-            url: currentEditor.sourceImageDataUrl || currentEditor.item.url
+            url: currentEditor.item.url
         };
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
@@ -9571,7 +9573,8 @@ export default function Page() {
                     editorReference.url
                 ],
                 referenceImages: [editorReference],
-                mask: currentEditor.mask || undefined
+                mask: currentEditor.mask || undefined,
+                moveGuide: currentEditor.sourceImageDataUrl || undefined
             };
             const res = await fetch(endpoint, {
                 method: 'POST',
@@ -9636,7 +9639,7 @@ export default function Page() {
                  generationMs: durationMs,
                  references: [editorReference],
                   annotations: currentEditor.mode === 'edit' && Array.isArray(currentEditor.annotations) ? currentEditor.annotations : undefined,
-                  mask: currentEditor.mode === 'edit' && currentEditor.mask ? { dataUrl: currentEditor.mask, feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))), annotations: currentEditor.annotations || [] } : undefined
+                   mask: currentEditor.mode === 'edit' && currentEditor.mask ? { dataUrl: currentEditor.mask, feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))), annotations: currentEditor.annotations || [], ...(currentEditor.sourceImageDataUrl ? { sourceImageDataUrl: currentEditor.sourceImageDataUrl } : {}) } : undefined
              });
             const info = `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${data.model?.name || '图片模型'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
             setResultItems((old)=>[
@@ -12538,14 +12541,14 @@ export default function Page() {
                                 initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
                                 initialFeather: generateMask?.referenceId === generateRefs[0].id ? generateMask.feather || 0 : 0,
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl, coverage, prompt, annotations, feather, sourceImageDataUrl)=>{
+                                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
                                         dataUrl,
                                         coverage,
                                         annotations,
                                         feather,
-                                        ...(sourceImageDataUrl ? { sourceImageDataUrl } : {})
+                                        ...(moveGuideDataUrl ? { sourceImageDataUrl: moveGuideDataUrl } : {})
                                     });
                                     setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
                                     setGeneratePrompt(prompt);
@@ -15574,14 +15577,14 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 initialAnnotations: editor.annotations || [],
                 initialFeather: editor.feather || 0,
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl, coverage, prompt, annotations, feather, sourceImageDataUrl)=>{
+                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl)=>{
                     setEditor((current)=>current ? {
                             ...current,
                             mask: dataUrl,
                             prompt,
                             annotations,
                             feather,
-                            sourceImageDataUrl: sourceImageDataUrl || undefined,
+                            sourceImageDataUrl: moveGuideDataUrl || undefined,
                             sourceUrl: undefined
                         } : current);
                     setEditorMaskOpen(false);

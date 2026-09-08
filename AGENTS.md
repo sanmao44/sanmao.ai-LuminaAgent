@@ -34,4 +34,3 @@ Codex 在操作本项目时，请严格遵守以下规则：
 ## 6. 用户端更新
 - 用户通过 `update.json` 检测新版本，并下载 `packageUrl` 的 zip 覆盖运行目录。
 - 确保 `update.json` 的版本号与 `package.json` 一致。
-

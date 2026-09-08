@@ -108,7 +108,29 @@ test("annotation descriptions compile once without duplicating the generated sec
   assert.match(compiled, /区域 3：替换背景文字/);
   assert.doesNotMatch(compiled, /区域 2：/);
   assert.equal(raster.compileLocalEditPrompt(compiled, annotations), compiled);
-  assert.equal(raster.compileLocalEditPrompt("整体保持自然", [annotations[1]]), "整体保持自然");
+  const unlabelled = raster.compileLocalEditPrompt("整体保持自然", [annotations[1]]);
+  assert.doesNotMatch(unlabelled, /区域 1：/);
+  assert.match(unlabelled, /局部处理要求：只修改编辑范围/);
+  assert.match(raster.compileLocalEditPrompt("整体保持自然"), /局部处理要求：只修改编辑范围/);
+
+  const moved = {
+    id: "move-one",
+    kind: "rectangle",
+    description: "移动发光物体",
+    geometry: { kind: "rectangle", x: 0.6, y: 0.2, width: 0.2, height: 0.2 },
+    move: { from: [{ kind: "rectangle", x: 0.2, y: 0.2, width: 0.2, height: 0.2 }] },
+    createdAt: 4,
+  };
+  const movePrompt = raster.compileLocalEditPrompt("保持主体、姿态和构图不变，只编辑指定范围。", [moved]);
+  assert.doesNotMatch(movePrompt, /保持主体、姿态和构图不变/);
+  assert.match(movePrompt, /不要移动选区外的人物、主体或画面构图/);
+  const noBaseCompiled = raster.compileLocalEditPrompt("", [moved]);
+  assert.equal(raster.compileLocalEditPrompt(noBaseCompiled, [moved]), noBaseCompiled);
+  const legacyCompiled = "保持主体、姿态和构图不变，只编辑指定范围。\n\n局部区域说明：\n区域 1：以移动参考图中的剪贴结果为准，将圈选主体从原位置移到目标位置；仅修补原位置和目标边缘，保持选区外内容不变。";
+  const migrated = raster.compileLocalEditPrompt(legacyCompiled, [moved]);
+  assert.doesNotMatch(migrated, /以移动参考图中的剪贴结果为准|仅修补原位置和目标边缘/);
+  assert.equal(raster.compileLocalEditPrompt(migrated, [moved]), migrated);
+  assert.equal(raster.compileLocalEditPrompt(migrated.replace(/\n/g, "\r\n"), [moved]), migrated);
 });
 
 test("the workbench records complete operations, supports undo/redo, feather and empty-range blocking", () => {
@@ -116,9 +138,11 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /pushHistory\(gesture\.before\)/);
   assert.match(editor, /restoreHistory\(historyRef\.current\.index - 1\)/);
   assert.match(editor, /restoreHistory\(historyRef\.current\.index \+ 1\)/);
-  assert.match(editor, /featherLocalEditMask\(sourcePixels, source\.width, source\.height, feather\)/);
+  assert.match(editor, /const fusionFeather = localEditFusionFeather\(feather\)/);
+  assert.match(editor, /createSeamlessLocalEditMask\(sourcePixels, source\.width, source\.height, fusionFeather\)/);
+  assert.match(editor, /exported\.feather/);
   assert.doesNotMatch(editor, /outputContext\.filter = `blur\(\$\{feather\}px\)`/);
-  assert.match(editor, /drawMaskOverlay\(mask, overlay, feather\)/);
+  assert.match(editor, /drawMaskOverlay\(mask, overlay, localEditFusionFeather\(feather\)\)/);
   assert.match(editor, /Math\.max\(0\.2, Math\.min\(3/);
   assert.match(editor, /const scale = Math\.min\(availableWidth \/ canvas\.width, availableHeight \/ canvas\.height\)/);
   assert.match(editor, /onClick=\{fitCanvas\}/);
@@ -159,6 +183,24 @@ test("pixel feathering creates a real alpha transition around an editable region
   assert.equal(alphaAt(10, 10) < alphaAt(4, 10), true);
 });
 
+test("submitted masks expand both edit locations and keep a minimum fusion transition", () => {
+  const mask = raster.createProtectedMask(21, 21);
+  raster.applyRectangleMask(mask, 21, 21, 5, 5, 10, 16);
+  raster.applyRectangleMask(mask, 21, 21, 12, 5, 17, 16);
+  const alphaAt = (pixels, x, y) => pixels[(y * 21 + x) * 4 + 3];
+
+  const expanded = raster.expandLocalEditMask(mask, 21, 21, 1);
+  assert.equal(alphaAt(expanded, 4, 10), 0);
+  assert.equal(alphaAt(expanded, 11, 10), 0);
+
+  const seamless = raster.createSeamlessLocalEditMask(mask, 21, 21, 0);
+  assert.equal(raster.localEditFusionFeather(0), 2);
+  assert.equal(alphaAt(seamless, 7, 10), 0);
+  assert.equal(alphaAt(seamless, 14, 10), 0);
+  assert.ok(alphaAt(seamless, 3, 10) > 0 && alphaAt(seamless, 3, 10) < 255);
+  assert.ok(alphaAt(seamless, 18, 10) > 0 && alphaAt(seamless, 18, 10) < 255);
+});
+
 test("moving a selection masks both source and target while compiling a visual-guide prompt", () => {
   const source = Uint8ClampedArray.from([
     255, 0, 0, 255,
@@ -193,13 +235,15 @@ test("moving a selection masks both source and target while compiling a visual-g
   assert.equal(repeatedMask[(1 * 10 + 6) * 4 + 3], 0);
   assert.equal(repeatedMask[(1 * 10 + 8) * 4 + 3], 0);
   const compiled = raster.compileLocalEditPrompt("保持光影自然", [moved]);
-  assert.match(compiled, /以移动参考图中的剪贴结果为准/);
-  assert.match(compiled, /仅修补原位置和目标边缘/);
+  assert.match(compiled, /移动参考图已经标出最终摆放/);
+  assert.match(compiled, /将圈选物体完整迁移到目标位置/);
+  assert.match(compiled, /不要移动选区外的人物、主体或画面构图/);
+  assert.match(compiled, /透明洞或拼接痕迹/);
   assert.doesNotMatch(compiled, /移动方向/);
   assert.match(compiled, /补充说明：把物体移到右侧/);
 });
 
-test("moving a selection produces a real cut-and-paste reference without mutating the source", () => {
+test("moving a selection repairs the source, pastes the selected pixels, and keeps the guide opaque", () => {
   const source = Uint8ClampedArray.from([
     255, 0, 0, 255,
     0, 255, 0, 255,
@@ -211,17 +255,19 @@ test("moving a selection produces a real cut-and-paste reference without mutatin
   selection[7] = 0;
   const moved = raster.moveLocalEditPixels(source, selection, 4, 1, 2, 0);
   assert.deepEqual([...source], [...original]);
-  assert.deepEqual([...moved.subarray(4, 8)], [0, 0, 0, 0]);
+  for (let index = 3; index < moved.length; index += 4) assert.equal(moved[index], 255);
+  assert.notDeepEqual([...moved.subarray(4, 8)], [...source.subarray(4, 8)]);
   assert.deepEqual([...moved.subarray(12, 16)], [0, 255, 0, 255]);
 
   const secondSelection = raster.createProtectedMask(4, 1);
   secondSelection[15] = 0;
   const movedAgain = raster.moveLocalEditPixels(moved, secondSelection, 4, 1, -2, 0);
   assert.deepEqual([...movedAgain.subarray(4, 8)], [0, 255, 0, 255]);
-  assert.deepEqual([...movedAgain.subarray(12, 16)], [0, 0, 0, 0]);
+  assert.notDeepEqual([...movedAgain.subarray(12, 16)], [0, 255, 0, 255]);
+  for (let index = 3; index < movedAgain.length; index += 4) assert.equal(movedAgain[index], 255);
 });
 
-test("move reference rebuilds normal, smart, repeated, and multiple drags from source pixels", () => {
+test("move preview and provider guide remove the source while preserving an opaque blended target cue", () => {
   const source = Uint8ClampedArray.from([
     1, 0, 0, 255,
     2, 0, 0, 255,
@@ -238,7 +284,7 @@ test("move reference rebuilds normal, smart, repeated, and multiple drags from s
   const rectangle = (x) => ({ kind: "rectangle", x, y: 0, width: 0.1, height: 1 });
   const smartSource = raster.createProtectedMask(10, 1);
   smartSource[(3 * 4) + 3] = 0;
-  const moved = raster.composeLocalEditMoveReference(source, 10, 1, [
+  const annotations = [
     {
       id: "repeat",
       kind: "rectangle",
@@ -255,14 +301,23 @@ test("move reference rebuilds normal, smart, repeated, and multiple drags from s
       move: { from: [{ kind: "smart", x: 0.3, y: 0, width: 0.1, height: 1 }] },
       createdAt: 2,
     },
-  ], new Map([["smart:from:0", smartSource]]));
+  ];
+  const smartMasks = new Map([["smart:from:0", smartSource]]);
+  const preview = raster.composeLocalEditMovePreview(source, 10, 1, annotations, smartMasks);
+  const reference = raster.composeLocalEditMoveReference(source, 10, 1, annotations, smartMasks);
 
   assert.deepEqual([...source], [...original]);
-  assert.deepEqual([...moved.subarray(4, 8)], [0, 0, 0, 0]);
-  assert.deepEqual([...moved.subarray(12, 16)], [0, 0, 0, 0]);
-  assert.deepEqual([...moved.subarray(24, 28)], [2, 0, 0, 255]);
-  assert.deepEqual([...moved.subarray(32, 36)], [4, 0, 0, 255]);
-  assert.deepEqual([...moved.subarray(16, 20)], [5, 0, 0, 255]);
+  assert.deepEqual([...preview], [...reference]);
+  for (let index = 3; index < reference.length; index += 4) assert.equal(reference[index], 255);
+  assert.notDeepEqual([...reference.subarray(4, 8)], [...source.subarray(4, 8)]);
+  assert.notDeepEqual([...reference.subarray(12, 16)], [...source.subarray(12, 16)]);
+  assert.notEqual(reference[24], source[24]);
+  assert.notEqual(reference[32], source[32]);
+
+  const repeatedOnly = raster.composeLocalEditMoveReference(source, 10, 1, [annotations[0]]);
+  assert.notEqual(repeatedOnly[1 * 4], source[1 * 4]);
+  assert.notEqual(repeatedOnly[4 * 4], source[4 * 4]);
+  assert.notEqual(repeatedOnly[6 * 4], source[6 * 4]);
 });
 
 test("moving a smart selection masks its original and translated smart pixels", () => {
@@ -300,13 +355,13 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /event\.preventDefault\(\);/);
   assert.match(editor, /onLostPointerCapture=\{handleLostPointerCapture\}/);
   assert.match(editor, /context\.clearRect\(0, 0, canvas\.width, canvas\.height\);/);
-  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number, sourceImageDataUrl\?: string\)/);
+  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number, moveGuideDataUrl\?: string\)/);
   assert.match(editor, /initialFeather\?: number/);
-  assert.match(editor, /normalizeFeather\(feather\)/);
+  assert.match(editor, /localEditFusionFeather\(feather\)/);
   assert.match(editor, /function beginMoveAnnotation/);
   assert.match(editor, /type LocalEditMode = 'modify' \| 'move'/);
   assert.match(editor, /aria-label="局部编辑功能"/);
-  assert.match(editor, /在画布上直接拖动源选区到目标位置/);
+  assert.match(editor, /圈选物体后，直接拖到目标位置/);
   assert.match(editor, /mode === 'move'\) beginMoveAnnotation\(event, annotation\)/);
   assert.match(editor, /className=\{`local-edit-annotation\$\{mode === 'move' \? ' move-enabled' : ''\}/);
   assert.match(editor, /local-edit-operation-card/);
@@ -315,8 +370,11 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /move: \{ from:/);
   assert.match(editor, /取消移动/);
   assert.match(editor, /moveLocalEditPixels\(/);
+  assert.match(editor, /composeLocalEditMovePreview\(/);
   assert.match(editor, /composeLocalEditMoveReference\(/);
-  assert.match(editor, /function exportMoveSourceImage\(\)/);
+  assert.match(editor, /function exportMoveGuideImage\(\)/);
+  assert.match(editor, /const source = sourceImageRef\.current/);
+  assert.match(editor, /createSeamlessLocalEditMask\(/);
   assert.match(editor, /原位置 · 待修补/);
   assert.match(editor, /function deleteAnnotation/);
   assert.match(editor, /补充.*说明/);
@@ -330,7 +388,8 @@ test("local edit shortcuts append prompts without submitting automatically", () 
   assert.match(editor, /替换区域/);
   assert.match(editor, /添加元素/);
   assert.match(editor, /保持主体/);
-  assert.match(editor, /existing \? `\$\{existing\}\\n\$\{item\.prompt\}` : item\.prompt/);
+  assert.match(editor, /const promptForMode = mode === 'move' && intent === 'subject'/);
+  assert.match(editor, /existing \? `\$\{existing\}\\n\$\{promptForMode\}` : promptForMode/);
   assert.match(editor, /应用局部编辑/);
 });
 
@@ -347,9 +406,9 @@ test("all image entry points use local edit wording while persisted field remain
   assert.match(page, /const restoredMask = typeof legacySavedMask === 'string'/);
   assert.match(page, /mask: currentEditor\.mask \|\| undefined/);
   assert.match(page, /annotations: currentEditor\.mode === 'edit'/);
-  assert.match(page, /onApply: \(dataUrl, coverage, prompt, annotations, feather, sourceImageDataUrl\)=>/);
-  assert.match(page, /\.\.\.\(sourceImageDataUrl \? \{ sourceImageDataUrl \} : \{\}\)/);
-  assert.match(page, /sourceImageDataUrl: sourceImageDataUrl \|\| undefined/);
+  assert.match(page, /onApply: \(dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl\)=>/);
+  assert.match(page, /\.\.\.\(moveGuideDataUrl \? \{ sourceImageDataUrl: moveGuideDataUrl \} : \{\}\)/);
+  assert.match(page, /sourceImageDataUrl: moveGuideDataUrl \|\| undefined/);
   assert.match(canvas, /initialAnnotations=/);
   assert.match(canvas, /annotations\.length \? \{ annotations \} : \{\}/);
 });

@@ -120,9 +120,11 @@ test('invalid local-edit media fails closed instead of returning the unconstrain
   );
 });
 
-test('both image-generation entry points enforce the local-edit composite', async () => {
+test('both image-generation entry points use the move guide only for the Provider and retain the original for compositing', async () => {
   const editRoute = await readFile(new URL('../app/api/edit/route.ts', import.meta.url), 'utf8');
   const generateRoute = await readFile(new URL('../app/api/generate/route.ts', import.meta.url), 'utf8');
+  assert.match(editRoute, /const providerReferences = moveGuide \? \[moveGuide, \.\.\.resolvedReferences\.slice\(1\)\] : resolvedReferences/);
+  assert.match(generateRoute, /const providerReferences = moveGuide \? \[moveGuide, \.\.\.references\.slice\(1\)\] : references/);
   assert.match(editRoute, /enforceLocalEditMask\(providerImages, resolvedReferences\[0\], mask/);
   assert.match(generateRoute, /enforceLocalEditMask\(providerImages, references\[0\], mask/);
 });

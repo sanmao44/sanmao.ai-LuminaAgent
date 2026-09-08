@@ -7,9 +7,12 @@ import {
   applyLocalEditAnnotationMask,
   applyLocalEditGeometryMask,
   calculateEditableCoverage as calculateLocalEditableCoverage,
+  composeLocalEditMovePreview,
   composeLocalEditMoveReference,
   compileLocalEditPrompt,
+  createSeamlessLocalEditMask,
   featherLocalEditMask,
+  localEditFusionFeather,
   moveLocalEditPixels,
   normalizeLocalEditAnnotations,
   type LocalEditAnnotation,
@@ -31,7 +34,7 @@ export type LocalEditEditorProps = {
   initialPrompt?: string;
   initialAnnotations?: LocalEditAnnotation[];
   initialFeather?: number;
-  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, sourceImageDataUrl?: string) => void | Promise<void>;
+  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, moveGuideDataUrl?: string) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -192,6 +195,12 @@ function copyImageData(source: ImageData) {
   return new ImageData(new Uint8ClampedArray(source.data), source.width, source.height);
 }
 
+function imageDataFromPixels(pixels: Uint8ClampedArray, width: number, height: number) {
+  const data = new Uint8ClampedArray(pixels.length);
+  data.set(pixels);
+  return new ImageData(data, width, height);
+}
+
 function createProtectedImageData(width: number, height: number) {
   const image = new ImageData(width, height);
   for (let index = 0; index < image.data.length; index += 4) {
@@ -278,7 +287,7 @@ function maskPixelsToDataUrl(pixels: Uint8ClampedArray, width: number, height: n
   canvas.height = height;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('无法保存智能点选遮罩');
-  context.putImageData(new ImageData(new Uint8ClampedArray(pixels), width, height), 0, 0);
+  context.putImageData(imageDataFromPixels(pixels, width, height), 0, 0);
   return canvas.toDataURL('image/png');
 }
 
@@ -346,7 +355,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     const mask = maskCanvasRef.current;
     const overlay = overlayCanvasRef.current;
     if (!mask || !overlay) return;
-    setCoverage(drawMaskOverlay(mask, overlay, feather));
+    setCoverage(drawMaskOverlay(mask, overlay, localEditFusionFeather(feather)));
   };
 
   useEffect(() => {
@@ -807,7 +816,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   ) {
     const selection = createProtectedImageData(width, height);
     applyLocalEditGeometryMask(selection.data, width, height, geometry, 'edit', smartPixels);
-    return selection.data;
+    return featherLocalEditMask(selection.data, width, height, localEditFusionFeather(0));
   }
 
   function renderMovePreview(nextAnnotations = annotationsRef.current) {
@@ -817,7 +826,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     if (!source || !imageCanvas || !imageContext) return false;
     const hasMove = nextAnnotations.some((annotation) => annotation.move?.from.length);
     const pixels = hasMove
-      ? composeLocalEditMoveReference(
+      ? composeLocalEditMovePreview(
           source.data,
           imageCanvas.width,
           imageCanvas.height,
@@ -825,7 +834,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
           smartMaskPixelsRef.current,
         )
       : new Uint8ClampedArray(source.data);
-    imageContext.putImageData(new ImageData(pixels, imageCanvas.width, imageCanvas.height), 0, 0);
+    imageContext.putImageData(imageDataFromPixels(pixels, imageCanvas.width, imageCanvas.height), 0, 0);
     return hasMove;
   }
 
@@ -905,7 +914,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         dx * imageCanvas.width,
         dy * imageCanvas.height,
       );
-      imageContext.putImageData(new ImageData(movedPixels, imageCanvas.width, imageCanvas.height), 0, 0);
+      imageContext.putImageData(imageDataFromPixels(movedPixels, imageCanvas.width, imageCanvas.height), 0, 0);
       let targetGeometry = moveGeometry(movingAnnotation.initial.geometry, dx, dy);
       if (targetGeometry.kind === 'smart' && movingAnnotation.initialSmartMask) {
         const translated = translateMaskPixels(
@@ -1240,9 +1249,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
   function addIntent(intent: LocalEditIntent) {
     const item = LOCAL_EDIT_INTENTS.find((entry) => entry.value === intent);
     if (!item) return;
+    const promptForMode = mode === 'move' && intent === 'subject'
+      ? '保持被移动物体的外观、比例、姿态和光影一致；不要保留它在原位置，也不要移动选区外主体。'
+      : item.prompt;
     setPrompt((current) => {
       const existing = current.trimEnd();
-      return existing ? `${existing}\n${item.prompt}` : item.prompt;
+      return existing ? `${existing}\n${promptForMode}` : promptForMode;
     });
   }
 
@@ -1300,17 +1312,35 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
     const sourceContext = source.getContext('2d');
     if (!sourceContext) throw new Error('局部编辑范围导出失败，请重试');
     const sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height).data;
-    const pixels = featherLocalEditMask(sourcePixels, source.width, source.height, feather);
-    outputContext.putImageData(new ImageData(pixels, output.width, output.height), 0, 0);
-    return { dataUrl: output.toDataURL('image/png'), coverage: calculateLocalEditableCoverage(pixels) };
+    const fusionFeather = localEditFusionFeather(feather);
+    const pixels = createSeamlessLocalEditMask(sourcePixels, source.width, source.height, fusionFeather);
+    outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
+    return {
+      dataUrl: output.toDataURL('image/png'),
+      coverage: calculateLocalEditableCoverage(pixels),
+      feather: fusionFeather,
+    };
   }
 
-  function exportMoveSourceImage() {
+  function exportMoveGuideImage() {
     if (!annotationsRef.current.some((annotation) => annotation.move?.from.length)) return undefined;
-    if (!renderMovePreview(annotationsRef.current)) throw new Error('移动参考图导出失败，请重试');
-    const source = imageCanvasRef.current;
-    if (!source) throw new Error('移动参考图导出失败，请重试');
-    return source.toDataURL('image/png');
+    const source = sourceImageRef.current;
+    const imageCanvas = imageCanvasRef.current;
+    if (!source || !imageCanvas) throw new Error('移动参考图导出失败，请重试');
+    const output = document.createElement('canvas');
+    output.width = imageCanvas.width;
+    output.height = imageCanvas.height;
+    const outputContext = output.getContext('2d');
+    if (!outputContext) throw new Error('移动参考图导出失败，请重试');
+    const pixels = composeLocalEditMoveReference(
+      source.data,
+      imageCanvas.width,
+      imageCanvas.height,
+      annotationsRef.current,
+      smartMaskPixelsRef.current,
+    );
+    outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
+    return output.toDataURL('image/png');
   }
 
   async function applyLocalEdit() {
@@ -1334,8 +1364,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
         exported.coverage,
         compileLocalEditPrompt(prompt, annotations),
         annotations,
-        normalizeFeather(feather),
-        exportMoveSourceImage(),
+        exported.feather,
+        exportMoveGuideImage(),
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '局部编辑范围导出失败，图片可能受跨域保护');
@@ -1358,14 +1388,14 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
       <div className="mask-editor local-edit-workbench surface" role="dialog" aria-modal="true" aria-labelledby="local-edit-title">
         {error && <div className="mask-editor-error local-edit-error" role="alert">{error}</div>}
         <div className="mask-editor-head local-edit-workbench-head">
-          <div><span>图片工作台</span><h2 id="local-edit-title">局部编辑</h2><small>透明区域会生成新内容，白色区域保护原图；提交后生成新结果，原图不会被覆盖。</small></div>
+          <div><span>图片工作台</span><h2 id="local-edit-title">局部编辑</h2><small>透明和过渡区域会生成新内容，白色区域保护原图；提交后生成新结果，原图不会被覆盖。</small></div>
           <button type="button" className="icon-button" disabled={saving} onClick={onCancel} aria-label="关闭局部编辑">×</button>
         </div>
         <div className="local-edit-mode-switch" role="group" aria-label="局部编辑功能">
           <span>功能</span>
           <button type="button" className={mode === 'modify' ? 'active' : ''} aria-pressed={mode === 'modify'} disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => switchLocalEditMode('modify')}>修改</button>
           <button type="button" className={mode === 'move' ? 'active' : ''} aria-pressed={mode === 'move'} disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => switchLocalEditMode('move')}>移动</button>
-          {mode === 'move' && <small>在画布上直接拖动源选区到目标位置</small>}
+          {mode === 'move' && <small>圈选物体后，直接拖到目标位置</small>}
         </div>
         <div className="local-edit-workbench-toolbar" role="toolbar" aria-label="局部编辑工具">
           <div className="local-edit-workbench-tool-row">
@@ -1478,8 +1508,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
               <div className="local-edit-operation-head"><span>当前功能</span><strong>{mode === 'move' ? '移动' : '修改'}</strong></div>
               {mode === 'move' ? (
                 <>
-                  <p>先圈选要移动的物体，再拖动选区到目标位置。拖动时会直接显示剪贴预览；原位置和目标位置都会在生成时自然修补。</p>
-                  <small>{selectedMoveAnnotation ? `当前源选区：${annotationLabel(selectedMoveAnnotation)}${movingAnnotation ? '（移动预览中）' : '，可直接拖到目标位置'}` : '第 1 步：先创建或点击一个源选区。'}</small>
+                  <p>先圈选要移动的物体，再拖动选区到目标位置。预览会真实显示物体离开原位置并落到目标位置；提交时源区和目标边缘会一起重绘融合。</p>
+                  <small>{selectedMoveAnnotation ? `当前源选区：${annotationLabel(selectedMoveAnnotation)}${movingAnnotation ? '（移动预览中）' : '，可直接拖到目标位置'}；细小主体优先用智能点选或自由圈选。` : '第 1 步：先创建或点击一个源选区。'}</small>
                 </>
               ) : (
                 <p>在画布上使用工具修改局部编辑范围，完成后可切换到移动功能。</p>
@@ -1487,7 +1517,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
             </section>
             <div className="local-edit-workbench-controls">
               <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
-              <label><span>边缘羽化</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather}px</b></label>
+              <label><span>边缘融合</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather > 0 ? `${feather}px` : '自动 2px'}</b></label>
             </div>
        <section className="local-edit-segmentation-card" aria-label="本地智能点选模型">
               <div className="local-edit-segmentation-head"><span>本地智能点选（SAM）</span><b>{segmentationStatus === 'ready' ? '已安装' : segmentationCached ? '已缓存' : '免费可用'}</b></div>

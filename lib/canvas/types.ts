@@ -110,10 +110,10 @@ export type CanvasNodePresentation = {
 export type CanvasMaskState = {
   url: string;
   assetId?: string;
-  /** A locally moved source image that must replace the original first reference. */
+  /** A locally composed move guide sent to the provider beside the original source. */
   sourceAssetId?: string;
   sourceUrl?: string;
-  /** Legacy editor output kept readable for old saved canvas documents. */
+  /** Inline move guide retained for older canvas documents. */
   sourceImageDataUrl?: string;
   status: CanvasMaskStatus;
   coverage?: number;

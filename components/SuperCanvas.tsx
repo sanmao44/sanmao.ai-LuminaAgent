@@ -150,7 +150,10 @@ import {
   orderCanvasImageItems,
 } from "@/lib/canvas/download";
 import { recordCanvasImages } from "@/lib/creation/history";
-import type { LocalEditAnnotation } from "@/lib/local-edit";
+import {
+  compileLocalEditPrompt,
+  type LocalEditAnnotation,
+} from "@/lib/local-edit";
 import {
   requestPromptOptimization,
   runReversePrompt,
@@ -2238,6 +2241,23 @@ function canvasLocalEditMaskForHistory(mask: ImageCreationSettings["mask"]): Gal
       : 0,
     ...(mask.annotations?.length ? { annotations: mask.annotations } : {}),
   };
+}
+
+function compiledCanvasLocalEditPrompt(
+  node: CanvasNode,
+  prompt: string,
+  draftParams?: CanvasGenerationParams,
+) {
+  const masks = [
+    node.data.mask,
+    (draftParams as ImageCreationSettings | undefined)?.mask,
+    (node.data.generation?.params as ImageCreationSettings | undefined)?.mask,
+    (node.data.params as ImageCreationSettings | undefined)?.mask,
+  ];
+  const annotations = masks
+    .map((mask) => mask?.annotations)
+    .find((items): items is LocalEditAnnotation[] => Boolean(items?.length));
+  return annotations ? compileLocalEditPrompt(prompt, annotations) : prompt;
 }
 
 function canvasVideoTargetHasImageReference(
@@ -6408,10 +6428,8 @@ export default function SuperCanvas() {
       const context = inputNodes.filter((node) => node.type === "prompt");
       const refs = linked
         .filter((node) => node.data.kind === "image")
-        .map((node, index) => ({
-          url: kind === "image" && index === 0 && (effectiveParams as ImageCreationSettings).mask?.sourceUrl
-            ? String((effectiveParams as ImageCreationSettings).mask?.sourceUrl)
-            : String(node.data.url || ""),
+        .map((node) => ({
+          url: String(node.data.url || ""),
           name: String(node.data.name || "参考素材"),
         }))
         .filter((item) => item.url);
@@ -6603,6 +6621,7 @@ export default function SuperCanvas() {
                       ? "opaque"
                       : undefined,
                 maskUrl: imageParams.mask?.url,
+                moveGuideUrl: imageParams.mask?.sourceUrl,
                 references: refs,
               });
               if (!result.images?.length)
@@ -7230,7 +7249,7 @@ export default function SuperCanvas() {
     if (useCurrentImageAsReference) {
       addReference(
         source.id,
-        String(paramsWithMask.mask?.sourceUrl || source.data.url),
+        String(source.data.url),
         String(source.data.name || "当前图片"),
       );
     }
@@ -7394,6 +7413,7 @@ export default function SuperCanvas() {
             ? "opaque"
             : undefined,
         ...(params.mask ? { maskUrl: params.mask.url } : {}),
+        ...(params.mask?.sourceUrl ? { moveGuideUrl: params.mask.sourceUrl } : {}),
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
@@ -8200,10 +8220,8 @@ export default function SuperCanvas() {
       if (videoInputError) return notify(videoInputError, "error");
     }
     const refs = (kind === "video" ? videoInputs?.referenceImages || [] : inputSemantics.imageReferences)
-      .map((node, index) => ({
-          url: kind === "image" && index === 0 && (source.params as ImageCreationSettings).mask?.sourceUrl
-            ? String((source.params as ImageCreationSettings).mask?.sourceUrl)
-            : String(node.data.url || ""),
+      .map((node) => ({
+          url: String(node.data.url || ""),
           name: String(node.data.name || "参考素材"),
         }))
       .filter((item) => item.url);
@@ -8321,6 +8339,7 @@ export default function SuperCanvas() {
                 ? "opaque"
                 : undefined,
           maskUrl: imageParams.mask?.url,
+          moveGuideUrl: imageParams.mask?.sourceUrl,
           references: refs,
         });
         if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
@@ -8663,11 +8682,11 @@ export default function SuperCanvas() {
   const editorPromptFor = useCallback(
     (node: CanvasNode) => {
       const draft = editorDrafts[node.id];
-      if (draft?.prompt?.trim()) return draft.prompt;
       if (node.type === "prompt") return String(node.data.agentPrompt || node.data.text || "");
       if (node.type === "media" && node.data.kind === "audio") return draft?.prompt || "";
       const persistedPrompt = String(node.data.generation?.prompt || node.data.prompt || "");
-      return persistedPrompt || draft?.prompt || "";
+      const rawPrompt = draft?.prompt?.trim() || persistedPrompt || draft?.prompt || "";
+      return compiledCanvasLocalEditPrompt(node, rawPrompt, draft?.params);
     },
     [editorDrafts],
   );
@@ -9056,7 +9075,7 @@ export default function SuperCanvas() {
         setReuseDraft((current) => current?.sourceNodeId === currentNode.id ? null : current);
       const draft = editorDrafts[currentNode.id];
       const params = draft?.params ? clone(draft.params) : editorParamsFor(currentNode);
-      const prompt = draft?.prompt?.trim() ? draft.prompt : editorPromptFor(currentNode);
+      const prompt = editorPromptFor(currentNode);
       const generationRequest: CanvasGenerationRequest = {
         nodeId: currentNode.id,
         prompt,
@@ -9127,7 +9146,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, sourceImageDataUrl?: string) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string) => {
       const node = maskNodeId
         ? nodeById(docRef.current, maskNodeId)
         : undefined;
@@ -9158,8 +9177,8 @@ export default function SuperCanvas() {
         const uploaded = await uploadCanvasAsset(
           dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
         );
-        const movedSource = sourceImageDataUrl
-          ? await uploadCanvasAsset(dataUrlFile(sourceImageDataUrl, `moved-source-${node.id}.png`))
+        const moveGuide = moveGuideDataUrl
+          ? await uploadCanvasAsset(dataUrlFile(moveGuideDataUrl, `move-guide-${node.id}.png`))
           : undefined;
         const liveDraft = editorDrafts[node.id];
         const settings = copyParams(
@@ -9173,17 +9192,20 @@ export default function SuperCanvas() {
           mask: {
             assetId: uploaded.id,
             url: uploaded.url,
-            ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
+            ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
             ...(annotations.length ? { annotations } : {}),
             feather: maskFeather,
           },
         } satisfies ImageCreationSettings;
-        const nextPrompt = prompt?.trim() || liveDraft?.prompt?.trim() || existingDraft.prompt;
+        const nextPrompt = compileLocalEditPrompt(
+          prompt?.trim() || liveDraft?.prompt?.trim() || existingDraft.prompt,
+          annotations,
+        );
         const maskCoverage = Math.max(0, Math.min(1, coverage));
         const mask: CanvasMaskState = {
           assetId: uploaded.id,
           url: uploaded.url,
-          ...(movedSource ? { sourceAssetId: movedSource.id, sourceUrl: movedSource.url } : {}),
+          ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
           status: "pending",
           coverage: maskCoverage,
           ...(annotations.length ? { annotations } : {}),
@@ -13179,7 +13201,7 @@ export default function SuperCanvas() {
           initialPrompt={editorPromptFor(maskNode)}
           initialAnnotations={maskNode.data.mask?.annotations || maskSettings?.mask?.annotations || []}
           initialFeather={maskNode.data.mask?.feather ?? maskSettings?.mask?.feather ?? 0}
-          onApply={(value, coverage, prompt, annotations, feather, sourceImageDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, sourceImageDataUrl)}
+          onApply={(value, coverage, prompt, annotations, feather, moveGuideDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, moveGuideDataUrl)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}

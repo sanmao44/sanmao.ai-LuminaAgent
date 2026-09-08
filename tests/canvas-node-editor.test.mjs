@@ -61,7 +61,7 @@ test("overlay positioning ignores identical geometry updates", () => {
   assert.match(editor, /setPosition\(\(current\) =>[\s\S]*current\.left === position\.left[\s\S]*current\.top === position\.top[\s\S]*current\.maxHeight === position\.maxHeight[\s\S]*\? current/);
 });
 
-test("editor generation forwards its draft without waiting for selection state", () => {
+test("editor generation resolves its current draft without waiting for selection state", () => {
   const editorStart = component.indexOf("const runEditorGeneration = useCallback");
   const editorEnd = component.indexOf("const updateUpscaleParams", editorStart);
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "editor generation should be present");
@@ -69,7 +69,7 @@ test("editor generation forwards its draft without waiting for selection state",
   assert.match(editor, /const currentNode = nodeById\(docRef\.current, node\.id\)/);
   assert.match(editor, /const generationRequest: CanvasGenerationRequest/);
   assert.match(editor, /nodeId: currentNode\.id/);
-  assert.match(editor, /const prompt = draft\?\.prompt\?\.trim\(\) \? draft\.prompt : editorPromptFor\(currentNode\)/);
+  assert.match(editor, /const prompt = editorPromptFor\(currentNode\)/);
   assert.match(editor, /prompt,[\s\S]*\.\.\.\(params \? \{ params \} : \{\}\),/);
   assert.match(editor, /runGenerationRef\.current\?\.\(generationRequest\)/);
   assert.doesNotMatch(editor, /setTimeout/);
@@ -583,7 +583,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, sourceImageDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, sourceImageDataUrl\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, moveGuideDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, moveGuideDataUrl\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /initialFeather=\{maskNode\.data\.mask\?\.feather \?\? maskSettings\?\.mask\?\.feather \?\? 0\}/);
   assert.match(component, /status: "pending"/);
@@ -599,17 +599,40 @@ test("applying a local edit closes both editors instead of reopening the node pr
   assert.ok(applyStart >= 0 && applyEnd > applyStart, "canvas mask apply handler should be present");
   assert.match(apply, /setExpandedEditorId\(null\)/);
   assert.match(apply, /setMaskNodeId\(null\)/);
-  assert.match(apply, /const movedSource = sourceImageDataUrl/);
-  assert.match(apply, /sourceAssetId: movedSource\.id, sourceUrl: movedSource\.url/);
+  assert.match(apply, /const moveGuide = moveGuideDataUrl/);
+  assert.match(apply, /sourceAssetId: moveGuide\.id, sourceUrl: moveGuide\.url/);
   assert.match(apply, /const liveDraft = editorDrafts\[node\.id\]/);
   assert.match(apply, /liveDraft\?\.params \|\| existingDraft\.params/);
-  assert.match(apply, /const nextPrompt = prompt\?\.trim\(\) \|\| liveDraft\?\.prompt\?\.trim\(\) \|\| existingDraft\.prompt/);
+  assert.match(apply, /const nextPrompt = compileLocalEditPrompt\([\s\S]*prompt\?\.trim\(\) \|\| liveDraft\?\.prompt\?\.trim\(\) \|\| existingDraft\.prompt,[\s\S]*annotations/);
   assert.match(apply, /prompt: nextPrompt,[\s\S]*mask,[\s\S]*params: clone\(params\)/);
   assert.match(apply, /generation: \{[\s\S]*prompt: nextPrompt,[\s\S]*params: clone\(params\)/);
   assert.match(apply, /editor: \{ \.\.\.item\.data\.editor, dirty: true, draftPrompt: nextPrompt, draftParams: clone\(params\) \}/);
   assert.match(apply, /setEditorDrafts\(\(current\) => \(\{[\s\S]*prompt: nextPrompt,[\s\S]*params: clone\(params\),[\s\S]*dirty: true/);
   assert.match(apply, /setReuseDraft\(\(current\) => current\?\.sourceNodeId === node\.id[\s\S]*prompt: nextPrompt,[\s\S]*params: clone\(params\),[\s\S]*dirty: true/);
   assert.doesNotMatch(apply, /openImageEditor\(node, \{ params, prompt: nextPrompt \}\)/);
+});
+
+test("canvas reuses the compiled local-edit prompt for legacy masks, display, and generation", () => {
+  assert.match(component, /function compiledCanvasLocalEditPrompt\(/);
+  assert.match(component, /node\.data\.mask,[\s\S]*draftParams as ImageCreationSettings/);
+  assert.match(component, /return annotations \? compileLocalEditPrompt\(prompt, annotations\) : prompt/);
+  const promptStart = component.indexOf("const editorPromptFor = useCallback");
+  const promptEnd = component.indexOf("const openImageEditor = useCallback", promptStart);
+  const editorPrompt = component.slice(promptStart, promptEnd);
+  assert.ok(promptStart >= 0 && promptEnd > promptStart, "editor prompt resolver should be present");
+  assert.match(editorPrompt, /const rawPrompt = draft\?\.prompt\?\.trim\(\) \|\| persistedPrompt \|\| draft\?\.prompt \|\| ""/);
+  assert.match(editorPrompt, /return compiledCanvasLocalEditPrompt\(node, rawPrompt, draft\?\.params\)/);
+  const generationStart = component.indexOf("const runEditorGeneration = useCallback");
+  const generationEnd = component.indexOf("const updateUpscaleParams = useCallback", generationStart);
+  const generation = component.slice(generationStart, generationEnd);
+  assert.match(generation, /const prompt = editorPromptFor\(currentNode\)/);
+});
+
+test("canvas sends the move guide separately and keeps the original image as the composite source", () => {
+  assert.match(component, /url: String\(node\.data\.url \|\| ""\)/);
+  assert.match(component, /moveGuideUrl: imageParams\.mask\?\.sourceUrl/);
+  assert.match(component, /params\.mask\?\.sourceUrl \? \{ moveGuideUrl: params\.mask\.sourceUrl \} : \{\}/);
+  assert.doesNotMatch(component, /url: kind === "image" && index === 0 && \(effectiveParams as ImageCreationSettings\)\.mask\?\.sourceUrl/);
 });
 
 test("local edit summary only occupies editor space when a mask exists", () => {

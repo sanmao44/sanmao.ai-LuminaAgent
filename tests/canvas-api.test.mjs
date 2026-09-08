@@ -255,7 +255,7 @@ test('canvas image generation compresses reference images before submitting', as
   }
 });
 
-test('canvas local editing keeps the source reference aligned with its mask', async () => {
+test('canvas local editing keeps the original source for compositing and sends a separate move guide', async () => {
   const mocks = withImageCanvas({ width: 3200, height: 1800 });
   try {
     let request;
@@ -265,12 +265,14 @@ test('canvas local editing keeps the source reference aligned with its mask', as
     }, () => api.generateCanvasImage({
       prompt: 'local edit',
       maskUrl: 'data:image/png;base64,MASK',
+      moveGuideUrl: 'data:image/png;base64,MOVE_GUIDE',
       references: [{ url: 'data:image/png;base64,SOURCE' }],
     }));
 
     const payload = JSON.parse(request.options.body);
     assert.deepEqual(payload.references, ['data:image/png;base64,SOURCE']);
     assert.equal(payload.mask, 'data:image/png;base64,MASK');
+    assert.equal(payload.moveGuide, 'data:image/png;base64,MOVE_GUIDE');
     assert.deepEqual(mocks.encodedTypes, []);
   } finally {
     mocks.restore();
