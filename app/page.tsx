@@ -1174,6 +1174,15 @@ function getChatFilePreviewContent(file) {
         }
     }
 }
+function buildChatFilePreviewContent(content) {
+    const source = String(content || '').replace(/prefers-reduced-motion\s*:\s*reduce/gi, 'prefers-reduced-motion: no-preference');
+    const bootstrap = '<script data-sanmao-preview-motion>(function(){try{var nativeMatchMedia=window.matchMedia&&window.matchMedia.bind(window);window.matchMedia=function(query){var text=String(query);if(/prefers-reduced-motion/i.test(text))return{media:text,matches:false,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}};return nativeMatchMedia?nativeMatchMedia(text):{media:text,matches:false,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}}};}catch(e){}})();</script>';
+    const head = source.match(/<head\b[^>]*>/i);
+    if (head) return source.replace(head[0], `${head[0]}${bootstrap}`);
+    const doctype = source.match(/^\s*<!doctype\b[^>]*>\s*/i);
+    if (doctype) return `${doctype[0]}${bootstrap}${source.slice(doctype[0].length)}`;
+    return `${bootstrap}${source}`;
+}
 function formatFileSize(size) {
     if (!size || size < 1) return '文件';
     if (size < 1024) return `${size} B`;
@@ -6247,7 +6256,7 @@ export default function Page() {
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
         try {
-            const content = getChatFilePreviewContent(file);
+            const content = buildChatFilePreviewContent(getChatFilePreviewContent(file));
             if (!content.trim()) throw new Error('HTML 文件内容为空');
             setChatFilePreview({
                 name: file.name || 'HTML 文件',
