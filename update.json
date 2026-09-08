@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.33/SANMAO.AI-0.7.33.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.33/SANMAO.AI-0.7.33.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "6bdd091886d7af9b4383f164f43961119ebe3f7077c7a87ab82251c78328dfb2",
   "publishedAt": "2026-09-08T10:32:22+08:00",
   "notes": [
     "局部编辑移动改为像素级剪贴参考，真实迁移圈选物体并自动修补原位置与目标边缘，支持普通、自由圈选和智能选区及连续移动。",
