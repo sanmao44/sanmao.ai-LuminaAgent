@@ -40,9 +40,15 @@ test("renders HTML through srcDoc in a script-sandboxed iframe", () => {
   assert.match(dialog, /role: "dialog"/);
   assert.match(dialog, /"aria-modal": "true"/);
   assert.match(dialog, /srcDoc: file\.content/);
+  assert.match(dialog, /URL\.createObjectURL\(new Blob/);
+  assert.match(dialog, /src: previewUrl \|\| undefined/);
   assert.match(dialog, /sandbox: "allow-scripts"/);
   assert.doesNotMatch(dialog, /allow-same-origin/);
   assert.match(page, /new TextDecoder\('utf-8', \{ fatal: true \}\)\.decode\(bytes\)/);
+  assert.match(dialog, /allow: "autoplay; fullscreen"/);
+  assert.match(page, /function buildChatFilePreviewContent\(content\)/);
+  assert.match(page, /prefers-reduced-motion\\s\*:\\s\*reduce/);
+  assert.match(page, /buildChatFilePreviewContent\(getChatFilePreviewContent\(file\)\)/);
 });
 
 test("keeps the download path and provides multiple close paths", () => {

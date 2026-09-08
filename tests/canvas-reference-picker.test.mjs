@@ -56,13 +56,16 @@ test("reference controls expose canvas picking while keeping file upload availab
   assert.match(component, /上传参考素材/);
 });
 
-test("picker feedback uses hover/flash styling and the referencing cursor without an overlay prompt", () => {
+test("picker feedback keeps a visible instruction without blocking canvas nodes", () => {
   assert.match(component, /cancelReferencePicker\(\)/);
-  assert.doesNotMatch(component, /canvas-reference-picker-banner/);
+  assert.match(component, /className="canvas-hint canvas-reference-picker-hint"/);
+  assert.match(component, /正在选择参考素材/);
+  assert.match(component, /点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消/);
   assert.match(styles, /reference-picker-target/);
   assert.match(styles, /reference-picker-hover/);
   assert.match(styles, /reference-picker-flash/);
   assert.match(cursorStyles, /is-cursor-referencing/);
+  assert.match(styles, /\.canvas-reference-picker-hint\{[^}]*pointer-events:none/);
 });
 
 test("picker has no fixed prompt layer that can cover narrow editors", () => {

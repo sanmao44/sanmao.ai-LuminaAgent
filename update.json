@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.33",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.33",
+  "latestVersion": "0.7.34",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.34",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.33/SANMAO.AI-0.7.33.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.34/SANMAO.AI-0.7.34.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.33/SANMAO.AI-0.7.33.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.33/SANMAO.AI-0.7.33.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.33/SANMAO.AI-0.7.33.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.34/SANMAO.AI-0.7.34.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.34/SANMAO.AI-0.7.34.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.34/SANMAO.AI-0.7.34.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "publishedAt": "2026-09-08T10:32:22+08:00",
+  "sha256": "55b4447132e4dad6370c99e8eccec4440c0d6de4475a874aea9de028f0cc5e4e",
+  "publishedAt": "2026-09-08T18:06:02+08:00",
   "notes": [
-    "局部编辑移动改为像素级剪贴参考，真实迁移圈选物体并自动修补原位置与目标边缘，支持普通、自由圈选和智能选区及连续移动。",
-    "移动提交同时包含源区域和目标区域掩码，并增加背景修补、边缘羽化和无拼接痕迹约束，减少重复物体、硬边和矩形接缝。",
-    "局部编辑应用后同步超级画布节点、编辑草稿、参数和复用草稿，画布显示、重新打开编辑器与下一次生成使用同一份最终提示词。"
+    "局部编辑支持删除已确认的整个区域并撤销恢复，标记列表提供独立的编辑与删除操作。",
+    "修改草稿可继续叠加选区、擦除区域和拖动画布，只有点击添加后才写入正式记录与历史。",
+    "固定局部编辑主面板布局，仅让标记列表内部滚动；标记较多时自动紧凑显示，补充说明输入框保持可用。"
   ]
 }
