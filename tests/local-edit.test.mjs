@@ -361,7 +361,11 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /function beginMoveAnnotation/);
   assert.match(editor, /type LocalEditMode = 'modify' \| 'move'/);
   assert.match(editor, /aria-label="局部编辑功能"/);
-  assert.match(editor, /圈选物体后，直接拖到目标位置/);
+  assert.match(editor, /圈选要移动的物体，再拖到目标位置，并补充移动要求/);
+  assert.match(editor, /圈选要修改的区域，并补充要移除、替换或添加的内容/);
+  assert.match(editor, /placeholder=\{mode === 'move' \? '补充移动说明' : '补充修改说明'\}/);
+  assert.match(editor, /aria-label=\{mode === 'move' \? '移动说明' : '修改说明'\}/);
+  assert.match(editor, /strong>\{mode === 'move' \? '移动说明' : '修改说明'\}<\/strong>/);
   assert.match(editor, /mode === 'move'\) beginMoveAnnotation\(event, annotation\)/);
   assert.match(editor, /className=\{`local-edit-annotation\$\{mode === 'move' \? ' move-enabled' : ''\}/);
   assert.match(editor, /local-edit-operation-card/);

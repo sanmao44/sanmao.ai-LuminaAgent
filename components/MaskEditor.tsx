@@ -1395,7 +1395,9 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
           <span>功能</span>
           <button type="button" className={mode === 'modify' ? 'active' : ''} aria-pressed={mode === 'modify'} disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => switchLocalEditMode('modify')}>修改</button>
           <button type="button" className={mode === 'move' ? 'active' : ''} aria-pressed={mode === 'move'} disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => switchLocalEditMode('move')}>移动</button>
-          {mode === 'move' && <small>圈选物体后，直接拖到目标位置</small>}
+          {mode === 'move'
+            ? <small>圈选要移动的物体，再拖到目标位置，并补充移动要求</small>
+            : <small>圈选要修改的区域，并补充要移除、替换或添加的内容</small>}
         </div>
         <div className="local-edit-workbench-toolbar" role="toolbar" aria-label="局部编辑工具">
           <div className="local-edit-workbench-tool-row">
@@ -1487,7 +1489,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
                   const top = pendingAnnotation.anchor.y / Math.max(1, imageCanvas?.height || 1);
                   return (
                     <div className="local-edit-annotation-popover" style={{ left: `${Math.max(2, Math.min(72, left * 100))}%`, top: `${Math.max(2, Math.min(78, top * 100))}%` }} onPointerDown={(event) => event.stopPropagation()}>
-                      <input autoFocus value={annotationDraft} disabled={saving} onChange={(event) => setAnnotationDraft(event.target.value)} placeholder="补充移动说明" aria-label="局部标记描述" />
+                      <input autoFocus value={annotationDraft} disabled={saving} onChange={(event) => setAnnotationDraft(event.target.value)} placeholder={mode === 'move' ? '补充移动说明' : '补充修改说明'} aria-label={mode === 'move' ? '移动说明' : '修改说明'} />
                       <button type="button" disabled={saving} onClick={confirmPendingAnnotation}>{editingAnnotationId ? '保存' : '添加'}</button>
                       <button type="button" disabled={saving} onClick={cancelPendingAnnotation}>取消</button>
                     </div>
@@ -1505,14 +1507,14 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialP
               </div>
             </div>
             <section className="local-edit-operation-card" data-mode={mode} aria-label={mode === 'move' ? '移动输入区域' : '修改输入区域'}>
-              <div className="local-edit-operation-head"><span>当前功能</span><strong>{mode === 'move' ? '移动' : '修改'}</strong></div>
+              <div className="local-edit-operation-head"><span>当前功能</span><strong>{mode === 'move' ? '移动说明' : '修改说明'}</strong></div>
               {mode === 'move' ? (
                 <>
-                  <p>先圈选要移动的物体，再拖动选区到目标位置。预览会真实显示物体离开原位置并落到目标位置；提交时源区和目标边缘会一起重绘融合。</p>
+                  <p>先圈选要移动的物体，再拖动选区到目标位置，并补充移动要求。预览会真实显示物体离开原位置并落到目标位置；提交时源区和目标边缘会一起重绘融合。</p>
                   <small>{selectedMoveAnnotation ? `当前源选区：${annotationLabel(selectedMoveAnnotation)}${movingAnnotation ? '（移动预览中）' : '，可直接拖到目标位置'}；细小主体优先用智能点选或自由圈选。` : '第 1 步：先创建或点击一个源选区。'}</small>
                 </>
               ) : (
-                <p>在画布上使用工具修改局部编辑范围，完成后可切换到移动功能。</p>
+                <p>圈选需要修改的区域，并在说明中写清要移除、替换或添加的内容；完成后可切换到移动功能。</p>
               )}
             </section>
             <div className="local-edit-workbench-controls">
