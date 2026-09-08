@@ -1162,7 +1162,17 @@ function getChatFilePreviewContent(file) {
     if (file?.encoding !== 'base64') return String(file?.content || '');
     const binary = atob(String(file?.content || '').replace(/\s/g, ''));
     const bytes = Uint8Array.from(binary, (char)=>char.charCodeAt(0));
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+        // Keep previewing files with a legacy Chinese encoding when the runtime
+        // exposes that decoder; otherwise fall back to replacement decoding.
+        try {
+            return new TextDecoder('gb18030').decode(bytes);
+        } catch {
+            return new TextDecoder('utf-8').decode(bytes);
+        }
+    }
 }
 function formatFileSize(size) {
     if (!size || size < 1) return '文件';
@@ -4380,6 +4390,23 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
     });
 }
 function ChatFilePreviewDialog({ file, onClose }) {
+    const [previewUrl, setPreviewUrl] = useState('');
+    useEffect(()=>{
+        let url = '';
+        try {
+            if (typeof URL !== 'undefined' && typeof Blob !== 'undefined') {
+                url = URL.createObjectURL(new Blob([
+                    file.content
+                ], {
+                    type: 'text/html;charset=utf-8'
+                }));
+            }
+        } catch {}
+        setPreviewUrl(url);
+        return ()=>{
+            if (url) URL.revokeObjectURL(url);
+        };
+    }, [file.content]);
     return /*#__PURE__*/ _jsxs("div", {
         className: "chat-file-preview-backdrop",
         role: "presentation",
@@ -4427,7 +4454,10 @@ function ChatFilePreviewDialog({ file, onClose }) {
                             className: "chat-file-preview-frame",
                             title: `${file.name} HTML 预览`,
                             srcDoc: file.content,
+                            src: previewUrl || undefined,
                             sandbox: "allow-scripts",
+                            allow: "autoplay; fullscreen",
+                            loading: "eager",
                             referrerPolicy: "no-referrer"
                         })
                     }),

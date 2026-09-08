@@ -160,9 +160,10 @@ test("local edit history shortcuts use physical keys and are not preempted by ca
 });
 
 test("completed marks stay editable without opening a text dialog", () => {
-  assert.match(editor, /function commitAnnotation\(annotation: LocalEditAnnotation, before: HistorySnapshot\)/);
-  assert.match(editor, /commitAnnotation\(annotation, gesture\.before\)/);
-  assert.match(editor, /commitAnnotation\(annotation, before\)/);
+  assert.match(editor, /function setAnnotationPending\(annotation: LocalEditAnnotation, before: HistorySnapshot/);
+  assert.match(editor, /stage: 'modify'/);
+  assert.match(editor, /isExisting: true/);
+  assert.match(editor, /function saveEditedAnnotation\(\)/);
   assert.match(editor, /function annotationPreviewStyle\(annotation: LocalEditAnnotation, imageUrl: string\)/);
   assert.match(editor, /className="local-edit-selection-thumb"/);
   assert.match(editor, /<button type="button" onClick=\{\(\) => editAnnotation\(annotation\)\}>修改<\/button>/);
@@ -356,9 +357,22 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /onLostPointerCapture=\{handleLostPointerCapture\}/);
   assert.match(editor, /context\.clearRect\(0, 0, canvas\.width, canvas\.height\);/);
   assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number, moveGuideDataUrl\?: string\)/);
+  assert.match(editor, /initialPrompt\?: string/);
+  assert.match(editor, /const \[prompt, setPrompt\] = useState\(''\)/);
+  assert.doesNotMatch(editor, /setPrompt\(initialPrompt\)/);
+  assert.doesNotMatch(editor, /请填写局部编辑提示词/);
+  assert.match(editor, /局部编辑补充说明（可选）/);
+  assert.match(editor, /可选：补充本次局部编辑要移除、替换或添加的内容…/);
   assert.match(editor, /initialFeather\?: number/);
   assert.match(editor, /localEditFusionFeather\(feather\)/);
   assert.match(editor, /function beginMoveAnnotation/);
+  assert.match(editor, /function beginPendingMove/);
+  assert.match(editor, /dragImage: copyImageData\(dragBefore\.image\)/);
+  assert.match(editor, /isPendingDraft: true/);
+  assert.match(editor, /setPendingAnnotation\(pending\)/);
+  assert.match(editor, /rebuildMask\(annotationsWithPending\(pending\)\)/);
+  assert.match(editor, /nextFrom = movingAnnotation\.isPendingDraft/);
+  assert.match(editor, /!movingAnnotation\.isPendingDraft/);
   assert.match(editor, /type LocalEditMode = 'modify' \| 'move'/);
   assert.match(editor, /aria-label="局部编辑功能"/);
   assert.match(editor, /圈选要移动的物体，再拖到目标位置，并补充移动要求/);
@@ -371,6 +385,9 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /local-edit-operation-card/);
   assert.match(editor, /setMoveSourceId\(annotation\.id\)/);
   assert.match(editor, /local-edit-move-frame target/);
+  assert.match(editor, /onPointerDown=\{pendingMove \? \(event\) => beginPendingMove\(event, pendingMove\) : undefined\}/);
+  assert.match(editor, /x1=\{`\$\{source\.x \* 100\}%`\} y1=\{`\$\{source\.y \* 100\}%`\} x2=\{`\$\{target\.x \* 100\}%`\} y2=\{`\$\{target\.y \* 100\}%`\}/);
+  assert.match(editor, /x1=\{`\$\{\(source\.x \+ source\.width\) \* 100\}%`\}/);
   assert.match(editor, /move: \{ from:/);
   assert.match(editor, /取消移动/);
   assert.match(editor, /moveLocalEditPixels\(/);
@@ -384,6 +401,8 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /补充.*说明/);
   assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);
   assert.match(styles, /\.local-edit-workbench-body\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(260px,320px\)/);
+  assert.match(styles, /\.local-edit-move-frame\.target[^}]*pointer-events:auto/);
+  assert.doesNotMatch(styles, /marker-end:url\(#local-edit-move-arrow\)/);
 });
 
 test("local edit shortcuts append prompts without submitting automatically", () => {
