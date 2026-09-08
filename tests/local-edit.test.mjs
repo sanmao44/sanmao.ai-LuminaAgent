@@ -174,6 +174,15 @@ test("completed marks stay editable without opening a text dialog", () => {
   assert.match(editor, /onClick=\{\(\) => deleteAnnotation\(annotation\)\}/);
   assert.match(editor, /local-edit-annotation-summary-select/);
   assert.match(styles, /\.local-edit-selection-thumb\{[^}]*background-repeat:no-repeat/);
+  assert.match(styles, /\.local-edit-annotation-summary>div\{[^}]*max-height:min\(32vh,260px\);[^}]*overflow-x:hidden;[^}]*overflow-y:auto/);
+  assert.match(editor, /className=\{`local-edit-annotation-summary\$\{annotations\.length > 0 \? ' has-items' : ''\}\$\{annotations\.length >= 4 \? ' dense' : ''\}`\}/);
+  assert.match(styles, /\.local-edit-workbench-sidebar\{overflow:hidden;padding-right:0/);
+  assert.match(styles, /\.local-edit-annotation-summary\.has-items\{[^}]*flex:1 1 0;min-height:0;overflow:hidden;grid-template-rows:auto minmax\(0,1fr\)/);
+  assert.match(styles, /\.local-edit-annotation-summary\.has-items>div\{[^}]*min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto/);
+  assert.match(styles, /\.local-edit-prompt\{min-height:100px;flex:0 0 clamp\(100px,14vh,160px\)/);
+  assert.match(styles, /\.local-edit-prompt textarea\{min-height:68px/);
+  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-annotation-summary-select\{min-height:30px/);
+  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-selection-thumb\{width:26px;height:26px/);
 });
 
 test("pixel feathering creates a real alpha transition around an editable region", () => {

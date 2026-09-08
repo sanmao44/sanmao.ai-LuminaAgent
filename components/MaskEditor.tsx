@@ -1755,7 +1755,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
               <span>快捷意图</span>
               {LOCAL_EDIT_INTENTS.map((intent) => <button key={intent.value} type="button" disabled={saving} onClick={() => addIntent(intent.value)}>{intent.label}</button>)}
              </div>
-             <div className="local-edit-annotation-summary" aria-live="polite">
+             <div className={`local-edit-annotation-summary${annotations.length > 0 ? ' has-items' : ''}${annotations.length >= 4 ? ' dense' : ''}`} aria-live="polite">
                <span>局部标记</span><b>{annotations.length} / 16</b>
                {annotations.length > 0 && <div>{annotations.map((annotation, index) => <div key={annotation.id} className="local-edit-annotation-summary-item">
                  <button type="button" className="local-edit-annotation-summary-select" title={annotationLabel(annotation)} onClick={() => handleAnnotationSummaryClick(annotation)}>

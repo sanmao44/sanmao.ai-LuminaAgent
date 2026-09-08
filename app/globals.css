@@ -3512,7 +3512,7 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .local-edit-annotation-popover input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .local-edit-annotation-summary{display:grid;gap:5px;padding:7px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--muted);font-size:8px;flex:none}
 .local-edit-annotation-summary>span{font-weight:850}.local-edit-annotation-summary>b{position:absolute;margin:0 0 0 56px;color:var(--accent-text)}
-.local-edit-annotation-summary>div{display:flex;gap:4px;flex-wrap:wrap;max-height:58px;overflow:auto}
+.local-edit-annotation-summary>div{display:flex;gap:4px;flex-wrap:wrap;max-height:min(32vh,260px);overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
 .local-edit-annotation-summary-item{display:flex;align-items:center;gap:3px;width:100%;min-width:0}
 .local-edit-annotation-summary-item .local-edit-annotation-summary-select{flex:1;min-width:0}
 .local-edit-annotation-edit-icon{flex:0 0 28px!important;width:28px;min-width:28px!important;min-height:28px!important;height:28px!important;padding:0!important;display:grid!important;place-items:center;border-color:color-mix(in srgb,var(--accent) 28%,var(--line))!important;color:var(--accent-text)!important}
@@ -3551,3 +3551,15 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .reference-mention-thumb img,.reference-mention-thumb video{width:100%;height:100%;display:block;object-fit:cover}
 .reference-mention-text-thumbnail{display:grid;align-content:center;gap:2px;width:100%;height:100%;padding:4px;color:var(--accent-text);background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 18%,var(--panel-3)),var(--panel-3));font-size:8px}
 .reference-mention-text-thumbnail>b{font-size:7px;letter-spacing:.08em}.reference-mention-text-thumbnail>small{overflow:hidden;display:block;color:var(--text-2);font-size:6px;line-height:1.25;word-break:break-word}.reference-mention-fallback-thumbnail{display:grid;place-items:center;width:100%;height:100%;font-size:16px}
+.local-edit-workbench-sidebar{overflow:hidden;padding-right:0}
+.local-edit-annotation-summary.has-items{flex:1 1 0;min-height:0;overflow:hidden;grid-template-rows:auto minmax(0,1fr)}
+.local-edit-annotation-summary.has-items>div{min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
+.local-edit-prompt{min-height:100px;flex:0 0 clamp(100px,14vh,160px)}
+.local-edit-prompt textarea{min-height:68px}
+.local-edit-annotation-summary.dense>div{gap:3px}
+.local-edit-annotation-summary.dense .local-edit-annotation-summary-item{gap:2px}
+.local-edit-annotation-summary.dense .local-edit-annotation-summary-select{min-height:30px;padding:2px 5px 2px 2px}
+.local-edit-annotation-summary.dense .local-edit-selection-thumb{width:26px;height:26px;border-radius:5px}
+.local-edit-annotation-summary.dense .local-edit-annotation-edit-icon,.local-edit-annotation-summary.dense .local-edit-annotation-delete-icon{flex-basis:24px!important;width:24px;min-width:24px!important;min-height:24px!important;height:24px!important}
+.local-edit-annotation-summary.dense .local-edit-annotation-edit-icon svg,.local-edit-annotation-summary.dense .local-edit-annotation-delete-icon svg{width:11px;height:11px}
+@media(max-width:760px){.local-edit-workbench-sidebar{overflow:hidden}.local-edit-prompt{min-height:92px;flex-basis:92px}.local-edit-prompt textarea{min-height:60px}}
