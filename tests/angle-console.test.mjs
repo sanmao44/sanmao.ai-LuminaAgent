@@ -11,7 +11,7 @@ test('angle console exposes only edit-capable models', () => {
 });
 
 test('default guide is a neutral universal proxy', () => {
-  assert.match(source, /const \[camera, setCamera\] = useState<AngleCameraState>\(\(\) => createViewpointCamera\(\)\)/);
+  assert.match(source, /const \[camera, setCamera\] = useState<AngleCameraState>\(\(\) => createViewpointCamera\(initialCamera\)\)/);
   assert.match(source, /const \[humanMode, setHumanMode\] = useState<HumanMode>\('object'\)/);
   assert.match(source, /const isNeutral = mode === 'gray'/);
   assert.match(source, /anatomical-front-marker/);

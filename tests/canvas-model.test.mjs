@@ -174,6 +174,23 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.equal(result.camera.zoom, 3);
 });
 
+test('angle node drafts preserve a relative viewpoint baseline', () => {
+  const created = model.createAngleNode({ x: 0, y: 0 });
+  assert.equal(created.data.angle.camera.viewpoint.version, 2);
+  const normalized = model.normalizeDocument({
+    nodes: [{
+      id: 'angle-1',
+      type: 'angle',
+      x: 0,
+      y: 0,
+      data: { angle: { camera: { yaw: 45 } } },
+    }],
+  });
+  const camera = normalized.nodes[0].data.angle.camera;
+  assert.equal(camera.yaw, 45);
+  assert.equal(camera.viewpoint.version, 2);
+});
+
 test('recovers interrupted local canvas work while preserving remote video tasks', () => {
   const document = model.normalizeDocument({
     nodes: [

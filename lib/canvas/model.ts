@@ -144,6 +144,24 @@ const CANVAS_ANGLE_DEFAULT_CAMERA = {
   compositionLock: false,
   modelId: "auto",
 } as const;
+const CANVAS_ANGLE_DEFAULT_VIEWPOINT = {
+  version: 2,
+  subjectType: "unknown",
+  mode: "object-orbit",
+  modeSource: "auto",
+  changeView: true,
+  guide: false,
+  lighting: {
+    enabled: false,
+    azimuth: -45,
+    elevation: 35,
+    intensity: 1,
+    softness: 0.6,
+    temperature: 5500,
+    fill: 0.3,
+    anchor: "camera",
+  },
+} as const;
 const CANVAS_ANGLE_DEFAULT_LIGHTING = {
   enabled: false,
   azimuth: -45,
@@ -187,7 +205,9 @@ export function normalizeCanvasAngleParams(value?: unknown): CanvasAngleNodeConf
       frameY: clampNumber(source.frameY, CANVAS_ANGLE_DEFAULT_CAMERA.frameY, -50, 50),
       compositionLock: source.compositionLock === true,
       modelId: typeof source.modelId === "string" && source.modelId ? source.modelId : "auto",
-      ...(source.viewpoint && typeof source.viewpoint === "object" ? { viewpoint: clone(source.viewpoint) } : {}),
+      viewpoint: source.viewpoint && typeof source.viewpoint === "object" && !Array.isArray(source.viewpoint)
+        ? clone(source.viewpoint)
+        : CANVAS_ANGLE_DEFAULT_VIEWPOINT,
     } as CanvasAngleNodeConfig["camera"];
   };
   const rawLighting = raw.lighting && typeof raw.lighting === "object" ? raw.lighting as Record<string, unknown> : {};

@@ -1162,9 +1162,9 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
 }
 
 export default function AngleConsole({ theme, reference, initialCamera, initialCameraStart, initialOutput, initialNote, embedded = false, onDraftChange, models, defaultProviderId, defaultProviderName, defaultModelId, results, busy, onReferenceFiles, onExit, onRemoveReference, onBrowseHistory, onGenerate, onOpenResult, openResultId, suppressAutoOpenId, onResultOpened, onDownloadResult, onDownloadShare, onNotify }: AngleConsoleProps) {
-  const [camera, setCamera] = useState<AngleCameraState>(() => createViewpointCamera());
-  const [cameraStart, setCameraStart] = useState<AngleCameraState | null>(null);
-  const [note, setNote] = useState('');
+  const [camera, setCamera] = useState<AngleCameraState>(() => createViewpointCamera(initialCamera));
+  const [cameraStart, setCameraStart] = useState<AngleCameraState | null>(() => initialCameraStart ? normalizeAngleState(initialCameraStart) : null);
+  const [note, setNote] = useState(() => initialNote || '');
   const [humanMode, setHumanMode] = useState<HumanMode>('object');
   const [customHumanFile, setCustomHumanFile] = useState<File | null>(null);
   const [panelTab, setPanelTab] = useState<'controls' | 'backend'>('controls');
