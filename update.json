@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.35",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.35",
+  "latestVersion": "0.7.36",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.36",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.35/SANMAO.AI-0.7.35.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.36/SANMAO.AI-0.7.36.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.35/SANMAO.AI-0.7.35.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.35/SANMAO.AI-0.7.35.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.35/SANMAO.AI-0.7.35.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.36/SANMAO.AI-0.7.36.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.36/SANMAO.AI-0.7.36.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.36/SANMAO.AI-0.7.36.zip"
   ],
-  "sha256": "11c83a2c01681e74be7a3ddb008be9337ef8ac09e1d14f633522b787e440044a",
-  "publishedAt": "2026-09-08T00:00:00+08:00",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "publishedAt": "2026-09-09T00:00:00+08:00",
   "notes": [
-    "新增超级画布视频编辑节点，支持图片、视频和音频自动入轨，以及播放头、播放、分割、裁剪、排序、字幕和静音。",
-    "编辑计划随画布持久化并支持刷新恢复，节点与现有画布交互保持一致，不会把编辑计划误识别为已生成视频。",
-    "本版本保存编辑计划，暂不负责 FFmpeg 合成导出。"
+    "完善超级画布视频工作台的剪辑流程，支持素材移动到第一帧、时间线分割、撤销/重做与连续播放操作。",
+    "增强画布节点与工作台之间的状态同步，保持编辑计划、素材轨道和预览状态一致。",
+    "优化画布比例适配、4K 分辨率设置、时间线排版及视频图层交互，提升从剪辑到交付的连续操作体验。"
   ]
 }
