@@ -71,3 +71,10 @@ test("all running canvas node kinds share the indicator and elapsed clock", () =
     "media, angle, upscale, Agent and generator nodes should use the shared indicator",
   );
 });
+
+test("angle workbench hydrates legacy drafts with a relative viewpoint baseline", () => {
+  assert.match(
+    canvas,
+    /const angle = normalizeCanvasAngleParams\(angleNode\.data\.angle\)/,
+  );
+});

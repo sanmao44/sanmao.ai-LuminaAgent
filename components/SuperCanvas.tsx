@@ -13495,7 +13495,7 @@ export default function SuperCanvas() {
           if (!angleNode || angleNode.type !== "angle") return null;
           const referenceNode = incomingReferences(document, angleNode.id).find((item) => isCanvasReadyImageSource(item));
           const reference = canvasAngleReferenceFromNode(referenceNode);
-          const angle = angleNode.data.angle || normalizeCanvasAngleParams();
+          const angle = normalizeCanvasAngleParams(angleNode.data.angle);
           return (
             <div className="canvas-angle-workbench" data-canvas-wheel-isolate>
               <AngleConsole
