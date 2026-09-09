@@ -34,6 +34,7 @@ import {
   createGroup,
   createMedia,
   createPrompt,
+  createAngleNode,
   createUpscaleNode,
   createVideoEditorNode,
   detachNodesFromGroups,
@@ -286,6 +287,7 @@ import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
+import AngleConsole, { type AngleConsoleDraft } from "@/components/AngleConsole";
 
 type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
 type Mode = CanvasGenerationMode | "text";
@@ -658,7 +660,8 @@ type ConnectableNodeKind =
   | "workflowImage"
   | "workflowVideo"
   | "upscale"
-  | "videoEditor";
+  | "videoEditor"
+  | "angle";
 type ConnectionNodePicker = {
   x: number;
   y: number;
@@ -786,6 +789,12 @@ const CONNECTION_NODE_OPTIONS: Array<{
     icon: "↗",
     label: "超分节点",
     description: "连接一张已完成图片并打开超分设置",
+  },
+  {
+    kind: "angle",
+    icon: "◈",
+    label: "角度控制节点",
+    description: "连接一张已完成图片并生成新视角",
   },
   {
     kind: "workflowImage",
@@ -1012,6 +1021,21 @@ function connectCanvasNodesInDocument(
   let inputRole = requestedRole;
   let videoMode: CanvasVideoInputMode | undefined;
   let next = document;
+
+  if (target.type === "angle") {
+    if (!source || !isCanvasReadyImageSource(source)) {
+      return { ok: false, document, reason: "角度控制节点只接受一张已完成的图片。" };
+    }
+    if (next.edges.some((edge) => edge.target === target.id && !["generated", "variant", "lineage"].includes(edge.kind || ""))) {
+      return { ok: false, document, reason: "角度控制节点只能连接一张图片。" };
+    }
+    const beforeEdges = next.edges.length;
+    next = addEdge(next, sourceId, targetId, sourcePort, targetPort, "reference", "reference-image", 0);
+    if (next.edges.length === beforeEdges) {
+      return { ok: false, document, reason: "这条连线已存在，或不符合角度节点的输入规则。" };
+    }
+    return { ok: true, document: next, inputRole: "reference-image" };
+  }
 
   if (target.type === "video-editor") {
     if (!sourceInputs.length) {
@@ -1310,6 +1334,7 @@ function dataUrlFile(dataUrl: string, name: string) {
 
 function nodeLabel(node: CanvasNode) {
   if (node.type === "video-editor") return "视频编辑节点";
+  if (node.type === "angle") return "角度控制节点";
   if (node.type === "upscale") return "图片超分";
   if (node.type === "prompt") return "Agent 节点";
   if (node.type === "generator")
@@ -2709,6 +2734,7 @@ export default function SuperCanvas() {
   const [imageEditorNodeId, setImageEditorNodeId] = useState<string | null>(null);
   const [videoClipEditorNodeId, setVideoClipEditorNodeId] = useState<string | null>(null);
   const [videoEditorNodeId, setVideoEditorNodeId] = useState<string | null>(null);
+  const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
   const [oneClickCinematicNodeId, setOneClickCinematicNodeId] = useState<string | null>(null);
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
@@ -2845,6 +2871,7 @@ export default function SuperCanvas() {
     setMaskNodeId(null);
     setVideoClipEditorNodeId(null);
     setVideoEditorNodeId(null);
+    setAngleNodeId(null);
     setOneClickCinematicNodeId(null);
     setAssetCollectionPickerNodeId(null);
     setActivePanel(null);
@@ -2918,6 +2945,18 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setQuickToolbarNodeId(null);
       setVideoClipEditorNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasAngleConsole = useCallback(
+    (nodeId: string) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (!node || node.type !== "angle") return;
+      closeCanvasOverlayConflicts();
+      setSelectedIds(new Set([nodeId]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      setAngleNodeId(nodeId);
     },
     [closeCanvasOverlayConflicts],
   );
@@ -3259,6 +3298,7 @@ export default function SuperCanvas() {
       const supportedTarget = Boolean(
         target && (
           target.type === "prompt" ||
+          target.type === "angle" ||
           target.type === "upscale" ||
           target.type === "generator" ||
           (target.type === "media" && targetKind !== "audio")
@@ -5133,9 +5173,37 @@ export default function SuperCanvas() {
 
   const addNode = useCallback(
     (
-      kind: "image" | "video" | "audio" | "text" | "workflowImage" | "workflowVideo" | "upscale" | "videoEditor",
+      kind: "image" | "video" | "audio" | "text" | "workflowImage" | "workflowVideo" | "upscale" | "videoEditor" | "angle",
       position?: Point,
     ) => {
+      if (kind === "angle") {
+        const seed = position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
+        const draft = createAngleNode(seed);
+        const point = position ? seed : openNodePosition(seed, draft);
+        const node = { ...draft, x: point.x, y: point.y };
+        const source = selectedSingle && isCanvasReadyImageSource(selectedSingle) ? selectedSingle : undefined;
+        const connected = source
+          ? connectCanvasNodesInDocument(
+              { ...docRef.current, nodes: [...docRef.current.nodes, node] },
+              source.id,
+              node.id,
+              "right",
+              "left",
+              runtime,
+            )
+          : { ok: true, document: { ...docRef.current, nodes: [...docRef.current.nodes, node] } };
+        if (!connected.ok) {
+          notify(connected.reason || "无法创建角度控制节点。", "error");
+          return;
+        }
+        commit(() => connected.document);
+        setSelectedIds(new Set([node.id]));
+        setSelectedGroupId(null);
+        setAngleNodeId(node.id);
+        setContextMenu(null);
+        notify(source ? "已添加并连接角度控制节点" : "已添加角度控制节点，请连接一张已完成图片");
+        return;
+      }
       if (kind === "upscale") {
         const seed = position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
         const draft = createUpscaleNode(seed);
@@ -5206,6 +5274,10 @@ export default function SuperCanvas() {
         setConnectionNodePicker(null);
         return notify("对象组不能作为超分输入，请连接单张图片", "error");
       }
+      if (kind === "angle" && groupById(docRef.current, picker.sourceId)) {
+        setConnectionNodePicker(null);
+        return notify("对象组不能作为角度控制输入，请连接单张图片", "error");
+      }
       const sourceNode = nodeById(docRef.current, picker.sourceId);
       if (
         kind === "upscale" &&
@@ -5214,6 +5286,10 @@ export default function SuperCanvas() {
         setConnectionNodePicker(null);
         return notify("超分节点只接受一张已完成的图片", "error");
       }
+      if (kind === "angle" && !isCanvasReadyImageSource(sourceNode)) {
+        setConnectionNodePicker(null);
+        return notify("角度控制节点只接受一张已完成的图片", "error");
+      }
       const mediaKind =
         kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const draft =
@@ -5221,6 +5297,8 @@ export default function SuperCanvas() {
           ? createVideoEditorNode(picker.world)
           : kind === "upscale"
           ? createUpscaleNode(picker.world)
+          : kind === "angle"
+          ? createAngleNode(picker.world)
           : kind === "text"
           ? createPrompt(picker.world)
           : kind === "workflowImage"
@@ -5260,8 +5338,9 @@ export default function SuperCanvas() {
       else if (mediaKind !== "audio" && kind !== "videoEditor") setMode(mediaKind);
       if (mediaKind === "audio") setExpandedEditorId(node.id);
       if (kind === "upscale") setExpandedEditorId(node.id);
+      if (kind === "angle") setAngleNodeId(node.id);
       notify(
-        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
+        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "angle" ? "角度控制" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [commit, notify, openNodePosition, runtime],
@@ -9954,6 +10033,39 @@ export default function SuperCanvas() {
     controller.abort();
   }, []);
 
+  const updateCanvasAngleDraft = useCallback((nodeId: string, draft: AngleConsoleDraft) => {
+    updateDoc((value) => {
+      const angleNode = nodeById(value, nodeId);
+      if (!angleNode || angleNode.type !== "angle") return value;
+      const referenceNode = incomingReferences(value, nodeId).find((item) => isCanvasReadyImageSource(item));
+      const nextAngle: CanvasAngleParams = {
+        ...draft,
+        kind: "angle",
+        referenceNodeId: referenceNode?.id,
+        referenceMedia: referenceNode
+          ? {
+              id: referenceNode.id,
+              name: referenceNode.data.name,
+              url: referenceNode.data.url,
+              ...(referenceNode.data.assetId ? { assetId: String(referenceNode.data.assetId) } : {}),
+            }
+          : undefined,
+      };
+      if (JSON.stringify(angleNode.data.angle || null) === JSON.stringify(nextAngle)) return value;
+      return {
+        ...value,
+        nodes: value.nodes.map((node) => node.id === nodeId
+          ? { ...node, data: { ...node.data, angle: nextAngle } }
+          : node),
+      };
+    });
+  }, [updateDoc]);
+
+  const handleCanvasAngleDraftChange = useCallback((draft: AngleConsoleDraft) => {
+    if (!angleNodeId) return;
+    updateCanvasAngleDraft(angleNodeId, draft);
+  }, [angleNodeId, updateCanvasAngleDraft]);
+
   const openImageOperations = useCallback((node: CanvasNode) => {
     if ((node.type !== "media" && node.type !== "upscale") || node.data.kind !== "image" || !node.data.url)
       return notify("请先选择一张已完成的图片", "error");
@@ -12074,6 +12186,28 @@ export default function SuperCanvas() {
         },
       };
     }
+    if (node.type === "angle") {
+      const pending = node.data.status === "queued" || node.data.status === "running";
+      return {
+        primaryActions: [
+          {
+            id: "open-angle",
+            icon: "edit",
+            label: pending ? "生成中…" : "打开角度工作台",
+            onClick: () => openCanvasAngleConsole(node.id),
+          },
+          {
+            id: "cancel-angle",
+            icon: "×",
+            label: "取消生成",
+            disabled: !pending,
+            onClick: () => cancelAngleGeneration(node.id),
+          },
+        ],
+        menuGroups: [],
+        dangerAction: { id: "delete-angle", icon: "delete", label: "删除", danger: true, onClick: deleteSelection },
+      };
+    }
     const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
     return {
       primaryActions: [
@@ -12097,6 +12231,8 @@ export default function SuperCanvas() {
     openCanvasVideoClipEditor,
     openOneClickCinematic,
     openCanvasVideoEditor,
+    openCanvasAngleConsole,
+    cancelAngleGeneration,
     continueFromMedia,
     deleteSelection,
     downloadCanvasNode,
@@ -12468,6 +12604,31 @@ export default function SuperCanvas() {
         layerGroup,
       ];
     }
+    if (node.type === "angle") {
+      const pending = node.data.status === "queued" || node.data.status === "running";
+      return [
+        {
+          label: "角度控制",
+          actions: [
+            {
+              id: "open-angle",
+              icon: "◈",
+              label: "打开角度工作台",
+              onClick: close(() => openCanvasAngleConsole(node.id)),
+            },
+            {
+              id: "cancel-angle",
+              icon: "×",
+              label: "取消生成",
+              disabled: !pending,
+              onClick: close(() => cancelAngleGeneration(node.id)),
+            },
+          ],
+        },
+        { label: "复制与整理", actions: canvasActions },
+        layerGroup,
+      ];
+    }
     return [
       { label: "复制与整理", actions: canvasActions },
       layerGroup,
@@ -12477,6 +12638,8 @@ export default function SuperCanvas() {
     openCanvasAudioPanel,
     openCanvasVideoClipEditor,
     openCanvasVideoEditor,
+    openCanvasAngleConsole,
+    cancelAngleGeneration,
     contextNode,
     contextMenu?.world,
     continueFromMedia,
@@ -13205,6 +13368,8 @@ export default function SuperCanvas() {
                      openCanvasMediaViewer(node.id)
                    }
                    onOpenVideoClip={() => openCanvasVideoClipEditor(node.id)}
+                  onOpenAngle={() => openCanvasAngleConsole(node.id)}
+                  onCancelAngle={() => cancelAngleGeneration(node.id)}
                    onOpenVideoEditor={() => openCanvasVideoEditor(node.id)}
                   onOutputPreview={(output) => openCanvasMediaViewer(output.id)}
                   onLocalEdit={() => openCanvasMaskEditor(node.id)}
@@ -13323,6 +13488,47 @@ export default function SuperCanvas() {
               onClose={() => setVideoEditorNodeId(null)}
               onCreate={(draft, selectedClipId) => createVideoEditorClip(videoEditorNode.id, draft, selectedClipId)}
             />
+          );
+        })()}
+        {angleNodeId && !nodeGestureActive && (() => {
+          const angleNode = document.nodes.find((item) => item.id === angleNodeId);
+          if (!angleNode || angleNode.type !== "angle") return null;
+          const referenceNode = incomingReferences(document, angleNode.id).find((item) => isCanvasReadyImageSource(item));
+          const reference = canvasAngleReferenceFromNode(referenceNode);
+          const angle = angleNode.data.angle || normalizeCanvasAngleParams();
+          return (
+            <div className="canvas-angle-workbench" data-canvas-wheel-isolate>
+              <AngleConsole
+                theme={theme}
+                embedded
+                reference={reference}
+                initialCamera={angle.camera}
+                initialCameraStart={angle.cameraStart}
+                initialOutput={angle.output}
+                initialNote={angle.angleNote}
+                models={runtime?.models || []}
+                results={[]}
+                busy={generationKeys.has(angleNode.id)}
+                onReferenceFiles={(files) => {
+                  if (referenceNode) {
+                    notify("请先移除当前参考图，再上传新的参考图。", "error");
+                    return;
+                  }
+                  void addEditorReferenceFiles(angleNode.id, Array.from(files).slice(0, 1));
+                }}
+                onExit={() => setAngleNodeId(null)}
+                onRemoveReference={() => {
+                  if (referenceNode) removeNodeReference(angleNode.id, referenceNode.id);
+                }}
+                onBrowseHistory={() => notify("请从画布中连接一张已完成图片作为参考。")}
+                onGenerate={(input) => runAngleGeneration(angleNode.id, input)}
+                onOpenResult={() => undefined}
+                onDownloadResult={() => undefined}
+                onDownloadShare={() => undefined}
+                onNotify={notify}
+                onDraftChange={handleCanvasAngleDraftChange}
+              />
+            </div>
           );
         })()}
         {expandedEditorId && !nodeGestureActive && (() => {
@@ -13965,6 +14171,11 @@ export default function SuperCanvas() {
             <button type="button" className="canvas-menu-item canvas-menu-item-tool" onClick={() => addNode("upscale", contextMenu.world)}>
               <span className="canvas-menu-icon" aria-hidden="true">↗</span>
               <span className="canvas-menu-copy"><b>超分节点</b><small>连接图片后在独立面板中提交</small></span>
+              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+            </button>
+            <button type="button" className="canvas-menu-item canvas-menu-item-tool canvas-menu-item-angle" onClick={() => addNode("angle", contextMenu.world)}>
+              <span className="canvas-menu-icon" aria-hidden="true">◈</span>
+              <span className="canvas-menu-copy"><b>角度控制节点</b><small>连接一张已完成图片，生成新的相机视角</small></span>
               <span className="canvas-menu-arrow" aria-hidden="true">›</span>
             </button>
 
@@ -17346,6 +17557,8 @@ function CanvasNodeCard({
   onPreview,
   onOpenVideoClip,
   onOpenVideoEditor,
+  onOpenAngle,
+  onCancelAngle,
   onTextPreview,
   onLocalEdit,
   onUseAsImagePrompt,
@@ -17393,6 +17606,8 @@ function CanvasNodeCard({
   onPreview: () => void;
   onOpenVideoClip: () => void;
   onOpenVideoEditor: () => void;
+  onOpenAngle: () => void;
+  onCancelAngle: () => void;
   onTextPreview: () => void;
   onLocalEdit: () => void;
   onUseAsImagePrompt: () => void;
@@ -17442,6 +17657,10 @@ function CanvasNodeCard({
       : null;
   const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
   const failed = data.status === "failed" && !data.url;
+  const angleReference = node.type === "angle"
+    ? incomingReferences(document, node.id).find((item) => isCanvasReadyImageSource(item))
+    : undefined;
+  const angleParams = node.type === "angle" ? data.angle : undefined;
   const videoClipSourceDuration =
     Number(data.sourceDurationMs || data.durationMs) > 0
       ? Number(data.sourceDurationMs || data.durationMs) / 1000
@@ -17602,7 +17821,7 @@ function CanvasNodeCard({
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
-      data-node-kind={node.type === "video-editor" ? "video-editor" : node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
+      data-node-kind={node.type === "angle" ? "angle" : node.type === "video-editor" ? "video-editor" : node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       aria-busy={pending}
       style={{
         left: node.x,
@@ -17624,7 +17843,8 @@ function CanvasNodeCard({
       onDoubleClick={(event) => {
         event.stopPropagation();
         if (referencePickerActive) return;
-        if (node.type === "video-editor") onOpenVideoEditor();
+        if (node.type === "angle") onOpenAngle();
+        else if (node.type === "video-editor") onOpenVideoEditor();
         else if (node.type === "media" && node.data.kind === "video" && node.data.url) onOpenVideoClip();
         else if (node.type === "prompt") onEdit(true);
         else if (node.type === "media" && node.data.kind === "audio") onToggleEditor(node);
@@ -17660,6 +17880,34 @@ function CanvasNodeCard({
           inputs={incomingContext(document, node.id).filter(isCanvasReferenceableNode)}
           onOpen={onOpenVideoEditor}
         />
+      ) : node.type === "angle" ? (
+        <div className="canvas-angle-card">
+          <div className="canvas-angle-card-head">
+            <span className="canvas-angle-card-icon" aria-hidden="true">◈</span>
+            <div><b>角度控制</b><small>相机视角 · 主体 · 光影</small></div>
+            <span className={`canvas-angle-card-state ${status}`}>{pending ? "生成中" : status === "failed" ? "失败" : angleReference ? "已连接" : "待输入"}</span>
+          </div>
+          {pending ? (
+            <CanvasProcessingIndicator label={processingLabel} progress={processingProgress} kind="image" startedAt={data.processingStartedAt} compact />
+          ) : angleReference?.data.url ? (
+            <div className="canvas-angle-card-reference">
+              <img src={String(angleReference.data.url)} alt={String(angleReference.data.name || "角度参考图")} draggable={false} />
+              <span>参考图</span>
+            </div>
+          ) : (
+            <div className="canvas-angle-card-empty"><b>连接一张已完成图片</b><small>角度节点只接受单张图片输入</small></div>
+          )}
+          <div className="canvas-angle-card-summary">
+            <span>机位 {angleParams ? `${Math.round(angleParams.camera.yaw)}° / ${Math.round(angleParams.camera.pitch)}°` : "原图"}</span>
+            <span>{angleParams?.subjectType || "通用主体"}</span>
+            <span>{angleParams?.lighting?.enabled ? "自定义灯光" : "原始光照"}</span>
+          </div>
+          {status === "failed" && <small className="canvas-angle-card-error">{String(data.statusLabel || "生成失败，可重试")}</small>}
+          <div className="canvas-angle-card-actions">
+            <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onOpenAngle(); }}>{status === "failed" ? "重试 / 编辑" : "打开工作台"}</button>
+            {pending && <button type="button" className="danger" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCancelAngle(); }}>取消</button>}
+          </div>
+        </div>
       ) : node.type === "media" && (
         <div className={`canvas-media-card${data.kind === "video" ? " video" : data.kind === "audio" ? " audio" : ""}`}>
           <div className="canvas-media-stage">

@@ -94,6 +94,11 @@ test('angle console exposes universal subject, view mode, guide and lighting con
   assert.match(source, /光源基准/);
 });
 
+test('embedded draft sync waits for persisted camera hydration', () => {
+  assert.match(source, /const initialDraftPendingRef = useRef\(Boolean\(initialCamera\)\)/);
+  assert.match(source, /if \(initialDraftPendingRef\.current\) \{[\s\S]*initialDraftPendingRef\.current = false;[\s\S]*return;[\s\S]*\}/);
+});
+
 test('angle console uses unified non-native menus for every dropdown surface', async () => {
   const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
   assert.match(source, /function AngleMenu</);

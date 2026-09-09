@@ -1193,6 +1193,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
   const preferenceRestoredRef = useRef(false);
   const previousReferenceIdRef = useRef<string | null | undefined>(reference?.id);
   const submittingRef = useRef(false);
+  const initialDraftPendingRef = useRef(Boolean(initialCamera));
 
   useEffect(() => {
     if (!helpOpen) return;
@@ -1240,6 +1241,9 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
       .join(' · ')
     : '';
   const hasReadyReference = Boolean(reference && !reference.pending);
+  const initialCameraKey = initialCamera ? JSON.stringify(initialCamera) : '';
+  const initialCameraStartKey = initialCameraStart ? JSON.stringify(initialCameraStart) : '';
+  const initialOutputKey = initialOutput ? JSON.stringify(initialOutput) : '';
   const submitState = !reference
     ? { title: '先添加参考图', detail: '上传或从历史选择一张图片，作为原始内容、结构与风格参考。', step: 1 }
     : reference.pending
@@ -1270,7 +1274,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     }
     image.src = referenceUrl;
     return () => { cancelled = true; };
-  }, [initialOutput, onNotify, reference?.id, reference?.dataUrl, reference?.url]);
+  }, [initialOutputKey, onNotify, reference?.id, reference?.dataUrl, reference?.url]);
 
   useEffect(() => {
     viewedResultIdsRef.current = readViewedAngleResultIds();
@@ -1334,14 +1338,22 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
 
   useEffect(() => {
     if (!initialCamera) return;
-    setCamera(createViewpointCamera(initialCamera));
-    setCameraStart(initialCameraStart ? normalizeAngleState(initialCameraStart) : null);
-    if (initialNote !== undefined) setNote(initialNote);
-    if (initialOutput) setAngleOutput(initialOutput);
-  }, [initialCamera, initialCameraStart, initialNote, initialOutput, reference?.id]);
+    const nextCamera = createViewpointCamera(initialCamera);
+    const nextCameraStart = initialCameraStart ? normalizeAngleState(initialCameraStart) : null;
+    setCamera((current) => JSON.stringify(current) === JSON.stringify(nextCamera) ? current : nextCamera);
+    setCameraStart((current) => JSON.stringify(current) === JSON.stringify(nextCameraStart) ? current : nextCameraStart);
+    if (initialNote !== undefined) setNote((current) => current === initialNote ? current : initialNote);
+    if (initialOutput) setAngleOutput((current) => JSON.stringify(current) === initialOutputKey ? current : initialOutput);
+  }, [initialCameraKey, initialCameraStartKey, initialNote, initialOutputKey, reference?.id]);
 
   useEffect(() => {
     if (!embedded || !onDraftChange) return;
+    // On mount, the persisted camera is hydrated in the effect above. Skip
+    // the first draft write so the initial local state cannot overwrite it.
+    if (initialDraftPendingRef.current) {
+      initialDraftPendingRef.current = false;
+      return;
+    }
     onDraftChange({
       camera,
       cameraStart,

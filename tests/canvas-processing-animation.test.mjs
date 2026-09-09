@@ -67,7 +67,7 @@ test("all running canvas node kinds share the indicator and elapsed clock", () =
   assert.match(canvas, /kind={processingKind}/);
   assert.equal(
     (canvas.match(/<CanvasProcessingIndicator/g) || []).length,
-    4,
-    "media, upscale, Agent and generator nodes should use the shared indicator",
+    5,
+    "media, angle, upscale, Agent and generator nodes should use the shared indicator",
   );
 });
