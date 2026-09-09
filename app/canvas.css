@@ -1642,7 +1642,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-one-click-advanced .select-menu{width:100%}.canvas-one-click-advanced .select-menu-trigger{height:34px;min-height:34px}
 .canvas-one-click-footer{box-sizing:border-box;min-width:0;flex-wrap:wrap;padding-bottom:18px}
 .canvas-one-click-footer button{box-sizing:border-box;min-width:0;max-width:100%;flex:0 1 auto;white-space:nowrap}
-@media(max-width:540px){.canvas-one-click-backdrop{padding:8px}.canvas-one-click-dialog{width:calc(100vw - 16px);height:min(860px,calc(100dvh - 16px));max-height:calc(100dvh - 16px)}.canvas-one-click-body{padding:13px}.canvas-one-click-video-param-grid{grid-template-columns:1fr}.canvas-one-click-v20-presets>div{grid-template-columns:repeat(2,minmax(0,1fr))}.canvas-one-click-v20-custom>div{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:540px){.canvas-one-click-backdrop{padding:8px}.canvas-one-click-dialog{width:calc(100vw - 16px);height:min(860px,calc(100dvh - 16px));max-height:calc(100dvh - 16px)}.canvas-one-click-body{padding:13px}.canvas-one-click-footer{justify-content:stretch}.canvas-one-click-footer button{flex:1 1 0;min-width:0;max-width:none;overflow:hidden;text-overflow:ellipsis}.canvas-one-click-video-param-grid{grid-template-columns:1fr}.canvas-one-click-v20-presets>div{grid-template-columns:repeat(2,minmax(0,1fr))}.canvas-one-click-v20-custom>div{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* Button hierarchy: compact toolbars should read as one control surface,
    while each action keeps a small color cue for fast scanning. */

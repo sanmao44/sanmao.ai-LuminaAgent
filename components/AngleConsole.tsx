@@ -1300,7 +1300,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     if (saved) {
         const savedCamera = saved.camera && typeof saved.camera === 'object' ? saved.camera : saved;
         setCamera(saved.referenceId === reference?.id ? createViewpointCamera(savedCamera) : { ...createViewpointCamera(), modelId: savedCamera.modelId || 'auto' });
-        setCameraStart(null);
+        setCameraStart(saved.cameraStart ? normalizeAngleState(saved.cameraStart) : null);
         if (typeof saved.note === 'string') setNote(saved.note);
       }
     } catch {}
@@ -1409,7 +1409,9 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     setPanelTab('controls');
     setControlTab('camera');
     setFramingStatus(GUIDE_FRAMING_PENDING);
-    try { localStorage.setItem('sanmao-angle-settings', JSON.stringify({ camera: defaults, cameraStart: null, note: '' })); } catch {}
+    if (!embedded) {
+      try { localStorage.setItem('sanmao-angle-settings', JSON.stringify({ camera: defaults, cameraStart: null, note: '' })); } catch {}
+    }
     onNotify('已恢复默认参考视角、通用主体和原始光照；参考图与生成结果已保留。');
   }
 
@@ -1442,7 +1444,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     if (viewpoint.guide && viewpoint.changeView && !guideReference) return onNotify('空间构图导引截图失败，请关闭导引或重新载入空间预览。');
     const selectedModel = camera.modelId !== 'auto' ? modelOptions.find((model) => model.id === camera.modelId) : undefined;
     recordModelCall({ context: 'angle', mode: selectedModel ? 'manual' : 'auto', providerId: selectedModel?.providerId, modelId: selectedModel?.id, params: { yaw: camera.yaw, pitch: camera.pitch, roll: camera.roll, focal: camera.focal, distance: camera.distance, frameX: camera.frameX, frameY: camera.frameY, compositionLock: camera.compositionLock, note } });
-    await onGenerate({ reference, guideReference: guideReference || undefined, output: angleOutput, camera, cameraStart: null, note, prompt: compiledPrompt });
+    await onGenerate({ reference, guideReference: guideReference || undefined, output: angleOutput, camera, cameraStart, note, prompt: compiledPrompt });
     } catch (error) {
       onNotify(error instanceof Error ? error.message : '视角生成失败，请重试。');
     } finally {
@@ -1573,7 +1575,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
       <div className="angle-preview-grid">
         <div className="angle-preview-pane angle-reference-pane">
           <div className="angle-pane-label"><b>原始参考图</b></div>
-          {reference ? <div className="angle-image-frame"><img draggable={false} src={reference.dataUrl} alt={reference.name}/></div> : <div className="angle-empty-reference"><strong>粘贴、拖入或上传参考图</strong><span>也可以从生成历史中选择一张已有图片。</span><div><button type="button" className="primary-small" onClick={() => referenceInputRef.current?.click()}>选择图片</button><button type="button" className="ghost-button" onClick={onBrowseHistory}>打开历史</button></div></div>}
+          {reference ? <div className="angle-image-frame"><img draggable={false} src={reference.dataUrl || reference.url} alt={reference.name}/></div> : <div className="angle-empty-reference"><strong>粘贴、拖入或上传参考图</strong><span>也可以从生成历史中选择一张已有图片。</span><div><button type="button" className="primary-small" onClick={() => referenceInputRef.current?.click()}>选择图片</button><button type="button" className="ghost-button" onClick={onBrowseHistory}>打开历史</button></div></div>}
           {reference?.pending && <div className="angle-reference-loading" role="status" aria-live="polite"><span className="mini-loader"/><span>正在准备参考图…</span></div>}
           {reference && <div className="angle-pane-tools"><button type="button" onClick={() => referenceInputRef.current?.click()}>更换参考图</button><button type="button" onClick={onBrowseHistory}>从历史选择</button><button type="button" title="恢复人物居中" onClick={() => updateCamera({ frameX: 0, frameY: 0 })}>构图居中</button></div>}
           {reference && <div className="angle-reference-hud"><span><b>图 1</b> 原始内容、结构与风格参考</span><small title={reference.name}>{reference.name}</small></div>}
