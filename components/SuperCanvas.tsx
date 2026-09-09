@@ -5116,34 +5116,9 @@ export default function SuperCanvas() {
 
   const addNode = useCallback(
     (
-      kind: "image" | "video" | "audio" | "text" | "workflowImage" | "workflowVideo" | "upscale" | "videoEditor",
+      kind: "image" | "video" | "audio" | "text" | "workflowImage" | "workflowVideo" | "upscale" | "videoEditor" | "angle",
       position?: Point,
     ) => {
-      if (kind === "angle") {
-        const seed = position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
-        const draft = createAngleNode(seed);
-        const point = position ? seed : openNodePosition(seed, draft);
-        const node = { ...draft, x: point.x, y: point.y };
-        const source = selectedSingle && isCanvasReadyImageSource(selectedSingle) ? selectedSingle : undefined;
-        const connected = source
-          ? connectCanvasNodesInDocument(
-              { ...docRef.current, nodes: [...docRef.current.nodes, node] },
-              source.id,
-              node.id,
-              "right",
-              "left",
-              runtime,
-            )
-          : { ok: true, document: { ...docRef.current, nodes: [...docRef.current.nodes, node] } };
-        if (!connected.ok) return notify(connected.reason || "无法创建角度控制节点。", "error");
-        commit(() => connected.document);
-        setSelectedIds(new Set([node.id]));
-        setSelectedGroupId(null);
-        setAngleNodeId(node.id);
-        setContextMenu(null);
-        notify(source ? "已添加并连接角度控制节点" : "已添加角度控制节点，请连接一张已完成图片");
-        return;
-      }
       if (kind === "upscale") {
         const seed = position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
         const draft = createUpscaleNode(seed);
