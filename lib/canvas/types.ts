@@ -4,6 +4,22 @@ import type { LocalEditAnnotation } from '../local-edit';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor';
 export type CanvasMediaKind = 'image' | 'video' | 'audio';
+/** A non-destructive range that reuses the original video source. */
+export type CanvasVideoClipState = {
+  version: 1;
+  /** Source node kept only for provenance; playback still uses `data.url`. */
+  sourceNodeId?: string;
+  startTime: number;
+  endTime: number;
+  volume: number;
+  muted: boolean;
+  playbackRate: 0.5 | 1 | 1.5 | 2;
+  fit: 'contain' | 'cover';
+  scale?: number;
+  x?: number;
+  y?: number;
+  opacity?: number;
+};
 export type CanvasVideoEditorTrack = 'video' | 'audio' | 'caption';
 export type CanvasVideoEditorClipType = 'image' | 'video' | 'audio' | 'caption';
 
@@ -14,6 +30,7 @@ export type CanvasVideoEditorClip = {
   type: CanvasVideoEditorClipType;
   name: string;
   start: number;
+  /** Duration on the editor timeline (after the clip playback rate is applied). */
   duration: number;
   sourceOffset: number;
   text?: string;
@@ -22,6 +39,8 @@ export type CanvasVideoEditorClip = {
   x?: number;
   y?: number;
   volume?: number;
+  playbackRate?: 0.5 | 1 | 1.5 | 2;
+  fit?: 'contain' | 'cover';
   fadeIn?: number;
 };
 
@@ -30,6 +49,8 @@ export type CanvasVideoEditorState = {
   projectDuration: number;
   fps: number;
   aspect: string;
+  /** Output canvas quality preset used by the editor preview/export handoff. */
+  resolution?: "720p" | "1080p" | "2K" | "4K";
   clips: CanvasVideoEditorClip[];
   mutedTracks: CanvasVideoEditorTrack[];
 };
@@ -187,6 +208,10 @@ export type CanvasNodeData = {
   nativeHeight?: number;
   /** Duration of a loaded video in milliseconds, when available. */
   durationMs?: number;
+  /** Native media duration for a referenced video clip, in milliseconds. */
+  sourceDurationMs?: number;
+  /** Trim and playback metadata for a video node; editor outputs may materialize it. */
+  videoClip?: CanvasVideoClipState;
   /** Identifies the node operation that produced the current media URL. */
   resultSource?: "upscale-node";
   referenceOrder?: string[];

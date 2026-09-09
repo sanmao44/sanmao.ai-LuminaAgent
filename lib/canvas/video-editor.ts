@@ -14,6 +14,7 @@ export type CanvasVideoEditorInput = {
 
 export const VIDEO_EDITOR_DEFAULT_FPS = 30;
 export const VIDEO_EDITOR_DEFAULT_ASPECT = "16:9";
+export const VIDEO_EDITOR_DEFAULT_RESOLUTION = "1080p" as const;
 
 const TRACK_ORDER: CanvasVideoEditorTrack[] = ["video", "audio", "caption"];
 
@@ -28,6 +29,12 @@ function clamp(value: number, min: number, max: number) {
 
 function normalizeTrack(value: unknown): CanvasVideoEditorTrack {
   return value === "audio" || value === "caption" ? value : "video";
+}
+
+function clipPlaybackRate(clip: Pick<CanvasVideoEditorClip, "playbackRate">) {
+  return clip.playbackRate === 0.5 || clip.playbackRate === 1.5 || clip.playbackRate === 2
+    ? clip.playbackRate
+    : 1;
 }
 
 function normalizeClipType(value: unknown, track: CanvasVideoEditorTrack): CanvasVideoEditorClipType {
@@ -60,6 +67,11 @@ function normalizeClip(value: unknown, index: number): CanvasVideoEditorClip | n
   if (raw.x !== undefined) clip.x = clamp(finite(raw.x, 0), -1, 1);
   if (raw.y !== undefined) clip.y = clamp(finite(raw.y, 0), -1, 1);
   if (raw.volume !== undefined) clip.volume = clamp(finite(raw.volume, 1), 0, 2);
+  if (raw.playbackRate !== undefined) {
+    const playbackRate = finite(raw.playbackRate, 1);
+    clip.playbackRate = playbackRate === 0.5 || playbackRate === 1.5 || playbackRate === 2 ? playbackRate : 1;
+  }
+  if (raw.fit !== undefined) clip.fit = raw.fit === "cover" ? "cover" : "contain";
   if (raw.fadeIn !== undefined) clip.fadeIn = clamp(finite(raw.fadeIn, 0), 0, duration);
   return clip;
 }
@@ -78,6 +90,7 @@ export function normalizeVideoEditorState(value: unknown): CanvasVideoEditorStat
     projectDuration: Math.max(maxEnd, finite(raw.projectDuration, maxEnd)),
     fps: clamp(Math.round(finite(raw.fps, VIDEO_EDITOR_DEFAULT_FPS)), 1, 120),
     aspect: typeof raw.aspect === "string" && raw.aspect.trim() ? raw.aspect.trim() : VIDEO_EDITOR_DEFAULT_ASPECT,
+    resolution: raw.resolution === "720p" || raw.resolution === "2K" || raw.resolution === "4K" ? raw.resolution : VIDEO_EDITOR_DEFAULT_RESOLUTION,
     clips,
     mutedTracks,
   };
@@ -92,6 +105,7 @@ export function createVideoEditorState(
       projectDuration: 0,
       fps: VIDEO_EDITOR_DEFAULT_FPS,
       aspect: VIDEO_EDITOR_DEFAULT_ASPECT,
+      resolution: VIDEO_EDITOR_DEFAULT_RESOLUTION,
       clips: [],
       mutedTracks: [],
     },
@@ -118,7 +132,8 @@ function clipForInput(input: CanvasVideoEditorInput, start: number): CanvasVideo
     sourceOffset: 0,
     scale: 1,
     opacity: 1,
-    volume: isAudio ? 1 : undefined,
+    volume: 1,
+    ...(input.kind === "video" ? { playbackRate: 1 as const, fit: "contain" as const } : {}),
   };
 }
 
@@ -179,11 +194,32 @@ export function updateVideoEditorClip(
 ): CanvasVideoEditorState {
   const clips = state.clips.map((clip) => {
     if (clip.id !== clipId) return clip;
-    const duration = clamp(finite(patch.duration, clip.duration), 0.05, 24 * 60 * 60);
+    const currentRate = clipPlaybackRate(clip);
+    const nextRate = clipPlaybackRate({ playbackRate: patch.playbackRate ?? currentRate });
+    // A clip duration is measured on the project timeline. When only speed
+    // changes, retain the same source range and derive its new output length.
+    const duration = clamp(
+      patch.duration === undefined
+        ? clip.duration * currentRate / nextRate
+        : finite(patch.duration, clip.duration),
+      0.05,
+      24 * 60 * 60,
+    );
     return normalizeClip({ ...clip, ...patch, duration }, 0) || clip;
   });
   const projectDuration = clips.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0);
   return { ...state, clips, projectDuration };
+}
+
+/** Move a clip on its track without changing its source range or duration. */
+export function moveVideoEditorClip(
+  state: CanvasVideoEditorState,
+  clipId: string,
+  start: number,
+): CanvasVideoEditorState {
+  const clip = state.clips.find((item) => item.id === clipId);
+  if (!clip) return state;
+  return updateVideoEditorClip(state, clipId, { start: Math.max(0, finite(start, clip.start)) });
 }
 
 export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: string) {
@@ -211,7 +247,7 @@ export function splitVideoEditorClip(
     id: `${clip.id}-split-${Math.round(point * 1000)}`,
     start: point,
     duration: clip.duration - firstDuration,
-    sourceOffset: clip.sourceOffset + firstDuration,
+    sourceOffset: clip.sourceOffset + firstDuration * clipPlaybackRate(clip),
   };
   const clips = state.clips.flatMap((item) => item.id === clipId
     ? [{ ...item, duration: firstDuration }, second]
@@ -238,7 +274,7 @@ export function trimVideoEditorClip(
   return updateVideoEditorClip(state, clipId, {
     start: nextStart,
     duration: nextDuration,
-    sourceOffset: clip.sourceOffset + leftTrim,
+    sourceOffset: clip.sourceOffset + leftTrim * clipPlaybackRate(clip),
   });
 }
 
@@ -268,8 +304,18 @@ export function addVideoEditorCaption(
   start = 0,
   duration = 3,
 ): CanvasVideoEditorState {
-  const safeStart = Math.max(0, Number(start) || 0);
   const safeDuration = clamp(Number(duration) || 3, 0.05, 24 * 60 * 60);
+  const requestedStart = Math.max(0, Number(start) || 0);
+  const captionClips = state.clips.filter((clip) => clip.track === "caption");
+  let safeStart = requestedStart;
+  // Keep one caption track readable: when the playhead is inside an existing
+  // caption, place the new caption after the blocking range instead of
+  // stacking two clips at the same time and hiding one in preview.
+  while (captionClips.some((clip) => safeStart < clipEnd(clip) && safeStart + safeDuration > clip.start)) {
+    safeStart = captionClips
+      .filter((clip) => safeStart < clipEnd(clip) && safeStart + safeDuration > clip.start)
+      .reduce((end, clip) => Math.max(end, clipEnd(clip)), safeStart);
+  }
   const clip: CanvasVideoEditorClip = {
     id: `caption-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     track: "caption",

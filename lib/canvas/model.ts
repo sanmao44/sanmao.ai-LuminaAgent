@@ -17,6 +17,7 @@ import type {
 import { normalizeCreationSettings } from "../creation/settings";
 import { normalizeCanvasMaskState } from "./mask";
 import { createVideoEditorState, normalizeVideoEditorState } from "./video-editor";
+import { normalizeCanvasVideoClipState, videoClipDurationSeconds } from "./video-clip";
 import {
   normalizeCanvasEntityLayers,
   normalizeCanvasNodeLayers,
@@ -286,6 +287,20 @@ function normalizeNode(value: unknown): CanvasNode | null {
   }
   if (type === "media" && data.kind === "video")
     normalizeVideoInputModeState(data);
+  if (type === "media" && data.kind === "video") {
+    const sourceDurationSeconds = Number(data.sourceDurationMs || data.durationMs) / 1000;
+    const videoClip = normalizeCanvasVideoClipState(
+      data.videoClip,
+      sourceDurationSeconds,
+    );
+    if (videoClip) {
+      data.videoClip = videoClip;
+      data.durationMs = Math.round(videoClipDurationSeconds(videoClip) * 1000);
+    } else {
+      delete data.videoClip;
+      delete data.sourceDurationMs;
+    }
+  }
   if (type === "media" && data.generation) {
     const kind = mediaKind(data.generation.kind || data.kind);
     data.generation = kind === "audio"

@@ -27,7 +27,7 @@ export default function VideoEditorNode({ state: rawState, inputs, onOpen }: Vid
           <span className="canvas-video-editor-icon" aria-hidden="true">✂</span>
           <div>
             <b>视频编辑节点</b>
-            <small>可持久化编辑计划</small>
+            <small>多轨剪辑、裁剪、分割和字幕</small>
           </div>
         </div>
         <button

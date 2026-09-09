@@ -198,6 +198,7 @@ import SelectMenu from "@/components/SelectMenu";
 import CanvasImageEditorWorkbench, {
   type CanvasImageEditorSaveRequest,
 } from "@/components/canvas/CanvasImageEditorWorkbench";
+import CanvasVideoClipWorkbench from "@/components/canvas/CanvasVideoClipWorkbench";
 import CanvasGroupComposeDialog, {
   type CanvasGroupComposeSettings,
   type CanvasGroupComposeSource,
@@ -219,6 +220,7 @@ import type {
   CanvasSnapshot,
   CanvasVariantState,
   CanvasUpscaleParams,
+  CanvasVideoClipState,
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
 import {
@@ -226,6 +228,11 @@ import {
   syncVideoEditorInputs,
   type CanvasVideoEditorInput,
 } from "@/lib/canvas/video-editor";
+import {
+  normalizeCanvasVideoClipState,
+  videoClipDurationSeconds,
+} from "@/lib/canvas/video-clip";
+import { renderCanvasVideoClip } from "@/lib/canvas/video-trim";
 import {
   renderCanvasImageGrid,
   renderCanvasImageGridComposite,
@@ -2670,6 +2677,7 @@ export default function SuperCanvas() {
     null,
   );
   const [imageEditorNodeId, setImageEditorNodeId] = useState<string | null>(null);
+  const [videoClipEditorNodeId, setVideoClipEditorNodeId] = useState<string | null>(null);
   const [videoEditorNodeId, setVideoEditorNodeId] = useState<string | null>(null);
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
@@ -2804,6 +2812,7 @@ export default function SuperCanvas() {
     setLightbox(null);
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
+    setVideoClipEditorNodeId(null);
     setVideoEditorNodeId(null);
     setAssetCollectionPickerNodeId(null);
     setActivePanel(null);
@@ -2863,6 +2872,20 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([nodeId]));
       setSelectedGroupId(null);
       setVideoEditorNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasVideoClipEditor = useCallback(
+    (nodeId: string) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (node?.type !== "media" || node.data.kind !== "video" || !node.data.url) {
+        return;
+      }
+      closeCanvasOverlayConflicts();
+      setSelectedIds(new Set([nodeId]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      setVideoClipEditorNodeId(nodeId);
     },
     [closeCanvasOverlayConflicts],
   );
@@ -3104,28 +3127,6 @@ export default function SuperCanvas() {
       updateDoc(updater);
     },
     [updateDoc],
-  );
-  const updateVideoEditorNodeState = useCallback(
-    (nodeId: string, videoEditor: CanvasVideoEditorState) => {
-      commit((value) => ({
-        ...value,
-        nodes: value.nodes.map((node) =>
-          node.id === nodeId && node.type === "video-editor"
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  videoEditor,
-                  statusLabel: videoEditor.clips.length
-                    ? `${videoEditor.clips.length} 个片段 · 编辑计划`
-                    : "连接素材后自动入轨",
-                },
-              }
-            : node,
-        ),
-      }));
-    },
-    [commit],
   );
   const addLog = useCallback(
     (message: string) => {
@@ -5703,8 +5704,22 @@ export default function SuperCanvas() {
           const dimensionsChanged =
             hasNaturalSize &&
             (node.data.nativeWidth !== width || node.data.nativeHeight !== height);
+          const videoClip =
+            node.type === "media" && node.data.kind === "video"
+              ? normalizeCanvasVideoClipState(
+                  node.data.videoClip,
+                  durationMs !== undefined ? durationMs / 1000 : Number(node.data.sourceDurationMs || node.data.durationMs) / 1000,
+                )
+              : undefined;
+          const effectiveDurationMs = videoClip
+            ? Math.round(videoClipDurationSeconds(videoClip) * 1000)
+            : durationMs;
+          const sourceDurationChanged =
+            Boolean(videoClip) &&
+            durationMs !== undefined &&
+            node.data.sourceDurationMs !== durationMs;
           const durationChanged =
-            durationMs !== undefined && node.data.durationMs !== durationMs;
+            effectiveDurationMs !== undefined && node.data.durationMs !== effectiveDurationMs;
           const nextSize =
             hasNaturalSize && node.data.autoFit !== false
               ? node.type === "upscale"
@@ -5718,7 +5733,7 @@ export default function SuperCanvas() {
           // loadedmetadata may fire again when a selected video is remounted.
           // Returning the original node/document when nothing changed prevents
           // that browser event from creating a React state-update loop.
-          if (!dimensionsChanged && !durationChanged && !cardSizeChanged)
+          if (!dimensionsChanged && !durationChanged && !sourceDurationChanged && !cardSizeChanged)
             return node;
 
           changed = true;
@@ -5730,7 +5745,8 @@ export default function SuperCanvas() {
               ...(hasNaturalSize
                 ? { nativeWidth: width, nativeHeight: height }
                 : {}),
-              ...(durationMs !== undefined ? { durationMs } : {}),
+              ...(effectiveDurationMs !== undefined ? { durationMs: effectiveDurationMs } : {}),
+              ...(sourceDurationChanged ? { sourceDurationMs: durationMs } : {}),
             },
           };
         });
@@ -9852,6 +9868,230 @@ export default function SuperCanvas() {
     setImageEditorNodeId(null);
   }, [addLog, commit, imageEditorNodeId, notify, openNodePosition, runtime]);
 
+  const createVideoClip = useCallback(async (draft: CanvasVideoClipState) => {
+    const source = videoClipEditorNodeId
+      ? nodeById(docRef.current, videoClipEditorNodeId)
+      : undefined;
+    if (
+      !source ||
+      source.type !== "media" ||
+      source.data.kind !== "video" ||
+      !source.data.url
+    ) {
+      notify("当前视频节点已不存在，请重新打开剪辑", "error");
+      return;
+    }
+    const sourceDurationMs = Number(source.data.sourceDurationMs || source.data.durationMs);
+    const sourceDuration = Number.isFinite(sourceDurationMs) && sourceDurationMs > 0
+      ? sourceDurationMs / 1000
+      : undefined;
+    const clip = normalizeCanvasVideoClipState(draft, sourceDuration);
+    if (!clip || clip.endTime <= clip.startTime) {
+      notify("剪辑范围无效，请调整开始和结束时间", "error");
+      return;
+    }
+    const sourceName = String(source.data.name || "视频");
+    let rendered: Awaited<ReturnType<typeof renderCanvasVideoClip>>;
+    try {
+      rendered = await renderCanvasVideoClip(String(source.data.url), clip);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "视频裁剪失败，请重试", "error");
+      return;
+    }
+    const clipDurationMs = Math.round(rendered.durationSeconds * 1000);
+    if (!rendered.blob.size) {
+      notify("视频裁剪没有生成有效文件，请重试", "error");
+      return;
+    }
+    let asset: Awaited<ReturnType<typeof uploadCanvasAsset>>;
+    try {
+      asset = await uploadCanvasAsset(
+        new File([rendered.blob], `${sourceName}-剪辑.webm`, { type: rendered.mime }),
+      );
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "裁剪视频上传失败，请重试", "error");
+      return;
+    }
+    const videoParams = videoParamsForCanvasNode(source, runtime);
+    const createdAt = Date.now();
+    const resultName = `${sourceName} · 剪辑`;
+    const outputClip: CanvasVideoClipState = {
+      version: 1,
+      sourceNodeId: source.id,
+      startTime: 0,
+      endTime: rendered.durationSeconds,
+      volume: clip.volume,
+      muted: clip.muted,
+      playbackRate: 1,
+      fit: clip.fit,
+    };
+    const draftNode = createMedia(
+      "video",
+      asset.url,
+      resultName,
+      { x: source.x + nodeSize(source).w + 90, y: source.y },
+      {
+        role: "视频剪辑结果",
+        status: "completed",
+        statusLabel: "视频剪辑结果",
+        assetId: asset.id,
+        sourceAssetId: source.data.sourceAssetId || source.data.assetId,
+        mimeType: asset.mime,
+        autoFit: source.data.autoFit !== false,
+        nativeWidth: rendered.width || source.data.nativeWidth,
+        nativeHeight: rendered.height || source.data.nativeHeight,
+        durationMs: clipDurationMs,
+        sourceDurationMs: clipDurationMs,
+        videoClip: outputClip,
+        params: clone(videoParams),
+        generation: {
+          kind: "video",
+           prompt: "视频裁剪",
+          params: clone(videoParams),
+          operation: "edit",
+          referenceIds: [source.id],
+          parentNodeId: source.id,
+          createdAt,
+        },
+      },
+    );
+    const positioned = {
+      ...draftNode,
+      ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode),
+    };
+    commit((value) => ({
+      ...value,
+      nodes: [...value.nodes, positioned],
+      edges: [
+        ...value.edges,
+        {
+          id: uid("edge"),
+          source: source.id,
+          target: positioned.id,
+          sourcePort: "right",
+          targetPort: "left",
+          kind: "lineage",
+        },
+      ],
+    }));
+    setSelectedIds(new Set([positioned.id]));
+    setSelectedGroupId(null);
+    setVideoClipEditorNodeId(null);
+    notify("已创建视频剪辑节点");
+    addLog(`视频剪辑已创建：${sourceName}`);
+  }, [addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
+
+  const createVideoEditorClip = useCallback((
+    editorNodeId: string,
+    draft: CanvasVideoEditorState,
+    selectedClipId: string | null,
+  ) => {
+    const editorNode = nodeById(docRef.current, editorNodeId);
+    if (!editorNode || editorNode.type !== "video-editor") {
+      notify("当前视频编辑节点已不存在，请重新打开工作台", "error");
+      return;
+    }
+
+    const selected = selectedClipId
+      ? draft.clips.find((clip) => clip.id === selectedClipId)
+      : undefined;
+    const candidates = selected ? [selected, ...draft.clips.filter((clip) => clip.id !== selected.id)] : draft.clips;
+    const sourceClip = candidates.find((clip) => {
+      if (clip.track !== "video" || clip.type !== "video" || !clip.sourceNodeId) return false;
+      const source = nodeById(docRef.current, clip.sourceNodeId);
+      return source?.type === "media" && source.data.kind === "video" && Boolean(source.data.url);
+    });
+    const source = sourceClip?.sourceNodeId ? nodeById(docRef.current, sourceClip.sourceNodeId) : undefined;
+    if (!sourceClip || !source || source.type !== "media" || source.data.kind !== "video" || !source.data.url) {
+      notify("请先连接一个可用的视频节点并选中其片段", "error");
+      return;
+    }
+
+    const sourceDurationMs = Number(source.data.sourceDurationMs || source.data.durationMs);
+    const sourceDuration = Number.isFinite(sourceDurationMs) && sourceDurationMs > 0
+      ? sourceDurationMs / 1000
+      : undefined;
+    const clip = normalizeCanvasVideoClipState(
+      {
+        version: 1,
+        sourceNodeId: source.id,
+        startTime: sourceClip.sourceOffset,
+        endTime: sourceClip.sourceOffset + sourceClip.duration * (sourceClip.playbackRate ?? 1),
+        volume: sourceClip.volume ?? 1,
+        muted: draft.mutedTracks.includes("video"),
+        playbackRate: sourceClip.playbackRate ?? 1,
+        fit: sourceClip.fit ?? "contain",
+        scale: sourceClip.scale ?? 1,
+        x: sourceClip.x ?? 0,
+        y: sourceClip.y ?? 0,
+        opacity: sourceClip.opacity ?? 1,
+      },
+      sourceDuration,
+    );
+    if (!clip || clip.endTime <= clip.startTime) {
+      notify("剪辑范围无效，请调整时间线片段", "error");
+      return;
+    }
+
+    const sourceName = String(source.data.name || "视频");
+    const clipDurationMs = Math.round(videoClipDurationSeconds(clip) * 1000);
+    const videoParams = { ...videoParamsForCanvasNode(source, runtime), aspect: draft.aspect, resolution: draft.resolution || "1080p" };
+    const createdAt = Date.now();
+    const draftNode = createMedia(
+      "video",
+      String(source.data.url),
+      `${sourceName} · 剪辑`,
+      { x: source.x + nodeSize(source).w + 90, y: source.y },
+      {
+        role: "视频剪辑结果",
+        status: "completed",
+        statusLabel: "引用式视频剪辑",
+        sourceAssetId: source.data.sourceAssetId || source.data.assetId,
+        mimeType: source.data.mimeType,
+        autoFit: source.data.autoFit !== false,
+        nativeWidth: source.data.nativeWidth,
+        nativeHeight: source.data.nativeHeight,
+        durationMs: clipDurationMs,
+        ...(sourceDurationMs > 0 ? { sourceDurationMs } : {}),
+        videoClip: clip,
+        params: clone(videoParams),
+        generation: {
+          kind: "video",
+          prompt: "引用式视频剪辑",
+          params: clone(videoParams),
+          operation: "edit",
+          referenceIds: [source.id, editorNode.id],
+          parentNodeId: source.id,
+          createdAt,
+        },
+      },
+    );
+    const positioned = {
+      ...draftNode,
+      ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode),
+    };
+    commit((value) => ({
+      ...value,
+      nodes: [...value.nodes, positioned],
+      edges: [
+        ...value.edges,
+        {
+          id: uid("edge"),
+          source: source.id,
+          target: positioned.id,
+          sourcePort: "right",
+          targetPort: "left",
+          kind: "lineage",
+        },
+      ],
+    }));
+    setSelectedIds(new Set([positioned.id]));
+    setSelectedGroupId(null);
+    setVideoEditorNodeId(null);
+    notify("已创建视频剪辑节点");
+    addLog(`视频剪辑已创建：${sourceName}`);
+  }, [addLog, commit, notify, openNodePosition, runtime]);
+
   const runUpscaleNode = useCallback(async (node: CanvasNode) => {
     if (node.type !== "upscale") return;
     const source = canvasUpscaleSource(docRef.current, node.id);
@@ -11218,6 +11458,13 @@ export default function SuperCanvas() {
       return {
         primaryActions: [
           {
+            id: "trim-video",
+            icon: "edit",
+            label: "剪辑视频",
+            disabled: !hasMedia,
+            onClick: () => openCanvasVideoClipEditor(node.id),
+          },
+          {
             id: "continue",
             icon: "play",
             label: "继续生成 / 变体",
@@ -11350,6 +11597,7 @@ export default function SuperCanvas() {
     openCanvasMaskEditor,
     openCanvasTextViewer,
     openCanvasAudioPanel,
+    openCanvasVideoClipEditor,
     openCanvasVideoEditor,
     continueFromMedia,
     deleteSelection,
@@ -11615,6 +11863,13 @@ export default function SuperCanvas() {
     if (node.type === "media" && node.data.kind === "video") {
       const mediaActions: CanvasQuickAction[] = [
         {
+          id: "trim-video",
+          icon: "✂",
+          label: "剪辑视频",
+          disabled: !hasMedia,
+          onClick: close(() => openCanvasVideoClipEditor(node.id)),
+        },
+        {
           id: "continue",
           icon: "▶",
           label: "继续生成 / 变体",
@@ -11722,6 +11977,7 @@ export default function SuperCanvas() {
   }, [
     openAssetCollectionPicker,
     openCanvasAudioPanel,
+    openCanvasVideoClipEditor,
     openCanvasVideoEditor,
     contextNode,
     contextMenu?.world,
@@ -12447,10 +12703,11 @@ export default function SuperCanvas() {
                    onConnect={startConnection}
                    onSelect={(event) => selectNode(node, event.shiftKey)}
                    onRemoveFromGroup={() => removeNodeFromGroup(node.id)}
-                  onPreview={() =>
-                    openCanvasMediaViewer(node.id)
-                  }
-                  onOpenVideoEditor={() => openCanvasVideoEditor(node.id)}
+                   onPreview={() =>
+                     openCanvasMediaViewer(node.id)
+                   }
+                   onOpenVideoClip={() => openCanvasVideoClipEditor(node.id)}
+                   onOpenVideoEditor={() => openCanvasVideoEditor(node.id)}
                   onOutputPreview={(output) => openCanvasMediaViewer(output.id)}
                   onLocalEdit={() => openCanvasMaskEditor(node.id)}
                   onTextPreview={() => openCanvasTextViewer(node.id)}
@@ -12531,6 +12788,17 @@ export default function SuperCanvas() {
             />
           );
         })()}
+        {videoClipEditorNodeId && !nodeGestureActive && (() => {
+          const videoClipNode = document.nodes.find((item) => item.id === videoClipEditorNodeId);
+          if (!videoClipNode || videoClipNode.type !== "media" || videoClipNode.data.kind !== "video" || !videoClipNode.data.url) return null;
+          return (
+            <CanvasVideoClipWorkbench
+              node={videoClipNode}
+              onClose={() => setVideoClipEditorNodeId(null)}
+              onCreate={createVideoClip}
+            />
+          );
+        })()}
         {videoEditorNodeId && !nodeGestureActive && (() => {
           const videoEditorNode = document.nodes.find((item) => item.id === videoEditorNodeId);
           if (!videoEditorNode || videoEditorNode.type !== "video-editor") return null;
@@ -12539,7 +12807,7 @@ export default function SuperCanvas() {
               node={videoEditorNode}
               document={document}
               onClose={() => setVideoEditorNodeId(null)}
-              onChange={(videoEditor) => updateVideoEditorNodeState(videoEditorNode.id, videoEditor)}
+              onCreate={(draft, selectedClipId) => createVideoEditorClip(videoEditorNode.id, draft, selectedClipId)}
             />
           );
         })()}
@@ -16560,6 +16828,7 @@ function CanvasNodeCard({
   onSelect,
   onRemoveFromGroup,
   onPreview,
+  onOpenVideoClip,
   onOpenVideoEditor,
   onTextPreview,
   onLocalEdit,
@@ -16606,6 +16875,7 @@ function CanvasNodeCard({
   onSelect: (event: ReactPointerEvent) => void;
   onRemoveFromGroup: () => void;
   onPreview: () => void;
+  onOpenVideoClip: () => void;
   onOpenVideoEditor: () => void;
   onTextPreview: () => void;
   onLocalEdit: () => void;
@@ -16656,9 +16926,20 @@ function CanvasNodeCard({
       : null;
   const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
   const failed = data.status === "failed" && !data.url;
+  const videoClipSourceDuration =
+    Number(data.sourceDurationMs || data.durationMs) > 0
+      ? Number(data.sourceDurationMs || data.durationMs) / 1000
+      : undefined;
+  const videoClip =
+    node.type === "media" && data.kind === "video"
+      ? normalizeCanvasVideoClipState(data.videoClip, videoClipSourceDuration)
+      : undefined;
+  const sourceVideoDuration = formatCanvasVideoDuration(data.durationMs);
   const videoDuration =
     node.type === "media" && data.kind === "video" && data.url
-      ? formatCanvasVideoDuration(data.durationMs)
+      ? videoClip
+        ? formatCanvasVideoDuration(Math.round(videoClipDurationSeconds(videoClip) * 1000))
+        : sourceVideoDuration
       : "";
   const videoResolution =
     node.type === "media" &&
@@ -16772,17 +17053,27 @@ function CanvasNodeCard({
     const video = videoRef.current;
     if (video) {
       video.pause();
-      video.currentTime = 0;
+      try {
+        video.currentTime = videoClip?.startTime || 0;
+      } catch {}
     }
     setVideoPlaybackState("paused");
-  }, [data.url]);
+  }, [data.url, videoClip?.startTime]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoClip) return;
+    video.playbackRate = videoClip.playbackRate;
+    video.volume = videoClip.muted ? 0 : videoClip.volume;
+  }, [videoClip?.muted, videoClip?.playbackRate, videoClip?.volume]);
 
   const toggleVideoPlayback = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     const video = videoRef.current;
     if (!video) return;
 
-    if (video.ended) video.currentTime = 0;
+    if (video.ended || (videoClip && video.currentTime >= videoClip.endTime - 0.01))
+      video.currentTime = videoClip?.startTime || 0;
     if (video.paused) {
       void video.play().catch(() => setVideoPlaybackState("paused"));
     } else {
@@ -16818,6 +17109,7 @@ function CanvasNodeCard({
         event.stopPropagation();
         if (referencePickerActive) return;
         if (node.type === "video-editor") onOpenVideoEditor();
+        else if (node.type === "media" && node.data.kind === "video" && node.data.url) onOpenVideoClip();
         else if (node.type === "prompt") onEdit(true);
         else if (node.type === "media" && node.data.kind === "audio") onToggleEditor(node);
         else if (isCanvasReferenceableNode(node)) onPreview();
@@ -16884,10 +17176,11 @@ function CanvasNodeCard({
               <video
                 ref={videoRef}
                 src={data.url}
-                muted
+                muted={videoClip ? videoClip.muted : true}
                 playsInline
                 preload="metadata"
                 draggable={false}
+                style={videoClip ? { objectFit: videoClip.fit, transform: `translate(${(videoClip.x || 0) * 50}%, ${(videoClip.y || 0) * 50}%) scale(${videoClip.scale || 1})`, opacity: videoClip.opacity ?? 1, transformOrigin: "center center" } : undefined}
                 aria-label={`视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
                 onPlay={() => setVideoPlaybackState("playing")}
                 onPause={() =>
@@ -16896,14 +17189,21 @@ function CanvasNodeCard({
                   )
                 }
                 onEnded={() => setVideoPlaybackState("ended")}
-                onLoadedMetadata={(event) =>
+                onTimeUpdate={(event) => {
+                  if (!videoClip || event.currentTarget.currentTime < videoClip.endTime - 0.01) return;
+                  setVideoPlaybackState("ended");
+                  event.currentTarget.pause();
+                  event.currentTarget.currentTime = videoClip.endTime;
+                }}
+                onLoadedMetadata={(event) => {
                   onNaturalSize(
                     node.id,
                     event.currentTarget.videoWidth,
                     event.currentTarget.videoHeight,
                     event.currentTarget.duration,
-                  )
-                }
+                  );
+                  if (videoClip) event.currentTarget.currentTime = videoClip.startTime;
+                }}
               />
             ) : data.kind === "audio" ? (
               <div className="canvas-audio-stage">
