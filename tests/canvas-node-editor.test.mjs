@@ -306,6 +306,10 @@ test("Agent editor exposes one-take only for two completed connected images", ()
 test("one-take duration picker stays inside the right edge of the canvas editor", () => {
   assert.match(
     styles,
+    /\.canvas-node-editor-popover\.is-columns-node:not\(\.is-prompt-expanded\) \.canvas-agent-one-take-control\{position:static\}/,
+  );
+  assert.match(
+    styles,
     /\.canvas-node-editor-popover\.is-columns-node:not\(\.is-prompt-expanded\) \.canvas-agent-one-take-control>\.one-take-duration-popover\{left:auto;right:0\}/,
   );
 });

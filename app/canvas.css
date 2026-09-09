@@ -43,6 +43,7 @@
 }
 
 .canvas-node-editor-action-buttons{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;flex:none}.canvas-agent-one-take-control{display:flex;align-items:center;position:relative}.canvas-node-editor-one-take{height:31px;padding:0 11px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:9px;background:var(--panel-2);color:var(--accent-text);font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.canvas-node-editor-one-take:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft)}.canvas-node-editor-one-take:disabled{opacity:.5;cursor:wait}
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-agent-one-take-control{position:static}
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-agent-one-take-control>.one-take-duration-popover{left:auto;right:0}
 
 /* Arrange mode picker and group image composition settings. */
