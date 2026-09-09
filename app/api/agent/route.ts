@@ -6,6 +6,7 @@ import { appendGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { planSearch, searchWeb, type SearchResponse } from '@/lib/web-search';
 import { buildOneTakeVideoPromptInstructions } from '@/lib/one-take-video-prompt';
+import { buildCinematicDirectorInstructions } from '@/lib/cinematic-shock-opening-director';
 import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
@@ -345,6 +346,7 @@ export async function POST(request: Request) {
     wantsStream = body.stream === true;
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
+    const isCinematicDirectorTask = body.task === 'cinematic_shock_opening_director';
     const isOptimizePromptTask = body.task === 'optimize_prompt';
     const isTextPolishTask = body.task === 'polish_text';
     const isPromptOptimizationTask = isOptimizePromptTask || isTextPolishTask;
@@ -429,11 +431,11 @@ export async function POST(request: Request) {
       '[原文]',
     ].join('\n');
     const identityQuestion = isModelIdentityQuestion(latest?.content || '');
-    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
-    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion && likelyFileGenerationRequest(latest?.content || '');
+    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
+    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask && !identityQuestion && likelyFileGenerationRequest(latest?.content || '');
     const webMode = resolveAgentWebMode(body.webMode, body.webSearch);
     const webSearchEnabled = webMode !== 'off';
-    const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isPromptOptimizationTask || identityQuestion;
+    const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isCinematicDirectorTask || isPromptOptimizationTask || identityQuestion;
     const rawWebDecision = shouldUseAgentWebSearch(webMode, latest?.content || '', messages.slice(0, -1));
     const webDecision: AgentWebDecision = searchExcludedTask
       ? { ...rawWebDecision, shouldSearch: false, reason: 'ordinary-chat' }
@@ -445,7 +447,7 @@ export async function POST(request: Request) {
     let nativeSearchError = '';
     const providerPlatform = getProviderPreset(agentRuntime.provider.platform).label;
     const currentDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'long', timeZone: 'Asia/Shanghai' }).format(new Date());
-    const ordinaryChatDirectionsInstructions = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask
+    const ordinaryChatDirectionsInstructions = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask
       ? '\n\n普通文本回答结束时，追加一个标题为“你还可以继续”的小节，并用 1.、2.、3. 列出 3 个结合当前对话、可以直接作为下一轮提问的具体短句，每项不超过 40 字。不要解释这些按钮或交互。若本轮生成了图片，改用专门的“下一版可尝试方向”格式。'
       : '';
     const query = webDecision.query;
@@ -465,6 +467,7 @@ export async function POST(request: Request) {
     ];
     if (isReversePromptTask) llmMessages[0] = { role: 'system', content: reversePromptInstructions };
     if (isOneTakeVideoPromptTask) llmMessages[0] = { role: 'system', content: buildOneTakeVideoPromptInstructions(oneTakeDuration || ONE_TAKE_DEFAULT_DURATION) };
+    if (isCinematicDirectorTask) llmMessages[0] = { role: 'system', content: buildCinematicDirectorInstructions() };
     if (isOptimizePromptTask) llmMessages[0] = { role: 'system', content: optimizePromptInstructions };
     if (isTextPolishTask) llmMessages[0] = { role: 'system', content: textPolishInstructions };
 
@@ -515,7 +518,7 @@ export async function POST(request: Request) {
     const webFailureContext = '';
     system = buildSystem(`${webSearchInstructions}${nativeAnswerInstructions}`, webContext, webFailureContext);
     system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
-    if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0] = { role: 'system', content: system };
+    if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0] = isCinematicDirectorTask ? llmMessages[0] : { role: 'system', content: system };
 
     // Search is selected locally before this point. Do not give ordinary
     // questions another model-side web_search planning round trip.
@@ -578,9 +581,10 @@ export async function POST(request: Request) {
       }
     }
     const useTools = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion;
+    const shouldUseTools = useTools && !isCinematicDirectorTask;
     let first: any;
     try {
-      first = await chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, useTools
+      first = await chatCompletion(agentRuntime.provider, agentRuntime.model.rawId, shouldUseTools
         ? { messages: llmMessages, tools: callableTools, tool_choice: 'auto' }
         : { messages: llmMessages }, requestController.signal);
     } catch (error) {

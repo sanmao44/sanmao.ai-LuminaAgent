@@ -1,5 +1,6 @@
 import type {
   CanvasCamera,
+  CanvasAngleNodeConfig,
   CanvasConnectionStyle,
   CanvasDocument,
   CanvasEdge,
@@ -17,6 +18,7 @@ import type {
 import { normalizeCreationSettings } from "../creation/settings";
 import { normalizeCanvasMaskState } from "./mask";
 import { createVideoEditorState, normalizeVideoEditorState } from "./video-editor";
+import { normalizeCanvasVideoClipState, videoClipDurationSeconds } from "./video-clip";
 import {
   normalizeCanvasEntityLayers,
   normalizeCanvasNodeLayers,
@@ -69,7 +71,7 @@ export function normalizeCamera(
 }
 
 function nodeType(value: unknown): CanvasNode["type"] {
-  return value === "prompt" || value === "generator" || value === "upscale" || value === "video-editor" ? value : "media";
+  return value === "prompt" || value === "generator" || value === "upscale" || value === "video-editor" || value === "angle" ? value : "media";
 }
 
 function mediaKind(value: unknown): CanvasMediaKind {
@@ -125,6 +127,114 @@ function normalizeVideoNodeParams(data: CanvasNodeData) {
       ? data.params
       : data.generation?.params;
   return normalizeCreationSettings("video", currentParams);
+}
+
+const CANVAS_ANGLE_SUBJECT_TYPES = new Set([
+  "unknown", "person", "character", "product", "object", "vehicle",
+  "building", "interior", "landscape", "street", "scene",
+]);
+const CANVAS_ANGLE_DEFAULT_CAMERA = {
+  yaw: 0,
+  pitch: 0,
+  roll: 0,
+  focal: 50,
+  distance: 2.2,
+  frameX: 0,
+  frameY: 0,
+  compositionLock: false,
+  modelId: "auto",
+} as const;
+const CANVAS_ANGLE_DEFAULT_LIGHTING = {
+  enabled: false,
+  azimuth: -45,
+  elevation: 35,
+  intensity: 1,
+  softness: 0.6,
+  temperature: 5500,
+  fill: 0.3,
+  anchor: "camera",
+} as const;
+const CANVAS_ANGLE_DEFAULT_OUTPUT = {
+  aspectRatio: "1:1",
+  width: 1280,
+  height: 1280,
+  referenceWidth: 1,
+  referenceHeight: 1,
+} as const;
+
+function finiteOr(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, finiteOr(value, fallback)));
+}
+
+/** Normalize the persisted angle-node draft without coupling canvas model tests to the UI module. */
+export function normalizeCanvasAngleParams(value?: unknown): CanvasAngleNodeConfig {
+  const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const rawCamera = raw.camera && typeof raw.camera === "object" ? raw.camera as Record<string, unknown> : raw;
+  const rawStart = raw.cameraStart && typeof raw.cameraStart === "object" ? raw.cameraStart as Record<string, unknown> : null;
+  const cameraFor = (camera: Record<string, unknown> | null) => {
+    const source = camera || {};
+    return {
+      yaw: clampNumber(source.yaw, CANVAS_ANGLE_DEFAULT_CAMERA.yaw, -3600, 3600),
+      pitch: clampNumber(source.pitch, CANVAS_ANGLE_DEFAULT_CAMERA.pitch, -60, 60),
+      roll: clampNumber(source.roll, CANVAS_ANGLE_DEFAULT_CAMERA.roll, -45, 45),
+      focal: clampNumber(source.focal, CANVAS_ANGLE_DEFAULT_CAMERA.focal, 0.1, 200),
+      distance: clampNumber(source.distance, CANVAS_ANGLE_DEFAULT_CAMERA.distance, 0.05, 11),
+      frameX: clampNumber(source.frameX, CANVAS_ANGLE_DEFAULT_CAMERA.frameX, -50, 50),
+      frameY: clampNumber(source.frameY, CANVAS_ANGLE_DEFAULT_CAMERA.frameY, -50, 50),
+      compositionLock: source.compositionLock === true,
+      modelId: typeof source.modelId === "string" && source.modelId ? source.modelId : "auto",
+      ...(source.viewpoint && typeof source.viewpoint === "object" ? { viewpoint: clone(source.viewpoint) } : {}),
+    } as CanvasAngleNodeConfig["camera"];
+  };
+  const rawLighting = raw.lighting && typeof raw.lighting === "object" ? raw.lighting as Record<string, unknown> : {};
+  const subjectType = CANVAS_ANGLE_SUBJECT_TYPES.has(String(raw.subjectType))
+    ? String(raw.subjectType)
+    : "unknown";
+  const referenceMedia = raw.referenceMedia && typeof raw.referenceMedia === "object"
+    ? raw.referenceMedia as Record<string, unknown>
+    : undefined;
+  const output = raw.output && typeof raw.output === "object" ? raw.output as Record<string, unknown> : {};
+  const outputWidth = Math.round(clampNumber(output.width, CANVAS_ANGLE_DEFAULT_OUTPUT.width, 1, 8192));
+  const outputHeight = Math.round(clampNumber(output.height, CANVAS_ANGLE_DEFAULT_OUTPUT.height, 1, 8192));
+  return {
+    kind: "angle",
+    camera: cameraFor(rawCamera),
+    cameraStart: raw.cameraStart === null || !rawStart ? null : cameraFor(rawStart),
+    subjectType: subjectType as CanvasAngleNodeConfig["subjectType"],
+    cameraMode: raw.cameraMode === "camera-view" ? "camera-view" : "object-orbit",
+    lighting: {
+      enabled: rawLighting.enabled === true,
+      azimuth: clampNumber(rawLighting.azimuth, CANVAS_ANGLE_DEFAULT_LIGHTING.azimuth, -180, 180),
+      elevation: clampNumber(rawLighting.elevation, CANVAS_ANGLE_DEFAULT_LIGHTING.elevation, 0, 90),
+      intensity: clampNumber(rawLighting.intensity, CANVAS_ANGLE_DEFAULT_LIGHTING.intensity, 0.1, 2),
+      softness: clampNumber(rawLighting.softness, CANVAS_ANGLE_DEFAULT_LIGHTING.softness, 0, 1),
+      temperature: clampNumber(rawLighting.temperature, CANVAS_ANGLE_DEFAULT_LIGHTING.temperature, 2500, 10000),
+      fill: clampNumber(rawLighting.fill, CANVAS_ANGLE_DEFAULT_LIGHTING.fill, 0, 1),
+      anchor: rawLighting.anchor === "reference" ? "reference" : "camera",
+    },
+    angleNote: typeof raw.angleNote === "string" ? raw.angleNote : typeof raw.note === "string" ? raw.note : "",
+    angleGuide: raw.angleGuide === true,
+    output: {
+      aspectRatio: typeof output.aspectRatio === "string" && output.aspectRatio ? output.aspectRatio : `${outputWidth}:${outputHeight}`,
+      width: outputWidth,
+      height: outputHeight,
+      referenceWidth: Math.round(clampNumber(output.referenceWidth, 1, 1, 8192)),
+      referenceHeight: Math.round(clampNumber(output.referenceHeight, 1, 1, 8192)),
+    },
+    ...(typeof raw.referenceNodeId === "string" && raw.referenceNodeId ? { referenceNodeId: raw.referenceNodeId } : {}),
+    ...(referenceMedia ? {
+      referenceMedia: {
+        ...(typeof referenceMedia.id === "string" ? { id: referenceMedia.id } : {}),
+        ...(typeof referenceMedia.name === "string" ? { name: referenceMedia.name } : {}),
+        ...(typeof referenceMedia.url === "string" ? { url: referenceMedia.url } : {}),
+        ...(typeof referenceMedia.assetId === "string" ? { assetId: referenceMedia.assetId } : {}),
+      },
+    } : {}),
+  };
 }
 
 const DEFAULT_VIDEO_ASPECT_RATIO = 16 / 9;
@@ -234,6 +344,13 @@ function normalizeNode(value: unknown): CanvasNode | null {
       };
     }
   }
+  if (type === "angle") {
+    const persistedAngle = data.angle || (data as CanvasNodeData & { angleConfig?: unknown }).angleConfig || data.generation?.angle;
+    data.angle = normalizeCanvasAngleParams(persistedAngle);
+    data.status = data.status || "idle";
+    data.statusLabel = data.statusLabel || "等待连接图片";
+    data.role = data.role || "角度控制";
+  }
   if (type === "generator") {
     const kind = mediaKind(data.kind || "image");
     if (kind === "video") normalizeVideoInputModeState(data);
@@ -286,6 +403,20 @@ function normalizeNode(value: unknown): CanvasNode | null {
   }
   if (type === "media" && data.kind === "video")
     normalizeVideoInputModeState(data);
+  if (type === "media" && data.kind === "video") {
+    const sourceDurationSeconds = Number(data.sourceDurationMs || data.durationMs) / 1000;
+    const videoClip = normalizeCanvasVideoClipState(
+      data.videoClip,
+      sourceDurationSeconds,
+    );
+    if (videoClip) {
+      data.videoClip = videoClip;
+      data.durationMs = Math.round(videoClipDurationSeconds(videoClip) * 1000);
+    } else {
+      delete data.videoClip;
+      delete data.sourceDurationMs;
+    }
+  }
   if (type === "media" && data.generation) {
     const kind = mediaKind(data.generation.kind || data.kind);
     data.generation = kind === "audio"
@@ -452,6 +583,13 @@ export function canConnect(
         : [];
     if (!sourceInputs.length)
       return { ok: false, reason: "视频编辑节点只接受已有素材或素材组。" };
+    return { ok: true as const };
+  }
+  if (targetNode?.type === "angle") {
+    if (!sourceNode || !isCanvasReadyImageSource(sourceNode))
+      return { ok: false, reason: "角度控制节点只接受一张已完成的图片" };
+    if (document.edges.some((edge) => edge.target === target && !["generated", "variant", "lineage"].includes(edge.kind || "")))
+      return { ok: false, reason: "角度控制节点只能连接一张图片" };
     return { ok: true as const };
   }
   const sourceHasAudio = Boolean(
@@ -657,8 +795,15 @@ export function normalizeDocument(
       (edge) => nodeIds.has(edge.target) || groupIds.has(edge.target),
     );
   const upscaleTargets = new Set<string>();
+  const angleTargets = new Set<string>();
   const usableEdges = migratedEdges.filter((edge) => {
     const targetNode = layerNormalizedNodes.find((node) => node.id === edge.target);
+    if (targetNode?.type === "angle") {
+      const sourceNode = layerNormalizedNodes.find((node) => node.id === edge.source);
+      if (!sourceNode || !isCanvasReadyImageSource(sourceNode) || angleTargets.has(targetNode.id)) return false;
+      angleTargets.add(targetNode.id);
+      return true;
+    }
     if (targetNode?.type !== "upscale") return true;
     const sourceNode = layerNormalizedNodes.find((node) => node.id === edge.source);
     if (!sourceNode || sourceNode.type !== "media" || sourceNode.data.kind !== "image" || !sourceNode.data.url || upscaleTargets.has(targetNode.id)) return false;
@@ -687,6 +832,15 @@ export function normalizeDocument(
   const normalizedEdgeMap = new Map<CanvasEdge, CanvasEdge>();
   orderedUsableEdges.forEach(({ edge }) => {
     const targetNode = layerNormalizedNodes.find((node) => node.id === edge.target);
+    if (targetNode?.type === "angle") {
+      normalizedEdgeMap.set(edge, {
+        ...edge,
+        kind: "reference",
+        inputRole: "reference-image",
+        order: 0,
+      });
+      return;
+    }
     if (targetNode?.type === "upscale") {
       normalizedEdgeMap.set(edge, { ...edge, inputRole: "upscale-image" as CanvasInputRole });
       return;
@@ -780,6 +934,9 @@ export function recoverInterruptedCanvasDocument(
       return interrupted(node, "上次超分任务已中断，可重试");
     }
 
+    if (node.type === "angle")
+      return interrupted(node, "上次角度任务已中断，可重试");
+
     const rawStates = Array.isArray(node.data.variantStates)
       ? node.data.variantStates
       : [];
@@ -843,10 +1000,10 @@ export function nodeSize(node: Pick<CanvasNode, "type" | "w" | "h">) {
   return {
     w:
       node.w ||
-      (node.type === "media" ? 320 : node.type === "prompt" ? 270 : node.type === "upscale" ? 360 : node.type === "video-editor" ? 360 : 306),
+      (node.type === "media" ? 320 : node.type === "prompt" ? 270 : node.type === "upscale" ? 360 : node.type === "video-editor" ? 360 : node.type === "angle" ? 390 : 306),
     h:
       node.h ||
-      (node.type === "media" ? 220 : node.type === "prompt" ? 170 : node.type === "upscale" ? 260 : node.type === "video-editor" ? 250 : 238),
+      (node.type === "media" ? 220 : node.type === "prompt" ? 170 : node.type === "upscale" ? 260 : node.type === "video-editor" ? 250 : node.type === "angle" ? 310 : 238),
   };
 }
 
@@ -2273,6 +2430,27 @@ export function createUpscaleNode(position: { x: number; y: number } = { x: 0, y
         referenceIds: [],
         createdAt: Date.now(),
       },
+    },
+  };
+}
+
+export function createAngleNode(
+  position: { x: number; y: number } = { x: 0, y: 0 },
+  params?: Partial<CanvasAngleNodeConfig>,
+): CanvasNode {
+  const angle = normalizeCanvasAngleParams(params);
+  return {
+    id: uid("node"),
+    type: "angle",
+    x: position.x,
+    y: position.y,
+    w: 390,
+    h: 310,
+    data: {
+      role: "角度控制",
+      status: "idle",
+      statusLabel: "等待连接图片",
+      angle,
     },
   };
 }

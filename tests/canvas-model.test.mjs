@@ -15,11 +15,13 @@ async function loadTypeScript(path) {
     const maskUrl = new URL('../lib/canvas/mask.ts', import.meta.url);
     const layersUrl = new URL('../lib/canvas/layers.ts', import.meta.url);
     const videoEditorUrl = new URL('../lib/canvas/video-editor.ts', import.meta.url);
+    const videoClipUrl = new URL('../lib/canvas/video-clip.ts', import.meta.url);
     const localEditUrl = new URL('../lib/local-edit.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
     const maskSource = await readFile(maskUrl, 'utf8');
     const layersSource = await readFile(layersUrl, 'utf8');
     const videoEditorSource = await readFile(videoEditorUrl, 'utf8');
+    const videoClipSource = await readFile(videoClipUrl, 'utf8');
     const localEditSource = await readFile(localEditUrl, 'utf8');
     const localEditRuntime = ts.transpileModule(localEditSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -62,6 +64,10 @@ async function loadTypeScript(path) {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: videoEditorUrl.pathname,
     }).outputText;
+    const videoClipCompiled = ts.transpileModule(videoClipSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: videoClipUrl.pathname,
+    }).outputText;
     const modelCompiled = compiled.replace(
       /^\s*import\s+\{\s*normalizeCreationSettings\s*\}\s+from\s+["']\.\.\/creation\/settings["'];?\s*$/m,
       '',
@@ -74,8 +80,11 @@ async function loadTypeScript(path) {
     ).replace(
       /^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/video-editor["'];?\s*$/m,
       '',
+    ).replace(
+      /^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/video-clip["'];?\s*$/m,
+      '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${videoClipCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }

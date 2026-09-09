@@ -1,9 +1,32 @@
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from '../creation/settings';
 import type { PublicState, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
+import type {
+  AngleCameraState,
+  AngleOutputSpec,
+  LightingState,
+  SubjectType,
+  ViewMode,
+} from '../angle-control';
 
-export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor';
+export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor' | 'angle';
 export type CanvasMediaKind = 'image' | 'video' | 'audio';
+/** A non-destructive range that reuses the original video source. */
+export type CanvasVideoClipState = {
+  version: 1;
+  /** Source node kept only for provenance; playback still uses `data.url`. */
+  sourceNodeId?: string;
+  startTime: number;
+  endTime: number;
+  volume: number;
+  muted: boolean;
+  playbackRate: 0.5 | 1 | 1.5 | 2;
+  fit: 'contain' | 'cover';
+  scale?: number;
+  x?: number;
+  y?: number;
+  opacity?: number;
+};
 export type CanvasVideoEditorTrack = 'video' | 'audio' | 'caption';
 export type CanvasVideoEditorClipType = 'image' | 'video' | 'audio' | 'caption';
 
@@ -14,14 +37,21 @@ export type CanvasVideoEditorClip = {
   type: CanvasVideoEditorClipType;
   name: string;
   start: number;
+  /** Duration on the editor timeline (after the clip playback rate is applied). */
   duration: number;
   sourceOffset: number;
   text?: string;
+  /** Explicit caption font size in output pixels. */
+  fontSize?: number;
+  /** Caption background opacity, from transparent to opaque. */
+  captionBackgroundOpacity?: number;
   scale?: number;
   opacity?: number;
   x?: number;
   y?: number;
   volume?: number;
+  playbackRate?: 0.5 | 1 | 1.5 | 2;
+  fit?: 'contain' | 'cover';
   fadeIn?: number;
 };
 
@@ -30,8 +60,12 @@ export type CanvasVideoEditorState = {
   projectDuration: number;
   fps: number;
   aspect: string;
+  /** Output canvas quality preset used by the editor preview/export handoff. */
+  resolution?: "720p" | "1080p" | "2K" | "4K";
   clips: CanvasVideoEditorClip[];
   mutedTracks: CanvasVideoEditorTrack[];
+  /** Tracks hidden from preview and export. Missing means every track is enabled. */
+  disabledTracks?: CanvasVideoEditorTrack[];
 };
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
@@ -92,12 +126,65 @@ export type CanvasUpscaleParams = {
   prompt?: string;
 };
 
+/** Persisted controls for the dedicated image-to-image angle node. */
+export type CanvasAngleParams = {
+  kind: 'angle';
+  camera: AngleCameraState;
+  cameraStart: AngleCameraState | null;
+  subjectType: SubjectType;
+  cameraMode: ViewMode;
+  lighting: LightingState;
+  angleNote: string;
+  angleGuide: boolean;
+  output: AngleOutputSpec;
+  referenceNodeId?: string;
+  referenceMedia?: {
+    id?: string;
+    name?: string;
+    url?: string;
+    assetId?: string;
+  };
+};
+
+/** Alias kept explicit for callers that model the node rather than its params. */
+export type CanvasAngleNodeConfig = CanvasAngleParams;
+
 export type CanvasNodeParams = CanvasGenerationParams | CanvasUpscaleParams;
 
 export type CanvasGenerationMeta = {
   kind: CanvasMediaKind;
   prompt: string;
   params: CanvasNodeParams;
+  /** Identifies the automatic image-to-video workflow. */
+  generationType?: "one_click_cinematic" | string;
+  sourceImageNodeId?: string;
+  sourceImageUrl?: string;
+  sourceImageAssetId?: string;
+  duration?: number;
+  wowLevel?: 1 | 2 | 3 | 4 | 5;
+  directingMode?: "auto" | "one_take" | "montage";
+  aspectRatio?: string;
+  creativity?: "strict" | "balanced" | "bold";
+  userDirection?: string;
+  directorPlan?: Record<string, unknown>;
+  finalVideoPrompt?: string;
+  negativePrompt?: string;
+  error?: string;
+  /** Full provenance for an image produced by a dedicated angle node. */
+  angle?: {
+    camera: AngleCameraState;
+    cameraStart: AngleCameraState | null;
+    angleNote: string;
+    angleGuide: boolean;
+    output: AngleOutputSpec;
+    referenceNodeId?: string;
+    referenceMedia?: {
+      id?: string;
+      name?: string;
+      url?: string;
+      assetId?: string;
+    };
+  };
   operation?: "generate" | "edit" | "upscale" | "extend";
   referenceIds?: string[];
   sourceGeneratorId?: string;
@@ -187,6 +274,10 @@ export type CanvasNodeData = {
   nativeHeight?: number;
   /** Duration of a loaded video in milliseconds, when available. */
   durationMs?: number;
+  /** Native media duration for a referenced video clip, in milliseconds. */
+  sourceDurationMs?: number;
+  /** Trim and playback metadata for a video node; editor outputs may materialize it. */
+  videoClip?: CanvasVideoClipState;
   /** Identifies the node operation that produced the current media URL. */
   resultSource?: "upscale-node";
   referenceOrder?: string[];
@@ -211,6 +302,8 @@ export type CanvasNodeData = {
   imageOperation?: CanvasImageOperationMeta;
   /** Persisted edit plan for a video-editor node; it is not a rendered media URL. */
   videoEditor?: CanvasVideoEditorState;
+  /** Configuration for an independent angle node. */
+  angle?: CanvasAngleParams;
   [key: string]: unknown;
 };
 

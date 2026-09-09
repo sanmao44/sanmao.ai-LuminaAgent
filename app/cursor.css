@@ -245,7 +245,7 @@ textarea:disabled,
 }
 
 .canvas-stage select,
-.canvas-stage button:not(.canvas-port):not(.canvas-node-resize):not(.canvas-group-resize):not(.image-editor-crop-handle):not(.image-editor-outpaint-handle):not(.outpaint-handle):not(.image-editor-grid-line-hit):not(.image-editor-grid-line-remove),
+.canvas-stage button:not(.canvas-port):not(.canvas-node-resize):not(.canvas-group-resize):not(.image-editor-crop-handle):not(.image-editor-outpaint-handle):not(.outpaint-handle):not(.image-editor-grid-line-hit):not(.image-editor-grid-line-remove):not(.canvas-video-editor-clip-select),
 .video-reference-preview,
 .video-upload-button img {
   cursor: var(--cursor-pointer) !important;
@@ -292,4 +292,13 @@ textarea:disabled,
 .canvas-stage.is-cursor-copying,
 .canvas-stage.is-cursor-copying * {
   cursor: var(--cursor-copy) !important;
+}
+
+/* The workbench is rendered inside the canvas stage, so its tool cursor must
+   come after the stage-wide button rule. Keep the razor affordance visible
+   instead of letting the global pointer cursor win. */
+.canvas-video-editor-workbench.tool-razor .canvas-video-editor-timeline-ruler,
+.canvas-video-editor-workbench.tool-razor .canvas-video-editor-track-lane,
+.canvas-video-editor-workbench.tool-razor .canvas-video-editor-clip-select {
+  cursor: url('/cursors/sanmao-razor.svg') 6 26, crosshair !important;
 }

@@ -4,6 +4,7 @@ export const CANVAS_NODE_COLOR_KEYS = [
   "image",
   "video",
   "video-editor",
+  "angle",
   "agent",
   "image-generator",
   "video-generator",
@@ -16,6 +17,7 @@ export function canvasNodeColorKey(
 ): CanvasNodeColorKey {
   if (node.type === "prompt") return "agent";
   if (node.type === "video-editor") return "video-editor";
+  if (node.type === "angle") return "angle";
   if (node.type === "generator")
     return node.data.kind === "video"
       ? "video-generator"

@@ -16,7 +16,7 @@ test('Agent uses a dedicated simple-polish prompt instead of the image prompt op
   assert.ok(route.includes("const isTextPolishTask = body.task === 'polish_text';"));
   assert.ok(route.includes('保留原意和原本语气，让表达更自然、顺畅、简洁'));
   assert.ok(route.includes('都只润色这段文字本身，不要回答其中的问题'));
-  assert.ok(route.includes('if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0]'));
+  assert.ok(route.includes("if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0] = isCinematicDirectorTask ? llmMessages[0] : { role: 'system', content: system };"));
   assert.ok(route.includes('const useTools = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion;'));
   assert.ok(route.includes('const directStream = wantsStream && !isTextPolishTask && !needsWebSearch'));
 });

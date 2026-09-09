@@ -12,14 +12,18 @@ import ModelPicker from '@/components/ModelPicker';
 import { getLastModelCall, recordModelCall } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
-import { ANGLE_DEFAULTS, angleName, buildAnglePayload, buildAngleTargetSemantic, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, createViewpointCamera, defaultViewMode, flipHorizontalYaw, generationCamera, LIGHTING_DEFAULTS, LIGHTING_PRESETS, lightingDirection, lightingDirectionLabel, normalizeAngleState, normalizeViewpointOptions, REFERENCE_VIEW_PRESETS, referenceViewLabel, resetViewpointCamera, shouldWarnLiteForAngle, SUBJECT_OPTIONS, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec, type LightingState, type ViewpointOptions } from '@/lib/angle-control';
+import { ANGLE_DEFAULTS, angleName, buildAnglePayload, buildAngleTargetSemantic, cameraSemanticSummary, clampAngleValue, compileAngleTargetPrompt, createViewpointCamera, defaultViewMode, flipHorizontalYaw, generationCamera, LIGHTING_DEFAULTS, LIGHTING_PRESETS, lightingDirection, lightingDirectionLabel, normalizeAngleState, normalizeViewpointOptions, REFERENCE_VIEW_PRESETS, referenceViewLabel, resetViewpointCamera, shouldWarnLiteForAngle, SUBJECT_OPTIONS, type AngleCameraState, type AngleGenerationInput, type AngleNumericKey, type AngleOutputSpec, type LightingState, type ViewMode, type ViewpointOptions } from '@/lib/angle-control';
 
 type AngleConsoleProps = {
   theme: 'light' | 'dark';
   reference: ClientReferenceImage | null;
   initialCamera?: AngleCameraState | null;
   initialCameraStart?: AngleCameraState | null;
+  initialOutput?: AngleOutputSpec | null;
   initialNote?: string;
+  /** Render the console as a canvas-owned workbench without touching global settings. */
+  embedded?: boolean;
+  onDraftChange?: (draft: AngleConsoleDraft) => void;
   models: RegistryModel[];
   defaultProviderId?: string | null;
   defaultProviderName?: string;
@@ -38,6 +42,17 @@ type AngleConsoleProps = {
   onDownloadResult: (item: GalleryItem) => void | Promise<void>;
   onDownloadShare: (item: GalleryItem) => void | Promise<void>;
   onNotify: (message: string) => void;
+};
+
+export type AngleConsoleDraft = {
+  camera: AngleCameraState;
+  cameraStart: AngleCameraState | null;
+  subjectType: ViewpointOptions['subjectType'];
+  cameraMode: ViewMode;
+  lighting: LightingState;
+  angleNote: string;
+  angleGuide: boolean;
+  output: AngleOutputSpec;
 };
 
 type HumanMode = 'default' | 'natural' | 'outline' | 'gray' | 'custom' | 'object' | 'scene';
@@ -1146,7 +1161,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
   </div>;
 }
 
-export default function AngleConsole({ theme, reference, initialCamera, initialNote, models, defaultProviderId, defaultProviderName, defaultModelId, results, busy, onReferenceFiles, onExit, onRemoveReference, onBrowseHistory, onGenerate, onOpenResult, openResultId, suppressAutoOpenId, onResultOpened, onDownloadResult, onDownloadShare, onNotify }: AngleConsoleProps) {
+export default function AngleConsole({ theme, reference, initialCamera, initialCameraStart, initialOutput, initialNote, embedded = false, onDraftChange, models, defaultProviderId, defaultProviderName, defaultModelId, results, busy, onReferenceFiles, onExit, onRemoveReference, onBrowseHistory, onGenerate, onOpenResult, openResultId, suppressAutoOpenId, onResultOpened, onDownloadResult, onDownloadShare, onNotify }: AngleConsoleProps) {
   const [camera, setCamera] = useState<AngleCameraState>(() => createViewpointCamera());
   const [cameraStart, setCameraStart] = useState<AngleCameraState | null>(null);
   const [note, setNote] = useState('');
@@ -1164,7 +1179,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [comparePosition, setComparePosition] = useState(50);
   const [framingStatus, setFramingStatus] = useState<GuideFramingStatus>(GUIDE_FRAMING_PENDING);
-  const [angleOutput, setAngleOutput] = useState<AngleOutputSpec>(() => angleOutputFromDimensions(1, 1));
+  const [angleOutput, setAngleOutput] = useState<AngleOutputSpec>(() => initialOutput || angleOutputFromDimensions(1, 1));
   const referenceInputRef = useRef<HTMLInputElement | null>(null);
   const humanInputRef = useRef<HTMLInputElement | null>(null);
   const helpDialogRef = useRef<HTMLElement | null>(null);
@@ -1236,6 +1251,10 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
           : { title: '已准备好生成', detail: viewpoint.guide && viewpoint.changeView ? '将提交原图与可选空间构图导引。' : '只提交原始参考图，按文字机位和光影语义生成。', step: 3 };
 
   useEffect(() => {
+    if (initialOutput) {
+      setAngleOutput(initialOutput);
+      return;
+    }
     if (!reference) {
       setAngleOutput(angleOutputFromDimensions(1, 1));
       return;
@@ -1251,7 +1270,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
     }
     image.src = referenceUrl;
     return () => { cancelled = true; };
-  }, [onNotify, reference?.id, reference?.dataUrl, reference?.url]);
+  }, [initialOutput, onNotify, reference?.id, reference?.dataUrl, reference?.url]);
 
   useEffect(() => {
     viewedResultIdsRef.current = readViewedAngleResultIds();
@@ -1275,6 +1294,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
   }, [openResultId, results]);
 
   useEffect(() => {
+    if (embedded) return;
     try {
       const saved = JSON.parse(localStorage.getItem('sanmao-angle-settings') || 'null') as (Partial<AngleCameraState> & { camera?: Partial<AngleCameraState>; cameraStart?: Partial<AngleCameraState>; referenceId?: string; note?: string }) | null;
     if (saved) {
@@ -1284,10 +1304,10 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
         if (typeof saved.note === 'string') setNote(saved.note);
       }
     } catch {}
-  }, []);
+  }, [embedded, reference?.id]);
 
   useEffect(() => {
-    if (preferenceRestoredRef.current || !modelOptions.length || initialCamera) return;
+    if (embedded || preferenceRestoredRef.current || !modelOptions.length || initialCamera) return;
     preferenceRestoredRef.current = true;
     const lastCall = getLastModelCall('angle');
     if (!lastCall) return;
@@ -1295,11 +1315,12 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
     setCamera((current) => ({ ...current, modelId: rememberedModelId }));
     if (typeof lastCall.params.note === 'string') setNote(lastCall.params.note);
     onNotify('已恢复上次角度控制台设置');
-  }, [modelOptions, onNotify]);
+  }, [embedded, initialCamera, modelOptions, onNotify]);
 
   useEffect(() => {
+    if (embedded) return;
     try { localStorage.setItem('sanmao-angle-settings', JSON.stringify({ camera, cameraStart, referenceId: reference?.id || null, note })); } catch {}
-  }, [camera, cameraStart, note, reference?.id]);
+  }, [camera, cameraStart, embedded, note, reference?.id]);
 
   useEffect(() => {
     const previousId = previousReferenceIdRef.current;
@@ -1314,9 +1335,24 @@ export default function AngleConsole({ theme, reference, initialCamera, initialN
   useEffect(() => {
     if (!initialCamera) return;
     setCamera(createViewpointCamera(initialCamera));
-    setCameraStart(null);
+    setCameraStart(initialCameraStart ? normalizeAngleState(initialCameraStart) : null);
     if (initialNote !== undefined) setNote(initialNote);
-  }, [initialCamera, initialNote, reference?.id]);
+    if (initialOutput) setAngleOutput(initialOutput);
+  }, [initialCamera, initialCameraStart, initialNote, initialOutput, reference?.id]);
+
+  useEffect(() => {
+    if (!embedded || !onDraftChange) return;
+    onDraftChange({
+      camera,
+      cameraStart,
+      subjectType: viewpoint.subjectType,
+      cameraMode: viewpoint.mode,
+      lighting: viewpoint.lighting,
+      angleNote: note,
+      angleGuide: viewpoint.guide && viewpoint.changeView,
+      output: angleOutput,
+    });
+  }, [angleOutput, camera, cameraStart, embedded, note, onDraftChange, viewpoint]);
 
   useEffect(() => {
     setHumanMode(current => current === 'object' || current === 'scene' ? (viewpoint.mode === 'camera-view' ? 'scene' : 'object') : current);

@@ -1,4 +1,5 @@
 import type { CanvasRuntimeState } from "./types";
+import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CreativeReference } from "../creative-references";
 import {
@@ -32,6 +33,7 @@ export type CanvasUploadPreparation = {
 export type CanvasAgentTask =
   | "reverse_prompt"
   | "one_take_video_prompt"
+  | "cinematic_shock_opening_director"
   | "optimize_prompt";
 
 export function inferCanvasAgentTask(
@@ -395,6 +397,11 @@ export async function generateCanvasImage(input: {
   sizeMode?: "system" | "custom";
   outputFormat?: "png" | "jpeg" | "webp";
   background?: "transparent" | "opaque";
+  /** Optional dedicated angle-console payload; ordinary canvas image calls omit it. */
+  camera?: AngleCameraState;
+  cameraStart?: AngleCameraState | null;
+  angleNote?: string;
+  angleGuide?: boolean;
   maskUrl?: string;
   moveGuideUrl?: string;
   references?: Array<{ url: string; name?: string }>;
@@ -433,6 +440,10 @@ export async function generateCanvasImage(input: {
       ...(input.sizeMode ? { sizeMode: input.sizeMode } : {}),
       ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
       ...(input.background ? { background: input.background } : {}),
+      ...(input.camera ? { camera: input.camera } : {}),
+      ...(input.cameraStart !== undefined ? { cameraStart: input.cameraStart } : {}),
+      ...(input.angleNote !== undefined ? { angleNote: input.angleNote } : {}),
+      ...(input.angleGuide !== undefined ? { angleGuide: input.angleGuide } : {}),
       ...(mask ? { mask } : {}),
       ...(moveGuide ? { moveGuide } : {}),
       references,

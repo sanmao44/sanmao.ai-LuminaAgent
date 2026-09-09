@@ -165,6 +165,14 @@ import {
   ONE_TAKE_DEFAULT_DURATION,
 } from "@/lib/one-take-video-duration";
 import {
+  buildCinematicDirectorRequest,
+  compileCinematicVideoPrompt,
+  DEFAULT_CINEMATIC_OPENING_SETTINGS,
+  parseCinematicDirectorPlan,
+  resolvedCinematicDuration,
+  type CinematicOpeningSettings,
+} from "@/lib/cinematic-shock-opening-director";
+import {
   hideUnifiedAsset,
   listUnifiedAssets,
   registerCanvasAsset,
@@ -198,6 +206,10 @@ import SelectMenu from "@/components/SelectMenu";
 import CanvasImageEditorWorkbench, {
   type CanvasImageEditorSaveRequest,
 } from "@/components/canvas/CanvasImageEditorWorkbench";
+import CanvasVideoClipWorkbench from "@/components/canvas/CanvasVideoClipWorkbench";
+import OneClickCinematicPanel, {
+  type OneClickCinematicVideoSelection,
+} from "@/components/canvas/OneClickCinematicPanel";
 import CanvasGroupComposeDialog, {
   type CanvasGroupComposeSettings,
   type CanvasGroupComposeSource,
@@ -213,12 +225,14 @@ import type {
   CanvasInputRole,
   CanvasMediaKind,
   CanvasMaskState,
+  CanvasNodeData,
   CanvasNode,
   CanvasProject,
   CanvasRuntimeState,
   CanvasSnapshot,
   CanvasVariantState,
   CanvasUpscaleParams,
+  CanvasVideoClipState,
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
 import {
@@ -226,6 +240,12 @@ import {
   syncVideoEditorInputs,
   type CanvasVideoEditorInput,
 } from "@/lib/canvas/video-editor";
+import {
+  normalizeCanvasVideoClipState,
+  videoClipDurationSeconds,
+} from "@/lib/canvas/video-clip";
+import { renderCanvasVideoClip } from "@/lib/canvas/video-trim";
+import { renderCanvasVideoEditor } from "@/lib/canvas/video-export";
 import {
   renderCanvasImageGrid,
   renderCanvasImageGridComposite,
@@ -2670,7 +2690,9 @@ export default function SuperCanvas() {
     null,
   );
   const [imageEditorNodeId, setImageEditorNodeId] = useState<string | null>(null);
+  const [videoClipEditorNodeId, setVideoClipEditorNodeId] = useState<string | null>(null);
   const [videoEditorNodeId, setVideoEditorNodeId] = useState<string | null>(null);
+  const [oneClickCinematicNodeId, setOneClickCinematicNodeId] = useState<string | null>(null);
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
@@ -2804,7 +2826,9 @@ export default function SuperCanvas() {
     setLightbox(null);
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
+    setVideoClipEditorNodeId(null);
     setVideoEditorNodeId(null);
+    setOneClickCinematicNodeId(null);
     setAssetCollectionPickerNodeId(null);
     setActivePanel(null);
     setArrangeGroupMenuOpen(false);
@@ -2863,6 +2887,20 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([nodeId]));
       setSelectedGroupId(null);
       setVideoEditorNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const openCanvasVideoClipEditor = useCallback(
+    (nodeId: string) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (node?.type !== "media" || node.data.kind !== "video" || !node.data.url) {
+        return;
+      }
+      closeCanvasOverlayConflicts();
+      setSelectedIds(new Set([nodeId]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      setVideoClipEditorNodeId(nodeId);
     },
     [closeCanvasOverlayConflicts],
   );
@@ -3105,28 +3143,6 @@ export default function SuperCanvas() {
     },
     [updateDoc],
   );
-  const updateVideoEditorNodeState = useCallback(
-    (nodeId: string, videoEditor: CanvasVideoEditorState) => {
-      commit((value) => ({
-        ...value,
-        nodes: value.nodes.map((node) =>
-          node.id === nodeId && node.type === "video-editor"
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  videoEditor,
-                  statusLabel: videoEditor.clips.length
-                    ? `${videoEditor.clips.length} 个片段 · 编辑计划`
-                    : "连接素材后自动入轨",
-                },
-              }
-            : node,
-        ),
-      }));
-    },
-    [commit],
-  );
   const addLog = useCallback(
     (message: string) => {
       const normalized = message.toLowerCase();
@@ -3160,6 +3176,21 @@ export default function SuperCanvas() {
       kind === "error" ? 5200 : 2800,
     );
   }, []);
+  const openOneClickCinematic = useCallback(
+    (nodeId: string) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (!node || !isCanvasReadyImageSource(node)) {
+        notify("请先准备好一张已完成的图片。", "error");
+        return;
+      }
+      closeCanvasOverlayConflicts();
+      setSelectedIds(new Set([nodeId]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      setOneClickCinematicNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts, notify],
+  );
   const connectCanvasNodes = useCallback(
     (
       sourceId: string,
@@ -5703,8 +5734,22 @@ export default function SuperCanvas() {
           const dimensionsChanged =
             hasNaturalSize &&
             (node.data.nativeWidth !== width || node.data.nativeHeight !== height);
+          const videoClip =
+            node.type === "media" && node.data.kind === "video"
+              ? normalizeCanvasVideoClipState(
+                  node.data.videoClip,
+                  durationMs !== undefined ? durationMs / 1000 : Number(node.data.sourceDurationMs || node.data.durationMs) / 1000,
+                )
+              : undefined;
+          const effectiveDurationMs = videoClip
+            ? Math.round(videoClipDurationSeconds(videoClip) * 1000)
+            : durationMs;
+          const sourceDurationChanged =
+            Boolean(videoClip) &&
+            durationMs !== undefined &&
+            node.data.sourceDurationMs !== durationMs;
           const durationChanged =
-            durationMs !== undefined && node.data.durationMs !== durationMs;
+            effectiveDurationMs !== undefined && node.data.durationMs !== effectiveDurationMs;
           const nextSize =
             hasNaturalSize && node.data.autoFit !== false
               ? node.type === "upscale"
@@ -5718,7 +5763,7 @@ export default function SuperCanvas() {
           // loadedmetadata may fire again when a selected video is remounted.
           // Returning the original node/document when nothing changed prevents
           // that browser event from creating a React state-update loop.
-          if (!dimensionsChanged && !durationChanged && !cardSizeChanged)
+          if (!dimensionsChanged && !durationChanged && !sourceDurationChanged && !cardSizeChanged)
             return node;
 
           changed = true;
@@ -5730,7 +5775,8 @@ export default function SuperCanvas() {
               ...(hasNaturalSize
                 ? { nativeWidth: width, nativeHeight: height }
                 : {}),
-              ...(durationMs !== undefined ? { durationMs } : {}),
+              ...(effectiveDurationMs !== undefined ? { durationMs: effectiveDurationMs } : {}),
+              ...(sourceDurationChanged ? { sourceDurationMs: durationMs } : {}),
             },
           };
         });
@@ -8796,6 +8842,231 @@ export default function SuperCanvas() {
 
   runGenerationRef.current = runGeneration;
 
+  const runOneClickCinematic = useCallback(
+    async (
+      sourceInput: CanvasNode,
+      settings: CinematicOpeningSettings,
+      selection: OneClickCinematicVideoSelection,
+    ) => {
+      const source = nodeById(docRef.current, sourceInput.id) || sourceInput;
+      if (!isCanvasReadyImageSource(source)) {
+        notify("参考图片已不可用，请先准备好一张已完成的图片。", "error");
+        return;
+      }
+      const selectedModel = videoModelOptions(runtime).find(
+        (model) => model.id === selection.modelId && model.providerId === selection.providerId,
+      );
+      if (!selectedModel) {
+        notify("所选服务商或视频模型已不可用，请重新选择。", "error");
+        return;
+      }
+      const sourceUrl = String(source.data.url || "");
+      const sourceName = String(source.data.name || "当前图片");
+      const sourceWidth = Number(source.data.nativeWidth);
+      const sourceHeight = Number(source.data.nativeHeight);
+      const sourceAspect = sourceWidth > 0 && sourceHeight > 0
+        ? sourceWidth / sourceHeight >= 1.18
+          ? "16:9"
+          : sourceWidth / sourceHeight <= 0.86
+            ? "9:16"
+            : sourceWidth / sourceHeight < 1
+              ? "4:5"
+              : "1:1"
+        : "16:9";
+      const aspect = settings.aspectRatio === "project" ? sourceAspect : settings.aspectRatio;
+      const baseParams = normalizeCreationSettings(
+        "video",
+        readSharedCreationSettings("video", runtime),
+        runtime,
+      );
+      const videoProvider = runtime?.providers.find((provider) => provider.id === selectedModel.providerId);
+      const videoLimits = getVideoModelLimits(selectedModel, videoProvider);
+      const usesAgnesV20 = /agnes(?: video)?[- ]?v2\.0/i.test(`${selectedModel.rawId} ${selectedModel.displayName}`);
+      const requestedDuration = resolvedCinematicDuration(settings.duration);
+      const supportedDurations = usesAgnesV20
+        ? [Math.max(1, Math.round((selection.agnesNumFrames || baseParams.agnesNumFrames) / Math.max(1, selection.agnesFrameRate || baseParams.agnesFrameRate)))]
+        : videoLimits.fixedSeconds
+          ? [videoLimits.fixedSeconds]
+          : videoLimits.allowedSeconds || Array.from({ length: Math.max(0, videoLimits.maxSeconds - videoLimits.minSeconds + 1) }, (_, index) => videoLimits.minSeconds + index);
+      const duration = supportedDurations.reduce((closest, value) => Math.abs(value - requestedDuration) < Math.abs(closest - requestedDuration) ? value : closest, supportedDurations[0] || requestedDuration);
+      const resolution = videoLimits.resolutions.includes(selection.resolution)
+        ? selection.resolution
+        : videoLimits.resolutions[0] || baseParams.resolution;
+      const modelCapabilities = selectedModel.capabilities || [];
+      const inputMode = modelCapabilities.includes("video-first-frame") || modelCapabilities.includes("video-generate")
+        ? "first-frame" as const
+        : modelCapabilities.includes("video-reference")
+          ? "reference" as const
+          : "first-frame" as const;
+      const videoParams: VideoCreationSettings = {
+        ...baseParams,
+        model: selectedModel.id,
+        operation: "generate",
+        inputMode,
+        duration,
+        aspect,
+        resolution,
+        ...(usesAgnesV20 ? {
+          agnesWidth: selection.agnesWidth || baseParams.agnesWidth,
+          agnesHeight: selection.agnesHeight || baseParams.agnesHeight,
+          agnesNumFrames: selection.agnesNumFrames || baseParams.agnesNumFrames,
+          agnesFrameRate: selection.agnesFrameRate || baseParams.agnesFrameRate,
+        } : {}),
+      };
+      const previousConcepts = docRef.current.nodes
+        .filter((node) => node.id !== source.id && node.data.generation?.generationType === "one_click_cinematic" && node.data.generation?.sourceImageNodeId === source.id)
+        .map((node) => String(node.data.generation?.directorPlan && typeof node.data.generation.directorPlan === "object"
+          ? (node.data.generation.directorPlan as { concept?: { title?: string; visualIdea?: string } }).concept?.visualIdea || (node.data.generation.directorPlan as { concept?: { title?: string } }).concept?.title || ""
+          : "").trim())
+        .filter(Boolean)
+        .slice(-6);
+      const outputPosition = {
+        x: source.x + nodeSize(source).w + 100,
+        y: source.y,
+      };
+      const output = createMedia("video", "", `一键成片 · ${sourceName}`, outputPosition, {
+        role: "一键成片",
+        status: "running",
+        processingStartedAt: Date.now(),
+        statusLabel: "分析参考图…",
+        generation: {
+          kind: "video",
+          prompt: "",
+          params: clone(videoParams),
+          generationType: "one_click_cinematic",
+          sourceImageNodeId: source.id,
+          sourceImageUrl: sourceUrl,
+          ...(source.data.assetId ? { sourceImageAssetId: String(source.data.assetId) } : {}),
+          duration,
+          wowLevel: settings.wowLevel,
+          directingMode: settings.directingMode,
+          aspectRatio: aspect,
+          creativity: settings.creativity,
+          userDirection: settings.userDirection,
+          referenceIds: [source.id],
+          createdAt: Date.now(),
+        },
+        referenceOrder: [source.id],
+      });
+      const initialDocument = addEdge(
+        { ...docRef.current, nodes: [...docRef.current.nodes, output] },
+        source.id,
+        output.id,
+        "right",
+        "left",
+        "reference",
+        inputMode === "first-frame" ? "first-frame" : "reference-image",
+        0,
+      );
+      if (initialDocument.nodes.length === docRef.current.nodes.length) {
+        notify("无法建立图片到视频的参考连线。", "error");
+        return;
+      }
+      commit(() => initialDocument);
+      setSelectedIds(new Set([output.id]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      generationKeysRef.current.add(output.id);
+      setGenerationKeys(new Set(generationKeysRef.current));
+
+      const updateOutput = (patch: Partial<CanvasNodeData>, generationPatch?: Partial<NonNullable<CanvasNode["data"]["generation"]>>) => {
+        updateDoc((value) => ({
+          ...value,
+          nodes: value.nodes.map((node) => node.id === output.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  ...patch,
+                  ...(generationPatch && node.data.generation
+                    ? { generation: { ...node.data.generation, ...generationPatch } }
+                    : {}),
+                },
+              }
+            : node),
+        }));
+      };
+
+      try {
+        const directorResponse = await generateCanvasAgent({
+          messages: [{
+            role: "user",
+            content: buildCinematicDirectorRequest({
+              sourceName,
+              sourcePrompt: String(source.data.generation?.prompt || source.data.prompt || ""),
+              settings,
+              previousConcepts,
+            }),
+          }],
+          model: runtime?.settings.agentModelId || "auto",
+          task: "cinematic_shock_opening_director",
+          deliverable: "TEXT",
+          intentReason: "一键成片自动导演",
+          references: [{
+            id: source.id,
+            nodeId: source.id,
+            kind: "image",
+            name: sourceName,
+            url: sourceUrl,
+            ...(source.data.mimeType ? { mimeType: String(source.data.mimeType) } : {}),
+          }],
+        });
+        const plan = parseCinematicDirectorPlan(directorResponse.message);
+        const finalPrompt = compileCinematicVideoPrompt(plan, settings, videoParams);
+        updateOutput(
+          { status: "running", statusLabel: "准备生成…", processingStartedAt: Date.now() },
+          { prompt: finalPrompt, finalVideoPrompt: finalPrompt, negativePrompt: plan.negativePrompt, directorPlan: plan as unknown as Record<string, unknown> },
+        );
+
+        const task = await generateCanvasVideo({
+          prompt: finalPrompt,
+          model: selectedModel.id,
+          modelRawId: selectedModel.rawId,
+          operation: "generate",
+          inputMode,
+          duration,
+          aspect,
+          resolution,
+          ...(usesAgnesV20 ? {
+            agnesWidth: videoParams.agnesWidth,
+            agnesHeight: videoParams.agnesHeight,
+            agnesNumFrames: videoParams.agnesNumFrames,
+            agnesFrameRate: videoParams.agnesFrameRate,
+          } : {}),
+          references: [{ url: sourceUrl, name: sourceName }],
+          ...(inputMode === "first-frame" ? { firstFrame: sourceUrl } : {}),
+        });
+        updateOutput(
+          {
+            jobId: task.id,
+            status: task.status === "done" ? "completed" : "running",
+            progress: Number(task.progress || 0),
+            url: task.videoUrls?.[0] || undefined,
+            statusLabel: task.status === "done" ? "样片完成" : "视频生成中",
+          },
+          { taskId: task.id, updatedAt: Date.now() },
+        );
+        if (task.status === "done") {
+          notify("一键成片已完成");
+          addLog(`一键成片完成：${task.id}`);
+        } else {
+          void pollVideo(output.id, task.id);
+          notify("样片任务已提交，结果会自动写入画布");
+          addLog(`一键成片任务已提交：${task.id}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "一键成片失败";
+        updateOutput({ status: "failed", statusLabel: message }, { error: message, updatedAt: Date.now() });
+        notify(message, "error");
+        addLog(`一键成片失败：${message}`);
+      } finally {
+        generationKeysRef.current.delete(output.id);
+        setGenerationKeys(new Set(generationKeysRef.current));
+      }
+    },
+    [addLog, commit, notify, pollVideo, runtime, updateDoc],
+  );
+
   const editorPromptFor = useCallback(
     (node: CanvasNode) => {
       const draft = editorDrafts[node.id];
@@ -9851,6 +10122,239 @@ export default function SuperCanvas() {
     }
     setImageEditorNodeId(null);
   }, [addLog, commit, imageEditorNodeId, notify, openNodePosition, runtime]);
+
+  const createVideoClip = useCallback(async (draft: CanvasVideoClipState) => {
+    const source = videoClipEditorNodeId
+      ? nodeById(docRef.current, videoClipEditorNodeId)
+      : undefined;
+    if (
+      !source ||
+      source.type !== "media" ||
+      source.data.kind !== "video" ||
+      !source.data.url
+    ) {
+      notify("当前视频节点已不存在，请重新打开剪辑", "error");
+      return;
+    }
+    const sourceDurationMs = Number(source.data.sourceDurationMs || source.data.durationMs);
+    const sourceDuration = Number.isFinite(sourceDurationMs) && sourceDurationMs > 0
+      ? sourceDurationMs / 1000
+      : undefined;
+    const clip = normalizeCanvasVideoClipState(draft, sourceDuration);
+    if (!clip || clip.endTime <= clip.startTime) {
+      notify("剪辑范围无效，请调整开始和结束时间", "error");
+      return;
+    }
+    const sourceName = String(source.data.name || "视频");
+    let rendered: Awaited<ReturnType<typeof renderCanvasVideoClip>>;
+    try {
+      rendered = await renderCanvasVideoClip(String(source.data.url), clip);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "视频裁剪失败，请重试", "error");
+      return;
+    }
+    const clipDurationMs = Math.round(rendered.durationSeconds * 1000);
+    if (!rendered.blob.size) {
+      notify("视频裁剪没有生成有效文件，请重试", "error");
+      return;
+    }
+    let asset: Awaited<ReturnType<typeof uploadCanvasAsset>>;
+    try {
+      asset = await uploadCanvasAsset(
+        new File([rendered.blob], `${sourceName}-剪辑.webm`, { type: rendered.mime }),
+      );
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "裁剪视频上传失败，请重试", "error");
+      return;
+    }
+    const videoParams = videoParamsForCanvasNode(source, runtime);
+    const createdAt = Date.now();
+    const resultName = `${sourceName} · 剪辑`;
+    const outputClip: CanvasVideoClipState = {
+      version: 1,
+      sourceNodeId: source.id,
+      startTime: 0,
+      endTime: rendered.durationSeconds,
+      volume: clip.volume,
+      muted: clip.muted,
+      playbackRate: 1,
+      fit: clip.fit,
+    };
+    const draftNode = createMedia(
+      "video",
+      asset.url,
+      resultName,
+      { x: source.x + nodeSize(source).w + 90, y: source.y },
+      {
+        role: "视频剪辑结果",
+        status: "completed",
+        statusLabel: "视频剪辑结果",
+        assetId: asset.id,
+        sourceAssetId: source.data.sourceAssetId || source.data.assetId,
+        mimeType: asset.mime,
+        autoFit: source.data.autoFit !== false,
+        nativeWidth: rendered.width || source.data.nativeWidth,
+        nativeHeight: rendered.height || source.data.nativeHeight,
+        durationMs: clipDurationMs,
+        sourceDurationMs: clipDurationMs,
+        videoClip: outputClip,
+        params: clone(videoParams),
+        generation: {
+          kind: "video",
+           prompt: "视频裁剪",
+          params: clone(videoParams),
+          operation: "edit",
+          referenceIds: [source.id],
+          parentNodeId: source.id,
+          createdAt,
+        },
+      },
+    );
+    const positioned = {
+      ...draftNode,
+      ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode),
+    };
+    commit((value) => ({
+      ...value,
+      nodes: [...value.nodes, positioned],
+      edges: [
+        ...value.edges,
+        {
+          id: uid("edge"),
+          source: source.id,
+          target: positioned.id,
+          sourcePort: "right",
+          targetPort: "left",
+          kind: "lineage",
+        },
+      ],
+    }));
+    setSelectedIds(new Set([positioned.id]));
+    setSelectedGroupId(null);
+    setVideoClipEditorNodeId(null);
+    notify("已创建视频剪辑节点");
+    addLog(`视频剪辑已创建：${sourceName}`);
+  }, [addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
+
+  const createVideoEditorClip = useCallback((
+    editorNodeId: string,
+    draft: CanvasVideoEditorState,
+    selectedClipId: string | null,
+  ) => {
+    const editorNode = nodeById(docRef.current, editorNodeId);
+    if (!editorNode || editorNode.type !== "video-editor") {
+      notify("当前视频编辑节点已不存在，请重新打开工作台", "error");
+      return;
+    }
+
+    const selected = selectedClipId ? draft.clips.find((clip) => clip.id === selectedClipId) : undefined;
+    const sourceIds = [...new Set(draft.clips.flatMap((clip) => clip.sourceNodeId ? [clip.sourceNodeId] : []))];
+    const sourceNodes = sourceIds
+      .map((id) => nodeById(docRef.current, id))
+      .filter((source): source is CanvasNode => Boolean(source && source.type === "media" && source.data.url && source.data.kind));
+    const renderSources = sourceNodes.map((source) => ({
+      nodeId: source.id,
+      kind: source.data.kind as "image" | "video" | "audio",
+      url: String(source.data.url),
+      ...(source.data.nativeWidth ? { nativeWidth: source.data.nativeWidth } : {}),
+      ...(source.data.nativeHeight ? { nativeHeight: source.data.nativeHeight } : {}),
+    }));
+    if (!renderSources.length || !draft.clips.some((clip) => clip.track === "video" && clip.sourceNodeId)) {
+      notify("请先连接一个可用的视频或图片素材", "error");
+      return;
+    }
+
+    const preferredSource = sourceNodes.find((source) => source.data.kind === "video" || source.data.kind === "image") || sourceNodes[0];
+    const sourceName = String(editorNode.data.name || preferredSource.data.name || "视频编辑");
+    // The previous single-clip handoff used sourceClip.duration * (sourceClip.playbackRate ?? 1);
+    // the editor now renders every timeline track into one standalone asset.
+    const videoParams = { ...videoParamsForCanvasNode(preferredSource, runtime), aspect: draft.aspect, resolution: draft.resolution || "1080p" };
+    const createdAt = Date.now();
+    return (async () => {
+      let rendered: Awaited<ReturnType<typeof renderCanvasVideoEditor>>;
+      try {
+        rendered = await renderCanvasVideoEditor(draft, renderSources);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "成片导出失败，请重试", "error");
+        return;
+      }
+      if (!rendered.blob.size) {
+        notify("成片导出没有生成有效文件，请重试", "error");
+        return;
+      }
+      let asset: Awaited<ReturnType<typeof uploadCanvasAsset>>;
+      try {
+        asset = await uploadCanvasAsset(new File([rendered.blob], `${sourceName}-成片.webm`, { type: rendered.mime }));
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "成片上传失败，请重试", "error");
+        return;
+      }
+      const clip: CanvasVideoClipState = {
+        version: 1,
+        sourceNodeId: editorNode.id,
+        startTime: 0,
+        endTime: rendered.durationSeconds,
+        volume: 1,
+        muted: false,
+        playbackRate: 1,
+        fit: "contain",
+      };
+      const draftNode = createMedia(
+        "video",
+        asset.url,
+        `${sourceName} · 成片`,
+        { x: editorNode.x + nodeSize(editorNode).w + 90, y: editorNode.y },
+        {
+          role: "视频编辑成片",
+          status: "completed",
+          statusLabel: "视频编辑成片",
+          assetId: asset.id,
+          sourceAssetId: preferredSource.data.sourceAssetId || preferredSource.data.assetId,
+          mimeType: asset.mime || rendered.mime,
+          autoFit: true,
+          nativeWidth: rendered.width,
+          nativeHeight: rendered.height,
+          durationMs: Math.round(rendered.durationSeconds * 1000),
+          sourceDurationMs: Math.round(rendered.durationSeconds * 1000),
+          videoClip: clip,
+          params: clone(videoParams),
+          generation: {
+            kind: "video",
+            prompt: "视频编辑成片",
+            params: clone(videoParams),
+            operation: "edit",
+            referenceIds: [editorNode.id, ...sourceIds],
+            parentNodeId: editorNode.id,
+            createdAt,
+          },
+        },
+      );
+      const positioned = {
+        ...draftNode,
+        ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode),
+      };
+      commit((value) => ({
+        ...value,
+        nodes: [...value.nodes, positioned],
+        edges: [
+          ...value.edges,
+          {
+            id: uid("edge"),
+            source: editorNode.id,
+            target: positioned.id,
+            sourcePort: "right",
+            targetPort: "left",
+            kind: "lineage",
+          },
+        ],
+      }));
+      setSelectedIds(new Set([positioned.id]));
+      setSelectedGroupId(null);
+      setVideoEditorNodeId(null);
+      notify(selected ? "已导出所选片段所在的完整时间线并创建新节点" : "已导出完整时间线并创建新节点");
+      addLog(`视频编辑成片已创建：${sourceName}`);
+    })();
+  }, [addLog, commit, notify, openNodePosition, runtime]);
 
   const runUpscaleNode = useCallback(async (node: CanvasNode) => {
     if (node.type !== "upscale") return;
@@ -11184,6 +11688,14 @@ export default function SuperCanvas() {
       return {
         primaryActions: [
           {
+            id: "one-click-cinematic",
+            icon: "cinematic",
+            label: "一键成片",
+            title: "打开设置并选择服务商与视频模型",
+            disabled: !isCanvasReadyImageSource(node),
+            onClick: () => openOneClickCinematic(node.id),
+          },
+          {
             id: "mask",
             icon: "mask",
             label: node.data.mask ? "查看局部编辑" : "局部编辑",
@@ -11217,6 +11729,13 @@ export default function SuperCanvas() {
       const canAddAsset = canAddCanvasAsset(node);
       return {
         primaryActions: [
+          {
+            id: "trim-video",
+            icon: "edit",
+            label: "剪辑视频",
+            disabled: !hasMedia,
+            onClick: () => openCanvasVideoClipEditor(node.id),
+          },
           {
             id: "continue",
             icon: "play",
@@ -11350,6 +11869,8 @@ export default function SuperCanvas() {
     openCanvasMaskEditor,
     openCanvasTextViewer,
     openCanvasAudioPanel,
+    openCanvasVideoClipEditor,
+    openOneClickCinematic,
     openCanvasVideoEditor,
     continueFromMedia,
     deleteSelection,
@@ -11615,6 +12136,13 @@ export default function SuperCanvas() {
     if (node.type === "media" && node.data.kind === "video") {
       const mediaActions: CanvasQuickAction[] = [
         {
+          id: "trim-video",
+          icon: "✂",
+          label: "剪辑视频",
+          disabled: !hasMedia,
+          onClick: close(() => openCanvasVideoClipEditor(node.id)),
+        },
+        {
           id: "continue",
           icon: "▶",
           label: "继续生成 / 变体",
@@ -11722,6 +12250,7 @@ export default function SuperCanvas() {
   }, [
     openAssetCollectionPicker,
     openCanvasAudioPanel,
+    openCanvasVideoClipEditor,
     openCanvasVideoEditor,
     contextNode,
     contextMenu?.world,
@@ -12447,10 +12976,11 @@ export default function SuperCanvas() {
                    onConnect={startConnection}
                    onSelect={(event) => selectNode(node, event.shiftKey)}
                    onRemoveFromGroup={() => removeNodeFromGroup(node.id)}
-                  onPreview={() =>
-                    openCanvasMediaViewer(node.id)
-                  }
-                  onOpenVideoEditor={() => openCanvasVideoEditor(node.id)}
+                   onPreview={() =>
+                     openCanvasMediaViewer(node.id)
+                   }
+                   onOpenVideoClip={() => openCanvasVideoClipEditor(node.id)}
+                   onOpenVideoEditor={() => openCanvasVideoEditor(node.id)}
                   onOutputPreview={(output) => openCanvasMediaViewer(output.id)}
                   onLocalEdit={() => openCanvasMaskEditor(node.id)}
                   onTextPreview={() => openCanvasTextViewer(node.id)}
@@ -12514,6 +13044,22 @@ export default function SuperCanvas() {
             menuSubtitle="节点操作"
           />
         )}
+        {oneClickCinematicNodeId && !nodeGestureActive && (() => {
+          const source = document.nodes.find((item) => item.id === oneClickCinematicNodeId);
+          if (!source || !isCanvasReadyImageSource(source)) return null;
+          return (
+            <OneClickCinematicPanel
+              imageUrl={String(source.data.url)}
+              imageName={String(source.data.name || "当前图片")}
+              runtime={runtime}
+              onCancel={() => setOneClickCinematicNodeId(null)}
+              onSubmit={(settings, selection) => {
+                setOneClickCinematicNodeId(null);
+                void runOneClickCinematic(source, settings, selection);
+              }}
+            />
+          );
+        })()}
         {imageEditorNodeId && !nodeGestureActive && (() => {
           const imageEditorNode = document.nodes.find((item) => item.id === imageEditorNodeId);
           if (!imageEditorNode || (imageEditorNode.type !== "media" && imageEditorNode.type !== "upscale") || imageEditorNode.data.kind !== "image" || !imageEditorNode.data.url) return null;
@@ -12531,6 +13077,17 @@ export default function SuperCanvas() {
             />
           );
         })()}
+        {videoClipEditorNodeId && !nodeGestureActive && (() => {
+          const videoClipNode = document.nodes.find((item) => item.id === videoClipEditorNodeId);
+          if (!videoClipNode || videoClipNode.type !== "media" || videoClipNode.data.kind !== "video" || !videoClipNode.data.url) return null;
+          return (
+            <CanvasVideoClipWorkbench
+              node={videoClipNode}
+              onClose={() => setVideoClipEditorNodeId(null)}
+              onCreate={createVideoClip}
+            />
+          );
+        })()}
         {videoEditorNodeId && !nodeGestureActive && (() => {
           const videoEditorNode = document.nodes.find((item) => item.id === videoEditorNodeId);
           if (!videoEditorNode || videoEditorNode.type !== "video-editor") return null;
@@ -12539,7 +13096,7 @@ export default function SuperCanvas() {
               node={videoEditorNode}
               document={document}
               onClose={() => setVideoEditorNodeId(null)}
-              onChange={(videoEditor) => updateVideoEditorNodeState(videoEditorNode.id, videoEditor)}
+              onCreate={(draft, selectedClipId) => createVideoEditorClip(videoEditorNode.id, draft, selectedClipId)}
             />
           );
         })()}
@@ -15122,6 +15679,8 @@ function CanvasActionIcon({ name }: { name: string }) {
       return svg(<><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="7" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" /></>);
     case "one-take":
       return svg(<><path d="M5 7.5h14v9H5z" /><path d="m10 10 4 2-4 2v-4ZM7 5v2M17 5v2" /></>);
+    case "cinematic":
+      return svg(<><path d="M4.5 7.5h15v9h-15z" /><path d="M8 5.5v2M12 5.5v2M16 5.5v2M8 16.5v2M12 16.5v2M16 16.5v2" /><path d="m10 10 4 2-4 2v-4Z" fill="currentColor" stroke="none" /></>);
     default:
       return <>{name}</>;
   }
@@ -16560,6 +17119,7 @@ function CanvasNodeCard({
   onSelect,
   onRemoveFromGroup,
   onPreview,
+  onOpenVideoClip,
   onOpenVideoEditor,
   onTextPreview,
   onLocalEdit,
@@ -16606,6 +17166,7 @@ function CanvasNodeCard({
   onSelect: (event: ReactPointerEvent) => void;
   onRemoveFromGroup: () => void;
   onPreview: () => void;
+  onOpenVideoClip: () => void;
   onOpenVideoEditor: () => void;
   onTextPreview: () => void;
   onLocalEdit: () => void;
@@ -16656,9 +17217,20 @@ function CanvasNodeCard({
       : null;
   const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
   const failed = data.status === "failed" && !data.url;
+  const videoClipSourceDuration =
+    Number(data.sourceDurationMs || data.durationMs) > 0
+      ? Number(data.sourceDurationMs || data.durationMs) / 1000
+      : undefined;
+  const videoClip =
+    node.type === "media" && data.kind === "video"
+      ? normalizeCanvasVideoClipState(data.videoClip, videoClipSourceDuration)
+      : undefined;
+  const sourceVideoDuration = formatCanvasVideoDuration(data.durationMs);
   const videoDuration =
     node.type === "media" && data.kind === "video" && data.url
-      ? formatCanvasVideoDuration(data.durationMs)
+      ? videoClip
+        ? formatCanvasVideoDuration(Math.round(videoClipDurationSeconds(videoClip) * 1000))
+        : sourceVideoDuration
       : "";
   const videoResolution =
     node.type === "media" &&
@@ -16772,17 +17344,27 @@ function CanvasNodeCard({
     const video = videoRef.current;
     if (video) {
       video.pause();
-      video.currentTime = 0;
+      try {
+        video.currentTime = videoClip?.startTime || 0;
+      } catch {}
     }
     setVideoPlaybackState("paused");
-  }, [data.url]);
+  }, [data.url, videoClip?.startTime]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoClip) return;
+    video.playbackRate = videoClip.playbackRate;
+    video.volume = videoClip.muted ? 0 : videoClip.volume;
+  }, [videoClip?.muted, videoClip?.playbackRate, videoClip?.volume]);
 
   const toggleVideoPlayback = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     const video = videoRef.current;
     if (!video) return;
 
-    if (video.ended) video.currentTime = 0;
+    if (video.ended || (videoClip && video.currentTime >= videoClip.endTime - 0.01))
+      video.currentTime = videoClip?.startTime || 0;
     if (video.paused) {
       void video.play().catch(() => setVideoPlaybackState("paused"));
     } else {
@@ -16818,6 +17400,7 @@ function CanvasNodeCard({
         event.stopPropagation();
         if (referencePickerActive) return;
         if (node.type === "video-editor") onOpenVideoEditor();
+        else if (node.type === "media" && node.data.kind === "video" && node.data.url) onOpenVideoClip();
         else if (node.type === "prompt") onEdit(true);
         else if (node.type === "media" && node.data.kind === "audio") onToggleEditor(node);
         else if (isCanvasReferenceableNode(node)) onPreview();
@@ -16884,10 +17467,11 @@ function CanvasNodeCard({
               <video
                 ref={videoRef}
                 src={data.url}
-                muted
+                muted={videoClip ? videoClip.muted : true}
                 playsInline
                 preload="metadata"
                 draggable={false}
+                style={videoClip ? { objectFit: videoClip.fit, transform: `translate(${(videoClip.x || 0) * 50}%, ${(videoClip.y || 0) * 50}%) scale(${videoClip.scale || 1})`, opacity: videoClip.opacity ?? 1, transformOrigin: "center center" } : undefined}
                 aria-label={`视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
                 onPlay={() => setVideoPlaybackState("playing")}
                 onPause={() =>
@@ -16896,14 +17480,21 @@ function CanvasNodeCard({
                   )
                 }
                 onEnded={() => setVideoPlaybackState("ended")}
-                onLoadedMetadata={(event) =>
+                onTimeUpdate={(event) => {
+                  if (!videoClip || event.currentTarget.currentTime < videoClip.endTime - 0.01) return;
+                  setVideoPlaybackState("ended");
+                  event.currentTarget.pause();
+                  event.currentTarget.currentTime = videoClip.endTime;
+                }}
+                onLoadedMetadata={(event) => {
                   onNaturalSize(
                     node.id,
                     event.currentTarget.videoWidth,
                     event.currentTarget.videoHeight,
                     event.currentTarget.duration,
-                  )
-                }
+                  );
+                  if (videoClip) event.currentTarget.currentTime = videoClip.startTime;
+                }}
               />
             ) : data.kind === "audio" ? (
               <div className="canvas-audio-stage">
