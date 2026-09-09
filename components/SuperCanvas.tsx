@@ -5189,10 +5189,6 @@ export default function SuperCanvas() {
         setConnectionNodePicker(null);
         return notify("对象组不能作为超分输入，请连接单张图片", "error");
       }
-      if (kind === "angle" && groupById(docRef.current, picker.sourceId)) {
-        setConnectionNodePicker(null);
-        return notify("对象组不能作为角度控制输入，请连接单张图片", "error");
-      }
       const sourceNode = nodeById(docRef.current, picker.sourceId);
       if (
         kind === "upscale" &&
@@ -5201,10 +5197,6 @@ export default function SuperCanvas() {
         setConnectionNodePicker(null);
         return notify("超分节点只接受一张已完成的图片", "error");
       }
-      if (kind === "angle" && !isCanvasReadyImageSource(sourceNode)) {
-        setConnectionNodePicker(null);
-        return notify("角度控制节点只接受一张已完成的图片", "error");
-      }
       const mediaKind =
         kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const draft =
@@ -5212,8 +5204,6 @@ export default function SuperCanvas() {
           ? createVideoEditorNode(picker.world)
           : kind === "upscale"
           ? createUpscaleNode(picker.world)
-          : kind === "angle"
-          ? createAngleNode(picker.world)
           : kind === "text"
           ? createPrompt(picker.world)
           : kind === "workflowImage"
@@ -5253,9 +5243,8 @@ export default function SuperCanvas() {
       else if (mediaKind !== "audio" && kind !== "videoEditor") setMode(mediaKind);
       if (mediaKind === "audio") setExpandedEditorId(node.id);
       if (kind === "upscale") setExpandedEditorId(node.id);
-      if (kind === "angle") setAngleNodeId(node.id);
       notify(
-        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "angle" ? "角度控制" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
+        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [commit, notify, openNodePosition, runtime],
