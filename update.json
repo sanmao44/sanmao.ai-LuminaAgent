@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.36/SANMAO.AI-0.7.36.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.36/SANMAO.AI-0.7.36.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "ef87c89ee5fc2d7e0f5355de525a474f4315f71ce9088927351e2af443b5d60d",
   "publishedAt": "2026-09-09T00:00:00+08:00",
   "notes": [
     "完善超级画布视频工作台的剪辑流程，支持素材移动到第一帧、时间线分割、撤销/重做与连续播放操作。",
