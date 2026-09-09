@@ -60,6 +60,7 @@ import {
   upscaleCardSizeForRatio,
   nodeById,
   nodeSize,
+  normalizeCanvasAngleParams,
   normalizeDocument,
   recoverInterruptedCanvasDocument,
   removeCanvasReference,
@@ -84,6 +85,7 @@ import {
   type CanvasNodeLayerAction,
 } from "@/lib/canvas/layers";
 import { createPortal } from "react-dom";
+import type { ClientReferenceImage } from "@/lib/types";
 import {
   getCanvasVideoTask,
   generateCanvasAgent,
@@ -216,6 +218,7 @@ import CanvasGroupComposeDialog, {
 } from "@/components/canvas/CanvasGroupComposeDialog";
 import type {
   CanvasCamera,
+  CanvasAngleParams,
   CanvasConnectionStyle,
   CanvasDocument,
   CanvasEdge,
@@ -235,6 +238,7 @@ import type {
   CanvasVideoClipState,
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
+import type { AngleGenerationInput } from "@/lib/angle-control";
 import {
   normalizeVideoEditorState,
   syncVideoEditorInputs,
@@ -2296,6 +2300,18 @@ function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | 
   };
 }
 
+function canvasAngleReferenceFromNode(node: CanvasNode | undefined): ClientReferenceImage | null {
+  if (!isCanvasReadyImageSource(node) || node?.data.kind !== "image" || !node.data.url) return null;
+  const url = String(node.data.url);
+  return {
+    id: node.id,
+    name: String(node.data.name || "原始参考图"),
+    kind: "image",
+    url,
+    ...(url.startsWith("data:") ? { dataUrl: url } : {}),
+  };
+}
+
 function isCanvasReferencePickerCandidate(node: CanvasNode | undefined) {
   return Boolean(
     node &&
@@ -2670,6 +2686,7 @@ export default function SuperCanvas() {
   const runUpscaleNodeRef = useRef<((node: CanvasNode) => Promise<void>) | null>(null);
   const mountedRef = useRef(true);
   const generationKeysRef = useRef<Set<string>>(new Set());
+  const angleAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const registeredAssetUrlsRef = useRef<Set<string>>(new Set());
   const spaceHeldRef = useRef(false);
   const [ready, setReady] = useState(false);
@@ -5189,10 +5206,6 @@ export default function SuperCanvas() {
         setConnectionNodePicker(null);
         return notify("对象组不能作为超分输入，请连接单张图片", "error");
       }
-      if (kind === "angle" && groupById(docRef.current, picker.sourceId)) {
-        setConnectionNodePicker(null);
-        return notify("对象组不能作为角度控制输入，请连接单张图片", "error");
-      }
       const sourceNode = nodeById(docRef.current, picker.sourceId);
       if (
         kind === "upscale" &&
@@ -5201,10 +5214,6 @@ export default function SuperCanvas() {
         setConnectionNodePicker(null);
         return notify("超分节点只接受一张已完成的图片", "error");
       }
-      if (kind === "angle" && !isCanvasReadyImageSource(sourceNode)) {
-        setConnectionNodePicker(null);
-        return notify("角度控制节点只接受一张已完成的图片", "error");
-      }
       const mediaKind =
         kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const draft =
@@ -5212,8 +5221,6 @@ export default function SuperCanvas() {
           ? createVideoEditorNode(picker.world)
           : kind === "upscale"
           ? createUpscaleNode(picker.world)
-          : kind === "angle"
-          ? createAngleNode(picker.world)
           : kind === "text"
           ? createPrompt(picker.world)
           : kind === "workflowImage"
@@ -5253,9 +5260,8 @@ export default function SuperCanvas() {
       else if (mediaKind !== "audio" && kind !== "videoEditor") setMode(mediaKind);
       if (mediaKind === "audio") setExpandedEditorId(node.id);
       if (kind === "upscale") setExpandedEditorId(node.id);
-      if (kind === "angle") setAngleNodeId(node.id);
       notify(
-        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "angle" ? "角度控制" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
+        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [commit, notify, openNodePosition, runtime],
@@ -9739,6 +9745,214 @@ export default function SuperCanvas() {
     setLightbox(null);
     notify("已创建超分节点，请设置参数后提交");
   }, [commit, notify, selectedSingle]);
+
+  const runAngleGeneration = useCallback(async (nodeId: string, input: AngleGenerationInput) => {
+    const angleNode = nodeById(docRef.current, nodeId);
+    if (!angleNode || angleNode.type !== "angle") {
+      notify("角度控制节点已不存在，请重新选择。", "error");
+      return;
+    }
+    const source = incomingReferences(docRef.current, nodeId).find((item) => isCanvasReadyImageSource(item));
+    const sourceReference = canvasAngleReferenceFromNode(source);
+    if (!source || !sourceReference) {
+      notify("角度控制节点需要一张已完成的图片输入。", "error");
+      return;
+    }
+    if (generationKeysRef.current.has(nodeId)) {
+      notify("这个角度控制任务正在生成，请稍候。", "error");
+      return;
+    }
+
+    const taskId = uid("angle-task");
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    angleAbortControllersRef.current.set(nodeId, controller);
+    const existingAngle = angleNode.data.angle || normalizeCanvasAngleParams();
+    const viewpoint = input.camera.viewpoint;
+    const angle: CanvasAngleParams = {
+      ...existingAngle,
+      kind: "angle",
+      camera: clone(input.camera),
+      cameraStart: input.cameraStart ? clone(input.cameraStart) : null,
+      subjectType: viewpoint?.subjectType || existingAngle.subjectType,
+      cameraMode: viewpoint?.mode || existingAngle.cameraMode,
+      lighting: viewpoint?.lighting ? clone(viewpoint.lighting) : existingAngle.lighting,
+      angleNote: input.note,
+      angleGuide: Boolean(input.guideReference),
+      output: clone(input.output),
+      referenceNodeId: source.id,
+      referenceMedia: {
+        id: source.id,
+        name: sourceReference.name,
+        url: sourceReference.url,
+        ...(source.data.assetId ? { assetId: String(source.data.assetId) } : {}),
+      },
+    };
+    const baseParams = normalizeCreationSettings(
+      "image",
+      angleNode.data.generation?.params || null,
+      runtime,
+    ) as ImageCreationSettings;
+    const params: ImageCreationSettings = {
+      ...baseParams,
+      kind: "image",
+      model: input.camera.modelId || "auto",
+      aspect: input.output.aspectRatio || "自定义",
+      customAspectWidth: input.output.width,
+      customAspectHeight: input.output.height,
+      sizeMode: "custom",
+      width: input.output.width,
+      height: input.output.height,
+      count: 1,
+      quality: "自动",
+      outputFormat: "png",
+      backgroundMode: "auto",
+      mask: undefined,
+    };
+    generationKeysRef.current.add(nodeId);
+    setGenerationKeys(new Set(generationKeysRef.current));
+    updateDoc((value) => ({
+      ...value,
+      nodes: value.nodes.map((node) => node.id === nodeId
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              angle,
+              status: "running" as const,
+              statusLabel: "角度结果生成中",
+              processingStartedAt: startedAt,
+              jobId: taskId,
+            },
+          }
+        : node),
+    }));
+
+    try {
+      const references = [
+        { url: sourceReference.url || "", name: sourceReference.name },
+        ...(input.guideReference
+          ? [{ url: input.guideReference.dataUrl || input.guideReference.url || "", name: "空间构图导引" }]
+          : []),
+      ].filter((reference) => reference.url);
+      const response = await generateCanvasImage({
+        taskId,
+        prompt: input.prompt,
+        model: input.camera.modelId,
+        count: 1,
+        aspect: input.output.aspectRatio,
+        resolution: "自动",
+        quality: "自动",
+        sizeMode: "custom",
+        width: input.output.width,
+        height: input.output.height,
+        outputFormat: "png",
+        camera: input.camera,
+        cameraStart: input.cameraStart,
+        angleNote: input.note,
+        angleGuide: Boolean(input.guideReference),
+        references,
+        signal: controller.signal,
+      });
+      const image = response.images?.[0];
+      if (!image?.url) throw new Error("服务端没有返回角度结果图片。");
+      const outputPosition = {
+        x: angleNode.x + nodeSize(angleNode).w + 100,
+        y: angleNode.y,
+      };
+      const outputDraft = createMedia("image", image.url, "角度控制结果", outputPosition, {
+        role: "角度控制结果",
+        model: response.model?.name || input.camera.modelId || "自动模型",
+        status: "completed",
+        statusLabel: "角度结果已完成",
+        generation: {
+          kind: "image",
+          prompt: input.prompt,
+          params: clone(params),
+          operation: "edit",
+          referenceIds: [source.id],
+          parentNodeId: nodeId,
+          sourceImageNodeId: source.id,
+          sourceImageUrl: sourceReference.url,
+          sourceImageAssetId: source.data.assetId ? String(source.data.assetId) : undefined,
+          taskId,
+          createdAt: startedAt,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          angle,
+        },
+        referenceOrder: [source.id],
+      });
+      const output = {
+        ...outputDraft,
+        ...openNodePosition(outputPosition, outputDraft),
+      };
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes
+          .map((node) => node.id === nodeId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "completed" as const,
+                  statusLabel: "已生成结果，可再次调整",
+                  processingStartedAt: undefined,
+                  jobId: undefined,
+                },
+              }
+            : node,
+          )
+          .concat(output),
+        edges: [
+          ...value.edges,
+          {
+            id: uid("edge"),
+            source: nodeId,
+            target: output.id,
+            sourcePort: "right" as const,
+            targetPort: "left" as const,
+            kind: "lineage" as const,
+          },
+        ],
+      }));
+      setSelectedIds(new Set([output.id]));
+      setSelectedGroupId(null);
+      notify("角度结果已写入画布");
+      addLog(`角度控制生成完成：${output.id}`);
+    } catch (error) {
+      const message = controller.signal.aborted
+        ? "角度任务已取消，可重试"
+        : error instanceof Error ? error.message : "角度控制生成失败";
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === nodeId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                status: "failed" as const,
+                statusLabel: message,
+                processingStartedAt: undefined,
+                jobId: undefined,
+              },
+            }
+          : node),
+      }));
+      notify(message, "error");
+      addLog(`角度控制生成失败：${message}`);
+    } finally {
+      if (angleAbortControllersRef.current.get(nodeId) === controller)
+        angleAbortControllersRef.current.delete(nodeId);
+      generationKeysRef.current.delete(nodeId);
+      setGenerationKeys(new Set(generationKeysRef.current));
+    }
+  }, [addLog, notify, openNodePosition, runtime, updateDoc]);
+
+  const cancelAngleGeneration = useCallback((nodeId: string) => {
+    const controller = angleAbortControllersRef.current.get(nodeId);
+    if (!controller) return;
+    controller.abort();
+  }, []);
 
   const openImageOperations = useCallback((node: CanvasNode) => {
     if ((node.type !== "media" && node.type !== "upscale") || node.data.kind !== "image" || !node.data.url)
