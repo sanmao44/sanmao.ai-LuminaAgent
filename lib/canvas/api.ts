@@ -402,6 +402,7 @@ export async function generateCanvasImage(input: {
   cameraStart?: AngleCameraState | null;
   angleNote?: string;
   angleGuide?: boolean;
+  signal?: AbortSignal;
   maskUrl?: string;
   moveGuideUrl?: string;
   references?: Array<{ url: string; name?: string }>;
@@ -425,6 +426,7 @@ export async function generateCanvasImage(input: {
   }>("/api/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: input.signal,
     body: JSON.stringify({
       source: "canvas",
       ...(input.taskId ? { taskId: input.taskId } : {}),
