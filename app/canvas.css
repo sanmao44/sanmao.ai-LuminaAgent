@@ -3973,8 +3973,8 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 @media(max-width:720px){.canvas-reference-picker-hint{left:12px;right:12px;top:76px;max-width:none;transform:none;justify-content:center}.canvas-reference-picker-hint>div{max-width:100%}.canvas-reference-picker-hint small{display:block;overflow:hidden;text-overflow:ellipsis}}
 
 /* Video editor node and workbench use the canvas token system. */
-.canvas-node[data-node-kind="video-editor"]{padding:0;overflow:hidden}
-.canvas-video-editor-card{height:100%;display:flex;flex-direction:column;gap:11px;padding:14px;box-sizing:border-box;background:color-mix(in srgb,var(--panel) 96%,var(--canvas-node-video-editor) 4%)}
+.canvas-node[data-node-kind="video-editor"]{padding:0;overflow:visible}
+.canvas-video-editor-card{height:100%;display:flex;flex-direction:column;gap:11px;padding:14px;box-sizing:border-box;overflow:hidden;border-radius:18px;background:color-mix(in srgb,var(--panel) 96%,var(--canvas-node-video-editor) 4%)}
 .canvas-video-editor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
 .canvas-video-editor-title{display:flex;align-items:center;gap:9px;min-width:0}
 .canvas-video-editor-title>div{display:grid;gap:3px;min-width:0}
