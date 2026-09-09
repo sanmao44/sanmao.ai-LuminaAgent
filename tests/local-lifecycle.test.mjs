@@ -52,6 +52,13 @@ test("health and official launchers expose the intended lifecycle modes", () => 
   assert.match(linuxLauncher, /export SANMAO_LIFECYCLE=1/);
 });
 
+test("Windows launcher waits for fresh production-build artifacts", () => {
+  assert.match(windowsLauncher, /function Clear-SanmaoBuildArtifactMarkers/);
+  assert.match(windowsLauncher, /\.next\\BUILD_ID/);
+  assert.match(windowsLauncher, /\.next\\required-server-files\.json/);
+  assert.match(windowsLauncher, /if \(-not \$needBuild -and -not \$SkipBuild\.IsPresent\)/);
+});
+
 test("every existing launcher prepares the optional public media relay", () => {
   assert.equal(freeRelayPs.charCodeAt(0), 0xfeff, "Windows PowerShell relay helper must keep a UTF-8 BOM");
   assert.match(windowsLauncher, /FreeRelay/);

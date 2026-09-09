@@ -339,7 +339,8 @@ function Test-SanmaoBuildArtifacts {
   $requiredPaths = @(
     (Join-Path $root '.next\BUILD_ID'),
     (Join-Path $root '.next\prerender-manifest.json'),
-    (Join-Path $root '.next\routes-manifest.json')
+    (Join-Path $root '.next\routes-manifest.json'),
+    (Join-Path $root '.next\required-server-files.json')
   )
   foreach ($path in $requiredPaths) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
@@ -348,7 +349,7 @@ function Test-SanmaoBuildArtifacts {
   # next start can report Ready and then exit if a manifest is still being
   # written. Read both JSON files so the launcher never starts against a
   # partially materialized production build.
-  foreach ($path in $requiredPaths[1..2]) {
+  foreach ($path in $requiredPaths[1..3]) {
     try {
       $content = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
       if ([string]::IsNullOrWhiteSpace($content)) { return $false }
@@ -358,6 +359,20 @@ function Test-SanmaoBuildArtifacts {
     }
   }
   return $true
+}
+
+function Clear-SanmaoBuildArtifactMarkers {
+  # Clear the markers before a rebuild so a previous build cannot make the
+  # readiness check pass while Next.js is still replacing .next in the
+  # background.
+  foreach ($path in @(
+      (Join-Path $root '.next\BUILD_ID'),
+      (Join-Path $root '.next\prerender-manifest.json'),
+      (Join-Path $root '.next\routes-manifest.json'),
+      (Join-Path $root '.next\required-server-files.json')
+    )) {
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Wait-SanmaoBuildArtifacts([int]$TimeoutMs = 15000) {
@@ -677,7 +692,7 @@ $nextCmd = Join-Path $root 'node_modules\.bin\next.cmd'
 $buildIdPath = Join-Path $root '.next\BUILD_ID'
 
 $needBuild = (-not $SkipBuild.IsPresent) -and (($ForceBuild.IsPresent) -or ($env:SANMAO_FORCE_BUILD -eq '1') -or (-not (Test-SanmaoBuildArtifacts)))
-if (-not $needBuild) {
+if (-not $needBuild -and -not $SkipBuild.IsPresent) {
   $buildTime = (Get-Item -LiteralPath $buildIdPath).LastWriteTimeUtc
   $files = @()
   foreach ($d in @('app', 'components', 'lib', 'public')) {
@@ -700,6 +715,8 @@ if ($SkipBuild.IsPresent) {
 } elseif ($needBuild) {
   Write-Host '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。' -ForegroundColor Yellow
   Write-Host '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。' -ForegroundColor Yellow
+  Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
+  Clear-SanmaoBuildArtifactMarkers
   $buildSourceFingerprint = Get-SanmaoSourceFingerprint
   & $nextCmd build --webpack
   if ($LASTEXITCODE -ne 0) {
