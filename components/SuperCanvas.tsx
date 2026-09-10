@@ -2646,12 +2646,26 @@ function CanvasEdgeVisual({
         onPointerDown={handlePointerDown}
       />
       {related && animateRelated && (
-        <path
-          className="canvas-edge-related-flow"
-          d={path}
-          pathLength="1000"
-          aria-hidden="true"
-        />
+        <>
+          <path
+            className="canvas-edge-related-flow"
+            d={path}
+            pathLength="1000"
+            aria-hidden="true"
+          />
+          <path
+            className="canvas-edge-related-flow-mid"
+            d={path}
+            pathLength="1000"
+            aria-hidden="true"
+          />
+          <path
+            className="canvas-edge-related-flow-head"
+            d={path}
+            pathLength="1000"
+            aria-hidden="true"
+          />
+        </>
       )}
     </g>
   );
@@ -13499,10 +13513,6 @@ export default function SuperCanvas() {
               viewBox="-5000 -5000 10000 10000"
             >
               <defs>
-                <linearGradient id="canvas-edge-gradient" x1="0" x2="1">
-                  <stop offset="0" stopColor="var(--accent)" />
-                  <stop offset="1" stopColor="var(--accent-2)" />
-                </linearGradient>
                 {CANVAS_NODE_COLOR_KEYS.map((colorKey) => (
                   <marker
                     key={colorKey}

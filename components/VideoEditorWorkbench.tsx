@@ -8,6 +8,7 @@ import type {
   CanvasVideoEditorState,
   CanvasVideoEditorTrack,
 } from "@/lib/canvas/types";
+import SelectMenu from "@/components/SelectMenu";
 import {
   addVideoEditorCaption,
   clipEnd,
@@ -752,8 +753,8 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
             <div className="canvas-video-editor-timeline-actions">
               <div className="canvas-video-editor-tool-toggle" role="group" aria-label="编辑工具"><button type="button" className={toolMode === "select" ? "active" : ""} onClick={() => setToolMode("select")} title="选择工具（V）">V</button><button type="button" className={toolMode === "razor" ? "active" : ""} onClick={() => setToolMode("razor")} title="剃刀工具（C）">✂ C</button></div>
               <button type="button" className={`canvas-video-editor-snap${snapEnabled ? " active" : ""}`} onClick={() => setSnapEnabled((value) => !value)} title="切换时间线吸附（拖动片段时）">吸附</button>
-              <label className="canvas-video-editor-project-setting"><span>比例</span><select aria-label="项目比例" value={draft.aspect} onChange={(event) => emit({ ...draft, aspect: event.target.value })}>{ASPECT_PRESETS.map((aspect) => <option value={aspect} key={aspect}>{aspect}</option>)}</select></label>
-              <label className="canvas-video-editor-project-setting"><span>分辨率</span><select aria-label="项目分辨率" value={draft.resolution || "1080p"} onChange={(event) => emit({ ...draft, resolution: event.target.value as CanvasVideoEditorState["resolution"] })}>{RESOLUTION_PRESETS.map((resolution) => <option value={resolution} key={resolution}>{resolution}</option>)}</select></label>
+              <label className="canvas-video-editor-project-setting"><span>比例</span><SelectMenu ariaLabel="项目比例" className="canvas-video-editor-project-select" menuClassName="canvas-video-editor-project-menu" menuWidth={112} value={draft.aspect} options={ASPECT_PRESETS.map((aspect) => ({ value: aspect, label: aspect }))} onChange={(aspect) => emit({ ...draft, aspect })} /></label>
+              <label className="canvas-video-editor-project-setting"><span>分辨率</span><SelectMenu ariaLabel="项目分辨率" className="canvas-video-editor-project-select" menuClassName="canvas-video-editor-project-menu" menuWidth={112} value={draft.resolution || "1080p"} options={RESOLUTION_PRESETS.map((resolution) => ({ value: resolution, label: resolution }))} onChange={(resolution) => emit({ ...draft, resolution: resolution as CanvasVideoEditorState["resolution"] })} /></label>
               <button type="button" onClick={splitSelected} disabled={!canSplitSelected} title="在播放头处分割（S）">✂ 分割 <kbd>S</kbd></button>
               <button type="button" onClick={deleteSelected} disabled={!selectedClip} title="删除所选片段（Delete）">删除 <kbd>Del</kbd></button>
               <button type="button" className="canvas-video-editor-icon-button" onClick={() => setTimeDisplayMode((value) => value === "seconds" ? "frames" : "seconds")} aria-label={timeDisplayMode === "seconds" ? "切换为按帧显示时间码" : "切换为按秒显示时间码"} title={timeDisplayMode === "seconds" ? "按秒显示时间码" : "按帧显示时间码"}>{timeDisplayMode === "seconds" ? "s" : "▦"}</button>

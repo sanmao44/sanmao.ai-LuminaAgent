@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import SelectMenu from '@/components/SelectMenu';
 import type { PublicState, UpscaleConnection, UpscaleProviderId } from '@/lib/types';
 import { UPSCALE_PROVIDER_LINKS, UPSCALE_PROVIDER_NAMES } from '@/lib/upscale-catalog';
 
@@ -125,7 +126,7 @@ export default function UpscaleConnectionGuide({ connections, onStateChanged, on
       <div className="upscale-connection-fields">
         <label><span>第 1 行：{credentialNames[0]}</span><input value={form.first} onChange={(event) => update(provider, { first: event.target.value })} autoComplete="off" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[0]}`} /></label>
         <label><span>第 2 行：{credentialNames[1]}</span><input type="password" value={form.second} onChange={(event) => update(provider, { second: event.target.value })} autoComplete="new-password" placeholder={connection?.connected ? '留空，继续使用已保存密钥' : `粘贴 ${credentialNames[1]}`} /></label>
-        {tencent && buckets.length > 0 && <label><span>选择存储桶</span><select value={form.bucket} onChange={(event) => update(provider, { bucket: event.target.value })}><option value="">请选择</option>{buckets.map((bucket) => <option value={bucket.name} key={`${bucket.name}-${bucket.region}`}>{bucket.name} · {bucket.region || '自动识别'}</option>)}</select></label>}
+        {tencent && buckets.length > 0 && <label><span>选择存储桶</span><SelectMenu ariaLabel="选择存储桶" className="upscale-connection-bucket-select" value={form.bucket} options={[{ value: '', label: '请选择' }, ...buckets.map((bucket) => ({ value: bucket.name, label: `${bucket.name} · ${bucket.region || '自动识别'}` }))]} onChange={(bucket) => update(provider, { bucket })} /></label>}
       </div>
       <div className="upscale-connection-actions"><button type="button" className="primary-small" disabled={busy === provider || tencent && buckets.length > 0 && !form.bucket} onClick={() => void submit(provider)}>{busy === provider ? '检测中…' : connection?.connected ? '重新检测并保存' : '检测并连接'}</button>{message[provider] && <span className={message[provider].includes('成功') || message[provider].includes('已删除') ? 'success' : 'error'}>{message[provider]}</span>}</div>
       {tencent && <small className="upscale-connection-note">首次使用请在存储桶中开启“数据万象（CI）”，并确认已开通对应图像处理服务。本工具会把原图自动上传到你自己的 COS 桶再超分，不会依赖外网中转，也不会修改云账号权限。</small>}

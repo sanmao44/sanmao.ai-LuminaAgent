@@ -235,12 +235,25 @@ html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(
 .canvas-settings-card{display:grid;gap:13px;padding:14px;border:1px solid var(--line-strong);border-radius:15px;background:var(--panel-2)}
 .canvas-settings-card>div:first-child{display:grid;gap:5px}.canvas-settings-card>div:first-child b{font-size:10px}.canvas-settings-card>div:first-child small{color:var(--muted);font-size:8px;line-height:1.5}
 .canvas-settings-options{display:grid;gap:7px}.canvas-settings-options button{display:flex;align-items:center;gap:9px;min-height:52px;padding:8px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--text);text-align:left}.canvas-settings-options button:hover{border-color:var(--accent);background:var(--accent-soft)}.canvas-settings-options button.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 13%,transparent)}.canvas-settings-options button>span:nth-child(2){display:grid;gap:4px;flex:1;min-width:0}.canvas-settings-options button b{font-size:9px}.canvas-settings-options button small{color:var(--muted);font-size:8px}.canvas-settings-options button i{width:18px;color:var(--accent-text);font-style:normal;text-align:center}.canvas-settings-option-icon{width:28px;height:28px;display:grid;place-items:center;flex:none;border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:18px}
-.canvas-edge-related-flow{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke:color-mix(in srgb,var(--accent-2) 72%,#fff);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:72 928;stroke-dashoffset:0;opacity:.86;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent-2) 48%,transparent));animation:canvas-edge-related-flow 1.8s linear infinite}
+/* The travelling flow light is three phase-locked dashes sharing one leading
+   edge: a long tail in the source node color, a tinted middle and a bright tip
+   read as a single light streak whose colour ramps up along its length. */
+.canvas-edge-related-flow{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 88%,var(--canvas-edge-flow-head));stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:172 828;stroke-dashoffset:1000;opacity:.78;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 46%,transparent));animation:canvas-edge-related-flow 1.8s linear infinite}
 @keyframes canvas-edge-related-flow{from{stroke-dashoffset:1000}to{stroke-dashoffset:0}}
+.canvas-edge-related-flow-mid{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 54%,var(--canvas-edge-flow-head));stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:118 882;stroke-dashoffset:946;opacity:.86;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 48%,transparent));animation:canvas-edge-related-flow-mid 1.8s linear infinite}
+@keyframes canvas-edge-related-flow-mid{from{stroke-dashoffset:946}to{stroke-dashoffset:-54}}
+.canvas-edge-related-flow-head{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 18%,var(--canvas-edge-flow-head));stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:52 948;stroke-dashoffset:880;opacity:1;filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color,var(--accent-2)) 58%,transparent));animation:canvas-edge-related-flow-head 1.8s linear infinite}
+@keyframes canvas-edge-related-flow-head{from{stroke-dashoffset:880}to{stroke-dashoffset:-120}}
 .canvas-edge-visual .canvas-edge.related{stroke-dasharray:11 9;stroke-linecap:round;animation:canvas-edge-related-dashes 1.8s linear infinite}
 @keyframes canvas-edge-related-dashes{from{stroke-dashoffset:0}to{stroke-dashoffset:-40}}
 .canvas-edge-visual .canvas-edge.related-static{stroke-dasharray:6 6;stroke-linecap:round;animation:none!important;filter:none}
-@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-edge-related-flow,html:not([data-motion="on"]) .canvas-edge.related{animation:none!important}}
+/* Light boards need a deeper, more saturated comet: a white hot tip would wash
+   out on a light surface, so the head color mixes toward ink instead. */
+html[data-theme="light"] .canvas-edge-visual .canvas-edge-related-flow{opacity:.94;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--node-color,var(--accent)) 34%,transparent))}
+html[data-theme="light"] .canvas-edge-visual .canvas-edge-related-flow-mid{opacity:.92;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--node-color,var(--accent)) 38%,transparent))}
+html[data-theme="light"] .canvas-edge-visual .canvas-edge-related-flow-head{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--node-color,var(--accent)) 44%,transparent))}
+
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-edge-related-flow,html:not([data-motion="on"]) .canvas-edge.related{animation:none!important}html:not([data-motion="on"]) .canvas-edge-related-flow-head{animation:none!important}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-connection-cancel{animation:none!important}}
 @keyframes canvas-connection-remove-attention{0%{opacity:0;box-shadow:0 0 0 0 color-mix(in srgb,var(--danger) 0%,transparent)}45%{opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 24%,transparent)}100%{opacity:.9;box-shadow:0 1px 3px color-mix(in srgb,var(--danger) 14%,transparent)}}
 .canvas-workbench>nav{grid-template-columns:repeat(6,1fr)}
@@ -504,6 +517,7 @@ html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(
   --canvas-node-upscale-text:#167267;
   --canvas-node-queued:#b45309;
   --canvas-node-running:#0369a1;
+  --canvas-edge-flow-head:color-mix(in srgb,var(--accent-2) 58%,#191634);
 }
 html[data-theme="dark"] .canvas-workspace{
   --canvas-node-image:#a78bfa;
@@ -522,6 +536,7 @@ html[data-theme="dark"] .canvas-workspace{
   --canvas-node-upscale-text:#99f6e4;
   --canvas-node-queued:#f59e0b;
   --canvas-node-running:#38bdf8;
+  --canvas-edge-flow-head:#ffffff;
 }
 .node-color-image{--node-color:var(--canvas-node-image);--node-text:var(--canvas-node-image-text);--node-soft:color-mix(in srgb,var(--canvas-node-image) 14%,transparent);--node-effective:var(--canvas-node-image)}
 .node-color-video{--node-color:var(--canvas-node-video);--node-text:var(--canvas-node-video-text);--node-soft:color-mix(in srgb,var(--canvas-node-video) 14%,transparent);--node-effective:var(--canvas-node-video)}
@@ -563,7 +578,9 @@ html[data-theme="dark"] .canvas-workspace{
 
 .canvas-edge-visual .canvas-edge,.canvas-edge-draft{stroke:color-mix(in srgb,var(--node-color) 76%,var(--line-strong));filter:drop-shadow(0 0 3px color-mix(in srgb,var(--node-color) 30%,transparent))}
 .canvas-edge-visual .canvas-edge:hover,.canvas-edge-visual .canvas-edge.selected{stroke:color-mix(in srgb,var(--node-color) 84%,var(--text));filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color) 52%,transparent))}
-.canvas-edge-visual .canvas-edge-related-flow{stroke:color-mix(in srgb,var(--node-color) 48%,#fff);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--node-color) 54%,transparent))}
+.canvas-edge-visual .canvas-edge-related-flow{stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 88%,var(--canvas-edge-flow-head));filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 46%,transparent))}
+.canvas-edge-visual .canvas-edge-related-flow-mid{stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 54%,var(--canvas-edge-flow-head));filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 48%,transparent))}
+.canvas-edge-visual .canvas-edge-related-flow-head{stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 18%,var(--canvas-edge-flow-head));filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color,var(--accent-2)) 58%,transparent))}
 .canvas-edge-draft{opacity:.86}
 
 .canvas-minimap-edges path{stroke:color-mix(in srgb,var(--node-color) 58%,var(--muted))}
@@ -1374,9 +1391,11 @@ html[data-theme="dark"] .canvas-workspace{
    they communicate. Keeping the geometry intact avoids pop-in while making
    zooming stable on large boards and low-end GPUs. */
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge,
-.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow{filter:none!important}
+.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow,
+.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-head{filter:none!important}
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge.related,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow,
+.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-head,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-running::before,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-running::after,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-queued::before,
@@ -4079,7 +4098,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-video-editor-timeline-shell{flex:none;display:flex;flex-direction:column;min-height:214px;border-top:1px solid var(--line);background:var(--panel)}
 .canvas-video-editor-timeline-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line)}
 .canvas-video-editor-timeline-toolbar>div:first-child{display:grid;gap:3px}.canvas-video-editor-timeline-toolbar b{font-size:11px}.canvas-video-editor-timeline-toolbar small{color:var(--muted);font-size:8px}
-.canvas-video-editor-project-setting{display:flex;align-items:center;gap:4px;height:25px;padding:0 5px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--muted);font-size:7px;font-weight:850}.canvas-video-editor-project-setting select{height:21px;padding:0 2px;border:0;outline:0;background:transparent;color:var(--text-2);font:800 8px inherit;cursor:pointer}.canvas-video-editor-project-setting select:focus{color:var(--node-text)}
+.canvas-video-editor-project-setting{display:flex;align-items:center;gap:4px;height:25px;padding:0 5px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--muted);font-size:7px;font-weight:850}.canvas-video-editor-project-setting>span{flex:none}.canvas-video-editor-project-setting .select-menu{width:auto;min-width:0;flex:none;display:inline-flex}.canvas-video-editor-project-setting .select-menu-trigger{width:auto;min-width:0;height:21px;min-height:21px;gap:3px;padding:0 2px;border:0;border-radius:5px;background:transparent;box-shadow:none;font-size:8px}.canvas-video-editor-project-setting .select-menu-trigger:hover,.canvas-video-editor-project-setting .select-menu.open .select-menu-trigger{border:0;background:var(--accent-soft);box-shadow:none}.canvas-video-editor-project-setting .select-menu-trigger:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 35%,transparent);outline-offset:1px}.canvas-video-editor-project-setting .select-menu-trigger-copy{font-size:8px;font-weight:800;color:var(--text-2)}.canvas-video-editor-project-setting .select-menu-chevron{font-size:9px;line-height:9px;transform:none}.canvas-video-editor-project-setting .select-menu.open .select-menu-chevron{transform:rotate(180deg)}.canvas-video-editor-project-menu{min-width:104px;padding:5px;border-radius:11px}.canvas-video-editor-project-menu .select-menu-option{min-height:26px;padding:5px 8px;border-radius:7px}.canvas-video-editor-project-menu .select-menu-option-copy strong{font-size:10px}.canvas-video-editor-project-menu .select-menu-check{font-size:11px}
 .canvas-video-editor-zoom{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:8px}.canvas-video-editor-zoom button{width:25px;height:25px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--text-2);cursor:pointer}
 .canvas-video-editor-timeline{min-height:164px;overflow:auto;padding-bottom:6px;scrollbar-width:thin}
 .canvas-video-editor-timeline-ruler{position:relative;height:27px;margin-left:112px;border-bottom:1px solid var(--line);background:repeating-linear-gradient(90deg,transparent 0 calc(72px - 1px),color-mix(in srgb,var(--line-strong) 65%,transparent) 72px 73px)}

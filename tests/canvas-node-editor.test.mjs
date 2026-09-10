@@ -503,6 +503,18 @@ test("selected related canvas edges become dashed and animate their flow", () =>
   assert.match(styles, /\.canvas-edge-visual \.canvas-edge\.related\{[^}]*stroke-dasharray:11 9[^}]*animation:canvas-edge-related-dashes 1\.8s linear infinite/);
   assert.match(styles, /@keyframes canvas-edge-related-dashes\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:-40\}\}/);
   assert.match(styles, /canvas-edge-related-flow,html:not\(\[data-motion="on"\]\) \.canvas-edge\.related\{animation:none!important\}/);
+  assert.match(component, /className="canvas-edge-related-flow-mid"/);
+  assert.match(styles, /\.canvas-edge-related-flow\{[^}]*stroke-dasharray:172 828[^}]*animation:canvas-edge-related-flow 1\.8s linear infinite/);
+  assert.match(styles, /\.canvas-edge-related-flow-mid\{[^}]*stroke-dasharray:118 882[^}]*animation:canvas-edge-related-flow-mid 1\.8s linear infinite/);
+  assert.match(styles, /\.canvas-edge-related-flow-head\{[^}]*stroke-dasharray:52 948[^}]*animation:canvas-edge-related-flow-head 1\.8s linear infinite/);
+  assert.match(styles, /@keyframes canvas-edge-related-flow-head\{from\{stroke-dashoffset:880\}to\{stroke-dashoffset:-120\}\}/);
+  // Every layer shares one leading edge, so the three dashes stay locked into a
+  // single streak while their colors ramp from the node color to the bright tip.
+  assert.match(styles, /\.canvas-edge-related-flow\{[^}]*var\(--node-color,var\(--accent-2\)\) 88%,var\(--canvas-edge-flow-head\)/);
+  assert.match(styles, /\.canvas-edge-related-flow-mid\{[^}]*var\(--node-color,var\(--accent-2\)\) 54%,var\(--canvas-edge-flow-head\)/);
+  assert.match(styles, /\.canvas-edge-related-flow-head\{[^}]*var\(--node-color,var\(--accent-2\)\) 18%,var\(--canvas-edge-flow-head\)/);
+  assert.match(styles, /--canvas-edge-flow-head:#ffffff/);
+  assert.match(styles, /html\[data-theme="light"\] \.canvas-edge-visual \.canvas-edge-related-flow-head\{[^}]*drop-shadow/);
 });
 
 test("canvas edges reveal one small red removal control at the pointer without a modifier", () => {
