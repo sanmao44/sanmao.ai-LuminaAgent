@@ -791,12 +791,6 @@ const CONNECTION_NODE_OPTIONS: Array<{
     description: "连接一张已完成图片并打开超分设置",
   },
   {
-    kind: "angle",
-    icon: "◈",
-    label: "角度控制节点",
-    description: "连接一张已完成图片并生成新视角",
-  },
-  {
     kind: "workflowImage",
     icon: "✧",
     label: "图片变体生成器",
@@ -1455,7 +1449,7 @@ async function waitForCanvasUpscaleTask(taskId: string) {
 }
 
 const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
-  "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop";
+  "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop";
 
 // Wheel gestures inside a node or an overlay belong to that control. Keep
 // them out of the stage zoom handler so native text/list scrolling can work
@@ -2735,6 +2729,7 @@ export default function SuperCanvas() {
   const [videoClipEditorNodeId, setVideoClipEditorNodeId] = useState<string | null>(null);
   const [videoEditorNodeId, setVideoEditorNodeId] = useState<string | null>(null);
   const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
+  const [angleImageNodeId, setAngleImageNodeId] = useState<string | null>(null);
   const [oneClickCinematicNodeId, setOneClickCinematicNodeId] = useState<string | null>(null);
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
@@ -2872,6 +2867,7 @@ export default function SuperCanvas() {
     setVideoClipEditorNodeId(null);
     setVideoEditorNodeId(null);
     setAngleNodeId(null);
+    setAngleImageNodeId(null);
     setOneClickCinematicNodeId(null);
     setAssetCollectionPickerNodeId(null);
     setActivePanel(null);
@@ -2960,6 +2956,22 @@ export default function SuperCanvas() {
     },
     [closeCanvasOverlayConflicts],
   );
+  const openImageAngleConsole = useCallback(
+    (nodeId: string) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (!node || !isCanvasReadyImageSource(node)) return;
+      closeCanvasOverlayConflicts();
+      setSelectedIds(new Set([nodeId]));
+      setSelectedGroupId(null);
+      setQuickToolbarNodeId(null);
+      setAngleImageNodeId(nodeId);
+    },
+    [closeCanvasOverlayConflicts],
+  );
+  const closeAngleWorkbench = useCallback(() => {
+    setAngleNodeId(null);
+    setAngleImageNodeId(null);
+  }, []);
   const openCanvasPanel = useCallback(
     (panel: CanvasPanel) => {
       closeCanvasOverlayConflicts();
@@ -3992,7 +4004,7 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       // During reference picking, node clicks stay reserved for selecting a
       // reference. Blank canvas clicks must still be able to pan the viewport.
@@ -10027,6 +10039,236 @@ export default function SuperCanvas() {
     }
   }, [addLog, notify, openNodePosition, runtime, updateDoc]);
 
+  const runImageAngleGeneration = useCallback(async (sourceNodeId: string, input: AngleGenerationInput) => {
+    const source = nodeById(docRef.current, sourceNodeId);
+    const sourceReference = canvasAngleReferenceFromNode(source);
+    if (!source || !isCanvasReadyImageSource(source) || !sourceReference) {
+      notify("生成新视角需要一张已完成的图片。", "error");
+      return;
+    }
+    const generationKey = `angle-image-${sourceNodeId}`;
+    if (generationKeysRef.current.has(generationKey)) {
+      notify("这个视角任务正在生成，请稍候。", "error");
+      return;
+    }
+
+    const taskId = uid("angle-task");
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    angleAbortControllersRef.current.set(generationKey, controller);
+    const viewpoint = input.camera.viewpoint;
+    const angle: CanvasAngleParams = {
+      kind: "angle",
+      camera: clone(input.camera),
+      cameraStart: input.cameraStart ? clone(input.cameraStart) : null,
+      subjectType: viewpoint?.subjectType || "unknown",
+      cameraMode: viewpoint?.mode || "object-orbit",
+      lighting: viewpoint?.lighting ? clone(viewpoint.lighting) : normalizeCanvasAngleParams().lighting,
+      angleNote: input.note,
+      angleGuide: Boolean(input.guideReference),
+      output: clone(input.output),
+      referenceNodeId: source.id,
+      referenceMedia: {
+        id: source.id,
+        name: sourceReference.name,
+        url: sourceReference.url,
+        ...(source.data.assetId ? { assetId: String(source.data.assetId) } : {}),
+      },
+    };
+    const baseParams = normalizeCreationSettings(
+      "image",
+      source.data.generation?.params || null,
+      runtime,
+    ) as ImageCreationSettings;
+    const params: ImageCreationSettings = {
+      ...baseParams,
+      kind: "image",
+      model: input.camera.modelId || "auto",
+      aspect: input.output.aspectRatio || "自定义",
+      customAspectWidth: input.output.width,
+      customAspectHeight: input.output.height,
+      sizeMode: "custom",
+      width: input.output.width,
+      height: input.output.height,
+      count: 1,
+      quality: "自动",
+      outputFormat: "png",
+      backgroundMode: "auto",
+      mask: undefined,
+    };
+    generationKeysRef.current.add(generationKey);
+    setGenerationKeys(new Set(generationKeysRef.current));
+
+    const outputPosition = {
+      x: source.x + nodeSize(source).w + 100,
+      y: source.y,
+    };
+    const pendingOutput = createMedia("image", "", "角度控制结果", outputPosition, {
+      role: "角度控制结果",
+      model: input.camera.modelId || "自动模型",
+      params: clone(params),
+      status: "running",
+      statusLabel: "角度结果生成中",
+      processingStartedAt: startedAt,
+      jobId: taskId,
+      generation: {
+        kind: "image",
+        prompt: input.prompt,
+        params: clone(params),
+        operation: "edit",
+        referenceIds: [source.id],
+        parentNodeId: source.id,
+        sourceImageNodeId: source.id,
+        sourceImageUrl: sourceReference.url,
+        sourceImageAssetId: source.data.assetId ? String(source.data.assetId) : undefined,
+        taskId,
+        createdAt: startedAt,
+        angle,
+      },
+      referenceOrder: [source.id],
+    });
+    const pendingOutputPositioned = {
+      ...pendingOutput,
+      ...openNodePosition(outputPosition, pendingOutput),
+    };
+    const pendingOutputId = pendingOutputPositioned.id;
+    commit((value) => ({
+      ...value,
+      nodes: [...value.nodes, pendingOutputPositioned],
+      edges: [
+        ...value.edges,
+        {
+          id: uid("edge"),
+          source: source.id,
+          target: pendingOutputId,
+          sourcePort: "right" as const,
+          targetPort: "left" as const,
+          kind: "lineage" as const,
+        },
+      ],
+    }));
+    setSelectedIds(new Set([pendingOutputId]));
+    setSelectedGroupId(null);
+    // The transient workbench is only a parameter editor. Once submitted, the
+    // ordinary image node owns the task and remains visible while it runs.
+    setAngleImageNodeId((current) => current === sourceNodeId ? null : current);
+    angleAbortControllersRef.current.set(pendingOutputId, controller);
+
+    try {
+      const references = [
+        { url: sourceReference.url || "", name: sourceReference.name },
+        ...(input.guideReference
+          ? [{ url: input.guideReference.dataUrl || input.guideReference.url || "", name: "空间构图导引" }]
+          : []),
+      ].filter((reference) => reference.url);
+      const response = await generateCanvasImage({
+        taskId,
+        prompt: input.prompt,
+        model: input.camera.modelId,
+        count: 1,
+        aspect: input.output.aspectRatio,
+        resolution: "自动",
+        quality: "自动",
+        sizeMode: "custom",
+        width: input.output.width,
+        height: input.output.height,
+        outputFormat: "png",
+        camera: input.camera,
+        cameraStart: input.cameraStart,
+        angleNote: input.note,
+        angleGuide: Boolean(input.guideReference),
+        references,
+        signal: controller.signal,
+      });
+      const image = response.images?.[0];
+      if (!image?.url) throw new Error("服务端没有返回角度结果图片。");
+      const outputDraft = createMedia("image", image.url, "角度控制结果", outputPosition, {
+        role: "角度控制结果",
+        model: response.model?.name || input.camera.modelId || "自动模型",
+        status: "completed",
+        statusLabel: "角度结果已完成",
+        generation: {
+          kind: "image",
+          prompt: input.prompt,
+          params: clone(params),
+          operation: "edit",
+          referenceIds: [source.id],
+          parentNodeId: source.id,
+          sourceImageNodeId: source.id,
+          sourceImageUrl: sourceReference.url,
+          sourceImageAssetId: source.data.assetId ? String(source.data.assetId) : undefined,
+          taskId,
+          createdAt: startedAt,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          angle,
+        },
+        referenceOrder: [source.id],
+      });
+      const output = {
+        ...outputDraft,
+        ...openNodePosition(outputPosition, outputDraft),
+      };
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === pendingOutputId
+          ? {
+              ...node,
+              w: output.w,
+              h: output.h,
+              data: {
+                ...node.data,
+                ...output.data,
+                url: image.url,
+                status: "completed" as const,
+                statusLabel: "角度结果已完成",
+                processingStartedAt: undefined,
+                jobId: undefined,
+              },
+            }
+          : node),
+      }));
+      setSelectedIds(new Set([pendingOutputId]));
+      setSelectedGroupId(null);
+      notify("新视角结果已写入画布");
+      addLog(`图片节点视角生成完成：${pendingOutputId}`);
+    } catch (error) {
+      const message = controller.signal.aborted
+        ? "角度任务已取消，可重试"
+        : error instanceof Error ? error.message : "角度控制生成失败";
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === pendingOutputId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                status: "failed" as const,
+                statusLabel: message,
+                processingStartedAt: undefined,
+                jobId: undefined,
+                generation: node.data.generation
+                  ? {
+                      ...node.data.generation,
+                      error: message,
+                      durationMs: Math.max(0, Date.now() - startedAt),
+                    }
+                  : node.data.generation,
+              },
+            }
+          : node),
+      }));
+      notify(message, "error");
+      addLog(`图片节点视角生成失败：${pendingOutputId}：${message}`);
+    } finally {
+      if (angleAbortControllersRef.current.get(generationKey) === controller)
+        angleAbortControllersRef.current.delete(generationKey);
+      if (angleAbortControllersRef.current.get(pendingOutputId) === controller)
+        angleAbortControllersRef.current.delete(pendingOutputId);
+      generationKeysRef.current.delete(generationKey);
+      setGenerationKeys(new Set(generationKeysRef.current));
+    }
+  }, [addLog, commit, notify, openNodePosition, runtime, updateDoc]);
+
   const cancelAngleGeneration = useCallback((nodeId: string) => {
     const controller = angleAbortControllersRef.current.get(nodeId);
     if (!controller) return;
@@ -10065,6 +10307,47 @@ export default function SuperCanvas() {
     if (!angleNodeId) return;
     updateCanvasAngleDraft(angleNodeId, draft);
   }, [angleNodeId, updateCanvasAngleDraft]);
+
+  const saveImageAngleAsNode = useCallback((draft: AngleConsoleDraft) => {
+    if (!angleImageNodeId) return;
+    const source = nodeById(docRef.current, angleImageNodeId);
+    const sourceReference = canvasAngleReferenceFromNode(source);
+    if (!source || !isCanvasReadyImageSource(source) || !sourceReference) {
+      notify("当前图片已不可用，无法保存角度控制节点。", "error");
+      return;
+    }
+    const angle: CanvasAngleParams = {
+      ...draft,
+      kind: "angle",
+      referenceNodeId: source.id,
+      referenceMedia: {
+        id: source.id,
+        name: sourceReference.name,
+        url: sourceReference.url,
+        ...(source.data.assetId ? { assetId: String(source.data.assetId) } : {}),
+      },
+    };
+    const position = { x: source.x + nodeSize(source).w + 90, y: source.y };
+    const draftNode = createAngleNode(position, angle);
+    const connected = connectCanvasNodesInDocument(
+      { ...docRef.current, nodes: [...docRef.current.nodes, draftNode] },
+      source.id,
+      draftNode.id,
+      "right",
+      "left",
+      runtime,
+    );
+    if (!connected.ok) {
+      notify(connected.reason || "无法保存角度控制节点。", "error");
+      return;
+    }
+    commit(() => connected.document);
+    setSelectedIds(new Set([draftNode.id]));
+    setSelectedGroupId(null);
+    setAngleImageNodeId(null);
+    setAngleNodeId(draftNode.id);
+    notify("已保存为角度控制节点");
+  }, [angleImageNodeId, commit, notify, runtime]);
 
   const openImageOperations = useCallback((node: CanvasNode) => {
     if ((node.type !== "media" && node.type !== "upscale") || node.data.kind !== "image" || !node.data.url)
@@ -11211,7 +11494,7 @@ export default function SuperCanvas() {
       const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
       const groupElement = element?.closest<HTMLElement>("[data-canvas-group-id]");
       const isolatedTarget = element?.closest(
-        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       if (groupElement && !node && !isolatedTarget) {
         event.preventDefault();
@@ -12033,6 +12316,14 @@ export default function SuperCanvas() {
             onClick: () => openOneClickCinematic(node.id),
           },
           {
+            id: "angle-view",
+            icon: "angle",
+            label: "生成新视角",
+            title: "基于当前图片打开视角与光影工作台",
+            disabled: !isCanvasReadyImageSource(node),
+            onClick: () => openImageAngleConsole(node.id),
+          },
+          {
             id: "mask",
             icon: "mask",
             label: node.data.mask ? "查看局部编辑" : "局部编辑",
@@ -12232,6 +12523,8 @@ export default function SuperCanvas() {
     openOneClickCinematic,
     openCanvasVideoEditor,
     openCanvasAngleConsole,
+    openImageAngleConsole,
+    closeAngleWorkbench,
     cancelAngleGeneration,
     continueFromMedia,
     deleteSelection,
@@ -12459,6 +12752,14 @@ export default function SuperCanvas() {
     if (node.type === "media" && node.data.kind === "image") {
       const mediaActions: CanvasQuickAction[] = [
         {
+          id: "angle-view",
+          icon: "◈",
+          label: "生成新视角",
+          title: "基于当前图片打开视角与光影工作台",
+          disabled: !isCanvasReadyImageSource(node),
+          onClick: close(() => openImageAngleConsole(node.id)),
+        },
+        {
           id: "image-operations",
           icon: "✦",
           label: "图片编辑",
@@ -12639,6 +12940,8 @@ export default function SuperCanvas() {
     openCanvasVideoClipEditor,
     openCanvasVideoEditor,
     openCanvasAngleConsole,
+    openImageAngleConsole,
+    closeAngleWorkbench,
     cancelAngleGeneration,
     contextNode,
     contextMenu?.world,
@@ -13029,10 +13332,10 @@ export default function SuperCanvas() {
           const isolatedTarget =
             canvasPointerDownRef.current?.interactive ||
             target?.closest(
-              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
             ) ||
             pointTarget?.closest(
-              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
             );
           if (isolatedTarget) return;
           const hit = target?.closest("[data-canvas-node-id]") ||
@@ -13490,43 +13793,68 @@ export default function SuperCanvas() {
             />
           );
         })()}
-        {angleNodeId && !nodeGestureActive && (() => {
-          const angleNode = document.nodes.find((item) => item.id === angleNodeId);
-          if (!angleNode || angleNode.type !== "angle") return null;
-          const referenceNode = incomingReferences(document, angleNode.id).find((item) => isCanvasReadyImageSource(item));
+        {(angleNodeId || angleImageNodeId) && !nodeGestureActive && (() => {
+          const transient = Boolean(angleImageNodeId);
+          const angleNode = angleNodeId ? document.nodes.find((item) => item.id === angleNodeId) : undefined;
+          const sourceNode = angleImageNodeId ? document.nodes.find((item) => item.id === angleImageNodeId) : undefined;
+          if (angleNodeId && (!angleNode || angleNode.type !== "angle")) return null;
+          if (angleImageNodeId && (!sourceNode || !isCanvasReadyImageSource(sourceNode))) return null;
+          const referenceNode = transient
+            ? sourceNode
+            : angleNode
+              ? incomingReferences(document, angleNode.id).find((item) => isCanvasReadyImageSource(item))
+              : undefined;
           const reference = canvasAngleReferenceFromNode(referenceNode);
-          const angle = normalizeCanvasAngleParams(angleNode.data.angle);
+          const angle = angleNode
+            ? normalizeCanvasAngleParams(angleNode.data.angle)
+              : null;
+          const ownerId = angleNode?.id || sourceNode?.id || "";
+          const busyKey = transient ? `angle-image-${ownerId}` : ownerId;
           return (
-            <div className="canvas-angle-workbench" data-canvas-wheel-isolate>
+            <div
+              className="canvas-angle-workbench"
+              data-canvas-wheel-isolate
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerMove={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onPointerCancel={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onWheel={(event) => event.stopPropagation()}
+            >
               <AngleConsole
                 theme={theme}
                 embedded
                 reference={reference}
-                initialCamera={angle.camera}
-                initialCameraStart={angle.cameraStart}
-                initialOutput={angle.output}
-                initialNote={angle.angleNote}
+                initialCamera={angle?.camera}
+                initialCameraStart={angle?.cameraStart}
+                initialOutput={angle?.output}
+                initialNote={angle?.angleNote}
                 models={runtime?.models || []}
                 results={[]}
-                busy={generationKeys.has(angleNode.id)}
+                busy={generationKeys.has(busyKey)}
                 onReferenceFiles={(files) => {
-                  if (referenceNode) {
+                  if (transient) {
+                    notify("生成新视角以当前图片为原始参考，不能在工作台内更换参考图。", "error");
+                  } else if (referenceNode && angleNode) {
                     notify("请先移除当前参考图，再上传新的参考图。", "error");
-                    return;
+                  } else if (angleNode) {
+                    void addEditorReferenceFiles(angleNode.id, Array.from(files).slice(0, 1));
                   }
-                  void addEditorReferenceFiles(angleNode.id, Array.from(files).slice(0, 1));
                 }}
-                onExit={() => setAngleNodeId(null)}
+                onExit={closeAngleWorkbench}
                 onRemoveReference={() => {
-                  if (referenceNode) removeNodeReference(angleNode.id, referenceNode.id);
+                  if (transient) notify("当前工作台固定使用这张图片作为原始参考。", "error");
+                  else if (referenceNode && angleNode) removeNodeReference(angleNode.id, referenceNode.id);
                 }}
-                onBrowseHistory={() => notify("请从画布中连接一张已完成图片作为参考。")}
-                onGenerate={(input) => runAngleGeneration(angleNode.id, input)}
+                onBrowseHistory={() => notify(transient ? "请先关闭当前工作台，再选择另一张图片生成新视角。" : "请从画布中连接一张已完成图片作为参考。")}
+                onGenerate={(input) => transient && sourceNode ? runImageAngleGeneration(sourceNode.id, input) : angleNode ? runAngleGeneration(angleNode.id, input) : undefined}
+                onSaveAsNode={transient ? saveImageAngleAsNode : undefined}
                 onOpenResult={() => undefined}
                 onDownloadResult={() => undefined}
                 onDownloadShare={() => undefined}
                 onNotify={notify}
-                onDraftChange={handleCanvasAngleDraftChange}
+                onDraftChange={transient ? undefined : handleCanvasAngleDraftChange}
               />
             </div>
           );
@@ -14173,12 +14501,6 @@ export default function SuperCanvas() {
               <span className="canvas-menu-copy"><b>超分节点</b><small>连接图片后在独立面板中提交</small></span>
               <span className="canvas-menu-arrow" aria-hidden="true">›</span>
             </button>
-            <button type="button" className="canvas-menu-item canvas-menu-item-tool canvas-menu-item-angle" onClick={() => addNode("angle", contextMenu.world)}>
-              <span className="canvas-menu-icon" aria-hidden="true">◈</span>
-              <span className="canvas-menu-copy"><b>角度控制节点</b><small>连接一张已完成图片，生成新的相机视角</small></span>
-              <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-            </button>
-
             <div className="canvas-menu-group">
               <button
                 type="button"
@@ -16117,6 +16439,8 @@ function CanvasActionIcon({ name }: { name: string }) {
       return svg(<><path d="M5 7.5h14v9H5z" /><path d="m10 10 4 2-4 2v-4ZM7 5v2M17 5v2" /></>);
     case "cinematic":
       return svg(<><path d="M4.5 7.5h15v9h-15z" /><path d="M8 5.5v2M12 5.5v2M16 5.5v2M8 16.5v2M12 16.5v2M16 16.5v2" /><path d="m10 10 4 2-4 2v-4Z" fill="currentColor" stroke="none" /></>);
+    case "angle":
+      return svg(<><path d="m12 4 2.3 5.7L20 12l-5.7 2.3L12 20l-2.3-5.7L4 12l5.7-2.3L12 4Z" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /></>);
     default:
       return <>{name}</>;
   }

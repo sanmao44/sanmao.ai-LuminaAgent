@@ -75,6 +75,6 @@ test("all running canvas node kinds share the indicator and elapsed clock", () =
 test("angle workbench hydrates legacy drafts with a relative viewpoint baseline", () => {
   assert.match(
     canvas,
-    /const angle = normalizeCanvasAngleParams\(angleNode\.data\.angle\)/,
+    /normalizeCanvasAngleParams\(angleNode\.data\.angle\)/,
   );
 });

@@ -111,6 +111,12 @@ test('angle console uses unified non-native menus for every dropdown surface', a
   assert.match(css, /\.angle-select-option:hover/);
 });
 
+test('embedded image-owned angle workbench can persist its draft as a node', () => {
+  assert.match(source, /onSaveAsNode\?: \(draft: AngleConsoleDraft\) => void/);
+  assert.match(source, /保存为节点/);
+  assert.match(source, /onSaveAsNode\(\{ camera, cameraStart/);
+});
+
 test('angle console provides a clear, responsive help document', async () => {
   const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
   assert.match(source, /angle-top-help/);

@@ -35,6 +35,8 @@ type AngleConsoleProps = {
   onRemoveReference: () => void;
   onBrowseHistory: () => void;
   onGenerate: (input: AngleGenerationInput) => void | Promise<void>;
+  /** Optional action for the canvas image-owned workbench to persist this draft as a node. */
+  onSaveAsNode?: (draft: AngleConsoleDraft) => void;
   onOpenResult: (item: GalleryItem) => void;
   openResultId?: string | null;
   suppressAutoOpenId?: string | null;
@@ -1161,7 +1163,7 @@ function ThreeCameraPreview({ camera, output, theme, humanMode, customHumanFile,
   </div>;
 }
 
-export default function AngleConsole({ theme, reference, initialCamera, initialCameraStart, initialOutput, initialNote, embedded = false, onDraftChange, models, defaultProviderId, defaultProviderName, defaultModelId, results, busy, onReferenceFiles, onExit, onRemoveReference, onBrowseHistory, onGenerate, onOpenResult, openResultId, suppressAutoOpenId, onResultOpened, onDownloadResult, onDownloadShare, onNotify }: AngleConsoleProps) {
+export default function AngleConsole({ theme, reference, initialCamera, initialCameraStart, initialOutput, initialNote, embedded = false, onDraftChange, onSaveAsNode, models, defaultProviderId, defaultProviderName, defaultModelId, results, busy, onReferenceFiles, onExit, onRemoveReference, onBrowseHistory, onGenerate, onOpenResult, openResultId, suppressAutoOpenId, onResultOpened, onDownloadResult, onDownloadShare, onNotify }: AngleConsoleProps) {
   const [camera, setCamera] = useState<AngleCameraState>(() => createViewpointCamera(initialCamera));
   const [cameraStart, setCameraStart] = useState<AngleCameraState | null>(() => initialCameraStart ? normalizeAngleState(initialCameraStart) : null);
   const [note, setNote] = useState(() => initialNote || '');
@@ -1577,6 +1579,7 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
     <header className="angle-console-topbar">
       <div className="angle-console-brand-group"><button type="button" className="angle-brand" onClick={onExit} title="返回 SANMAO.AI"><div className="angle-logo"><img src="/brand-mark.png" alt="" /></div><div><b>ANGLE CONTROL</b><small>CAMERA VIEW GENERATOR</small></div></button><button type="button" className="angle-exit-button" onClick={onExit} title="返回 SANMAO.AI"><span className="angle-exit-icon" aria-hidden="true"><svg viewBox="0 0 18 18" focusable="false"><path d="M8 4.5 4.5 8 8 11.5" /><path d="M4.8 8H13.5" /></svg></span><span className="angle-exit-label">返回 SANMAO.AI</span></button></div>
       <div className="angle-console-actions">
+        {onSaveAsNode && <button type="button" className="angle-top-button angle-top-save" onClick={() => onSaveAsNode({ camera, cameraStart, subjectType: viewpoint.subjectType, cameraMode: viewpoint.mode, lighting: viewpoint.lighting, angleNote: note, angleGuide: viewpoint.guide && viewpoint.changeView, output: angleOutput })} disabled={busy}>保存为节点</button>}
         <button type="button" className="angle-top-button angle-top-help" onClick={() => setHelpOpen(true)} aria-haspopup="dialog" aria-expanded={helpOpen}><span aria-hidden="true">?</span>使用说明</button>
         <button type="button" className={`angle-top-button angle-top-history ${resultNoticeId === latestResult?.id ? 'has-new-result' : ''}`} onClick={openHistoryPanel}>查看结果{results.length ? ` · ${results.length}` : ''}</button>
         <input ref={referenceInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { if (event.target.files?.length) replaceReferenceFiles(event.target.files); event.currentTarget.value = ''; }}/>

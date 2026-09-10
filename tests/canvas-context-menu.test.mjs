@@ -87,6 +87,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /保留组内及边界连线/);
   assert.match(contextMenu, /label: "复制图片"/);
   assert.match(contextMenu, /label: "图片编辑"/);
+  assert.match(contextMenu, /label: "生成新视角"/);
   assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
   assert.match(contextMenu, /label: "下载"/);
   assert.match(contextMenu, /label: "加入资产"/);
@@ -108,6 +109,8 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(quickActions, /id: "mask"/);
   assert.match(quickActions, /局部编辑/);
   assert.match(quickActions, /label: "图片编辑"/);
+  assert.match(quickActions, /id: "angle-view"/);
+  assert.match(quickActions, /label: "生成新视角"/);
   assert.match(quickActions, /label: "作为参考"/);
   assert.match(quickActions, /label: "下载"/);
   assert.match(quickActions, /label: "加入资产"/);
@@ -148,6 +151,15 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.doesNotMatch(groupContextMenu, /图片编辑|局部编辑|复制图片|作为参考|继续生成/);
   assert.match(component, /target: CanvasQuickToolbarTarget/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
+  assert.match(component, /const runImageAngleGeneration = useCallback/);
+  assert.match(component, /const pendingOutput = createMedia\("image", "", "角度控制结果"/);
+  assert.match(component, /status: "running"[\s\S]*?processingStartedAt: startedAt[\s\S]*?jobId: taskId/);
+  assert.match(component, /const pendingOutputId = pendingOutputPositioned\.id/);
+  assert.match(component, /nodes: value\.nodes\.map\(\(node\) => node\.id === pendingOutputId/);
+  assert.match(component, /parentNodeId: source\.id/);
+  assert.match(component, /source: source\.id,[\s\S]*kind: "lineage"/);
+  assert.match(component, /const saveImageAngleAsNode = useCallback/);
+  assert.match(component, /setAngleNodeId\(draftNode\.id\)/);
 });
 
 test("layer actions use the shared entity stack and explain boundary no-ops", () => {
@@ -259,6 +271,7 @@ test("create menu uses separators instead of spacious group headings", () => {
   const upscalePosition = createMenu.indexOf('addNode("upscale", contextMenu.world)');
   const workflowPosition = createMenu.indexOf('addNode("workflowImage", contextMenu.world)');
   assert.ok(basicNodesPosition >= 0 && upscalePosition > basicNodesPosition && workflowPosition > upscalePosition, "create menu should place upscale after basic nodes");
+  assert.doesNotMatch(createMenu, /角度控制节点|addNode\("angle"/);
   assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\{[^}]*border-top:1px solid/);
   assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\+\.canvas-menu-group\{[^}]*border-top:1px solid/);
 });
@@ -271,4 +284,5 @@ test("connection picker places upscale before image variants", () => {
   const upscalePosition = options.indexOf('kind: "upscale"');
   const imageVariantPosition = options.indexOf('kind: "workflowImage"');
   assert.ok(upscalePosition >= 0 && imageVariantPosition > upscalePosition, "upscale should appear before image variants");
+  assert.doesNotMatch(options, /kind: "angle"/);
 });
