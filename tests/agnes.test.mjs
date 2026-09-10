@@ -72,9 +72,11 @@ test('exposes the complete Agnes catalog with official billing defaults and limi
   };
   const models = await providers.discoverModels(agnesProvider());
   assert.deepEqual(models.map((model) => model.id), [
-    'agnes-2.0-flash', 'agnes-2.5-flash', 'agnes-2.5-pro-alpha', 'agnes-2.5-pro-beta', 'agnes-2.5-pro',
+    'agnes-3.0-flash', 'agnes-2.0-flash', 'agnes-2.5-flash', 'agnes-2.5-pro-alpha', 'agnes-2.5-pro-beta', 'agnes-2.5-pro',
     'agnes-image-2.0-flash', 'agnes-image-2.1-flash', 'agnes-video-v2.0', 'agnes-video-2.5', 'agnes-video-2.5-flash',
   ]);
+  assert.deepEqual(models.find((model) => model.id === 'agnes-3.0-flash').capabilities, ['chat', 'vision']);
+  assert.equal(models.find((model) => model.id === 'agnes-3.0-flash').enabledByDefault, true);
   assert.equal(models.find((model) => model.id === 'agnes-2.0-flash').contextWindow, 512000);
   assert.equal(models.find((model) => model.id === 'agnes-2.0-flash').maxOutputTokens, 65536);
   assert.equal(models.find((model) => model.id === 'agnes-2.5-pro').contextWindow, 1000000);

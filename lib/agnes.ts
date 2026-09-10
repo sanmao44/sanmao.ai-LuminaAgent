@@ -22,6 +22,8 @@ export type AgnesModelDefinition = {
 };
 
 const textModels: AgnesModelDefinition[] = [
+  // Agnes 3.0 Flash is published as a text model with image-URL input.
+  { id: 'agnes-3.0-flash', name: 'Agnes 3.0 Flash', kind: 'chat', billing: 'free', enabledByDefault: true, capabilities: ['chat', 'vision'] },
   { id: 'agnes-2.0-flash', name: 'Agnes 2.0 Flash', kind: 'chat', billing: 'free', enabledByDefault: true, capabilities: ['chat', 'vision'], contextWindow: 512_000, maxOutputTokens: 65_536 },
   { id: 'agnes-2.5-flash', name: 'Agnes 2.5 Flash', kind: 'chat', billing: 'free', enabledByDefault: true, capabilities: ['chat', 'vision'], contextWindow: 512_000, maxOutputTokens: 65_536 },
   { id: 'agnes-2.5-pro-alpha', name: 'Agnes 2.5 Pro Alpha', kind: 'chat', billing: 'paid', enabledByDefault: false, capabilities: ['chat', 'vision'], contextWindow: 1_000_000, maxOutputTokens: 65_536 },
