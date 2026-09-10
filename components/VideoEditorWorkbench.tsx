@@ -45,6 +45,24 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Drags inside the workbench end on window rather than on the element that
+ * started them. The modal backdrop stops pointer propagation so the canvas
+ * never reacts to editor input, and React's synthetic stopPropagation cancels
+ * the native event before bubble-phase window listeners can see it. Capture
+ * phase listeners still receive every move, so drags keep working.
+ */
+function watchPointerDrag(handleMove: (event: PointerEvent) => void, handleEnd: () => void) {
+  window.addEventListener("pointermove", handleMove, true);
+  window.addEventListener("pointerup", handleEnd, true);
+  window.addEventListener("pointercancel", handleEnd, true);
+  return () => {
+    window.removeEventListener("pointermove", handleMove, true);
+    window.removeEventListener("pointerup", handleEnd, true);
+    window.removeEventListener("pointercancel", handleEnd, true);
+  };
+}
+
 function secondsLabel(value: number, detailed = false) {
   const safe = Math.max(0, value);
   const minutes = Math.floor(safe / 60);
@@ -553,14 +571,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
       if (trim) commitHistory(trim.before, current);
       setTrim(null);
     };
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
+    return watchPointerDrag(handlePointerMove, handlePointerUp);
   }, [trim, draft, duration, timelineZoom]);
 
   useEffect(() => {
@@ -571,14 +582,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
       commitHistory(move.before, current);
       setMove(null);
     };
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
+    return watchPointerDrag(handlePointerMove, handlePointerUp);
   }, [move, draft, timelineZoom, duration]);
 
   useEffect(() => {
@@ -589,28 +593,14 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
       commitHistory(previewMove.before, current);
       setPreviewMove(null);
     };
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
+    return watchPointerDrag(handlePointerMove, handlePointerUp);
   }, [previewMove, previewBounds.width, previewFrameStyle.height, projectAspect]);
 
   useEffect(() => {
     if (!scrubbing) return;
     const handlePointerMove = (event: PointerEvent) => scrubFromClientX(event.clientX);
     const handlePointerUp = () => setScrubbing(false);
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
+    return watchPointerDrag(handlePointerMove, handlePointerUp);
   }, [scrubbing, duration, timelineZoom]);
 
   useEffect(() => {

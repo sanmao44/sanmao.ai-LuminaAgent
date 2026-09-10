@@ -260,11 +260,12 @@ export function moveVideoEditorClip(
   const clip = state.clips.find((item) => item.id === clipId);
   if (!clip) return state;
   const requestedStart = Math.max(0, finite(start, clip.start));
-  if (clip.track !== "video") return updateVideoEditorClip(state, clipId, { start: requestedStart });
-  const { previous, next } = neighboringVideoClips(state, clip);
-  const minimum = previous ? clipEnd(previous) : 0;
-  const maximum = next ? Math.max(minimum, next.start - clip.duration) : Number.POSITIVE_INFINITY;
-  return updateVideoEditorClip(state, clipId, { start: Math.min(maximum, Math.max(minimum, requestedStart)) });
+  const moved = updateVideoEditorClip(state, clipId, { start: requestedStart });
+  // Video clips share one sequential lane, so the dragged clip lands where it
+  // was dropped and normalization pushes the follower clips to the right.
+  // Clamping the drag between its neighbours instead would freeze any clip that
+  // sits flush against the next one, which is the common case after a split.
+  return clip.track === "video" ? normalizeVideoEditorState(moved) : moved;
 }
 
 export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: string) {
@@ -312,24 +313,20 @@ export function trimVideoEditorClip(
 ): CanvasVideoEditorState {
   const clip = state.clips.find((item) => item.id === clipId);
   if (!clip) return state;
-  const { previous, next } = neighboringVideoClips(state, clip);
-  const minimumStart = previous ? clipEnd(previous) : 0;
-  const maximumEnd = next ? next.start : Number.POSITIVE_INFINITY;
-  const requestedStart = Math.max(0, finite(start, clip.start));
-  const requestedEnd = Math.max(requestedStart + MIN_CLIP_DURATION, finite(end, clipEnd(clip)));
-  const nextStart = clip.track === "video"
-    ? Math.min(maximumEnd - MIN_CLIP_DURATION, Math.max(minimumStart, requestedStart))
-    : requestedStart;
-  const nextEnd = clip.track === "video"
-    ? Math.min(maximumEnd, Math.max(nextStart + MIN_CLIP_DURATION, requestedEnd))
-    : requestedEnd;
+  const previous = neighboringVideoClips(state, clip).previous;
+  // The left edge stops at the clip before it, while the right edge may grow
+  // over a follower: normalization ripples that follower right instead of
+  // refusing the trim.
+  const minimumStart = clip.track === "video" && previous ? clipEnd(previous) : 0;
+  const nextStart = Math.max(minimumStart, Math.max(0, finite(start, clip.start)));
+  const nextEnd = Math.max(nextStart + MIN_CLIP_DURATION, finite(end, clipEnd(clip)));
   const leftTrim = Math.max(0, nextStart - clip.start);
-  const nextDuration = nextEnd - nextStart;
-  return updateVideoEditorClip(state, clipId, {
+  const trimmed = updateVideoEditorClip(state, clipId, {
     start: nextStart,
-    duration: nextDuration,
+    duration: nextEnd - nextStart,
     sourceOffset: clip.sourceOffset + leftTrim * clipPlaybackRate(clip),
   });
+  return clip.track === "video" ? normalizeVideoEditorState(trimmed) : trimmed;
 }
 
 export function reorderVideoEditorClips(

@@ -4257,6 +4257,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-video-editor-track-lane{min-width:0}
 .canvas-video-editor-mark-range{position:absolute;top:0;bottom:0;z-index:var(--canvas-z-local-base);box-sizing:border-box;border-inline:1px solid color-mix(in srgb,var(--accent) 46%,transparent);background:color-mix(in srgb,var(--accent) 15%,transparent);pointer-events:none}
 .canvas-video-editor-clip{z-index:var(--canvas-z-local-content)}
+.canvas-video-editor-clip.selected{z-index:var(--canvas-z-local-control)}
 .canvas-video-editor-playhead{z-index:var(--canvas-z-local-control)}
 .canvas-video-editor-track-label .canvas-video-editor-track-toggle{margin-left:auto;color:var(--accent-text)}
 .canvas-video-editor-track-label .canvas-video-editor-track-mute{margin-left:0}

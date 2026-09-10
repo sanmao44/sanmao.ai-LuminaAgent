@@ -111,7 +111,7 @@ test('moves clips to timeline zero and normalizes project output settings and tr
   assert.equal(normalized.resolution, '4K');
 });
 
-test('keeps video clips sequential and clamps move/trim operations to neighbours', () => {
+test('keeps video clips sequential and free of overlaps after move and trim', () => {
   const state = editor.createVideoEditorState([
     { nodeId: 'video-a', kind: 'video', durationSeconds: 4 },
     { nodeId: 'video-b', kind: 'video', durationSeconds: 5 },
@@ -123,13 +123,42 @@ test('keeps video clips sequential and clamps move/trim operations to neighbours
   const moved = editor.moveVideoEditorClip(state, second.id, 0);
   assert.ok(moved.clips.find((clip) => clip.id === second.id).start >= first.start + first.duration);
   const trimmed = editor.trimVideoEditorClip(state, first.id, 0, 99);
-  assert.ok(editor.clipEnd(trimmed.clips.find((clip) => clip.id === first.id)) <= second.start);
+  assert.ok(
+    editor.clipEnd(trimmed.clips.find((clip) => clip.id === first.id))
+      <= trimmed.clips.find((clip) => clip.id === second.id).start,
+  );
 
   const repaired = editor.normalizeVideoEditorState({
     ...state,
     clips: state.clips.map((clip) => clip.id === second.id ? { ...clip, start: 1 } : clip),
   });
   assert.ok(repaired.clips.find((clip) => clip.id === second.id).start >= first.start + first.duration);
+});
+
+test('drags a flush clip away from its neighbour instead of freezing it', () => {
+  const state = editor.createVideoEditorState([
+    { nodeId: 'video-a', kind: 'video', durationSeconds: 4 },
+    { nodeId: 'video-b', kind: 'video', durationSeconds: 5 },
+  ]);
+  const first = state.clips.find((clip) => clip.id === 'clip-video-a');
+  const second = state.clips.find((clip) => clip.id === 'clip-video-b');
+  assert.equal(second.start, first.duration);
+
+  const moved = editor.moveVideoEditorClip(state, first.id, 2);
+  const movedFirst = moved.clips.find((clip) => clip.id === first.id);
+  const movedSecond = moved.clips.find((clip) => clip.id === second.id);
+  assert.equal(movedFirst.start, 2);
+  assert.equal(movedFirst.duration, first.duration);
+  assert.equal(movedSecond.start, 6);
+
+  const trimmed = editor.trimVideoEditorClip(state, first.id, 0, 6);
+  assert.equal(editor.clipEnd(trimmed.clips.find((clip) => clip.id === first.id)), 6);
+  assert.equal(trimmed.clips.find((clip) => clip.id === second.id).start, 6);
+
+  const shortened = editor.trimVideoEditorClip(state, second.id, 5, 9);
+  const shortenedSecond = shortened.clips.find((clip) => clip.id === second.id);
+  assert.equal(shortenedSecond.start, 5);
+  assert.equal(shortenedSecond.duration, 4);
 });
 
 test('canvas recognizes the editor as a node but not as a rendered media source', () => {
