@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.37/SANMAO.AI-0.7.37.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.37/SANMAO.AI-0.7.37.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "3af1dea248220aa272f3c3782fa92c5c61b18a3f9208e5106490a5ff1bf2103f",
   "publishedAt": "2026-09-10T00:00:00+08:00",
   "notes": [
     "超级画布新增角度控制节点，支持持久保存机位与光影草稿，并将结果写回画布。",
