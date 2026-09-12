@@ -209,7 +209,13 @@ export type ReferenceSelection<T extends CreativeReferenceLike = CreativeReferen
 export function selectCreativeReferences<T extends CreativeReferenceLike>(value: string, available: readonly T[]): ReferenceSelection<T> {
   const numbers = referenceMentionNumbers(value);
   const hasMentions = numbers.length > 0;
-  const invalidNumbers = Array.from(new Set(numbers.filter((number) => number < 1 || number > available.length)));
+  // When there are no current references, @1-style text is ordinary prompt
+  // content (there is nothing it could resolve to). Only validate mention
+  // bounds when a reference list exists; this keeps text-only requests
+  // sendable instead of rejecting every numeric @ token.
+  const invalidNumbers = available.length
+    ? Array.from(new Set(numbers.filter((number) => number < 1 || number > available.length)))
+    : [];
   if (!hasMentions) return { references: [...available], invalidNumbers, hasMentions };
   const selected: T[] = [];
   const seen = new Set<string>();

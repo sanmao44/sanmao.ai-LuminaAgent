@@ -21,6 +21,13 @@ const available = [
   { id: "text-1", kind: "text", name: "脚本.txt", text: "真实文本内容", mimeType: "text/plain" },
 ];
 
+test("keeps numeric @ tokens as prompt text when no references are available", () => {
+  const result = refs.selectCreativeReferences("把@1@2@3变成图一图二图三", []);
+  assert.deepEqual(result.references, []);
+  assert.deepEqual(result.invalidNumbers, []);
+  assert.equal(result.hasMentions, true);
+});
+
 test("inserts a numbered mention at the active cursor and replaces the active query", () => {
   const inserted = refs.insertReferenceMention("前景 @图", 6, 1);
   assert.equal(inserted.value, "前景 @2 ");
