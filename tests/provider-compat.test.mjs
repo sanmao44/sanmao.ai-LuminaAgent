@@ -211,6 +211,45 @@ test('normalizes image responses from common provider protocols', () => {
   ]);
 });
 
+test('rejects inline image fields whose bytes are not an image', () => {
+  const invalid = Buffer.from('not an image').toString('base64');
+  assert.throws(
+    () => providers.normalizeProviderImages({ data: [{ b64_json: invalid }] }),
+    /不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/,
+  );
+});
+
+test('does not submit a second edit job after malformed JSON image output', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  const invalid = Buffer.from('not an image').toString('base64');
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [{ b64_json: invalid }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await assert.rejects(
+      providers.editImage({
+        type: 'openai-compatible',
+        platform: 'custom',
+        baseUrl: 'https://images.example.test/v1',
+        apiKey: 'test-key',
+      }, 'gpt-image-2', {
+        prompt: 'camera edit',
+        references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+        count: 1,
+      }),
+      /不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/,
+    );
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('does not mistake an asynchronous task id for an image', () => {
   assert.throws(
     () => providers.normalizeProviderImages({ id: 'task_0123456789abcdef0123456789abcdef', status: 'processing' }),

@@ -150,12 +150,41 @@ function attachProviderResponseMeta(value: any, meta: ProviderResponseMeta) {
   return value;
 }
 
-function imageMimeFromBytes(bytes: Uint8Array) {
+export function imageMimeFromBytes(bytes: Uint8Array) {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
   if (bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp';
   if (bytes.length >= 6 && (String.fromCharCode(...bytes.slice(0, 6)) === 'GIF87a' || String.fromCharCode(...bytes.slice(0, 6)) === 'GIF89a')) return 'image/gif';
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) return 'image/bmp';
   return '';
+}
+
+export class ProviderImageFormatError extends Error {
+  readonly providerImageFormat = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderImageFormatError';
+  }
+}
+
+function dataUrlBytes(value: string) {
+  const match = value.match(/^data:[^;,]+(?:;base64)?,([\s\S]*)$/i);
+  if (!match) return null;
+  const comma = value.indexOf(',');
+  const metadata = value.slice(0, comma).toLowerCase();
+  try {
+    return metadata.includes(';base64')
+      ? Buffer.from(match[1], 'base64')
+      : Buffer.from(decodeURIComponent(match[1]), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function isSupportedImageDataUrl(value: string) {
+  const bytes = dataUrlBytes(value);
+  return Boolean(bytes && imageMimeFromBytes(bytes));
 }
 
 function imageMimeFromContentType(contentType: string) {
@@ -729,12 +758,16 @@ function responseShape(value: any, depth = 0): string {
 
 export function normalizeProviderImages(data: any): GeneratedImage[] {
   const images = extractImages(data);
+  const validImages = images.filter((image) => !/^data:image\//i.test(image.url) || isSupportedImageDataUrl(image.url));
+  if (images.length && !validImages.length) {
+    throw new ProviderImageFormatError('服务商返回了图片字段，但内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。请检查服务商的 image_url/b64_json 响应格式；任务可能已经提交，请先核对服务商后台状态后再重试。');
+  }
   if (!images.length) {
     const meta = data && typeof data === 'object' ? (data as any)[providerResponseMeta] as ProviderResponseMeta | undefined : undefined;
     const typeHint = meta?.contentType ? `，响应类型 ${meta.contentType.split(';', 1)[0]}` : '';
     throw new Error(`服务商已返回成功响应，但没有找到可显示的图片${typeHint}。响应结构：${responseShape(data)}。请确认模型支持图片接口，并检查服务商是否返回了 image_url、b64_json、二进制图片或异步任务结果。`);
   }
-  return images;
+  return validImages;
 }
 
 function normalizeImages(data: any): GeneratedImage[] {
@@ -1008,6 +1041,10 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     return normalizeImages(data);
   } catch (jsonError) {
     if (signal?.aborted) throw signal.reason || jsonError;
+    // A successful JSON response with malformed image data is not a request
+    // compatibility failure. Falling back to multipart here would submit a
+    // second paid job after the provider has already accepted the first one.
+    if (jsonError instanceof ProviderImageFormatError) throw jsonError;
     // 一些 OpenAI 兼容中转仍只接受 multipart/form-data，自动回退。
     try {
       const form = new FormData();

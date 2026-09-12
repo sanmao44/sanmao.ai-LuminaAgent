@@ -1,4 +1,4 @@
-import { editImage, generateImage } from '@/lib/providers';
+import { editImage, generateImage, imageMimeFromBytes, ProviderImageFormatError } from '@/lib/providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
@@ -57,12 +57,22 @@ function dataUrlBuffer(url: string) {
   return match[2] ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]), 'utf8');
 }
 
+function invalidProviderImageError() {
+  return new ProviderImageFormatError('服务商已返回生图结果，但内容不是可解码的图片。请检查服务商返回的 image_url/b64_json 是否指向真实的 PNG、JPEG 或 WebP 文件；任务可能已经提交，请先核对服务商后台状态后再重试。');
+}
+
+function ensureProviderImageBuffer(buffer: Buffer) {
+  if (!buffer.byteLength || !imageMimeFromBytes(buffer)) throw invalidProviderImageError();
+  return buffer;
+}
+
 async function generatedImageBuffer(url: string, signal?: AbortSignal) {
   const embedded = dataUrlBuffer(url);
-  if (embedded) return embedded;
+  if (embedded) return ensureProviderImageBuffer(embedded);
+  if (url.startsWith('data:')) throw invalidProviderImageError();
   const response = await fetch(url, { signal, cache: 'no-store' });
   if (!response.ok) throw new Error(`Unable to read generated image for roll correction: HTTP ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  return ensureProviderImageBuffer(Buffer.from(await response.arrayBuffer()));
 }
 
 async function normalizeAngleOutputSize(images: GeneratedImage[], width: number, height: number, roll: number, signal?: AbortSignal): Promise<GeneratedImage[]> {
@@ -70,7 +80,12 @@ async function normalizeAngleOutputSize(images: GeneratedImage[], width: number,
   const targetHeight = Math.max(1, Math.round(height));
   return Promise.all(images.map(async (image) => {
     const input = await generatedImageBuffer(image.url, signal);
-    const output = await renderAngleOutput(input, targetWidth, targetHeight, roll);
+    let output: Buffer;
+    try {
+      output = await renderAngleOutput(input, targetWidth, targetHeight, roll);
+    } catch {
+      throw invalidProviderImageError();
+    }
     return { ...image, url: `data:image/png;base64,${output.toString('base64')}` };
   }));
 }

@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip"
   ],
-  "sha256": "d8a19ccced01ed09b9b1f6e0365df426dfbbee70a590fac4ef92fcb2825e797e",
+  "sha256": "",
   "publishedAt": "2026-09-10T18:25:40+08:00",
   "notes": [
     "修复视频剪辑工作台里片段拖不动的问题：片段移动、两端裁剪手柄和预览画面位移全部恢复响应。",
