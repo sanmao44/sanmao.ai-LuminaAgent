@@ -563,8 +563,13 @@ if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
   Write-SanmaoLauncherLog '部分旧服务端口未能释放，将继续使用可用端口。' 'WARN'
 }
 
+$launcherVersion = 'unknown'
+try {
+  $launcherPackage = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw -ErrorAction Stop | ConvertFrom-Json
+  if ($launcherPackage.version) { $launcherVersion = [string]$launcherPackage.version }
+} catch {}
 Write-Host '========================================' -ForegroundColor DarkGray
-Write-Host '        SANMAO.AI 一键启动器 0.7.38' -ForegroundColor White
+Write-Host "        SANMAO.AI 一键启动器 $launcherVersion" -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
 
 # 1. Check Node.js

@@ -261,8 +261,9 @@ printf '\n==> 清理旧的 SANMAO.AI 后台服务\n'
 sanmao_clear_stale 3000 3010
 sanmao_clear_stale "$PORT_START" "$PORT_END"
 
+LAUNCHER_VERSION=`node -p "require('./package.json').version" 2>/dev/null || printf '%s' 'unknown'`
 printf '%s\n' '========================================'
-printf '%s\n' '        SANMAO.AI macOS 启动器 0.7.38'
+printf '%s\n' "        SANMAO.AI macOS 启动器 $LAUNCHER_VERSION"
 printf '%s\n' '========================================'
 
 printf '\n==> 检查 Node.js\n'
