@@ -242,8 +242,17 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.equal((toolsMenu.match(/className="canvas-menu-divider"/g) || []).length, 2);
   assert.match(toolsMenu, /<b>上传<\/b>/);
   assert.doesNotMatch(toolsMenu, /导入图片 \/ 视频 \/ 音频/);
-  const actionOrder = ["上传", "添加节点", "粘贴", "撤销", "重做", "一键整理", "适应视图"];
-  const actionPositions = actionOrder.map((label) => toolsMenu.indexOf(`<b>${label}</b>`));
+  const actionMarkers = [
+    "<b>上传</b>",
+    "<b>添加节点</b>",
+    "<b>粘贴</b>",
+    "<b>撤销</b>",
+    "<b>重做</b>",
+    "<b>一键整理</b>",
+    "清理空内容（",
+    "<b>适应视图</b>",
+  ];
+  const actionPositions = actionMarkers.map((marker) => toolsMenu.indexOf(marker));
   assert.deepEqual(
     actionPositions,
     [...actionPositions].sort((a, b) => a - b),
@@ -255,6 +264,10 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.equal(arrangeIcon, "⌗");
   assert.equal(fitIcon, "⛶");
   assert.notEqual(arrangeIcon, fitIcon);
+  assert.match(toolsMenu, /<b>清理空内容（\{emptyContentNodes\.length\}）<\/b>/);
+  assert.match(toolsMenu, /deleteEmptyContentNodes\(\)/);
+  assert.match(toolsMenu, /disabled=\{!emptyContentNodes\.length\}/);
+  assert.match(toolsMenu, /canvas-menu-item-danger/);
   assert.match(styles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
   assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
 });

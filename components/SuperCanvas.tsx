@@ -49,6 +49,7 @@ import {
   groupById,
   groupForNode,
   groupNodes,
+  isCanvasEmptyContentNode,
   isCanvasReadyImageSource,
   isCanvasReferenceableNode,
   incomingContext,
@@ -5378,6 +5379,18 @@ export default function SuperCanvas() {
     clearSelection();
     notify(`已删除 ${count} 个对象`);
   }, [clearSelection, commit, notify, selectedIds]);
+  const deleteEmptyContentNodes = useCallback(() => {
+    const ids = docRef.current.nodes
+      .filter(isCanvasEmptyContentNode)
+      .map((node) => node.id);
+    if (!ids.length) {
+      notify("当前没有可清理的空内容节点");
+      return;
+    }
+    commit((value) => removeNodes(value, ids));
+    clearSelection();
+    notify(`已清理 ${ids.length} 个空内容节点`);
+  }, [clearSelection, commit, notify]);
   const duplicateSelection = useCallback(() => {
     if (!selectedIds.size) return;
     const copies = duplicateNodes(
@@ -12568,6 +12581,10 @@ export default function SuperCanvas() {
   const contextGroup = contextMenu?.menu === "group" && contextMenu.groupId
     ? groupById(document, contextMenu.groupId)
     : undefined;
+  const emptyContentNodes = useMemo(
+    () => document.nodes.filter(isCanvasEmptyContentNode),
+    [document.nodes],
+  );
   const groupQuickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const group = contextGroup || selectedGroup;
     if (!group) return { primaryActions: [], menuGroups: [] };
@@ -14642,6 +14659,21 @@ export default function SuperCanvas() {
                   <b>一键整理</b>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool canvas-menu-item-danger"
+                onClick={() => {
+                  setContextMenu(null);
+                  deleteEmptyContentNodes();
+                }}
+                disabled={!emptyContentNodes.length}
+                title="删除没有实际内容的节点，包括已连线节点；可通过撤销恢复"
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⌫</span>
+                <span className="canvas-menu-copy">
+                  <b>清理空内容（{emptyContentNodes.length}）</b>
+                </span>
               </button>
               <button
                 type="button"

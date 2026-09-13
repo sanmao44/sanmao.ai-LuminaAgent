@@ -1174,6 +1174,10 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-tools-context-menu .canvas-menu-item+.canvas-menu-item{margin-top:2px}
 .canvas-tools-context-menu .canvas-menu-icon{width:28px;height:28px;border-radius:8px;font-size:13px}
 .canvas-tools-context-menu .canvas-menu-item-tool .canvas-menu-icon{font-size:15px}
+.canvas-tools-context-menu .canvas-menu-item-danger{color:var(--danger)}
+.canvas-tools-context-menu .canvas-menu-item-danger .canvas-menu-icon{border-color:color-mix(in srgb,var(--danger) 34%,var(--line));background:var(--danger-soft);color:var(--danger)}
+.canvas-tools-context-menu .canvas-menu-item-danger .canvas-menu-copy b{color:var(--danger)}
+.canvas-tools-context-menu .canvas-menu-item-danger:hover{border-color:color-mix(in srgb,var(--danger) 42%,var(--line));background:var(--danger-soft);box-shadow:none}
 .canvas-tools-context-menu .canvas-menu-copy{gap:0}
 .canvas-tools-context-menu .canvas-menu-copy b{font-size:10px}
 .canvas-tools-context-menu .canvas-menu-copy small{display:none}
