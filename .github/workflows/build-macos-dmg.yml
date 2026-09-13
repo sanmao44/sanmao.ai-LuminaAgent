@@ -27,6 +27,10 @@ jobs:
       - name: Validate update manifest before packaging
         run: node scripts/validate-update-manifest.mjs --strict
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Build self-contained macOS app image
         shell: bash
         env:
@@ -67,6 +71,35 @@ jobs:
             "$output"
 
           hdiutil imageinfo "$output" | grep -E 'image-type|partition-scheme|size:'
+
+      - name: Verify app launches independently after copying from DMG
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/sanmao-mounted"
+          mkdir -p "$mount" "$HOME/Applications"
+          hdiutil attach "$RUNNER_TEMP/SANMAO.AI-$RELEASE_VERSION.dmg" -readonly -nobrowse -mountpoint "$mount"
+          ditto "$mount/SANMAO.AI.app" "$HOME/Applications/SANMAO.AI.app"
+          hdiutil detach "$mount"
+          app="$HOME/Applications/SANMAO.AI.app"
+          app_root="$app/Contents/Resources/AppRoot"
+          cd "$app_root"
+          npm ci
+          npm run build
+          SANMAO_NONINTERACTIVE=1 SANMAO_SKIP_BUILD=1 SANMAO_PORT=3210 "$app/Contents/MacOS/SANMAO.AI" &
+          launcher_pid=$!
+          trap 'kill "$launcher_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..90}; do
+            if curl --fail --silent http://localhost:3210/api/health > "$RUNNER_TEMP/sanmao-health.json"; then
+              cat "$RUNNER_TEMP/sanmao-health.json"
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$HOME/Library/Logs/SANMAO.AI-startup.log"
+          exit 1
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

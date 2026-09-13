@@ -11,6 +11,28 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const operations = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 
+test("image loader uses CORS and localizes unsupported remote images", async () => {
+  const loaderSource = compiled.slice(compiled.indexOf("const localizedImages ="), compiled.indexOf("function canvasToPng"));
+  const urls = [];
+  let saves = 0;
+  class FakeImage {
+    set src(url) {
+      urls.push(url);
+      assert.equal(this.crossOrigin, "anonymous");
+      queueMicrotask(() => url.startsWith("https:") ? this.onerror?.() : this.onload?.());
+    }
+  }
+  const load = new Function("Image", "fetch", "window", `${loaderSource}; return loadImage;`)(
+    FakeImage,
+    async () => { saves++; return Response.json({ images: [{ url: "/api/storage/file?name=original.png" }] }); },
+    { location: { origin: "http://localhost:3210" } },
+  );
+  await load("https://example.com/original.png");
+  await load("https://example.com/original.png");
+  assert.equal(saves, 1);
+  assert.deepEqual(urls, ["https://example.com/original.png", "/api/storage/file?name=original.png", "/api/storage/file?name=original.png"]);
+});
+
 test("crop presets stay inside the source and preserve their ratio", () => {
   const sourceSize = { width: 1600, height: 900 };
   for (const [aspect, expected] of [["1:1", 1], ["4:3", 4 / 3], ["3:4", 3 / 4], ["16:9", 16 / 9], ["9:16", 9 / 16]]) {
