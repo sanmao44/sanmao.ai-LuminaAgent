@@ -8367,6 +8367,8 @@ export default function SuperCanvas() {
       };
       try {
         const generationStartedAt = Date.now();
+        let finalEventReceived = false;
+        let finalEventText = "";
         const agentReferenceNodes = referenceNodes.filter((node) => node.type === "prompt" || node.data.kind !== "audio");
         const response = await generateCanvasAgent({
           messages: agentMessages,
@@ -8401,12 +8403,17 @@ export default function SuperCanvas() {
             streamedText += String(event.text);
             scheduleStreamFlush();
           }
+          if (event.type === "final") {
+            finalEventReceived = true;
+            finalEventText = String(event.message || "").trim();
+          }
         });
         const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
         if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
         flushStreamedText();
         const parent = nodeById(docRef.current, inputId) || inputNode;
-        const responseText = response.message || "Agent 没有返回文本。";
+        const responseText = String(finalEventReceived ? finalEventText : response.message || "").trim();
+        if (!responseText) throw new Error("Agent 没有返回有效结果，请重试。");
         const effectiveModelRecord = runtime?.models.find(
           (model) => model.id === effectiveSettings.model,
         );
@@ -8522,6 +8529,9 @@ export default function SuperCanvas() {
                   ...node,
                   data: {
                     ...node.data,
+                    text: String(node.data.agentPrompt || prompt),
+                    agentResponse: undefined,
+                    role: "Agent 输入",
                     status: "failed",
                     statusLabel: message,
                   },

@@ -343,6 +343,7 @@ export async function POST(request: Request) {
     releaseRuntimeRequest = await beginRuntimeRequest('agent');
     const body = await request.json();
     const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
+    const isCanvasSource = sourceForLog === 'canvas';
     wantsStream = body.stream === true;
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
@@ -447,9 +448,11 @@ export async function POST(request: Request) {
     let nativeSearchError = '';
     const providerPlatform = getProviderPreset(agentRuntime.provider.platform).label;
     const currentDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'long', timeZone: 'Asia/Shanghai' }).format(new Date());
-    const ordinaryChatDirectionsInstructions = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask
-      ? '\n\n普通文本回答结束时，追加一个标题为“你还可以继续”的小节，并用 1.、2.、3. 列出 3 个结合当前对话、可以直接作为下一轮提问的具体短句，每项不超过 40 字。不要解释这些按钮或交互。若本轮生成了图片，改用专门的“下一版可尝试方向”格式。'
-      : '';
+    const ordinaryChatDirectionsInstructions = isCanvasSource
+      ? '\n\n超级画布输出规则：只输出本轮任务所需的最终结果。不要追加“你还可以继续”“下一版可尝试方向”、下一步建议、客套话、过程说明或自我评价。'
+      : !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask
+        ? '\n\n普通文本回答结束时，追加一个标题为“你还可以继续”的小节，并用 1.、2.、3. 列出 3 个结合当前对话、可以直接作为下一轮提问的具体短句，每项不超过 40 字。不要解释这些按钮或交互。若本轮生成了图片，改用专门的“下一版可尝试方向”格式。'
+        : '';
     const query = webDecision.query;
     const searchPlan = planSearch(query);
     const plannedNativeQuery = (searchPlan.intent.entities.length >= 2 ? searchPlan.queries[searchPlan.queries.length - 1] : searchPlan.queries[0]) || query;
