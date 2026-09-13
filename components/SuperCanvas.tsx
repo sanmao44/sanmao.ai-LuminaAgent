@@ -12168,11 +12168,12 @@ export default function SuperCanvas() {
       notify(error instanceof Error ? error.message : "分享版下载失败", "error");
     }
   }, [notify]);
-  const downloadSelectedImages = useCallback(async () => {
-    if (selectedImageDownloads.length < 2 || batchDownloading) return;
+  const downloadSelectedImages = useCallback(async (groupItems?: typeof selectedImageDownloads) => {
+    const downloadItems = groupItems ?? selectedImageDownloads;
+    if (!downloadItems.length || batchDownloading) return;
     setBatchDownloading(true);
     try {
-      const { blob } = await createCanvasImageZip(selectedImageDownloads);
+      const { blob } = await createCanvasImageZip(downloadItems);
       const objectUrl = URL.createObjectURL(blob);
       const anchor = window.document.createElement("a");
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -12184,7 +12185,7 @@ export default function SuperCanvas() {
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-      notify(`已开始下载 ${selectedImageDownloads.length} 张图片`);
+      notify(`已开始下载 ${downloadItems.length} 张图片`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "批量下载图片失败", "error");
     } finally {
@@ -13033,8 +13034,10 @@ export default function SuperCanvas() {
               icon: "download",
               label: "批量下载",
               title: "按组内顺序打包下载图片",
-              disabled: selectedImageDownloads.length < 2 || batchDownloading,
-              onClick: () => void downloadSelectedImages(),
+              disabled: !groupImages.length || batchDownloading,
+              onClick: () => void downloadSelectedImages(groupImages.map((node) => ({
+                id: node.id, name: String(node.data.name || "图片"), url: String(node.data.url),
+              }))),
             },
           ],
         },

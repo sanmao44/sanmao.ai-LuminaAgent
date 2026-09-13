@@ -73,11 +73,29 @@ test('does not create a partial zip when an image download fails', async () => {
 
 test('canvas exposes a multi-image download action without replacing single downloads', async () => {
   const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
-  assert.match(component, /createCanvasImageZip\(selectedImageDownloads\)/);
+  assert.match(component, /createCanvasImageZip\(downloadItems\)/);
   assert.match(component, /selectedImageDownloads\.length >= 2/);
   assert.match(component, /\.filter\(\(node\) => isCanvasReadyImageSource\(node\)\)/);
   assert.match(component, /按选择顺序打包下载图片/);
   assert.match(component, /const downloadCanvasNode = useCallback/);
+});
+
+test('remote fetch failure saves through existing storage before zipping', async () => {
+  const calls = [];
+  const result = await download.createCanvasImageZip([{ id: 'r', name: 'remote', url: 'https://example.com/a.png' }], async (url) => {
+    calls.push(url);
+    if (url.startsWith('https:')) throw new TypeError('Failed to fetch');
+    if (url === '/api/storage/images') return Response.json({ images: [{ url: '/api/storage/file?name=a.png' }] });
+    return new Response(new Uint8Array([1, 2]), { headers: { 'content-type': 'image/png' } });
+  });
+  assert.equal(result.fileNames.length, 1);
+  assert.deepEqual(calls, ['https://example.com/a.png', '/api/storage/images', '/api/storage/file?name=a.png']);
+});
+
+test('group downloads use group members independently of selection', async () => {
+  const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+  assert.match(component, /downloadSelectedImages\(groupImages\.map/);
+  assert.match(component, /disabled: !groupImages\.length \|\| batchDownloading/);
 });
 
 test('upscale results expose a direct download action on the infinite canvas', async () => {
