@@ -10425,7 +10425,7 @@ export default function SuperCanvas() {
       }
       setSelectedGroupId(null);
       notify("新视角结果已写入画布");
-      addLog(`图片节点视角生成完成：${pendingOutputId}`);
+      addLog(`图片节点视角生成完成：${pendingOutputId || "全景工作台"}`);
       options?.onResult?.(image.url);
     } catch (error) {
       const message = controller.signal.aborted
@@ -10456,7 +10456,7 @@ export default function SuperCanvas() {
         }));
       }
       notify(message, "error");
-      addLog(`图片节点视角生成失败：${pendingOutputId}：${message}`);
+      addLog(`图片节点视角生成失败：${pendingOutputId || "全景工作台"}：${message}`);
       options?.onError?.(message);
     } finally {
       if (angleAbortControllersRef.current.get(generationKey) === controller)
@@ -11560,6 +11560,11 @@ export default function SuperCanvas() {
           setLightbox(null);
           return;
         }
+        if (panoramaNodeId) {
+          if (generationKeys.has(`angle-image-${panoramaNodeId}`)) return;
+          closePanoramaWorkbench();
+          return;
+        }
         if (textLightboxNodeId) {
           setTextLightboxNodeId(null);
           return;
@@ -11669,6 +11674,9 @@ export default function SuperCanvas() {
     connectionTargetId,
     lightbox,
     maskNodeId,
+    panoramaNodeId,
+    generationKeys,
+    closePanoramaWorkbench,
     reusePreview,
     referencePicker,
     selectedEdgeId,
@@ -14906,6 +14914,34 @@ export default function SuperCanvas() {
           </CanvasContextMenuFrame>
         ) : null}
       </div>
+      {panoramaNodeId && (() => {
+        const panoramaNode = nodeById(document, panoramaNodeId);
+        const reference = canvasAngleReferenceFromNode(panoramaNode);
+        if (!panoramaNode || !reference) return null;
+        const imageParams = panoramaNode.data.generation?.params as ImageCreationSettings | undefined;
+        const modelId = String(imageParams?.model || panoramaNode.data.model || "auto");
+        const busy = generationKeys.has(`angle-image-${panoramaNode.id}`);
+        return (
+          <PanoramaWorkbench
+            reference={reference}
+            referenceWidth={Number(panoramaNode.data.nativeWidth) || undefined}
+            referenceHeight={Number(panoramaNode.data.nativeHeight) || undefined}
+            resultUrl={panoramaResultUrl}
+            modelId={modelId}
+            busy={busy}
+            error={panoramaError}
+            onApply={(input) => {
+              setPanoramaError("");
+              void runImageAngleGeneration(panoramaNode.id, input, {
+                createPendingNode: false,
+                onResult: (url) => setPanoramaResultUrl(url),
+                onError: (message) => setPanoramaError(message),
+              });
+            }}
+            onClose={closePanoramaWorkbench}
+          />
+        );
+      })()}
       {lightbox && (() => {
         const viewerNode = nodeById(document, lightbox.nodeId);
         if (!viewerNode || !isCanvasReferenceableNode(viewerNode)) return null;
@@ -14930,6 +14966,11 @@ export default function SuperCanvas() {
           references={viewerReferences}
           initialCompare={lightbox.compare}
           onClose={() => setLightbox(null)}
+          onAngle={
+            viewerNode.data.kind === "image" && isCanvasReadyImageSource(viewerNode)
+              ? () => openImagePanorama(viewerNode.id)
+              : undefined
+          }
           onNotify={notify}
           onDownload={(variant) => {
             if (variant === "share") {
