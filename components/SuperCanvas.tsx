@@ -173,6 +173,7 @@ import {
   requestPromptOptimization,
   runReversePrompt,
 } from "@/lib/creation/agent";
+import { requestAgent } from "@/lib/agent-client";
 import {
   buildOneTakeVideoRequest,
   normalizeOneTakeDuration,
@@ -221,7 +222,7 @@ import CanvasImageEditorWorkbench, {
   type CanvasImageEditorSaveRequest,
 } from "@/components/canvas/CanvasImageEditorWorkbench";
 import CanvasVideoClipWorkbench from "@/components/canvas/CanvasVideoClipWorkbench";
-import PanoramaWorkbench from "@/components/canvas/PanoramaWorkbench";
+import PanoramaWorkbench, { type PanoramaSnapshot } from "@/components/canvas/PanoramaWorkbench";
 import OneClickCinematicPanel, {
   type OneClickCinematicVideoSelection,
 } from "@/components/canvas/OneClickCinematicPanel";
@@ -620,6 +621,10 @@ function visibleCanvasImagePresetPrompt(
   if (userPrompt === presetPrompt) return "";
   if (userPrompt.startsWith(presetPrompt)) return userPrompt.slice(presetPrompt.length).trim();
   return userPrompt;
+}
+
+function canvasNodeSupportsImagePresets(node: CanvasNode) {
+  return node.type !== "generator" && node.type !== "prompt" && node.type !== "upscale" && node.data.kind === "image";
 }
 type Interaction =
   | {
@@ -1587,6 +1592,41 @@ function generationLogOutputUrls(log: CanvasGenerationLog) {
 
 function variantRequirementsFor(node: CanvasNode) {
   return normalizeVariantRequirements(node.data.variantRequirements);
+}
+
+type SmartVariantDraft = {
+  instruction: string;
+  category?: string;
+  sources?: string[];
+};
+
+type SmartVariantPlan = {
+  categories: string[];
+  variants: SmartVariantDraft[];
+};
+
+function parseSmartVariantPlan(message: string): SmartVariantPlan {
+  const match = message.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("AI 未返回可解析的变体方案，请重试。");
+  const raw = JSON.parse(match[0]) as Partial<SmartVariantPlan>;
+  const variants = Array.isArray(raw.variants)
+    ? raw.variants
+        .map((item) => ({
+          instruction: String(item?.instruction || "").trim(),
+          category: String(item?.category || "").trim() || undefined,
+          sources: Array.isArray(item?.sources)
+            ? item.sources.map((source) => String(source)).filter(Boolean)
+            : undefined,
+        }))
+        .filter((item) => item.instruction)
+    : [];
+  if (!variants.length) throw new Error("AI 没有整理出有效的变体要求。");
+  return {
+    categories: Array.isArray(raw.categories)
+      ? raw.categories.map((item) => String(item).trim()).filter(Boolean)
+      : [],
+    variants,
+  };
 }
 
 function variantStatesFor(node: CanvasNode): CanvasVariantState[] {
@@ -2844,8 +2884,6 @@ export default function SuperCanvas() {
     compare: boolean;
   } | null>(null);
   const [panoramaNodeId, setPanoramaNodeId] = useState<string | null>(null);
-  const [panoramaResultUrl, setPanoramaResultUrl] = useState("");
-  const [panoramaError, setPanoramaError] = useState("");
   const [reuseDraft, setReuseDraft] = useState<CanvasReuseDraft | null>(null);
   const [reusePromptBeforeOptimization, setReusePromptBeforeOptimization] = useState<string | null>(null);
   const [deckPromptBeforeOptimization, setDeckPromptBeforeOptimization] = useState<string | null>(null);
@@ -2942,8 +2980,6 @@ export default function SuperCanvas() {
     setReusePreview(null);
     setLightbox(null);
     setPanoramaNodeId(null);
-    setPanoramaResultUrl("");
-    setPanoramaError("");
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
     setVideoClipEditorNodeId(null);
@@ -3052,8 +3088,6 @@ export default function SuperCanvas() {
   );
   const closePanoramaWorkbench = useCallback(() => {
     setPanoramaNodeId(null);
-    setPanoramaResultUrl("");
-    setPanoramaError("");
   }, []);
   const closeAngleWorkbench = useCallback(() => {
     setAngleNodeId(null);
@@ -3343,8 +3377,6 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setQuickToolbarNodeId(null);
       setPanoramaNodeId(nodeId);
-      setPanoramaResultUrl("");
-      setPanoramaError("");
     },
     [closeCanvasOverlayConflicts, notify],
   );
@@ -4021,6 +4053,86 @@ export default function SuperCanvas() {
       ) || position
     );
   }, []);
+  const applyPanoramaView = useCallback(async (sourceNodeId: string, snapshot: PanoramaSnapshot) => {
+    const source = nodeById(docRef.current, sourceNodeId);
+    if (!source || !isCanvasReadyImageSource(source) || source.data.kind !== "image" || !source.data.url)
+      throw new Error("原全景图片已不可用，请关闭后重新打开查看器。");
+    if (!snapshot.dataUrl || snapshot.width < 1 || snapshot.height < 1)
+      throw new Error("当前视角没有可导出的画面。");
+
+    const sourceName = String(source.data.name || "全景图片");
+    const viewLabel = `${snapshot.yaw}°`;
+    const asset = await uploadCanvasAsset(
+      dataUrlFile(snapshot.dataUrl, `${sourceName}-全景视图-${snapshot.yaw}deg.png`),
+    );
+    if (asset.kind !== "image") throw new Error("当前视角未能保存为图片素材，请重试。");
+
+    const currentSource = nodeById(docRef.current, sourceNodeId);
+    if (!currentSource || !isCanvasReadyImageSource(currentSource) || currentSource.data.kind !== "image")
+      throw new Error("原全景图片已被移除，未创建新的平面图片节点。");
+
+    const createdAt = Date.now();
+    const sourceParams = currentSource.type === "upscale"
+      ? defaultParams("image", runtime)
+      : currentSource.data.generation?.params
+        || currentSource.data.params
+        || defaultParams("image", runtime);
+    const viewPrompt = `本地导出全景视图 · 水平 ${viewLabel} · 垂直 ${snapshot.pitch}° · 视野 ${snapshot.fov}°`;
+    const result = {
+      ...createMedia(
+        "image",
+        asset.url,
+        `${sourceName} · ${viewLabel} 视图`,
+        { x: currentSource.x + nodeSize(currentSource).w + 90, y: currentSource.y },
+        {
+          role: "全景平面视图",
+          status: "completed",
+          statusLabel: "已应用当前全景视角",
+          assetId: asset.id,
+          sourceAssetId: asset.id,
+          mimeType: asset.mime || "image/png",
+          autoFit: true,
+          nativeWidth: snapshot.width,
+          nativeHeight: snapshot.height,
+          params: clone(sourceParams),
+          generation: {
+            kind: "image",
+            prompt: viewPrompt,
+            params: clone(sourceParams),
+            operation: "edit",
+            referenceIds: [currentSource.id],
+            parentNodeId: currentSource.id,
+            createdAt,
+          },
+        },
+      ),
+      ...mediaCardSizeForRatio(snapshot.width / snapshot.height, "image"),
+    };
+    const positioned = {
+      ...result,
+      ...openNodePosition({ x: result.x, y: result.y }, result),
+    };
+    commit((value) => ({
+      ...value,
+      nodes: [...value.nodes, positioned],
+      edges: [
+        ...value.edges,
+        {
+          id: uid("edge"),
+          source: currentSource.id,
+          target: positioned.id,
+          sourcePort: "right",
+          targetPort: "left",
+          kind: "lineage",
+        },
+      ],
+    }));
+    setSelectedIds(new Set([positioned.id]));
+    setSelectedGroupId(null);
+    setQuickToolbarNodeId(null);
+    notify("已应用为平面图片");
+    addLog(`全景视角已应用为平面图片：${sourceName} · ${viewLabel}`);
+  }, [addLog, commit, notify, openNodePosition, runtime]);
   const selectNode = useCallback((node: CanvasNode, additive = false) => {
     setSelectedEdgeId(null);
     const group = groupForNode(docRef.current, node.id);
@@ -4079,6 +4191,7 @@ export default function SuperCanvas() {
   }, []);
   const handleStagePointerDownCapture = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!event.currentTarget.contains(event.target as Node)) return;
       const target = event.target instanceof Element ? event.target : null;
       const pointTarget = window.document.elementFromPoint(
         event.clientX,
@@ -6736,8 +6849,6 @@ export default function SuperCanvas() {
       }));
 
       const sourceParams = copyParams(generator.data.params, kind, runtime);
-      const generatorPresetId = editorDrafts[generatorId]?.presetId;
-      const generatorPresetName = editorDrafts[generatorId]?.presetName;
       const resolvedModel = resolveAvailableCreationModel(sourceParams, runtime);
       const effectiveParams = {
         ...sourceParams,
@@ -6990,8 +7101,6 @@ export default function SuperCanvas() {
               const result = await generateCanvasImage({
                 taskId: uid("image-task"),
                 prompt,
-                ...(generatorPresetId ? { presetId: generatorPresetId } : {}),
-                ...(generatorPresetName ? { presetName: generatorPresetName } : {}),
                 model: imageParams.model,
                 count: imageParams.count,
                 aspect:
@@ -7031,8 +7140,6 @@ export default function SuperCanvas() {
                       kind: "image",
                       prompt,
                       params: clone(imageParams),
-                      ...(generatorPresetId ? { presetId: generatorPresetId } : {}),
-                      ...(generatorPresetName ? { presetName: generatorPresetName } : {}),
                       referenceIds: linked.map((item) => item.id),
                       sourceGeneratorId: generatorId,
                       variantBatchId: batchId,
@@ -7070,8 +7177,6 @@ export default function SuperCanvas() {
               });
               void recordCanvasImages(result.images, {
                 prompt,
-                ...(generatorPresetId ? { presetId: generatorPresetId } : {}),
-                ...(generatorPresetName ? { presetName: generatorPresetName } : {}),
                 source: "canvas",
                 modelId: imageParams.model,
                 modelName: result.model?.name,
@@ -9337,7 +9442,9 @@ export default function SuperCanvas() {
       if (node.type === "prompt") return String(node.data.agentPrompt || node.data.text || "");
       if (node.type === "media" && node.data.kind === "audio") return draft?.prompt || "";
       const persistedPrompt = String(node.data.generation?.prompt || node.data.prompt || "");
-      const rawPrompt = draft?.prompt?.trim() || persistedPrompt || draft?.prompt || "";
+      const rawPrompt = draft?.presetId && canvasNodeSupportsImagePresets(node)
+        ? draft.prompt || ""
+        : draft?.prompt?.trim() || persistedPrompt || draft?.prompt || "";
       return compiledCanvasLocalEditPrompt(node, rawPrompt, draft?.params);
     },
     [editorDrafts],
@@ -9733,15 +9840,15 @@ export default function SuperCanvas() {
       const draft = editorDrafts[currentNode.id];
       const params = draft?.params ? clone(draft.params) : editorParamsFor(currentNode);
       const prompt = editorPromptFor(currentNode);
-      const effectivePrompt = currentNode.data.kind === "image"
-        ? resolveCanvasImagePresetPrompt(prompt, draft?.presetId || currentNode.data.generation?.presetId, customImagePresets)
-        : prompt;
+       const effectivePrompt = canvasNodeSupportsImagePresets(currentNode) && currentNode.data.kind === "image"
+         ? resolveCanvasImagePresetPrompt(prompt, draft?.presetId || currentNode.data.generation?.presetId, customImagePresets)
+         : prompt;
       const generationRequest: CanvasGenerationRequest = {
         nodeId: currentNode.id,
         prompt: effectivePrompt,
         ...(params ? { params } : {}),
-        ...(draft?.presetId ? { presetId: draft.presetId } : {}),
-        ...(draft?.presetName ? { presetName: draft.presetName } : {}),
+        ...(canvasNodeSupportsImagePresets(currentNode) && draft?.presetId ? { presetId: draft.presetId } : {}),
+        ...(canvasNodeSupportsImagePresets(currentNode) && draft?.presetName ? { presetName: draft.presetName } : {}),
         ...(options?.useCurrentImageAsReference !== undefined
           ? { useCurrentImageAsReference: options.useCurrentImageAsReference }
           : {}),
@@ -11561,7 +11668,6 @@ export default function SuperCanvas() {
           return;
         }
         if (panoramaNodeId) {
-          if (generationKeys.has(`angle-image-${panoramaNodeId}`)) return;
           closePanoramaWorkbench();
           return;
         }
@@ -11675,7 +11781,6 @@ export default function SuperCanvas() {
     lightbox,
     maskNodeId,
     panoramaNodeId,
-    generationKeys,
     closePanoramaWorkbench,
     reusePreview,
     referencePicker,
@@ -12760,6 +12865,85 @@ export default function SuperCanvas() {
     () => document.nodes.filter(isCanvasEmptyContentNode),
     [document.nodes],
   );
+  const smartVariantSources = useMemo(() => {
+    if (selectedSingle?.type !== "generator") return [];
+    const directIds = new Set(document.edges.filter((edge) => edge.target === selectedSingle.id && !["generated", "variant", "lineage"].includes(edge.kind || "")).map((edge) => edge.source));
+    const agents = document.nodes.filter((node) => directIds.has(node.id))
+      .filter((node) => node.type === "prompt")
+      .map((node) => ({
+        id: node.id,
+        name: String(node.data.name || "Agent"),
+        text: String(node.data.agentResponse || node.data.text || node.data.agentPrompt || "").trim(),
+      }))
+      .filter((item) => item.text);
+    if (!agents.length) return [];
+    return [
+      { id: "shared-prompt", name: "共同提示词", text: String(selectedSingle.data.prompt || "").trim() },
+      ...agents,
+    ].filter((item) => item.text);
+  }, [document, selectedSingle]);
+  const [smartVariantOpen, setSmartVariantOpen] = useState(false);
+  const [smartVariantLoading, setSmartVariantLoading] = useState(false);
+  const [smartVariantPlan, setSmartVariantPlan] = useState<SmartVariantPlan | null>(null);
+  const [smartVariantError, setSmartVariantError] = useState("");
+  const [smartVariantBeforeApply, setSmartVariantBeforeApply] = useState<string | null>(null);
+  const smartVariantSession = useRef<{ nodeId: string; sources: typeof smartVariantSources } | null>(null);
+  const savedSmartVariant = selectedSingle?.data.smartVariantSnapshot;
+  const smartVariantTarget = nodeById(document, smartVariantSession.current?.nodeId || "");
+  const smartVariantBusy = Boolean(smartVariantTarget && (generationKeys.has(smartVariantTarget.id) || ["running", "queued"].includes(String(smartVariantTarget.data.status)) || smartVariantTarget.data.variantStates?.some((item) => item.status === "running")));
+  const openSmartVariant = useCallback(async (reanalyze = false) => {
+    if (!reanalyze && selectedSingle?.data.smartVariantSnapshot) {
+      const saved = selectedSingle.data.smartVariantSnapshot;
+      smartVariantSession.current = { nodeId: selectedSingle.id, sources: clone(saved.sources) };
+      setSmartVariantPlan(clone(saved));
+      setSmartVariantError("");
+      setSmartVariantOpen(true);
+      return;
+    }
+    const session = smartVariantOpen && !reanalyze ? smartVariantSession.current : selectedSingle?.type === "generator"
+      ? { nodeId: selectedSingle.id, sources: smartVariantSources } : null;
+    if (!session?.sources.length || !chatModelsAvailable || smartVariantLoading) return;
+    smartVariantSession.current = session;
+    setSmartVariantOpen(true);
+    setSmartVariantLoading(true);
+    setSmartVariantError("");
+    setSmartVariantPlan(null);
+    try {
+      const sourceText = session.sources.map((source) => `[${source.name}]\n${source.text}`).join("\n\n");
+      const response = await requestAgent({
+        source: "canvas",
+        model: runtime?.settings.agentModelId || undefined,
+        task: "smart_variant_planning",
+        deliverable: "TEXT",
+        webMode: "off",
+        messages: [{
+          role: "user",
+          content: `严格根据以下文案整理变体要求。只拆分、归类、重组和清理表达，不新增事实，不删除有效信息，不递归推断上游内容。根据实际内容决定数量，不为凑数制造重复。只返回 JSON：{"categories":["分类"],"variants":[{"category":"分类","instruction":"完整变体要求","sources":["原文片段"]}]}\n\n${sourceText}`,
+        }],
+      });
+      const plan = parseSmartVariantPlan(response.message);
+      setSmartVariantPlan(plan);
+      updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== session.nodeId ? node : {
+        ...node, data: { ...node.data, smartVariantSnapshot: { ...plan, sources: clone(session.sources) } },
+      }) }));
+    } catch (error) {
+      setSmartVariantError(error instanceof Error ? error.message : "智能变体分析失败");
+    } finally {
+      setSmartVariantLoading(false);
+    }
+  }, [chatModelsAvailable, runtime?.settings.agentModelId, selectedSingle, smartVariantSources, smartVariantOpen, smartVariantLoading, updateDoc]);
+  const applySmartVariant = useCallback(() => {
+    const target = nodeById(docRef.current, smartVariantSession.current?.nodeId || "");
+    if (target?.type !== "generator" || !smartVariantPlan?.variants.length) return;
+    if (generationKeys.has(target.id) || ["running", "queued"].includes(String(target.data.status)) || target.data.variantStates?.some((item) => item.status === "running")) return;
+    const value = smartVariantPlan.variants.map((item) => item.instruction.replace(/\r?\n/g, " ").trim()).filter(Boolean).join("\n");
+    if (!value) return;
+    setSmartVariantBeforeApply(target.data.variantRequirementsText ?? variantRequirementsFor(target).join("\n"));
+    updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== target.id ? node : {
+      ...node, data: { ...node.data, smartVariantSnapshot: { ...clone(smartVariantPlan), sources: clone(smartVariantSession.current?.sources || []) }, variantRequirementsText: value, variantRequirements: normalizeVariantRequirements(value), variantStates: [], variantBatchId: undefined, variantGroupId: undefined },
+    }) }));
+    setSmartVariantOpen(false);
+  }, [smartVariantPlan, updateDoc, generationKeys]);
   const groupQuickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const group = contextGroup || selectedGroup;
     if (!group) return { primaryActions: [], menuGroups: [] };
@@ -13940,7 +14124,17 @@ export default function SuperCanvas() {
             target={{ kind: "node", node: selectedSingle }}
             document={document}
             stageRef={stageRef}
-            actions={quickActions}
+            actions={selectedSingle.type === "generator" ? {
+              ...quickActions,
+              primaryActions: [{
+                id: "smart-variant",
+                icon: "edit",
+                label: smartVariantLoading ? "分析中…" : savedSmartVariant ? `查看变体 · ${savedSmartVariant.variants.length} 条` : "一键变体",
+                title: savedSmartVariant ? "查看已保存方案，不调用 AI" : !chatModelsAvailable ? "请先启用对话模型" : !smartVariantSources.length ? "请直接连接有文案的 Agent 节点" : "分析文案并预览变体要求",
+                disabled: smartVariantLoading || (!savedSmartVariant && (!chatModelsAvailable || !smartVariantSources.length)),
+                onClick: () => void openSmartVariant(),
+              }, ...quickActions.primaryActions],
+            } : quickActions}
             menuSubtitle="节点操作"
           />
         )}
@@ -14134,6 +14328,11 @@ export default function SuperCanvas() {
               onToggleEditor={toggleEditor}
               onGenerate={runEditorGeneration}
               onOneTake={runOneTakeForAgentNode}
+              smartVariantAction={editorNode.type === "generator" && editorNode.id === selectedSingle?.id ? (
+                <>
+                  {smartVariantBeforeApply !== null && <button type="button" className="canvas-node-editor-dock-chip" onClick={() => { updateVariantRequirements(smartVariantBeforeApply); setSmartVariantBeforeApply(null); }}>撤销上次应用</button>}
+                </>
+              ) : undefined}
               onNotify={notify}
               onEditorPromptChange={updateEditorPrompt}
               onEditorParamsChange={updateEditorParams}
@@ -14614,7 +14813,18 @@ export default function SuperCanvas() {
                         <b>变体要求</b>
                         <small>逐条编辑、回车新增</small>
                       </div>
-                      <span>{variantRequirementsFor(selectedSingle).length} 条</span>
+                      <div className="canvas-variant-editor-head-actions">
+                        <button
+                          type="button"
+                          className="canvas-smart-variant-button"
+                          disabled={!chatModelsAvailable || !smartVariantSources.length || smartVariantLoading}
+                          title={!smartVariantSources.length ? "请先连接至少一个有文案的 Agent 节点" : "使用 AI 整理变体"}
+                          onClick={() => void openSmartVariant()}
+                        >
+                          ✦ {smartVariantLoading ? "分析中…" : "一键变体"}
+                        </button>
+                        <span>{variantRequirementsFor(selectedSingle).length} 条</span>
+                      </div>
                     </div>
                     <CanvasVariantRequirementsEditor
                       ariaLabel="变体要求"
@@ -14627,6 +14837,12 @@ export default function SuperCanvas() {
                       onChange={updateVariantRequirements}
                       note="每条要求都会叠加到共同提示词，并按顺序生成独立结果。"
                     />
+                    {smartVariantBeforeApply !== null && (
+                      <button type="button" className="canvas-smart-variant-undo" onClick={() => {
+                        updateVariantRequirements(smartVariantBeforeApply);
+                        setSmartVariantBeforeApply(null);
+                      }}>↶ 撤销上次应用</button>
+                    )}
                   </div>
                 )}
                 <CreationParameterEditor
@@ -14648,6 +14864,51 @@ export default function SuperCanvas() {
             </>
           )}
         </div>
+        {smartVariantOpen && createPortal(
+          <div className="smart-variant-backdrop" role="dialog" aria-modal="true" aria-label="智能一键变体"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerMove={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+            onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setSmartVariantOpen(false); }}
+          >
+            <div className="smart-variant-dialog">
+              <header>
+                <div><strong>智能一键变体</strong><small>AI 按原文归类整理，不新增或删除信息</small></div>
+                <button type="button" onClick={() => setSmartVariantOpen(false)} aria-label="关闭">×</button>
+              </header>
+              {smartVariantLoading ? <div className="smart-variant-loading">正在分析共同提示词和直接连接的 Agent 文案…</div> : smartVariantError ? <div className="smart-variant-error">{smartVariantError}</div> : smartVariantPlan && (
+                <div className="smart-variant-grid">
+                  <section>
+                    <b>分析来源</b>
+                    {JSON.stringify(smartVariantSession.current?.sources) !== JSON.stringify(smartVariantSources) && <p role="status">原文已更新；当前显示上次分析来源。</p>}
+                    {smartVariantSession.current?.sources.map((source) => <details key={source.id} open><summary>{source.name}</summary><p>{source.text}</p></details>)}
+                    <b>识别分类</b>
+                    <div className="smart-variant-tags">{smartVariantPlan.categories.map((category) => <span key={category}>{category}</span>)}</div>
+                  </section>
+                  <section>
+                    <div className="smart-variant-result-head"><b>变体草稿</b><small>{smartVariantPlan.variants.length} 条，可编辑</small></div>
+                    <div className="smart-variant-drafts">
+                      {smartVariantPlan.variants.map((variant, index) => <article key={index}>
+                        <div><span>{index + 1}</span><input value={variant.category || ""} placeholder="分类" onChange={(event) => setSmartVariantPlan((current) => current && ({ ...current, variants: current.variants.map((item, itemIndex) => itemIndex === index ? { ...item, category: event.target.value } : item) }))} /></div>
+                        <textarea value={variant.instruction} onChange={(event) => setSmartVariantPlan((current) => current && ({ ...current, variants: current.variants.map((item, itemIndex) => itemIndex === index ? { ...item, instruction: event.target.value } : item) }))} />
+                        {variant.sources?.length ? <details><summary>查看来源片段</summary><p>{variant.sources.join("\n")}</p></details> : null}
+                      </article>)}
+                    </div>
+                  </section>
+                </div>
+              )}
+              <footer>
+                {smartVariantBusy && <span role="status">生成中，仅可查看；完成后可应用修改。</span>}
+                <button type="button" onClick={() => void openSmartVariant(true)} disabled={smartVariantLoading || !chatModelsAvailable || !smartVariantSources.length}>重新分析</button>
+                <button type="button" className="primary-small" onClick={applySmartVariant} disabled={!smartVariantPlan?.variants.length || smartVariantLoading || smartVariantBusy}>应用到变体要求</button>
+              </footer>
+            </div>
+          </div>,
+          window.document.body,
+        )}
         <CanvasMinimap
           document={document}
           connectionStyle={connectionStyle}
@@ -14919,25 +15180,19 @@ export default function SuperCanvas() {
         const reference = canvasAngleReferenceFromNode(panoramaNode);
         if (!panoramaNode || !reference) return null;
         const imageParams = panoramaNode.data.generation?.params as ImageCreationSettings | undefined;
-        const modelId = String(imageParams?.model || panoramaNode.data.model || "auto");
-        const busy = generationKeys.has(`angle-image-${panoramaNode.id}`);
+        const width = Number(panoramaNode.data.nativeWidth);
+        const height = Number(panoramaNode.data.nativeHeight);
+        const isEquirectangular = panoramaNode.data.generation?.presetId === "panorama_720"
+          || panoramaNode.data.generation?.presetName === "720 全景"
+          || imageParams?.aspect === "2:1"
+          || (width > 0 && height > 0 && Math.abs(width / height - 2) < 0.08);
         return (
           <PanoramaWorkbench
             reference={reference}
-            referenceWidth={Number(panoramaNode.data.nativeWidth) || undefined}
-            referenceHeight={Number(panoramaNode.data.nativeHeight) || undefined}
-            resultUrl={panoramaResultUrl}
-            modelId={modelId}
-            busy={busy}
-            error={panoramaError}
-            onApply={(input) => {
-              setPanoramaError("");
-              void runImageAngleGeneration(panoramaNode.id, input, {
-                createPendingNode: false,
-                onResult: (url) => setPanoramaResultUrl(url),
-                onError: (message) => setPanoramaError(message),
-              });
-            }}
+            referenceWidth={width || undefined}
+            referenceHeight={height || undefined}
+            isEquirectangular={isEquirectangular}
+            onApply={(snapshot) => applyPanoramaView(panoramaNode.id, snapshot)}
             onClose={closePanoramaWorkbench}
           />
         );
@@ -16444,8 +16699,8 @@ function CanvasAudioPlayer({
     }
   };
 
-  return (
-    <div
+    return (
+      <div
       className={`canvas-audio-player${compact ? " compact" : ""}`}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
@@ -16521,7 +16776,7 @@ function CanvasAudioPlayer({
           />
         </label>
       )}
-    </div>
+      </div>
   );
 }
 
@@ -16601,6 +16856,7 @@ function CanvasAudioNodePanel({
 }
 
 type CanvasNodeEditorPopoverProps = {
+  smartVariantAction?: ReactNode;
   node: CanvasNode;
   document: CanvasDocument;
   stageRef: RefObject<HTMLDivElement | null>;
@@ -17299,6 +17555,7 @@ function CanvasGroupContextMenu({
 }
 
 function CanvasNodeEditorPopover({
+  smartVariantAction,
   node,
   document,
   stageRef,
@@ -17356,6 +17613,9 @@ function CanvasNodeEditorPopover({
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
+  const presetPanelRef = useRef<HTMLDivElement | null>(null);
+  const presetEditorDialogRef = useRef<HTMLDivElement | null>(null);
+  const presetNameInputRef = useRef<HTMLInputElement | null>(null);
   const data = node.data;
   const audioNode = node.type === "media" && data.kind === "audio";
   const isImageNode = !audioNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
@@ -17478,9 +17738,10 @@ function CanvasNodeEditorPopover({
   };
 
   const hasPresetReferenceImage = canUseCurrentImageAsReference || Boolean(branchDraft?.sourceNodeId && data.url) || editorReferences.some(isCanvasReadyImageSource) || branchReferences.some((reference) => reference.kind === "image" && Boolean(reference.url));
-  const imagePresetEnabled = isImageNode && !pending;
+  const supportsImagePresets = canvasNodeSupportsImagePresets(node);
+  const imagePresetEnabled = supportsImagePresets && !pending;
   const chooseImagePreset = (preset: ImagePreset | CustomImagePreset) => {
-    if (!imagePresetEnabled) return;
+    if (!imagePresetEnabled || !supportsImagePresets) return;
     const requiresImage = "requiresImage" in preset ? preset.requiresImage : true;
     if (requiresImage && !hasPresetReferenceImage) {
       onNotify("请先选择一张参考图片。", "error");
@@ -17520,21 +17781,34 @@ function CanvasNodeEditorPopover({
   const [presetPanelOpen, setPresetPanelOpen] = useState(false);
   const [presetEditorOpen, setPresetEditorOpen] = useState(false);
   const [presetDraft, setPresetDraft] = useState<CustomImagePreset>({ id: "custom_new", label: "", description: "自定义图片预设", icon: "✦", prompt: "", builtin: false });
-  const [selectedPresetId, setSelectedPresetId] = useState(branchDraft?.presetId || node.data.generation?.presetId || "");
-  const [selectedPresetName, setSelectedPresetName] = useState(branchDraft?.presetName || node.data.generation?.presetName || "");
+  const [selectedPresetId, setSelectedPresetId] = useState(supportsImagePresets ? (branchDraft?.presetId || node.data.generation?.presetId || "") : "");
+  const [selectedPresetName, setSelectedPresetName] = useState(supportsImagePresets ? (branchDraft?.presetName || node.data.generation?.presetName || "") : "");
   const builtinImagePresets = BUILTIN_IMAGE_PRESETS;
   const customImagePresetList = imagePresets;
-  const activeImagePreset = imagePresetEnabled
+  const activeImagePreset = imagePresetEnabled && supportsImagePresets
     ? [...builtinImagePresets, ...customImagePresetList].find((preset) => preset.id === selectedPresetId)
     : undefined;
-  const visibleEditorPrompt = isImageNode
+  const visibleEditorPrompt = supportsImagePresets
     ? visibleCanvasImagePresetPrompt(editorPrompt, selectedPresetId, customImagePresetList)
     : editorPrompt;
   const generationOptions = {
     ...(canUseCurrentImageAsReference ? { useCurrentImageAsReference } : {}),
-    ...(selectedPresetId ? { presetId: selectedPresetId } : {}),
-    ...(selectedPresetName ? { presetName: selectedPresetName } : {}),
+    ...(supportsImagePresets && selectedPresetId ? { presetId: selectedPresetId } : {}),
+    ...(supportsImagePresets && selectedPresetName ? { presetName: selectedPresetName } : {}),
   } satisfies Pick<CanvasGenerationRequest, "useCurrentImageAsReference" | "presetId" | "presetName">;
+  const closePresetEditor = () => setPresetEditorOpen(false);
+
+  useEffect(() => {
+    if (!presetPanelOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (presetPanelRef.current?.contains(target) || presetEditorDialogRef.current?.contains(target))) return;
+      setPresetPanelOpen(false);
+      closePresetEditor();
+    };
+    window.document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => window.document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+  }, [presetPanelOpen]);
 
   const editorSubtitle = node.type === "generator"
     ? (data.kind === "video" ? "视频变体 · 生成新视频" : "变体 · 生成新图")
@@ -17553,15 +17827,15 @@ function CanvasNodeEditorPopover({
   useEffect(() => {
     setPromptBeforeOptimization(null);
     setUseCurrentImageAsReference(true);
-    setSelectedPresetId(branchDraft?.presetId || node.data.generation?.presetId || "");
-    setSelectedPresetName(branchDraft?.presetName || node.data.generation?.presetName || "");
-  }, [branchDraft?.presetId, branchDraft?.presetName, node.data.generation?.presetId, node.data.generation?.presetName, node.id]);
+    setSelectedPresetId(supportsImagePresets ? (branchDraft?.presetId || node.data.generation?.presetId || "") : "");
+    setSelectedPresetName(supportsImagePresets ? (branchDraft?.presetName || node.data.generation?.presetName || "") : "");
+  }, [branchDraft?.presetId, branchDraft?.presetName, node.data.generation?.presetId, node.data.generation?.presetName, node.id, supportsImagePresets]);
 
   async function optimizeEditorPrompt() {
-    if (!editorPrompt.trim()) return;
+    if (!visibleEditorPrompt.trim()) return;
     if (!editorChatAvailable) return onNotify("没有可用的对话模型，请先在主界面模型库启用。", "error");
     if (promptOptimizing) return;
-    const original = editorPrompt;
+    const original = visibleEditorPrompt;
     setPromptOptimizing(true);
     try {
       const optimized = await requestPromptOptimization(
@@ -17595,7 +17869,7 @@ function CanvasNodeEditorPopover({
 
   const promptOptimizationActions = (
     <div className="canvas-node-editor-prompt-actions" aria-label="提示词操作">
-      {editorPrompt.trim() && <button type="button" disabled={promptOptimizing} aria-busy={promptOptimizing} title={editorChatAvailable ? "使用 AI 优化当前提示词" : "请先在模型库启用对话模型"} onClick={() => void optimizeEditorPrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? "优化中…" : "AI 优化"}</span></button>}
+      {visibleEditorPrompt.trim() && <button type="button" disabled={promptOptimizing} aria-busy={promptOptimizing} title={editorChatAvailable ? "使用 AI 优化当前提示词" : "请先在模型库启用对话模型"} onClick={() => void optimizeEditorPrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? "优化中…" : "AI 优化"}</span></button>}
       {promptBeforeOptimization !== null && <button type="button" disabled={promptOptimizing} title="撤销 AI 优化" onClick={undoEditorPromptOptimization}><span aria-hidden="true">↶</span><span>撤销</span></button>}
     </div>
   );
@@ -17648,8 +17922,20 @@ function CanvasNodeEditorPopover({
   }, [editorPrompt, isCompact, isDockNode, node.id, promptExpanded]);
 
   useEffect(() => {
+    if (!presetEditorOpen) return;
+    const frame = window.requestAnimationFrame(() => presetNameInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [presetEditorOpen]);
+
+  useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (presetEditorOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        closePresetEditor();
+        return;
+      }
       if (promptExpanded) {
         event.preventDefault();
         event.stopPropagation();
@@ -17658,7 +17944,7 @@ function CanvasNodeEditorPopover({
     };
     window.addEventListener("keydown", handleEscape, true);
     return () => window.removeEventListener("keydown", handleEscape, true);
-  }, [promptExpanded]);
+  }, [presetEditorOpen, promptExpanded]);
 
   useEffect(() => {
     if (imageDockPanel !== "params") return;
@@ -17785,6 +18071,7 @@ function CanvasNodeEditorPopover({
   }, [reposition]);
 
   return (
+    <>
     <div
       ref={popoverRef}
        className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
@@ -17855,7 +18142,7 @@ function CanvasNodeEditorPopover({
            <div className="canvas-node-editor-image-dock">
             <div className="canvas-node-editor-dock-chips">
               {imagePresetEnabled && (
-                <div className="canvas-node-editor-dock-preset-wrap">
+                <div ref={presetPanelRef} className="canvas-node-editor-dock-preset-wrap">
                   <button type="button" className="canvas-node-editor-dock-chip" onClick={() => setPresetPanelOpen((value) => !value)} aria-label="图片生成预设" aria-expanded={presetPanelOpen} aria-controls="canvas-image-dock-presets" data-tooltip="图片生成预设">
                     <span aria-hidden="true">✦</span> 预设
                   </button>
@@ -17865,29 +18152,26 @@ function CanvasNodeEditorPopover({
                         <div><b>图片生成预设</b><small>点击后替换提示词，可继续编辑</small></div>
                         <button type="button" aria-label="关闭预设" onClick={() => setPresetPanelOpen(false)}>×</button>
                       </div>
-                      <div className="canvas-preset-section">
-                        <span className="canvas-preset-section-title">内置预设</span>
-                        <div className="canvas-preset-grid">
-                          {builtinImagePresets.map((preset) => {
-                            const disabled = preset.requiresImage && !canUseCurrentImageAsReference && !editorReferences.some(isCanvasReadyImageSource);
-                            return <button type="button" key={preset.id} className={`canvas-preset-item${selectedPresetId === preset.id ? " active" : ""}`} disabled={disabled} title={disabled ? "请先选择一张参考图片" : preset.description} onClick={() => chooseImagePreset(preset)}><span className="canvas-preset-icon" aria-hidden="true">{preset.icon}</span><span><b>{preset.label}</b><small>{preset.description}</small></span></button>;
-                          })}
-                        </div>
-                      </div>
-                      <div className="canvas-preset-section">
-                        <div className="canvas-preset-section-head"><span className="canvas-preset-section-title">我的预设</span><button type="button" className="canvas-preset-add" onClick={openNewPresetEditor}>＋ 新建</button></div>
-                        {customImagePresetList.length ? <div className="canvas-preset-grid">{customImagePresetList.map((preset) => <div className={`canvas-preset-item-row${selectedPresetId === preset.id ? " active" : ""}`} key={preset.id}><button type="button" className="canvas-preset-item" title={preset.description} onClick={() => chooseImagePreset(preset)}><span className="canvas-preset-icon" aria-hidden="true">{preset.icon}</span><span><b>{preset.label}</b><small>{preset.description}</small></span></button><button type="button" className="canvas-preset-edit" aria-label={`编辑${preset.label}`} onClick={() => openEditPresetEditor(preset)}>✎</button><button type="button" className="canvas-preset-delete" aria-label={`删除${preset.label}`} onClick={() => onDeleteImagePreset(preset.id)}>×</button></div>)}</div> : <small className="canvas-preset-empty">还没有自定义预设</small>}
+                      <div className="canvas-preset-columns">
+                        <section className="canvas-preset-column">
+                          <span className="canvas-preset-section-title">内置预设</span>
+                          <div className="canvas-preset-column-list">
+                            <div className="canvas-preset-grid">
+                              {builtinImagePresets.map((preset) => {
+                                const disabled = preset.requiresImage && !canUseCurrentImageAsReference && !editorReferences.some(isCanvasReadyImageSource);
+                                return <button type="button" key={preset.id} className={`canvas-preset-item${selectedPresetId === preset.id ? " active" : ""}`} disabled={disabled} title={disabled ? "请先选择一张参考图片" : preset.description} onClick={() => chooseImagePreset(preset)}><span className="canvas-preset-icon" aria-hidden="true">{preset.icon}</span><span><b>{preset.label}</b><small>{preset.description}</small></span></button>;
+                              })}
+                            </div>
+                          </div>
+                        </section>
+                        <section className="canvas-preset-column">
+                          <div className="canvas-preset-section-head"><span className="canvas-preset-section-title">我的预设</span><button type="button" className="canvas-preset-add" onClick={openNewPresetEditor}>＋ 新建</button></div>
+                          <div className="canvas-preset-column-list">
+                            {customImagePresetList.length ? <div className="canvas-preset-grid">{customImagePresetList.map((preset) => <div className={`canvas-preset-item-row${selectedPresetId === preset.id ? " active" : ""}`} key={preset.id}><button type="button" className="canvas-preset-item" title={preset.description} onClick={() => chooseImagePreset(preset)}><span className="canvas-preset-icon" aria-hidden="true">{preset.icon}</span><span><b>{preset.label}</b><small>{preset.description}</small></span></button><button type="button" className="canvas-preset-edit" aria-label={`编辑${preset.label}`} onClick={() => openEditPresetEditor(preset)}>✎</button><button type="button" className="canvas-preset-delete" aria-label={`删除${preset.label}`} onClick={() => onDeleteImagePreset(preset.id)}>×</button></div>)}</div> : <small className="canvas-preset-empty">还没有自定义预设</small>}
+                          </div>
+                        </section>
                       </div>
                       {!hasPresetReferenceImage && <small className="canvas-preset-hint">部分预设需要参考图，请先选择一张参考图片</small>}
-                      {presetEditorOpen && imagePresetEnabled && (
-                        <div className="canvas-preset-editor" role="dialog" aria-label="编辑图片预设" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-                          <div className="canvas-node-editor-dock-popover-head"><b>{imagePresets.some((item) => item.id === presetDraft.id) ? "编辑我的预设" : "新建我的预设"}</b><button type="button" aria-label="关闭预设编辑" onClick={() => setPresetEditorOpen(false)}>×</button></div>
-                          <label><span>名称</span><input value={presetDraft.label} maxLength={40} onChange={(event) => setPresetDraft((value) => ({ ...value, label: event.target.value }))} placeholder="例如：日系人像" /></label>
-                          <label><span>提示词</span><textarea value={presetDraft.prompt} maxLength={12000} onChange={(event) => setPresetDraft((value) => ({ ...value, prompt: event.target.value }))} placeholder="输入要保存的完整提示词" /></label>
-                          <div className="canvas-preset-icon-picker"><span>图标</span><div>{IMAGE_PRESET_ICONS.map((icon) => <button type="button" key={icon} className={presetDraft.icon === icon ? "active" : ""} onClick={() => setPresetDraft((value) => ({ ...value, icon }))}>{icon}</button>)}</div></div>
-                          <div className="canvas-preset-editor-actions"><button type="button" onClick={() => setPresetEditorOpen(false)}>取消</button><button type="button" className="primary" onClick={savePresetDraft}>保存预设</button></div>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -17975,6 +18259,7 @@ function CanvasNodeEditorPopover({
                   )}
                 </div>
               )}
+              {smartVariantAction}
               <span className="canvas-node-editor-dock-hint">{dockHint}</span>
             </div>
             {!isUpscaleNode && (
@@ -18240,6 +18525,28 @@ function CanvasNodeEditorPopover({
         </div>}
       </div>
     </div>
+    {presetEditorOpen && imagePresetEnabled && createPortal(
+      <div
+        className="canvas-preset-editor-backdrop"
+        role="presentation"
+        onPointerDown={(event) => {
+          if (event.target === event.currentTarget) closePresetEditor();
+        }}
+      >
+        <div ref={presetEditorDialogRef} className="canvas-preset-editor" role="dialog" aria-modal="true" aria-label="编辑图片预设" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+          <div className="canvas-preset-editor-head">
+            <div><b>{imagePresets.some((item) => item.id === presetDraft.id) ? "编辑我的预设" : "新建我的预设"}</b><small>保存后可在图片生成节点中一键引用</small></div>
+            <button type="button" aria-label="关闭预设编辑" onClick={closePresetEditor}>×</button>
+          </div>
+          <label><span>名称</span><input ref={presetNameInputRef} value={presetDraft.label} maxLength={40} onChange={(event) => setPresetDraft((value) => ({ ...value, label: event.target.value }))} placeholder="例如：日系人像" /></label>
+          <label><span>提示词</span><textarea value={presetDraft.prompt} maxLength={12000} onChange={(event) => setPresetDraft((value) => ({ ...value, prompt: event.target.value }))} placeholder="输入要保存的完整提示词" /></label>
+          <div className="canvas-preset-icon-picker"><span>图标</span><div>{IMAGE_PRESET_ICONS.map((icon) => <button type="button" key={icon} className={presetDraft.icon === icon ? "active" : ""} onClick={() => setPresetDraft((value) => ({ ...value, icon }))}>{icon}</button>)}</div></div>
+          <div className="canvas-preset-editor-actions"><button type="button" onClick={closePresetEditor}>取消</button><button type="button" className="primary" onClick={savePresetDraft}>保存预设</button></div>
+        </div>
+      </div>,
+      window.document.body,
+    )}
+    </>
   );
 }
 

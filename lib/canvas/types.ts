@@ -290,6 +290,11 @@ export type CanvasNodeData = {
   variantRequirements?: string[];
   /** Editing buffer that preserves empty lines while the user types. */
   variantRequirementsText?: string;
+  smartVariantSnapshot?: {
+    categories: string[];
+    variants: { instruction: string; category?: string; sources?: string[] }[];
+    sources: { id: string; name: string; text: string }[];
+  };
   /** Runtime/persisted status for each variation in the latest batch. */
   variantStates?: CanvasVariantState[];
   variantBatchId?: string;

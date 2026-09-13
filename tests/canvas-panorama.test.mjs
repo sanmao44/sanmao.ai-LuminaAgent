@@ -25,32 +25,37 @@ test("completed image viewer exposes the panorama entry point", () => {
   assert.match(canvas, /onAngle=\{[\s\S]*isCanvasReadyImageSource\(viewerNode\)[\s\S]*openImagePanorama\(viewerNode\.id\)/);
 });
 
-test("panorama workbench keeps 0 degrees as the original angle and clamps the dial", () => {
-  assert.match(workbench, /function normalizePanoramaAngle\(value: number\)/);
-  assert.match(workbench, /Math\.round\(value\) % 360/);
-  assert.match(workbench, /if \(normalized === 0 \|\| normalized === 360\) return "原图角度"/);
-  assert.match(workbench, /aria-valuemin=\{0\}/);
-  assert.match(workbench, /aria-valuemax=\{360\}/);
-  assert.match(workbench, /onClick=\{\(\) => setAngle\(0\)\}/);
-  assert.match(workbench, /回到原角度/);
-  assert.match(workbench, /cameraStart = cameraForAngle\(0, modelId\)/);
+test("panorama workbench renders a real sphere for 2:1 images", () => {
+  assert.match(workbench, /import \* as THREE from "three"/);
+  assert.match(workbench, /new THREE\.SphereGeometry/);
+  assert.match(workbench, /side: THREE\.BackSide/);
+  assert.match(workbench, /isEquirectangular\?: boolean/);
+  assert.match(workbench, /滚轮缩放/);
+  assert.match(workbench, /回到原始方向/);
+  assert.match(canvas, /presetId === "panorama_720"/);
+  assert.match(canvas, /Math\.abs\(width \/ height - 2\) < 0\.08/);
 });
 
-test("panorama generation writes through the existing angle image path", () => {
-  assert.match(canvas, /const runImageAngleGeneration = useCallback/);
-  assert.match(canvas, /createPendingNode\?: boolean/);
-  assert.match(canvas, /createPendingNode: false/);
-  assert.match(canvas, /onResult: \(url\) => setPanoramaResultUrl\(url\)/);
-  assert.match(canvas, /onError: \(message\) => setPanoramaError\(message\)/);
-  assert.match(canvas, /source: source\.id,[\s\S]*target: output\.id,[\s\S]*kind: "lineage"/);
-  assert.match(canvas, /options\?\.onResult\?\.\(image\.url\)/);
-  assert.match(canvas, /options\?\.onError\?\.\(message\)/);
-  assert.match(workbench, /不会把原图横向拉伸成全景展开图/);
+test("panorama viewer applies the current local view without image generation", () => {
+  assert.match(workbench, /onApply\?: \(snapshot: PanoramaSnapshot\)/);
+  assert.match(workbench, /preserveDrawingBuffer: true/);
+  assert.match(workbench, /canvas\.toDataURL\("image\/png"\)/);
+  assert.match(workbench, /应用为平面图片/);
+  assert.doesNotMatch(workbench, /AngleGenerationInput|generateCanvasImage|应用此角度/);
+  assert.doesNotMatch(canvas, /runImageAngleGeneration\(panoramaNode\.id/);
+  assert.match(canvas, /const applyPanoramaView = useCallback/);
+  assert.match(canvas, /dataUrlFile\(snapshot\.dataUrl/);
+  assert.match(canvas, /role: "全景平面视图"/);
+  assert.match(canvas, /已应用为平面图片/);
+  assert.match(workbench, /普通图片以正面贴图显示/);
+  assert.match(workbench, /背面没有可用图像/);
+  assert.match(workbench, /滚轮缩放 · 回到原始比例/);
+  assert.match(workbench, /if \(!isEquirectangular\) return;/);
 });
 
-test("panorama workbench has bounded desktop and mobile layouts", () => {
-  assert.match(styles, /\.canvas-panorama-dialog\{[^}]*max-height:calc\(100vh - 36px\)/);
-  assert.match(styles, /\.canvas-panorama-body\{[^}]*overflow:auto/);
-  assert.match(styles, /@media\(max-width:760px\)\{\.canvas-panorama-workbench/);
-  assert.match(styles, /\.canvas-panorama-preview-grid\{grid-template-columns:1fr\}/);
+test("panorama viewer has bounded desktop and mobile layouts", () => {
+  assert.match(styles, /\.canvas-spherical-dialog\{[^}]*max-height:calc\(100vh - 36px\)/);
+  assert.match(styles, /\.canvas-spherical-stage\{[^}]*touch-action:none/);
+  assert.match(styles, /@media\(max-width:760px\)\{\.canvas-spherical-workbench/);
+  assert.match(viewer, /打开真实360°球体查看器/);
 });
