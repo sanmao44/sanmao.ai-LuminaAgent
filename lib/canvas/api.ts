@@ -387,6 +387,8 @@ export async function uploadCanvasAsset(file: File) {
 export async function generateCanvasImage(input: {
   taskId?: string;
   prompt: string;
+  presetId?: string;
+  presetName?: string;
   model?: string;
   count?: number;
   aspect?: string;
@@ -431,6 +433,8 @@ export async function generateCanvasImage(input: {
       source: "canvas",
       ...(input.taskId ? { taskId: input.taskId } : {}),
       prompt: input.prompt,
+      ...(input.presetId ? { presetId: input.presetId } : {}),
+      ...(input.presetName ? { presetName: input.presetName } : {}),
       model: input.model || "auto",
       count: Math.max(1, Math.min(8, Number(input.count || 1))),
       aspectRatio: input.aspect || "自动",

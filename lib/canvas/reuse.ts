@@ -31,6 +31,8 @@ export type CanvasReuseDraft = {
   operation: "generate" | "edit" | "extend";
   variantRequirementsText?: string;
   dirty: boolean;
+  presetId?: string;
+  presetName?: string;
 };
 
 export type ReferenceDraftResult = {
@@ -136,6 +138,8 @@ export function reuseDraftFromNode(
       ? "extend"
       : "generate",
     dirty: false,
+    ...(node.data.generation?.presetId ? { presetId: node.data.generation.presetId } : {}),
+    ...(node.data.generation?.presetName ? { presetName: node.data.generation.presetName } : {}),
   };
 }
 

@@ -6755,7 +6755,8 @@ export default function Page() {
                 'sanmao-success-sound',
                 HISTORY_PAGE_SIZE_STORAGE_KEY,
                 'sanmao-generate-settings',
-                'sanmao-generate-tasks'
+                'sanmao-generate-tasks',
+                'sanmao-image-presets-v1'
             ];
             const preferences = {};
             for (const key of preferenceKeys){
@@ -6803,7 +6804,8 @@ export default function Page() {
             'sanmao-success-sound',
             HISTORY_PAGE_SIZE_STORAGE_KEY,
             'sanmao-generate-settings',
-            'sanmao-generate-tasks'
+            'sanmao-generate-tasks',
+            'sanmao-image-presets-v1'
         ];
         for (const key of preferenceKeys) localStorage.removeItem(key);
         for (const [key, value] of Object.entries(client.preferences || {})) if (preferenceKeys.includes(key) && typeof value === 'string') localStorage.setItem(key, value);

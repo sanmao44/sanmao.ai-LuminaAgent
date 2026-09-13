@@ -126,6 +126,7 @@ export default function MediaViewer({
   onNavigate,
   onDownload,
   onNotify,
+  onAngle,
 }: {
   item: MediaViewerItem;
   references: MediaViewerReference[];
@@ -499,6 +500,7 @@ export default function MediaViewer({
               </div>
             )}
             {item.versionInfo && <button type="button" className={`media-viewer-header-button media-viewer-settings-button ${showParameters ? "active" : ""}`} onClick={() => setShowParameters((value) => !value)}><span className="media-viewer-button-icon" aria-hidden="true">ⓘ</span><span>参数查看</span></button>}
+            {onAngle && item.kind === "image" && <button type="button" className="media-viewer-header-button media-viewer-panorama-button" onClick={onAngle} title="基于原图生成其他水平视角"><span className="media-viewer-button-icon" aria-hidden="true">◌</span><span>360°视角</span></button>}
             <div className="media-viewer-download-group" role="group" aria-label="下载">
               <button type="button" className="media-viewer-download-button original" onClick={() => download("original")}><span className="media-viewer-button-icon" aria-hidden="true">↓</span><span>{item.kind === "video" ? "原视频" : item.kind === "audio" ? "原音频" : "原图"}</span></button>
               <button type="button" className="media-viewer-download-button share" onClick={() => download("share")} disabled={item.kind !== "image"}><span className="media-viewer-button-icon" aria-hidden="true">⇩</span><span>分享版</span></button>

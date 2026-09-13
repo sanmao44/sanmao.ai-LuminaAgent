@@ -14,6 +14,8 @@ export type GenerationLog = {
   mediaKind?: MediaKind;
   source?: GenerationSource;
   prompt: string;
+  presetId?: string;
+  presetName?: string;
   modelId?: string;
   modelName?: string;
   providerName?: string;

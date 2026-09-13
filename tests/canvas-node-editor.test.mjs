@@ -651,6 +651,23 @@ test("canvas reuses the compiled local-edit prompt for legacy masks, display, an
   assert.match(generation, /const prompt = editorPromptFor\(currentNode\)/);
 });
 
+test("image presets stay opaque in the editor and open the custom form inside the dock", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  assert.ok(editorStart >= 0, "node editor popover should be present");
+  const editor = component.slice(editorStart);
+  assert.match(editor, /const visibleEditorPrompt = isImageNode/);
+  assert.match(editor, /className="canvas-image-preset-reference"/);
+  assert.match(editor, /onClick=\{clearImagePreset\}/);
+  assert.match(editor, /onClick=\{openNewPresetEditor\}/);
+  assert.match(editor, /presetEditorOpen && imagePresetEnabled/);
+  assert.match(editor, /输入要保存的完整提示词/);
+  assert.doesNotMatch(editor, /preset\.prompt\.slice\(0, 42\)/);
+  assert.match(component, /function resolveCanvasImagePresetPrompt\(/);
+  assert.match(component, /const effectivePrompt = currentNode\.data\.kind === "image"/);
+  assert.match(component, /resolveCanvasImagePresetPrompt\(prompt, draft\?\.presetId/);
+  assert.match(styles, /\.canvas-image-preset-reference\{/);
+});
+
 test("canvas sends the move guide separately and keeps the original image as the composite source", () => {
   assert.match(component, /url: String\(node\.data\.url \|\| ""\)/);
   assert.match(component, /moveGuideUrl: imageParams\.mask\?\.sourceUrl/);

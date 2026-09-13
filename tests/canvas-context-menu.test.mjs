@@ -152,9 +152,9 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /target: CanvasQuickToolbarTarget/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
   assert.match(component, /const runImageAngleGeneration = useCallback/);
-  assert.match(component, /const pendingOutput = createMedia\("image", "", "角度控制结果"/);
+  assert.match(component, /const pendingOutput = (?:createPendingNode \? )?createMedia\("image", "", "角度控制结果"/);
   assert.match(component, /status: "running"[\s\S]*?processingStartedAt: startedAt[\s\S]*?jobId: taskId/);
-  assert.match(component, /const pendingOutputId = pendingOutputPositioned\.id/);
+  assert.match(component, /const pendingOutputId = pendingOutputPositioned\?\.id \|\| null/);
   assert.match(component, /nodes: value\.nodes\.map\(\(node\) => node\.id === pendingOutputId/);
   assert.match(component, /parentNodeId: source\.id/);
   assert.match(component, /source: source\.id,[\s\S]*kind: "lineage"/);

@@ -8,6 +8,8 @@ export async function recordCanvasImages(
   images: Array<{ url: string; revisedPrompt?: string }>,
   meta: {
     prompt: string;
+    presetId?: string;
+    presetName?: string;
     modelId?: string;
     modelName?: string;
     providerName?: string;
@@ -35,6 +37,8 @@ export async function recordCanvasImages(
     url: image.url,
     revisedPrompt: image.revisedPrompt,
     prompt: meta.prompt,
+    presetId: meta.presetId,
+    presetName: meta.presetName,
     modelId: meta.modelId,
     modelName: meta.modelName,
     providerName: meta.providerName,

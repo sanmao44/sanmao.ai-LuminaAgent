@@ -98,6 +98,8 @@ export async function POST(request: Request) {
   let outputSizeForLog: string | undefined;
   let modeForLog: 'generate' | 'edit' = 'generate';
   let sourceForLog: GenerationSource = 'workspace';
+  let presetIdForLog: string | undefined;
+  let presetNameForLog: string | undefined;
   let logId: string | undefined;
   let runtimeProviderId = '';
   const startedAt = Date.now();
@@ -111,6 +113,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     sourceForLog = normalizeGenerationSource(body.source, 'workspace');
     const prompt = String(body.prompt || '').trim();
+    const presetId = typeof body.presetId === 'string' ? body.presetId.trim().slice(0, 100) : undefined;
+    const presetName = typeof body.presetName === 'string' ? body.presetName.trim().slice(0, 100) : undefined;
+    presetIdForLog = presetId;
+    presetNameForLog = presetName;
     let camera;
     let cameraStart;
     try {
@@ -185,7 +191,7 @@ export async function POST(request: Request) {
     resolutionForLog = input.resolution;
     outputSizeForLog = input.width && input.height ? `${input.width}×${input.height}` : undefined;
     modeForLog = references.length ? 'edit' : 'generate';
-    logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
+    logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, presetId, presetName, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const storagePath = (await getPublicState()).settings.imageStoragePath;
     const providerImages = references.length
       ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
@@ -212,7 +218,7 @@ export async function POST(request: Request) {
     const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
     if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
-    const failure = { status: 'error' as const, mode: modeForLog, source: sourceForLog, prompt: promptForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };
+    const failure = { status: 'error' as const, mode: modeForLog, source: sourceForLog, prompt: promptForLog, presetId: presetIdForLog, presetName: presetNameForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };
     if (logId) await finishGenerationLog(logId, failure).catch(() => undefined); else await appendGenerationLog(failure).catch(() => undefined);
     return Response.json({ error: failure.error }, { status: cancelled ? 499 : 502 });
   } finally {
