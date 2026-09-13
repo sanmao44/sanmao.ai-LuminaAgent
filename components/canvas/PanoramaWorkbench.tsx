@@ -128,7 +128,8 @@ export default function PanoramaWorkbench({
           texture.anisotropy = renderer?.capabilities.getMaxAnisotropy() || 1;
           if (isEquirectangular) {
             geometry = new THREE.SphereGeometry(20, 96, 64);
-            material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide });
+            geometry.scale(-1, 1, 1);
+            material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
             scene.add(new THREE.Mesh(geometry, material));
           } else {
             const aspect = sourceAspect(referenceWidth, referenceHeight);

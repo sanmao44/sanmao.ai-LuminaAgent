@@ -28,7 +28,9 @@ test("completed image viewer exposes the panorama entry point", () => {
 test("panorama workbench renders a real sphere for 2:1 images", () => {
   assert.match(workbench, /import \* as THREE from "three"/);
   assert.match(workbench, /new THREE\.SphereGeometry/);
-  assert.match(workbench, /side: THREE\.BackSide/);
+  assert.match(workbench, /geometry\.scale\(-1, 1, 1\)/);
+  assert.match(workbench, /side: THREE\.FrontSide/);
+  assert.doesNotMatch(workbench, /side: THREE\.BackSide/);
   assert.match(workbench, /isEquirectangular\?: boolean/);
   assert.match(workbench, /滚轮缩放/);
   assert.match(workbench, /回到原始方向/);
