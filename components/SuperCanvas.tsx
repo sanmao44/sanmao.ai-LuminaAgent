@@ -17755,6 +17755,7 @@ function CanvasNodeEditorPopover({
     onImagePresetSelect(preset);
     if (imageParams && "aspectRatio" in preset && preset.aspectRatio) onEditorParamsChange(node, { ...imageParams, aspect: preset.aspectRatio });
     setImageDockPanel(null);
+    setPresetPanelOpen(false);
     onNotify(`已套用预设：${preset.label}`);
   };
   const clearImagePreset = () => {

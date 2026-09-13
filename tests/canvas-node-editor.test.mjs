@@ -660,6 +660,7 @@ test("image presets stay opaque in the editor and open custom forms in a separat
   assert.match(editor, /className="canvas-image-preset-reference"/);
   assert.match(editor, /onClick=\{clearImagePreset\}/);
   assert.match(editor, /onClick=\{openNewPresetEditor\}/);
+  assert.match(editor, /onImagePresetSelect\(preset\);[\s\S]*setPresetPanelOpen\(false\);/);
   assert.match(editor, /presetEditorOpen && imagePresetEnabled && createPortal/);
   assert.match(editor, /className="canvas-preset-editor-backdrop"/);
   assert.match(editor, /aria-modal="true"/);
