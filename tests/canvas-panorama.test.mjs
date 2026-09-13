@@ -41,6 +41,7 @@ test("panorama viewer applies the current local view without image generation", 
   assert.match(workbench, /preserveDrawingBuffer: true/);
   assert.match(workbench, /canvas\.toDataURL\("image\/png"\)/);
   assert.match(workbench, /应用为平面图片/);
+  assert.match(workbench, /await onApply\(\{[\s\S]*?\}\);\s*onClose\(\);/);
   assert.doesNotMatch(workbench, /AngleGenerationInput|generateCanvasImage|应用此角度/);
   assert.doesNotMatch(canvas, /runImageAngleGeneration\(panoramaNode\.id/);
   assert.match(canvas, /const applyPanoramaView = useCallback/);

@@ -72,7 +72,6 @@ export default function PanoramaWorkbench({
   const [failed, setFailed] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState("");
-  const [applied, setApplied] = useState(false);
   const [yaw, setYaw] = useState(0);
   const [pitch, setPitch] = useState(0);
   const [fov, setFov] = useState(72);
@@ -198,7 +197,6 @@ export default function PanoramaWorkbench({
   }, [isEquirectangular, reference.dataUrl, reference.url, referenceHeight, referenceWidth]);
 
   const adjustView = (deltaYaw: number, deltaPitch: number) => {
-    setApplied(false);
     yawRef.current += deltaYaw;
     pitchRef.current = clamp(pitchRef.current + deltaPitch, -82, 82);
     setYaw(normalizeYaw(yawRef.current));
@@ -211,13 +209,11 @@ export default function PanoramaWorkbench({
   };
 
   const updateZoom = (delta: number) => {
-    setApplied(false);
     fovRef.current = clamp(fovRef.current + delta, 35, 95);
     setFov(Math.round(fovRef.current));
   };
 
   const resetView = () => {
-    setApplied(false);
     yawRef.current = 0;
     pitchRef.current = 0;
     fovRef.current = 72;
@@ -252,7 +248,7 @@ export default function PanoramaWorkbench({
         pitch: Math.round(pitchRef.current),
         fov: Math.round(fovRef.current),
       });
-      setApplied(true);
+      onClose();
     } catch (error) {
       setApplyError(error instanceof Error ? error.message : "当前视角导出失败，请重试。");
     } finally {
@@ -320,11 +316,9 @@ export default function PanoramaWorkbench({
           <span>
             {applyError
               ? applyError
-              : applied
-                ? "已创建当前视角的平面图片节点，原全景图保持不变。"
-                : isEquirectangular
-                  ? "原图方向为 0°，可自由查看完整球体。"
-                  : "兼容模式：只显示原图正面，背面没有可用图像。"}
+              : isEquirectangular
+                ? "原图方向为 0°，可自由查看完整球体。"
+                : "兼容模式：只显示原图正面，背面没有可用图像。"}
           </span>
           <div>
             <button type="button" onClick={resetView}>↺ 回到原始方向</button>
