@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip"
   ],
-  "sha256": "3869e9253f2f10e840e87876e378ae886689773a9a47a7dbffcb9d05a3cfec86",
+  "sha256": "e16c3081e1b47148f8c6b1d6be78ee2f7e9be85acb0a4661ec0626b1fee48906",
   "publishedAt": "2026-09-14T01:00:00+08:00",
   "notes": [
     "修复变体图片组和普通图片组宫格拼接因外链跨域导致预览、导出失败的问题。",
