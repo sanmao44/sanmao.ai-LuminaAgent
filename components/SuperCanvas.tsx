@@ -4226,7 +4226,7 @@ export default function SuperCanvas() {
 
   const startGroupResize = useCallback(
     (event: ReactPointerEvent, group: CanvasGroup) => {
-      if (referencePicker) return;
+      if (event.button !== 0 || referencePicker) return;
       event.preventDefault();
       event.stopPropagation();
       setCursorTask("resizing");
@@ -4265,7 +4265,7 @@ export default function SuperCanvas() {
 
   const startResize = useCallback(
     (event: ReactPointerEvent, node: CanvasNode) => {
-      if (referencePicker) return;
+      if (event.button !== 0 || referencePicker) return;
       event.preventDefault();
       event.stopPropagation();
       setCursorTask("resizing");
@@ -4288,7 +4288,7 @@ export default function SuperCanvas() {
   );
   const startConnection = useCallback(
     (event: ReactPointerEvent, nodeId: string, port: "left" | "right") => {
-      if (referencePicker) return;
+      if (event.button !== 0 || referencePicker) return;
       event.preventDefault();
       event.stopPropagation();
       setCursorTask("connecting");
@@ -9241,6 +9241,11 @@ export default function SuperCanvas() {
 
   const toggleEditor = useCallback(
     (node: CanvasNode) => {
+      if (node.type === "video-editor") {
+        setExpandedEditorId(null);
+        if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
+        return;
+      }
       if (expandedEditorId === node.id) {
         setExpandedEditorId(null);
         if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
@@ -9295,7 +9300,7 @@ export default function SuperCanvas() {
     if (!pendingClickNodeId) return;
     const node = nodeById(docRef.current, pendingClickNodeId);
     setPendingClickNodeId(null);
-    if (node && expandedEditorId !== node.id) toggleEditor(node);
+    if (node && (expandedEditorId !== node.id || node.type === "video-editor")) toggleEditor(node);
   }, [expandedEditorId, pendingClickNodeId, toggleEditor]);
 
   const updateEditorPrompt = useCallback(
@@ -13871,7 +13876,7 @@ export default function SuperCanvas() {
         })()}
         {expandedEditorId && !nodeGestureActive && (() => {
           const editorNode = document.nodes.find((item) => item.id === expandedEditorId);
-          if (!editorNode) return null;
+          if (!editorNode || editorNode.type === "video-editor") return null;
           return (
             <CanvasNodeEditorPopover
               node={editorNode}

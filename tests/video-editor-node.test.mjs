@@ -170,6 +170,18 @@ test('canvas recognizes the editor as a node but not as a rendered media source'
   assert.match(nodeSource, /多轨剪辑、裁剪、分割和字幕/);
 });
 
+test('video editor nodes bypass the generic prompt editor while ordinary nodes keep it', () => {
+  const toggleStart = componentSource.indexOf('const toggleEditor = useCallback');
+  const toggleEnd = componentSource.indexOf('useEffect(() => {', toggleStart);
+  assert.ok(toggleStart >= 0 && toggleEnd > toggleStart, 'generic editor toggle should exist');
+  const toggle = componentSource.slice(toggleStart, toggleEnd);
+  assert.match(toggle, /if \(node\.type === "video-editor"\) \{[\s\S]*?setExpandedEditorId\(null\)[\s\S]*?return;/);
+  assert.match(toggle, /setExpandedEditorId\(node\.id\)/);
+  assert.match(componentSource, /if \(node && \(expandedEditorId !== node\.id \|\| node\.type === "video-editor"\)\) toggleEditor\(node\);/);
+  assert.match(componentSource, /if \(!editorNode \|\| editorNode\.type === "video-editor"\) return null;/);
+  assert.match(componentSource, /if \(node\.type === "video-editor"\) onOpenVideoEditor\(\)/);
+});
+
 test('workbench keeps edits as a draft and creates a separate video clip node', () => {
   assert.match(workbenchSource, /onCreate: \(state: CanvasVideoEditorState, selectedClipId: string \| null\) => void/);
   assert.doesNotMatch(workbenchSource, /onChange:\s*\(state: CanvasVideoEditorState/);
