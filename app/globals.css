@@ -2762,6 +2762,9 @@ html[data-theme="light"] .angle-viewpoint-console .angle-help-mode-compare em{
 .angle-viewpoint-console .angle-control-row>span,.angle-viewpoint-console .angle-number,.angle-viewpoint-console .angle-select-label,.angle-viewpoint-console .angle-note-section label{font-size:11px}
 .angle-viewpoint-console .angle-number{height:32px}
 .angle-viewpoint-console .angle-toggle,.angle-viewpoint-console .angle-segmented button,.angle-viewpoint-console .angle-light-presets button,.angle-viewpoint-console .angle-lenses button,.angle-viewpoint-console .angle-reset-all,.angle-viewpoint-console .angle-panel-tabs button{font-size:11px;min-height:30px}
+.angle-viewpoint-console .angle-lenses{grid-template-columns:repeat(5,minmax(0,1fr));min-width:0}
+.angle-viewpoint-console .angle-lenses button{min-width:0;padding-inline:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.angle-viewpoint-console .angle-lenses.angle-three-presets{grid-template-columns:repeat(3,minmax(max-content,1fr))}
 .angle-viewpoint-console .angle-select-label select{font-size:12px;min-height:34px}
 .angle-viewpoint-console .angle-model-compact>span{font-size:11px}
 .angle-viewpoint-console .angle-semantic-summary b{font-size:10px}

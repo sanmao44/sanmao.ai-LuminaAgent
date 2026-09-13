@@ -1662,11 +1662,11 @@ export default function AngleConsole({ theme, reference, initialCamera, initialC
           </div>
           <fieldset className="angle-camera-fields" disabled={!viewpoint.changeView}>
             <section className="angle-section angle-compact-section"><h3>01 · 机位控制</h3>{renderQuickControl('yaw', '水平角度', -180, 180)}{renderQuickControl('pitch', '上下角度', -60, 60)}
-              <div className="angle-lenses">{[{label:'高机位',pitch:-30},{label:'原图高度',pitch:0},{label:'低机位',pitch:30}].map(preset => <button type="button" key={preset.label} onClick={() => updateCamera({ pitch: preset.pitch })}>{preset.label}</button>)}</div>
+              <div className="angle-lenses angle-three-presets">{[{label:'高机位',pitch:-30},{label:'原图高度',pitch:0},{label:'低机位',pitch:30}].map(preset => <button type="button" key={preset.label} onClick={() => updateCamera({ pitch: preset.pitch })}>{preset.label}</button>)}</div>
             </section>
             <section className="angle-section angle-compact-section"><h3>02 · 距离与焦距</h3>{renderQuickControl('focal', '焦距', 14, 200, 1, 'mm')}<div className="angle-lenses">{[24, 35, 50, 85, 135].map((focal) => <button type="button" key={focal} className={Math.round(camera.focal) === focal ? 'active' : ''} onClick={() => updateCamera({ focal })}>{focal}</button>)}</div>
               {renderQuickControl('distance', '相对距离', 0.25, 5, 0.05, '×')}
-              <div className="angle-lenses">{[{label:'近景',value:0.65},{label:'原图距离',value:1},{label:'远景',value:2}].map(preset => <button type="button" key={preset.label} onClick={() => updateCamera({ distance: preset.value * ANGLE_DEFAULTS.distance })}>{preset.label}</button>)}</div>
+              <div className="angle-lenses angle-three-presets">{[{label:'近景',value:0.65},{label:'原图距离',value:1},{label:'远景',value:2}].map(preset => <button type="button" key={preset.label} onClick={() => updateCamera({ distance: preset.value * ANGLE_DEFAULTS.distance })}>{preset.label}</button>)}</div>
               <div className="angle-lens-foot"><button type="button" role="switch" aria-checked={camera.compositionLock} className={`angle-lock ${camera.compositionLock ? 'active' : ''}`} onClick={() => updateCamera({ compositionLock: !camera.compositionLock })} title="改变焦距时同步调整相机距离，尽量保持主体在画面中的大小"><i/>变焦保持构图</button></div>
             </section>
           </fieldset>
