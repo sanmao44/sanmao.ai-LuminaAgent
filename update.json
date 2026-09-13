@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.40/SANMAO.AI-0.7.40.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.40/SANMAO.AI-0.7.40.zip"
   ],
-  "sha256": "ecc1e2219f9806fc36333793180044f0ca9b90bf52348b3f092e182d695d47a4",
+  "sha256": "3869e9253f2f10e840e87876e378ae886689773a9a47a7dbffcb9d05a3cfec86",
   "publishedAt": "2026-09-10T18:25:40+08:00",
   "notes": [
     "新增全景视图工作台，可将全景视图导出为平面图片。",
