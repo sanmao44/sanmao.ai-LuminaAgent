@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { afterEach } from 'node:test';
 import ts from 'typescript';
+import { validateUpdateManifest, validSha256 } from '../scripts/validate-update-manifest.mjs';
 
 async function loadTs(fileUrl, replacements = []) {
   let source = await readFile(fileUrl, 'utf8');
@@ -105,6 +106,22 @@ test('manifest candidates use GitHub first then no-VPN friendly mirrors by defau
   ]);
 });
 
+test('strict update manifest validation rejects missing and placeholder checksums', () => {
+  const base = {
+    schemaVersion: 1,
+    latestVersion: '0.7.39',
+    releaseUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.39',
+    packageUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip',
+  };
+
+  assert.equal(validSha256(''), false);
+  assert.equal(validSha256('0'.repeat(64)), false);
+  assert.match(validateUpdateManifest(base, { currentVersion: '0.7.38', strict: true }).join('\n'), /sha256/);
+  assert.deepEqual(validateUpdateManifest({ ...base, sha256: 'a'.repeat(64) }, { currentVersion: '0.7.39', strict: true }), []);
+  assert.match(validateUpdateManifest({ ...base, sha256: 'a'.repeat(64), latestVersion: '0.7.40' }, { currentVersion: '0.7.38', strict: true }).join('\n'), /package\.json/);
+  assert.match(validateUpdateManifest({ ...base, sha256: 'a'.repeat(64), packageUrl: base.packageUrl.replace('0.7.39', '0.7.38') }, { currentVersion: '0.7.39', strict: true }).join('\n'), /packageUrl/);
+});
+
 test('custom manifest URL does not derive public mirrors and keeps configured mirrors', () => {
   process.env.SANMAO_UPDATE_MANIFEST_URL = 'https://example.com/sanmao/update.json';
   process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://mirror.example.com/sanmao/update.json,https://cdn.example.com/sanmao/update.json';
@@ -158,6 +175,25 @@ test('manifest check selects the newest successful source instead of the fastest
   const status = await update.getUpdateStatus(true);
   assert.equal(status.latestVersion, '0.7.20');
   assert.equal(status.hasUpdate, true);
+});
+
+test('manifest check prefers a complete same-version mirror over an incomplete one', async () => {
+  process.env.SANMAO_UPDATE_MANIFEST_URL = 'https://mirror.example.test/incomplete/update.json';
+  process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://mirror.example.test/complete/update.json';
+  globalThis.fetch = async (url) => new Response(JSON.stringify({
+    schemaVersion: 1,
+    latestVersion: '0.7.20',
+    releaseUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.20',
+    ...(String(url).includes('/complete/') ? {
+      packageUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip',
+      sha256: 'a'.repeat(64),
+    } : {}),
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.latestVersion, '0.7.20');
+  assert.equal(status.canApply, true);
+  assert.equal(status.sha256, 'a'.repeat(64));
 });
 
 test('manifest check returns an error status when every source fails', async () => {

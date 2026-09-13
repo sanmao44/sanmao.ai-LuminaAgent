@@ -11,6 +11,7 @@ type UpdateStatus = {
   releaseUrl?: string;
   projectUrl?: string;
   packageUrl?: string;
+  applyUnavailableReason?: 'missing-package' | 'missing-checksum' | 'disabled' | 'missing-updater';
   canApply?: boolean;
   notes?: string[];
   error?: string;
@@ -235,8 +236,9 @@ export default function UpdateNotice() {
   const updateLabel = useMemo(() => {
     if (applyState === 'working') return '正在启动更新…';
     if (applyState === 'started') return '更新进行中…';
+    if (status?.applyUnavailableReason === 'missing-package' || status?.applyUnavailableReason === 'missing-checksum') return '暂不可安全更新';
     return status?.canApply ? '立即更新并重启' : '前往下载';
-  }, [applyState, status?.canApply]);
+  }, [applyState, status?.applyUnavailableReason, status?.canApply]);
 
   function dismissUpdate() {
     if (status?.latestVersion) window.localStorage.setItem(DISMISSED_KEY, status.latestVersion);
@@ -266,6 +268,7 @@ export default function UpdateNotice() {
   async function applyUpdate(runInBackground = false) {
     if (!status?.hasUpdate) return;
     if (!status.canApply) {
+      if (status.applyUnavailableReason === 'missing-package' || status.applyUnavailableReason === 'missing-checksum') return;
       openExternal(status.releaseUrl);
       return;
     }
@@ -297,6 +300,17 @@ export default function UpdateNotice() {
               : '正在准备更新'
     : '';
   const updateInProgress = Boolean(updateProgress && !['failed', 'completed'].includes(updateProgress.stage));
+
+  const unavailableNote = status?.applyUnavailableReason === 'missing-checksum'
+    ? '发布包缺少 SHA-256 校验值，暂不能安全更新；请稍后重试。'
+    : status?.applyUnavailableReason === 'missing-package'
+      ? '发布包地址缺失，暂不能安全更新；请稍后重试。'
+      : status?.applyUnavailableReason === 'missing-updater'
+        ? '当前安装目录缺少本地更新程序，请重新下载完整安装包。'
+        : status?.applyUnavailableReason === 'disabled'
+          ? '当前运行环境已关闭本地更新，请通过部署或安装包升级。'
+          : '当前版本将打开 GitHub Release 下载页，下载后重新运行启动器即可。';
+  const manifestIncomplete = status?.applyUnavailableReason === 'missing-package' || status?.applyUnavailableReason === 'missing-checksum';
 
   const hasUpdate = Boolean(status?.hasUpdate && status.latestVersion && status.releaseUrl);
   const projectUrl = status?.projectUrl || PROJECT_URL;
@@ -428,12 +442,12 @@ export default function UpdateNotice() {
             <div className="update-modal-actions">
               <button type="button" className="ghost-button" disabled={applyState === 'working'} onClick={dismissUpdate}>稍后提醒</button>
               {status?.canApply && applyState === 'idle' ? <button type="button" className="ghost-button update-background-button" onClick={() => void applyUpdate(true)}>后台更新</button> : null}
-              <button type="button" className="primary-small" disabled={applyState === 'working' || applyState === 'started'} onClick={() => void applyUpdate()}>
+              <button type="button" className="primary-small" disabled={manifestIncomplete || applyState === 'working' || applyState === 'started'} onClick={() => void applyUpdate()}>
                 {applyState === 'working' ? <span className="mini-loader" /> : null}
                 {updateLabel}
               </button>
             </div>
-            {status?.canApply ? <small className="update-modal-safe-note">已启用本地安全更新：下载包会校验 SHA-256。</small> : <small className="update-modal-safe-note">当前版本将打开 GitHub Release 下载页，下载后重新运行启动器即可。</small>}
+            {status?.canApply ? <small className="update-modal-safe-note">已启用本地安全更新：下载包会校验 SHA-256。</small> : <small className="update-modal-safe-note">{unavailableNote}</small>}
           </section>
         </div>
       ) : null}

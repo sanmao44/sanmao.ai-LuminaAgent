@@ -24,6 +24,9 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      - name: Validate update manifest before packaging
+        run: node scripts/validate-update-manifest.mjs --strict
+
       - name: Build self-contained macOS app image
         shell: bash
         env:
