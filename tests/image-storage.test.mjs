@@ -140,3 +140,80 @@ test('drops provider auth after a cross-host redirect', async () => {
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('allows only the configured 65535 service subdomains', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), headers: init.headers || {} });
+    return new Response(png, { status: 200, headers: { 'content-type': 'image/png' } });
+  };
+  try {
+    await storage.persistGeneratedImages([
+      { url: 'https://image-cdn.65535.space/result.png' },
+      { url: 'https://not65535.space/result.png' },
+    ], undefined, {
+      headers: { Authorization: 'Bearer secret' },
+      trustedHosts: ['task-api-1-cn.65535.space'],
+      trustedHostSuffixes: ['65535.space'],
+    });
+    assert.deepEqual(calls.find(call => call.url.includes('image-cdn.65535.space')).headers, { Authorization: 'Bearer secret' });
+    assert.deepEqual(calls.find(call => call.url.includes('not65535.space')).headers, {});
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('accepts a provider JSON wrapper and retries a signed URL without auth', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), headers: init.headers || {} });
+    if (String(url).includes('/result.json')) {
+      return new Response(JSON.stringify({ data: [{ image_url: 'https://image-cdn.65535.space/result.png?signature=abc' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (Object.keys(init.headers || {}).length) return new Response('signed URL does not accept Authorization', { status: 403, headers: { 'content-type': 'text/plain' } });
+    return new Response(png, { status: 200, headers: { 'content-type': 'image/png' } });
+  };
+  try {
+    const result = await storage.persistGeneratedImages([{ url: 'https://provider.example/result.json' }], undefined, {
+      headers: { Authorization: 'Bearer secret' },
+      trustedHosts: ['provider.example'],
+      trustedHostSuffixes: ['65535.space'],
+    });
+    assert.match(result.images[0].url, /^\/api\/storage\/file\?name=/);
+    assert.deepEqual(calls.map((call) => call.headers), [
+      { Authorization: 'Bearer secret' },
+      { Authorization: 'Bearer secret' },
+      {},
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('accepts raw base64 image content returned by a provider URL', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  globalThis.fetch = async () => new Response(png.toString('base64'), {
+    status: 200,
+    headers: { 'content-type': 'text/plain' },
+  });
+  try {
+    const result = await storage.persistGeneratedImages([{ url: 'https://provider.example/base64-result' }]);
+    assert.match(result.images[0].url, /^\/api\/storage\/file\?name=/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

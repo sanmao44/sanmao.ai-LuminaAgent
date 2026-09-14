@@ -258,13 +258,35 @@ async function parseResponse(response: Response) {
   const contentType = response.headers.get('content-type') || '';
   const bytes = new Uint8Array(await response.arrayBuffer());
   const requestId = requestIdFrom(null, '', response.headers);
-  const imageMime = imageMimeFromContentType(contentType) || imageMimeFromBytes(bytes);
-  if (response.ok && imageMime && bytes.length) {
-    return attachProviderResponseMeta(`data:${imageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, requestId });
+  const detectedImageMime = imageMimeFromBytes(bytes);
+  if (response.ok && detectedImageMime && bytes.length) {
+    return attachProviderResponseMeta(`data:${detectedImageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, requestId });
   }
   const text = Buffer.from(bytes).toString('utf8');
   let data: any = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  // A few compatible gateways return the temporary image URL as plain text
+  // while incorrectly keeping an image/* content type. Treat that URL as a
+  // provider image reference instead of base64-encoding the URL itself.
+  if (response.ok && !detectedImageMime && imageMimeFromContentType(contentType) && /^https?:\/\//i.test(text.trim())) {
+    data = text.trim();
+  }
+  // Some compatible gateways label an inline base64 response as image/png
+  // without decoding it first. Decode that transport form here so it follows
+  // the same validated image path as a real binary response. Invalid bytes
+  // remain a provider-format error and never reach local storage.
+  if (response.ok && !detectedImageMime && imageMimeFromContentType(contentType)) {
+    const compact = text.trim().replace(/\s/g, '');
+    const dataUrlMatch = compact.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=_-]+)$/i);
+    const encoded = dataUrlMatch ? dataUrlMatch[2] : compact;
+    if (encoded && /^[A-Za-z0-9+/=_-]+$/.test(encoded)) {
+      try {
+        const decoded = Buffer.from(encoded, 'base64');
+        const decodedMime = imageMimeFromBytes(decoded);
+        if (decodedMime) data = `data:${decodedMime};base64,${decoded.toString('base64')}`;
+      } catch { /* normalizeProviderImages will surface a provider-format error. */ }
+    }
+  }
   const responseRequestId = requestIdFrom(data, text, response.headers);
   if (!response.ok) {
     throw providerResponseError(response.status, data, text, responseRequestId);
@@ -417,6 +439,15 @@ function urlHost(value: string) {
   }
 }
 
+function urlHostname(value: string) {
+  try {
+    const parsed = new URL(value);
+    return /^https?:$/i.test(parsed.protocol) ? parsed.hostname.toLowerCase() : '';
+  } catch {
+    return '';
+  }
+}
+
 /** Authentication used only when a provider returns an image URL on its own host. */
 export function imageDownloadAuth(provider: RuntimeProvider): ImageDownloadAuth {
   const trustedHosts = [
@@ -424,9 +455,14 @@ export function imageDownloadAuth(provider: RuntimeProvider): ImageDownloadAuth 
     providerEndpoint(provider, provider.imageGenerationPath, '/images/generations'),
     providerEndpoint(provider, provider.imageEditPath, '/images/edits'),
   ].map((value) => urlHost(String(value || ''))).filter(Boolean);
+  const hostnames = [provider.baseUrl, provider.videoBaseUrl].map((value) => urlHostname(String(value || ''))).filter(Boolean);
+  const trustedHostSuffixes = is65535Provider(provider) && hostnames.some((hostname) => hostname === '65535.space' || hostname.endsWith('.65535.space'))
+    ? ['65535.space']
+    : [];
   return {
     headers: authHeaders(provider),
     trustedHosts: Array.from(new Set(trustedHosts)),
+    trustedHostSuffixes,
   };
 }
 
@@ -831,7 +867,7 @@ async function generateAgnesImage(provider: RuntimeProvider, rawModelId: string,
     body: JSON.stringify(payload),
   }, IMAGE_REQUEST_TIMEOUT, signal);
   const images = extractImages(data);
-  if (images.length) return images.slice(0, Math.max(1, Math.min(8, Number(input.count || 1))));
+  if (images.length) return normalizeImages(data).slice(0, Math.max(1, Math.min(8, Number(input.count || 1))));
   if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
   return normalizeImages(data);
 }
@@ -879,7 +915,7 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
     });
     const data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, signal);
     const images = extractImages(data);
-    if (images.length) return images;
+    if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
     if (/(fail|error|cancel|reject|expired)/.test(status)) {
       throw new Error(String(data?.error?.message || data?.error_message || data?.error || data?.message || `图片任务失败：${status}`));
@@ -901,7 +937,7 @@ async function waitForApimartTask(provider: RuntimeProvider, initial: any, signa
     const response = await fetchJson(providerEndpoint(provider, `/tasks/${encodeURIComponent(taskId)}`, `/tasks/${encodeURIComponent(taskId)}`), { method: 'GET', headers: authHeaders(provider) }, 30000, signal);
     const data = unwrapProviderData(provider, response);
     const images = extractImages(data);
-    if (images.length) return images;
+    if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
     if (/(fail|error|cancel|reject)/.test(status)) throw new Error(String(data?.error?.message || data?.error_message || data?.error || data?.message || `APIMart 图片任务失败：${status}`));
   }
@@ -929,7 +965,7 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
     });
     const data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, signal);
     const images = extractImages(data);
-    if (images.length) return images;
+    if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
     if (/(fail|error|cancel|reject)/.test(status)) throw new Error(String(data?.error_message || data?.error?.message || data?.error || data?.message || `超分任务失败：${status}`));
   }
@@ -964,7 +1000,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
     try {
       const data = await request(payload);
       const images = extractImages(data);
-      if (images.length) return images;
+      if (images.length) return normalizeImages(data);
       if (taskIdFrom(data)) {
         try { return await waitForImageTask(provider, data, signal); }
         catch (error) { Object.assign(error as object, { providerAcceptedTask: true }); throw error; }
@@ -979,7 +1015,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
       delete fallback.resolution;
       const data = await request(fallback);
       const images = extractImages(data);
-      if (images.length) return images;
+      if (images.length) return normalizeImages(data);
       if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
       return normalizeImages(data);
     }
@@ -1123,7 +1159,7 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
       body: JSON.stringify({ kind: 'image', model: rawModelId, input: { prompt, image: reference, ...compactParameters } }),
     }, IMAGE_REQUEST_TIMEOUT, signal);
     const images = extractImages(data);
-    return images.length ? images : await waitForUpscaleTask(provider, data, signal);
+    return images.length ? normalizeImages(data) : await waitForUpscaleTask(provider, data, signal);
   }
 
   const jsonBodies: Array<Record<string, unknown>> = [
@@ -1134,7 +1170,7 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
     try {
       const data = await fetchJson(endpoint, { method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, IMAGE_REQUEST_TIMEOUT, signal);
       const images = extractImages(data);
-      return images.length ? images : await waitForUpscaleTask(provider, data, signal);
+      return images.length ? normalizeImages(data) : await waitForUpscaleTask(provider, data, signal);
     } catch (error) {
       if (signal?.aborted) throw signal.reason || error;
       errors.push(error instanceof Error ? error.message : 'JSON 超分请求失败');
@@ -1151,7 +1187,7 @@ export async function upscaleImage(provider: RuntimeProvider, rawModelId: string
     const response = await fetch(endpoint, { method: 'POST', headers: authHeaders(provider), body: form, cache: 'no-store', signal: combineSignals(signal, IMAGE_REQUEST_TIMEOUT) });
     const data = await parseResponse(response);
     const images = extractImages(data);
-    return images.length ? images : await waitForUpscaleTask(provider, data, signal);
+    return images.length ? normalizeImages(data) : await waitForUpscaleTask(provider, data, signal);
   } catch (error) {
     errors.push(error instanceof Error ? error.message : '表单超分请求失败');
   }

@@ -12,6 +12,7 @@ const MAX_STORED_IMAGE_BYTES = 100 * 1024 * 1024;
 export type ImageDownloadAuth = {
   headers: Record<string, string>;
   trustedHosts: string[];
+  trustedHostSuffixes?: string[];
 };
 
 function configuredRoot() {
@@ -68,11 +69,13 @@ export async function persistImageBuffer(buffer: Buffer, _contentType = 'image/p
 }
 
 function canUseDownloadAuth(url: string, auth?: ImageDownloadAuth) {
-  if (!auth?.headers || !auth.trustedHosts.length) return false;
+  if (!auth?.headers || (!auth.trustedHosts.length && !auth.trustedHostSuffixes?.length)) return false;
   try {
     const target = new URL(url);
     // Never forward an API key over plain HTTP, even when the hostname matches.
-    return target.protocol === 'https:' && auth.trustedHosts.some((host) => host === target.host);
+    if (target.protocol !== 'https:') return false;
+    if (auth.trustedHosts.some((host) => host === target.host)) return true;
+    return auth.trustedHostSuffixes?.some((suffix) => target.hostname === suffix || target.hostname.endsWith(`.${suffix}`)) || false;
   } catch {
     return false;
   }
@@ -81,12 +84,21 @@ function canUseDownloadAuth(url: string, auth?: ImageDownloadAuth) {
 async function fetchImageResponse(url: string, downloadAuth?: ImageDownloadAuth) {
   let currentUrl = url;
   for (let redirectCount = 0; redirectCount <= 3; redirectCount++) {
+    const headers = canUseDownloadAuth(currentUrl, downloadAuth) ? downloadAuth!.headers : undefined;
     const response = await fetch(currentUrl, {
-      ...(canUseDownloadAuth(currentUrl, downloadAuth) ? { headers: downloadAuth!.headers } : {}),
+      ...(headers ? { headers } : {}),
       signal: AbortSignal.timeout(30_000),
       cache: 'no-store',
       redirect: 'manual',
     });
+    if ((response.status === 401 || response.status === 403) && headers) {
+      const unauthenticated = await fetch(currentUrl, {
+        signal: AbortSignal.timeout(30_000),
+        cache: 'no-store',
+        redirect: 'manual',
+      });
+      if (unauthenticated.status !== 401 && unauthenticated.status !== 403) return unauthenticated;
+    }
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get('location');
     if (!location) return response;
@@ -96,7 +108,67 @@ async function fetchImageResponse(url: string, downloadAuth?: ImageDownloadAuth)
   throw new Error('下载服务商图片失败：重定向次数过多');
 }
 
-async function readImageBuffer(url: string, downloadAuth?: ImageDownloadAuth) {
+function compactBase64(value: string) {
+  const compact = value.trim().replace(/\s/g, '');
+  return compact.length >= 16 && compact.length % 4 !== 1 && /^[A-Za-z0-9+/=_-]+$/.test(compact) ? compact : '';
+}
+
+function imageReferenceFromPayload(value: unknown, key = '', depth = 0): { url?: string; data?: string } | null {
+  if (depth > 8 || value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (/^data:image\//i.test(text)) return { data: text };
+    if (/^https?:\/\//i.test(text) && /(?:url|uri|href|image|output|result|download|file)/i.test(key)) return { url: text };
+    if (/(?:base64|b64|image|data|result|output)/i.test(key)) {
+      const encoded = compactBase64(text);
+      if (encoded) return { data: `data:image/png;base64,${encoded}` };
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = imageReferenceFromPayload(item, key, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value !== 'object') return null;
+  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+    if (/^(?:task[_-]?id|request[_-]?id|status|state|message|error|model|prompt)$/i.test(childKey)) continue;
+    const found = imageReferenceFromPayload(childValue, childKey, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function readImagePayload(value: unknown, sourceUrl: string, downloadAuth: ImageDownloadAuth | undefined, depth: number): Promise<{ buffer: Buffer; mime: string; ext: string }> {
+  if (typeof value !== 'string') throw invalidImageError();
+  const reference = value.trim();
+  if (reference.startsWith('data:image/')) {
+    const match = reference.match(/^data:([^;,]+)(;base64)?,([\s\S]*)$/i);
+    if (!match) throw invalidImageError();
+    const buffer = match[2] ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]), 'utf8');
+    const mime = await validateImageBuffer(buffer);
+    return { buffer, mime, ext: imageExtension(mime) };
+  }
+  const encoded = compactBase64(reference);
+  if (encoded) {
+    const buffer = Buffer.from(encoded, 'base64');
+    try {
+      const mime = await validateImageBuffer(buffer);
+      return { buffer, mime, ext: imageExtension(mime) };
+    } catch { /* It may be a JSON/base64 wrapper; continue below. */ }
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(reference); } catch { throw invalidImageError(); }
+  const nested = imageReferenceFromPayload(parsed);
+  if (!nested || depth >= 2) throw invalidImageError();
+  if (nested.data) return readImagePayload(nested.data, sourceUrl, downloadAuth, depth + 1);
+  if (nested.url && nested.url !== sourceUrl) return readImageBuffer(nested.url, downloadAuth, depth + 1);
+  throw invalidImageError();
+}
+
+async function readImageBuffer(url: string, downloadAuth?: ImageDownloadAuth, depth = 0): Promise<{ buffer: Buffer; mime: string; ext: string }> {
   if (url.startsWith('data:image/')) {
     const match = url.match(/^data:([^;,]+)(;base64)?,([\s\S]*)$/i);
     if (!match) throw invalidImageError();
@@ -121,6 +193,11 @@ async function readImageBuffer(url: string, downloadAuth?: ImageDownloadAuth) {
   try {
     mime = await validateImageBuffer(buffer);
   } catch {
+    if (depth < 2) {
+      try {
+        return await readImagePayload(buffer.toString('utf8'), url, downloadAuth, depth + 1);
+      } catch { /* Preserve the safe metadata error below. */ }
+    }
     const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim() || 'unknown';
     const host = (() => { try { return new URL(url).host; } catch { return 'unknown'; } })();
     throw new Error(`${invalidImageError().message}（来源 ${host}，HTTP ${response.status}，Content-Type ${contentType}）`);

@@ -250,6 +250,45 @@ test('does not submit a second edit job after malformed JSON image output', asyn
   }
 });
 
+test('rejects a binary-looking image response before local persistence', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(Buffer.from('not an image'), {
+    status: 200,
+    headers: { 'content-type': 'image/png' },
+  });
+  try {
+    await assert.rejects(
+      providers.generateImage({
+        type: 'openai-compatible',
+        platform: 'custom',
+        baseUrl: 'https://images.example.test/v1',
+        apiKey: 'test-key',
+      }, 'gpt-image-2', { prompt: 'space', count: 1 }),
+      /没有找到可显示的图片|不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/,
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('keeps a plain image URL when a gateway mislabels its content type', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => String(url).includes('cdn.example.test')
+    ? new Response(Buffer.from('not fetched in this provider-layer test'), { status: 200, headers: { 'content-type': 'image/png' } })
+    : new Response('https://cdn.example.test/result.png', { status: 200, headers: { 'content-type': 'image/png' } });
+  try {
+    const images = await providers.generateImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'space', count: 1 });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/result.png' }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('does not mistake an asynchronous task id for an image', () => {
   assert.throws(
     () => providers.normalizeProviderImages({ id: 'task_0123456789abcdef0123456789abcdef', status: 'processing' }),
