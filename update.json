@@ -1,20 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.41",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.41",
+  "latestVersion": "0.7.42",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.42",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.42/SANMAO.AI-0.7.42.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.42/SANMAO.AI-0.7.42.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.42/SANMAO.AI-0.7.42.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.42/SANMAO.AI-0.7.42.zip"
   ],
   "sha256": "cddccce9fda473420a1c2ec0de2a40d511efa5b90eb4347fa4bb5e74aac27719",
-  "publishedAt": "2026-09-14T01:00:00+08:00",
+  "publishedAt": "2026-09-14T13:27:55+08:00",
   "notes": [
-    "修复变体图片组和普通图片组宫格拼接因外链跨域导致预览、导出失败的问题。",
-    "外链原图无法跨域读取时，尝试保存为本地原图后参与拼接。",
-    "修复 macOS 安装包独立启动时的应用目录定位问题。",
-    "包含 0.7.40 的全部功能和修复。"
+    "新增 LLM 任务日志，记录模型、服务商、耗时、调用次数、响应字数、联网状态和失败原因。",
+    "主界面与超级画布支持按 LLM 类型筛选，并可展开查看任务详情。",
+    "包含 0.7.41 的全部功能和修复。"
   ]
 }
