@@ -24,6 +24,7 @@ export type UpdateStatus = {
   packageUrl?: string;
   mirrorUrls?: string[];
   sha256?: string;
+  applyUnavailableReason?: 'missing-package' | 'missing-checksum' | 'disabled' | 'missing-updater';
   canApply: boolean;
   publishedAt?: string;
   notes?: string[];
@@ -58,6 +59,19 @@ export function compareVersions(left: string, right: string) {
     if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
   }
   return 0;
+}
+
+function chooseUpdateStatus(current: UpdateStatus, candidate: UpdateStatus) {
+  const versionComparison = compareVersions(candidate.latestVersion || '0.0.0', current.latestVersion || '0.0.0');
+  if (versionComparison > 0) return candidate;
+  if (versionComparison < 0) return current;
+  // CDN mirrors can briefly disagree on fields while serving the same version.
+  // Prefer the complete, locally applicable manifest instead of letting an
+  // empty checksum downgrade the in-app update experience.
+  if (!current.canApply && candidate.canApply) return candidate;
+  if (!current.packageUrl && candidate.packageUrl) return candidate;
+  if (!current.sha256 && candidate.sha256) return candidate;
+  return current;
 }
 
 function configuredManifestUrl() {
@@ -118,7 +132,15 @@ function validPackageUrl(value: string) {
 }
 
 function validSha256(value: string) {
-  return /^[a-f0-9]{64}$/i.test(value);
+  return /^[a-f0-9]{64}$/i.test(value) && !/^0{64}$/i.test(value);
+}
+
+function getApplyUnavailableReason(packageUrl?: string, sha256?: string) {
+  if (process.env.SANMAO_DISABLE_LOCAL_UPDATE === '1') return 'disabled' as const;
+  if (!packageUrl) return 'missing-package' as const;
+  if (!sha256) return 'missing-checksum' as const;
+  if (!hasLocalUpdater()) return 'missing-updater' as const;
+  return undefined;
 }
 
 function statusFromManifest(raw: Partial<UpdateManifest>, checkedAt: string): UpdateStatus {
@@ -133,6 +155,7 @@ function statusFromManifest(raw: Partial<UpdateManifest>, checkedAt: string): Up
 
   if (!latestVersion || !validHttpUrl(releaseUrl)) throw new Error('更新清单格式无效');
   const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+  const applyUnavailableReason = hasUpdate ? getApplyUnavailableReason(packageUrl, sha256) : undefined;
   return {
     configured: true,
     currentVersion,
@@ -143,7 +166,8 @@ function statusFromManifest(raw: Partial<UpdateManifest>, checkedAt: string): Up
     packageUrl,
     mirrorUrls,
     sha256,
-    canApply: hasUpdate && Boolean(packageUrl && sha256 && hasLocalUpdater()),
+    applyUnavailableReason,
+    canApply: hasUpdate && !applyUnavailableReason,
     publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : undefined,
     notes: Array.isArray(raw.notes) ? raw.notes.filter((note): note is string => typeof note === 'string').slice(0, 8) : [],
     checkedAt,
@@ -189,9 +213,7 @@ export async function getUpdateStatus(force = false): Promise<UpdateStatus> {
       .filter((result): result is PromiseFulfilledResult<UpdateStatus> => result.status === 'fulfilled')
       .map((result) => result.value);
     if (!statuses.length) throw new Error('所有更新清单源均不可用');
-    const status = statuses.reduce((latest, candidate) => (
-      compareVersions(candidate.latestVersion || '0.0.0', latest.latestVersion || '0.0.0') > 0 ? candidate : latest
-    ));
+    const status = statuses.reduce(chooseUpdateStatus);
     cached = { expiresAt: Date.now() + cacheTtlMs, status };
     return status;
   } catch (error) {

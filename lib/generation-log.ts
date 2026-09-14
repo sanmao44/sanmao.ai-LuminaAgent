@@ -9,11 +9,15 @@ export type GenerationLog = {
   id: string;
   createdAt: string;
   status: 'pending' | 'success' | 'error';
-  mode: 'generate' | 'edit' | 'upscale' | 'agent' | 'video' | 'audio';
+  mode: 'generate' | 'edit' | 'upscale' | 'agent' | 'llm' | 'video' | 'audio';
+  /** Distinguishes model conversations from media-generation tasks. */
+  taskKind?: 'media' | 'llm';
   /** Stable cross-media label for future audio and other creative work. */
   mediaKind?: MediaKind;
   source?: GenerationSource;
   prompt: string;
+  presetId?: string;
+  presetName?: string;
   modelId?: string;
   modelName?: string;
   providerName?: string;
@@ -38,6 +42,10 @@ export type GenerationLog = {
   idempotencyKey?: string;
   costUsd?: number;
   errorCode?: string;
+  task?: string;
+  llmCallCount?: number;
+  responseChars?: number;
+  webSearchStatus?: string;
 };
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');

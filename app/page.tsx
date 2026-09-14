@@ -209,6 +209,7 @@ function sourceLabel(source) {
     return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : source === 'upscale' ? '高清放大' : '直接生成';
 }
 function generationLogSourceLabel(log) {
+    if (log.taskKind === 'llm' || log.mode === 'llm') return log.source === 'canvas' ? '画布 LLM' : '助手 LLM';
     if (log.source === 'canvas') return '画布生成';
     if (log.mode === 'video') return log.operation === 'edit' ? '视频编辑' : log.operation === 'extend' ? '视频扩展' : '视频生成';
     if (log.mode === 'audio' || log.mediaKind === 'audio') return '音频生成';
@@ -216,12 +217,21 @@ function generationLogSourceLabel(log) {
     return log.mode === 'edit' ? '图片修改' : log.mode === 'upscale' ? '图片超分' : '工作台生成';
 }
 function generationMediaKind(log) {
+    if (log.taskKind === 'llm' || log.mode === 'llm') return 'llm';
     if (log.mediaKind === 'audio' || log.mode === 'audio') return 'audio';
     if (log.mediaKind === 'video' || log.mode === 'video') return 'video';
     return 'image';
 }
+function generationLogIsLlm(log) {
+    return generationMediaKind(log) === 'llm';
+}
+function generationLlmCallLabel(log) {
+    const calls = typeof log.llmCallCount === 'number' ? log.llmCallCount : 0;
+    const chars = typeof log.responseChars === 'number' ? log.responseChars : 0;
+    return `${calls} 次模型调用 · ${chars} 字响应`;
+}
 function generationMediaLabel(kind) {
-    return kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片';
+    return kind === 'llm' ? 'LLM' : kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片';
 }
 function ratioFromDimensions(width, height) {
     if (!width || !height) return '未知';
@@ -6755,7 +6765,8 @@ export default function Page() {
                 'sanmao-success-sound',
                 HISTORY_PAGE_SIZE_STORAGE_KEY,
                 'sanmao-generate-settings',
-                'sanmao-generate-tasks'
+                'sanmao-generate-tasks',
+                'sanmao-image-presets-v1'
             ];
             const preferences = {};
             for (const key of preferenceKeys){
@@ -6803,7 +6814,8 @@ export default function Page() {
             'sanmao-success-sound',
             HISTORY_PAGE_SIZE_STORAGE_KEY,
             'sanmao-generate-settings',
-            'sanmao-generate-tasks'
+            'sanmao-generate-tasks',
+            'sanmao-image-presets-v1'
         ];
         for (const key of preferenceKeys) localStorage.removeItem(key);
         for (const [key, value] of Object.entries(client.preferences || {})) if (preferenceKeys.includes(key) && typeof value === 'string') localStorage.setItem(key, value);
@@ -13006,10 +13018,10 @@ export default function Page() {
                                                         children: "RUN MONITOR"
                                                     }),
                                                     /*#__PURE__*/ _jsx("strong", {
-                                                        children: "生成任务"
+                                                        children: "任务日志"
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
-                                                        children: "服务端同步展示进行中、成功和失败任务"
+                                                        children: "同步展示 LLM、图片、视频任务的进行中、成功和失败状态"
                                                     })
                                                 ]
                                             }),
@@ -13026,8 +13038,8 @@ export default function Page() {
                                                             /*#__PURE__*/ _jsx("input", {
                                                                 value: logSearch,
                                                                 onChange: (e)=>setLogSearch(e.target.value),
-                                                                placeholder: "搜索提示词、模型或服务商",
-                                                                "aria-label": "搜索生成任务"
+                                                                placeholder: "搜索提示词、模型、服务商或任务类型",
+                                                                "aria-label": "搜索任务日志"
                                                             }),
                                                             logSearch && /*#__PURE__*/ _jsx("button", {
                                                                 type: "button",
@@ -13044,7 +13056,8 @@ export default function Page() {
                                                             ['all', '全部'],
                                                             ['image', '图片'],
                                                             ['video', '视频'],
-                                                            ['audio', '音频 · 即将上线']
+                                                            ['audio', '音频 · 即将上线'],
+                                                            ['llm', 'LLM']
                                                         ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", disabled: value === 'audio', className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
                                                     }),
                                                     /*#__PURE__*/ _jsx("div", {
@@ -13310,7 +13323,7 @@ export default function Page() {
                                                                 children: log.status === 'pending' ? /*#__PURE__*/ _jsx("span", {
                                                                     className: "loading-orb log-loading-orb"
                                                                 }) : /*#__PURE__*/ _jsx(Icon, {
-                                                                    name: generationMediaKind(log) === 'video' ? 'video' : generationMediaKind(log) === 'audio' ? 'audio' : 'image',
+                                                                    name: generationMediaKind(log) === 'video' ? 'video' : generationMediaKind(log) === 'audio' ? 'audio' : generationMediaKind(log) === 'llm' ? 'agent' : 'image',
                                                                     size: 18
                                                                 })
                                                             }),
@@ -13349,8 +13362,8 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsxs("span", {
                                                                         className: "log-meta-chip log-count-chip",
                                                                         children: [
-                                                                            generationMediaKind(log) === 'video' ? (log.videoUrls?.length || (log.status === 'pending' ? 1 : 0)) : generationMediaKind(log) === 'audio' ? 1 : log.status === 'pending' ? log.count ?? 1 : log.imageCount ?? 0,
-                                                                            generationMediaKind(log) === 'video' ? ' 段视频' : generationMediaKind(log) === 'audio' ? ' 段音频' : log.references?.length ? ` 张 · 参考图 ${log.references.length}` : " 张"
+                                                                            generationMediaKind(log) === 'llm' ? (log.llmCallCount || 0) : generationMediaKind(log) === 'video' ? (log.videoUrls?.length || (log.status === 'pending' ? 1 : 0)) : generationMediaKind(log) === 'audio' ? 1 : log.status === 'pending' ? log.count ?? 1 : log.imageCount ?? 0,
+                                                                            generationMediaKind(log) === 'llm' ? ' 次调用' : generationMediaKind(log) === 'video' ? ' 段视频' : generationMediaKind(log) === 'audio' ? ' 段音频' : log.references?.length ? ` 张 · 参考图 ${log.references.length}` : " 张"
                                                                         ]
                                                                     }),
                                                                     /*#__PURE__*/ _jsxs("span", {
@@ -13363,7 +13376,7 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsxs("span", {
                                                                         className: "log-meta-chip log-size-chip",
                                                                         children: [
-                                                                            generationMediaKind(log) === 'video' ? `${log.operation === 'edit' ? '编辑' : log.operation === 'extend' ? '扩展' : '生成'} · ${log.resolution || '自动分辨率'}` : generationMediaKind(log) === 'audio' ? '音频 · 参数详情' : logResolutionLabel(log, logImageSpecs[log.id]),
+                                                                            generationMediaKind(log) === 'llm' ? `任务 · ${log.task || '普通对话'} · 联网 ${log.webSearchStatus || '未检索'}` : generationMediaKind(log) === 'video' ? `${log.operation === 'edit' ? '编辑' : log.operation === 'extend' ? '扩展' : '生成'} · ${log.resolution || '自动分辨率'}` : generationMediaKind(log) === 'audio' ? '音频 · 参数详情' : logResolutionLabel(log, logImageSpecs[log.id]),
                                                                             generationMediaKind(log) === 'image' && " · ",
                                                                             generationMediaKind(log) === 'image' && logOutputSizeLabel(log, logImageSpecs[log.id]),
                                                                             generationMediaKind(log) === 'image' && " · ",
@@ -15030,7 +15043,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             children: "生成任务详情"
                                         }),
                                         /*#__PURE__*/ _jsx("h2", {
-                                            children: selectedLog.status === 'pending' ? '正在生成' : selectedLog.status === 'success' ? '生成成功' : '生成失败'
+                                                        children: selectedLog.status === 'pending' ? (generationLogIsLlm(selectedLog) ? 'LLM 处理中' : '正在生成') : selectedLog.status === 'success' ? (generationLogIsLlm(selectedLog) ? 'LLM 完成' : '生成成功') : (generationLogIsLlm(selectedLog) ? 'LLM 失败' : '生成失败')
                                         })
                                     ]
                                 }),
@@ -15078,11 +15091,11 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                 selectedLog.status === 'pending' ? /*#__PURE__*/ _jsx("span", {
                                     className: "loading-orb"
                                 }) : /*#__PURE__*/ _jsx(Icon, {
-                                    name: generationMediaKind(selectedLog) === 'video' ? 'video' : generationMediaKind(selectedLog) === 'audio' ? 'audio' : 'image',
+                                    name: generationMediaKind(selectedLog) === 'video' ? 'video' : generationMediaKind(selectedLog) === 'audio' ? 'audio' : generationMediaKind(selectedLog) === 'llm' ? 'agent' : 'image',
                                     size: 24
                                 }),
                                 /*#__PURE__*/ _jsx("span", {
-                                    children: selectedLog.status === 'pending' ? `${generationMediaLabel(generationMediaKind(selectedLog))}生成中，完成后会自动更新` : `没有可预览的${generationMediaLabel(generationMediaKind(selectedLog))}`
+                                    children: selectedLog.status === 'pending' ? `${generationMediaLabel(generationMediaKind(selectedLog))}${generationMediaKind(selectedLog) === 'llm' ? '处理中' : '生成中'}，完成后会自动更新` : `没有可预览的${generationMediaLabel(generationMediaKind(selectedLog))}`
                                 })
                             ]
                         }),
@@ -15196,10 +15209,10 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                 /*#__PURE__*/ _jsxs("div", {
                                     children: [
                                         /*#__PURE__*/ _jsx("dt", {
-                                            children: generationMediaKind(selectedLog) === 'video' ? "视频数量" : generationMediaKind(selectedLog) === 'audio' ? "音频数量" : "图片数量"
+                                            children: generationMediaKind(selectedLog) === 'llm' ? "模型调用" : generationMediaKind(selectedLog) === 'video' ? "视频数量" : generationMediaKind(selectedLog) === 'audio' ? "音频数量" : "图片数量"
                                         }),
                                         /*#__PURE__*/ _jsx("dd", {
-                                            children: generationMediaKind(selectedLog) === 'video' ? `${selectedLog.videoUrls?.length || (selectedLog.status === 'pending' ? 1 : 0)} 段` : generationMediaKind(selectedLog) === 'audio' ? '1 段' : selectedLog.status === 'pending' ? `预计 ${selectedLog.count ?? 1} 张` : `${selectedLog.imageCount ?? 0} 张`
+                                            children: generationMediaKind(selectedLog) === 'llm' ? `${selectedLog.llmCallCount || 0} 次 · ${selectedLog.responseChars || 0} 字响应` : generationMediaKind(selectedLog) === 'video' ? `${selectedLog.videoUrls?.length || (selectedLog.status === 'pending' ? 1 : 0)} 段` : generationMediaKind(selectedLog) === 'audio' ? '1 段' : selectedLog.status === 'pending' ? `预计 ${selectedLog.count ?? 1} 张` : `${selectedLog.imageCount ?? 0} 张`
                                         })
                                     ]
                                 }),
@@ -15209,28 +15222,29 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             children: "分辨率"
                                         }),
                                         /*#__PURE__*/ _jsx("dd", {
-                                            children: generationMediaKind(selectedLog) === 'video' ? (selectedLog.resolution || '自动') : generationMediaKind(selectedLog) === 'audio' ? '音频参数见任务输入' : logResolutionLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                            children: generationMediaKind(selectedLog) === 'llm' ? `任务：${selectedLog.task || '普通对话'} · 联网：${selectedLog.webSearchStatus || '未检索'}` : generationMediaKind(selectedLog) === 'video' ? (selectedLog.resolution || '自动') : generationMediaKind(selectedLog) === 'audio' ? '音频参数见任务输入' : logResolutionLabel(selectedLog, logImageSpecs[selectedLog.id])
                                         })
                                     ]
                                 }),
                                 /*#__PURE__*/ _jsxs("div", {
                                     children: [
                                         /*#__PURE__*/ _jsx("dt", {
-                                            children: generationMediaKind(selectedLog) === 'video' ? "视频比例"
+                                            children: generationMediaKind(selectedLog) === 'llm' ? "LLM 任务类型"
+                                                : generationMediaKind(selectedLog) === 'video' ? "视频比例"
                                                 : generationMediaKind(selectedLog) === 'audio' ? "音频时长" : "图片尺寸"
                                         }),
                                         /*#__PURE__*/ _jsx("dd", {
-                                            children: generationMediaKind(selectedLog) === 'video' ? (selectedLog.aspectRatio || '自动') : generationMediaKind(selectedLog) === 'audio' ? (selectedLog.durationMs ? `${(selectedLog.durationMs / 1000).toFixed(1)} 秒` : '—') : logOutputSizeLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                            children: generationMediaKind(selectedLog) === 'llm' ? generationLogSourceLabel(selectedLog) : generationMediaKind(selectedLog) === 'video' ? (selectedLog.aspectRatio || '自动') : generationMediaKind(selectedLog) === 'audio' ? (selectedLog.durationMs ? `${(selectedLog.durationMs / 1000).toFixed(1)} 秒` : '—') : logOutputSizeLabel(selectedLog, logImageSpecs[selectedLog.id])
                                         })
                                     ]
                                 }),
                                 /*#__PURE__*/ _jsxs("div", {
                                     children: [
                                         /*#__PURE__*/ _jsx("dt", {
-                                            children: generationMediaKind(selectedLog) === 'video' ? "视频操作" : generationMediaKind(selectedLog) === 'audio' ? "音频格式" : "图片比例"
+                                            children: generationMediaKind(selectedLog) === 'llm' ? "联网状态" : generationMediaKind(selectedLog) === 'video' ? "视频操作" : generationMediaKind(selectedLog) === 'audio' ? "音频格式" : "图片比例"
                                         }),
                                         /*#__PURE__*/ _jsx("dd", {
-                                            children: generationMediaKind(selectedLog) === 'video' ? (selectedLog.operation === 'edit' ? '编辑' : selectedLog.operation === 'extend' ? '扩展' : '生成') : generationMediaKind(selectedLog) === 'audio' ? '—' : logAspectRatioLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                            children: generationMediaKind(selectedLog) === 'llm' ? (selectedLog.webSearchStatus || '未检索') : generationMediaKind(selectedLog) === 'video' ? (selectedLog.operation === 'edit' ? '编辑' : selectedLog.operation === 'extend' ? '扩展' : '生成') : generationMediaKind(selectedLog) === 'audio' ? '—' : logAspectRatioLabel(selectedLog, logImageSpecs[selectedLog.id])
                                         })
                                     ]
                                 }),

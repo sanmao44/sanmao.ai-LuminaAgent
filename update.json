@@ -1,19 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.39",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.39",
+  "latestVersion": "0.7.41",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.41",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.41/SANMAO.AI-0.7.41.zip"
   ],
-  "sha256": "",
-  "publishedAt": "2026-09-10T18:25:40+08:00",
+  "sha256": "e16c3081e1b47148f8c6b1d6be78ee2f7e9be85acb0a4661ec0626b1fee48906",
+  "publishedAt": "2026-09-14T01:00:00+08:00",
   "notes": [
-    "修复视频剪辑工作台里片段拖不动的问题：片段移动、两端裁剪手柄和预览画面位移全部恢复响应。",
-    "片段拖动改为落在鼠标位置，后面的片段自动顺次右推，不再因为与相邻片段紧贴而完全无法移动。",
-    "选中片段提升层级，紧贴后一个片段时裁剪手柄不再被遮挡，点击也不再误取消选中。"
+    "修复变体图片组和普通图片组宫格拼接因外链跨域导致预览、导出失败的问题。",
+    "外链原图无法跨域读取时，尝试保存为本地原图后参与拼接。",
+    "修复 macOS 安装包独立启动时的应用目录定位问题。",
+    "包含 0.7.40 的全部功能和修复。"
   ]
 }

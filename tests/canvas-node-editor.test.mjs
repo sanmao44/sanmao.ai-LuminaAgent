@@ -643,12 +643,43 @@ test("canvas reuses the compiled local-edit prompt for legacy masks, display, an
   const promptEnd = component.indexOf("const openImageEditor = useCallback", promptStart);
   const editorPrompt = component.slice(promptStart, promptEnd);
   assert.ok(promptStart >= 0 && promptEnd > promptStart, "editor prompt resolver should be present");
-  assert.match(editorPrompt, /const rawPrompt = draft\?\.prompt\?\.trim\(\) \|\| persistedPrompt \|\| draft\?\.prompt \|\| ""/);
+  assert.match(editorPrompt, /const rawPrompt = draft\?\.presetId && canvasNodeSupportsImagePresets\(node\)[\s\S]*draft\.prompt \|\| ""/);
+  assert.match(editorPrompt, /draft\?\.prompt\?\.trim\(\) \|\| persistedPrompt \|\| draft\?\.prompt \|\| ""/);
   assert.match(editorPrompt, /return compiledCanvasLocalEditPrompt\(node, rawPrompt, draft\?\.params\)/);
   const generationStart = component.indexOf("const runEditorGeneration = useCallback");
   const generationEnd = component.indexOf("const updateUpscaleParams = useCallback", generationStart);
   const generation = component.slice(generationStart, generationEnd);
   assert.match(generation, /const prompt = editorPromptFor\(currentNode\)/);
+});
+
+test("image presets stay opaque in the editor and open custom forms in a separate modal", () => {
+  const editorStart = component.indexOf("function CanvasNodeEditorPopover");
+  assert.ok(editorStart >= 0, "node editor popover should be present");
+  const editor = component.slice(editorStart);
+  assert.match(editor, /const visibleEditorPrompt = supportsImagePresets/);
+  assert.match(editor, /className="canvas-image-preset-reference"/);
+  assert.match(editor, /onClick=\{clearImagePreset\}/);
+  assert.match(editor, /onClick=\{openNewPresetEditor\}/);
+  assert.match(editor, /onImagePresetSelect\(preset\);[\s\S]*setPresetPanelOpen\(false\);/);
+  assert.match(editor, /presetEditorOpen && imagePresetEnabled && createPortal/);
+  assert.match(editor, /className="canvas-preset-editor-backdrop"/);
+  assert.match(editor, /aria-modal="true"/);
+  assert.match(editor, /presetNameInputRef\.current\?\.focus\(\)/);
+  assert.match(editor, /输入要保存的完整提示词/);
+  assert.doesNotMatch(editor, /preset\.prompt\.slice\(0, 42\)/);
+  assert.match(component, /function resolveCanvasImagePresetPrompt\(/);
+  assert.match(component, /const effectivePrompt = canvasNodeSupportsImagePresets\(currentNode\) && currentNode\.data\.kind === "image"/);
+  assert.match(component, /resolveCanvasImagePresetPrompt\(prompt, draft\?\.presetId/);
+  assert.match(styles, /\.canvas-image-preset-reference\{/);
+  assert.match(styles, /\.canvas-preset-editor-backdrop\{/);
+});
+
+test("image variant generators do not expose or persist image presets", () => {
+  assert.match(component, /function canvasNodeSupportsImagePresets\(node: CanvasNode\)/);
+  assert.match(component, /return node\.type !== "generator" && node\.type !== "prompt" && node\.type !== "upscale" && node\.data\.kind === "image"/);
+  assert.match(component, /const imagePresetEnabled = supportsImagePresets && !pending/);
+  assert.match(component, /canvasNodeSupportsImagePresets\(currentNode\) && draft\?\.presetId/);
+  assert.doesNotMatch(component, /const generatorPresetId = editorDrafts\[generatorId\]\?\.presetId/);
 });
 
 test("canvas sends the move guide separately and keeps the original image as the composite source", () => {

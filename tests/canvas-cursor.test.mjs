@@ -62,6 +62,23 @@ test("canvas cursor follows the active pointer task", () => {
   assert.match(css, /\.canvas-stage\.is-cursor-copying,\.canvas-stage\.is-cursor-copying \*\{cursor:copy!important\}/);
 });
 
+test("middle-button presses stay on canvas pan instead of node gestures", () => {
+  const stageHandler = component.slice(
+    component.indexOf("const handleStagePointerDown = useCallback"),
+    component.indexOf("const startNodeDrag = useCallback"),
+  );
+  assert.match(stageHandler, /if \(event\.button !== 0 && event\.button !== 1\) return;/);
+  assert.match(stageHandler, /const panIntent = event\.button === 1 \|\| spaceHeldRef\.current;/);
+  assert.match(stageHandler, /interactionRef\.current = \{\s*kind: "pan"/);
+
+  for (const handlerName of ["startGroupResize", "startResize", "startConnection"]) {
+    const start = component.indexOf(`const ${handlerName} = useCallback`);
+    const end = component.indexOf("const ", start + 1);
+    const handler = component.slice(start, end > start ? end : undefined);
+    assert.match(handler, /if \(event\.button !== 0 \|\| referencePicker\) return;/, `${handlerName} should accept left button only`);
+  }
+});
+
 test("canvas text controls expose the text editing cursor", () => {
   assert.match(css, /\.canvas-stage textarea,\.canvas-stage \[contenteditable="true"\],\.canvas-text-lightbox-body\{cursor:text\}/);
   assert.match(css, /\.canvas-stage input:not\(\[type="button"\]\).*\{cursor:text\}/);

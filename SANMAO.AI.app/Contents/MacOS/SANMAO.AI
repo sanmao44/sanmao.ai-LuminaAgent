@@ -3,7 +3,7 @@ set -eu
 set -f
 
 SCRIPT_DIR=`CDPATH= cd -- "$(dirname "$0")" && pwd`
-BUNDLE_CONTENTS=`CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd`
+BUNDLE_CONTENTS=`CDPATH= cd -- "$SCRIPT_DIR/.." && pwd`
 if [ -f "$BUNDLE_CONTENTS/Resources/AppRoot/scripts/start-macos.sh" ]; then
   ROOT_DIR="$BUNDLE_CONTENTS/Resources/AppRoot"
 else

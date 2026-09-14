@@ -485,13 +485,58 @@ function coverOffset(
   return remaining * Math.max(0, Math.min(1, Number(offset) || 0));
 }
 
-function loadImage(url: string) {
+const localizedImages = new Map<string, Promise<string>>();
+
+async function localizeImage(url: string) {
+  const existing = localizedImages.get(url);
+  if (existing) return existing;
+  const pending = (async () => {
+    const response = await fetch('/api/storage/images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: [{ url }] }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!response.ok) throw new Error(`原图保存失败（HTTP ${response.status}）`);
+    const data = await response.json();
+    const localUrl = data.images?.[0]?.url;
+    if (typeof localUrl !== 'string' || !localUrl.startsWith('/api/storage/file?')) {
+      throw new Error('无法读取外链原图，请稍后重试或重新导入原图');
+    }
+    return localUrl;
+  })();
+  localizedImages.set(url, pending);
+  // Bound the session cache; failed requests remain retryable.
+  if (localizedImages.size > 64) localizedImages.delete(localizedImages.keys().next().value!);
+  try { return await pending; }
+  catch (error) { localizedImages.delete(url); throw error; }
+}
+
+function loadSafeImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('无法读取图片内容'));
+    const timer = setTimeout(() => {
+      image.onload = null;
+      image.onerror = null;
+      image.src = '';
+      reject(new Error('读取图片超时'));
+    }, 15000);
+    image.crossOrigin = 'anonymous';
+    image.onload = () => { clearTimeout(timer); resolve(image); };
+    image.onerror = () => { clearTimeout(timer); reject(new Error('无法读取图片内容')); };
     image.src = url;
   });
+}
+
+async function loadImage(url: string) {
+  const remote = /^https?:\/\//i.test(url) && new URL(url).origin !== window.location.origin;
+  const cached = localizedImages.get(url);
+  if (cached) return loadSafeImage(await cached);
+  try { return await loadSafeImage(url); }
+  catch (error) {
+    if (!remote) throw error;
+    return loadSafeImage(await localizeImage(url));
+  }
 }
 
 function canvasToPng(canvas: HTMLCanvasElement) {

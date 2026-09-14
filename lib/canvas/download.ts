@@ -79,7 +79,26 @@ export async function createCanvasImageZip(
   if (!items.length) throw new Error("没有可下载的图片");
   const results = await Promise.allSettled(
     items.map(async (item) => {
-      const response = await fetcher(item.url);
+      let response: Response;
+      try {
+        response = await fetcher(item.url, { signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        if (!/^https?:\/\//i.test(item.url)) throw error;
+        const saved = await fetcher("/api/storage/images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images: [{ url: item.url }] }),
+          signal: AbortSignal.timeout(45000),
+        });
+        if (!saved.ok) throw new Error(`原图保存失败（HTTP ${saved.status}）`);
+        const data = await saved.json();
+        const localUrl = data.images?.[0]?.url;
+        if (typeof localUrl !== "string" || !localUrl.startsWith("/api/storage/file?")) {
+          throw new Error("外链原图无法取回，请稍后重试或重新导入原图");
+        }
+        response = await fetcher(localUrl, { signal: AbortSignal.timeout(15000) });
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       return {

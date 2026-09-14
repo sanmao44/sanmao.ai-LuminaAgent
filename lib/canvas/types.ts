@@ -155,6 +155,8 @@ export type CanvasGenerationMeta = {
   kind: CanvasMediaKind;
   prompt: string;
   params: CanvasNodeParams;
+  presetId?: string;
+  presetName?: string;
   /** Identifies the automatic image-to-video workflow. */
   generationType?: "one_click_cinematic" | string;
   sourceImageNodeId?: string;
@@ -205,6 +207,8 @@ export type CanvasHistoryEntry = {
   id: string;
   operation: "generate" | "edit" | "inpaint" | "outpaint" | "upscale" | "extend";
   prompt: string;
+  presetId?: string;
+  presetName?: string;
   params?: CanvasNodeParams;
   referenceIds: string[];
   resultIds?: string[];
@@ -286,6 +290,11 @@ export type CanvasNodeData = {
   variantRequirements?: string[];
   /** Editing buffer that preserves empty lines while the user types. */
   variantRequirementsText?: string;
+  smartVariantSnapshot?: {
+    categories: string[];
+    variants: { instruction: string; category?: string; sources?: string[] }[];
+    sources: { id: string; name: string; text: string }[];
+  };
   /** Runtime/persisted status for each variation in the latest batch. */
   variantStates?: CanvasVariantState[];
   variantBatchId?: string;

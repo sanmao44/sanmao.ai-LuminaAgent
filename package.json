@@ -1,6 +1,6 @@
 {
   "name": "sanmao-ai-studio",
-  "version": "0.7.39",
+  "version": "0.7.41",
   "private": true,
   "scripts": {
     "dev": "next dev --webpack -p 3210",
@@ -8,7 +8,8 @@
     "start": "next start -p 3210",
     "test": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit --incremental false",
-    "check": "npm run typecheck && npm test && npm run build",
+    "validate:update": "node scripts/validate-update-manifest.mjs --strict",
+    "check": "npm run typecheck && npm run validate:update && npm test && npm run build",
     "generate:launcher-icons": "node scripts/generate-launcher-icons.mjs"
   },
   "dependencies": {

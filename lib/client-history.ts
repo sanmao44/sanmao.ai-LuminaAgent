@@ -16,6 +16,8 @@ export type GalleryItem = {
   id: string;
   url: string;
   prompt: string;
+  presetId?: string;
+  presetName?: string;
   revisedPrompt?: string;
   modelId?: string;
   modelName?: string;

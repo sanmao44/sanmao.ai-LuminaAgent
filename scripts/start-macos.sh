@@ -61,7 +61,7 @@ LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
 . "$SCRIPT_DIR/launcher-common.sh"
 . "$SCRIPT_DIR/free-relay-common.sh"
 sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
-sanmao_log "启动器开始运行，根目录：$ROOT_DIR，端口范围：$PORT_START..$PORT_END" INFO
+sanmao_log "启动器开始运行，根目录：${ROOT_DIR}，端口范围：${PORT_START}..${PORT_END}" INFO
 
 media_relay_required() {
   DATA_ROOT="$SANMAO_PROVIDER_CONFIG_DIR"
@@ -261,8 +261,9 @@ printf '\n==> 清理旧的 SANMAO.AI 后台服务\n'
 sanmao_clear_stale 3000 3010
 sanmao_clear_stale "$PORT_START" "$PORT_END"
 
+LAUNCHER_VERSION=`node -p "require('./package.json').version" 2>/dev/null || printf '%s' 'unknown'`
 printf '%s\n' '========================================'
-printf '%s\n' '        SANMAO.AI macOS 启动器 0.7.38'
+printf '%s\n' "        SANMAO.AI macOS 启动器 $LAUNCHER_VERSION"
 printf '%s\n' '========================================'
 
 printf '\n==> 检查 Node.js\n'
@@ -368,7 +369,7 @@ if command -v lsof >/dev/null 2>&1; then
   done
 fi
 if [ $PORT -gt $PORT_END ]; then
-  fail "$PORT_START～$PORT_END 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
+  fail "${PORT_START}～${PORT_END} 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
 fi
 
 if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
@@ -407,7 +408,7 @@ if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
   free_relay_watch "$ROOT_DIR" "$SERVER_PID" "$PORT" &
   RELAY_WATCH_PID=$!
 fi
-sanmao_log "已启动服务进程 PID $SERVER_PID，等待端口 $PORT 就绪。" INFO
+sanmao_log "已启动服务进程 PID ${SERVER_PID}，等待端口 $PORT 就绪。" INFO
 
 READY=0
 ATTEMPT=0

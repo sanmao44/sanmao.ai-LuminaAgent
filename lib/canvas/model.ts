@@ -97,6 +97,58 @@ export function isCanvasReadyImageSource(node: CanvasNode | undefined) {
   );
 }
 
+function hasCanvasText(...values: unknown[]) {
+  return values.some((value) => typeof value === "string" && value.trim().length > 0);
+}
+
+/** Returns whether a node is only an unfilled draft with no usable content. */
+export function isCanvasEmptyContentNode(node: CanvasNode | undefined) {
+  if (!node) return false;
+  const data = node.data;
+  if (data.status === "queued" || data.status === "running") return false;
+  const generationPrompt = data.generation?.prompt;
+  const draftPrompt = data.editor?.draftPrompt;
+
+  if (node.type === "media") {
+    return !hasCanvasText(data.url, data.prompt, data.agentPrompt, generationPrompt, draftPrompt);
+  }
+  if (node.type === "prompt") {
+    return !hasCanvasText(
+      data.text,
+      data.agentPrompt,
+      data.agentResponse,
+      data.prompt,
+      generationPrompt,
+      draftPrompt,
+    );
+  }
+  if (node.type === "generator") {
+    if (hasCanvasText(data.prompt, data.agentPrompt, generationPrompt, draftPrompt)) return false;
+    if (data.variantRequirements?.some((item) => String(item || "").trim())) return false;
+    if (typeof data.variantRequirementsText === "string" && data.variantRequirementsText.trim()) return false;
+    if (data.variantStates?.some((state) =>
+      hasCanvasText(state.instruction) ||
+      state.resultIds.length > 0 ||
+      Boolean(state.taskIds?.length) ||
+      state.status !== "pending"
+    )) return false;
+    return true;
+  }
+  if (node.type === "upscale") {
+    if (hasCanvasText(data.url)) return false;
+    const upscalePrompt = data.prompt || data.generation?.prompt;
+    return !hasCanvasText(upscalePrompt) || String(upscalePrompt).trim() === "Upscale this image";
+  }
+  if (node.type === "angle") {
+    if (data.status && data.status !== "idle") return false;
+    return !hasCanvasText(data.angle?.angleNote);
+  }
+  if (node.type === "video-editor") {
+    return !Boolean(data.videoEditor?.clips?.length);
+  }
+  return false;
+}
+
 function normalizeUpscaleParams(value: unknown): CanvasUpscaleParams {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const scaleValue = Number(raw.scale ?? raw.upscaleScale);

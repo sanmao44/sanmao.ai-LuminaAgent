@@ -120,6 +120,7 @@ gh release create v0.7.25 `
 
 > 如果想**全自动**：配好 `.github/workflows` 里的 CI，之后**只要打 tag / 推分支**，GitHub 就会自动从 `main` 打包 ZIP 和 DMG 并出 Release，不用手动 `gh release create`。
 > **发布前必做校验（避免“SHA-256 校验失败”）：**
+> `npm run check` 和 GitHub CI 会强制检查 `update.json`：`latestVersion` 必须与 `package.json` 一致，`packageUrl`、`releaseUrl` 和非全零 SHA-256 必须完整且版本一致。未生成真实 ZIP 校验值前，不要把发布准备提交推到 `main`。
 > 上传 zip 后，在仓库根目录运行：
 > ```powershell
 > node scripts/verify-release.mjs --file "<SANMAO.AI-x.y.z.zip 的完整路径>" --repo sanmao44/sanmao.ai-LuminaAgent --tag "v0.7.26"

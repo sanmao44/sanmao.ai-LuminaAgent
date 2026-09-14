@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { validateUpdateManifest, validSha256 } from './validate-update-manifest.mjs';
 
 function usage() {
   console.log('用法: node scripts/verify-release.mjs --file <zip路径> [--write] [--repo <owner/repo>] [--tag <vX.Y.Z>]');
@@ -41,6 +42,9 @@ const size = statSync(filePath).size;
 const manifestPath = join(process.cwd(), 'update.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 const expectedSha256 = (manifest.sha256 || '').toLowerCase();
+const packageInfo = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+const fileVersionMatch = basename(filePath).match(/^SANMAO\.AI-(\d+\.\d+\.\d+)\.zip$/i);
+const fileVersion = fileVersionMatch?.[1] || '';
 
 console.log('---------------------------------------------------------------');
 console.log('文件      : ' + basename(filePath));
@@ -50,7 +54,7 @@ console.log('update.json: ' + (expectedSha256 || '(未填写)'));
 console.log('---------------------------------------------------------------');
 
 let mismatch = false;
-if (!expectedSha256) {
+if (!validSha256(expectedSha256)) {
   console.log('⚠ update.json 未记录 sha256，请确认版本号与文件名一致。');
   mismatch = true;
 } else if (actualSha256 !== expectedSha256) {
@@ -61,8 +65,22 @@ if (!expectedSha256) {
   console.log('✓ update.json 的 SHA-256 与该压缩包一致。');
 }
 
+const manifestErrors = validateUpdateManifest(manifest, { currentVersion: packageInfo.version, strict: true });
+for (const error of manifestErrors) {
+  console.log('✗ 更新清单校验失败：' + error);
+  mismatch = true;
+}
+if (fileVersion && manifest.latestVersion !== fileVersion) {
+  console.log(`✗ 压缩包版本 v${fileVersion} 与 update.json 的 v${manifest.latestVersion} 不一致。`);
+  mismatch = true;
+}
+
 const repo = argValue('--repo');
 const tag = argValue('--tag');
+if (tag && fileVersion && tag.replace(/^v/i, '') !== fileVersion) {
+  console.log(`✗ tag ${tag} 与压缩包版本 v${fileVersion} 不一致。`);
+  mismatch = true;
+}
 if (repo && tag) {
   try {
     const apiUrl = 'https://api.github.com/repos/' + repo + '/releases/tags/' + tag;

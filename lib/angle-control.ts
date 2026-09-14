@@ -670,6 +670,13 @@ export function buildReferenceViewpointPrompt(note: string, input: AngleCameraSt
       'This is a camera change, not a head turn, subject rotation, mirror flip, flat image rotation, crop or perspective warp.',
     ].join('\n') : '',
     view.changeView ? [
+      'CONTENT LOCK (HIGHEST PRIORITY)',
+      'Treat Image 1 as a locked scene bible. Keep the same person or object identity, facial features, hair, clothing, accessories, pose, expression, proportions, materials, colors, props, environment, background landmarks and lighting style.',
+      'The only intentional edit is the FINAL CAMERA position, elevation, lens, distance and framing requested above. Do not beautify, restyle, redraw, replace, simplify or add content.',
+      'Do not change the subject into a different person, alter age or ethnicity, invent a new outfit, move hands or limbs, change the expression, remove distinctive details, add text or logos, or replace the setting.',
+      'If a detail is not visible from the final camera, let it become naturally occluded. If a newly exposed surface must be inferred, reconstruct only the minimum continuation implied by Image 1; never use inference as permission to redesign the scene.',
+    ].join('\n') : '',
+    view.changeView ? [
       'DISTANCE AND FRAMING',
       Math.abs(distance - 1) < 0.02
         ? 'Keep a natural camera distance and framing comparable to Image 1.'
@@ -684,6 +691,7 @@ export function buildReferenceViewpointPrompt(note: string, input: AngleCameraSt
       'RECONSTRUCTION',
       magnitude <= 30 ? 'Make only the necessary camera change; maintain extremely high consistency with the reference.' : magnitude <= 90 ? 'Preserve visible identity and structural details while reconstructing newly visible surfaces.' : 'This view exposes substantial areas absent from the reference. Infer unseen surfaces conservatively from visible structural and design cues. Avoid unnecessary new details.',
       'Produce one coherent image with plausible geometry, occlusion and spatial continuity. Do not force an originally visible face or facade to remain visible from behind.',
+      'Run a final reference-consistency check: every difference must be caused by the requested camera geometry, natural occlusion, perspective, framing or explicitly requested lighting change.',
     ].join('\n') : '',
     [
       'OUTPUT',
@@ -810,6 +818,12 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
       'Occlusion, overlap, visible surfaces and screen position may change naturally when required by the new camera viewpoint.',
     ].join('\n'),
     [
+      'CONTENT LOCK (HIGHEST PRIORITY)',
+      'Image 1 is a locked scene bible. Preserve the exact subject identity and all recognizable details, including face, hair, clothing, accessories, pose, expression, proportions, props, environment, background landmarks, colors, materials and lighting style.',
+      'Only the final camera may change. Never beautify, restyle, redesign, replace, simplify or add content. Natural occlusion is allowed; unseen surfaces may be completed only conservatively from visible evidence.',
+      'Do not turn a camera move into a head turn, body rotation, new pose, different outfit, different person, altered age, altered ethnicity, removed details, invented text or a replacement background.',
+    ].join('\n'),
+    [
       'TARGET VIEW',
       `HORIZONTAL VIEW · ${semantic.horizontal_view.class} · ${semantic.horizontal_view.strength}`,
       semantic.horizontal_view.instruction,
@@ -832,6 +846,11 @@ export function compileAngleTargetPrompt(note: string, camera: AngleCameraState,
       'PRESERVE',
       '保持人物身份、脸部特征、发型、服装、配饰、身体比例、世界空间姿态、表情、场景、重要物体、光照方向、色彩、材质与视觉风格。',
       `允许换机位自然改变可见表面、遮挡、重叠和画面位置；不要为了保持正脸或原始投影而重设计人物${options?.hasGuideReference ? '，不要复制图2灰模外观' : ''}。`,
+    ].join('\n'),
+    [
+      'ANTI-DRIFT CHECK',
+      'Before returning the image, compare it against Image 1 and reject any change that is not explained by camera geometry, natural occlusion, perspective, framing or the explicitly selected lighting target.',
+      'Do not output a concept variation, alternate costume, alternate pose, mirror image, collage, split comparison, diagram or reference-sheet panel.',
     ].join('\n'),
     [
       'OUTPUT',

@@ -1971,6 +1971,56 @@ test('does not distribute fewer than three valid nodes or an already even select
   assert.deepEqual(even.document, distributed.document);
 });
 
+test('identifies empty canvas drafts across node types without deleting active or useful content', () => {
+  const emptyPrompt = model.createPrompt({ x: 0, y: 0 });
+  const filledPrompt = model.createPrompt({ x: 0, y: 0 }, '保留这段内容');
+  const emptyGenerator = model.createGenerator('image', { x: 0, y: 0 });
+  const filledGenerator = model.createGenerator('image', { x: 0, y: 0 });
+  filledGenerator.data.prompt = '生成一张图';
+  const emptyMedia = model.createEmptyMedia('image', { x: 0, y: 0 });
+  const filledMedia = model.createMedia('image', '/kept.png', '已完成', { x: 0, y: 0 });
+  const emptyUpscale = model.createUpscaleNode({ x: 0, y: 0 });
+  const emptyAngle = model.createAngleNode({ x: 0, y: 0 });
+  const emptyEditor = model.createVideoEditorNode({ x: 0, y: 0 });
+  const runningMedia = model.createEmptyMedia('video', { x: 0, y: 0 });
+  runningMedia.data.status = 'running';
+  const failedDraft = model.createEmptyMedia('image', { x: 0, y: 0 });
+  failedDraft.data.status = 'failed';
+  failedDraft.data.generation = {
+    ...failedDraft.data.generation,
+    prompt: '保留并允许重试',
+  };
+
+  assert.equal(model.isCanvasEmptyContentNode(emptyPrompt), true);
+  assert.equal(model.isCanvasEmptyContentNode(emptyGenerator), true);
+  assert.equal(model.isCanvasEmptyContentNode(emptyMedia), true);
+  assert.equal(model.isCanvasEmptyContentNode(emptyUpscale), true);
+  assert.equal(model.isCanvasEmptyContentNode(emptyAngle), true);
+  assert.equal(model.isCanvasEmptyContentNode(emptyEditor), true);
+  assert.equal(model.isCanvasEmptyContentNode(filledPrompt), false);
+  assert.equal(model.isCanvasEmptyContentNode(filledGenerator), false);
+  assert.equal(model.isCanvasEmptyContentNode(filledMedia), false);
+  assert.equal(model.isCanvasEmptyContentNode(runningMedia), false);
+  assert.equal(model.isCanvasEmptyContentNode(failedDraft), false);
+});
+
+test('removing empty nodes also removes their connected edges and keeps undo-ready snapshots clean', () => {
+  const empty = model.createPrompt({ x: 0, y: 0 });
+  const kept = model.createPrompt({ x: 400, y: 0 }, '保留');
+  const document = model.addEdge({
+    nodes: [empty, kept],
+    groups: [],
+    edges: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  }, empty.id, kept.id);
+  const ids = document.nodes.filter(model.isCanvasEmptyContentNode).map((node) => node.id);
+  const removed = model.removeNodes(document, ids);
+
+  assert.deepEqual(removed.nodes.map((node) => node.id), [kept.id]);
+  assert.equal(removed.edges.length, 0);
+  assert.equal(removed.groups.length, 0);
+});
+
 test('NOVA localStorage keys have a one-way migration target and no independent API config', () => {
   assert.match(storageSource, /nova\.v1\.projects/);
   assert.match(storageSource, /nova\.v1\.active/);
