@@ -26,6 +26,7 @@ function harness() {
     '@/lib/providers': {
       editImage: async (_provider, _model, input) => { calls.edits.push(input); return []; },
       generateImage: async (_provider, _model, input) => { calls.generations.push(input); return []; },
+      imageDownloadAuth: () => undefined,
     },
     '@/lib/store': {
       getRuntimeImageModelForCapability: async id => { calls.modelLookups.push(id); return id === 'missing' ? null : runtime; },

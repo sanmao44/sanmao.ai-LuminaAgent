@@ -1,4 +1,5 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType } from './types';
+import type { ImageDownloadAuth } from './image-storage';
 import { inferNativeSearch } from './native-search-detection';
 import { inferModelKind } from './model-kind';
 import { agnesModelCatalog } from './agnes';
@@ -405,6 +406,28 @@ function authHeaders(provider: RuntimeProvider, video = false) {
   const prefix = provider.authPrefix ?? 'Bearer ';
   const key = video ? provider.videoApiKey || provider.apiKey : provider.apiKey;
   return { [header]: `${prefix}${key}` };
+}
+
+function urlHost(value: string) {
+  try {
+    const parsed = new URL(value);
+    return /^https?:$/i.test(parsed.protocol) ? parsed.host : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Authentication used only when a provider returns an image URL on its own host. */
+export function imageDownloadAuth(provider: RuntimeProvider): ImageDownloadAuth {
+  const trustedHosts = [
+    provider.baseUrl,
+    providerEndpoint(provider, provider.imageGenerationPath, '/images/generations'),
+    providerEndpoint(provider, provider.imageEditPath, '/images/edits'),
+  ].map((value) => urlHost(String(value || ''))).filter(Boolean);
+  return {
+    headers: authHeaders(provider),
+    trustedHosts: Array.from(new Set(trustedHosts)),
+  };
 }
 
 function isApimartProvider(provider: RuntimeProvider) {

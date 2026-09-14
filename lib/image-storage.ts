@@ -9,6 +9,11 @@ const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data')
 const legacyStoragePath = path.join(process.cwd(), '..', 'image_generation_records');
 const MAX_STORED_IMAGE_BYTES = 100 * 1024 * 1024;
 
+export type ImageDownloadAuth = {
+  headers: Record<string, string>;
+  trustedHosts: string[];
+};
+
 function configuredRoot() {
   return path.resolve(process.env.SANMAO_IMAGE_STORAGE_PATH || path.join(dataDir, 'images'));
 }
@@ -62,7 +67,36 @@ export async function persistImageBuffer(buffer: Buffer, _contentType = 'image/p
   return { url: `/api/storage/file?name=${encodeURIComponent(name)}`, path: root, name, bytes: buffer.byteLength, contentType: mime };
 }
 
-async function readImageBuffer(url: string) {
+function canUseDownloadAuth(url: string, auth?: ImageDownloadAuth) {
+  if (!auth?.headers || !auth.trustedHosts.length) return false;
+  try {
+    const target = new URL(url);
+    // Never forward an API key over plain HTTP, even when the hostname matches.
+    return target.protocol === 'https:' && auth.trustedHosts.some((host) => host === target.host);
+  } catch {
+    return false;
+  }
+}
+
+async function fetchImageResponse(url: string, downloadAuth?: ImageDownloadAuth) {
+  let currentUrl = url;
+  for (let redirectCount = 0; redirectCount <= 3; redirectCount++) {
+    const response = await fetch(currentUrl, {
+      ...(canUseDownloadAuth(currentUrl, downloadAuth) ? { headers: downloadAuth!.headers } : {}),
+      signal: AbortSignal.timeout(30_000),
+      cache: 'no-store',
+      redirect: 'manual',
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location');
+    if (!location) return response;
+    if (redirectCount === 3) throw new Error('下载服务商图片失败：重定向次数过多');
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+  throw new Error('下载服务商图片失败：重定向次数过多');
+}
+
+async function readImageBuffer(url: string, downloadAuth?: ImageDownloadAuth) {
   if (url.startsWith('data:image/')) {
     const match = url.match(/^data:([^;,]+)(;base64)?,([\s\S]*)$/i);
     if (!match) throw invalidImageError();
@@ -77,24 +111,31 @@ async function readImageBuffer(url: string) {
     return { buffer, mime, ext: imageExtension(mime) };
   }
   if (!/^https?:\/\//i.test(url)) throw new Error('图片结果不是可读取的 data URL 或 HTTP 地址，无法保存到本地');
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  const response = await fetchImageResponse(url, downloadAuth);
   if (!response.ok) throw new Error(`下载服务商图片失败：HTTP ${response.status}`);
   const contentLength = Number(response.headers.get('content-length') || 0);
   if (contentLength > MAX_STORED_IMAGE_BYTES) throw new Error('图片超过 100MB，无法保存');
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.byteLength > MAX_STORED_IMAGE_BYTES) throw new Error('图片超过 100MB，无法保存');
-  const mime = await validateImageBuffer(buffer);
+  let mime: string;
+  try {
+    mime = await validateImageBuffer(buffer);
+  } catch {
+    const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim() || 'unknown';
+    const host = (() => { try { return new URL(url).host; } catch { return 'unknown'; } })();
+    throw new Error(`${invalidImageError().message}（来源 ${host}，HTTP ${response.status}，Content-Type ${contentType}）`);
+  }
   return { buffer, mime, ext: imageExtension(mime) };
 }
 
-export async function persistGeneratedImages(images: GeneratedImage[], configuredPath?: string) {
+export async function persistGeneratedImages(images: GeneratedImage[], configuredPath?: string, downloadAuth?: ImageDownloadAuth) {
   const root = path.resolve(configuredPath?.trim() || configuredRoot());
   await mkdir(root, { recursive: true });
   const writtenFiles: string[] = [];
   const failures: string[] = [];
   const saved = await Promise.all(images.map(async (image, index) => {
     try {
-      const loaded = await readImageBuffer(image.url);
+      const loaded = await readImageBuffer(image.url, downloadAuth);
       const name = `${Date.now()}-${randomUUID()}.${loaded.ext}`;
       const file = path.join(root, name);
       writtenFiles.push(file);

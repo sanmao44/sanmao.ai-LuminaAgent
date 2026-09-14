@@ -73,3 +73,70 @@ test('stores valid image bytes under a local storage URL', async () => {
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('sends provider auth only to a trusted provider host', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, headers: init.headers || {} });
+    return new Response(png, { status: 200, headers: { 'content-type': 'image/png' } });
+  };
+  try {
+    await storage.persistGeneratedImages([
+      { url: 'https://provider.example/result.png' },
+      { url: 'https://cdn.example/result.png' },
+    ], undefined, {
+      headers: { Authorization: 'Bearer secret' },
+      trustedHosts: ['provider.example'],
+    });
+    assert.deepEqual(calls.find(call => call.url.includes('provider.example')).headers, { Authorization: 'Bearer secret' });
+    assert.deepEqual(calls.find(call => call.url.includes('cdn.example')).headers, {});
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('reports safe upstream response metadata for invalid image bytes', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  globalThis.fetch = async () => new Response(Buffer.from('upstream-error'), {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  });
+  try {
+    await assert.rejects(
+      storage.persistGeneratedImages([{ url: 'https://provider.example/result.png?signature=secret' }]),
+      /来源 provider\.example，HTTP 200，Content-Type text\/html/,
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('drops provider auth after a cross-host redirect', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), headers: init.headers || {} });
+    if (calls.length === 1) return new Response(null, { status: 302, headers: { location: 'https://cdn.example/result.png' } });
+    return new Response(png, { status: 200, headers: { 'content-type': 'image/png' } });
+  };
+  try {
+    await storage.persistGeneratedImages([{ url: 'https://provider.example/result.png' }], undefined, {
+      headers: { Authorization: 'Bearer secret' },
+      trustedHosts: ['provider.example'],
+    });
+    assert.deepEqual(calls[0].headers, { Authorization: 'Bearer secret' });
+    assert.deepEqual(calls[1].headers, {});
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

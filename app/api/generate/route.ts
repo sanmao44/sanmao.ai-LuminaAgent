@@ -1,4 +1,4 @@
-import { editImage, generateImage, imageMimeFromBytes, ProviderImageFormatError } from '@/lib/providers';
+import { editImage, generateImage, imageDownloadAuth, imageMimeFromBytes, ProviderImageFormatError } from '@/lib/providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
@@ -209,7 +209,7 @@ export async function POST(request: Request) {
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
     const generatedImages = normalizedImages;
-    const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId });
+    const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
     return Response.json({ ok: true, images: stored.images, mode: references.length ? 'reference' : 'generate', model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) {

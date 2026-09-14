@@ -1,4 +1,4 @@
-import { editImage, type ImageEditInput } from '@/lib/providers';
+import { editImage, imageDownloadAuth, type ImageEditInput } from '@/lib/providers';
 import { resolveStoredImageReference } from '@/lib/image-storage';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
     const images = await normalizeStarApiLandscapeImages(runtime.provider, runtime.model.rawId, input, maskSafeImages, requestController.signal);
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
-    const stored = await persistGenerationResult({ images, storagePath, startedAt, providerFinishedAt, logId });
+    const stored = await persistGenerationResult({ images, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
     return Response.json({ ok: true, images: stored.images, storagePath: stored.path, model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name } });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) {

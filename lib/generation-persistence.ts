@@ -1,5 +1,5 @@
 import { appendGenerationLog, finishGenerationLog } from './generation-log';
-import { persistGeneratedImages } from './image-storage';
+import { persistGeneratedImages, type ImageDownloadAuth } from './image-storage';
 import type { GeneratedImage, ReferenceImageRecord } from './types';
 import type { GenerationSource } from './generation-source';
 
@@ -24,13 +24,14 @@ type BackgroundPersistenceOptions = {
   providerFinishedAt: number;
   logId?: string;
   log?: BackgroundGenerationLog;
+  downloadAuth?: ImageDownloadAuth;
 };
 
 /** Persist the local copy and finalize the log before returning the image response. */
 export async function persistGenerationResult(options: BackgroundPersistenceOptions) {
   const storageStartedAt = Date.now();
   try {
-    const stored = await persistGeneratedImages(options.images, options.storagePath);
+    const stored = await persistGeneratedImages(options.images, options.storagePath, options.downloadAuth);
     const patch = {
       status: 'success' as const,
       durationMs: Date.now() - options.startedAt,

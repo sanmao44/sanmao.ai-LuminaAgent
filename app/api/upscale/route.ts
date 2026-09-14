@@ -1,4 +1,4 @@
-import { upscaleImage } from '@/lib/providers';
+import { imageDownloadAuth, upscaleImage } from '@/lib/providers';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { resolveStoredImageReference } from '@/lib/image-storage';
 import { persistGenerationResult } from '@/lib/generation-persistence';
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
     const images = await upscaleImage(runtime.provider, runtime.model.rawId, { reference: resolvedReference, size, seed, colorCorrection, resizeMethod, prompt: String(body.prompt || '') }, requestController.signal);
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
-    const stored = await persistGenerationResult({ images, storagePath: publicState.settings.imageStoragePath, startedAt, providerFinishedAt, logId });
+    const stored = await persistGenerationResult({ images, storagePath: publicState.settings.imageStoragePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
     return Response.json({ ok: true, images: stored.images, storagePath: stored.path, size, seed, colorCorrection, resizeMethod, model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name } });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) {

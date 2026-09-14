@@ -1,4 +1,4 @@
-import { chatCompletion, chatCompletionStream, editImage, generateImage, type ChatContentPart, type ChatMessage } from '@/lib/providers';
+import { chatCompletion, chatCompletionStream, editImage, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '@/lib/providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeModel } from '@/lib/store';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
@@ -819,6 +819,7 @@ export async function POST(request: Request) {
           storagePath: state.settings.imageStoragePath,
           startedAt,
           providerFinishedAt,
+          downloadAuth: imageDownloadAuth(imageRuntime.provider),
           log: { mode, source: sourceForLog, prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, references: mode === 'edit' && referenceRecords.length ? referenceRecords : undefined },
         });
         generated.push(...stored.images);
