@@ -18,7 +18,7 @@ import { normalizeGenerationSource, type GenerationSource } from '@/lib/generati
 import { classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { memoryContextMessage } from '@/lib/agent-memory';
-import { appendPersonaToSystem } from '@/lib/agent-persona';
+import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
 
 export const runtime = 'nodejs';
 
@@ -538,6 +538,10 @@ export async function POST(request: Request) {
       ...memoryContextMessage(body.memory),
       ...messages.map((m) => ({ role: m.role, content: toChatContent(m, supportsVideoInput) } as ChatMessage)),
     ];
+    const personaInstruction = personaContextMessage(body.persona)[0];
+    if (personaInstruction) {
+      llmMessages.push(personaInstruction);
+    }
     if (isReversePromptTask) llmMessages[0] = { role: 'system', content: reversePromptInstructions };
     if (isOneTakeVideoPromptTask) llmMessages[0] = { role: 'system', content: buildOneTakeVideoPromptInstructions(oneTakeDuration || ONE_TAKE_DEFAULT_DURATION) };
     if (isCinematicDirectorTask) llmMessages[0] = { role: 'system', content: buildCinematicDirectorInstructions() };
