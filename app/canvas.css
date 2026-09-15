@@ -237,14 +237,14 @@ html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(
 .canvas-settings-options{display:grid;gap:7px}.canvas-settings-options button{display:flex;align-items:center;gap:9px;min-height:52px;padding:8px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--text);text-align:left}.canvas-settings-options button:hover{border-color:var(--accent);background:var(--accent-soft)}.canvas-settings-options button.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 13%,transparent)}.canvas-settings-options button>span:nth-child(2){display:grid;gap:4px;flex:1;min-width:0}.canvas-settings-options button b{font-size:9px}.canvas-settings-options button small{color:var(--muted);font-size:8px}.canvas-settings-options button i{width:18px;color:var(--accent-text);font-style:normal;text-align:center}.canvas-settings-option-icon{width:28px;height:28px;display:grid;place-items:center;flex:none;border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:18px}
 /* Moving guides carry repeated, tapered light trails. Every stroke advances
    by one dash period, so the loop and the bright leading ends stay aligned. */
-.canvas-edge-visual{--edge-flow-color:var(--node-color,var(--accent));--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 94%,#fff);--edge-flow-halo-opacity:.13;--edge-flow-guide:color-mix(in srgb,var(--edge-flow-color) 48%,var(--line-strong))}
-html[data-theme="dark"] .canvas-edge-visual{--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 65%,#fff);--edge-flow-halo-opacity:.32;--edge-flow-guide:color-mix(in srgb,var(--edge-flow-color) 38%,var(--line-strong))}
+.canvas-edge-visual{--edge-flow-color:var(--node-color,var(--accent));--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 94%,#fff);--edge-flow-halo-opacity:.1;--edge-flow-guide:color-mix(in srgb,var(--edge-flow-color) 48%,var(--line-strong))}
+html[data-theme="dark"] .canvas-edge-visual{--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 65%,#fff);--edge-flow-halo-opacity:.22;--edge-flow-guide:color-mix(in srgb,var(--edge-flow-color) 38%,var(--line-strong))}
 .canvas-edge-related-flow{pointer-events:none}
 /* Scale normalized trail strokes with their route; non-scaling-stroke changes
    their dash spacing in Chromium and breaks the intended trail proportions. */
 .canvas-edge-flow-stroke{fill:none;stroke:var(--edge-flow-color);pointer-events:none;stroke-linecap:round;stroke-linejoin:round;stroke-dashoffset:var(--edge-flow-offset);animation:canvas-edge-related-flow 2.6s linear infinite}
 .canvas-edge-flow-tip{stroke:var(--edge-flow-tip)}
-.canvas-edge-flow-halo{stroke-width:6;opacity:var(--edge-flow-halo-opacity);filter:blur(1.6px)}
+.canvas-edge-flow-halo{stroke-width:3.2;opacity:var(--edge-flow-halo-opacity);filter:blur(.9px)}
 @keyframes canvas-edge-related-flow{from{stroke-dashoffset:var(--edge-flow-offset)}to{stroke-dashoffset:calc(var(--edge-flow-offset) - 360px)}}
 @keyframes canvas-edge-related-dashes{from{stroke-dashoffset:0}to{stroke-dashoffset:-32}}
 .canvas-edge-visual .canvas-edge.related{stroke:var(--edge-flow-guide);stroke-width:1.4;stroke-dasharray:7 9;stroke-linecap:round;filter:none;animation:canvas-edge-related-dashes 1.6s linear infinite}

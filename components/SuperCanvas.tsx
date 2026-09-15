@@ -2679,14 +2679,14 @@ function createCanvasClipboardPayload(
 // Nested strokes share a leading edge, tapering in width and opacity toward
 // the tail. Repeating dashes follow every route without per-frame JS geometry.
 const CANVAS_EDGE_FLOW_SEGMENTS = [
-  { length: 160, width: 0.6, opacity: 0.12 },
-  { length: 136, width: 0.9, opacity: 0.18 },
-  { length: 112, width: 1.2, opacity: 0.24 },
-  { length: 88, width: 1.5, opacity: 0.32 },
-  { length: 64, width: 1.8, opacity: 0.42 },
-  { length: 40, width: 2.1, opacity: 0.54 },
-  { length: 20, width: 2.4, opacity: 0.7 },
-  { length: 6, width: 2.4, opacity: 1 },
+  { length: 160, width: 0.35, opacity: 0.12 },
+  { length: 136, width: 0.5, opacity: 0.18 },
+  { length: 112, width: 0.65, opacity: 0.24 },
+  { length: 88, width: 0.8, opacity: 0.32 },
+  { length: 64, width: 0.95, opacity: 0.42 },
+  { length: 40, width: 1.1, opacity: 0.54 },
+  { length: 20, width: 1.3, opacity: 0.7 },
+  { length: 6, width: 1.3, opacity: 1 },
 ];
 
 function CanvasEdgeVisual({
