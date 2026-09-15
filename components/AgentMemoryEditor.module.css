@@ -1,0 +1,56 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-end;
+  flex-shrink: 0;
+  margin: 8px 16px;
+  min-height: 32px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border, #8886);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.dialog {
+  width: min(600px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--border, #8886);
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  color: var(--text, #222);
+}
+.dialog::backdrop { background: #0008; }
+.dialog form { display: grid; gap: 12px; }
+.dialog h2 { font-size: 18px; margin: 0 0 8px; }
+.dialog label, .dialog output { font-size: 12px; }
+.dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 180px;
+  height: min(320px, 45dvh);
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border, #8886);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.dialog output { text-align: right; }
+.dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.dialog footer button {
+  padding: 7px 12px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border, #8886);
+  border-radius: 4px;
+}
+.dialog footer button:first-child { margin-right: auto; }
+.dialog button:disabled, .trigger:disabled { opacity: .5; cursor: not-allowed; }
+.dialog p { color: #d33d4d; overflow-wrap: anywhere; }

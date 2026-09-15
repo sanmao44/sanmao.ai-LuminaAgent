@@ -3,6 +3,7 @@ import type { AngleCameraState } from './angle-control';
 import { emitWorkspaceChange } from './workspace-events';
 import type { UpscaleOutputFormat } from './types';
 import type { LocalEditAnnotation } from './local-edit';
+import type { ConversationMemory } from './agent-memory';
 
 export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas' | 'upscale';
 
@@ -94,6 +95,7 @@ export type ChatSession = {
   createdAt: number;
   updatedAt: number;
   messages: ChatHistoryMessage[];
+  memory?: ConversationMemory;
 };
 
 export type AssetIndexItem = {

@@ -29,6 +29,8 @@ import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/li
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
 import { requestAgent } from '@/lib/agent-client';
+import { editConversationMemory, prepareConversationMemory, validConversationMemory } from '@/lib/agent-memory';
+import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
@@ -5176,6 +5178,7 @@ export default function Page() {
     const conversationNavCloseTimerRef = useRef(0);
     const conversationNavCloseAfterClickRef = useRef(false);
     const activeChatIdRef = useRef(null);
+    const chatMemoryRef = useRef(new Map());
     const busyChatIdsRef = useRef(new Set());
     const pendingChatMessagesRef = useRef(new Map());
     const agentRequestsRef = useRef(new Map());
@@ -7112,6 +7115,7 @@ export default function Page() {
     async function refreshChatSessions() {
         try {
             const sessions = (await listChatSessions()).map(normalizeChatSession);
+            chatMemoryRef.current = new Map(sessions.map((session)=>[session.id, validConversationMemory(session.memory, session.messages)]));
             setChatSessions(sessions);
             if (sessions.length) {
                 activeChatIdRef.current = sessions[0].id;
@@ -8343,6 +8347,43 @@ export default function Page() {
         setAngleResultOpenRequest(angleResultToast.id);
         setAngleResultToast(null);
     }
+    async function prepareAgentMemory(sessionId, context, model, signal) {
+        const memory = await prepareConversationMemory(context, chatMemoryRef.current.get(sessionId), async (summary, transcript)=>{
+            const response = await fetch('/api/agent/memory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal,
+                body: JSON.stringify({ summary, transcript, model })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '整理对话记忆失败，请重试');
+            return result.summary;
+        }, signal);
+        signal.throwIfAborted();
+        const previous = chatMemoryRef.current.get(sessionId);
+        chatMemoryRef.current.set(sessionId, memory);
+        try {
+            await persistAgentSession(sessionId, pendingChatMessagesRef.current.get(sessionId) || context);
+        } catch (error) {
+            chatMemoryRef.current.set(sessionId, previous);
+            throw error;
+        }
+        return memory.summary;
+    }
+    async function saveAgentMemory(summary) {
+        const sessionId = activeChatIdRef.current;
+        if (!sessionId || busyChatIdsRef.current.has(sessionId)) throw new Error('请等待当前对话完成');
+        const currentMessages = pendingChatMessagesRef.current.get(sessionId) || messages;
+        const previous = chatMemoryRef.current.get(sessionId);
+        chatMemoryRef.current.set(sessionId, editConversationMemory(currentMessages, summary));
+        try {
+            await persistAgentSession(sessionId, currentMessages);
+        } catch (error) {
+            chatMemoryRef.current.set(sessionId, previous);
+            throw error;
+        }
+        notify(summary.trim() ? '对话记忆已保存' : '摘要已清空，最近消息仍会作为上下文');
+    }
     async function persistAgentSession(id, nextMessages) {
         const storedMessages = normalizeAssistantImageSources(nextMessages.filter((message)=>!message.pending).map(({ pending: _pending, ...message })=>message));
         if (!storedMessages.length) return;
@@ -8354,7 +8395,8 @@ export default function Page() {
             title: existing?.title || firstUser.slice(0, 30),
             createdAt: existing?.createdAt || now,
             updatedAt: now,
-            messages: storedMessages
+            messages: storedMessages,
+            memory: validConversationMemory(chatMemoryRef.current.get(id), storedMessages)
         };
         const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
         const operation = previous.catch(()=>undefined).then(async ()=>{
@@ -8739,7 +8781,10 @@ export default function Page() {
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const payloadMessages = contextMessages.slice(-12).map((item)=>({
+            const retryInstruction = { id: 'retry-instruction', role: 'user', content: '请基于上面的对话重新生成一版完整答复。不要提及“重试”或“版本”，直接回答原问题。' };
+            const memory = await prepareAgentMemory(sessionId, [...contextMessages, retryInstruction], activeAgentModelId, requestController.signal);
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
+            const payloadMessages = contextMessages.slice(-11).map((item)=>({
                     role: item.role,
                     content: item.content,
                     references: item.id === latestUserId ? referencesForRequest : [],
@@ -8753,13 +8798,14 @@ export default function Page() {
                 }));
             payloadMessages.push({
                 role: 'user',
-                content: '请基于上面的对话重新生成一版完整答复。不要提及“重试”或“版本”，直接回答原问题。',
+                content: retryInstruction.content,
                 references: [],
                 files: []
             });
             let streamedText = '';
             const data = await requestAgent({
                     messages: payloadMessages,
+                    memory,
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
@@ -8984,6 +9030,9 @@ export default function Page() {
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
+            updatePendingActivity({ stage: 'memory', message: '正在整理当前对话上下文…' });
+            const memory = await prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal);
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
             const payloadMessages = nextMessages.slice(-12).map((m)=>({
                     role: m.role,
                     content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : m.content,
@@ -9000,6 +9049,7 @@ export default function Page() {
             let streamedText = '';
             const data = await requestAgent({
                     messages: payloadMessages,
+                    memory,
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     task,
@@ -10806,6 +10856,12 @@ export default function Page() {
                                     if (e.dataTransfer.files?.length) void addAgentAttachments(e.dataTransfer.files);
                                 },
                                 children: [
+                                    activeChatId && /*#__PURE__*/ _jsx(AgentMemoryEditor, {
+                                        summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
+                                        disabled: activeAgentBusy,
+                                        icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
+                                        onSave: saveAgentMemory
+                                    }, activeChatId),
                                     !messages.length ? /*#__PURE__*/ _jsxs("div", {
                                         className: "agent-welcome",
                                         children: [

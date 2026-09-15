@@ -17,6 +17,7 @@ import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { memoryContextMessage } from '@/lib/agent-memory';
 
 export const runtime = 'nodejs';
 
@@ -533,6 +534,7 @@ export async function POST(request: Request) {
     system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     let llmMessages: ChatMessage[] = [
       { role: 'system', content: system },
+      ...memoryContextMessage(body.memory),
       ...messages.map((m) => ({ role: m.role, content: toChatContent(m, supportsVideoInput) } as ChatMessage)),
     ];
     if (isReversePromptTask) llmMessages[0] = { role: 'system', content: reversePromptInstructions };
