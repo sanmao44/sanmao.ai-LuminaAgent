@@ -18913,11 +18913,9 @@ function CanvasNodeCard({
       }}
     >
       {status === "running" && (
-        <svg className="canvas-node-flow" aria-hidden="true" focusable="false">
-          <rect className="canvas-node-flow-glow" pathLength="100" />
-          <rect className="canvas-node-flow-trail" pathLength="100" />
-          <rect className="canvas-node-flow-head" pathLength="100" />
-        </svg>
+        <div className="canvas-node-aura" aria-hidden="true">
+          <span className="canvas-node-aura-surface" />
+        </div>
       )}
       {group && (
         <button
