@@ -586,6 +586,7 @@ type CanvasEditorDraft = {
 type CanvasGenerationRequest = {
   nodeId?: string;
   prompt?: string;
+  userPrompt?: string;
   params?: CanvasGenerationParams;
   agentTask?: CanvasAgentTask;
   durationSeconds?: number;
@@ -6149,7 +6150,7 @@ export default function SuperCanvas() {
       : selectedSingle;
     const promptOverride =
       request?.nodeId && activeNode?.id === request.nodeId
-        ? request.prompt
+        ? request.userPrompt ?? request.prompt
         : undefined;
     const paramsOverride =
       request?.nodeId && activeNode?.id === request.nodeId
@@ -6221,7 +6222,10 @@ export default function SuperCanvas() {
       };
     }
     if (activeNode?.type === "media") {
-      const prompt = promptOverride ?? String(activeNode.data.generation?.prompt || activeNode.data.prompt || "");
+      const prompt = promptOverride ?? String(
+        activeNode.data.generation?.userPrompt
+          ?? (activeNode.data.generation?.prompt || activeNode.data.prompt || ""),
+      );
       const value = paramsOverride || activeNode.data.generation?.params || activeNode.data.params;
       if (activeNode.data.kind === "video") {
         return {
@@ -6318,6 +6322,7 @@ export default function SuperCanvas() {
                           generation: {
                             ...node.data.generation,
                             prompt: value,
+                            userPrompt: value,
                           },
                         }
                       : {}),
@@ -7664,12 +7669,13 @@ export default function SuperCanvas() {
     const useCurrentImageAsReference = options?.useCurrentImageAsReference !== false;
     const presetId = draft.presetId;
     const presetName = draft.presetName;
+    const userPrompt = visibleCanvasImagePresetPrompt(draft.prompt, presetId, customImagePresets);
     // Keep the legacy signature stable for callers that only control reference usage.
     const hasTextReference = draft.references.some(
       (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
     );
-    if (!draft.prompt.trim() && !hasTextReference && !presetId) return notify("请输入生成提示词。", "error");
-    const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
+    if (!userPrompt && !hasTextReference && !presetId) return notify("请输入生成提示词。", "error");
+    const naturalReferenceReplacement = replaceNaturalReferenceLabels(userPrompt, draft.references);
     const selection = selectCreativeReferences(naturalReferenceReplacement.value, draft.references);
     if (selection.invalidNumbers.length) {
       return notify(`引用编号无效：${selection.invalidNumbers.map((number) => `@${number}`).join("、")}`, "error");
@@ -7868,6 +7874,7 @@ export default function SuperCanvas() {
       generation: {
         kind: "image",
         prompt,
+        userPrompt,
         params: clone(params),
         ...(presetId ? { presetId } : {}),
         ...(presetName ? { presetName } : {}),
@@ -8066,16 +8073,17 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, notify, openNodePosition, runtime, updateDoc]);
+  }, [addLog, commit, customImagePresets, notify, openNodePosition, runtime, updateDoc]);
 
   const runVideoContinuation = useCallback(async (draftInput: CanvasReuseDraft) => {
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind !== "video") return;
+    const userPrompt = draft.prompt.trim();
     const hasTextReference = draft.references.some(
       (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
     );
-    if (!draft.prompt.trim() && !hasTextReference) return notify("请输入生成提示词。", "error");
-    const naturalReferenceReplacement = replaceNaturalReferenceLabels(draft.prompt, draft.references);
+    if (!userPrompt && !hasTextReference) return notify("请输入生成提示词。", "error");
+    const naturalReferenceReplacement = replaceNaturalReferenceLabels(userPrompt, draft.references);
     const selection = selectCreativeReferences(naturalReferenceReplacement.value, draft.references);
     if (selection.invalidNumbers.length) {
       return notify(`引用编号无效：${selection.invalidNumbers.map((number) => `@${number}`).join("、")}`, "error");
@@ -8137,6 +8145,7 @@ export default function SuperCanvas() {
       generation: {
         kind: "video",
         prompt,
+        userPrompt,
         params: clone(draft.params),
         operation: draft.operation,
         referenceIds: resolvedReferenceIds,
@@ -8234,6 +8243,7 @@ export default function SuperCanvas() {
                 generation: {
                   kind: "video",
                   prompt,
+                  userPrompt,
                   params: clone(params),
                   operation: draft.operation,
                   referenceIds: resolvedReferenceIds,
@@ -8270,18 +8280,28 @@ export default function SuperCanvas() {
 
   const runReuseGeneration = useCallback(async (
     draftInput: CanvasReuseDraft,
-    options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference" | "presetId" | "presetName">,
+    options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference" | "presetId" | "presetName" | "userPrompt">,
   ) => {
     const draft = cloneReuseDraft(draftInput);
-    if (draft.kind === "audio") {
+    const hasPresetSelection = Boolean(
+      options && Object.prototype.hasOwnProperty.call(options, "presetId"),
+    );
+    const requestedDraft = options && (typeof options.userPrompt === "string" || hasPresetSelection)
+      ? {
+          ...draft,
+          ...(typeof options.userPrompt === "string" ? { prompt: options.userPrompt } : {}),
+          ...(hasPresetSelection ? { presetId: options.presetId, presetName: options.presetName } : {}),
+        }
+      : draft;
+    if (requestedDraft.kind === "audio") {
       notify("音频节点只能作为视频参考输入，不能复用为生成节点。", "error");
       return;
     }
-    if (draft.kind === "image") {
-      await runImageContinuation(draft, { useCurrentImageAsReference: options?.useCurrentImageAsReference });
+    if (requestedDraft.kind === "image") {
+      await runImageContinuation(requestedDraft, { useCurrentImageAsReference: options?.useCurrentImageAsReference });
       return;
     }
-    await runVideoContinuation(draft);
+    await runVideoContinuation(requestedDraft);
   }, [notify, runImageContinuation, runVideoContinuation]);
 
   const runGeneration = useCallback(async (request?: CanvasGenerationRequest) => {
@@ -8320,15 +8340,20 @@ export default function SuperCanvas() {
         ),
       );
       if (!draft) return notify("当前节点没有完整生成参数，无法创建新分支。", "error");
-      const requestedPrompt = request?.prompt?.trim();
+      const hasRequestedPrompt = typeof request?.userPrompt === "string" || typeof request?.prompt === "string";
+      const requestedPrompt = typeof request?.userPrompt === "string"
+        ? request.userPrompt
+        : request?.prompt;
+      const hasRequestedPreset = Boolean(
+        request && Object.prototype.hasOwnProperty.call(request, "presetId"),
+      );
       await runReuseGeneration(
         request
           ? {
               ...draft,
-              ...(requestedPrompt ? { prompt: request.prompt } : {}),
+              ...(hasRequestedPrompt ? { prompt: requestedPrompt || "" } : {}),
               ...(request.params ? { params: clone(request.params) } : {}),
-              ...(request.presetId ? { presetId: request.presetId } : {}),
-              ...(request.presetName ? { presetName: request.presetName } : {}),
+              ...(hasRequestedPreset ? { presetId: request.presetId, presetName: request.presetName } : {}),
               dirty: true,
             }
           : draft,
@@ -8708,6 +8733,9 @@ export default function SuperCanvas() {
       })),
     );
     const sourcePrompt = naturalReferenceReplacement.value;
+    const userPrompt = typeof request?.userPrompt === "string"
+      ? request.userPrompt.trim()
+      : source.prompt.trim();
     const explicitMentionNumbers = referenceMentionNumbers(sourcePrompt);
     const invalidMentionNumbers = explicitMentionNumbers.filter((number) => number < 1 || number > mentionCandidates.length);
     if (invalidMentionNumbers.length) return notify(`引用编号无效：${Array.from(new Set(invalidMentionNumbers)).map((number) => `@${number}`).join("、")}`, "error");
@@ -8793,9 +8821,9 @@ export default function SuperCanvas() {
                     status: "running",
                     processingStartedAt: Date.now(),
                     statusLabel: kind === "video" ? "视频生成中" : "图片生成中",
-                    prompt,
+                    prompt: userPrompt,
                     ...(node.data.generation
-                      ? { generation: { ...node.data.generation, prompt, ...(presetId ? { presetId } : {}), ...(presetName ? { presetName } : {}) } }
+                      ? { generation: { ...node.data.generation, prompt, userPrompt, ...(presetId ? { presetId } : {}), ...(presetName ? { presetName } : {}) } }
                       : {}),
                   },
                 }
@@ -8836,6 +8864,7 @@ export default function SuperCanvas() {
               generation: {
                 kind: "image",
                 prompt,
+                userPrompt,
                 params: clone(imageParams),
                 ...(presetId ? { presetId } : {}),
                 ...(presetName ? { presetName } : {}),
@@ -8910,6 +8939,7 @@ export default function SuperCanvas() {
               generation: {
                 kind: "image",
                 prompt,
+                userPrompt,
                 params: clone(imageParams),
                 ...(presetId ? { presetId } : {}),
                 ...(presetName ? { presetName } : {}),
@@ -9063,6 +9093,7 @@ export default function SuperCanvas() {
               generation: {
                 kind: "video",
                 prompt,
+                userPrompt,
                 params: clone(videoParams),
                 referenceIds: linked.map((item) => item.id),
                 sourceGeneratorId: sourceNode?.id,
@@ -9152,6 +9183,7 @@ export default function SuperCanvas() {
                     generation: {
                       kind: "video",
                       prompt,
+                      userPrompt,
                       params: clone(videoParams),
                       referenceIds: linked.map((item) => item.id),
                       sourceGeneratorId: sourceNode?.id,
@@ -9461,13 +9493,26 @@ export default function SuperCanvas() {
       const draft = editorDrafts[node.id];
       if (node.type === "prompt") return String(node.data.agentPrompt || node.data.text || "");
       if (node.type === "media" && node.data.kind === "audio") return draft?.prompt || "";
-      const persistedPrompt = String(node.data.generation?.prompt || node.data.prompt || "");
+      const persistedPrompt = typeof node.data.generation?.userPrompt === "string"
+        ? node.data.generation.userPrompt
+        : typeof node.data.editor?.draftPrompt === "string"
+          ? node.data.editor.draftPrompt
+          : String(node.data.generation?.prompt || node.data.prompt || "");
+      const persistedVisiblePrompt = canvasNodeSupportsImagePresets(node)
+        ? visibleCanvasImagePresetPrompt(
+            persistedPrompt,
+            node.data.generation?.presetId,
+            customImagePresets,
+          )
+        : persistedPrompt;
       const rawPrompt = draft?.presetId && canvasNodeSupportsImagePresets(node)
         ? draft.prompt || ""
-        : draft?.prompt?.trim() || persistedPrompt || draft?.prompt || "";
+        : draft
+          ? draft.prompt
+          : persistedVisiblePrompt;
       return compiledCanvasLocalEditPrompt(node, rawPrompt, draft?.params);
     },
-    [editorDrafts],
+    [customImagePresets, editorDrafts],
   );
 
   const editorParamsFor = useCallback(
@@ -9614,7 +9659,7 @@ export default function SuperCanvas() {
               ...item.data,
               prompt: value,
               ...(item.data.generation
-                ? { generation: { ...item.data.generation, prompt: value } }
+                ? { generation: { ...item.data.generation, prompt: value, userPrompt: value } }
                 : {}),
               editor: { ...item.data.editor, draftPrompt: value, dirty: true },
             },
@@ -9836,7 +9881,7 @@ export default function SuperCanvas() {
   const runEditorGeneration = useCallback(
     (
       node: CanvasNode,
-      options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference" | "presetId" | "presetName">,
+      options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference" | "presetId" | "presetName" | "userPrompt">,
     ) => {
       if (node.type === "media" && node.data.kind === "audio") {
         notify("音频节点是独立素材输入，请将它连接到视频节点后生成。", "error");
@@ -9860,15 +9905,31 @@ export default function SuperCanvas() {
       const draft = editorDrafts[currentNode.id];
       const params = draft?.params ? clone(draft.params) : editorParamsFor(currentNode);
       const prompt = editorPromptFor(currentNode);
-       const effectivePrompt = canvasNodeSupportsImagePresets(currentNode) && currentNode.data.kind === "image"
-         ? resolveCanvasImagePresetPrompt(prompt, draft?.presetId || currentNode.data.generation?.presetId, customImagePresets)
-         : prompt;
+      const userPrompt = typeof options?.userPrompt === "string" ? options.userPrompt : prompt;
+      const supportsImagePresets = canvasNodeSupportsImagePresets(currentNode) && currentNode.data.kind === "image";
+      const hasDraftPresetSelection = Boolean(
+        draft && Object.prototype.hasOwnProperty.call(draft, "presetId"),
+      );
+      const presetId = supportsImagePresets
+        ? hasDraftPresetSelection
+          ? draft?.presetId
+          : options?.presetId || currentNode.data.generation?.presetId
+        : undefined;
+      const presetName = supportsImagePresets
+        ? hasDraftPresetSelection
+          ? draft?.presetName
+          : options?.presetName || currentNode.data.generation?.presetName
+        : undefined;
+      const effectivePrompt = supportsImagePresets
+        ? resolveCanvasImagePresetPrompt(userPrompt, presetId, customImagePresets)
+        : userPrompt;
       const generationRequest: CanvasGenerationRequest = {
         nodeId: currentNode.id,
         prompt: effectivePrompt,
+        userPrompt,
         ...(params ? { params } : {}),
-        ...(canvasNodeSupportsImagePresets(currentNode) && draft?.presetId ? { presetId: draft.presetId } : {}),
-        ...(canvasNodeSupportsImagePresets(currentNode) && draft?.presetName ? { presetName: draft.presetName } : {}),
+        ...(presetId ? { presetId } : {}),
+        ...(presetName ? { presetName } : {}),
         ...(options?.useCurrentImageAsReference !== undefined
           ? { useCurrentImageAsReference: options.useCurrentImageAsReference }
           : {}),
@@ -9882,18 +9943,21 @@ export default function SuperCanvas() {
                   ...item,
                   data: {
                     ...item.data,
-                    ...(item.type === "prompt" ? { text: effectivePrompt, agentPrompt: effectivePrompt } : { prompt: effectivePrompt }),
+                    ...(item.type === "prompt" ? { text: userPrompt, agentPrompt: userPrompt } : { prompt: userPrompt }),
                     ...(draft.params ? { params: clone(draft.params) } : {}),
                     ...(item.type === "media" && item.data.generation
                       ? {
                           generation: {
                             ...item.data.generation,
                             prompt: effectivePrompt,
+                            userPrompt,
+                            presetId,
+                            presetName,
                             ...(draft.params ? { params: clone(draft.params) } : {}),
                           },
                         }
                       : {}),
-                    editor: { ...item.data.editor, dirty: false, draftPrompt: effectivePrompt, draftParams: draft.params },
+                    editor: { ...item.data.editor, dirty: false, draftPrompt: userPrompt, draftParams: draft.params },
                   },
                 }
               : item,
@@ -9906,7 +9970,7 @@ export default function SuperCanvas() {
       setExpandedEditorId(null);
       void runGenerationRef.current?.(generationRequest);
     },
-    [commit, editorDrafts, editorParamsFor, editorPromptFor, notify, reuseDraft, runReuseGeneration],
+    [commit, customImagePresets, editorDrafts, editorParamsFor, editorPromptFor, notify, reuseDraft, runReuseGeneration],
   );
 
   const updateUpscaleParams = useCallback((node: CanvasNode, params: CanvasUpscaleParams) => {
@@ -10019,6 +10083,7 @@ export default function SuperCanvas() {
                           generation: {
                             ...item.data.generation,
                             prompt: nextPrompt,
+                            userPrompt: nextPrompt,
                             params: clone(params),
                           },
                         }

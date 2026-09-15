@@ -131,7 +131,7 @@ export function reuseDraftFromNode(
   return {
     sourceNodeId: node.id,
     kind: node.data.kind,
-    prompt: String(node.data.generation?.prompt || node.data.prompt || ""),
+    prompt: String(node.data.generation?.userPrompt ?? (node.data.generation?.prompt || node.data.prompt || "")),
     params: { ...params } as CanvasGenerationParams,
     references: dedupeReferenceDrafts(references),
     operation: node.data.kind === "video" && "operation" in params && params.operation === "extend"

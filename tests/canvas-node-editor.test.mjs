@@ -70,7 +70,8 @@ test("editor generation resolves its current draft without waiting for selection
   assert.match(editor, /const generationRequest: CanvasGenerationRequest/);
   assert.match(editor, /nodeId: currentNode\.id/);
   assert.match(editor, /const prompt = editorPromptFor\(currentNode\)/);
-  assert.match(editor, /prompt,[\s\S]*\.\.\.\(params \? \{ params \} : \{\}\),/);
+  assert.match(editor, /prompt: effectivePrompt,[\s\S]*userPrompt,[\s\S]*\.\.\.\(params \? \{ params \} : \{\}\),/);
+  assert.match(editor, /const userPrompt = typeof options\?\.userPrompt === "string"/);
   assert.match(editor, /runGenerationRef\.current\?\.\(generationRequest\)/);
   assert.doesNotMatch(editor, /setTimeout/);
 
@@ -82,8 +83,8 @@ test("editor generation resolves its current draft without waiting for selection
   assert.match(generation, /nodeById\(docRef\.current, request\.nodeId\)/);
   assert.match(generation, /const source = deckSource\(request\)/);
   assert.match(generation, /const generationMode = source\.kind/);
-  assert.match(generation, /const requestedPrompt = request\?\.prompt\?\.trim\(\)/);
-  assert.match(generation, /\.\.\.\(requestedPrompt \? \{ prompt: request\.prompt \} : \{\}\)/);
+  assert.match(generation, /const hasRequestedPrompt = typeof request\?\.userPrompt === "string" \|\| typeof request\?\.prompt === "string"/);
+  assert.match(generation, /\.\.\.\(hasRequestedPrompt \? \{ prompt: requestedPrompt \|\| "" \} : \{\}\)/);
   assert.match(generation, /if \(!request && reuseDraft\)/);
   assert.doesNotMatch(generation, /if \(mode === "text"\)/);
 });
@@ -410,9 +411,9 @@ test("text references can supply the prompt for repeat image and video generatio
   const video = component.slice(videoStart, videoEnd);
   [continuation, video].forEach((section) => {
     assert.match(section, /const hasTextReference = draft\.references\.some\(/);
-    assert.match(section, /if \(!draft\.prompt\.trim\(\) && !hasTextReference\)/);
+    assert.match(section, /if \(!userPrompt && !hasTextReference/);
   });
-  assert.match(component, /const persistedPrompt = String\(node\.data\.generation\?\.prompt \|\| node\.data\.prompt \|\| ""\)/);
+  assert.match(component, /const persistedPrompt = typeof node\.data\.generation\?\.userPrompt === "string"/);
 });
 
 test("video continuation creates a direct video result without a variant generator", () => {
@@ -658,7 +659,8 @@ test("canvas reuses the compiled local-edit prompt for legacy masks, display, an
   const editorPrompt = component.slice(promptStart, promptEnd);
   assert.ok(promptStart >= 0 && promptEnd > promptStart, "editor prompt resolver should be present");
   assert.match(editorPrompt, /const rawPrompt = draft\?\.presetId && canvasNodeSupportsImagePresets\(node\)[\s\S]*draft\.prompt \|\| ""/);
-  assert.match(editorPrompt, /draft\?\.prompt\?\.trim\(\) \|\| persistedPrompt \|\| draft\?\.prompt \|\| ""/);
+  assert.match(editorPrompt, /const persistedVisiblePrompt = canvasNodeSupportsImagePresets\(node\)/);
+  assert.match(editorPrompt, /: draft\r?\n\s+\? draft\.prompt\r?\n\s+: persistedVisiblePrompt/);
   assert.match(editorPrompt, /return compiledCanvasLocalEditPrompt\(node, rawPrompt, draft\?\.params\)/);
   const generationStart = component.indexOf("const runEditorGeneration = useCallback");
   const generationEnd = component.indexOf("const updateUpscaleParams = useCallback", generationStart);
@@ -682,8 +684,8 @@ test("image presets stay opaque in the editor and open custom forms in a separat
   assert.match(editor, /输入要保存的完整提示词/);
   assert.doesNotMatch(editor, /preset\.prompt\.slice\(0, 42\)/);
   assert.match(component, /function resolveCanvasImagePresetPrompt\(/);
-  assert.match(component, /const effectivePrompt = canvasNodeSupportsImagePresets\(currentNode\) && currentNode\.data\.kind === "image"/);
-  assert.match(component, /resolveCanvasImagePresetPrompt\(prompt, draft\?\.presetId/);
+  assert.match(component, /const supportsImagePresets = canvasNodeSupportsImagePresets\(currentNode\) && currentNode\.data\.kind === "image"/);
+  assert.match(component, /resolveCanvasImagePresetPrompt\(userPrompt, presetId, customImagePresets\)/);
   assert.match(styles, /\.canvas-image-preset-reference\{/);
   assert.match(styles, /\.canvas-preset-editor-backdrop\{/);
 });
@@ -692,7 +694,7 @@ test("image variant generators do not expose or persist image presets", () => {
   assert.match(component, /function canvasNodeSupportsImagePresets\(node: CanvasNode\)/);
   assert.match(component, /return node\.type !== "generator" && node\.type !== "prompt" && node\.type !== "upscale" && node\.data\.kind === "image"/);
   assert.match(component, /const imagePresetEnabled = supportsImagePresets && !pending/);
-  assert.match(component, /canvasNodeSupportsImagePresets\(currentNode\) && draft\?\.presetId/);
+  assert.match(component, /const supportsImagePresets = canvasNodeSupportsImagePresets\(currentNode\) && currentNode\.data\.kind === "image"/);
   assert.doesNotMatch(component, /const generatorPresetId = editorDrafts\[generatorId\]\?\.presetId/);
 });
 

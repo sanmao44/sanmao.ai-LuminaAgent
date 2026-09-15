@@ -154,6 +154,8 @@ export type CanvasNodeParams = CanvasGenerationParams | CanvasUpscaleParams;
 export type CanvasGenerationMeta = {
   kind: CanvasMediaKind;
   prompt: string;
+  /** Prompt entered by the user, excluding opaque preset instructions. */
+  userPrompt?: string;
   params: CanvasNodeParams;
   presetId?: string;
   presetName?: string;
