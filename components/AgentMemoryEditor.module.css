@@ -51,6 +51,7 @@
 .dialog form { display: grid; gap: 12px; }
 .dialog h2 { font-size: 18px; margin: 0 0 8px; }
 .dialog label, .dialog output { font-size: 12px; }
+.dialog .hint { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
 .summary {
   min-height: 100px;
   max-height: min(360px, 50dvh);

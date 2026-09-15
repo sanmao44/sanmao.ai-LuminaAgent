@@ -31,6 +31,8 @@ import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-int
 import { requestAgent } from '@/lib/agent-client';
 import { editConversationMemory, prepareConversationMemory, validConversationMemory } from '@/lib/agent-memory';
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
+import AgentPersonaEditor from '@/components/AgentPersonaEditor';
+import { normalizeConversationPersona } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
@@ -1649,6 +1651,12 @@ function Icon({ name, size = 18 }) {
             children: /*#__PURE__*/ _jsx("path", {
                 d: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
             })
+        }),
+        user: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", { cx: "12", cy: "8", r: "3" }),
+                /*#__PURE__*/ _jsx("path", { d: "M5 20a7 7 0 0 1 14 0" })
+            ]
         }),
         preview: /*#__PURE__*/ _jsxs(_Fragment, {
             children: [
@@ -8384,6 +8392,16 @@ export default function Page() {
         }
         notify(summary.trim() ? '对话记忆已保存' : '摘要已清空，最近消息仍会作为上下文');
     }
+    async function saveAgentPersona(persona) {
+        const sessionId = activeChatIdRef.current;
+        if (!sessionId || busyChatIdsRef.current.has(sessionId)) throw new Error('请等待当前对话完成');
+        const current = chatSessions.find((session)=>session.id === sessionId);
+        if (!current) throw new Error('当前对话不存在');
+        const next = { ...current, persona: normalizeConversationPersona(persona), updatedAt: Date.now() };
+        await saveChatSession(next);
+        setChatSessions((old)=>old.map((session)=>session.id === sessionId ? next : session));
+        notify(next.persona ? '角色设定已保存' : '角色设定已清空');
+    }
     async function persistAgentSession(id, nextMessages) {
         const storedMessages = normalizeAssistantImageSources(nextMessages.filter((message)=>!message.pending).map(({ pending: _pending, ...message })=>message));
         if (!storedMessages.length) return;
@@ -8396,6 +8414,7 @@ export default function Page() {
             createdAt: existing?.createdAt || now,
             updatedAt: now,
             messages: storedMessages,
+            persona: existing?.persona || '',
             memory: validConversationMemory(chatMemoryRef.current.get(id), storedMessages)
         };
         const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
@@ -8806,6 +8825,7 @@ export default function Page() {
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
+                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || '',
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
@@ -9050,6 +9070,7 @@ export default function Page() {
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
+                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || '',
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     task,
@@ -11559,12 +11580,23 @@ export default function Page() {
                             }),
                             section === 'agent' && activeChatId && /*#__PURE__*/ _jsx("div", {
                                 className: "agent-memory-dock",
-                                children: /*#__PURE__*/ _jsx(AgentMemoryEditor, {
+                                children: /*#__PURE__*/ _jsxs("div", {
+                                    className: "agent-context-tools",
+                                    children: [
+                                        /*#__PURE__*/ _jsx(AgentMemoryEditor, {
                                     summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
-                                    disabled: activeAgentBusy,
-                                    icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
-                                    onSave: saveAgentMemory
-                                }, activeChatId)
+                                            disabled: activeAgentBusy,
+                                            icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
+                                            onSave: saveAgentMemory
+                                        }, `memory-${activeChatId}`),
+                                        /*#__PURE__*/ _jsx(AgentPersonaEditor, {
+                                            persona: chatSessions.find((session)=>session.id === activeChatId)?.persona || '',
+                                            disabled: activeAgentBusy,
+                                            icon: /*#__PURE__*/ _jsx(Icon, { name: 'user', size: 16 }),
+                                            onSave: saveAgentPersona
+                                        }, `persona-${activeChatId}`)
+                                    ]
+                                })
                             }),
                             section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
                                 theme: theme,

@@ -96,6 +96,7 @@ export type ChatSession = {
   updatedAt: number;
   messages: ChatHistoryMessage[];
   memory?: ConversationMemory;
+  persona?: string;
 };
 
 export type AssetIndexItem = {

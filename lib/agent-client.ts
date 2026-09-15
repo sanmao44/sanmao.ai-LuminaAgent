@@ -23,6 +23,7 @@ export type AgentClientMessage = {
 
 export type AgentRequestPayload = {
   memory?: string;
+  persona?: string;
   source?: "agent" | "canvas";
   messages: AgentClientMessage[];
   referenceImages?: Array<Record<string, unknown>>;
