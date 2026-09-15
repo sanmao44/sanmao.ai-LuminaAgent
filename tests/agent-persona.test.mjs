@@ -21,8 +21,7 @@ test('conversation persona is normalized, bounded, and appended to the primary s
 
 test('rebuilt Agent system prompts retain the conversation persona', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-  assert.match(route, /import \{ appendPersonaToSystem \} from '@\/lib\/agent-persona';/);
-  assert.doesNotMatch(route, /personaContextMessage/);
+  assert.match(route, /import \{ appendPersonaToSystem, personaContextMessage \} from '@\/lib\/agent-persona';/);
   assert.match(route, /let system = appendPersonaToSystem\(buildSystem\(initialWebInstructions, ''\), body\.persona\);/);
   assert.match(route, /system = appendPersonaToSystem\(buildSystem\(`\$\{webSearchInstructions\}\$\{nativeAnswerInstructions\}`, webContext, webFailureContext\), body\.persona\);/);
 });
