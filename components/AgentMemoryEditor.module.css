@@ -17,8 +17,9 @@
 .trigger::after {
   content: attr(data-tooltip);
   position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 1;
   width: max-content;
   padding: 7px 9px;
@@ -30,8 +31,10 @@
   line-height: 1.4;
   pointer-events: none;
   visibility: hidden;
+  opacity: 0;
+  transition: opacity .15s ease, visibility .15s ease;
 }
-.trigger:hover::after, .trigger:focus-visible::after { visibility: visible; }
+.trigger:hover::after, .trigger:focus-visible::after { visibility: visible; opacity: 1; }
 .dialog {
   box-sizing: border-box;
   width: min(600px, calc(100vw - 32px));
