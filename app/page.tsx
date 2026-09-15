@@ -10733,14 +10733,8 @@ export default function Page() {
                                 ]
                             }),
                             /*#__PURE__*/ _jsx("div", {
-                                className: `top-actions${section === 'agent' && activeChatId ? ' has-agent-memory' : ''}`,
+                                className: "top-actions",
                                 children: [
-                                    section === 'agent' && activeChatId && /*#__PURE__*/ _jsx(AgentMemoryEditor, {
-                                        summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
-                                        disabled: activeAgentBusy,
-                                        icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
-                                        onSave: saveAgentMemory
-                                    }, activeChatId),
                                     /*#__PURE__*/ _jsxs(Link, {
                                         href: "/canvas",
                                         className: "super-canvas-entry",
@@ -11545,16 +11539,16 @@ export default function Page() {
                                                             ]
                                                         }),
                                                         /*#__PURE__*/ _jsx("button", {
-                                                            type: "button",
-                                                            className: `send-button ${activeAgentBusy ? 'stop-button' : ''}`,
-                                                            disabled: activeAgentBusy ? false : !agentInput.trim() && !agentFiles.length && !agentRefs.length || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
-                                                            onClick: ()=>activeAgentBusy ? void stopAgent() : void sendAgent(),
-                                                            title: activeAgentBusy ? '停止当前回答' : agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : '发送',
-                                                            "aria-label": activeAgentBusy ? '停止当前回答' : '发送',
-                                                            children: /*#__PURE__*/ _jsx(Icon, {
-                                                                name: activeAgentBusy ? "stop" : "send",
-                                                                size: 18
-                                                            })
+                                                                    type: "button",
+                                                                    className: `send-button ${activeAgentBusy ? 'stop-button' : ''}`,
+                                                                    disabled: activeAgentBusy ? false : !agentInput.trim() && !agentFiles.length && !agentRefs.length || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
+                                                                    onClick: ()=>activeAgentBusy ? void stopAgent() : void sendAgent(),
+                                                                    title: activeAgentBusy ? '停止当前回答' : agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : '发送',
+                                                                    "aria-label": activeAgentBusy ? '停止当前回答' : '发送',
+                                                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                                                        name: activeAgentBusy ? "stop" : "send",
+                                                                        size: 18
+                                                                    })
                                                         })
                                                     ]
                                                 })
@@ -11562,6 +11556,15 @@ export default function Page() {
                                         })
                                     })
                                 ]
+                            }),
+                            section === 'agent' && activeChatId && /*#__PURE__*/ _jsx("div", {
+                                className: "agent-memory-dock",
+                                children: /*#__PURE__*/ _jsx(AgentMemoryEditor, {
+                                    summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
+                                    disabled: activeAgentBusy,
+                                    icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
+                                    onSave: saveAgentMemory
+                                }, activeChatId)
                             }),
                             section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
                                 theme: theme,
