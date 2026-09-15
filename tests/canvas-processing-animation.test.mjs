@@ -24,10 +24,12 @@ test("processing feedback uses one restrained signal animation system", () => {
   const motion = styles.slice(motionStart);
 
   assert.match(motion, /canvas-processing-orbit/);
-  assert.match(motion, /canvas-processing-signal/);
+  assert.match(motion, /canvas-processing-breathe/);
   assert.match(motion, /canvas-processing-indeterminate/);
   assert.match(motion, /canvas-processing-node-signal/);
-  assert.match(motion, /canvas-processing-edge/);
+  assert.doesNotMatch(component, /canvas-processing-signal|canvas-processing-live-dot/);
+  assert.match(motion, /contain:layout style\}/);
+  assert.doesNotMatch(motion, /contain:layout style paint/);
   assert.match(motion, /\.canvas-processing-indicator\.is-running[^}]*--processing-accent:var\(--canvas-node-running\)/);
   assert.match(
     styles,
@@ -53,10 +55,12 @@ test("processing feedback uses one restrained signal animation system", () => {
     "processing styles should not be duplicated later in the cascade",
   );
   assert.match(motion, /prefers-reduced-motion:reduce/);
+  assert.match(motion, /data-zoom-tier="overview"[^}]*animation:none!important/);
+  assert.match(motion, /data-motion="off"[^}]*animation:none!important/);
 });
 
 test("all running canvas node kinds share the indicator and elapsed clock", () => {
-  for (const kind of ["image", "video", "agent", "generator", "upscale"])
+  for (const kind of ["image", "video", "agent", "generator", "angle", "upscale"])
     assert.match(component, new RegExp(`\\| "${kind}"|kind === "${kind}"`));
 
   assert.match(component, /useSyncExternalStore/);

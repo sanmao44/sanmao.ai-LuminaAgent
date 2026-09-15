@@ -18786,11 +18786,13 @@ function CanvasNodeCard({
       ? "agent"
       : node.type === "generator"
         ? "generator"
-        : node.type === "upscale"
-          ? "upscale"
-          : data.kind === "video"
-            ? "video"
-            : "image";
+        : node.type === "angle"
+          ? "angle"
+          : node.type === "upscale"
+            ? "upscale"
+            : data.kind === "video"
+              ? "video"
+              : "image";
   const mediaFooterStatus =
     node.type === "media" && data.kind === "video"
       ? pending
@@ -18943,10 +18945,10 @@ function CanvasNodeCard({
           <div className="canvas-angle-card-head">
             <span className="canvas-angle-card-icon" aria-hidden="true">◈</span>
             <div><b>角度控制</b><small>相机视角 · 主体 · 光影</small></div>
-            <span className={`canvas-angle-card-state ${status}`}>{pending ? "生成中" : status === "failed" ? "失败" : angleReference ? "已连接" : "待输入"}</span>
+            <span className={`canvas-angle-card-state ${status}`}>{status === "queued" ? "排队中" : pending ? "生成中" : status === "failed" ? "失败" : angleReference ? "已连接" : "待输入"}</span>
           </div>
           {pending ? (
-            <CanvasProcessingIndicator label={processingLabel} progress={processingProgress} kind="image" startedAt={data.processingStartedAt} compact />
+            <CanvasProcessingIndicator label={processingLabel} progress={processingProgress} kind={processingKind} startedAt={data.processingStartedAt} waiting={data.status === "queued"} compact />
           ) : angleReference?.data.url ? (
             <div className="canvas-angle-card-reference">
               <img src={String(angleReference.data.url)} alt={String(angleReference.data.name || "角度参考图")} draggable={false} />

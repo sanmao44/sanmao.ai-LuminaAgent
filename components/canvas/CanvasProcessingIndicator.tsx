@@ -12,6 +12,7 @@ export type CanvasProcessingKind =
   | "video"
   | "agent"
   | "generator"
+  | "angle"
   | "upscale";
 
 type CanvasProcessingIndicatorProps = {
@@ -115,6 +116,13 @@ function ProcessingGlyph({ kind }: { kind: CanvasProcessingKind }) {
         <rect x="13.5" y="13.5" width="4.5" height="4.5" rx="1" />
       </>
     );
+  } else if (kind === "angle") {
+    glyph = (
+      <>
+        <path d="m12 4 7 4v8l-7 4-7-4V8Z" />
+        <path d="m5 8 7 4 7-4M12 12v8" />
+      </>
+    );
   } else if (kind === "upscale") {
     glyph = (
       <>
@@ -147,6 +155,7 @@ function processingStageLabel(
   if (kind === "video") return hasProgress ? "远程渲染" : "准备任务";
   if (kind === "agent") return "思考中";
   if (kind === "generator") return "分支处理中";
+  if (kind === "angle") return "视角生成中";
   if (kind === "upscale") return "放大处理中";
   return "生成处理中";
 }
@@ -179,7 +188,11 @@ export default function CanvasProcessingIndicator({
     now - (validStartedAt ?? fallbackStartedAtRef.current),
   );
   const elapsed = formatProcessingTime(elapsedMilliseconds);
-  const hasProgress = typeof progress === "number";
+  const normalizedProgress =
+    typeof progress === "number" && Number.isFinite(progress)
+      ? Math.round(Math.max(0, Math.min(100, progress)))
+      : undefined;
+  const hasProgress = normalizedProgress !== undefined;
   const phase = waiting ? "queued" : "running";
   const stageLabel = processingStageLabel(kind, waiting, hasProgress);
 
@@ -194,15 +207,13 @@ export default function CanvasProcessingIndicator({
     >
       <span className="canvas-processing-visual" aria-hidden="true">
         <span className="canvas-processing-orbit orbit-outer" />
-        <span className="canvas-processing-orbit orbit-inner" />
         <span className="canvas-processing-glyph">
           <ProcessingGlyph kind={kind} />
         </span>
-        <span className="canvas-processing-live-dot" />
       </span>
       <span className="canvas-processing-copy">
         <span className="canvas-processing-title">
-          <b>{label}</b>
+          <b title={label}>{label}</b>
           <em>
             <span className="canvas-processing-status-dot" aria-hidden="true" />
             {waiting ? "排队" : "运行"}
@@ -221,20 +232,15 @@ export default function CanvasProcessingIndicator({
             {elapsed}
           </time>
           {hasProgress && (
-            <small className="canvas-processing-percent">{progress}%</small>
+            <small className="canvas-processing-percent">{normalizedProgress}%</small>
           )}
         </span>
-      </span>
-      <span className="canvas-processing-signal" aria-hidden="true">
-        <i />
-        <i />
-        <i />
       </span>
       <span
         className={`canvas-processing-progress${hasProgress ? " determinate" : " indeterminate"}`}
         aria-hidden="true"
       >
-        <i style={hasProgress ? { width: `${progress}%` } : undefined} />
+        <i style={hasProgress ? { width: `${normalizedProgress}%` } : undefined} />
       </span>
     </div>
   );
