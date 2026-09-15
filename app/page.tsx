@@ -1658,6 +1658,13 @@ function Icon({ name, size = 18 }) {
                 /*#__PURE__*/ _jsx("path", { d: "M5 20a7 7 0 0 1 14 0" })
             ]
         }),
+        brain: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", { d: "M9 4.5a3 3 0 0 0-3 3v.5a3.5 3.5 0 0 0 0 7v.5a3 3 0 0 0 3 3" }),
+                /*#__PURE__*/ _jsx("path", { d: "M15 4.5a3 3 0 0 1 3 3v.5a3.5 3.5 0 0 1 0 7v.5a3 3 0 0 1-3 3" }),
+                /*#__PURE__*/ _jsx("path", { d: "M9 8.5c1.5 0 2 1 3 1s1.5-1 3-1M9 15.5c1.5 0 2-1 3-1s1.5 1 3 1M12 9.5v5" })
+            ]
+        }),
         preview: /*#__PURE__*/ _jsxs(_Fragment, {
             children: [
                 /*#__PURE__*/ _jsx("path", {
@@ -11600,7 +11607,7 @@ export default function Page() {
                                         activeChatId && /*#__PURE__*/ _jsx(AgentMemoryEditor, {
                                     summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
                                             disabled: activeAgentBusy,
-                                            icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
+                                            icon: /*#__PURE__*/ _jsx(Icon, { name: 'brain', size: 16 }),
                                             onSave: saveAgentMemory
                                         }, `memory-${activeChatId}`),
                                         /*#__PURE__*/ _jsx(AgentPersonaEditor, {
