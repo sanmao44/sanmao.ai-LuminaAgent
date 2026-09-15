@@ -18912,6 +18912,13 @@ function CanvasNodeCard({
         else onToggleEditor(node);
       }}
     >
+      {status === "running" && (
+        <svg className="canvas-node-flow" aria-hidden="true" focusable="false">
+          <rect className="canvas-node-flow-glow" pathLength="100" />
+          <rect className="canvas-node-flow-trail" pathLength="100" />
+          <rect className="canvas-node-flow-head" pathLength="100" />
+        </svg>
+      )}
       {group && (
         <button
           type="button"
