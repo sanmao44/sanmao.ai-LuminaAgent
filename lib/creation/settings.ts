@@ -95,6 +95,7 @@ export const IMAGE_RATIOS = [
 ] as const;
 export const VIDEO_RATIOS = [
   "auto",
+  "21:9",
   "16:9",
   "9:16",
   "1:1",
