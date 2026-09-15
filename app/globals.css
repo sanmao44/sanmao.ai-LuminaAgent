@@ -1416,7 +1416,8 @@ html[data-theme="light"] .angle-model-option.active small { color:var(--angle-ac
 .model-picker-search:focus-within kbd{border-color:color-mix(in srgb,var(--accent) 32%,var(--line));background:var(--panel);color:var(--accent-text)}
 .top-actions{justify-self:end}
 .agent-composer-wrap{left:var(--shell-content-left);transition:left .2s ease}
-.agent-memory-dock{position:fixed;left:calc(var(--shell-content-left) + 12px);top:calc(var(--shell-header-height) + 12px);z-index:26;display:grid;place-items:center;width:34px;height:34px;transition:left .2s ease}
+.agent-memory-dock{position:fixed;left:calc(var(--shell-content-left) + 12px);top:calc(var(--shell-header-height) + 12px);z-index:26;transition:left .2s ease}
+.agent-context-tools{display:flex;align-items:center;gap:8px}
 .agent-memory-dock .trigger{width:34px;height:34px}
 
 /* Desktop uses one shared content boundary. Opening the sidebar reflows every
