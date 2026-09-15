@@ -5126,6 +5126,7 @@ export default function Page() {
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renamingChatTitle, setRenamingChatTitle] = useState('');
     const [activeChatId, setActiveChatId] = useState(null);
+    const [agentPersonaDraft, setAgentPersonaDraft] = useState('');
     const [agentInput, setAgentInput] = useState('');
     const [promptOptimizing, setPromptOptimizing] = useState(false);
     const [agentInputBeforeOptimization, setAgentInputBeforeOptimization] = useState(null);
@@ -8394,10 +8395,16 @@ export default function Page() {
     }
     async function saveAgentPersona(persona) {
         const sessionId = activeChatIdRef.current;
-        if (!sessionId || busyChatIdsRef.current.has(sessionId)) throw new Error('请等待当前对话完成');
+        const normalized = normalizeConversationPersona(persona);
+        if (!sessionId) {
+            setAgentPersonaDraft(normalized);
+            notify(normalized ? '新对话角色设定已保存，发送后生效' : '新对话角色设定已清空');
+            return;
+        }
+        if (busyChatIdsRef.current.has(sessionId)) throw new Error('请等待当前对话完成');
         const current = chatSessions.find((session)=>session.id === sessionId);
         if (!current) throw new Error('当前对话不存在');
-        const next = { ...current, persona: normalizeConversationPersona(persona), updatedAt: Date.now() };
+        const next = { ...current, persona: normalized, updatedAt: Date.now() };
         await saveChatSession(next);
         setChatSessions((old)=>old.map((session)=>session.id === sessionId ? next : session));
         notify(next.persona ? '角色设定已保存' : '角色设定已清空');
@@ -8414,7 +8421,7 @@ export default function Page() {
             createdAt: existing?.createdAt || now,
             updatedAt: now,
             messages: storedMessages,
-            persona: existing?.persona || '',
+            persona: id === activeChatIdRef.current ? (existing?.persona || agentPersonaDraft) : existing?.persona || '',
             memory: validConversationMemory(chatMemoryRef.current.get(id), storedMessages)
         };
         const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
@@ -8525,6 +8532,7 @@ export default function Page() {
         setAgentInput('');
         setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
+        setAgentPersonaDraft('');
         resetMessageSelection();
         resetShareSelection();
         setSection('agent');
@@ -8539,6 +8547,7 @@ export default function Page() {
         setAgentInput('');
         setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
+        setAgentPersonaDraft(session.persona || '');
         resetMessageSelection();
         resetShareSelection();
         setSection('agent');
@@ -8825,7 +8834,7 @@ export default function Page() {
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
-                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || '',
+                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || (sessionId === activeChatIdRef.current ? agentPersonaDraft : ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
@@ -9070,7 +9079,7 @@ export default function Page() {
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
-                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || '',
+                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || (sessionId === activeChatIdRef.current ? agentPersonaDraft : ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     task,
@@ -11578,19 +11587,19 @@ export default function Page() {
                                     })
                                 ]
                             }),
-                            section === 'agent' && activeChatId && /*#__PURE__*/ _jsx("div", {
+                            section === 'agent' && /*#__PURE__*/ _jsx("div", {
                                 className: "agent-memory-dock",
                                 children: /*#__PURE__*/ _jsxs("div", {
                                     className: "agent-context-tools",
                                     children: [
-                                        /*#__PURE__*/ _jsx(AgentMemoryEditor, {
+                                        activeChatId && /*#__PURE__*/ _jsx(AgentMemoryEditor, {
                                     summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
                                             disabled: activeAgentBusy,
                                             icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
                                             onSave: saveAgentMemory
                                         }, `memory-${activeChatId}`),
                                         /*#__PURE__*/ _jsx(AgentPersonaEditor, {
-                                            persona: chatSessions.find((session)=>session.id === activeChatId)?.persona || '',
+                                            persona: activeChatId ? (chatSessions.find((session)=>session.id === activeChatId)?.persona || '') : agentPersonaDraft,
                                             disabled: activeAgentBusy,
                                             icon: /*#__PURE__*/ _jsx(Icon, { name: 'user', size: 16 }),
                                             onSave: saveAgentPersona
