@@ -235,22 +235,24 @@ html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(
 .canvas-settings-card{display:grid;gap:13px;padding:14px;border:1px solid var(--line-strong);border-radius:15px;background:var(--panel-2)}
 .canvas-settings-card>div:first-child{display:grid;gap:5px}.canvas-settings-card>div:first-child b{font-size:10px}.canvas-settings-card>div:first-child small{color:var(--muted);font-size:8px;line-height:1.5}
 .canvas-settings-options{display:grid;gap:7px}.canvas-settings-options button{display:flex;align-items:center;gap:9px;min-height:52px;padding:8px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--text);text-align:left}.canvas-settings-options button:hover{border-color:var(--accent);background:var(--accent-soft)}.canvas-settings-options button.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 13%,transparent)}.canvas-settings-options button>span:nth-child(2){display:grid;gap:4px;flex:1;min-width:0}.canvas-settings-options button b{font-size:9px}.canvas-settings-options button small{color:var(--muted);font-size:8px}.canvas-settings-options button i{width:18px;color:var(--accent-text);font-style:normal;text-align:center}.canvas-settings-option-icon{width:28px;height:28px;display:grid;place-items:center;flex:none;border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:18px}
-/* Related edges keep a quiet dashed guide. Three short, phase-locked layers
-   form one travelling light in the source hue, with theme-specific highlights. */
-.canvas-edge-visual{--edge-flow-color:var(--node-color,var(--accent));--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 94%,#fff);--edge-flow-halo:none;--edge-flow-tail-opacity:.3;--edge-flow-mid-opacity:.65}
-html[data-theme="dark"] .canvas-edge-visual{--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 30%,#fff);--edge-flow-halo:drop-shadow(0 0 2px color-mix(in srgb,var(--edge-flow-color) 45%,transparent));--edge-flow-tail-opacity:.24;--edge-flow-mid-opacity:.58}
-.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke-linecap:round;stroke-linejoin:round;filter:none}
-.canvas-edge-related-flow{stroke:var(--edge-flow-color);stroke-width:1.5;stroke-dasharray:104 896;stroke-dashoffset:1000;opacity:var(--edge-flow-tail-opacity);animation:canvas-edge-related-flow 2.8s linear infinite}
-.canvas-edge-related-flow-mid{stroke:var(--edge-flow-color);stroke-width:1.8;stroke-dasharray:58 942;stroke-dashoffset:954;opacity:var(--edge-flow-mid-opacity);animation:canvas-edge-related-flow-mid 2.8s linear infinite}
-.canvas-edge-related-flow-head{stroke:var(--edge-flow-tip);stroke-width:2.2;stroke-dasharray:12 988;stroke-dashoffset:908;opacity:1;filter:var(--edge-flow-halo);animation:canvas-edge-related-flow-head 2.8s linear infinite}
-@keyframes canvas-edge-related-flow{from{stroke-dashoffset:1000}to{stroke-dashoffset:0}}
-@keyframes canvas-edge-related-flow-mid{from{stroke-dashoffset:954}to{stroke-dashoffset:-46}}
-@keyframes canvas-edge-related-flow-head{from{stroke-dashoffset:908}to{stroke-dashoffset:-92}}
-.canvas-edge-visual .canvas-edge.related{stroke:color-mix(in srgb,var(--edge-flow-color) 66%,var(--line-strong));stroke-width:1.4;stroke-dasharray:7 9;stroke-linecap:round;filter:none;animation:none}
+/* Moving guides carry repeated, tapered light trails. Every stroke advances
+   by one dash period, so the loop and the bright leading ends stay aligned. */
+.canvas-edge-visual{--edge-flow-color:var(--node-color,var(--accent));--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 94%,#fff);--edge-flow-halo-opacity:.13;--edge-flow-guide:color-mix(in srgb,var(--edge-flow-color) 48%,var(--line-strong))}
+html[data-theme="dark"] .canvas-edge-visual{--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 65%,#fff);--edge-flow-halo-opacity:.32;--edge-flow-guide:color-mix(in srgb,var(--edge-flow-color) 38%,var(--line-strong))}
+.canvas-edge-related-flow{pointer-events:none}
+/* Scale normalized trail strokes with their route; non-scaling-stroke changes
+   their dash spacing in Chromium and breaks the intended trail proportions. */
+.canvas-edge-flow-stroke{fill:none;stroke:var(--edge-flow-color);pointer-events:none;stroke-linecap:round;stroke-linejoin:round;stroke-dashoffset:var(--edge-flow-offset);animation:canvas-edge-related-flow 2.6s linear infinite}
+.canvas-edge-flow-tip{stroke:var(--edge-flow-tip)}
+.canvas-edge-flow-halo{stroke-width:6;opacity:var(--edge-flow-halo-opacity);filter:blur(1.6px)}
+@keyframes canvas-edge-related-flow{from{stroke-dashoffset:var(--edge-flow-offset)}to{stroke-dashoffset:calc(var(--edge-flow-offset) - 360px)}}
+@keyframes canvas-edge-related-dashes{from{stroke-dashoffset:0}to{stroke-dashoffset:-32}}
+.canvas-edge-visual .canvas-edge.related{stroke:var(--edge-flow-guide);stroke-width:1.4;stroke-dasharray:7 9;stroke-linecap:round;filter:none;animation:canvas-edge-related-dashes 1.6s linear infinite}
 .canvas-edge-visual .canvas-edge.related-static{stroke-dasharray:7 9;stroke-linecap:round;animation:none!important;filter:none}
-.canvas-stage.is-panning :is(.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head){animation-play-state:paused!important}
-html[data-motion="off"] :is(.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head){display:none;animation:none!important}
-@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) :is(.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head){display:none;animation:none!important}}
+.canvas-stage.is-panning :is(.canvas-edge.related,.canvas-edge-flow-stroke){animation-play-state:paused!important}
+html[data-motion="off"] .canvas-edge-related-flow{display:none}
+html[data-motion="off"] :is(.canvas-edge.related,.canvas-edge-flow-stroke){animation:none!important}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-edge-related-flow{display:none}html:not([data-motion="on"]) :is(.canvas-edge.related,.canvas-edge-flow-stroke){animation:none!important}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-connection-cancel{animation:none!important}}
 @keyframes canvas-connection-remove-attention{0%{opacity:0;box-shadow:0 0 0 0 color-mix(in srgb,var(--danger) 0%,transparent)}45%{opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 24%,transparent)}100%{opacity:.9;box-shadow:0 1px 3px color-mix(in srgb,var(--danger) 14%,transparent)}}
 .canvas-workbench>nav{grid-template-columns:repeat(6,1fr)}
@@ -1387,13 +1389,9 @@ html[data-theme="dark"] .canvas-workspace{
    they communicate. Keeping the geometry intact avoids pop-in while making
    zooming stable on large boards and low-end GPUs. */
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge,
-.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow,
-.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-mid,
-.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-head{filter:none!important}
+.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-flow-stroke{filter:none!important}
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge.related,
-.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow,
-.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-mid,
-.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-head,
+.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-flow-stroke,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-running::before,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-running::after,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-queued::before,

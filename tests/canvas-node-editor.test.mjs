@@ -498,24 +498,37 @@ test("opening a dock drawer measures only the attached editor surface", () => {
   assert.match(component, /isCompact, isDockNode, isImageNode/);
 });
 
-test("selected related edges use one source-colored light with a quiet dashed guide", () => {
+test("selected related edges animate dashed guides and aligned tapered light trails", () => {
   assert.match(component, /related \? "related"/);
-  assert.match(styles, /\.canvas-edge-visual \.canvas-edge\.related\{[^}]*stroke-dasharray:7 9[^}]*filter:none;animation:none/);
-  assert.match(component, /className="canvas-edge-related-flow-mid"/);
-  const leadingEdges = ["", "-mid", "-head"].map((suffix) => {
-    const rule = styles.match(new RegExp(`^\\.canvas-edge-related-flow${suffix}\\{([^}]+)\\}`, "m"))[1];
-    const [length, gap] = rule.match(/stroke-dasharray:(\d+) (\d+)/).slice(1).map(Number);
-    const offset = Number(rule.match(/stroke-dashoffset:(\d+)/)[1]);
-    assert.equal(length + gap, 1000, "each layer makes one pass along the normalized path");
-    assert.match(rule, /2\.8s linear infinite/);
-    return 1000 - offset + length;
+  const guide = styles.match(/^\.canvas-edge-visual \.canvas-edge\.related\{([^}]+)\}/m)[1];
+  const [dash, gap] = guide.match(/stroke-dasharray:(\d+) (\d+)/).slice(1).map(Number);
+  const guideLoop = Number(styles.match(/@keyframes canvas-edge-related-dashes\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:-(\d+)/)[1]);
+  assert.equal(guideLoop % (dash + gap), 0, "moving dashes must loop without a jump");
+  assert.match(guide, /animation:canvas-edge-related-dashes [\d.]+s linear infinite/);
+  const segments = [...component.match(/const CANVAS_EDGE_FLOW_SEGMENTS = \[([\s\S]*?)\];/)[1].matchAll(/length: (\d+), width: ([\d.]+), opacity: ([\d.]+)/g)].map(match => ({length: +match[1], width: +match[2], opacity: +match[3]}));
+  assert.ok(segments.length >= 6, "the trail needs a gradual taper");
+  segments.slice(1).forEach((segment, index) => {
+    assert.ok(segment.length < segments[index].length);
+    assert.ok(segment.width >= segments[index].width);
+    assert.ok(segment.opacity > segments[index].opacity);
   });
-  assert.deepEqual(leadingEdges, [104, 104, 104], "all layers must share one leading edge");
-  assert.match(styles, /--edge-flow-tip:color-mix\(in srgb,var\(--edge-flow-color\) 94%,#fff\);--edge-flow-halo:none/);
-  assert.match(styles, /html\[data-theme="dark"\] \.canvas-edge-visual\{[^}]*--edge-flow-tip:color-mix\(in srgb,var\(--edge-flow-color\) 30%,#fff\)/);
+  const period = Number(component.match(/strokeDasharray=\{`\$\{length\} \$\{(\d+) - length\}`\}/)[1]);
+  const trailLength = Number(component.match(/"--edge-flow-offset": `\$\{length - (\d+)\}px`/)[1]);
+  const animationPeriod = Number(styles.match(/to\{stroke-dashoffset:calc\(var\(--edge-flow-offset\) - (\d+)px\)/)[1]);
+  assert.equal(period, animationPeriod, "all strokes must advance by exactly one repeat");
+  assert.equal(segments[0].length, trailLength);
+  assert.ok(period > trailLength && 1000 / period >= 2, "separate light trails should repeat along the path");
+  const halo = component.match(/strokeDasharray="(\d+) (\d+)"\s+style=\{\{ "--edge-flow-offset": "(-?\d+)px"/);
+  assert.equal(+halo[1] + +halo[2], period);
+  assert.equal(+halo[1] - +halo[3], trailLength, "halo and tapered strokes must share their bright leading end");
+  assert.match(styles, /\.canvas-edge-flow-stroke\{[^}]*pointer-events:none[^}]*animation:canvas-edge-related-flow [\d.]+s linear infinite/);
+  assert.doesNotMatch(styles.match(/^\.canvas-edge-flow-stroke\{([^}]+)\}/m)[1], /non-scaling-stroke/, "normalized trail spacing should follow canvas zoom");
+  assert.match(styles, /--edge-flow-tip:color-mix\(in srgb,var\(--edge-flow-color\) 94%,#fff\)/);
+  assert.match(styles, /html\[data-theme="dark"\] \.canvas-edge-visual\{[^}]*--edge-flow-tip:color-mix\(in srgb,var\(--edge-flow-color\) 65%,#fff\)/);
   assert.doesNotMatch(styles, /--canvas-edge-flow-head/);
-  assert.match(styles, /html\[data-motion="off"\] :is\(\.canvas-edge-related-flow,\.canvas-edge-related-flow-mid,\.canvas-edge-related-flow-head\)\{display:none;animation:none!important/);
-  assert.match(styles, /prefers-reduced-motion:reduce\)\{html:not\(\[data-motion="on"\]\) :is\(\.canvas-edge-related-flow,\.canvas-edge-related-flow-mid,\.canvas-edge-related-flow-head\)\{display:none/);
+  assert.match(styles, /html\[data-motion="off"\] \.canvas-edge-related-flow\{display:none\}/);
+  assert.match(styles, /html\[data-motion="off"\] :is\(\.canvas-edge\.related,\.canvas-edge-flow-stroke\)\{animation:none!important/);
+  assert.match(styles, /prefers-reduced-motion:reduce\)\{html:not\(\[data-motion="on"\]\) \.canvas-edge-related-flow\{display:none\}html:not\(\[data-motion="on"\]\) :is\(\.canvas-edge\.related,\.canvas-edge-flow-stroke\)\{animation:none!important/);
 });
 
 test("canvas edges reveal one small red removal control at the pointer without a modifier", () => {

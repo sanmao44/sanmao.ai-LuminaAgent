@@ -2676,6 +2676,19 @@ function createCanvasClipboardPayload(
   };
 }
 
+// Nested strokes share a leading edge, tapering in width and opacity toward
+// the tail. Repeating dashes follow every route without per-frame JS geometry.
+const CANVAS_EDGE_FLOW_SEGMENTS = [
+  { length: 160, width: 0.6, opacity: 0.12 },
+  { length: 136, width: 0.9, opacity: 0.18 },
+  { length: 112, width: 1.2, opacity: 0.24 },
+  { length: 88, width: 1.5, opacity: 0.32 },
+  { length: 64, width: 1.8, opacity: 0.42 },
+  { length: 40, width: 2.1, opacity: 0.54 },
+  { length: 20, width: 2.4, opacity: 0.7 },
+  { length: 6, width: 2.4, opacity: 1 },
+];
+
 function CanvasEdgeVisual({
   document,
   edge,
@@ -2743,26 +2756,27 @@ function CanvasEdgeVisual({
         onPointerDown={handlePointerDown}
       />
       {related && animateRelated && (
-        <>
+        <g className="canvas-edge-related-flow" aria-hidden="true">
           <path
-            className="canvas-edge-related-flow"
+            className="canvas-edge-flow-stroke canvas-edge-flow-halo"
             d={path}
             pathLength="1000"
-            aria-hidden="true"
+            strokeDasharray="136 224"
+            style={{ "--edge-flow-offset": "-24px" } as CSSProperties}
           />
-          <path
-            className="canvas-edge-related-flow-mid"
-            d={path}
-            pathLength="1000"
-            aria-hidden="true"
-          />
-          <path
-            className="canvas-edge-related-flow-head"
-            d={path}
-            pathLength="1000"
-            aria-hidden="true"
-          />
-        </>
+          {CANVAS_EDGE_FLOW_SEGMENTS.map(({ length, width, opacity }) => (
+            <path
+              key={length}
+              className={`canvas-edge-flow-stroke${length === 6 ? " canvas-edge-flow-tip" : ""}`}
+              d={path}
+              pathLength="1000"
+              strokeDasharray={`${length} ${360 - length}`}
+              strokeWidth={width}
+              opacity={opacity}
+              style={{ "--edge-flow-offset": `${length - 160}px` } as CSSProperties}
+            />
+          ))}
+        </g>
       )}
     </g>
   );
