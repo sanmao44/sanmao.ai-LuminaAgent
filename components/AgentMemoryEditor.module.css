@@ -1,24 +1,45 @@
 .trigger {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  align-self: flex-end;
+  justify-content: center;
   flex-shrink: 0;
-  margin: 8px 16px;
-  min-height: 32px;
-  color: inherit;
-  background: transparent;
-  border: 1px solid var(--border, #8886);
+  width: 34px;
+  height: 34px;
+  color: var(--text-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 4px 10px;
+  padding: 0;
+  cursor: pointer;
   font-size: 12px;
 }
+.trigger::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1;
+  width: max-content;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  visibility: hidden;
+}
+.trigger:hover::after, .trigger:focus-visible::after { visibility: visible; }
 .dialog {
+  box-sizing: border-box;
   width: min(600px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 20px;
-  border: 1px solid var(--border, #8886);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel, #fff);
   color: var(--text, #222);
@@ -27,6 +48,16 @@
 .dialog form { display: grid; gap: 12px; }
 .dialog h2 { font-size: 18px; margin: 0 0 8px; }
 .dialog label, .dialog output { font-size: 12px; }
+.summary {
+  min-height: 100px;
+  max-height: min(360px, 50dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.7;
+}
 .dialog textarea {
   box-sizing: border-box;
   width: 100%;
@@ -34,7 +65,7 @@
   height: min(320px, 45dvh);
   resize: vertical;
   padding: 10px;
-  border: 1px solid var(--border, #8886);
+  border: 1px solid var(--line);
   border-radius: 4px;
   background: transparent;
   color: inherit;
@@ -48,9 +79,10 @@
   padding: 7px 12px;
   color: inherit;
   background: transparent;
-  border: 1px solid var(--border, #8886);
+  border: 1px solid var(--line);
   border-radius: 4px;
 }
-.dialog footer button:first-child { margin-right: auto; }
+.dialog footer .clear { margin-right: auto; }
+.trigger:hover, .trigger:focus-visible { color: var(--accent-text); border-color: var(--accent); }
 .dialog button:disabled, .trigger:disabled { opacity: .5; cursor: not-allowed; }
 .dialog p { color: #d33d4d; overflow-wrap: anywhere; }

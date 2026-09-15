@@ -10733,8 +10733,14 @@ export default function Page() {
                                 ]
                             }),
                             /*#__PURE__*/ _jsx("div", {
-                                className: "top-actions",
+                                className: `top-actions${section === 'agent' && activeChatId ? ' has-agent-memory' : ''}`,
                                 children: [
+                                    section === 'agent' && activeChatId && /*#__PURE__*/ _jsx(AgentMemoryEditor, {
+                                        summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
+                                        disabled: activeAgentBusy,
+                                        icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
+                                        onSave: saveAgentMemory
+                                    }, activeChatId),
                                     /*#__PURE__*/ _jsxs(Link, {
                                         href: "/canvas",
                                         className: "super-canvas-entry",
@@ -10856,12 +10862,6 @@ export default function Page() {
                                     if (e.dataTransfer.files?.length) void addAgentAttachments(e.dataTransfer.files);
                                 },
                                 children: [
-                                    activeChatId && /*#__PURE__*/ _jsx(AgentMemoryEditor, {
-                                        summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
-                                        disabled: activeAgentBusy,
-                                        icon: /*#__PURE__*/ _jsx(Icon, { name: 'history', size: 16 }),
-                                        onSave: saveAgentMemory
-                                    }, activeChatId),
                                     !messages.length ? /*#__PURE__*/ _jsxs("div", {
                                         className: "agent-welcome",
                                         children: [
