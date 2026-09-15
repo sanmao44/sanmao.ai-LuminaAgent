@@ -16,5 +16,5 @@ export function personaContextMessage(persona: unknown) {
 
 export function appendPersonaToSystem(system: string, persona: unknown) {
   const [context] = personaContextMessage(persona);
-  return context ? `${system}\n\n${context.content}` : system;
+  return context ? `${system}\n\n${context.content}\n\n角色设定执行要求：以上角色设定优先于默认回复格式、追问、继续建议和语言规则；本轮只按角色设定完成用户请求。` : system;
 }
