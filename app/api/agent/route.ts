@@ -18,7 +18,7 @@ import { normalizeGenerationSource, type GenerationSource } from '@/lib/generati
 import { classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { memoryContextMessage } from '@/lib/agent-memory';
-import { personaContextMessage } from '@/lib/agent-persona';
+import { appendPersonaToSystem } from '@/lib/agent-persona';
 
 export const runtime = 'nodejs';
 
@@ -531,11 +531,10 @@ export async function POST(request: Request) {
       : webSearchEnabled
         ? '\n\n联网能力：当前为智能按需模式。本轮不需要联网，请直接回答，不要暗示或伪造网页搜索结果。'
         : '\n\n联网能力：当前已关闭联网搜索。不要调用、暗示或伪造网页搜索结果；对于最新、实时或需要来源的问题，请明确说明联网已关闭。';
-    let system = buildSystem(initialWebInstructions, '');
+    let system = appendPersonaToSystem(buildSystem(initialWebInstructions, ''), body.persona);
     system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     let llmMessages: ChatMessage[] = [
       { role: 'system', content: system },
-      ...personaContextMessage(body.persona),
       ...memoryContextMessage(body.memory),
       ...messages.map((m) => ({ role: m.role, content: toChatContent(m, supportsVideoInput) } as ChatMessage)),
     ];
@@ -598,7 +597,7 @@ export async function POST(request: Request) {
       : '';
     const webContext = nativeSearchData ? formatNativeSearchContext(nativeSearchData) : webSearchData ? formatWebSearchContext(webSearchData) : '';
     const webFailureContext = '';
-    system = buildSystem(`${webSearchInstructions}${nativeAnswerInstructions}`, webContext, webFailureContext);
+    system = appendPersonaToSystem(buildSystem(`${webSearchInstructions}${nativeAnswerInstructions}`, webContext, webFailureContext), body.persona);
     system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0] = isCinematicDirectorTask ? llmMessages[0] : { role: 'system', content: system };
 
