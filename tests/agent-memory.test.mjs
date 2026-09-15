@@ -8,6 +8,25 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const memory = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const messages = (count) => Array.from({ length: count }, (_, index) => ({ id: `m${index}`, role: index % 2 ? 'assistant' : 'user', content: `message ${index}` }));
 
+test('memory trigger keeps one custom tooltip and an accessible name', async () => {
+  const editor = await readFile(new URL('../components/AgentMemoryEditor.tsx', import.meta.url), 'utf8');
+  const tree = ts.createSourceFile('AgentMemoryEditor.tsx', editor, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let attributes;
+  function visit(node) {
+    if (ts.isJsxOpeningElement(node) && node.tagName.getText(tree) === 'button') {
+      const props = node.attributes.properties.filter(ts.isJsxAttribute);
+      if (props.some((prop) => prop.name.getText(tree) === 'data-tooltip')) attributes = props;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(tree);
+  assert(attributes, 'memory trigger exists');
+  const values = new Map(attributes.map((prop) => [prop.name.getText(tree), prop.initializer?.text]));
+  assert.equal(values.get('data-tooltip'), '当前对话记忆');
+  assert.equal(values.get('aria-label'), '当前对话记忆');
+  assert.equal(values.has('title'), false, 'native title would duplicate the custom tooltip');
+});
+
 test('short conversations do not call a model; long conversations retain all older text', async () => {
   const calls = [];
   const summarize = async (summary, text) => { calls.push({ summary, text }); return 'summary'; };

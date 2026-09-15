@@ -30,7 +30,7 @@ export default function AgentMemoryEditor({ summary, disabled, icon, onSave }: P
     } finally { setSaving(false); }
   }
   return <>
-    <button type="button" className={styles.trigger} title="当前对话记忆" data-tooltip="当前对话记忆" aria-label="当前对话记忆" aria-haspopup="dialog" onClick={() => {
+    <button type="button" className={styles.trigger} data-tooltip="当前对话记忆" aria-label="当前对话记忆" aria-haspopup="dialog" onClick={() => {
       setDraft(summary); setError(''); setEditing(false); setOpen(true);
     }}>{icon}</button>
     {open && createPortal(<dialog ref={dialog} className={styles.dialog} aria-labelledby="agent-memory-title" onClose={() => setOpen(false)} onCancel={(event) => { if (saving) event.preventDefault(); }}>
