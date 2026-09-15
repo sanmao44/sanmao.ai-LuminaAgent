@@ -26,3 +26,10 @@ test('rebuilt Agent system prompts retain the conversation persona', async () =>
   assert.match(route, /let system = appendPersonaToSystem\(buildSystem\(initialWebInstructions, ''\), body\.persona\);/);
   assert.match(route, /system = appendPersonaToSystem\(buildSystem\(`\$\{webSearchInstructions\}\$\{nativeAnswerInstructions\}`, webContext, webFailureContext\), body\.persona\);/);
 });
+
+test('saving persona updates the active conversation request immediately', async () => {
+  const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  assert.ok(page.includes("const agentPersonaRef = useRef('');"));
+  assert.match(page, /agentPersonaRef\.current = normalized;[\s\S]*setAgentPersonaDraft\(normalized\)/);
+  assert.match(page, /persona: sessionId === activeChatIdRef\.current \? agentPersonaRef\.current/);
+});

@@ -5127,6 +5127,7 @@ export default function Page() {
     const [renamingChatTitle, setRenamingChatTitle] = useState('');
     const [activeChatId, setActiveChatId] = useState(null);
     const [agentPersonaDraft, setAgentPersonaDraft] = useState('');
+    const agentPersonaRef = useRef('');
     const [agentInput, setAgentInput] = useState('');
     const [promptOptimizing, setPromptOptimizing] = useState(false);
     const [agentInputBeforeOptimization, setAgentInputBeforeOptimization] = useState(null);
@@ -7128,6 +7129,7 @@ export default function Page() {
             setChatSessions(sessions);
             if (sessions.length) {
                 activeChatIdRef.current = sessions[0].id;
+                agentPersonaRef.current = sessions[0].persona || '';
                 setActiveChatId(sessions[0].id);
                 setMessages(sessions[0].messages);
                 requestChatScrollAfterCommit();
@@ -8396,6 +8398,7 @@ export default function Page() {
     async function saveAgentPersona(persona) {
         const sessionId = activeChatIdRef.current;
         const normalized = normalizeConversationPersona(persona);
+        agentPersonaRef.current = normalized;
         if (!sessionId) {
             setAgentPersonaDraft(normalized);
             notify(normalized ? '新对话角色设定已保存，发送后生效' : '新对话角色设定已清空');
@@ -8421,7 +8424,7 @@ export default function Page() {
             createdAt: existing?.createdAt || now,
             updatedAt: now,
             messages: storedMessages,
-            persona: id === activeChatIdRef.current ? (existing?.persona || agentPersonaDraft) : existing?.persona || '',
+            persona: id === activeChatIdRef.current ? (agentPersonaRef.current || existing?.persona || agentPersonaDraft) : existing?.persona || '',
             memory: validConversationMemory(chatMemoryRef.current.get(id), storedMessages)
         };
         const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
@@ -8525,6 +8528,7 @@ export default function Page() {
     function startNewChat() {
         pauseChatAutoFollow();
         activeChatIdRef.current = null;
+        agentPersonaRef.current = '';
         setActiveChatId(null);
         setMessages([]);
         setAgentRefs([]);
@@ -8540,6 +8544,7 @@ export default function Page() {
     function openChatSession(session) {
         const normalized = normalizeChatSession(session);
         activeChatIdRef.current = session.id;
+        agentPersonaRef.current = session.persona || '';
         setActiveChatId(session.id);
         setMessages(pendingChatMessagesRef.current.get(session.id) || normalized.messages);
         setAgentRefs([]);
@@ -8834,7 +8839,7 @@ export default function Page() {
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
-                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || (sessionId === activeChatIdRef.current ? agentPersonaDraft : ''),
+                    persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
@@ -9079,7 +9084,7 @@ export default function Page() {
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
-                    persona: chatSessions.find((session)=>session.id === sessionId)?.persona || (sessionId === activeChatIdRef.current ? agentPersonaDraft : ''),
+                    persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
                     task,
