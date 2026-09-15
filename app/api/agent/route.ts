@@ -535,7 +535,7 @@ export async function POST(request: Request) {
     system += `\n\n交付物路由上下文：本轮判断为 ${requestedDeliverable}（${requestedIntentReason}）。如果判断为 CLARIFY，不要调用图片或文件工具，直接询问用户“你想要直接出图、先写文案，还是图和文案都要？”；如果用户已明确选择，则优先服从选择。`;
     let llmMessages: ChatMessage[] = [
       { role: 'system', content: system },
-      ...memoryContextMessage(body.memory),
+      ...memoryContextMessage(body.memory, latest?.content || ''),
       ...messages.map((m) => ({ role: m.role, content: toChatContent(m, supportsVideoInput) } as ChatMessage)),
     ];
     const personaInstruction = personaContextMessage(body.persona)[0];

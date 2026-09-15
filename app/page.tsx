@@ -29,7 +29,7 @@ import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/li
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
 import { requestAgent } from '@/lib/agent-client';
-import { editConversationMemory, prepareConversationMemory, validConversationMemory } from '@/lib/agent-memory';
+import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
 import { normalizeConversationPersona } from '@/lib/agent-persona';
@@ -8824,7 +8824,8 @@ export default function Page() {
             const retryInstruction = { id: 'retry-instruction', role: 'user', content: '请基于上面的对话重新生成一版完整答复。不要提及“重试”或“版本”，直接回答原问题。' };
             const memory = await prepareAgentMemory(sessionId, [...contextMessages, retryInstruction], activeAgentModelId, requestController.signal);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const payloadMessages = contextMessages.slice(-11).map((item)=>({
+            const selectedContextMessages = selectRelevantConversationMessages(contextMessages, latestUserMessage?.content || '', 8, 3, 11);
+            const payloadMessages = selectedContextMessages.slice(-11).map((item)=>({
                     role: item.role,
                     content: item.content,
                     references: item.id === latestUserId ? referencesForRequest : [],
@@ -9074,7 +9075,8 @@ export default function Page() {
             updatePendingActivity({ stage: 'memory', message: '正在整理当前对话上下文…' });
             const memory = await prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const payloadMessages = nextMessages.slice(-12).map((m)=>({
+            const selectedContextMessages = selectRelevantConversationMessages(nextMessages, requestContent);
+            const payloadMessages = selectedContextMessages.map((m)=>({
                     role: m.role,
                     content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : m.content,
                     references: m.id === latestUserId ? referencesForRequest : [],
