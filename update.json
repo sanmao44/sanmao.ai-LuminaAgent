@@ -1,19 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.43",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.43",
+  "latestVersion": "0.7.44",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.44",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.43/SANMAO.AI-0.7.43.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.44/SANMAO.AI-0.7.44.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.43/SANMAO.AI-0.7.43.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.43/SANMAO.AI-0.7.43.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.43/SANMAO.AI-0.7.43.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.44/SANMAO.AI-0.7.44.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.44/SANMAO.AI-0.7.44.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.44/SANMAO.AI-0.7.44.zip"
   ],
   "sha256": "59d723b70675e9d9ec491c12c3af09ce5f616d35bfaa228df645cf94726217f8",
-  "publishedAt": "2026-09-15T20:00:00+08:00",
+  "publishedAt": "2026-09-16T01:08:00+08:00",
   "notes": [
     "新增 LLM 任务日志，记录模型、服务商、耗时、调用次数、响应字数、联网状态和失败原因。",
     "主界面与超级画布支持按 LLM 类型筛选，并可展开查看任务详情。",
-    "包含 0.7.41 的全部功能和修复。"
+    "修复预设提示词不应暴露在提示词编辑框中的问题。",
+    "包含 0.7.43 的全部功能和修复。"
   ]
 }
