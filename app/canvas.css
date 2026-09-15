@@ -235,25 +235,22 @@ html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(
 .canvas-settings-card{display:grid;gap:13px;padding:14px;border:1px solid var(--line-strong);border-radius:15px;background:var(--panel-2)}
 .canvas-settings-card>div:first-child{display:grid;gap:5px}.canvas-settings-card>div:first-child b{font-size:10px}.canvas-settings-card>div:first-child small{color:var(--muted);font-size:8px;line-height:1.5}
 .canvas-settings-options{display:grid;gap:7px}.canvas-settings-options button{display:flex;align-items:center;gap:9px;min-height:52px;padding:8px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--text);text-align:left}.canvas-settings-options button:hover{border-color:var(--accent);background:var(--accent-soft)}.canvas-settings-options button.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 13%,transparent)}.canvas-settings-options button>span:nth-child(2){display:grid;gap:4px;flex:1;min-width:0}.canvas-settings-options button b{font-size:9px}.canvas-settings-options button small{color:var(--muted);font-size:8px}.canvas-settings-options button i{width:18px;color:var(--accent-text);font-style:normal;text-align:center}.canvas-settings-option-icon{width:28px;height:28px;display:grid;place-items:center;flex:none;border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:18px}
-/* The travelling flow light is three phase-locked dashes sharing one leading
-   edge: a long tail in the source node color, a tinted middle and a bright tip
-   read as a single light streak whose colour ramps up along its length. */
-.canvas-edge-related-flow{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 88%,var(--canvas-edge-flow-head));stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:172 828;stroke-dashoffset:1000;opacity:.78;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 46%,transparent));animation:canvas-edge-related-flow 1.8s linear infinite}
+/* Related edges keep a quiet dashed guide. Three short, phase-locked layers
+   form one travelling light in the source hue, with theme-specific highlights. */
+.canvas-edge-visual{--edge-flow-color:var(--node-color,var(--accent));--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 94%,#fff);--edge-flow-halo:none;--edge-flow-tail-opacity:.3;--edge-flow-mid-opacity:.65}
+html[data-theme="dark"] .canvas-edge-visual{--edge-flow-tip:color-mix(in srgb,var(--edge-flow-color) 30%,#fff);--edge-flow-halo:drop-shadow(0 0 2px color-mix(in srgb,var(--edge-flow-color) 45%,transparent));--edge-flow-tail-opacity:.24;--edge-flow-mid-opacity:.58}
+.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke-linecap:round;stroke-linejoin:round;filter:none}
+.canvas-edge-related-flow{stroke:var(--edge-flow-color);stroke-width:1.5;stroke-dasharray:104 896;stroke-dashoffset:1000;opacity:var(--edge-flow-tail-opacity);animation:canvas-edge-related-flow 2.8s linear infinite}
+.canvas-edge-related-flow-mid{stroke:var(--edge-flow-color);stroke-width:1.8;stroke-dasharray:58 942;stroke-dashoffset:954;opacity:var(--edge-flow-mid-opacity);animation:canvas-edge-related-flow-mid 2.8s linear infinite}
+.canvas-edge-related-flow-head{stroke:var(--edge-flow-tip);stroke-width:2.2;stroke-dasharray:12 988;stroke-dashoffset:908;opacity:1;filter:var(--edge-flow-halo);animation:canvas-edge-related-flow-head 2.8s linear infinite}
 @keyframes canvas-edge-related-flow{from{stroke-dashoffset:1000}to{stroke-dashoffset:0}}
-.canvas-edge-related-flow-mid{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 54%,var(--canvas-edge-flow-head));stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:118 882;stroke-dashoffset:946;opacity:.86;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 48%,transparent));animation:canvas-edge-related-flow-mid 1.8s linear infinite}
-@keyframes canvas-edge-related-flow-mid{from{stroke-dashoffset:946}to{stroke-dashoffset:-54}}
-.canvas-edge-related-flow-head{fill:none;vector-effect:non-scaling-stroke;pointer-events:none;stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 18%,var(--canvas-edge-flow-head));stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:52 948;stroke-dashoffset:880;opacity:1;filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color,var(--accent-2)) 58%,transparent));animation:canvas-edge-related-flow-head 1.8s linear infinite}
-@keyframes canvas-edge-related-flow-head{from{stroke-dashoffset:880}to{stroke-dashoffset:-120}}
-.canvas-edge-visual .canvas-edge.related{stroke-dasharray:11 9;stroke-linecap:round;animation:canvas-edge-related-dashes 1.8s linear infinite}
-@keyframes canvas-edge-related-dashes{from{stroke-dashoffset:0}to{stroke-dashoffset:-40}}
-.canvas-edge-visual .canvas-edge.related-static{stroke-dasharray:6 6;stroke-linecap:round;animation:none!important;filter:none}
-/* Light boards need a deeper, more saturated comet: a white hot tip would wash
-   out on a light surface, so the head color mixes toward ink instead. */
-html[data-theme="light"] .canvas-edge-visual .canvas-edge-related-flow{opacity:.94;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--node-color,var(--accent)) 34%,transparent))}
-html[data-theme="light"] .canvas-edge-visual .canvas-edge-related-flow-mid{opacity:.92;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--node-color,var(--accent)) 38%,transparent))}
-html[data-theme="light"] .canvas-edge-visual .canvas-edge-related-flow-head{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--node-color,var(--accent)) 44%,transparent))}
-
-@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-edge-related-flow,html:not([data-motion="on"]) .canvas-edge.related{animation:none!important}html:not([data-motion="on"]) .canvas-edge-related-flow-head{animation:none!important}}
+@keyframes canvas-edge-related-flow-mid{from{stroke-dashoffset:954}to{stroke-dashoffset:-46}}
+@keyframes canvas-edge-related-flow-head{from{stroke-dashoffset:908}to{stroke-dashoffset:-92}}
+.canvas-edge-visual .canvas-edge.related{stroke:color-mix(in srgb,var(--edge-flow-color) 66%,var(--line-strong));stroke-width:1.4;stroke-dasharray:7 9;stroke-linecap:round;filter:none;animation:none}
+.canvas-edge-visual .canvas-edge.related-static{stroke-dasharray:7 9;stroke-linecap:round;animation:none!important;filter:none}
+.canvas-stage.is-panning :is(.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head){animation-play-state:paused!important}
+html[data-motion="off"] :is(.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head){display:none;animation:none!important}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) :is(.canvas-edge-related-flow,.canvas-edge-related-flow-mid,.canvas-edge-related-flow-head){display:none;animation:none!important}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-connection-cancel{animation:none!important}}
 @keyframes canvas-connection-remove-attention{0%{opacity:0;box-shadow:0 0 0 0 color-mix(in srgb,var(--danger) 0%,transparent)}45%{opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 24%,transparent)}100%{opacity:.9;box-shadow:0 1px 3px color-mix(in srgb,var(--danger) 14%,transparent)}}
 .canvas-workbench>nav{grid-template-columns:repeat(6,1fr)}
@@ -517,7 +514,6 @@ html[data-theme="light"] .canvas-edge-visual .canvas-edge-related-flow-head{filt
   --canvas-node-upscale-text:#167267;
   --canvas-node-queued:#b45309;
   --canvas-node-running:#0369a1;
-  --canvas-edge-flow-head:color-mix(in srgb,var(--accent-2) 58%,#191634);
 }
 html[data-theme="dark"] .canvas-workspace{
   --canvas-node-image:#a78bfa;
@@ -536,7 +532,6 @@ html[data-theme="dark"] .canvas-workspace{
   --canvas-node-upscale-text:#99f6e4;
   --canvas-node-queued:#f59e0b;
   --canvas-node-running:#38bdf8;
-  --canvas-edge-flow-head:#ffffff;
 }
 .node-color-image{--node-color:var(--canvas-node-image);--node-text:var(--canvas-node-image-text);--node-soft:color-mix(in srgb,var(--canvas-node-image) 14%,transparent);--node-effective:var(--canvas-node-image)}
 .node-color-video{--node-color:var(--canvas-node-video);--node-text:var(--canvas-node-video-text);--node-soft:color-mix(in srgb,var(--canvas-node-video) 14%,transparent);--node-effective:var(--canvas-node-video)}
@@ -578,9 +573,6 @@ html[data-theme="dark"] .canvas-workspace{
 
 .canvas-edge-visual .canvas-edge,.canvas-edge-draft{stroke:color-mix(in srgb,var(--node-color) 76%,var(--line-strong));filter:drop-shadow(0 0 3px color-mix(in srgb,var(--node-color) 30%,transparent))}
 .canvas-edge-visual .canvas-edge:hover,.canvas-edge-visual .canvas-edge.selected{stroke:color-mix(in srgb,var(--node-color) 84%,var(--text));filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color) 52%,transparent))}
-.canvas-edge-visual .canvas-edge-related-flow{stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 88%,var(--canvas-edge-flow-head));filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 46%,transparent))}
-.canvas-edge-visual .canvas-edge-related-flow-mid{stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 54%,var(--canvas-edge-flow-head));filter:drop-shadow(0 0 5px color-mix(in srgb,var(--node-color,var(--accent-2)) 48%,transparent))}
-.canvas-edge-visual .canvas-edge-related-flow-head{stroke:color-mix(in srgb,var(--node-color,var(--accent-2)) 18%,var(--canvas-edge-flow-head));filter:drop-shadow(0 0 7px color-mix(in srgb,var(--node-color,var(--accent-2)) 58%,transparent))}
 .canvas-edge-draft{opacity:.86}
 
 .canvas-minimap-edges path{stroke:color-mix(in srgb,var(--node-color) 58%,var(--muted))}
@@ -1396,9 +1388,11 @@ html[data-theme="dark"] .canvas-workspace{
    zooming stable on large boards and low-end GPUs. */
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow,
+.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-mid,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-head{filter:none!important}
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge.related,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow,
+.canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-mid,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-edge-related-flow-head,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-running::before,
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.status-running::after,
