@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { GeneratedVideo } from './types';
@@ -7,6 +7,8 @@ import type { GeneratedVideo } from './types';
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
 const MAX_DATA_URI_BYTES = 64 * 1024 * 1024;
+type PersistedVideo = GeneratedVideo & { localPath: string };
+type LoadedVideo = { buffer: Buffer; ext: string };
 
 function configuredRoot() {
   return path.resolve(process.env.SANMAO_VIDEO_STORAGE_PATH || path.join(dataDir, 'videos'));
@@ -29,17 +31,23 @@ function extensionFromUrl(url: string) {
   } catch { return ''; }
 }
 
-async function loadVideo(url: string) {
+async function loadVideo(url: string): Promise<LoadedVideo> {
   if (url.startsWith('data:')) {
     const match = url.match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
-    if (!match) return null;
+    if (!match) throw new Error('视频 data URI 格式无效，无法保存');
     const encodedBytes = Buffer.byteLength(match[3], 'utf8');
     if (encodedBytes > MAX_DATA_URI_BYTES * 1.4) throw new Error('视频 data URI 超过 64 MiB 限制，无法保存');
-    const buffer = match[2] ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]), 'utf8');
+    let buffer: Buffer;
+    try {
+      buffer = match[2] ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]), 'utf8');
+    } catch {
+      throw new Error('视频 data URI 格式无效，无法保存');
+    }
+    if (buffer.byteLength <= 0) throw new Error('视频 data URI 没有有效内容，无法保存');
     if (buffer.byteLength > MAX_DATA_URI_BYTES) throw new Error('视频 data URI 超过 64 MiB 限制，无法保存');
     return { buffer, ext: extensionFromContentType(match[1] || 'video/mp4') };
   }
-  if (!/^https?:\/\//i.test(url)) return null;
+  if (!/^https?:\/\//i.test(url)) throw new Error('视频结果不是可读取的 data URL 或 HTTP 地址，无法保存到本地');
   const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(120_000) });
   if (!response.ok) throw new Error(`视频下载失败：HTTP ${response.status}`);
   const length = Number(response.headers.get('content-length') || 0);
@@ -52,17 +60,34 @@ async function loadVideo(url: string) {
 export async function persistGeneratedVideos(videos: GeneratedVideo[], configuredPath?: string) {
   const root = path.resolve(configuredPath?.trim() || configuredRoot());
   await mkdir(root, { recursive: true });
-  let storageError = '';
-  const saved = await Promise.all(videos.map(async (video) => {
+  const writtenFiles: string[] = [];
+  const temporaryFiles: string[] = [];
+  const failures: string[] = [];
+  const saved = await Promise.all(videos.map(async (video, index): Promise<PersistedVideo | null> => {
     try {
       const loaded = await loadVideo(video.url);
-      if (!loaded) return video;
       const name = `${Date.now()}-${randomUUID()}.${loaded.ext}`;
-      await writeFile(path.join(root, name), loaded.buffer, { flag: 'wx' });
-      return { ...video, url: `/api/storage/video?name=${encodeURIComponent(name)}`, localPath: path.join(root, name) };
-    } catch (error) { storageError ||= error instanceof Error ? error.message : '本地视频保存失败'; return video; }
+      const file = path.join(root, name);
+      const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+      temporaryFiles.push(temporary);
+      await writeFile(temporary, loaded.buffer, { flag: 'wx' });
+      await rename(temporary, file);
+      writtenFiles.push(file);
+      return { ...video, url: `/api/storage/video?name=${encodeURIComponent(name)}`, localPath: file };
+    } catch (error) {
+      failures.push(`第 ${index + 1} 个：${error instanceof Error ? error.message : '未知错误'}`);
+      return null;
+    }
   }));
-  return { videos: saved, path: root, storageError: storageError || undefined };
+  await Promise.all(temporaryFiles.map((file) => rm(file, { force: true }).catch(() => undefined)));
+  if (failures.length) {
+    await Promise.all(writtenFiles.map((file) => rm(file, { force: true }).catch(() => undefined)));
+  }
+  return {
+    videos: failures.length ? [] : saved.filter((video): video is PersistedVideo => video !== null),
+    path: root,
+    storageError: failures.length ? `本地视频保存失败：${failures.join('；')}` : undefined,
+  };
 }
 
 export function resolveStoredVideoFile(root: string, name: string) {

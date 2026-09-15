@@ -8,6 +8,7 @@ type Props = {
   onNotify: (message: string) => void;
   onDelete: () => void | Promise<void>;
   onRestore?: () => void | Promise<void>;
+  onSaveLocally?: () => void | Promise<void>;
 };
 
 function statusLabel(status: VideoTask['status']) {
@@ -35,9 +36,9 @@ function durationLabel(input: VideoTask['input']) {
   return input.seconds ? `${input.seconds} 秒` : '默认时长';
 }
 
-export default function VideoRecordCard({ task, onNotify, onDelete, onRestore }: Props) {
+export default function VideoRecordCard({ task, onNotify, onDelete, onRestore, onSaveLocally }: Props) {
   const [parametersOpen, setParametersOpen] = useState(false);
-  const url = task.videoUrls?.[0] || task.remoteVideoUrls?.[0] || '';
+  const url = task.videoUrls?.[0] || '';
   const canDelete = task.status === 'done' || task.status === 'failed';
   const canRestore = task.status === 'done' || task.status === 'failed';
   const input = task.input;
@@ -68,7 +69,7 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore }:
   };
   return <article className={`creative-video-card ${task.status}`}>
     <div className="creative-video-preview">
-      {url ? <video src={url} controls playsInline preload="metadata" /> : <div className="creative-video-placeholder"><span>▶</span><small>{task.status === 'failed' ? '视频生成失败' : '视频生成中'}</small></div>}
+      {url ? <video src={url} controls playsInline preload="metadata" /> : <div className="creative-video-placeholder"><span>▶</span><small>{task.status === 'failed' ? '视频生成失败' : task.status === 'done' ? task.error ? '等待本地保存' : '视频已完成' : '视频生成中'}</small></div>}
       <span className="creative-media-badge">视频</span>
     </div>
     <div className="creative-video-body">
@@ -79,7 +80,8 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore }:
       <div className="creative-video-actions">
         <button type="button" className="creative-video-view-parameters" onClick={() => setParametersOpen(true)} title="查看这条任务的生成参数" aria-label="查看这条任务的生成参数"><span className="creative-action-icon" aria-hidden="true">⌕</span><span>查看参数</span></button>
         {canRestore && onRestore && <button type="button" className="creative-video-restore" onClick={() => void onRestore()} title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数"><span className="creative-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button>}
-        {url && <a className="creative-video-download" href={url} download target="_blank" rel="noreferrer" title="下载生成的视频" aria-label="下载生成的视频"><span className="creative-action-icon" aria-hidden="true">↓</span></a>}
+        {url && <a className="creative-video-download" href={url} download target="_blank" rel="noreferrer" title="下载已保存的视频" aria-label="下载已保存的视频"><span className="creative-action-icon" aria-hidden="true">↓</span></a>}
+        {task.error && task.remoteVideoUrls?.length && onSaveLocally && <button type="button" className="creative-video-save" onClick={() => void onSaveLocally()} title="再次保存本地视频" aria-label="再次保存本地视频"><span className="creative-action-icon" aria-hidden="true">↻</span><span>再次保存</span></button>}
         <button type="button" className="creative-video-delete" onClick={handleDelete} title={canDelete ? '删除视频任务' : '视频生成完成或失败后可删除'} aria-label="删除视频任务"><span className="creative-action-icon" aria-hidden="true">⌫</span><span>删除</span></button>
       </div>
     </div>

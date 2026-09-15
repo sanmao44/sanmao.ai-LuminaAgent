@@ -218,7 +218,7 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
     status: 'success',
     durationMs: Date.now() - new Date(task.createdAt).getTime(),
     providerDurationMs: Date.now() - new Date(task.startedAt || task.createdAt).getTime(),
-    videoUrls: remoteVideoUrls,
+    videoUrls,
     videoPath: stored.videos.find((video) => video.localPath)?.localPath,
     storageError: stored.storageError,
     providerTaskId: task.providerTaskId,
@@ -230,12 +230,19 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
 export async function saveVideoTaskLocally(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
-  if (!task.remoteVideoUrls.length) throw new Error('该任务没有可保存的远程视频地址');
-  const stored = await persistGeneratedVideos(task.remoteVideoUrls.map((url) => ({ url })), (await getPublicState()).settings.videoStoragePath);
+  const remoteVideoUrls = task.remoteVideoUrls?.length
+    ? task.remoteVideoUrls
+    : (task.videoUrls || []).filter((url) => /^https?:\/\//i.test(url));
+  if (!remoteVideoUrls.length) throw new Error('该任务没有可保存的远程视频地址');
+  const stored = await persistGeneratedVideos(remoteVideoUrls.map((url) => ({ url })), (await getPublicState()).settings.videoStoragePath);
   return updateVideoTask(id, {
-    videoUrls: stored.videos.map((video) => video.url),
-    localVideoPaths: stored.videos.map((video) => video.localPath).filter((item): item is string => Boolean(item)),
-    error: stored.storageError || '',
+    ...(stored.storageError ? {
+      error: stored.storageError,
+    } : {
+      videoUrls: stored.videos.map((video) => video.url),
+      localVideoPaths: stored.videos.map((video) => video.localPath),
+      error: undefined,
+    }),
   });
 }
 

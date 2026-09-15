@@ -21,7 +21,10 @@ test('connects completed and failed video cards to workbench parameter restore',
   assert.match(card, /className="creative-video-download"/);
   assert.doesNotMatch(studio, /复制视频地址/);
   assert.doesNotMatch(studio, /复制地址/);
-  assert.match(studio, /const thumbnailUrl = task\.videoUrls\?\.\[0\] \|\| task\.remoteVideoUrls\?\.\[0\] \|\| ''/);
+  assert.match(studio, /const thumbnailUrl = task\.videoUrls\?\.\[0\] \|\| ''/);
+  assert.doesNotMatch(card, /task\.videoUrls\?\.\[0\] \|\| task\.remoteVideoUrls\?\.\[0\]/);
+  assert.match(card, /onSaveLocally\?: \(\) => void \| Promise<void>/);
+  assert.match(studio, /onClick=\{\(\) => void saveTaskLocally\(task\)\}/);
   assert.match(studio, /className="video-task-thumbnail"[^>]*aria-hidden="true"><video src=\{thumbnailUrl\} muted playsInline preload="metadata"/);
   assert.match(videoStudioCss, /\.video-task-card\{grid-template-columns:minmax\(0,1fr\) 94px;grid-auto-rows:max-content/);
   assert.match(videoStudioCss, /\.video-task-card>\.video-task-thumbnail\{position:relative;grid-column:2;grid-row:1;width:94px;height:66px/);

@@ -7366,6 +7366,20 @@ export default function Page() {
         });
         setProviderEditor(true);
     }
+    async function saveVideoTaskLocally(task) {
+        try {
+            const res = await fetch(`/api/video/tasks/${encodeURIComponent(task.id)}`, {
+                method: 'POST'
+            });
+            const data = await res.json().catch(()=>({}));
+            if (!res.ok) throw new Error(data.error || '再次保存视频失败');
+            setVideoTasks((old)=>old.map((item)=>item.id === task.id ? data.task : item));
+            void refreshVideoTasks(videoPage);
+            notify('已再次保存视频');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '再次保存视频失败');
+        }
+    }
     function openManualModelDialog(provider) {
         setManualModelProvider(provider);
         setManualModelForm({ rawId: '', displayName: '', kind: 'auto' });
@@ -12918,7 +12932,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${pageSize} 项` })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task) }, task.id)) }),
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task) }, task.id)) }),
                                             /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
                                                 /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
                                                 /*#__PURE__*/ _jsxs("div", { children: [
