@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.46/SANMAO.AI-0.7.46.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.46/SANMAO.AI-0.7.46.zip"
   ],
-  "sha256": "e451f01b82fbe8799a100454307e0f853bdb952121d6d65d89e61873b468918e",
+  "sha256": "e1a6d780ff753eda4b7d17bbc55d97fdf0915ab190730a80086308c467415a08",
   "publishedAt": "2026-09-17T01:32:00+08:00",
   "notes": [
     "新增可复用的「技能」系统（兼容 Agent Skills 的 SKILL.md），支持本机新建、从 GitHub 仓库/链接/ZIP 导入，也支持让助手自己安装后确认。",
