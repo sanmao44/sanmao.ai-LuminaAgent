@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const MAX_INPUT_BYTES = 512 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 24 * 60 * 60;
+const OUTPUT_FPS = 30;
+let resolvedFfmpegPromise: Promise<{ command: string; checked: string[] }> | null = null;
 
 export type PreciseVideoTrimInput = {
   file: File;
@@ -21,17 +24,79 @@ function finiteNumber(value: unknown, fallback: number) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function runFfmpeg(args: string[]) {
+function ffmpegFileName() {
+  return process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+}
+
+function ffmpegCandidates() {
+  const binary = ffmpegFileName();
+  const values = [
+    process.env.FFMPEG_BIN,
+    // next build bundles ffmpeg-static's index.js, so its exported __dirname
+    // can point at the route bundle. Resolve from the application root first.
+    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', binary),
+    path.join(path.dirname(process.execPath), 'node_modules', 'ffmpeg-static', binary),
+    ffmpegPath,
+  ];
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function probeFfmpeg(command: string) {
+  return new Promise<boolean>((resolve) => {
+    const child = spawn(command, ['-version'], { windowsHide: true, stdio: 'ignore' });
+    child.once('error', () => resolve(false));
+    child.once('close', (code) => resolve(code === 0));
+  });
+}
+
+async function resolveFfmpegUncached() {
+  const checked: string[] = [];
+  for (const candidate of ffmpegCandidates()) {
+    const resolved = path.resolve(candidate);
+    checked.push(resolved);
+    try {
+      await access(resolved, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+      if (await probeFfmpeg(resolved)) return { command: resolved, checked };
+    } catch {
+      // Try the next installation layout.
+    }
+  }
+  // A system-managed FFmpeg remains a useful fallback for Docker and Linux.
+  checked.push('ffmpeg (PATH)');
+  if (await probeFfmpeg('ffmpeg')) return { command: 'ffmpeg', checked };
+  throw new Error(`找不到可运行的 FFmpeg；已检查：${checked.join('、')}。请重新运行启动器修复依赖。`);
+}
+
+function resolveFfmpeg() {
+  if (!resolvedFfmpegPromise) {
+    resolvedFfmpegPromise = resolveFfmpegUncached();
+    resolvedFfmpegPromise.catch(() => { resolvedFfmpegPromise = null; });
+  }
+  return resolvedFfmpegPromise;
+}
+
+async function runFfmpeg(args: string[]) {
+  const { command, checked } = await resolveFfmpeg();
   return new Promise<void>((resolve, reject) => {
-    if (!ffmpegPath) return reject(new Error('当前安装包缺少 FFmpeg，无法进行精确视频裁剪。'));
-    const child = spawn(ffmpegPath, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
       stderr = `${stderr}${chunk}`.slice(-12_000);
     });
-    child.once('error', () => reject(new Error('无法启动 FFmpeg，请重新安装应用后重试。')));
+    child.once('error', (error: NodeJS.ErrnoException) => {
+      const locations = checked.length ? `；已检查：${checked.join('、')}` : '';
+      fail(new Error(`无法启动 FFmpeg（${error.code || error.message}）${locations}。请重新运行启动器修复依赖。`));
+    });
     child.once('close', (code) => {
+      if (settled) return;
+      settled = true;
       if (code === 0) resolve();
       else reject(new Error(`视频精确裁剪失败${stderr.trim() ? `：${stderr.trim().split(/\r?\n/).at(-1)}` : ''}`));
     });
@@ -56,7 +121,7 @@ export async function preciselyTrimVideo(input: PreciseVideoTrimInput) {
       '-hide_banner', '-loglevel', 'error', '-y',
       '-i', inputPath,
       '-map', '0:v:0', '-map', '0:a:0?',
-      '-vf', `trim=start=${startTime.toFixed(6)}:end=${endTime.toFixed(6)},setpts=(PTS-STARTPTS)/${playbackRate}`,
+      '-vf', `trim=start=${startTime.toFixed(6)}:end=${endTime.toFixed(6)},setpts=(PTS-STARTPTS)/${playbackRate},fps=${OUTPUT_FPS},pad=ceil(iw/2)*2:ceil(ih/2)*2`,
       ...(input.muted ? ['-an'] : ['-af', `atrim=start=${startTime.toFixed(6)}:end=${endTime.toFixed(6)},asetpts=PTS-STARTPTS,atempo=${playbackRate}`]),
       '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
       '-pix_fmt', 'yuv420p',

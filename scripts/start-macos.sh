@@ -292,7 +292,7 @@ printf '\n==> 检查并安装程序依赖\n'
 NEED_INSTALL=0
 if [ "$SKIP_BUILD" = 1 ]; then
   printf '%s\n' '回滚模式：保留当前依赖，不执行 npm install。'
-elif [ ! -x node_modules/.bin/next ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
+elif [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
   NEED_INSTALL=1
 fi
 if [ "$NEED_INSTALL" -eq 1 ]; then
@@ -304,6 +304,9 @@ fi
 
 if [ ! -x node_modules/.bin/next ]; then
   fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
+fi
+if [ ! -x node_modules/ffmpeg-static/ffmpeg ]; then
+  fail '依赖安装完成后仍找不到 FFmpeg。请删除 node_modules 文件夹后重新运行启动器。'
 fi
 
 if [ "$SKIP_BUILD" = 1 ] && [ ! -f "$BUILD_ID" ]; then

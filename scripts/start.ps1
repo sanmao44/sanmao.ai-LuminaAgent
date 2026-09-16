@@ -650,6 +650,7 @@ if ($SkipBuild.IsPresent) {
   $nodeTypesExists = Test-Path '.\node_modules\@types\node\package.json'
   $reactTypesExists = Test-Path '.\node_modules\@types\react\package.json'
   $reactDomTypesExists = Test-Path '.\node_modules\@types\react-dom\package.json'
+  $ffmpegExists = Test-Path '.\node_modules\ffmpeg-static\ffmpeg.exe'
   $packageLockHashPath = '.\node_modules\.sanmao-package-lock.sha256'
   $packageLockChanged = $false
   if (Test-Path '.\package-lock.json') {
@@ -665,7 +666,7 @@ if ($SkipBuild.IsPresent) {
       }
     }
   }
-  if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or $packageLockChanged) {
+  if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or (-not $ffmpegExists) -or $packageLockChanged) {
     Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
     foreach ($repairPort in $portRange) {
       if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
@@ -687,6 +688,9 @@ if ($SkipBuild.IsPresent) {
 
   if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
     Fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
+  }
+  if (-not (Test-Path '.\node_modules\ffmpeg-static\ffmpeg.exe')) {
+    Fail '依赖安装完成后仍找不到 FFmpeg。请删除 node_modules 文件夹后重新运行启动器。'
   }
 }
 

@@ -11,6 +11,7 @@ RUN npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app
+RUN apk add --no-cache ffmpeg
 ENV NODE_ENV=production
 ENV SANMAO_DATA_DIR=/data
 ENV SANMAO_IMAGE_STORAGE_PATH=/data/images
