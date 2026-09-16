@@ -24,7 +24,7 @@ export const SKILL_FILES_MAX = 64;
 export const SKILL_TOTAL_MAX_BYTES = 2 * 1024 * 1024;
 export const SKILL_TOOL_CONTENT_MAX_CHARS = 12000;
 export const SKILL_FETCH_TIMEOUT_MS = 15000;
-export const SKILL_ARCHIVE_TIMEOUT_MS = 120000;
+export const SKILL_ARCHIVE_TIMEOUT_MS = 45000;
 export const SKILL_FETCH_HOPS_MAX = 3;
 export const SKILL_TOOL_MAX_CALLS = 4;
 export const SKILL_INSTALL_MAX_PER_REQUEST = 2;
@@ -915,4 +915,13 @@ export function skillsSnapshot(options: SkillStoreOptions = {}) {
 
 export function readLocalSkillDocument(dir: string) {
   try { return readFileSync(path.join(dir, 'SKILL.md'), 'utf8'); } catch { return ''; }
+}
+
+const MODEL_TOOL_MARKUP_PATTERN = /(?:\|\s*)?<[|｜]{0,4}DSML[|｜]{0,4}>|｜｜\s*DSML|<\s*DSML\s*\|/i;
+
+/** 模型把工具调用写成文本标记时（例如 DSML），截掉标记之后的调用块，避免露出乱码。 */
+export function stripToolCallMarkup(text: string) {
+  const match = MODEL_TOOL_MARKUP_PATTERN.exec(text);
+  if (!match) return text;
+  return text.slice(0, match.index).trimEnd();
 }

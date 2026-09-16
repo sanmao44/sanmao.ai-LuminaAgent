@@ -21,7 +21,7 @@ import { memoryContextMessage } from '@/lib/agent-memory';
 import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
 import { buildAgentSkillContext, buildSkillToolContent, installSkill, installSkillFromDocument, readSkill, readSkillFile, searchSkills, SKILL_INSTALL_MAX_PER_REQUEST, SKILL_TOOL_MAX_CALLS } from '@/lib/skills';
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
-import { fetchSkillText, parseGithubSkillTarget } from '@/lib/skills';
+import { fetchSkillText, parseGithubSkillTarget, stripToolCallMarkup } from '@/lib/skills';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 
 export const runtime = 'nodejs';
@@ -659,6 +659,7 @@ export async function POST(request: Request) {
       if (isImageToolCall({ function: { name } })) return imageToolsAllowed;
       return false;
     });
+    const skillToolsOnly = callableTools.filter((tool: any) => String(tool?.function?.name || '').startsWith('skill_'));
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, searchedAt: nativeSearchData.searchedAt };
       if (webSearchData) return { source: 'external', provider: webSearchData.provider, query: webSearchData.query, rawResultCount: webSearchData.rawResultCount, resultCount: webSearchData.resultCount, status: webSearchData.status, coverageNote: webSearchData.coverageNote, rounds: webSearchData.rounds, warnings: webSearchData.warnings, retryable: webSearchData.retryable, suggestedAction: webSearchData.suggestedAction, fallbackFrom: nativeSearchError ? 'native' : undefined, searchedAt: webSearchData.searchedAt };
@@ -795,6 +796,77 @@ export async function POST(request: Request) {
     let skillToolCalls = 0;
     let skillInstalls = 0;
 
+    const runSkillToolCall = async (call: any): Promise<ChatMessage> => {
+      let args: any = {};
+      try { args = JSON.parse(call?.function?.arguments || '{}'); } catch {}
+      const name = String(call?.function?.name || '');
+      const fail = (error: string): ChatMessage => ({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
+      if (!skillContext.settings.enabled) return fail('技能功能已关闭。');
+      if (skillToolCalls >= SKILL_TOOL_MAX_CALLS) return fail('本轮技能工具调用次数已达上限，请直接用现有信息继续。');
+      skillToolCalls += 1;
+      try {
+        if (name === 'skill_search') {
+          const found = searchSkills(args.query, skillContext.skills, 8);
+          return { role: 'tool', tool_call_id: call.id, content: JSON.stringify({
+            ok: true,
+            query: String(args.query || ''),
+            resultCount: found.length,
+            skills: found.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description })),
+            hint: found.length ? '用 skill_read 读取需要的技能后再执行。' : '没有匹配的技能；如果用户要求安装某个技能，改用 skill_install。',
+          }) };
+        }
+        if (name === 'skill_read') {
+          const skill = readSkill(args.id, { pending: false });
+          if (!skill) {
+            const waiting = readSkill(args.id, { pending: true });
+            return fail(waiting ? '技能“' + waiting.name + '”还在等待用户确认，确认后才能使用。' : '技能不存在或尚未启用。');
+          }
+          if (!skill.enabled) return fail('技能“' + skill.name + '”当前未启用。');
+          const filePath = typeof args.file === 'string' ? args.file.trim() : '';
+          const file = filePath ? readSkillFile(skill.id, filePath, { pending: false }) : null;
+          if (filePath && !file) return fail('技能里没有这个附带文件：' + filePath.slice(0, 120));
+          return { role: 'tool', tool_call_id: call.id, content: buildSkillToolContent(skill, file) };
+        }
+        if (skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST) return fail('本轮安装次数已达上限，请先让用户确认已安装的技能。');
+        const autoApprove = skillContext.settings.autoApprove;
+        const urlArg = String(args.url || '').trim();
+        const nameArg = String(args.name || '').trim();
+        const bodyArg = typeof args.body === 'string' ? args.body : '';
+        const shorthand = !urlArg && !bodyArg.trim() && /^[\w.-]+\/[\w.-]+(\/[\w.\-/]*)?$/.test(nameArg) ? nameArg : '';
+        const sourceRef = urlArg || shorthand;
+        const installer = { kind: 'agent' as const, name: '画布助手', detail: sourceRef || '由助手自主创建' };
+        let installed = null as ReturnType<typeof installSkill> | null;
+        if (sourceRef) {
+          const githubTarget = /github\.com\//i.test(sourceRef) || !/^[a-z]+:\/\//i.test(sourceRef) ? parseGithubSkillTarget(sourceRef) : null;
+          if (githubTarget) {
+            const parsed = await fetchSkillFilesFromGithub(githubTarget, { signal: requestController.signal });
+            installed = installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, source: 'github', sourceUrl: sourceRef, installer, pending: !autoApprove });
+          } else {
+            const fetched = await fetchSkillText(sourceRef, { signal: requestController.signal });
+            installed = installSkillFromDocument({ text: fetched.text, id: args.id, source: 'url', sourceUrl: fetched.url, installer, pending: !autoApprove });
+          }
+        } else {
+          installed = installSkill({ id: args.id, name: args.name, description: args.description, body: args.body, source: 'agent', installer, pending: !autoApprove });
+        }
+        skillInstalls += 1;
+        const record = installed;
+        if (!record) return fail('技能安装失败。');
+        return { role: 'tool', tool_call_id: call.id, content: JSON.stringify({
+          ok: true,
+          id: record.id,
+          name: record.name,
+          status: record.pending ? 'pending-confirmation' : 'enabled',
+          files: record.files.map((item) => item.path),
+          instruction: record.pending
+            ? '已保存到待确认区，需要用户在“技能”面板确认后才会生效。请如实告知用户，不要说已经可以直接使用。'
+            : '技能已启用，可以用 skill_read 读取并立即使用。',
+        }) };
+      } catch (error) {
+        if (requestController.signal.aborted) throw requestController.signal.reason || error;
+        return fail(error instanceof Error ? error.message : '技能操作失败。');
+      }
+    };
+
     for (const call of toolCalls) {
       let args: any = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
@@ -827,73 +899,8 @@ export async function POST(request: Request) {
       }
       const skillToolName = String(call?.function?.name || '');
       if (skillToolName === 'skill_search' || skillToolName === 'skill_read' || skillToolName === 'skill_install') {
-        const skillFail = (error: string) => toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
-        if (!skillContext.settings.enabled) { skillFail('技能功能已关闭。'); continue; }
-        if (skillToolCalls >= SKILL_TOOL_MAX_CALLS) { skillFail('本轮技能工具调用次数已达上限，请直接用现有信息继续。'); continue; }
-        skillToolCalls += 1;
-        try {
-          if (skillToolName === 'skill_search') {
-            const found = searchSkills(args.query, skillContext.skills, 8);
-            toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({
-              ok: true,
-              query: String(args.query || ''),
-              resultCount: found.length,
-              skills: found.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description })),
-              hint: found.length ? '用 skill_read 读取需要的技能后再执行。' : '没有匹配的技能；如果用户要求安装某个技能，改用 skill_install。',
-            }) });
-            continue;
-          }
-          if (skillToolName === 'skill_read') {
-            const skill = readSkill(args.id, { pending: false });
-            if (!skill) {
-              const waiting = readSkill(args.id, { pending: true });
-              skillFail(waiting ? '技能“' + waiting.name + '”还在等待用户确认，确认后才能使用。' : '技能不存在或尚未启用。');
-              continue;
-            }
-            if (!skill.enabled) { skillFail('技能“' + skill.name + '”当前未启用。'); continue; }
-            const filePath = typeof args.file === 'string' ? args.file.trim() : '';
-            const file = filePath ? readSkillFile(skill.id, filePath, { pending: false }) : null;
-            if (filePath && !file) { skillFail('技能里没有这个附带文件：' + filePath.slice(0, 120)); continue; }
-            toolResults.push({ role: 'tool', tool_call_id: call.id, content: buildSkillToolContent(skill, file) });
-            continue;
-          }
-          if (skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST) { skillFail('本轮安装次数已达上限，请先让用户确认已安装的技能。'); continue; }
-          const autoApprove = skillContext.settings.autoApprove;
-          const skillUrl = typeof args.url === 'string' ? args.url.trim() : '';
-          const installer = { kind: 'agent' as const, name: '画布助手', detail: skillUrl || '由助手自主创建' };
-          let installed = null as ReturnType<typeof installSkill> | null;
-          if (skillUrl) {
-            const githubTarget = /github\.com\//i.test(skillUrl) || /^[\w.-]+\/[\w.-]+$/.test(skillUrl) ? parseGithubSkillTarget(skillUrl) : null;
-            if (githubTarget) {
-              const parsed = await fetchSkillFilesFromGithub(githubTarget, { signal: requestController.signal });
-              installed = installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, source: 'github', sourceUrl: skillUrl, installer, pending: !autoApprove });
-            } else {
-              const fetched = await fetchSkillText(skillUrl, { signal: requestController.signal });
-              installed = installSkillFromDocument({ text: fetched.text, id: args.id, source: 'url', sourceUrl: fetched.url, installer, pending: !autoApprove });
-            }
-          } else {
-            installed = installSkill({ id: args.id, name: args.name, description: args.description, body: args.body, source: 'agent', installer, pending: !autoApprove });
-          }
-          skillInstalls += 1;
-          const record = installed;
-          if (record) {
-            toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({
-              ok: true,
-              id: record.id,
-              name: record.name,
-              status: record.pending ? 'pending-confirmation' : 'enabled',
-              files: record.files.map((item) => item.path),
-              instruction: record.pending
-                ? '已保存到待确认区，需要用户在“技能”面板确认后才会生效。请如实告知用户，不要说已经可以直接使用。'
-                : '技能已启用，可以用 skill_read 读取并立即使用。',
-            }) });
-          }
-          continue;
-        } catch (error) {
-          if (requestController.signal.aborted) throw requestController.signal.reason || error;
-          skillFail(error instanceof Error ? error.message : '技能操作失败。');
-          continue;
-        }
+        toolResults.push(await runSkillToolCall(call));
+        continue;
       }
       if (!isImageToolCall(call)) continue;
       if (!imageToolsAllowed) continue;
@@ -954,6 +961,32 @@ export async function POST(request: Request) {
     }
 
     const secondMessages: ChatMessage[] = [...llmMessages, { role: 'assistant', content: message?.content || null, tool_calls: toolCalls }, ...toolResults];
+    // 技能工具经常需要链式调用（先检索再读取、安装后再核对）。如果后续轮次完全
+    // 不给工具，模型会把调用写成文本标记（如 DSML），既不执行也会显示成乱码。
+    // 这里只为技能工具补最多两轮原生调用，其余工具仍保持单轮，控制成本与副作用。
+    let followupText = '';
+    if (skillToolCalls > 0 && skillToolsOnly.length && !generated.length && !generatedFiles.length && !webSearchData) {
+      for (let round = 0; round < 2; round += 1) {
+        const followup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
+          messages: secondMessages,
+          tools: skillToolsOnly,
+          tool_choice: 'auto',
+        }, requestController.signal).catch((error) => {
+          if (requestController.signal.aborted) throw requestController.signal.reason || error;
+          return null;
+        });
+        const followupMessage = followup?.choices?.[0]?.message;
+        const followupCalls = Array.isArray(followupMessage?.tool_calls) ? followupMessage.tool_calls : [];
+        if (!followupCalls.length) {
+          followupText = stripToolCallMarkup(String(followupMessage?.content || '')).trim();
+          break;
+        }
+        const followupResults: ChatMessage[] = [];
+        for (const followupCall of followupCalls) followupResults.push(await runSkillToolCall(followupCall));
+        secondMessages.push({ role: 'assistant', content: followupMessage?.content || null, tool_calls: followupCalls }, ...followupResults);
+        if (skillToolCalls >= SKILL_TOOL_MAX_CALLS) break;
+      }
+    }
     let finalText = generated.length || generatedFiles.length
       ? `已完成${generated.length ? ` ${generated.length} 张图片` : ''}${generated.length && generatedFiles.length ? '，' : ''}${generatedFiles.length ? ` ${generatedFiles.length} 个文件` : ''}。`
       : webSearchData
@@ -961,6 +994,7 @@ export async function POST(request: Request) {
       : '工具调用失败，请检查已启用的模型或服务商接口。';
     if (generated.length && preparedCaption) finalText = await preparedCaption;
     if (wantsStream) {
+      if (followupText) return streamResult(null, { fallback: followupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
       try {
         if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
@@ -970,9 +1004,13 @@ export async function POST(request: Request) {
         return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
+    if (followupText) finalText = followupText;
     try {
-      const second = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
-      finalText = second?.choices?.[0]?.message?.content || finalText;
+      if (!followupText) {
+        const second = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
+        const secondText = stripToolCallMarkup(String(second?.choices?.[0]?.message?.content || '')).trim();
+        if (secondText) finalText = secondText;
+      }
     } catch (error) {
       if (requestController.signal.aborted) throw requestController.signal.reason || error;
     }

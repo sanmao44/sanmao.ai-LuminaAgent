@@ -242,3 +242,19 @@ test('技能接口覆盖列表、导入、待确认与设置', async () => {
   assert.match(pending, /approvePendingSkill\(key\)/);
   assert.match(pending, /discardPendingSkill\(key\)/);
 });
+
+test('模型写出的工具调用标记会被截断', () => {
+  assert.equal(skills.stripToolCallMarkup('已完成安装，等待你确认。\n\n|<DSML|> calls>\n<|DSML|> invoke name="skill_search">'), '已完成安装，等待你确认。');
+  assert.equal(skills.stripToolCallMarkup('先查一下。｜｜DSML｜｜ invoke name="x"'), '先查一下。');
+  assert.equal(skills.stripToolCallMarkup('正常的技能说明文本。'), '正常的技能说明文本。');
+});
+
+test('GitHub 技能抓取带目录候选与接口通道', async () => {
+  assert.equal(skills.SKILL_ARCHIVE_TIMEOUT_MS, 45000);
+  const archive = await readFile(new URL('../lib/skill-archive.ts', import.meta.url), 'utf8');
+  assert.match(archive, /export function githubSkillDirCandidates/);
+  assert.match(archive, /if \(last\) candidates\.push\('skills\/' \+ last, last\);/);
+  assert.match(archive, /async function fetchSkillFilesFromGithubApi/);
+  assert.match(archive, /const GITHUB_API_BASE = 'https:\/\/api\.github\.com';/);
+  assert.match(archive, /const viaApi = await fetchSkillFilesFromGithubApi\(target, options\);/);
+});
