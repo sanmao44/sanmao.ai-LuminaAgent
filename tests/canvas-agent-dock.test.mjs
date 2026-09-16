@@ -84,3 +84,13 @@ test("the dock session is persisted only after hydration so reloads keep the con
   assert.match(component, /\}, \[hydrated, messages, model, webMode, autoApply\]\);/);
   assert.doesNotMatch(component, /hydratedRef/);
 });
+
+test("the dock reuses the shared skill manager so canvas chats install skills too", () => {
+  assert.match(component, /import SkillManager from "@\/components\/SkillManager";/);
+  assert.match(component, /canvas-agent-dock-head-actions[\s\S]*?<SkillManager disabled=\{busy\} icon=\{<span aria-hidden="true">★<\/span>\} \/>/);
+  assert.match(styles, /\.canvas-agent-dock-head-actions>button\[data-tooltip\]::after\{left:auto;right:0;top:calc\(100% \+ 8px\)/);
+});
+
+test("dock toolbar button sizing never leaks into the skill dialog", () => {
+  assert.doesNotMatch(styles, /\.canvas-agent-dock-head-actions button/);
+});

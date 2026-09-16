@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SelectMenu from "@/components/SelectMenu";
+import SkillManager from "@/components/SkillManager";
 import {
   agentModelOptions,
   type AgentWebMode,
@@ -293,6 +294,7 @@ export default function CanvasAgentDock({
           </div>
         </div>
         <div className="canvas-agent-dock-head-actions">
+          <SkillManager disabled={busy} icon={<span aria-hidden="true">★</span>} />
           <button type="button" onClick={clearSession} title="新建对话" aria-label="新建对话">
             ＋
           </button>
