@@ -175,6 +175,16 @@ import {
   runReversePrompt,
 } from "@/lib/creation/agent";
 import { requestAgent } from "@/lib/agent-client";
+import CanvasAgentDock, {
+  CANVAS_AGENT_DOCK_OPEN_KEY,
+} from "@/components/CanvasAgentDock";
+import {
+  buildCanvasAgentDockContext,
+  canvasAgentDockNodeLabel,
+  canvasAgentDockStatus,
+  type CanvasAgentDockChip,
+  type CanvasAgentDockReference,
+} from "@/lib/canvas/agent-dock";
 import {
   buildOneTakeVideoRequest,
   normalizeOneTakeDuration,
@@ -1513,7 +1523,7 @@ async function waitForCanvasUpscaleTask(taskId: string) {
 }
 
 const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
-  "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop";
+  "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop";
 
 // Wheel gestures inside a node or an overlay belong to that control. Keep
 // them out of the stage zoom handler so native text/list scrolling can work
@@ -1536,6 +1546,8 @@ function isCanvasWheelIsolatedTargetWithOptions(
     ".canvas-node-editor-popover",
     ".canvas-node-quick-toolbar",
     ".canvas-minimap",
+    ".canvas-agent-dock",
+    ".canvas-agent-dock-rail",
     ".canvas-workbench",
     ".canvas-context-menu",
     ".canvas-modal-backdrop",
@@ -3207,6 +3219,77 @@ export default function SuperCanvas() {
     [document.nodes, selectedIds],
   );
   const selectedSingle = selectedNodes.length === 1 ? selectedNodes[0] : null;
+  const [agentDockOpen, setAgentDockOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(CANVAS_AGENT_DOCK_OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CANVAS_AGENT_DOCK_OPEN_KEY, agentDockOpen ? "1" : "0");
+    } catch {
+      /* the dock stays usable without persisted state */
+    }
+  }, [agentDockOpen]);
+  const agentDockStatus = useMemo(() => canvasAgentDockStatus(document), [document]);
+  const agentDockContext = useMemo(
+    () => buildCanvasAgentDockContext(document, selectedIds, currentProject?.name || "无限画布"),
+    [currentProject, document, selectedIds],
+  );
+  const agentDockChips = useMemo<CanvasAgentDockChip[]>(
+    () =>
+      agentDockContext.nodeIds.slice(0, 8).flatMap((id) => {
+        const node = nodeById(document, id);
+        if (!node) return [];
+        const kind: CanvasAgentDockChip["kind"] =
+          node.data.kind === "video"
+            ? "video"
+            : node.data.kind === "audio"
+              ? "audio"
+              : node.data.kind === "image"
+                ? "image"
+                : "text";
+        const thumb =
+          (kind === "image" || kind === "video") && node.data.url ? String(node.data.url) : "";
+        return [
+          {
+            id,
+            label: canvasAgentDockNodeLabel(node),
+            kind,
+            ...(thumb ? { thumb } : {}),
+          },
+        ];
+      }),
+    [agentDockContext.nodeIds, document],
+  );
+  const agentDockReferences = useMemo<CanvasAgentDockReference[]>(
+    () =>
+      agentDockContext.nodeIds
+        .map((id) => nodeById(document, id))
+        .filter((node): node is CanvasNode => Boolean(node))
+        .map((node) => canvasReferenceDraftFromNode(node))
+        .filter((reference): reference is CanvasReferenceDraft => Boolean(reference))
+        .flatMap((reference) =>
+          reference.kind === "audio"
+            ? []
+            : [
+                {
+                  id: reference.id,
+                  kind: reference.kind as CanvasAgentDockReference["kind"],
+                  name: reference.name,
+                  ...(reference.nodeId ? { nodeId: reference.nodeId } : {}),
+                  ...(reference.url ? { url: reference.url } : {}),
+                  ...(reference.text ? { text: reference.text } : {}),
+                  ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
+                },
+              ],
+        )
+        .slice(0, 8),
+    [agentDockContext.nodeIds, document],
+  );
   useEffect(() => {
     setDeckPromptBeforeOptimization(null);
   }, [mode, reuseDraft?.sourceNodeId, selectedSingle?.id]);
@@ -4244,7 +4327,7 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       // During reference picking, node clicks stay reserved for selecting a
       // reference. Blank canvas clicks must still be able to pan the viewport.
@@ -9713,6 +9796,135 @@ export default function SuperCanvas() {
     [editorPromptFor, reuseDraft, updateDoc],
   );
 
+  const focusAgentDockNodes = useCallback(
+    (ids: string[]) => {
+      const targets = ids.filter((id) => Boolean(nodeById(docRef.current, id)));
+      if (!targets.length) return;
+      setSelectedIds(new Set(targets));
+      setSelectedGroupId(null);
+      fitView(targets);
+    },
+    [fitView],
+  );
+  const applyAgentDockImages = useCallback(
+    (
+      images: Array<{ url: string; revisedPrompt?: string }>,
+      meta: { prompt: string; model?: string },
+    ) => {
+      const incoming = images.filter((image) => Boolean(String(image.url || "").trim()));
+      if (!incoming.length) return;
+      const anchor = selectedSingle || selectedNodes[0] || null;
+      const origin = anchor
+        ? { x: anchor.x, y: anchor.y }
+        : screenToWorld(stageSize.width / 2, stageSize.height / 2);
+      const anchorWidth = anchor ? nodeSize(anchor).w : 320;
+      const imageSettings = readSharedCreationSettings("image", runtime);
+      const referenceIds = agentDockReferences.map(
+        (reference) => reference.nodeId || reference.id,
+      );
+      const nodes = incoming.map((image, index) =>
+        createMedia(
+          "image",
+          image.url,
+          `Agent 图片 ${index + 1}`,
+          {
+            x: origin.x + anchorWidth + 90 + (index % 2) * 350,
+            y: origin.y + Math.floor(index / 2) * 280,
+          },
+          {
+            role: "Agent 生成结果",
+            ...(meta.model ? { model: meta.model } : {}),
+            generation: {
+              kind: "image",
+              prompt: meta.prompt,
+              params: clone(imageSettings),
+              referenceIds,
+              ...(anchor ? { parentNodeId: anchor.id } : {}),
+              createdAt: Date.now(),
+            },
+            referenceOrder: referenceIds,
+          },
+        ),
+      );
+      commit((value) => {
+        let next = { ...value, nodes: [...value.nodes, ...nodes] };
+        if (anchor)
+          nodes.forEach((node) => {
+            next = addEdge(next, anchor.id, node.id, "right", "left", "generated");
+          });
+        return next;
+      });
+      setSelectedIds(new Set(nodes.map((node) => node.id)));
+      setSelectedGroupId(null);
+      setContextMenu(null);
+      void recordCanvasImages(incoming, {
+        prompt: meta.prompt,
+        source: "canvas",
+        modelId: imageSettings.model,
+        ...(meta.model ? { modelName: meta.model } : {}),
+        ...(anchor ? { parentId: anchor.id } : {}),
+      });
+      notify(`已把 ${nodes.length} 张 Agent 图片加入画布`);
+      fitView(nodes.map((node) => node.id));
+    },
+    [
+      agentDockReferences,
+      commit,
+      fitView,
+      notify,
+      runtime,
+      screenToWorld,
+      selectedNodes,
+      selectedSingle,
+      stageSize.height,
+      stageSize.width,
+    ],
+  );
+  const applyAgentDockText = useCallback(
+    (text: string, meta: { prompt: string }) => {
+      const content = String(text || "").trim();
+      if (!content) return;
+      const anchor = selectedSingle || selectedNodes[0] || null;
+      const origin = anchor
+        ? { x: anchor.x, y: anchor.y }
+        : screenToWorld(stageSize.width / 2, stageSize.height / 2);
+      const anchorWidth = anchor ? nodeSize(anchor).w : 290;
+      const draft = createPrompt(
+        { x: origin.x + anchorWidth + 90, y: origin.y },
+        content,
+      );
+      const node: CanvasNode = {
+        ...draft,
+        data: {
+          ...draft.data,
+          text: content,
+          agentResponse: content,
+          agentPrompt: meta.prompt,
+          role: "Agent 回复",
+          status: "completed" as const,
+          statusLabel: "Agent 已回复",
+        },
+      };
+      commit((value) => {
+        let next = { ...value, nodes: [...value.nodes, node] };
+        if (anchor) next = addEdge(next, anchor.id, node.id, "right", "left", "generated");
+        return next;
+      });
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setContextMenu(null);
+      notify("已把 Agent 回复存成节点");
+    },
+    [
+      commit,
+      notify,
+      screenToWorld,
+      selectedNodes,
+      selectedSingle,
+      stageSize.height,
+      stageSize.width,
+    ],
+  );
   const addNodeReference = useCallback(
     (targetId: string, sourceId: string, requestedRole?: CanvasInputRole) => {
       connectCanvasNodes(sourceId, targetId, "right", "left", requestedRole);
@@ -11719,7 +11931,7 @@ export default function SuperCanvas() {
         if (window.document.querySelector(".canvas-node-quick-menu")) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest(
-          ".reference-mention-editor,.canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu.open,.select-menu-popover,.model-picker-trigger.open,.model-picker-panel,.model-picker-dialog-backdrop,.media-viewer-backdrop,.canvas-asset-preview-backdrop,.mask-editor-backdrop,.canvas-compose-backdrop,.canvas-node-editor-popover.is-prompt-expanded",
+          ".reference-mention-editor,.canvas-node-mention-menu,.canvas-parameter-collection.open,.canvas-parameter-drawer,.select-menu.open,.select-menu-popover,.model-picker-trigger.open,.model-picker-panel,.model-picker-dialog-backdrop,.media-viewer-backdrop,.canvas-asset-preview-backdrop,.mask-editor-backdrop,.canvas-compose-backdrop,.canvas-node-editor-popover.is-prompt-expanded,.canvas-agent-dock",
         )) return;
         event.preventDefault();
         event.stopPropagation();
@@ -11898,7 +12110,7 @@ export default function SuperCanvas() {
       const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
       const groupElement = element?.closest<HTMLElement>("[data-canvas-group-id]");
       const isolatedTarget = element?.closest(
-        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       if (groupElement && !node && !isolatedTarget) {
         event.preventDefault();
@@ -13745,6 +13957,15 @@ export default function SuperCanvas() {
           >
             ≡ 日志
           </button>
+          <button
+            type="button"
+            className={`canvas-soft-button canvas-panel-button canvas-agent-button ${agentDockOpen ? "active" : ""}`}
+            aria-pressed={agentDockOpen}
+            title="Agent 助手：右侧面板，可读取选中节点并生成到画布"
+            onClick={() => setAgentDockOpen((value) => !value)}
+          >
+            ✦ Agent
+          </button>
           </>}
           {!topbarCollapsed && <button
             type="button"
@@ -13885,10 +14106,10 @@ export default function SuperCanvas() {
           const isolatedTarget =
             canvasPointerDownRef.current?.interactive ||
             target?.closest(
-              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
             ) ||
             pointTarget?.closest(
-              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
             );
           if (isolatedTarget) return;
           const hit = target?.closest("[data-canvas-node-id]") ||
@@ -15077,6 +15298,19 @@ export default function SuperCanvas() {
           fitView={fitView}
           onNavigate={panToWorld}
           onMoveNodes={moveMinimapNodes}
+        />
+        <CanvasAgentDock
+          open={agentDockOpen}
+          onToggle={setAgentDockOpen}
+          status={agentDockStatus}
+          chips={agentDockChips}
+          references={agentDockReferences}
+          contextBlock={agentDockContext.text}
+          runtime={runtime}
+          onFocusNodes={focusAgentDockNodes}
+          onApplyImages={applyAgentDockImages}
+          onApplyText={applyAgentDockText}
+          notify={notify}
         />
         {contextGroup && contextMenu?.menu === "group" && contextMenu.groupId ? (
           <CanvasGroupContextMenu
