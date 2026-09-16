@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.45/SANMAO.AI-0.7.45.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.45/SANMAO.AI-0.7.45.zip"
   ],
-  "sha256": "c546756b31d053d474bac1df45102a1764c1d9f952a6086f1b85a9d194ad6380",
+  "sha256": "e451f01b82fbe8799a100454307e0f853bdb952121d6d65d89e61873b468918e",
   "publishedAt": "2026-09-16T17:46:00+08:00",
   "notes": [
     "新增画布本地深度视频节点，支持深度图预览与视频导出。",
