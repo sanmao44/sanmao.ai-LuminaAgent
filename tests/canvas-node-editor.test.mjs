@@ -899,3 +899,11 @@ test("local depth video balances inference quality with higher-resolution export
   assert.match(localDepthVideo, /canvas\.width = exportWidth/);
   assert.match(localDepthVideo, /context\.drawImage\(depthCanvas, 0, 0, exportWidth, exportHeight\)/);
 });
+
+test("local depth video follows source FPS and produces an editor-compatible MP4", () => {
+  assert.match(localDepthVideo, /probeCanvasVideoFrameRate\(sourceFile\)/);
+  assert.match(localDepthVideo, /frameCount = Math\.max\(1, Math\.ceil\(duration \* fps\)\)/);
+  assert.match(localDepthVideo, /encodeCanvasDepthVideoMp4\(/);
+  assert.match(localDepthVideo, /-depth\.mp4/);
+  assert.doesNotMatch(localDepthVideo, /DEFAULT_FPS/);
+});

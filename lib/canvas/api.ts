@@ -402,6 +402,35 @@ export async function preciselyTrimCanvasVideo(
   return response.blob();
 }
 
+async function depthVideoResponse(path: string, form: FormData, fallback: string) {
+  const response = await fetch(path, { method: "POST", body: form, cache: "no-store" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    throw new Error(String(body?.error || `${fallback}：${response.status}`));
+  }
+  return response;
+}
+
+export async function probeCanvasVideoFrameRate(file: File) {
+  const form = new FormData();
+  form.set("file", file);
+  const response = await depthVideoResponse("/api/canvas/video-depth/probe", form, "读取原视频帧率失败");
+  const body = await response.json() as { frameRate?: unknown };
+  const frameRate = Number(body.frameRate);
+  if (!Number.isFinite(frameRate) || frameRate < 1 || frameRate > 60) {
+    throw new Error("无法识别原视频帧率；请使用帧率不超过 60 FPS 的 MP4 或 WebM 视频。");
+  }
+  return frameRate;
+}
+
+export async function encodeCanvasDepthVideoMp4(file: File, frameRate: number) {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("frameRate", String(frameRate));
+  const response = await depthVideoResponse("/api/canvas/video-depth/encode", form, "深度视频 MP4 编码失败");
+  return response.blob();
+}
+
 export async function generateCanvasImage(input: {
   taskId?: string;
   prompt: string;

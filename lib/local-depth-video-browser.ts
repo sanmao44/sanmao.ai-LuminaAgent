@@ -1,6 +1,6 @@
 "use client";
 
-import { uploadCanvasAsset } from "./canvas/api";
+import { encodeCanvasDepthVideoMp4, probeCanvasVideoFrameRate, uploadCanvasAsset } from "./canvas/api";
 import { writeWebmDuration } from "./canvas/webm-duration";
 
 export type LocalDepthVideoProgress = {
@@ -15,7 +15,6 @@ const CACHE_NAME = "sanmao-local-depth-v1";
 const MAX_INFERENCE_SIDE = 1024;
 // Re-expand the inferred depth map for export without making a browser-sized 4K video.
 const MAX_EXPORT_SIDE = 1920;
-const DEFAULT_FPS = 12;
 const MAX_DURATION_SECONDS = 30;
 
 type DepthPipeline = ((image: unknown) => Promise<{ depth: { toCanvas: () => HTMLCanvasElement } }>) & {
@@ -126,11 +125,16 @@ export async function generateLocalDepthVideo(
     : fallbackDuration;
   if (!Number.isFinite(duration) || duration <= 0) throw new Error("无法读取视频时长，请重新导入视频后重试");
   if (duration > MAX_DURATION_SECONDS) throw new Error(`为保证本机稳定处理，深度图节点暂支持 30 秒以内的视频；请先在视频剪辑中裁剪后再试`);
+  const sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
+  if (!sourceResponse.ok) throw new Error(`无法读取原视频：HTTP ${sourceResponse.status}`);
+  const sourceBlob = await sourceResponse.blob();
+  const sourceFile = new File([sourceBlob], sourceName, { type: sourceBlob.type || "video/mp4" });
+  emitProgress(onProgress, { phase: "loading", progress: 4, message: "正在识别原视频帧率…" });
+  const fps = await probeCanvasVideoFrameRate(sourceFile);
   if (typeof MediaRecorder === "undefined") {
     throw new Error("当前浏览器不支持视频导出，请使用最新版 Chrome 或 Edge");
   }
   const estimator = await loadPipeline(onProgress);
-  const fps = DEFAULT_FPS;
   const frameCount = Math.max(1, Math.ceil(duration * fps));
   const sourceWidth = Math.max(2, video.videoWidth);
   const sourceHeight = Math.max(2, video.videoHeight);
@@ -182,10 +186,14 @@ export async function generateLocalDepthVideo(
   }
   await wait(120);
   recorder.stop();
-  const blob = await writeWebmDuration(await stopped, frames.length / fps);
+  const browserBlob = await writeWebmDuration(await stopped, frames.length / fps);
   const base = sourceName.replace(/\.[^.]+$/, "") || "video";
-  const extension = blob.type.includes("mp4") ? "mp4" : "webm";
-  const asset = await uploadCanvasAsset(new File([blob], `${base}-depth.${extension}`, { type: blob.type || mime }));
+  emitProgress(onProgress, { phase: "encoding", progress: 100, message: "正在编码兼容剪辑软件的 MP4…" });
+  const mp4Blob = await encodeCanvasDepthVideoMp4(
+    new File([browserBlob], `${base}-depth-source.webm`, { type: browserBlob.type || "video/webm" }),
+    fps,
+  );
+  const asset = await uploadCanvasAsset(new File([mp4Blob], `${base}-depth.mp4`, { type: "video/mp4" }));
   return { ...asset, fps, frameCount };
 }
 

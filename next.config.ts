@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.resolve(process.cwd()),
   outputFileTracingIncludes: {
     '/api/canvas/video-trim': ['./node_modules/ffmpeg-static/ffmpeg*'],
+    '/api/canvas/video-depth/probe': ['./node_modules/ffmpeg-static/ffmpeg*'],
+    '/api/canvas/video-depth/encode': ['./node_modules/ffmpeg-static/ffmpeg*'],
   },
   headers: async () => [
     {
