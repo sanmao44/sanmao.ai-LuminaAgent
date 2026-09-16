@@ -27,6 +27,7 @@ export type CanvasAgentDockMessage = {
   content: string;
   model?: string;
   images?: Array<{ url: string; revisedPrompt?: string }>;
+  skills?: Array<{ id: string; name: string }>;
   error?: string;
   applied?: boolean;
 };
@@ -87,6 +88,9 @@ function readSession(): CanvasAgentDockSession | null {
             ...(message.model ? { model: String(message.model) } : {}),
             ...(Array.isArray(message.images) && message.images.length
               ? { images: message.images.map((image) => ({ url: String(image.url || ""), ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}) })) }
+              : {}),
+            ...(Array.isArray(message.skills) && message.skills.length
+              ? { skills: message.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
               : {}),
             ...(message.applied ? { applied: true } : {}),
           }))
@@ -230,7 +234,16 @@ export default function CanvasAgentDock({
           : [];
         setMessages((value) => [
           ...value,
-          { id: createId(), role: "assistant", content, model: response.model, ...(images.length ? { images } : {}) },
+          {
+            id: createId(),
+            role: "assistant",
+            content,
+            model: response.model,
+            ...(images.length ? { images } : {}),
+            ...(response.skills?.length
+              ? { skills: response.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
+              : {}),
+          },
         ]);
         if (images.length && autoApply) {
           onApplyImages(images, { prompt: text, model: response.model });
@@ -341,6 +354,13 @@ export default function CanvasAgentDock({
               <div className="canvas-agent-dock-role">
                 <b>✦ Agent</b>
                 {message.model ? <small>{message.model}</small> : null}
+              </div>
+            ) : null}
+            {message.skills?.length ? (
+              <div className="canvas-agent-dock-skills">
+                {message.skills.map((skill) => (
+                  <span key={skill.id || skill.name}>技能 · {skill.name}</span>
+                ))}
               </div>
             ) : null}
             <p>{message.content}</p>

@@ -923,6 +923,8 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-role{display:flex;align-items:baseline;gap:6px}
 .canvas-agent-dock-role b{color:var(--accent-text);font-size:9px;letter-spacing:.04em}
 .canvas-agent-dock-role small{color:var(--muted);font-size:8px}
+.canvas-agent-dock-skills{display:flex;flex-wrap:wrap;gap:4px}
+.canvas-agent-dock-skills span{padding:2px 7px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--accent-text);font-size:8px;line-height:1.5}
 .canvas-agent-dock-message.is-streaming p::after{content:"▍";margin-left:2px;color:var(--accent-text);animation:canvas-agent-dock-caret 1.05s steps(2,end) infinite}
 @keyframes canvas-agent-dock-caret{0%,100%{opacity:1}50%{opacity:0}}
 .canvas-agent-dock-message p{margin:0;white-space:pre-wrap;word-break:break-word;color:var(--text-2);font-size:10px;line-height:1.55}

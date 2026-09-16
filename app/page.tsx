@@ -8924,6 +8924,7 @@ export default function Page() {
                         files,
                         webSearch: data.webSearch || undefined,
                         webSearchDecision: data.webSearchDecision || undefined,
+                        skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
                         deliverable: data.deliverable || 'TEXT',
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
@@ -9183,6 +9184,7 @@ export default function Page() {
                     files,
                     webSearch: data.webSearch || undefined,
                     webSearchDecision: data.webSearchDecision || undefined,
+                    skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
                     deliverable: data.deliverable || selectedDeliverable,
                     ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
                 }
@@ -11001,6 +11003,10 @@ export default function Page() {
                                                                                  message.webSearchDecision?.status === 'disabled' ? '联网已关闭' : message.webSearchDecision?.status === 'failed' ? '联网搜索失败，已如实回答' : message.webSearch ? message.webSearch.source === 'native' ? '模型原生联网' : message.webSearch.fallbackFrom === 'native' ? '外部搜索 API（原生搜索失败后回退）' : '外部搜索 API' : '智能联网：本轮未触发',
                                                                                  message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
                                                                              ]
+                                                                         }),
+                                                                         message.role === 'assistant' && !message.pending && message.skills?.length && /*#__PURE__*/ _jsx("small", {
+                                                                             className: "message-skill-badge",
+                                                                             children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
                                                                          }),
                                                                          message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
                                                                              className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,

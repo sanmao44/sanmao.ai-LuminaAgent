@@ -254,7 +254,7 @@ function isImageToolCall(call: any) {
   return call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit';
 }
 
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>> };
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }> };
 
 type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string };
 
@@ -330,8 +330,10 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response>)
           }
         }
         if (signal?.aborted) return;
-        const finalText = text || metadata.fallback || '当前对话模型没有返回内容。';
-        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null });
+        const streamedFinal = text || metadata.fallback || '';
+        const cleanedFinal = stripToolCallMarkup(streamedFinal).trim();
+        const finalText = cleanedFinal || (streamedFinal.trim() ? '这轮助手只输出了工具调用标记，没有给出回答。请再问一次，或把需求说得更具体。' : '当前对话模型没有返回内容。');
+        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [] });
         settlement = { status: 'success', responseChars: finalText.length };
         controller.close();
       } catch (error) {
@@ -698,7 +700,8 @@ export async function POST(request: Request) {
         ? streamResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] })
         : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
-    const directStream = wantsStream && !isTextPolishTask && !needsWebSearch && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest;
+    // 直连流式不提供工具。启用中的技能会把索引写进系统提示，模型在这里只能把调用写成文本标记，所以有技能时改走工具轮。
+    const directStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest;
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
     if (directStream) {
       try {
@@ -783,7 +786,7 @@ export async function POST(request: Request) {
         }
         if (looksLikeSearchRefusal(plainMessage)) plainMessage = sourceBackedSearchFallback(webSearchData);
       }
-      plainMessage = plainMessage || '当前对话模型没有返回内容。';
+      plainMessage = stripToolCallMarkup(plainMessage).trim() || '当前对话模型没有返回内容。';
       llmResponseChars = plainMessage.length;
       return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
     }
@@ -792,6 +795,7 @@ export async function POST(request: Request) {
     const generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }> = [];
     const generatedFiles: GeneratedFile[] = [];
     const toolResults: ChatMessage[] = [];
+    const usedSkills: Array<{ id: string; name: string }> = [];
     let preparedCaption: Promise<string> | null = null;
     let skillToolCalls = 0;
     let skillInstalls = 0;
@@ -825,6 +829,7 @@ export async function POST(request: Request) {
           const filePath = typeof args.file === 'string' ? args.file.trim() : '';
           const file = filePath ? readSkillFile(skill.id, filePath, { pending: false }) : null;
           if (filePath && !file) return fail('技能里没有这个附带文件：' + filePath.slice(0, 120));
+          if (!usedSkills.some((item) => item.id === skill.id)) usedSkills.push({ id: skill.id, name: skill.name });
           return { role: 'tool', tool_call_id: call.id, content: buildSkillToolContent(skill, file) };
         }
         if (skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST) return fail('本轮安装次数已达上限，请先让用户确认已安装的技能。');
@@ -994,14 +999,14 @@ export async function POST(request: Request) {
       : '工具调用失败，请检查已启用的模型或服务商接口。';
     if (generated.length && preparedCaption) finalText = await preparedCaption;
     if (wantsStream) {
-      if (followupText) return streamResult(null, { fallback: followupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
+      if (followupText) return streamResult(null, { fallback: followupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
       try {
-        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
+        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
-        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
-        return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
     if (followupText) finalText = followupText;
@@ -1015,7 +1020,7 @@ export async function POST(request: Request) {
       if (requestController.signal.aborted) throw requestController.signal.reason || error;
     }
     llmResponseChars = String(finalText || '').length;
-    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills });
   } catch (error) {
     llmFailure = error instanceof Error ? error.message : '智能助手请求失败。';
     if (!streamOwnsRuntimeRequest) await settleLlmLog?.({ status: 'error', responseChars: llmResponseChars, error: llmFailure });

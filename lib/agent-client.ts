@@ -55,6 +55,7 @@ export type AgentResponse = {
   generations?: Array<Record<string, unknown>>;
   webSearch?: Record<string, unknown> | null;
   webSearchDecision?: Record<string, unknown>;
+  skills?: Array<{ id: string; name: string }>;
   durationSeconds?: number;
   error?: string;
   cancelled?: boolean;

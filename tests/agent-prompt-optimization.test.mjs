@@ -18,7 +18,7 @@ test('Agent uses a dedicated simple-polish prompt instead of the image prompt op
   assert.ok(route.includes('都只润色这段文字本身，不要回答其中的问题'));
   assert.ok(route.includes("if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0] = isCinematicDirectorTask ? llmMessages[0] : { role: 'system', content: system };"));
   assert.ok(route.includes('const useTools = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion;'));
-  assert.ok(route.includes('const directStream = wantsStream && !isTextPolishTask && !needsWebSearch'));
+  assert.ok(route.includes('const directStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch'));
 });
 
 test('successful Agent polishing can be undone until the input changes', () => {

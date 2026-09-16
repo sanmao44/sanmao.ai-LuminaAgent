@@ -189,6 +189,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
         <div className={styles.titleBlock}>
           <h2 id="skill-manager-title">技能</h2>
           <p className={styles.hint}>技能是助手可复用的流程说明，兼容 Agent Skills 的 SKILL.md。只有已启用的技能才会进入上下文，技能的脚本永远不会被执行。</p>
+          <p className={styles.hint}><strong>怎么用：</strong>安装并启用后不需要手动挑、也不用关键词，助手遇到相关任务会自己读取并按它执行；回答上出现「技能 · 名称」就说明这轮用了它。想指定某个技能时，直接对助手说“用 X 技能做…”。</p>
         </div>
         <div className={styles.switches}>
           <label className={styles.check}>
