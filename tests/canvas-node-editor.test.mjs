@@ -18,6 +18,10 @@ const shadowStyles = await readFile(
   new URL("../app/shadow-tuning.css", import.meta.url),
   "utf8",
 );
+const localDepthVideo = await readFile(
+  new URL("../lib/local-depth-video-browser.ts", import.meta.url),
+  "utf8",
+);
 
 test("node editor exposes an accessible expand/collapse control", () => {
   assert.match(component, /className="canvas-node-editor-expand"/);
@@ -884,4 +888,14 @@ test("quick-action menus never expose a horizontal scrollbar", () => {
   assert.match(styles, /\.canvas-node-quick-menu\{[^}]*overflow:hidden/);
   assert.match(styles, /\.canvas-node-quick-menu \.canvas-node-quick-menu-body\{[^}]*overflow-x:hidden;overflow-y:auto/);
   assert.match(styles, /\.canvas-node-quick-menu \.canvas-menu-item\{min-width:0;max-width:100%;box-sizing:border-box/);
+});
+
+test("local depth video balances inference quality with higher-resolution export", () => {
+  assert.match(localDepthVideo, /const MAX_INFERENCE_SIDE = 1024/);
+  assert.match(localDepthVideo, /const MAX_EXPORT_SIDE = 1920/);
+  assert.match(localDepthVideo, /inferenceScale = Math\.min\(1, MAX_INFERENCE_SIDE/);
+  assert.match(localDepthVideo, /exportScale = Math\.min\(1, MAX_EXPORT_SIDE/);
+  assert.match(localDepthVideo, /sourceCanvas\.width = inferenceWidth/);
+  assert.match(localDepthVideo, /canvas\.width = exportWidth/);
+  assert.match(localDepthVideo, /context\.drawImage\(depthCanvas, 0, 0, exportWidth, exportHeight\)/);
 });

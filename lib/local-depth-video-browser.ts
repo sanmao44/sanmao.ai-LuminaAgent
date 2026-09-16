@@ -11,7 +11,10 @@ export type LocalDepthVideoProgress = {
 
 const MODEL_ID = "onnx-community/depth-anything-v2-small";
 const CACHE_NAME = "sanmao-local-depth-v1";
-const MAX_SIDE = 768;
+// Keep inference high enough for meaningful contours, but avoid 4K WebGPU/WASM stalls.
+const MAX_INFERENCE_SIDE = 1024;
+// Re-expand the inferred depth map for export without making a browser-sized 4K video.
+const MAX_EXPORT_SIDE = 1920;
 const DEFAULT_FPS = 12;
 const MAX_DURATION_SECONDS = 30;
 
@@ -129,15 +132,20 @@ export async function generateLocalDepthVideo(
   const estimator = await loadPipeline(onProgress);
   const fps = DEFAULT_FPS;
   const frameCount = Math.max(1, Math.ceil(duration * fps));
-  const scale = Math.min(1, MAX_SIDE / Math.max(video.videoWidth, video.videoHeight));
-  const width = Math.max(2, Math.round(video.videoWidth * scale));
-  const height = Math.max(2, Math.round(video.videoHeight * scale));
+  const sourceWidth = Math.max(2, video.videoWidth);
+  const sourceHeight = Math.max(2, video.videoHeight);
+  const inferenceScale = Math.min(1, MAX_INFERENCE_SIDE / Math.max(sourceWidth, sourceHeight));
+  const inferenceWidth = Math.max(2, Math.round(sourceWidth * inferenceScale));
+  const inferenceHeight = Math.max(2, Math.round(sourceHeight * inferenceScale));
+  const exportScale = Math.min(1, MAX_EXPORT_SIDE / Math.max(sourceWidth, sourceHeight));
+  const exportWidth = Math.max(2, Math.round(sourceWidth * exportScale));
+  const exportHeight = Math.max(2, Math.round(sourceHeight * exportScale));
   const sourceCanvas = document.createElement("canvas");
-  sourceCanvas.width = width; sourceCanvas.height = height;
+  sourceCanvas.width = inferenceWidth; sourceCanvas.height = inferenceHeight;
   const sourceContext = sourceCanvas.getContext("2d");
   if (!sourceContext) throw new Error("当前浏览器不支持视频帧处理");
   const canvas = document.createElement("canvas");
-  canvas.width = width; canvas.height = height;
+  canvas.width = exportWidth; canvas.height = exportHeight;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("当前浏览器不支持深度视频编码");
   if (typeof canvas.captureStream !== "function") {
@@ -146,11 +154,11 @@ export async function generateLocalDepthVideo(
   const frames: Blob[] = [];
   for (let index = 0; index < frameCount; index += 1) {
     await seek(video, Math.min(duration, index / fps));
-    sourceContext.drawImage(video, 0, 0, width, height);
+    sourceContext.drawImage(video, 0, 0, inferenceWidth, inferenceHeight);
     const result = await estimator(sourceCanvas);
     const depthCanvas = result.depth.toCanvas() as HTMLCanvasElement;
-    context.clearRect(0, 0, width, height);
-    context.drawImage(depthCanvas, 0, 0, width, height);
+    context.clearRect(0, 0, exportWidth, exportHeight);
+    context.drawImage(depthCanvas, 0, 0, exportWidth, exportHeight);
     frames.push(await canvasBlob(canvas, "image/webp", 0.88));
     emitProgress(onProgress, { phase: "processing", progress: ((index + 1) / frameCount) * 100, message: `正在处理第 ${index + 1}/${frameCount} 帧…` });
   }
@@ -167,7 +175,7 @@ export async function generateLocalDepthVideo(
   });
   recorder.start();
   for (const [index, frame] of frames.entries()) {
-    await drawBlob(context, frame, width, height);
+    await drawBlob(context, frame, exportWidth, exportHeight);
     track?.requestFrame?.();
     emitProgress(onProgress, { phase: "encoding", progress: ((index + 1) / frames.length) * 100, message: `正在保存第 ${index + 1}/${frames.length} 帧…` });
     if (index < frames.length - 1) await wait(1000 / fps);
