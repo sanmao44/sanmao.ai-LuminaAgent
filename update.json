@@ -1,20 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.45",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.45",
+  "latestVersion": "0.7.46",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.46",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.45/SANMAO.AI-0.7.45.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.46/SANMAO.AI-0.7.46.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.45/SANMAO.AI-0.7.45.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.45/SANMAO.AI-0.7.45.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.45/SANMAO.AI-0.7.45.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.46/SANMAO.AI-0.7.46.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.46/SANMAO.AI-0.7.46.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.46/SANMAO.AI-0.7.46.zip"
   ],
   "sha256": "e451f01b82fbe8799a100454307e0f853bdb952121d6d65d89e61873b468918e",
-  "publishedAt": "2026-09-16T17:46:00+08:00",
+  "publishedAt": "2026-09-17T01:32:00+08:00",
   "notes": [
-    "新增画布本地深度视频节点，支持深度图预览与视频导出。",
-    "完善画布视频裁剪、帧序列编码和 FFmpeg 兼容处理。",
-    "调整图片生成预设面板尺寸与定位，减少遮挡并靠近图片节点。",
-    "包含 0.7.44 的全部功能和修复。"
+    "新增可复用的「技能」系统（兼容 Agent Skills 的 SKILL.md），支持本机新建、从 GitHub 仓库/链接/ZIP 导入，也支持让助手自己安装后确认。",
+    "主界面与超级画布都能用 / 或「技能」按钮把某个技能指定给本轮任务，回复会标注这轮用了哪些技能。",
+    "超级画布新增右侧 Agent 助手面板：可收起，与选中节点联动，生成的图片或文本可直接落回画布。",
+    "技能面板与画布面板 UI 重做：技能支持拖拽导入，画布输入框聚焦改为圆角光晕，打开 Agent 面板不再挤动画布顶栏。",
+    "包含 0.7.45 的全部功能和修复。"
   ]
 }
