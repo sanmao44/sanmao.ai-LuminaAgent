@@ -33,6 +33,8 @@ import { editConversationMemory, prepareConversationMemory, selectRelevantConver
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
 import SkillManager from '@/components/SkillManager';
+import AgentSkillMenu from '@/components/AgentSkillMenu';
+import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
 import { normalizeConversationPersona } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
@@ -5188,6 +5190,11 @@ export default function Page() {
     const chatEndRef = useRef(null);
     const agentComposerRef = useRef(null);
     const agentInputRef = useRef(null);
+    const [agentSkillMenuOpen, setAgentSkillMenuOpen] = useState(false);
+    const [agentSkillQuery, setAgentSkillQuery] = useState('');
+    const [agentSkillActive, setAgentSkillActive] = useState(0);
+    const [agentSkills, setAgentSkills] = useState([]);
+    const agentSkillMenuFromSlashRef = useRef(false);
     const chatAutoFollowRef = useRef(false);
     const chatScrollAfterCommitRef = useRef(false);
     const chatScrollFramesRef = useRef({ first: 0, second: 0 });
@@ -8966,6 +8973,7 @@ export default function Page() {
         }
     }
     async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride, durationSeconds) {
+        closeAgentSkillMenu();
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const rawContent = text.trim();
@@ -9286,6 +9294,30 @@ export default function Page() {
         }
         const duration = normalizeOneTakeDuration(durationSeconds);
         await sendAgent(buildOneTakeVideoRequest(duration), 'one_take_video_prompt', agentRefs, undefined, duration);
+    }
+    async function refreshAgentSkills() {
+        try {
+            const response = await fetch('/api/skills', { cache: 'no-store' });
+            const data = await response.json();
+            setAgentSkills(Array.isArray(data?.skills) ? data.skills.filter((skill)=>skill && skill.enabled) : []);
+        } catch {}
+    }
+    function closeAgentSkillMenu() {
+        agentSkillMenuFromSlashRef.current = false;
+        setAgentSkillMenuOpen(false);
+        setAgentSkillQuery('');
+    }
+    function openAgentSkillMenu(query) {
+        setAgentSkillQuery(query || '');
+        setAgentSkillActive(0);
+        setAgentSkillMenuOpen(true);
+        void refreshAgentSkills();
+    }
+    function applyAgentSkill(skill) {
+        setAgentInput(skillMessageValue(agentInput, skill.name));
+        setAgentInputBeforeOptimization(null);
+        closeAgentSkillMenu();
+        window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
     }
     async function optimizeAgentPrompt() {
         const original = agentInput;
@@ -11422,6 +11454,16 @@ export default function Page() {
                                                     onChange: (value)=>{
                                                         setAgentInput(value);
                                                         setAgentInputBeforeOptimization(null);
+                                                        const slashQuery = skillSlashQuery(value);
+                                                        if (slashQuery !== null) {
+                                                            agentSkillMenuFromSlashRef.current = true;
+                                                            if (!agentSkillMenuOpen) void refreshAgentSkills();
+                                                            setAgentSkillQuery(slashQuery);
+                                                            setAgentSkillActive(0);
+                                                            setAgentSkillMenuOpen(true);
+                                                        } else if (agentSkillMenuFromSlashRef.current) {
+                                                            closeAgentSkillMenu();
+                                                        }
                                                     },
                                                     transformPastedText: (value)=>replaceNaturalReferenceLabels(value, agentRefs).value,
                                                     onPaste: (event)=>{
@@ -11432,11 +11474,41 @@ export default function Page() {
                                                         }
                                                     },
                                                     onKeyDown: (event)=>{
+                                                        if (agentSkillMenuOpen) {
+                                                            const visibleSkills = filterSkills(agentSkills, agentSkillQuery);
+                                                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                                                event.preventDefault();
+                                                                if (visibleSkills.length) setAgentSkillActive((current)=>{
+                                                                    const next = event.key === 'ArrowDown' ? current + 1 : current - 1;
+                                                                    return (next + visibleSkills.length) % visibleSkills.length;
+                                                                });
+                                                                return;
+                                                            }
+                                                            if (event.key === 'Escape') {
+                                                                event.preventDefault();
+                                                                closeAgentSkillMenu();
+                                                                return;
+                                                            }
+                                                            if (agentSkillMenuFromSlashRef.current && (event.key === 'Enter' || event.key === 'Tab') && visibleSkills.length) {
+                                                                event.preventDefault();
+                                                                applyAgentSkill(visibleSkills[Math.min(Math.max(agentSkillActive, 0), visibleSkills.length - 1)]);
+                                                                return;
+                                                            }
+                                                        }
                                                         if (event.key === 'Enter' && !event.shiftKey) {
                                                             event.preventDefault();
                                                             if (!activeAgentBusy) void sendAgent();
                                                         }
                                                     }
+                                                }),
+                                                /*#__PURE__*/ _jsx(AgentSkillMenu, {
+                                                    open: agentSkillMenuOpen,
+                                                    skills: agentSkills,
+                                                    query: agentSkillQuery,
+                                                    activeIndex: agentSkillActive,
+                                                    onActiveIndexChange: setAgentSkillActive,
+                                                    onSelect: applyAgentSkill,
+                                                    onClose: closeAgentSkillMenu
                                                 }),
                                                 agentInput && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsx("button", {
                                                     type: "button",
@@ -11538,6 +11610,18 @@ export default function Page() {
                                                                              children: nativeWebSearchModelActive ? '模型自带搜索 · 优先使用' : '外部搜索 API'
                                                                          })
                                                                      ]
+                                                                }),
+                                                                /*#__PURE__*/ _jsxs("button", {
+                                                                    type: "button",
+                                                                    className: `agent-quick-button agent-skill-button ${agentSkillMenuOpen ? 'active' : ''}`,
+                                                                    disabled: activeAgentBusy,
+                                                                    onClick: ()=>agentSkillMenuOpen ? closeAgentSkillMenu() : openAgentSkillMenu(''),
+                                                                    title: "选择技能：把某个技能指定给本轮任务",
+                                                                    "aria-label": "选择技能",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx(Icon, { name: "star", size: 14 }),
+                                                                        /*#__PURE__*/ _jsx("span", { children: "技能" })
+                                                                    ]
                                                                 }),
                                                                 (agentRefs.length > 0 || agentInput.trim()) && /*#__PURE__*/ _jsxs("div", {
                                                                     className: "agent-quick-actions",

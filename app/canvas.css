@@ -345,7 +345,12 @@ html[data-motion="off"] :is(.canvas-edge.related,.canvas-edge-flow-stroke){anima
 
 /* v2 compact chrome: preserve the canvas as the primary surface. */
 .canvas-topbar{inset:12px 0 auto}
-.canvas-topbar-main{width:min(1080px,calc(100% - 28px));height:52px;padding:6px;border-radius:19px}
+.canvas-topbar-main{width:max-content;max-width:min(1360px,calc(100% - 28px));height:52px;padding:6px;border-radius:19px}
+.canvas-topbar-main>*{white-space:nowrap}
+.canvas-topbar-main>.canvas-brand,.canvas-topbar-main>.canvas-soft-button,.canvas-topbar-main>.canvas-icon-button,.canvas-topbar-main>.canvas-workbench-button,.canvas-topbar-main>.canvas-save-state,.canvas-topbar-main>.canvas-workspace-sync-state{flex:none}
+.canvas-topbar.with-agent-dock{right:calc(18px + min(400px,100vw - 36px) + 14px)}
+@media(max-width:1520px){.canvas-topbar-main .canvas-workspace-sync-state{display:none}}
+@media(max-width:1440px){.canvas-topbar-main .canvas-save-state{display:none}}
 .canvas-brand{min-width:172px;padding:4px 8px 4px 4px}
 .canvas-logo-mark{width:32px;height:32px;border-radius:10px}
 .canvas-icon-button{width:32px;height:32px;border-radius:10px;font-size:16px}
@@ -943,6 +948,8 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-composer:focus-within{border-color:color-mix(in srgb,var(--accent) 62%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
 .canvas-agent-dock-composer textarea{min-height:56px;max-height:190px;resize:vertical;padding:5px 4px;border:0;background:transparent;color:var(--text);font:inherit;font-size:10px;line-height:1.55}
 .canvas-agent-dock-composer textarea:focus{outline:0}
+.canvas-agent-dock-composer textarea:focus-visible,.canvas-workspace .canvas-agent-dock-composer textarea:focus-visible{outline:0;box-shadow:none}
+.canvas-agent-dock-composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
 .canvas-agent-dock-composer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .canvas-agent-dock-model{min-width:112px;flex:1}
 .canvas-agent-dock-web{height:30px;padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:9px}

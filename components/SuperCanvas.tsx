@@ -13840,7 +13840,7 @@ export default function SuperCanvas() {
         if (projectMenuOpen) setProjectMenuOpen(false);
       }}
     >
-      <header className={`canvas-topbar ${topbarCollapsed ? "collapsed" : ""}`}>
+      <header className={`canvas-topbar ${topbarCollapsed ? "collapsed" : ""} ${agentDockOpen ? "with-agent-dock" : ""}`}>
         <div className="canvas-topbar-main">
           <button
             type="button"
