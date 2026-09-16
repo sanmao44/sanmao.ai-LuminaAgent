@@ -1,15 +1,17 @@
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { type WorkspaceSnapshot } from '@/lib/workspace-types';
 import { validateWorkspaceShape } from '@/lib/workspace-format';
+import { WORKSPACE_TEMP_PATTERN, sweepStaleWorkspaceTemps } from '@/lib/workspace-temps';
 
 export const runtime = 'nodejs';
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const workspacePath = path.join(dataDir, 'workspace.json');
 const maxWorkspaceBytes = 80 * 1024 * 1024;
-const workspaceTempPattern = /^workspace\.json\.\d+\.\d+\.tmp$/;
+const workspaceTempSweepIntervalMs = 60 * 1000;
+let lastWorkspaceTempSweepAt = 0;
 
 function parseWorkspace(raw: string) {
   if (!raw.trim()) return null;
@@ -19,7 +21,7 @@ function parseWorkspace(raw: string) {
 async function recoverWorkspace() {
   const entries = await readdir(dataDir, { withFileTypes: true }).catch(() => []);
   const candidates = (await Promise.all(entries
-    .filter((entry) => entry.isFile() && workspaceTempPattern.test(entry.name))
+    .filter((entry) => entry.isFile() && WORKSPACE_TEMP_PATTERN.test(entry.name))
     .map(async (entry) => {
       const file = path.join(dataDir, entry.name);
       try { return { file, mtimeMs: (await stat(file)).mtimeMs }; }
@@ -56,9 +58,30 @@ async function readWorkspace() {
 async function writeAtomic(content: string) {
   await mkdir(dataDir, { recursive: true });
   const temporary = `${workspacePath}.${Date.now()}.${process.pid}.tmp`;
-  await writeFile(temporary, content, { encoding: 'utf8', flush: true });
-  parseWorkspace(await readFile(temporary, 'utf8'));
-  await rename(temporary, workspacePath);
+  try {
+    await writeFile(temporary, content, { encoding: 'utf8', flush: true });
+    parseWorkspace(await readFile(temporary, 'utf8'));
+    await renameWorkspaceSnapshot(temporary);
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  if (Date.now() - lastWorkspaceTempSweepAt >= workspaceTempSweepIntervalMs) {
+    lastWorkspaceTempSweepAt = Date.now();
+    await sweepStaleWorkspaceTemps(dataDir).catch(() => 0);
+  }
+}
+
+async function renameWorkspaceSnapshot(temporary: string) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(temporary, workspacePath);
+      return;
+    } catch (error) {
+      if (attempt >= 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
 }
 
 export async function GET(request: Request) {
