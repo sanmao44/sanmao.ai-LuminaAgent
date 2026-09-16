@@ -120,7 +120,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(quickActions, /id: "image-operations"/);
   assert.match(quickActions, /icon: "image-operations"/);
   assert.doesNotMatch(quickActions, /id: "more"/);
-  assert.doesNotMatch(quickActions, /label: "更多"/);
+  assert.match(quickActions, /id: "video-tools"/);
   assert.doesNotMatch(quickActions, /label: "预览"/);
   assert.match(component, /aria-haspopup="menu"/);
   assert.match(component, /aria-controls={`canvas-quick-menu-\$\{targetId\}-\$\{group\.id\}`}/);

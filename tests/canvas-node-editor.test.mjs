@@ -863,3 +863,25 @@ test("upscale result quick toolbar exposes image actions", () => {
   assert.match(component, /if \(!imageEditorNode \|\| \(imageEditorNode\.type !== "media" && imageEditorNode\.type !== "upscale"\)/);
   assert.match(component, /if \(!pickerNode \|\| !canAddCanvasAsset\(pickerNode\)\)/);
 });
+
+test("completed video nodes offer a guarded local depth-video action in more tools", () => {
+  const quickActionsStart = component.indexOf("const quickActions = useMemo");
+  const contextMenuStart = component.indexOf("const contextMenuGroups = useMemo", quickActionsStart);
+  assert.ok(quickActionsStart >= 0 && contextMenuStart > quickActionsStart);
+  const quickActions = component.slice(quickActionsStart, contextMenuStart);
+  const videoActionsStart = quickActions.indexOf('if (node.type === "media" && node.data.kind === "video")');
+  assert.ok(videoActionsStart >= 0, "video quick actions should be defined");
+  const videoActions = quickActions.slice(videoActionsStart);
+  assert.match(videoActions, /id: "video-tools"/);
+  assert.match(videoActions, /id: "depth-video"/);
+  assert.match(videoActions, /label: "生成深度图节点"/);
+  assert.match(videoActions, /disabled: !hasMedia \|\| generationKeys\.has\(`depth:\$\{node\.id\}`\)/);
+  assert.match(component, /const createDepthVideoFromNode = useCallback/);
+  assert.match(component, /generateLocalDepthVideo/);
+});
+
+test("quick-action menus never expose a horizontal scrollbar", () => {
+  assert.match(styles, /\.canvas-node-quick-menu\{[^}]*overflow:hidden/);
+  assert.match(styles, /\.canvas-node-quick-menu \.canvas-node-quick-menu-body\{[^}]*overflow-x:hidden;overflow-y:auto/);
+  assert.match(styles, /\.canvas-node-quick-menu \.canvas-menu-item\{min-width:0;max-width:100%;box-sizing:border-box/);
+});

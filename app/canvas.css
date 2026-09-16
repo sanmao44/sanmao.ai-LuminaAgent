@@ -1798,8 +1798,10 @@ html[data-motion="off"] .canvas-processing-progress.indeterminate>i{transform:no
 .canvas-node-quick-menu-trigger .canvas-node-quick-caret{width:auto;height:auto;margin-left:1px;border:0;background:transparent;box-shadow:none;color:var(--muted);font-size:12px;line-height:1;transition:transform .16s ease,color .16s ease}
 .canvas-node-quick-menu-trigger.open .canvas-node-quick-caret{color:var(--accent-text);transform:rotate(180deg)}
 .canvas-node-quick-actions button>.canvas-node-quick-icon svg{width:15px;height:15px;display:block;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.7}
-.canvas-node-quick-menu{width:min(266px,calc(100vw - 16px));padding:10px;z-index:var(--canvas-z-context-menu)}
-.canvas-node-quick-menu .canvas-node-quick-menu-body{min-width:0;max-height:min(420px,calc(100dvh - 24px));overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.canvas-node-quick-menu{width:min(266px,calc(100vw - 16px));max-width:calc(100vw - 16px);overflow:hidden;padding:10px;z-index:var(--canvas-z-context-menu)}
+.canvas-node-quick-menu .canvas-node-quick-menu-body{width:100%;min-width:0;max-width:100%;max-height:min(420px,calc(100dvh - 24px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.canvas-node-quick-menu .canvas-menu-item{min-width:0;max-width:100%;box-sizing:border-box}
+.canvas-node-quick-menu .canvas-menu-copy{min-width:0;overflow:hidden}
 .canvas-node-quick-menu .canvas-menu-title{padding:2px 4px 8px}
 .canvas-node-quick-menu .canvas-menu-title small{font-size:8px}
 .canvas-node-quick-menu .canvas-menu-item{min-height:44px}

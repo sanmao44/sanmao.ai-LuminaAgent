@@ -313,6 +313,16 @@ export type CanvasNodeData = {
   imageOperation?: CanvasImageOperationMeta;
   /** Persisted edit plan for a video-editor node; it is not a rendered media URL. */
   videoEditor?: CanvasVideoEditorState;
+  /** Metadata for a locally generated depth-map video. */
+  depthVideo?: {
+    sourceNodeId?: string;
+    model?: string;
+    mode?: "grayscale";
+    fps?: number;
+    frameCount?: number;
+    startedAt?: number;
+    completedAt?: number;
+  };
   /** Configuration for an independent angle node. */
   angle?: CanvasAngleParams;
   [key: string]: unknown;

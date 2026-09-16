@@ -294,6 +294,7 @@ import {
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
 import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
+import { generateLocalDepthVideo } from "@/lib/local-depth-video-browser";
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from "@/lib/theme";
 import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
 import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
@@ -1389,6 +1390,7 @@ function dataUrlFile(dataUrl: string, name: string) {
 }
 
 function nodeLabel(node: CanvasNode) {
+  if (node.data.depthVideo) return "视频深度图";
   if (node.type === "video-editor") return "视频编辑节点";
   if (node.type === "angle") return "角度控制节点";
   if (node.type === "upscale") return "图片超分";
@@ -12668,6 +12670,48 @@ export default function SuperCanvas() {
       setReverseAgentNodeId(null);
     }
   }, [chatModelsAvailable, notify, reverseAgentNodeId, runtime, updateDoc]);
+  const createDepthVideoFromNode = useCallback(async (source: CanvasNode) => {
+    if (source.type !== "media" || source.data.kind !== "video" || !source.data.url) {
+      notify("请先选择一个已完成的视频节点", "error");
+      return;
+    }
+    const activeKey = `depth:${source.id}`;
+    if (generationKeysRef.current.has(activeKey)) {
+      notify("该视频正在生成深度图，请稍候", "error");
+      return;
+    }
+    const position = { x: source.x + nodeSize(source).w + 90, y: source.y };
+    const output = createMedia("video", "", `${String(source.data.name || "视频")} · 深度图`, position, {
+      role: "本地深度图",
+      status: "queued",
+      statusLabel: "正在准备深度模型…",
+      processingStartedAt: Date.now(),
+      depthVideo: { sourceNodeId: source.id, model: "Depth Anything V2 Small", mode: "grayscale", fps: 12, startedAt: Date.now() },
+    });
+    const connected = addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, output] }, source.id, output.id, "right", "left", "manual", "video");
+    commit(() => connected);
+    setSelectedIds(new Set([output.id]));
+    setSelectedGroupId(null);
+    generationKeysRef.current.add(activeKey);
+    setGenerationKeys(new Set(generationKeysRef.current));
+    try {
+      const knownDurationMs = Number(source.data.durationMs || source.data.sourceDurationMs);
+      const asset = await generateLocalDepthVideo(String(source.data.url), String(source.data.name || "video"), (progress) => {
+        updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, status: "running" as const, progress: progress.progress, statusLabel: progress.message } } : node) }));
+      }, Number.isFinite(knownDurationMs) && knownDurationMs > 0 ? knownDurationMs / 1000 : undefined);
+      updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, url: asset.url, name: asset.name || `${String(source.data.name || "视频")} · 深度图`, status: "completed" as const, statusLabel: "深度图已完成", nativeWidth: source.data.nativeWidth, nativeHeight: source.data.nativeHeight, depthVideo: { ...node.data.depthVideo, fps: asset.fps, frameCount: asset.frameCount, completedAt: Date.now() } } } : node) }));
+      notify("深度图视频已生成");
+      addLog("视频深度图生成完成");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "深度图生成失败";
+      updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, status: "failed" as const, statusLabel: message } } : node) }));
+      notify(message, "error");
+      addLog(`视频深度图生成失败：${message}`);
+    } finally {
+      generationKeysRef.current.delete(activeKey);
+      setGenerationKeys(new Set(generationKeysRef.current));
+    }
+  }, [addLog, commit, notify, updateDoc]);
   const quickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const node = selectedSingle;
     if (!node || selectedGroupId || selectedNodes.length !== 1) return { primaryActions: [], menuGroups: [] };
@@ -12779,7 +12823,19 @@ export default function SuperCanvas() {
           },
           ...supportingActions(hasMedia, canAddAsset),
         ],
-        menuGroups: [],
+        menuGroups: [{
+          id: "video-tools",
+          icon: "more",
+          label: "更多",
+          actions: [{
+            id: "depth-video",
+            icon: "depth",
+            label: "生成深度图节点",
+            title: "免费在本机生成深度图视频，首次使用会下载模型",
+            disabled: !hasMedia || generationKeys.has(`depth:${node.id}`),
+            onClick: () => void createDepthVideoFromNode(node),
+          }],
+        }],
         dangerAction: {
           id: "delete",
           icon: "delete",
@@ -12936,6 +12992,7 @@ export default function SuperCanvas() {
     deleteSelection,
     downloadCanvasNode,
     generationKeys,
+    createDepthVideoFromNode,
     chatModelsAvailable,
     openImageEditor,
     openImageOperations,
@@ -17097,6 +17154,8 @@ function CanvasActionIcon({ name }: { name: string }) {
       return svg(<><path d="M5 7.5h14v9H5z" /><path d="m10 10 4 2-4 2v-4ZM7 5v2M17 5v2" /></>);
     case "cinematic":
       return svg(<><path d="M4.5 7.5h15v9h-15z" /><path d="M8 5.5v2M12 5.5v2M16 5.5v2M8 16.5v2M12 16.5v2M16 16.5v2" /><path d="m10 10 4 2-4 2v-4Z" fill="currentColor" stroke="none" /></>);
+    case "depth":
+      return svg(<><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="1.5" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.5" fill="currentColor" stroke="none" /><circle cx="11" cy="18" r="1.5" fill="currentColor" stroke="none" /></>);
     case "angle":
       return svg(<><path d="m12 4 2.3 5.7L20 12l-5.7 2.3L12 20l-2.3-5.7L4 12l5.7-2.3L12 4Z" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /></>);
     default:
