@@ -662,6 +662,8 @@ export async function patchSettings(patch: Partial<AppSettings>) {
     }
     if ('imageStoragePath' in patch) state.settings.imageStoragePath = String(patch.imageStoragePath || '').trim();
     if ('videoStoragePath' in patch) state.settings.videoStoragePath = String(patch.videoStoragePath || '').trim();
+    if ('skillsEnabled' in patch) state.settings.skillsEnabled = Boolean(patch.skillsEnabled);
+    if ('skillsAutoApprove' in patch) state.settings.skillsAutoApprove = Boolean(patch.skillsAutoApprove);
     return state.settings;
   });
 }

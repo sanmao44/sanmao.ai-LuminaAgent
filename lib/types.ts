@@ -168,6 +168,8 @@ export type AppSettings = {
   webSearchKeyMasked?: string;
   webSearchAnySearchConfigured?: boolean;
   webSearchQianfanConfigured?: boolean;
+  skillsEnabled?: boolean;
+  skillsAutoApprove?: boolean;
 };
 
 export type PublicState = {

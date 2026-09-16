@@ -32,6 +32,7 @@ import { requestAgent } from '@/lib/agent-client';
 import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
+import SkillManager from '@/components/SkillManager';
 import { normalizeConversationPersona } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
@@ -11630,8 +11631,12 @@ export default function Page() {
                                             persona: activeChatId ? (chatSessions.find((session)=>session.id === activeChatId)?.persona || '') : agentPersonaDraft,
                                             disabled: activeAgentBusy,
                                             icon: /*#__PURE__*/ _jsx(Icon, { name: 'user', size: 16 }),
-                                            onSave: saveAgentPersona
-                                        }, `persona-${activeChatId}`)
+                                        onSave: saveAgentPersona
+                                    }, `persona-${activeChatId}`),
+                                    /*#__PURE__*/ _jsx(SkillManager, {
+                                        disabled: activeAgentBusy,
+                                        icon: /*#__PURE__*/ _jsx(Icon, { name: 'star', size: 16 })
+                                    }, 'skills')
                                     ]
                                 })
                             }),
