@@ -94,3 +94,19 @@ test("the dock reuses the shared skill manager so canvas chats install skills to
 test("dock toolbar button sizing never leaks into the skill dialog", () => {
   assert.doesNotMatch(styles, /\.canvas-agent-dock-head-actions button/);
 });
+
+test("opening the dock never shifts the compact canvas topbar", () => {
+  assert.doesNotMatch(styles, /with-agent-dock/);
+  assert.doesNotMatch(canvas, /with-agent-dock/);
+  assert.match(styles, /\.canvas-topbar-main\{width:max-content;max-width:min\(1360px,calc\(100% - 28px\)\)/);
+});
+
+test("the dock composer calls the shared skill picker with slash and a toolbar button", () => {
+  assert.match(component, /import AgentSkillMenu from "@\/components\/AgentSkillMenu";/);
+  assert.match(component, /const slashQuery = skillSlashQuery\(value\);/);
+  assert.match(component, /className=\{`canvas-agent-dock-skill \$\{skillMenuOpen \? "is-active" : ""\}`\}/);
+  assert.match(component, /setInput\(\(value\) => skillMessageValue\(value, skill\.name\)\)/);
+  assert.match(component, /<AgentSkillMenu[\s\S]*?emptyHint="还没有启用中的技能。点右上角的 ★ 可以安装或启用。"/);
+  assert.match(styles, /\.canvas-agent-dock-skill\{/);
+  assert.match(styles, /\.canvas-agent-dock-composer \.agent-skill-menu\{/);
+});

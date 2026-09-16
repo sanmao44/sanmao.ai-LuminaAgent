@@ -11,9 +11,11 @@ type AgentSkillMenuProps = {
   onActiveIndexChange: (index: number) => void;
   onSelect: (skill: SkillPickerEntry) => void;
   onClose: () => void;
+  emptyHint?: string;
+  ignorePointerSelector?: string;
 };
 
-export default function AgentSkillMenu({ open, skills, query, activeIndex, onActiveIndexChange, onSelect, onClose }: AgentSkillMenuProps) {
+export default function AgentSkillMenu({ open, skills, query, activeIndex, onActiveIndexChange, onSelect, onClose, emptyHint, ignorePointerSelector = '.agent-composer-wrap, .canvas-agent-dock-composer' }: AgentSkillMenuProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const visible = useMemo(() => filterSkills(skills, query), [skills, query]);
 
@@ -22,7 +24,7 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       // 点击输入区内部（按钮、输入框）不关闭，避免和「技能」按钮的开关互相打架。
-      if (target instanceof Element && target.closest('.agent-composer-wrap')) return;
+      if (target instanceof Element && ignorePointerSelector && target.closest(ignorePointerSelector)) return;
       onClose();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -34,7 +36,7 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
       document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [open, onClose]);
+  }, [open, onClose, ignorePointerSelector]);
 
   if (!open) return null;
 
@@ -60,7 +62,7 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
         </button>
       )) : (
         <p className="agent-skill-menu-empty">
-          {skills.length ? `没有匹配「${query}」的技能` : '还没有启用中的技能。点聊天区左上角的 ☆ 按钮可以安装或启用。'}
+          {skills.length ? `没有匹配「${query}」的技能` : emptyHint || '还没有启用中的技能。点聊天区左上角的 ☆ 按钮可以安装或启用。'}
         </p>
       )}
       <p className="agent-skill-menu-tip">助手平时会自己挑技能，这里用来精确指定；输入 / 也能随时呼出。</p>

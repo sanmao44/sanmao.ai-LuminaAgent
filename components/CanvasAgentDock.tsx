@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SelectMenu from "@/components/SelectMenu";
 import SkillManager from "@/components/SkillManager";
+import AgentSkillMenu from "@/components/AgentSkillMenu";
+import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import {
   agentModelOptions,
   type AgentWebMode,
@@ -128,8 +130,14 @@ export default function CanvasAgentDock({
   const [webMode, setWebMode] = useState<AgentWebMode>("off");
   const [autoApply, setAutoApply] = useState(true);
   const [hydrated, setHydrated] = useState(false);
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  const [skillQuery, setSkillQuery] = useState("");
+  const [skillActive, setSkillActive] = useState(0);
+  const [skills, setSkills] = useState<SkillPickerEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const skillMenuFromSlashRef = useRef(false);
 
   useEffect(() => {
     const stored = readSession();
@@ -183,6 +191,51 @@ export default function CanvasAgentDock({
     [],
   );
 
+  const refreshSkills = useCallback(async () => {
+    try {
+      const response = await fetch("/api/skills", { cache: "no-store" });
+      const data = await response.json();
+      setSkills(Array.isArray(data?.skills) ? data.skills.filter((skill: SkillPickerEntry) => skill && skill.enabled) : []);
+    } catch {
+      /* 拉取失败时保留上一次的技能列表 */
+    }
+  }, []);
+
+  const closeSkillMenu = useCallback(() => {
+    skillMenuFromSlashRef.current = false;
+    setSkillMenuOpen(false);
+    setSkillQuery("");
+  }, []);
+
+  const openSkillMenu = useCallback(
+    (query: string) => {
+      setSkillQuery(query || "");
+      setSkillActive(0);
+      setSkillMenuOpen(true);
+      void refreshSkills();
+    },
+    [refreshSkills],
+  );
+
+  const applySkill = useCallback(
+    (skill: SkillPickerEntry) => {
+      setInput((value) => skillMessageValue(value, skill.name));
+      closeSkillMenu();
+      window.setTimeout(() => {
+        const node = textareaRef.current;
+        if (!node) return;
+        node.focus();
+        const end = node.value.length;
+        try {
+          node.setSelectionRange(end, end);
+        } catch {
+          /* 隐藏状态下部分浏览器会拒绝设置选区 */
+        }
+      }, 0);
+    },
+    [closeSkillMenu],
+  );
+
   const stop = useCallback(() => {
     abortRef.current?.abort(new DOMException("已停止", "AbortError"));
     abortRef.current = null;
@@ -197,6 +250,7 @@ export default function CanvasAgentDock({
         return;
       }
       if (busy) return;
+      closeSkillMenu();
       const userMessage: CanvasAgentDockMessage = { id: createId(), role: "user", content: text };
       const history = [...messages, userMessage];
       setMessages(history);
@@ -263,7 +317,7 @@ export default function CanvasAgentDock({
         setStreamText("");
       }
     },
-    [autoApply, busy, contextBlock, input, messages, model, notify, onApplyImages, references, webMode],
+    [autoApply, busy, closeSkillMenu, contextBlock, input, messages, model, notify, onApplyImages, references, webMode],
   );
 
   const cycleWebMode = useCallback(() => {
@@ -429,9 +483,51 @@ export default function CanvasAgentDock({
         }}
       >
         <textarea
+          ref={textareaRef}
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => {
+            const value = event.target.value;
+            setInput(value);
+            const slashQuery = skillSlashQuery(value);
+            if (slashQuery !== null) {
+              skillMenuFromSlashRef.current = true;
+              if (!skillMenuOpen) void refreshSkills();
+              setSkillQuery(slashQuery);
+              setSkillActive(0);
+              setSkillMenuOpen(true);
+            } else if (skillMenuFromSlashRef.current) {
+              closeSkillMenu();
+            }
+          }}
           onKeyDown={(event) => {
+            if (skillMenuOpen) {
+              const visibleSkills = filterSkills(skills, skillQuery);
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                if (visibleSkills.length) {
+                  setSkillActive((current) => {
+                    const next = event.key === "ArrowDown" ? current + 1 : current - 1;
+                    return (next + visibleSkills.length) % visibleSkills.length;
+                  });
+                }
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeSkillMenu();
+                return;
+              }
+              if (
+                skillMenuFromSlashRef.current &&
+                (event.key === "Enter" || event.key === "Tab") &&
+                !event.nativeEvent.isComposing &&
+                visibleSkills.length
+              ) {
+                event.preventDefault();
+                applySkill(visibleSkills[Math.min(Math.max(skillActive, 0), visibleSkills.length - 1)]);
+                return;
+              }
+            }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               if (!busy) void send();
@@ -442,6 +538,17 @@ export default function CanvasAgentDock({
           aria-label="给 Agent 的消息"
         />
         <div className="canvas-agent-dock-composer-row">
+          <button
+            type="button"
+            className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
+            onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
+            title="选择技能：把某个技能指定给本轮任务"
+            aria-haspopup="listbox"
+            aria-expanded={skillMenuOpen}
+          >
+            <i aria-hidden="true">✦</i>
+            <span>技能</span>
+          </button>
           <SelectMenu
             value={model}
             options={modelOptions}
@@ -465,6 +572,16 @@ export default function CanvasAgentDock({
             {busy ? "停止" : "发送"}
           </button>
         </div>
+        <AgentSkillMenu
+          open={skillMenuOpen}
+          skills={skills}
+          query={skillQuery}
+          activeIndex={skillActive}
+          onActiveIndexChange={setSkillActive}
+          onSelect={applySkill}
+          onClose={closeSkillMenu}
+          emptyHint="还没有启用中的技能。点右上角的 ★ 可以安装或启用。"
+        />
       </form>
     </aside>
   );

@@ -57,6 +57,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [fileLabel, setFileLabel] = useState('');
+  const [dragActive, setDragActive] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   useBodyScrollLock(open);
 
@@ -154,6 +156,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   }
 
   async function importFromFile(file: File) {
+    setFileLabel(file.name);
     await run(async () => {
       const form = new FormData();
       form.append('file', file);
@@ -183,23 +186,26 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   );
 
   return <>
-    <button type="button" className={styles.trigger} data-tooltip="技能" aria-label="技能" aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setPreview(null); setConfirming(''); setOpen(true); }}>{icon}</button>
+    <button type="button" className={styles.trigger} data-tooltip="技能" aria-label="技能" aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setPreview(null); setConfirming(''); setFileLabel(''); setDragActive(false); setOpen(true); }}>{icon}</button>
     {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="skill-manager-title" onClose={() => setOpen(false)} onCancel={(event) => { if (busy) event.preventDefault(); }}>
       <header className={styles.header}>
         <div className={styles.titleBlock}>
-          <h2 id="skill-manager-title">技能</h2>
+          <h2 id="skill-manager-title"><i aria-hidden="true">✦</i>技能</h2>
           <p className={styles.hint}>技能是助手可复用的流程说明，兼容 Agent Skills 的 SKILL.md。只有已启用的技能才会进入上下文，技能的脚本永远不会被执行。</p>
-          <p className={styles.hint}><strong>怎么用：</strong>安装并启用后不需要手动挑、也不用关键词，助手遇到相关任务会自己读取并按它执行；回答上出现「技能 · 名称」就说明这轮用了它。想指定某个技能时，直接对助手说“用 X 技能做…”。</p>
+          <p className={styles.hint}><strong>怎么用：</strong>安装并启用后不需要手动挑、也不用关键词，助手遇到相关任务会自己读取并按它执行；回答上出现「技能 · 名称」就说明这轮用了它。想指定某个技能时，直接对助手说“用 X 技能做…”，也可以点输入框旁的「技能」按钮或敲 / 呼出技能菜单（超级画布右侧的 Agent 面板同样支持）。</p>
         </div>
-        <div className={styles.switches}>
-          <label className={styles.check}>
-            <input type="checkbox" checked={settings.enabled} disabled={busy} onChange={(event) => void updateSettings({ enabled: event.target.checked })} />
-            <span>启用技能</span>
-          </label>
-          <label className={styles.check}>
-            <input type="checkbox" checked={settings.autoApprove} disabled={busy || !settings.enabled} onChange={(event) => void updateSettings({ autoApprove: event.target.checked })} />
-            <span>助手自己安装后自动启用</span>
-          </label>
+        <div className={styles.headerAside}>
+          <div className={styles.switches}>
+            <label className={styles.check}>
+              <input type="checkbox" checked={settings.enabled} disabled={busy} onChange={(event) => void updateSettings({ enabled: event.target.checked })} />
+              <span>启用技能</span>
+            </label>
+            <label className={styles.check}>
+              <input type="checkbox" checked={settings.autoApprove} disabled={busy || !settings.enabled} onChange={(event) => void updateSettings({ autoApprove: event.target.checked })} />
+              <span>助手自己安装后自动启用</span>
+            </label>
+          </div>
+          <button type="button" className={styles.close} aria-label="关闭技能面板" title="关闭" disabled={busy} onClick={() => setOpen(false)}>✕</button>
         </div>
       </header>
 
@@ -288,8 +294,26 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
           </div>
           <p className={styles.hint}>只允许 https 地址，内网与本机地址会被拒绝；GitHub 会整仓库下载后只安装含 SKILL.md 的目录。</p>
 
-          <label htmlFor="skill-file">上传 SKILL.md 或 ZIP</label>
-          <input id="skill-file" type="file" accept=".zip,.md,.markdown,.txt,application/zip,text/markdown" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFromFile(file); }} />
+          <div className={styles.orDivider}><span>或</span></div>
+
+          <input
+            id="skill-file"
+            className={styles.fileInput}
+            type="file"
+            accept=".zip,.md,.markdown,.txt,application/zip,text/markdown"
+            disabled={busy}
+            onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFromFile(file); }}
+          />
+          <label
+            className={`${styles.filePick} ${dragActive ? styles.isDragActive : ''} ${busy ? styles.isBusy : ''}`}
+            htmlFor="skill-file"
+            onDragOver={(event) => { event.preventDefault(); if (!busy) setDragActive(true); }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragActive(false); const file = event.dataTransfer?.files?.[0]; if (file && !busy) void importFromFile(file); }}
+          >
+            <b>{busy ? '正在导入…' : (fileLabel || '选择 SKILL.md 或 ZIP 文件')}</b>
+            <small>支持 .md / .zip，也可以直接把文件拖进来</small>
+          </label>
 
           {locals.length > 0 && <>
             <label>本机已有的 Agent Skills</label>
