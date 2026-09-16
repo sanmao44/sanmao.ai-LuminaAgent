@@ -1,6 +1,6 @@
 import { isTrustedAppRequest } from "@/lib/auth";
 import { beginRuntimeRequest, RuntimeDrainingError } from "@/lib/runtime-operation";
-import { encodeDepthVideoMp4 } from "@/lib/video-depth-service";
+import { encodeDepthVideoFrameSequence } from "@/lib/video-depth-service";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -11,9 +11,9 @@ export async function POST(request: Request) {
   try {
     releaseRuntimeRequest = await beginRuntimeRequest("video-depth-encode");
     const form = await request.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) return Response.json({ error: "缺少深度视频文件。" }, { status: 400 });
-    const output = await encodeDepthVideoMp4(file, Number(form.get("frameRate")));
+    const archive = form.get("archive");
+    if (!(archive instanceof File)) return Response.json({ error: "缺少深度帧序列。" }, { status: 400 });
+    const output = await encodeDepthVideoFrameSequence(archive, Number(form.get("frameRate")), Number(form.get("frameCount")));
     return new Response(output, {
       headers: {
         "Content-Type": "video/mp4",

@@ -423,10 +423,15 @@ export async function probeCanvasVideoFrameRate(file: File) {
   return frameRate;
 }
 
-export async function encodeCanvasDepthVideoMp4(file: File, frameRate: number) {
+export async function encodeCanvasDepthVideoFrameSequence(
+  archive: File,
+  frameRate: number,
+  frameCount: number,
+) {
   const form = new FormData();
-  form.set("file", file);
+  form.set("archive", archive);
   form.set("frameRate", String(frameRate));
+  form.set("frameCount", String(frameCount));
   const response = await depthVideoResponse("/api/canvas/video-depth/encode", form, "深度视频 MP4 编码失败");
   return response.blob();
 }

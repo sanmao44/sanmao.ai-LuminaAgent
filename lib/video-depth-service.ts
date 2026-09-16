@@ -4,11 +4,13 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
+import { unzipSync } from "fflate";
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), ".data");
 const MAX_INPUT_BYTES = 512 * 1024 * 1024;
 const MIN_FRAME_RATE = 1;
 const MAX_FRAME_RATE = 60;
+const MAX_FRAME_COUNT = 30 * MAX_FRAME_RATE;
 
 let resolvedFfmpegPromise: Promise<string> | null = null;
 
@@ -101,19 +103,32 @@ export function probeDepthVideoFrameRate(file: File) {
   });
 }
 
-export async function encodeDepthVideoMp4(file: File, frameRate: number) {
+export async function encodeDepthVideoFrameSequence(archive: File, frameRate: number, frameCount: number) {
   const fps = Number(frameRate);
   if (!Number.isFinite(fps) || fps < MIN_FRAME_RATE || fps > MAX_FRAME_RATE) {
     throw new Error("深度视频帧率无效，支持 1 到 60 FPS。");
   }
-  return withWorkingFile(file, async (inputPath, working) => {
+  const totalFrames = Math.round(Number(frameCount));
+  if (!Number.isFinite(totalFrames) || totalFrames < 1 || totalFrames > MAX_FRAME_COUNT) {
+    throw new Error(`深度帧数量无效，支持 1 到 ${MAX_FRAME_COUNT} 帧。`);
+  }
+  return withWorkingFile(archive, async (archivePath, working) => {
+    const framesPath = path.join(working, "frames");
     const outputPath = path.join(working, "output.mp4");
+    const entries = unzipSync(await readFile(archivePath));
+    const expectedNames = Array.from({ length: totalFrames }, (_, index) => `frame-${String(index).padStart(6, "0")}.webp`);
+    if (Object.keys(entries).length !== expectedNames.length || expectedNames.some((name) => !entries[name]?.byteLength)) {
+      throw new Error("深度帧序列不完整，请重新生成。");
+    }
+    await mkdir(framesPath, { recursive: true });
+    await Promise.all(expectedNames.map((name) => writeFile(path.join(framesPath, name), entries[name], { flag: "wx" })));
     await runFfmpeg([
       "-hide_banner", "-loglevel", "error", "-y",
-      "-i", inputPath,
+      "-framerate", String(fps), "-start_number", "0",
+      "-i", path.join(framesPath, "frame-%06d.webp"),
       "-map", "0:v:0",
-      "-vf", `fps=${fps},pad=ceil(iw/2)*2:ceil(ih/2)*2`,
-      "-r", String(fps),
+      "-frames:v", String(totalFrames), "-r", String(fps),
+      "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
       "-c:v", "libx264", "-preset", "medium", "-crf", "18",
       "-pix_fmt", "yuv420p", "-profile:v", "high",
       "-an", "-movflags", "+faststart",
