@@ -16,6 +16,8 @@ $lockPath = Join-Path $stagingPath 'update.lock'
 $drainPath = Join-Path $TargetPath '.data\runtime-draining.json'
 $backupSuffix = if ($OperationToken) { $OperationToken } else { [string]$PID }
 $backupPath = Join-Path $stagingPath ("previous-update-" + $backupSuffix)
+$launcherStdoutPath = Join-Path $stagingPath ("restart-launcher-" + $backupSuffix + '.out.log')
+$launcherStderrPath = Join-Path $stagingPath ("restart-launcher-" + $backupSuffix + '.err.log')
 $script:programBackedUp = $false
 $script:programBackupComplete = $false
 $script:launcherProcess = $null
@@ -30,7 +32,7 @@ function Write-UpdateLog([string]$Message) {
 
 function Write-UpdateProgress([string]$Stage, [string]$Message, [int]$Percent) {
   if (-not $ProgressPath) { return }
-  try {
+  for ($attempt = 0; $attempt -lt 4; $attempt++) { try {
     $progress = if (Test-Path -LiteralPath $ProgressPath) {
       Get-Content -LiteralPath $ProgressPath -Raw | ConvertFrom-Json
     } else { [pscustomobject]@{} }
@@ -41,7 +43,13 @@ function Write-UpdateProgress([string]$Stage, [string]$Message, [int]$Percent) {
     $temporaryProgressPath = "$ProgressPath.$PID.tmp"
     $progress | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporaryProgressPath -Encoding UTF8
     Move-Item -LiteralPath $temporaryProgressPath -Destination $ProgressPath -Force
-  } catch {}
+      return
+    } catch {
+      Remove-Item -LiteralPath "$ProgressPath.$PID.tmp" -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 100
+    }
+  }
+  Write-UpdateLog "无法写入更新进度：$Stage / $Message"
 }
 
 function PowerShellLiteral([string]$Value) {
@@ -125,9 +133,10 @@ function Start-RolledBackService {
     if ($OperationToken -and ((Get-Content -LiteralPath $launcher -Raw -ErrorAction SilentlyContinue) -match '\$OperationToken')) {
       $arguments += @('-OperationToken', $OperationToken)
     }
-    $script:launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetPath -WindowStyle Hidden -PassThru
+    Remove-Item -LiteralPath $launcherStdoutPath, $launcherStderrPath -Force -ErrorAction SilentlyContinue
+    $script:launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetPath -WindowStyle Hidden -RedirectStandardOutput $launcherStdoutPath -RedirectStandardError $launcherStderrPath -PassThru
     $ports = if ($Port -ge 1024 -and $Port -le 65525) { @($Port) } else { @(3210..3220) }
-    $deadline = (Get-Date).AddSeconds(180)
+    $deadline = (Get-Date).AddSeconds(600)
     while ((Get-Date) -lt $deadline) {
       foreach ($probePort in $ports) {
         if (Test-SanmaoHealthEndpoint -Port $probePort) { return $true }
@@ -224,23 +233,12 @@ try {
   $launcher = Join-Path $TargetPath 'scripts\start.ps1'
   if (-not (Test-Path -LiteralPath $launcher)) { throw '更新后找不到 Windows 启动器' }
   $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcher, '-NonInteractive')
-  $lanArgument = if ($env:SANMAO_NETWORK_MODE -eq 'lan') { ' -Lan' } else { '' }
-  $relayArgument = ' -FreeRelay'
-  $operationTokenArgument = if ($OperationToken) { " -OperationToken $(PowerShellLiteral $OperationToken)" } else { '' }
-  if ($Port -ge 1024 -and $Port -le 65525) {
-    # Keep this compatible with older releases whose start.ps1 did not yet
-    # declare a -Port parameter; all supported launchers already honor the
-    # SANMAO_PORT environment variable.
-    $launcherCommand = "`$env:SANMAO_PORT=$(PowerShellLiteral ([string]$Port)); `$env:SANMAO_OPERATION_TOKEN=$(PowerShellLiteral $OperationToken); & $(PowerShellLiteral $launcher) -NonInteractive$lanArgument$relayArgument$operationTokenArgument"
-    $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $launcherCommand)
-  } elseif ($lanArgument) {
-    $launcherArguments += @('-Lan', '-FreeRelay')
-    if ($OperationToken) { $launcherArguments += @('-OperationToken', $OperationToken) }
-  } else {
-    $launcherArguments += '-FreeRelay'
-    if ($OperationToken) { $launcherArguments += @('-OperationToken', $OperationToken) }
-  }
-  $launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $launcherArguments -WorkingDirectory $TargetPath -WindowStyle Hidden -PassThru
+  if ($Port -ge 1024 -and $Port -le 65525) { $launcherArguments += @('-Port', [string]$Port) }
+  if ($env:SANMAO_NETWORK_MODE -eq 'lan') { $launcherArguments += '-Lan' }
+  $launcherArguments += '-FreeRelay'
+  if ($OperationToken) { $launcherArguments += @('-OperationToken', $OperationToken) }
+  Remove-Item -LiteralPath $launcherStdoutPath, $launcherStderrPath -Force -ErrorAction SilentlyContinue
+  $launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $launcherArguments -WorkingDirectory $TargetPath -WindowStyle Hidden -RedirectStandardOutput $launcherStdoutPath -RedirectStandardError $launcherStderrPath -PassThru
   Write-UpdateLog "已启动更新后启动器 PID $($launcherProcess.Id)"
 
   $restartPorts = @()
@@ -249,20 +247,31 @@ try {
   } else {
     $restartPorts = 3210..3220
   }
-  $deadline = (Get-Date).AddSeconds(180)
+  $deadline = (Get-Date).AddSeconds(600)
   $ready = $false
+  $lastProgressAt = Get-Date
   while ((Get-Date) -lt $deadline) {
     foreach ($probePort in $restartPorts) {
       if (Test-SanmaoHealthEndpoint -Port $probePort) { $ready = $true; break }
     }
     if ($ready) { break }
     if ($launcherProcess.HasExited -and $launcherProcess.ExitCode -ne 0) {
+      $launcherDetails = ''
+      if (Test-Path -LiteralPath $launcherStderrPath) { $launcherDetails = (Get-Content -LiteralPath $launcherStderrPath -Tail 8 -ErrorAction SilentlyContinue) -join ' ' }
+      if ($launcherDetails) { throw "更新后启动器异常退出（退出码 $($launcherProcess.ExitCode)）：$launcherDetails" }
       throw "更新后启动器异常退出（退出码 $($launcherProcess.ExitCode)）"
+    }
+    if (((Get-Date) - $lastProgressAt).TotalSeconds -ge 10) {
+      Write-UpdateProgress 'starting' "正在等待新服务就绪…" 99
+      $lastProgressAt = Get-Date
     }
     Start-Sleep -Milliseconds 500
   }
   if (-not $ready) {
-    throw '更新后服务未在 180 秒内就绪，请查看 .data/logs/launcher.log 与更新日志后重试。'
+    $launcherDetails = ''
+    if (Test-Path -LiteralPath $launcherStderrPath) { $launcherDetails = (Get-Content -LiteralPath $launcherStderrPath -Tail 8 -ErrorAction SilentlyContinue) -join ' ' }
+    if ($launcherDetails) { throw "更新后服务未在 10 分钟内就绪：$launcherDetails" }
+    throw '更新后服务未在 10 分钟内就绪，请查看 .data/logs/launcher.log 与更新日志后重试。'
   }
   Write-UpdateLog '更新流程完成，新服务已就绪'
   if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue }
@@ -283,7 +292,7 @@ try {
   }
   if ($rollbackSucceeded) {
     Write-UpdateLog '旧版本服务已恢复'
-    Write-UpdateProgress 'failed' '更新失败，已自动恢复旧服务。' 0
+    Write-UpdateProgress 'failed' '更新失败，已自动恢复旧服务，可重新尝试更新。' 0
   } else {
     Write-UpdateProgress 'failed' '更新失败，请检查更新日志后重试' 0
   }

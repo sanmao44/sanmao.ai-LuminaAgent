@@ -41,6 +41,7 @@ const CHECKED_KEY = 'sanmao-update-checked-at';
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 const PROJECT_URL = 'https://github.com/sanmao44/sanmao.ai-LuminaAgent';
 const AUTO_RELOAD_DELAY_MS = 1500;
+const UPDATE_HEARTBEAT_TIMEOUT_MS = 10 * 60 * 1000;
 
 function openExternal(url?: string) {
   if (!url) return;
@@ -60,6 +61,12 @@ function isVersionAtLeast(currentVersion: string | undefined, targetVersion: str
     if (current[index] !== target[index]) return current[index] > target[index];
   }
   return true;
+}
+
+function isUpdateHeartbeatExpired(progress: UpdateProgress) {
+  if (progress.stage !== 'starting') return false;
+  const updatedAt = Date.parse(progress.updatedAt);
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt > UPDATE_HEARTBEAT_TIMEOUT_MS;
 }
 
 export default function UpdateNotice() {
@@ -152,6 +159,17 @@ export default function UpdateNotice() {
         setUpdateProgress(null);
         setApplyState('idle');
         return null;
+      }
+      if (isUpdateHeartbeatExpired(data.progress)) {
+        setUpdateProgress({
+          ...data.progress,
+          stage: 'failed',
+          message: '更新程序长时间没有响应，请查看更新日志后重试。',
+          error: '更新超时，当前服务未被替换。',
+        });
+        setApplyMessage('更新超时，当前服务未被替换。');
+        setApplyState('error');
+        return data.progress;
       }
       updateTargetVersionRef.current = data.progress.version;
       setUpdateProgress(data.progress);
