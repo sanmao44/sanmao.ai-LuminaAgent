@@ -1,4 +1,5 @@
 import type { CanvasVideoClipState } from "./types";
+import { writeWebmDuration } from "./webm-duration";
 
 export type RenderedCanvasVideoClip = {
   blob: Blob;
@@ -135,7 +136,7 @@ export async function renderCanvasVideoClip(
       video.pause();
       if (activeRecorder.state !== "inactive") activeRecorder.stop();
     }, Math.max(15000, ((end - start) / clip.playbackRate) * 1000 + 10000));
-    const blob = await finished;
+    const blob = await writeWebmDuration(await finished, (end - start) / clip.playbackRate);
     return {
       blob,
       mime,

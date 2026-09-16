@@ -97,6 +97,7 @@ import {
   generateCanvasVideo,
   inferCanvasAgentTask,
   loadCanvasRuntime,
+  preciselyTrimCanvasVideo,
   asDataUrl,
   uploadCanvasAsset,
   type CanvasAgentTask,
@@ -262,7 +263,6 @@ import {
   normalizeCanvasVideoClipState,
   videoClipDurationSeconds,
 } from "@/lib/canvas/video-clip";
-import { renderCanvasVideoClip } from "@/lib/canvas/video-trim";
 import { renderCanvasVideoEditor } from "@/lib/canvas/video-export";
 import {
   renderCanvasImageGrid,
@@ -11159,22 +11159,27 @@ export default function SuperCanvas() {
       return;
     }
     const sourceName = String(source.data.name || "视频");
-    let rendered: Awaited<ReturnType<typeof renderCanvasVideoClip>>;
+    let renderedBlob: Blob;
     try {
-      rendered = await renderCanvasVideoClip(String(source.data.url), clip);
+      const response = await fetch(String(source.data.url), { cache: "no-store" });
+      if (!response.ok) throw new Error(`无法读取原视频：HTTP ${response.status}`);
+      const sourceBlob = await response.blob();
+      const sourceFile = new File([sourceBlob], sourceName, { type: sourceBlob.type || String(source.data.mimeType || "video/mp4") });
+      renderedBlob = await preciselyTrimCanvasVideo(sourceFile, clip);
     } catch (error) {
       notify(error instanceof Error ? error.message : "视频裁剪失败，请重试", "error");
       return;
     }
-    const clipDurationMs = Math.round(rendered.durationSeconds * 1000);
-    if (!rendered.blob.size) {
+    const renderedDurationSeconds = (clip.endTime - clip.startTime) / clip.playbackRate;
+    const clipDurationMs = Math.round(renderedDurationSeconds * 1000);
+    if (!renderedBlob.size) {
       notify("视频裁剪没有生成有效文件，请重试", "error");
       return;
     }
     let asset: Awaited<ReturnType<typeof uploadCanvasAsset>>;
     try {
       asset = await uploadCanvasAsset(
-        new File([rendered.blob], `${sourceName}-剪辑.webm`, { type: rendered.mime }),
+        new File([renderedBlob], `${sourceName}-剪辑.mp4`, { type: "video/mp4" }),
       );
     } catch (error) {
       notify(error instanceof Error ? error.message : "裁剪视频上传失败，请重试", "error");
@@ -11187,7 +11192,7 @@ export default function SuperCanvas() {
       version: 1,
       sourceNodeId: source.id,
       startTime: 0,
-      endTime: rendered.durationSeconds,
+      endTime: renderedDurationSeconds,
       volume: clip.volume,
       muted: clip.muted,
       playbackRate: 1,
@@ -11206,8 +11211,8 @@ export default function SuperCanvas() {
         sourceAssetId: source.data.sourceAssetId || source.data.assetId,
         mimeType: asset.mime,
         autoFit: source.data.autoFit !== false,
-        nativeWidth: rendered.width || source.data.nativeWidth,
-        nativeHeight: rendered.height || source.data.nativeHeight,
+        nativeWidth: source.data.nativeWidth,
+        nativeHeight: source.data.nativeHeight,
         durationMs: clipDurationMs,
         sourceDurationMs: clipDurationMs,
         videoClip: outputClip,

@@ -48,7 +48,8 @@ test("normalizes non-destructive video ranges and derives the effective duration
 test("video clips stay ordinary media nodes and open the lightweight trimmer", () => {
   assert.match(types, /videoClip\?: CanvasVideoClipState/);
   assert.match(canvas, /createMedia\(\s*"video"/);
-  assert.match(canvas, /renderCanvasVideoClip\(String\(source\.data\.url\), clip\)/);
+  assert.match(canvas, /preciselyTrimCanvasVideo\(sourceFile, clip\)/);
+  assert.match(canvas, /-剪辑\.mp4/);
   assert.match(canvas, /uploadCanvasAsset\(/);
   assert.match(canvas, /videoClip: outputClip/);
   assert.match(canvas, /durationMs: clipDurationMs/);

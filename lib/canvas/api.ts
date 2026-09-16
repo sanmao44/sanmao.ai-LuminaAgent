@@ -384,6 +384,24 @@ export async function uploadCanvasAsset(file: File) {
   };
 }
 
+export async function preciselyTrimCanvasVideo(
+  file: File,
+  clip: { startTime: number; endTime: number; playbackRate: number; muted: boolean },
+) {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("startTime", String(clip.startTime));
+  form.set("endTime", String(clip.endTime));
+  form.set("playbackRate", String(clip.playbackRate));
+  form.set("muted", String(clip.muted));
+  const response = await fetch("/api/canvas/video-trim", { method: "POST", body: form, cache: "no-store" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    throw new Error(String(body?.error || `视频精确裁剪失败：${response.status}`));
+  }
+  return response.blob();
+}
+
 export async function generateCanvasImage(input: {
   taskId?: string;
   prompt: string;

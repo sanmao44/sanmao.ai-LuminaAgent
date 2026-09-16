@@ -2,6 +2,7 @@ import type {
   CanvasVideoEditorClip,
   CanvasVideoEditorState,
 } from "./types";
+import { writeWebmDuration } from "./webm-duration";
 
 export type CanvasVideoEditorRenderSource = {
   nodeId: string;
@@ -278,7 +279,7 @@ export async function renderCanvasVideoEditor(
       onProgress?.(Math.min(1, time / durationSeconds));
       if (time >= durationSeconds) stop();
     }, Math.max(16, Math.round(1000 / Math.max(1, Math.min(60, state.fps || 30)))));
-    const blob = await result;
+    const blob = await writeWebmDuration(await result, durationSeconds);
     return { blob, mime, durationSeconds, width, height };
   } finally {
     if (timerId !== undefined) window.clearInterval(timerId);
