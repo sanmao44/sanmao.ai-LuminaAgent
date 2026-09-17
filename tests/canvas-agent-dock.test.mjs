@@ -185,4 +185,7 @@ test("both sides of the conversation can copy their text", () => {
   assert.match(component, /const copyMessage = useCallback\(/);
   assert.match(component, /message\.role === "user" \? \(\s*<button type="button" onClick=\{\(\) => copyMessage\(message\.content\)\}>/);
   assert.match(component, /message\.role === "assistant" && !message\.error \? \([\s\S]{0,400}?copyMessage\(message\.content\)/);
+  // 放在气泡左侧，避免在自己的消息里被挤成第二行。
+  assert.match(styles, /\.canvas-agent-dock-message\.user>\.canvas-agent-dock-message-tools\{position:absolute;right:100%;bottom:2px;margin-right:5px/);
+  assert.match(styles, /\.canvas-agent-dock-message\.user\{position:relative;align-self:flex-end;max-width:calc\(92% - 42px\)/);
 });
