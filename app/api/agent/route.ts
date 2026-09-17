@@ -254,11 +254,11 @@ function isImageToolCall(call: any) {
   return call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit';
 }
 
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }> };
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; finalize?: (text: string) => Promise<string> | string; };
 
 type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string };
 
-function streamAgentResult(upstream: Response | null | (() => Promise<Response>), metadata: AgentStreamMetadata, signal?: AbortSignal, onSettled?: (result: AgentStreamSettlement) => Promise<void> | void) {
+function streamAgentResult(upstream: Response | null | (() => Promise<Response | null>), metadata: AgentStreamMetadata, signal?: AbortSignal, onSettled?: (result: AgentStreamSettlement) => Promise<void> | void) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const send = (controller: ReadableStreamDefaultController<Uint8Array>, event: Record<string, unknown>) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
@@ -331,7 +331,12 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response>)
         }
         if (signal?.aborted) return;
         const streamedFinal = text || metadata.fallback || '';
-        const cleanedFinal = stripToolCallMarkup(streamedFinal).trim();
+        let finalized = streamedFinal;
+        if (metadata.finalize) {
+          try { finalized = await metadata.finalize(streamedFinal); }
+          catch { finalized = streamedFinal; }
+        }
+        const cleanedFinal = stripToolCallMarkup(finalized).trim();
         const finalText = cleanedFinal || (streamedFinal.trim() ? '这轮助手只输出了工具调用标记，没有给出回答。请再问一次，或把需求说得更具体。' : '当前对话模型没有返回内容。');
         send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [] });
         settlement = { status: 'success', responseChars: finalText.length };
@@ -470,7 +475,7 @@ export async function POST(request: Request) {
       }).catch(() => undefined);
     };
     const streamResult = (
-      upstream: Response | null | (() => Promise<Response>),
+      upstream: Response | null | (() => Promise<Response | null>),
       metadata: Omit<AgentStreamMetadata, 'deliverable'>,
     ) => {
       const release = releaseRuntimeRequest;
@@ -681,20 +686,54 @@ export async function POST(request: Request) {
       if (webSearchData) return `已使用外部搜索 API${nativeSearchError ? '（原生搜索失败后回退）' : ''}，获得 ${webSearchData.resultCount} 条来源，正在整理回答…`;
       return '联网搜索失败，正在如实回答…';
     };
+    // 检索成功却回答“找不到来源”时，重新要求模型基于检索结果作答；流式与整段两种收尾共用这段逻辑。
+    const rewriteSearchRefusal = async (text: string) => {
+      const searchData = webSearchData;
+      if (!(searchData && searchData.status === 'SEARCH_SUCCESS' && searchData.resultCount > 0 && looksLikeSearchRefusal(text))) return text;
+      const synthesisMessages: ChatMessage[] = [
+        { role: 'system', content: '搜索已经成功并返回候选来源。请重新回答用户原问题：必须使用下方检索结果中能支持的事实，不能说“暂未找到可靠来源”或“没有结果”。来源质量不完全确定时，明确标注“候选来源，建议交叉核验”，并列出标题、来源、发布时间（如有）和 Markdown URL。不要编造检索结果中没有的事实。' },
+        ...llmMessages,
+      ];
+      let answer = text;
+      try {
+        const synthesis = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: synthesisMessages, tool_choice: 'none' }, requestController.signal);
+        const rewritten = typeof synthesis?.choices?.[0]?.message?.content === 'string' ? synthesis.choices[0].message.content.trim() : '';
+        if (rewritten) answer = rewritten;
+      } catch (error) {
+        if (requestController.signal.aborted) throw requestController.signal.reason || error;
+      }
+      return looksLikeSearchRefusal(answer) ? sourceBackedSearchFallback(searchData) : answer;
+    };
     const nativeNeedsContinuation = imageGenerationRequest || fileGenerationRequest;
     if (nativeSearchData && !nativeNeedsContinuation) {
+      const nativeSearch = nativeSearchData;
       const nativeMeta = searchMetadata();
+      const nativeFallback = nativeFallbackAnswer(nativeSearch);
+      // 原生搜索的答案同样逐字流式输出；检索过程混入的规划文本在收尾时统一清理。
+      if (wantsStream && !skillContext.skills.length && !isTextPolishTask && !identityQuestion) {
+        return streamResult(
+          // 部分原生搜索模型不支持流式接口，失败时退回清理后的检索摘要。
+          () => trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages, tool_choice: 'none' }, requestController.signal).catch(() => null),
+          {
+            images: [], files: [], generations: [], model: agentRuntime.model.displayName,
+            webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(),
+            fallback: nativeFallback,
+            finalize: (text: string) => appendNativeSources(text, nativeSearch) || nativeFallback,
+            statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }],
+          },
+        );
+      }
       let nativeMessage = '';
       try {
         const finalResponse = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages, tool_choice: 'none' }, requestController.signal);
-        nativeMessage = appendNativeSources(chatContentText(finalResponse?.choices?.[0]?.message?.content), nativeSearchData);
+        nativeMessage = appendNativeSources(chatContentText(finalResponse?.choices?.[0]?.message?.content), nativeSearch);
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         // Some native-search models expose only their search endpoint. In that
         // case, show a cleaned, source-backed fallback rather than the raw
         // planner/reasoning transcript.
       }
-      if (!nativeMessage) nativeMessage = nativeFallbackAnswer(nativeSearchData);
+      if (!nativeMessage) nativeMessage = nativeFallback;
       llmResponseChars = nativeMessage.length;
       return wantsStream
         ? streamResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] })
@@ -702,10 +741,14 @@ export async function POST(request: Request) {
     }
     // 直连流式不提供工具。启用中的技能会把索引写进系统提示，模型在这里只能把调用写成文本标记，所以有技能时改走工具轮。
     const directStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest;
+    // 检索结果已经写进系统提示，联网路径的最终答案同样可以直接流式输出，不必再多做一轮工具判断。
+    const searchedStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest;
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
-    if (directStream) {
+    if (directStream || searchedStream) {
+      // 联网路径把“检索成功却回答找不到来源”的兜底移到收尾阶段，正文照常逐字输出。
+      const finalize = searchedStream ? rewriteSearchRefusal : undefined;
       try {
-        return streamResult(() => trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal), { images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: streamStatuses });
+        return streamResult(() => trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal), { images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), statuses: streamStatuses, ...(finalize ? { finalize } : {}) });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
@@ -772,20 +815,7 @@ export async function POST(request: Request) {
           if (requestController.signal.aborted) throw requestController.signal.reason || error;
         }
       }
-      if (webSearchData?.status === 'SEARCH_SUCCESS' && webSearchData.resultCount > 0 && looksLikeSearchRefusal(plainMessage)) {
-        const synthesisMessages: ChatMessage[] = [
-          { role: 'system', content: '搜索已经成功并返回候选来源。请重新回答用户原问题：必须使用下方检索结果中能支持的事实，不能说“暂未找到可靠来源”或“没有结果”。来源质量不完全确定时，明确标注“候选来源，建议交叉核验”，并列出标题、来源、发布时间（如有）和 Markdown URL。不要编造检索结果中没有的事实。' },
-          ...llmMessages,
-        ];
-        try {
-          const synthesis = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: synthesisMessages, tool_choice: 'none' }, requestController.signal);
-          const rewritten = typeof synthesis?.choices?.[0]?.message?.content === 'string' ? synthesis.choices[0].message.content.trim() : '';
-          if (rewritten) plainMessage = rewritten;
-        } catch (error) {
-          if (requestController.signal.aborted) throw requestController.signal.reason || error;
-        }
-        if (looksLikeSearchRefusal(plainMessage)) plainMessage = sourceBackedSearchFallback(webSearchData);
-      }
+      plainMessage = await rewriteSearchRefusal(plainMessage);
       plainMessage = stripToolCallMarkup(plainMessage).trim() || '当前对话模型没有返回内容。';
       llmResponseChars = plainMessage.length;
       return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });

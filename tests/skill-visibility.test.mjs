@@ -38,6 +38,6 @@ test("the skill dialog explains how skills trigger so users do not have to guess
 });
 test("an enabled skill keeps the request on the tool round so the model can really read it", () => {
   assert.match(route, /const directStream = wantsStream && !skillContext\.skills\.length && !isTextPolishTask/);
-  assert.match(route, /const cleanedFinal = stripToolCallMarkup\(streamedFinal\)\.trim\(\);/);
+  assert.match(route, /const cleanedFinal = stripToolCallMarkup\(finalized\)\.trim\(\);/);
   assert.match(route, /plainMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\) \|\| '当前对话模型没有返回内容。';/);
 });
