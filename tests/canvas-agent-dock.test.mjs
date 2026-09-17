@@ -407,7 +407,7 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
 test("the dock keeps reporting a run and previews its images", () => {
   // 收起面板不等于停：rail 和工具栏都要显示「生成中」。
   assert.match(component, /canvas-agent-dock-rail\$\{busy \? " is-busy" : ""\}/);
-  assert.match(component, /<em>\{busy \? "生成中" : status\.failed \? `\$\{status\.failed\} 个失败` : "Agent"\}<\/em>/);
+  assert.match(component, /<em>\{busy \? "生成中" : status\.failed \? `\$\{status\.failed\} 个失败` : unreadReply \? "有新回答" : "Agent"\}<\/em>/);
   assert.match(component, /onBusyChange\?\.\(busy\);/);
   assert.match(canvas, /onBusyChange=\{setAgentDockBusy\}/);
   assert.match(canvas, /const \[agentDockBusy, setAgentDockBusy\] = useState\(false\)/);
@@ -549,4 +549,43 @@ test("quick questions about the selection are only offered when there is a selec
   assert.match(component, /title=\{action\.title\}/);
   // 空选中区要说清“没有选中时 Agent 读整张画布”。
   assert.ok(component.includes("没有选中时，Agent 读整张画布的概况。"));
+});
+test("a reply that lands while the dock is collapsed lights up the rail", () => {
+  // 收起面板不等于看不到结果：这一轮跑完要在 rail 上留个提示。
+  assert.match(component, /const \[unreadReply, setUnreadReply\] = useState\(false\)/);
+  assert.match(component, /\$\{!busy && !status\.failed && unreadReply \? " is-unread" : ""\}/);
+  assert.match(component, /if \(!openRef\.current\) setUnreadReply\(true\);/);
+  assert.match(component, /openRef\.current = open;/);
+  assert.ok(component.includes("Agent 答完了，点开面板看新回答"));
+  assert.ok(component.includes("Agent 有新回答，展开面板查看"));
+  assert.ok(component.includes("画布上有 ${status.failed} 个失败节点，展开面板定位"));
+  assert.match(styles, /\.canvas-agent-dock-rail\.is-unread\{/);
+});
+
+test("the dock names the web modes the way the rest of the app does", async () => {
+  // 同一件事在主对话页、节点参数面板和面板里必须是同一个说法。
+  assert.ok(component.includes('off: "关闭联网"'));
+  assert.ok(component.includes('auto: "智能联网"'));
+  assert.ok(component.includes('always: "始终联网"'));
+  assert.doesNotMatch(component, /按需联网|总是联网|不联网/);
+  // 这枚按钮是循环切换：提示要写清当前状态，并预告下一档。
+  assert.match(component, /const WEB_MODE_ORDER: AgentWebMode\[\] = \["off", "auto", "always"\];/);
+  assert.ok(component.includes("title={`联网：${WEB_MODE_LABELS[webMode]}"));
+  assert.ok(component.includes("aria-label={`联网模式：${WEB_MODE_LABELS[webMode]}`}"));
+  assert.match(styles, /\.canvas-agent-dock-web\.always:not\(:disabled\)\{/);
+  const params = await readFile(new URL("../components/CreationParameterEditor.tsx", import.meta.url), "utf8");
+  assert.ok(params.includes('label: "智能联网"'));
+});
+
+test("focusing a node keeps it clear of the open agent panel", () => {
+  // 面板是右侧浮层：定位节点、落下结果都要按面板左边那块可见区域取景，否则有半边藏在面板后面。
+  assert.match(canvas, /const agentDockRightInset = useCallback\(\(\) => \{/);
+  assert.match(canvas, /const viewWidth = width - Math\.min\(Math\.max\(rightInset, 0\), Math\.max\(0, width - 240\)\);/);
+  assert.match(canvas, /camera: \{ x: viewWidth \/ 2, y: height \/ 2, zoom: 1 \}/);
+  assert.match(canvas, /x: viewWidth \/ 2 - \(minX \+ \(maxX - minX\) \/ 2\) \* zoom,/);
+  assert.match(canvas, /fitView\(targets, agentDockRightInset\(\)\);/);
+  assert.match(canvas, /fitView\(nodes\.map\(\(node\) => node\.id\), agentDockRightInset\(\)\);/);
+  // 窄屏下面板是横在底部的一条，它没占右半边时不该让位。
+  assert.match(canvas, /if \(rect\.width <= 0 \|\| rect\.left <= stage\.left \+ stage\.width \/ 2\) return 0;/);
+  assert.match(canvas, /if \(!agentDockOpen\) return 0;/);
 });

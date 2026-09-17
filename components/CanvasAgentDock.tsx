@@ -92,11 +92,19 @@ const EMPTY_SAMPLES = [
   "帮我写一版更细的提示词",
   "选中这张图，继续做 16:9 的版本",
 ];
+/* 联网方式在主对话页、节点参数面板和这里必须是同一套说法，别让同一件事有三个名字。 */
 const WEB_MODE_LABELS: Record<AgentWebMode, string> = {
-  off: "不联网",
-  auto: "按需联网",
-  always: "总是联网",
+  off: "关闭联网",
+  auto: "智能联网",
+  always: "始终联网",
 };
+/* 这枚按钮是「点一下换一种」，所以提示既要写清当前状态，也要预告下一次点到的模式。 */
+const WEB_MODE_HINTS: Record<AgentWebMode, string> = {
+  off: "不会联网，适合最快的纯模型回复",
+  auto: "只在需要最新或外部事实时联网，普通创作直接回复",
+  always: "每轮都会联网检索，回复可能较慢",
+};
+const WEB_MODE_ORDER: AgentWebMode[] = ["off", "auto", "always"];
 
 function createId() {
   return `dock-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -288,6 +296,8 @@ export default function CanvasAgentDock({
   const inputBeforeEditRef = useRef("");
   const [atBottom, setAtBottom] = useState(true);
   const [dragChipId, setDragChipId] = useState<string | null>(null);
+  /* 面板收着的时候 Agent 答完了：rail 上要留一盏灯，否则回答静静躺着没人知道。 */
+  const [unreadReply, setUnreadReply] = useState(false);
   const contextRef = useRef<HTMLDivElement | null>(null);
   const chipDragRef = useRef<{ id: string; pointerId: number; x: number; y: number } | null>(null);
   const chipDragMovedRef = useRef(false);
@@ -303,6 +313,8 @@ export default function CanvasAgentDock({
   const logRef = useRef<HTMLDivElement | null>(null);
   const mentionEditorRef = useRef<HTMLDivElement | null>(null);
   const skillMenuFromSlashRef = useRef(false);
+  /* 生成是异步的：收尾时要按「此刻面板开着没有」决定要不要点亮 rail。 */
+  const openRef = useRef(open);
 
   useEffect(() => {
     const stored = readSession();
@@ -351,9 +363,13 @@ export default function CanvasAgentDock({
     if (node && stickToBottomRef.current) node.scrollTop = node.scrollHeight;
   }, [messages, streamText]);
 
-  /* 面板每次打开都从最新的地方看起。 */
+  /* 面板每次打开都从最新的地方看起，打开即视为看过新回答。 */
   useEffect(() => {
-    if (open) jumpToBottom();
+    openRef.current = open;
+    if (open) {
+      jumpToBottom();
+      setUnreadReply(false);
+    }
   }, [jumpToBottom, open]);
 
   useEffect(() => {
@@ -675,6 +691,8 @@ export default function CanvasAgentDock({
       } finally {
         abortRef.current = null;
         setBusy(false);
+        /* 收起面板时跑完的这一轮：rail 上要能看出来，点开就能看到结果。 */
+        if (!openRef.current) setUnreadReply(true);
         if (streamFrameRef.current !== null) window.cancelAnimationFrame(streamFrameRef.current);
         streamFrameRef.current = null;
         setStreamText("");
@@ -684,8 +702,9 @@ export default function CanvasAgentDock({
   );
 
   const cycleWebMode = useCallback(() => {
-    setWebMode((value) => (value === "off" ? "auto" : value === "auto" ? "always" : "off"));
+    setWebMode((value) => WEB_MODE_ORDER[(WEB_MODE_ORDER.indexOf(value) + 1) % WEB_MODE_ORDER.length]);
   }, []);
+  const nextWebMode = WEB_MODE_ORDER[(WEB_MODE_ORDER.indexOf(webMode) + 1) % WEB_MODE_ORDER.length];
 
   const clearSession = useCallback(() => {
     /* 新建对话会清掉整段记录且不可恢复，非空时先问一句。 */
@@ -860,19 +879,29 @@ export default function CanvasAgentDock({
     return (
       <button
         type="button"
-        className={`canvas-agent-dock-rail${busy ? " is-busy" : ""}${!busy && status.failed ? " is-failed" : ""}`}
+        className={`canvas-agent-dock-rail${busy ? " is-busy" : ""}${!busy && status.failed ? " is-failed" : ""}${!busy && !status.failed && unreadReply ? " is-unread" : ""}`}
         onClick={() => onToggle(true)}
         title={
           busy
             ? "Agent 正在生成，点开面板查看或停止"
             : status.failed
               ? `画布上有 ${status.failed} 个失败节点，点开面板定位`
-              : "展开 Agent 助手"
+              : unreadReply
+                ? "Agent 答完了，点开面板看新回答"
+                : "展开 Agent 助手"
         }
-        aria-label={busy ? "Agent 正在生成，展开面板查看或停止" : "展开 Agent 助手"}
+        aria-label={
+          busy
+            ? "Agent 正在生成，展开面板查看或停止"
+            : status.failed
+              ? `画布上有 ${status.failed} 个失败节点，展开面板定位`
+              : unreadReply
+                ? "Agent 有新回答，展开面板查看"
+                : "展开 Agent 助手"
+        }
       >
         <span aria-hidden="true">✦</span>
-        <em>{busy ? "生成中" : status.failed ? `${status.failed} 个失败` : "Agent"}</em>
+        <em>{busy ? "生成中" : status.failed ? `${status.failed} 个失败` : unreadReply ? "有新回答" : "Agent"}</em>
         {status.running + status.queued > 0 && <b>{status.running + status.queued}</b>}
       </button>
     );
@@ -1276,7 +1305,14 @@ export default function CanvasAgentDock({
               className="canvas-agent-dock-model"
             />
           </div>
-          <button type="button" className="canvas-agent-dock-web" onClick={cycleWebMode} disabled={busy}>
+          <button
+            type="button"
+            className={`canvas-agent-dock-web ${webMode}`}
+            onClick={cycleWebMode}
+            disabled={busy}
+            aria-label={`联网模式：${WEB_MODE_LABELS[webMode]}`}
+            title={`联网：${WEB_MODE_LABELS[webMode]} · ${WEB_MODE_HINTS[webMode]} · 点击切换到「${WEB_MODE_LABELS[nextWebMode]}」`}
+          >
             {WEB_MODE_LABELS[webMode]}
           </button>
           <label className="canvas-agent-dock-auto" title="Agent 返回图片时自动生成节点">

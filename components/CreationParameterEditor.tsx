@@ -1090,7 +1090,7 @@ function AgentEditor({
               },
               {
                 value: "auto",
-                label: "智能判断",
+                label: "智能联网",
                 description: "必要时自动搜索",
               },
               {

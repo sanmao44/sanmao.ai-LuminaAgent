@@ -5329,18 +5329,21 @@ export default function SuperCanvas() {
     },
     [updateDoc],
   );
+  /* rightInset 是右侧浮层（Agent 面板）占掉的宽度：取景只按它左边那块可见区域算，
+     否则「定位节点」和刚落下的结果会有半边藏在面板后面。 */
   const fitView = useCallback(
-    (ids?: string[]) => {
+    (ids?: string[], rightInset = 0) => {
       const targets = ids?.length
         ? ids
         : docRef.current.nodes.map((node) => node.id);
       const rect = stageRef.current?.getBoundingClientRect();
       const width = rect?.width || 1200;
       const height = rect?.height || 760;
+      const viewWidth = width - Math.min(Math.max(rightInset, 0), Math.max(0, width - 240));
       if (!targets.length) {
         updateDoc((value) => ({
           ...value,
-          camera: { x: width / 2, y: height / 2, zoom: 1 },
+          camera: { x: viewWidth / 2, y: height / 2, zoom: 1 },
         }));
         return;
       }
@@ -5351,7 +5354,7 @@ export default function SuperCanvas() {
       const maxY = Math.max(...bounds.map((item) => item.y + item.h));
       const zoom = clamp(
         Math.min(
-          (width - 180) / Math.max(1, maxX - minX),
+          (viewWidth - 180) / Math.max(1, maxX - minX),
           (height - 320) / Math.max(1, maxY - minY),
         ),
         0.12,
@@ -5360,7 +5363,7 @@ export default function SuperCanvas() {
       updateDoc((value) => ({
         ...value,
         camera: {
-          x: width / 2 - (minX + (maxX - minX) / 2) * zoom,
+          x: viewWidth / 2 - (minX + (maxX - minX) / 2) * zoom,
           y: (height - 120) / 2 - (minY + (maxY - minY) / 2) * zoom,
           zoom,
         },
@@ -5368,6 +5371,18 @@ export default function SuperCanvas() {
     },
     [updateDoc],
   );
+
+  /* Agent 面板量的就是它在屏幕上的真实位置：媒体查询把它挪到底部那条时不让位。
+     收起面板（只剩 rail）时它不占画布，也不让位。 */
+  const agentDockRightInset = useCallback(() => {
+    if (!agentDockOpen) return 0;
+    const stage = stageRef.current?.getBoundingClientRect();
+    const panel = typeof window === "undefined" ? null : window.document.querySelector(".canvas-agent-dock");
+    if (!stage || !(panel instanceof HTMLElement)) return 0;
+    const rect = panel.getBoundingClientRect();
+    if (rect.width <= 0 || rect.left <= stage.left + stage.width / 2) return 0;
+    return Math.max(0, stage.right - rect.left + 16);
+  }, [agentDockOpen]);
 
   const arrangeCanvasAction = useCallback((modeOverride?: CanvasArrangeMode) => {
     const selected = selectedIds.size ? [...selectedIds] : undefined;
@@ -9814,9 +9829,9 @@ export default function SuperCanvas() {
       }
       setSelectedIds(new Set(targets));
       setSelectedGroupId(null);
-      fitView(targets);
+      fitView(targets, agentDockRightInset());
     },
-    [fitView, notify],
+    [agentDockRightInset, fitView, notify],
   );
   /* 画布一侧的入口：选中节点后直接开面板并聚焦输入框，选中内容会自动成为上下文。 */
   const askAgentAboutSelection = useCallback(() => {
@@ -9923,11 +9938,12 @@ export default function SuperCanvas() {
         ...(anchor ? { parentId: anchor.id } : {}),
       });
       notify(`已把 ${nodes.length} 张 Agent 图片加入画布`);
-      fitView(nodes.map((node) => node.id));
+      fitView(nodes.map((node) => node.id), agentDockRightInset());
       return nodes.map((node) => node.id);
     },
     [
       agentDockReferences,
+      agentDockRightInset,
       commit,
       fitView,
       notify,
