@@ -249,8 +249,8 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
     "<b>撤销</b>",
     "<b>重做</b>",
     "<b>一键整理</b>",
-    "清理空内容（",
     "<b>适应视图</b>",
+    "清理空内容（",
   ];
   const actionPositions = actionMarkers.map((marker) => toolsMenu.indexOf(marker));
   assert.deepEqual(

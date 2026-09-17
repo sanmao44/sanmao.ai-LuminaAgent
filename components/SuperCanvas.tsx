@@ -15547,6 +15547,20 @@ export default function SuperCanvas() {
               </button>
               <button
                 type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  setContextMenu(null);
+                  fitView();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⛶</span>
+                <span className="canvas-menu-copy">
+                  <b>适应视图</b>
+                </span>
+                <small className="canvas-menu-shortcut">Z</small>
+              </button>
+              <button
+                type="button"
                 className="canvas-menu-item canvas-menu-item-tool canvas-menu-item-danger"
                 onClick={() => {
                   setContextMenu(null);
@@ -15559,20 +15573,6 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-copy">
                   <b>清理空内容（{emptyContentNodes.length}）</b>
                 </span>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  setContextMenu(null);
-                  fitView();
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⛶</span>
-                <span className="canvas-menu-copy">
-                  <b>适应视图</b>
-                </span>
-                <small className="canvas-menu-shortcut">Z</small>
               </button>
             </div>
           </CanvasContextMenuFrame>
