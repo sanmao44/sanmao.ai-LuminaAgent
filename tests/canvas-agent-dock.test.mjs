@@ -132,3 +132,9 @@ test("the dock composer calls the shared skill picker with slash and a toolbar b
   assert.match(styles, /\.canvas-agent-dock-skill\{/);
   assert.match(styles, /\.canvas-agent-dock-composer \.agent-skill-menu\{/);
 });
+
+test("the floating rail and minimap restore use the shared control shadow", () => {
+  assert.match(styles, /\.canvas-agent-dock-rail\{[^}]*box-shadow:var\(--shadow-control\)/);
+  assert.match(styles, /\.canvas-minimap-restore\{[^}]*box-shadow:var\(--shadow-control\)/);
+  assert.doesNotMatch(styles, /0 10px 28px rgba\(0,0,0,\.22\)/);
+});
