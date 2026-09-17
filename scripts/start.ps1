@@ -146,6 +146,28 @@ try {
 }
 Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，端口范围：$portStart..$portEnd" 'INFO'
 
+try {
+  $selfProcess = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID) -ErrorAction Stop
+  $parentId = [int]$selfProcess.ParentProcessId
+  $parentProcess = if ($parentId -gt 0) { Get-CimInstance Win32_Process -Filter ('ProcessId=' + $parentId) -ErrorAction SilentlyContinue } else { $null }
+  $switchList = @()
+  if ($Lan.IsPresent) { $switchList += '-Lan' }
+  if ($FreeRelay.IsPresent) { $switchList += '-FreeRelay' }
+  if ($NonInteractive.IsPresent) { $switchList += '-NonInteractive' }
+  if ($ForceBuild.IsPresent) { $switchList += '-ForceBuild' }
+  if ($SkipBuild.IsPresent) { $switchList += '-SkipBuild' }
+  if ($ForceRestart.IsPresent) { $switchList += '-ForceRestart' }
+  $switchText = if ($switchList.Count -gt 0) { $switchList -join ' ' } else { '(none)' }
+  if ($parentProcess) {
+    $parentCommand = ([string]$parentProcess.CommandLine) -replace '[\r\n]+', ' '
+    if ($parentCommand.Length -gt 300) { $parentCommand = $parentCommand.Substring(0, 300) }
+    $parentText = $parentProcess.Name + ' PID ' + $parentId + ' cmd=' + $parentCommand
+  } else {
+    $parentText = 'PID ' + $parentId + ' exited'
+  }
+  Write-SanmaoLauncherLog ('本次入参：' + $switchText + '；发起进程：' + $parentText) 'INFO'
+} catch {}
+
 function Test-SanmaoServerAtPort([int]$port) {
   return Test-SanmaoHealthEndpoint -Port $port
 }
