@@ -36,6 +36,14 @@ test("the skill dialog explains how skills trigger so users do not have to guess
   assert.match(manager, /回答上出现「技能 · 名称」就说明这轮用了它/);
   assert.match(manager, /直接对助手说“用 X 技能做/);
 });
+
+test("installed skills can be searched and edited from the panel", () => {
+  assert.match(manager, /aria-label="搜索技能"/);
+  assert.match(manager, /void openEditor\(skill\)/);
+  assert.match(manager, /正在编辑「/);
+  assert.match(manager, /editing \? '保存修改' : '保存技能'/);
+  assert.match(manager, /用过 \$\{skill\.useCount\} 次/);
+});
 test("an enabled skill keeps the request on the tool round so the model can really read it", () => {
   assert.match(route, /const directStream = wantsStream && !skillContext\.skills\.length && !isTextPolishTask/);
   assert.match(route, /const cleanedFinal = stripToolCallMarkup\(finalized\)\.trim\(\);/);

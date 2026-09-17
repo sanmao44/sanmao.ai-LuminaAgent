@@ -12,6 +12,8 @@ type SkillSummary = {
   description: string;
   version: string;
   tags: string[];
+  useCount?: number;
+  lastUsedAt?: number;
   tools: string[];
   source: string;
   sourceUrl: string;
@@ -51,6 +53,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [settings, setSettings] = useState<SkillSettingsView>({ enabled: true, autoApprove: false });
   const [locals, setLocals] = useState<LocalCandidate[]>([]);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [editing, setEditing] = useState('');
+  const [query, setQuery] = useState('');
   const [importUrl, setImportUrl] = useState('');
   const [overwrite, setOverwrite] = useState(false);
   const [preview, setPreview] = useState<{ id: string; name: string; body: string } | null>(null);
@@ -95,6 +99,10 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   }, [open, run, applyPayload]);
 
   const enabledCount = skills.filter((skill) => skill.enabled).length;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleSkills = normalizedQuery
+    ? skills.filter((skill) => `${skill.name} ${skill.id} ${skill.description || ''} ${(skill.tags || []).join(' ')}`.toLowerCase().includes(normalizedQuery))
+    : skills;
 
   async function updateSettings(patch: Partial<SkillSettingsView>) {
     await run(async () => {
@@ -135,13 +143,36 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     });
   }
 
-  async function createSkill() {
+  async function saveSkill() {
     await run(async () => {
+      if (editing) {
+        const data = await requestJson(`/api/skills/${encodeURIComponent(editing)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: draft.name, description: draft.description, tags: draft.tags, body: draft.body }) });
+        applyPayload(data);
+        setDraft(EMPTY_DRAFT);
+        setEditing('');
+        setTab('installed');
+        setNotice(`已保存「${(data.skill as { name?: string })?.name || draft.name}」的修改。`);
+        return;
+      }
       const data = await requestJson('/api/skills', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...draft, overwrite }) });
       applyPayload(data);
       setDraft(EMPTY_DRAFT);
       setTab('installed');
       setNotice(`已保存「${(data.skill as { name?: string })?.name || draft.name}」。`);
+    });
+  }
+
+  /* 编辑已装技能：拉完整正文预填表单，保存时走 PATCH，不会丢掉超长正文。 */
+  async function openEditor(skill: SkillSummary) {
+    await run(async () => {
+      const data = await requestJson(`/api/skills/${encodeURIComponent(skill.id)}`);
+      const record = data.skill as { id?: string; name?: string; description?: string; tags?: string[]; body?: string } | undefined;
+      if (!record?.id) throw new Error('技能不存在。');
+      setDraft({ name: record.name || '', description: record.description || '', tags: (record.tags || []).join(', '), body: record.body || '' });
+      setEditing(record.id);
+      setError('');
+      setNotice('');
+      setTab('create');
     });
   }
 
@@ -234,7 +265,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
 
       <nav className={styles.tabs} role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'installed'} className={tab === 'installed' ? styles.tabActive : styles.tab} onClick={() => setTab('installed')}>已安装{skills.length ? `（${skills.length}）` : ''}</button>
-        <button type="button" role="tab" aria-selected={tab === 'create'} className={tab === 'create' ? styles.tabActive : styles.tab} onClick={() => setTab('create')}>新建</button>
+        <button type="button" role="tab" aria-selected={tab === 'create'} className={tab === 'create' ? styles.tabActive : styles.tab} onClick={() => { setEditing(''); setDraft(EMPTY_DRAFT); setTab('create'); }}>新建</button>
         <button type="button" role="tab" aria-selected={tab === 'import'} className={tab === 'import' ? styles.tabActive : styles.tab} onClick={() => setTab('import')}>导入</button>
       </nav>
 
@@ -248,7 +279,10 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
               <pre>{preview.body}</pre>
             </section>
           : skills.length
-            ? skills.map((skill) => <article key={skill.id} className={styles.row}>
+            ? <>
+                {skills.length > 3 && <input type="text" value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、别名或简介" aria-label="搜索技能" />}
+                {visibleSkills.length
+                  ? visibleSkills.map((skill) => <article key={skill.id} className={styles.row}>
                 <div className={styles.rowMain}>
                   <div className={styles.rowTitle}>
                     <strong>{skill.name}</strong>
@@ -257,6 +291,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                   </div>
                   <p className={styles.description}>{skill.description || '没有填写简介'}</p>
                   <p className={styles.meta}>
+                    {skill.useCount ? `用过 ${skill.useCount} 次 · ` : ''}
                     {skill.tags?.length ? `别名：${skill.tags.join('、')} · ` : ''}
                     {skill.tools?.length ? `需要工具：${skill.tools.join('、')} · ` : ''}
                     {skill.files.length ? `${skill.files.length} 个附件 · ` : ''}
@@ -269,13 +304,17 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                     <input type="checkbox" checked={skill.enabled} disabled={busy} onChange={() => void toggleSkill(skill)} />
                     <span>启用</span>
                   </label>
+                  <button type="button" disabled={busy} onClick={() => void openEditor(skill)}>编辑</button>
                   <button type="button" disabled={busy} onClick={() => void openPreview(skill)}>预览</button>
                   <button type="button" disabled={busy} onClick={() => void removeSkill(skill)}>{confirming === skill.id ? '确认删除' : '删除'}</button>
                 </div>
               </article>)
+                  : <p className={styles.empty}>没有匹配「{query}」的技能。</p>}
+              </>
             : <p className={styles.empty}>还没有技能。可以新建、导入别人的 SKILL.md、粘贴 GitHub 仓库，或让助手自己安装。</p>)}
 
         {tab === 'create' && <section className={styles.form}>
+          {editing && <p className={styles.hint}>正在编辑「{skills.find((skill) => skill.id === editing)?.name || editing}」，保存后立即生效。</p>}
           <label htmlFor="skill-name">名称</label>
           <input id="skill-name" value={draft.name} disabled={busy} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：短视频分镜脚本" />
           <label htmlFor="skill-description">简介</label>
@@ -285,8 +324,9 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
           <label htmlFor="skill-body">正文（Markdown）</label>
           <textarea id="skill-body" value={draft.body} disabled={busy} onChange={(event) => setDraft({ ...draft, body: event.target.value })} placeholder={'# 目标\n\n# 步骤\n1. …\n\n# 注意事项\n- …'} />
           <div className={styles.formFooter}>
-            {overwriteToggle}
-            <button type="button" className={styles.primary} disabled={busy || !draft.name.trim() || !draft.body.trim()} onClick={() => void createSkill()}>保存技能</button>
+            {editing ? null : overwriteToggle}
+            {editing && <button type="button" disabled={busy} onClick={() => { setEditing(''); setDraft(EMPTY_DRAFT); }}>取消编辑</button>}
+            <button type="button" className={styles.primary} disabled={busy || !draft.name.trim() || !draft.body.trim()} onClick={() => void saveSkill()}>{editing ? '保存修改' : '保存技能'}</button>
           </div>
         </section>}
 

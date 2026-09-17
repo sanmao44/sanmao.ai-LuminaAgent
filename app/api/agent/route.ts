@@ -19,7 +19,7 @@ import { agentInstructionText, classifyAgentDeliverable, type AgentDeliverable }
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { memoryContextMessage } from '@/lib/agent-memory';
 import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
-import { buildAgentSkillContext, buildSkillToolContent, installSkill, installSkillFromDocument, readSkill, readSkillFile, searchSkills, SKILL_INSTALL_MAX_PER_REQUEST, SKILL_TOOL_MAX_CALLS } from '@/lib/skills';
+import { buildAgentSkillContext, buildSkillToolContent, installSkill, installSkillFromDocument, readSkill, readSkillFile, recordSkillUsage, searchSkills, SKILL_INSTALL_MAX_PER_REQUEST, SKILL_TOOL_MAX_CALLS } from '@/lib/skills';
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
 import { fetchSkillText, parseGithubSkillTarget, stripToolCallMarkup } from '@/lib/skills';
 import { resolveLocalDataDir } from '@/lib/data-paths';
@@ -866,6 +866,7 @@ export async function POST(request: Request) {
           const file = filePath ? readSkillFile(skill.id, filePath, { pending: false, offset }) : null;
           if (filePath && !file) return fail('技能里没有这个附带文件：' + filePath.slice(0, 120));
           if (!usedSkills.some((item) => item.id === skill.id)) usedSkills.push({ id: skill.id, name: skill.name });
+          try { recordSkillUsage(skill.id, { pending: false }); } catch {}
           return { role: 'tool', tool_call_id: call.id, content: buildSkillToolContent(skill, file, offset) };
         }
         if (skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST) return fail('本轮安装次数已达上限，请先让用户确认已安装的技能。');

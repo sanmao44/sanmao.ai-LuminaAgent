@@ -1,5 +1,5 @@
 import { isAdminRequest } from '@/lib/auth';
-import { deleteSkill, discardPendingSkill, readSkill, setSkillEnabled, skillSummary, skillsSnapshot } from '@/lib/skills';
+import { deleteSkill, discardPendingSkill, readSkill, setSkillEnabled, skillSummary, skillsSnapshot, updateSkill, type UpdateSkillInput } from '@/lib/skills';
 
 export const runtime = 'nodejs';
 
@@ -20,7 +20,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   try {
     const { id } = await context.params;
     const data = await request.json();
-    const skill = setSkillEnabled(decode(id), Boolean(data.enabled));
+    const patch: UpdateSkillInput = {};
+    if (typeof data.name === 'string') patch.name = data.name;
+    if (typeof data.description === 'string') patch.description = data.description;
+    if (typeof data.body === 'string') patch.body = data.body;
+    if (typeof data.tags === 'string' || Array.isArray(data.tags)) patch.tags = data.tags;
+    const skill = Object.keys(patch).length
+      ? updateSkill(decode(id), patch)
+      : setSkillEnabled(decode(id), Boolean(data.enabled));
     return Response.json({ ok: true, skill: skillSummary(skill), ...skillsSnapshot() });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '更新技能失败。' }, { status: 400 });

@@ -331,6 +331,60 @@ test('技能正文与附件支持按 offset 分段续读', async () => {
 });
 
 
+test('技能使用次数与编辑已安装技能', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    const installed = skills.installSkill({ id: 'demo', name: '演示技能', description: '旧简介', tags: ['旧别名'], body: '正文 A' }, store);
+    assert.equal(installed.useCount, 0);
+    assert.equal(installed.lastUsedAt, 0);
+
+    const used = skills.recordSkillUsage('demo', store);
+    assert.equal(used.useCount, 1);
+    assert.ok(used.lastUsedAt > 0);
+    assert.equal(skills.recordSkillUsage('missing', store), null);
+    assert.equal(skills.readSkill('demo', store).useCount, 1);
+
+    const edited = skills.updateSkill('demo', { name: '演示技能 v2', description: '新简介', tags: '报错, 调试', body: '# 新正文' }, store);
+    assert.equal(edited.name, '演示技能 v2');
+    assert.equal(edited.description, '新简介');
+    assert.deepEqual(edited.tags, ['报错', '调试']);
+    assert.equal(edited.body, '# 新正文');
+    assert.equal(edited.useCount, 1);
+    const onDisk = await readFile(path.join(store.dataDir, 'skills', 'demo', 'SKILL.md'), 'utf8');
+    assert.match(onDisk, /# 新正文/);
+    assert.match(onDisk, /tags: 报错, 调试/);
+    assert.equal(skills.searchSkills('报错', [edited])[0].id, 'demo');
+
+    skills.installSkill({ id: 'demo-long', name: '长技能', body: 'G'.repeat(30000) }, store);
+    const tagged = skills.updateSkill('demo-long', { tags: ['长文'] }, store);
+    assert.equal(tagged.bodyChars, 30000);
+    assert.equal(tagged.bodyClipped, true);
+    assert.deepEqual(tagged.tags, ['长文']);
+    assert.equal(skills.updateSkill('demo-long', {}, store).body, tagged.body);
+
+    assert.throws(() => skills.updateSkill('demo-long', { name: '   ' }, store), /名称不能为空/);
+    assert.throws(() => skills.updateSkill('demo-long', { body: '   ' }, store), /内容不能为空/);
+    assert.throws(() => skills.updateSkill('missing', {}, store), /不存在/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('常用技能排在技能索引与检索前面', () => {
+  const base = { enabled: true, pending: false, files: [], tools: [], tags: [], body: '正文', description: '', createdAt: 0, updatedAt: 0, lastUsedAt: 0 };
+  const records = Array.from({ length: 30 }, (_, index) => ({ ...base, id: 'skill-' + index, name: 'S' + index, useCount: index === 29 ? 5 : 0 }));
+  const section = skills.buildSkillIndexSection(records);
+  const firstRow = section.split('\n').find((line) => line.startsWith('- '));
+  assert.ok(firstRow.startsWith('- skill-29'), '常用技能必须排在索引最前面');
+  assert.ok(section.includes('另有 ' + (30 - skills.SKILL_INDEX_MAX) + ' 个技能未列出'));
+
+  const found = skills.searchSkills('流程', [
+    { ...base, id: 'rare', name: 'Rare', body: '流程说明', useCount: 0 },
+    { ...base, id: 'often', name: 'Often', body: '流程说明', useCount: 3 },
+  ]);
+  assert.equal(found[0].id, 'often');
+});
+
 test('Agent 路由接入技能工具与渐进披露', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
   assert.match(route, /import \{ buildAgentSkillContext,[^}]*\} from '@\/lib\/skills';/);
@@ -343,6 +397,7 @@ test('Agent 路由接入技能工具与渐进披露', async () => {
   assert.match(route, /readSkillFile\(skill\.id, filePath, \{ pending: false, offset \}\)/);
   assert.match(route, /buildSkillToolContent\(skill, file, offset\)/);
   assert.match(route, /tags: args\.tags/);
+  assert.match(route, /recordSkillUsage\(skill\.id, \{ pending: false \}\)/);
   assert.match(route, /if \(name === 'skill_search' \|\| name === 'skill_read' \|\| name === 'skill_install'\) return skillContext\.settings\.enabled;/);
   assert.match(route, /const skillContext = buildAgentSkillContext\(\{ settings: state\.settings, dataDir: resolveLocalDataDir\(\) \}\);/);
   assert.ok(route.match(/system \+= skillPromptSection;/g).length === 2);
@@ -361,6 +416,7 @@ test('技能接口覆盖列表、导入、待确认与设置', async () => {
   }
   assert.match(list, /patchSettings\(patch\)/);
   assert.match(detail, /setSkillEnabled\(decode\(id\), Boolean\(data\.enabled\)\)/);
+  assert.match(detail, /updateSkill\(decode\(id\), patch\)/);
   assert.match(importRoute, /skillFilesFromArchive\(buffer\)/);
   assert.match(importRoute, /fetchSkillFilesFromGithub\(target\)/);
   assert.match(importRoute, /listLocalAgentSkills\(\)\.find/);
