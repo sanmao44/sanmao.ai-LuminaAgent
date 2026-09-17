@@ -179,3 +179,10 @@ test("the dock composer grows with its text and only scrolls once it hits the ca
   assert.match(component, /field\.style\.overflowY = contentHeight > maxHeight \? "auto" : "hidden";/);
   assert.match(component, /\}, \[input, open\]\);/);
 });
+
+test("both sides of the conversation can copy their text", () => {
+  // 用户常要把自己刚写的那句提示词拿去别处复用，所以自己的消息也要能复制。
+  assert.match(component, /const copyMessage = useCallback\(/);
+  assert.match(component, /message\.role === "user" \? \(\s*<button type="button" onClick=\{\(\) => copyMessage\(message\.content\)\}>/);
+  assert.match(component, /message\.role === "assistant" && !message\.error \? \([\s\S]{0,400}?copyMessage\(message\.content\)/);
+});

@@ -346,6 +346,16 @@ export default function CanvasAgentDock({
     notify("已开始新的 Agent 对话");
   }, [notify, stop]);
 
+  const copyMessage = useCallback(
+    (content: string) => {
+      void navigator.clipboard?.writeText(content).then(
+        () => notify("已复制"),
+        () => notify("复制失败", "error"),
+      );
+    },
+    [notify],
+  );
+
   if (!open)
     return (
       <button
@@ -446,18 +456,15 @@ export default function CanvasAgentDock({
                   <button type="button" onClick={() => onApplyText(message.content, { prompt: "Agent 回复" })}>
                     存为节点
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(message.content).then(
-                        () => notify("已复制"),
-                        () => notify("复制失败", "error"),
-                      );
-                    }}
-                  >
+                  <button type="button" onClick={() => copyMessage(message.content)}>
                     复制
                   </button>
                 </>
+              ) : null}
+              {message.role === "user" ? (
+                <button type="button" onClick={() => copyMessage(message.content)}>
+                  复制
+                </button>
               ) : null}
               {message.images?.length ? (
                 <button
