@@ -194,3 +194,32 @@ test("both sides of the conversation can copy their text", () => {
   assert.match(component, /message\.role === "user" && message\.images\?\.length \? "has-media"/);
   assert.match(styles, /\.canvas-agent-dock-message\.user\.has-media>\.canvas-agent-dock-message-tools\{position:static/);
 });
+
+test("the dock reply offers the same select-text toolbar as the node text viewer", () => {
+  // 节点文本里已经有选段工具栏，面板里的回复直接复用同一套按钮和样式。
+  assert.match(component, /onMouseUp=\{updateSelection\}/);
+  assert.match(component, /canvas-text-selection-toolbar canvas-agent-dock-selection-toolbar \$\{selection\.placement\}/);
+  assert.match(component, /复制选段/);
+  assert.match(component, /创建 Agent 节点/);
+  assert.match(component, /转图片/);
+  assert.match(component, /转视频/);
+  // 工具栏不能被 portal 出去：画布用 DOM 祖先判断 UI 覆盖层，否则会把这一按
+  // 当成平移起手（setPointerCapture），按钮永远收不到 click。
+  assert.doesNotMatch(component, /createPortal/);
+  assert.match(component, /log\?\.closest\("\.canvas-agent-dock"\)/);
+  assert.match(styles, /\.canvas-agent-dock>\.canvas-agent-dock-selection-toolbar\{position:absolute\}/);
+  assert.match(styles, /\.canvas-text-selection-toolbar\{position:fixed/);
+  // 画布把 user-select 关了，面板里的回复必须重新打开才选得中。
+  assert.match(styles, /\.canvas-agent-dock-message\{user-select:text;-webkit-user-select:text\}/);
+  assert.match(canvas, /onCreateAgentNode=\{applyAgentDockAgentNode\}/);
+  assert.match(canvas, /onUseAsImagePrompt=\{applyAgentDockImageBranch\}/);
+  assert.match(canvas, /onUseAsVideoPrompt=\{applyAgentDockVideoBranch\}/);
+});
+
+test("dock select-text actions fall back to the viewport centre without a selection", () => {
+  // 没选中节点时不能连线，节点落在视口中心，anchor 必须可空。
+  assert.match(canvas, /\(anchor: CanvasNode \| null, value: string\) => \{\s*if \(anchor && anchor\.type !== "prompt"\) return;/);
+  assert.match(canvas, /\(text: string\) => createImageBranchFromText\(selectedSingle \|\| selectedNodes\[0\] \|\| null, text\)/);
+  assert.match(canvas, /\(text: string\) => createViewerAgentNode\(selectedSingle \|\| selectedNodes\[0\] \|\| null, text\)/);
+  assert.match(canvas, /return anchor\s*\?\s*addEdge\(withNode, anchor\.id, nextImageNode\.id/);
+});

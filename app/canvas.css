@@ -932,6 +932,12 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-empty button{padding:8px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel-2);color:var(--text-2);font-size:10px;line-height:1.4;text-align:left;transition:border-color .16s,background .16s,color .16s}
 .canvas-agent-dock-empty button:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel));color:var(--accent-text)}
 .canvas-agent-dock-message{display:grid;gap:6px;max-width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:13px;background:var(--panel-2)}
+/* 画布把 user-select 关了，面板里的回复要能像节点文本那样选段。 */
+.canvas-agent-dock-message{user-select:text;-webkit-user-select:text}
+.canvas-agent-dock-message-tools button,.canvas-agent-dock-skills{user-select:none;-webkit-user-select:none}
+/* 工具栏留在面板内（画布靠 DOM 祖先识别 UI 覆盖层）；面板有 backdrop-filter，
+   fixed 会相对面板定位，所以这里用 absolute + 面板内坐标。 */
+.canvas-agent-dock>.canvas-agent-dock-selection-toolbar{position:absolute}
 .canvas-agent-dock-message.assistant{border-left:2px solid color-mix(in srgb,var(--accent) 42%,var(--line))}
 .canvas-agent-dock-message.user{position:relative;align-self:flex-end;max-width:calc(92% - 42px);border-color:color-mix(in srgb,var(--accent) 34%,var(--line));background:color-mix(in srgb,var(--accent) 12%,var(--panel))}
 /* 自己那条消息的操作按钮放在气泡左侧：放进气泡里会被挤成第二行，很难看。 */

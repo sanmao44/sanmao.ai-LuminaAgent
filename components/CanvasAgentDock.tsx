@@ -56,6 +56,9 @@ type Props = {
     meta: { prompt: string; model?: string },
   ) => void;
   onApplyText: (text: string, meta: { prompt: string }) => void;
+  onCreateAgentNode: (text: string) => void;
+  onUseAsImagePrompt: (text: string) => void;
+  onUseAsVideoPrompt: (text: string) => void;
   notify: (message: string, kind?: "ok" | "error") => void;
 };
 
@@ -73,6 +76,12 @@ const WEB_MODE_LABELS: Record<AgentWebMode, string> = {
 
 function createId() {
   return `dock-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/* 选段操作只认单条消息：跨气泡的选区没有对应的节点语义。 */
+function messageElementOf(node: Node | null) {
+  const element = node instanceof Element ? node : node?.parentElement || null;
+  return element?.closest<HTMLElement>(".canvas-agent-dock-message") || null;
 }
 
 function readSession(): CanvasAgentDockSession | null {
@@ -121,6 +130,9 @@ export default function CanvasAgentDock({
   onFocusNodes,
   onApplyImages,
   onApplyText,
+  onCreateAgentNode,
+  onUseAsImagePrompt,
+  onUseAsVideoPrompt,
   notify,
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
@@ -356,6 +368,106 @@ export default function CanvasAgentDock({
     [notify],
   );
 
+  const [selection, setSelection] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    placement: "above" | "below";
+  } | null>(null);
+
+  const clearSelection = useCallback(() => {
+    setSelection(null);
+    if (typeof window !== "undefined") window.getSelection()?.removeAllRanges();
+  }, []);
+
+  /* 面板里的回复用和节点文本一样的选中工具栏：选段后能直接复制、建节点、转图片/转视频。 */
+  const updateSelection = useCallback(() => {
+    const log = logRef.current;
+    const dock = log?.closest(".canvas-agent-dock") || null;
+    const current = typeof window === "undefined" ? null : window.getSelection();
+    if (
+      !log ||
+      !dock ||
+      !current ||
+      current.isCollapsed ||
+      !current.rangeCount ||
+      !current.anchorNode ||
+      !current.focusNode ||
+      !log.contains(current.anchorNode) ||
+      !log.contains(current.focusNode)
+    ) {
+      setSelection(null);
+      return;
+    }
+    const anchorMessage = messageElementOf(current.anchorNode);
+    if (!anchorMessage || anchorMessage !== messageElementOf(current.focusNode)) {
+      setSelection(null);
+      return;
+    }
+    const selectedText = current.toString().trim();
+    const rect = current.getRangeAt(0).getBoundingClientRect();
+    if (!selectedText || (!rect.width && !rect.height)) {
+      setSelection(null);
+      return;
+    }
+    /* 工具栏必须留在面板的 DOM 里：画布用它判断这一按是不是 UI 覆盖层，
+       否则会被当成平移起手并抢走 pointer capture，按钮收不到 click。 */
+    const dockRect = dock.getBoundingClientRect();
+    const toolbarWidth = Math.min(420, Math.max(260, dockRect.width - 16));
+    const halfWidth = toolbarWidth / 2;
+    const center = rect.left + rect.width / 2 - dockRect.left;
+    const x = Math.min(dockRect.width - halfWidth - 8, Math.max(halfWidth + 8, center));
+    const top = rect.top - dockRect.top;
+    const bottom = rect.bottom - dockRect.top;
+    const showBelow = top < 48;
+    setSelection({
+      text: selectedText,
+      x,
+      y: showBelow ? bottom + 8 : top - 8,
+      placement: showBelow ? "below" : "above",
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!selection) return;
+    const log = logRef.current;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".canvas-text-selection-toolbar")) return;
+      if (!log?.contains(target)) setSelection(null);
+    };
+    const handleViewportChange = () => setSelection(null);
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("resize", handleViewportChange);
+    log?.addEventListener("scroll", handleViewportChange);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("resize", handleViewportChange);
+      log?.removeEventListener("scroll", handleViewportChange);
+    };
+  }, [selection]);
+
+  const copySelection = useCallback(() => {
+    const value = selection?.text;
+    if (!value) return;
+    clearSelection();
+    void navigator.clipboard?.writeText(value).then(
+      () => notify("已复制选中的文本"),
+      () => notify("复制失败，请检查浏览器剪贴板权限", "error"),
+    );
+  }, [clearSelection, notify, selection]);
+
+  const runSelectionAction = useCallback(
+    (action: (value: string) => void) => {
+      const value = selection?.text;
+      if (!value) return;
+      clearSelection();
+      action(value);
+    },
+    [clearSelection, selection],
+  );
+
   if (!open)
     return (
       <button
@@ -413,7 +525,15 @@ export default function CanvasAgentDock({
           <small>在画布上选中节点后，这里会显示它们，并把节点信息一起发给 Agent。</small>
         )}
       </div>
-      <div className="canvas-agent-dock-log" ref={logRef} role="log" aria-live="polite">
+      <div
+        className="canvas-agent-dock-log"
+        ref={logRef}
+        role="log"
+        aria-live="polite"
+        onMouseUp={updateSelection}
+        onKeyUp={updateSelection}
+        onTouchEnd={updateSelection}
+      >
         {messages.length === 0 && !busy && (
           <div className="canvas-agent-dock-empty">
             <b>可以这样问</b>
@@ -489,6 +609,30 @@ export default function CanvasAgentDock({
           </div>
         ) : null}
       </div>
+      {selection ? (
+        <div
+          className={`canvas-text-selection-toolbar canvas-agent-dock-selection-toolbar ${selection.placement}`}
+          style={{ left: selection.x, top: selection.y }}
+          role="toolbar"
+          aria-label="选中文本操作"
+          onMouseDown={(event) => event.preventDefault()}
+          onTouchStart={(event) => event.preventDefault()}
+        >
+          <span>{selection.text.length.toLocaleString()} 字</span>
+          <button type="button" onClick={copySelection}>
+            复制选段
+          </button>
+          <button type="button" className="primary" onClick={() => runSelectionAction(onCreateAgentNode)}>
+            创建 Agent 节点
+          </button>
+          <button type="button" onClick={() => runSelectionAction(onUseAsImagePrompt)}>
+            转图片
+          </button>
+          <button type="button" onClick={() => runSelectionAction(onUseAsVideoPrompt)}>
+            转视频
+          </button>
+        </div>
+      ) : null}
       <div className="canvas-agent-dock-quick">
         {quickActions.map((action) => (
           <button key={action.label} type="button" onClick={() => setInput(action.prompt)} disabled={busy}>

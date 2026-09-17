@@ -6459,19 +6459,15 @@ export default function SuperCanvas() {
   );
 
   const createImageBranchFromText = useCallback(
-    (node: CanvasNode, value: string) => {
-      if (node.type !== "prompt") return;
+    (anchor: CanvasNode | null, value: string) => {
+      if (anchor && anchor.type !== "prompt") return;
       const response = value.trim();
       if (!response) return;
       const imageParams = normalizeCreationSettings("image", null, runtime);
-      const imageNode = createEmptyMedia(
-        "image",
-        {
-          x: node.x + nodeSize(node).w + 90,
-          y: node.y,
-        },
-        imageParams,
-      );
+      const origin = anchor
+        ? { x: anchor.x + nodeSize(anchor).w + 90, y: anchor.y }
+        : screenToWorld(stageSize.width / 2, stageSize.height / 2);
+      const imageNode = createEmptyMedia("image", origin, imageParams);
       const nextImageNode: CanvasNode = {
         ...imageNode,
         data: {
@@ -6483,17 +6479,12 @@ export default function SuperCanvas() {
             : imageNode.data.generation,
         },
       };
-      commit((current) =>
-        addEdge(
-          { ...current, nodes: [...current.nodes, nextImageNode] },
-          node.id,
-          nextImageNode.id,
-          "right",
-          "left",
-          "generated",
-          "context",
-        ),
-      );
+      commit((current) => {
+        const withNode = { ...current, nodes: [...current.nodes, nextImageNode] };
+        return anchor
+          ? addEdge(withNode, anchor.id, nextImageNode.id, "right", "left", "generated", "context")
+          : withNode;
+      });
       setEditorDrafts((current) => ({
         ...current,
         [nextImageNode.id]: {
@@ -6509,23 +6500,19 @@ export default function SuperCanvas() {
       setTextLightboxNodeId(null);
       notify("已创建图片分支，文本已填入画布编辑器");
     },
-    [commit, notify, runtime],
+    [commit, notify, runtime, screenToWorld, stageSize],
   );
 
   const createVideoBranchFromText = useCallback(
-    (node: CanvasNode, value: string) => {
-      if (node.type !== "prompt") return;
+    (anchor: CanvasNode | null, value: string) => {
+      if (anchor && anchor.type !== "prompt") return;
       const response = value.trim();
       if (!response) return;
       const videoParams = normalizeCreationSettings("video", null, runtime);
-      const videoNode = createEmptyMedia(
-        "video",
-        {
-          x: node.x + nodeSize(node).w + 90,
-          y: node.y,
-        },
-        videoParams,
-      );
+      const origin = anchor
+        ? { x: anchor.x + nodeSize(anchor).w + 90, y: anchor.y }
+        : screenToWorld(stageSize.width / 2, stageSize.height / 2);
+      const videoNode = createEmptyMedia("video", origin, videoParams);
       const nextVideoNode: CanvasNode = {
         ...videoNode,
         data: {
@@ -6537,17 +6524,12 @@ export default function SuperCanvas() {
             : videoNode.data.generation,
         },
       };
-      commit((current) =>
-        addEdge(
-          { ...current, nodes: [...current.nodes, nextVideoNode] },
-          node.id,
-          nextVideoNode.id,
-          "right",
-          "left",
-          "generated",
-          "context",
-        ),
-      );
+      commit((current) => {
+        const withNode = { ...current, nodes: [...current.nodes, nextVideoNode] };
+        return anchor
+          ? addEdge(withNode, anchor.id, nextVideoNode.id, "right", "left", "generated", "context")
+          : withNode;
+      });
       setEditorDrafts((current) => ({
         ...current,
         [nextVideoNode.id]: {
@@ -6563,7 +6545,7 @@ export default function SuperCanvas() {
       setTextLightboxNodeId(null);
       notify("已创建视频分支，文本已填入画布编辑器");
     },
-    [commit, notify, runtime],
+    [commit, notify, runtime, screenToWorld, stageSize],
   );
 
   const useAgentResponseAsImagePrompt = useCallback(
@@ -12277,12 +12259,14 @@ export default function SuperCanvas() {
     },
     [notify],
   );
-  const createViewerAgentNode = useCallback((node: CanvasNode, value: string) => {
-    if (node.type !== "prompt") return;
+  const createViewerAgentNode = useCallback((anchor: CanvasNode | null, value: string) => {
+    if (anchor && anchor.type !== "prompt") return;
     const prompt = value.trim();
     if (!prompt) return notify("请先选中一段文本。", "error");
     const params = normalizeCreationSettings("text", null, runtime);
-    const seed = { x: node.x + nodeSize(node).w + 90, y: node.y };
+    const seed = anchor
+      ? { x: anchor.x + nodeSize(anchor).w + 90, y: anchor.y }
+      : screenToWorld(stageSize.width / 2, stageSize.height / 2);
     const base = createPrompt(seed, prompt);
     const draft = { ...base, ...openNodePosition(seed, base) };
     const agentNode: CanvasNode = {
@@ -12297,17 +12281,12 @@ export default function SuperCanvas() {
         statusLabel: undefined,
       },
     };
-    commit((current) =>
-      addEdge(
-        { ...current, nodes: [...current.nodes, agentNode] },
-        node.id,
-        agentNode.id,
-        "right",
-        "left",
-        "manual",
-        "context",
-      ),
-    );
+    commit((current) => {
+      const withNode = { ...current, nodes: [...current.nodes, agentNode] };
+      return anchor
+        ? addEdge(withNode, anchor.id, agentNode.id, "right", "left", "manual", "context")
+        : withNode;
+    });
     setEditorDrafts((current) => ({
       ...current,
       [agentNode.id]: { prompt, params },
@@ -12319,7 +12298,21 @@ export default function SuperCanvas() {
     setMode("text");
     setExpandedEditorId(agentNode.id);
     notify("已创建 Agent 新节点，请确认提示词后生成");
-  }, [commit, notify, openNodePosition, runtime]);
+  }, [commit, notify, openNodePosition, runtime, screenToWorld, stageSize]);
+
+  /* Agent 助手面板里的选段操作：没有选中节点时落在视口中心，不连线。 */
+  const applyAgentDockAgentNode = useCallback(
+    (text: string) => createViewerAgentNode(selectedSingle || selectedNodes[0] || null, text),
+    [createViewerAgentNode, selectedNodes, selectedSingle],
+  );
+  const applyAgentDockImageBranch = useCallback(
+    (text: string) => createImageBranchFromText(selectedSingle || selectedNodes[0] || null, text),
+    [createImageBranchFromText, selectedNodes, selectedSingle],
+  );
+  const applyAgentDockVideoBranch = useCallback(
+    (text: string) => createVideoBranchFromText(selectedSingle || selectedNodes[0] || null, text),
+    [createVideoBranchFromText, selectedNodes, selectedSingle],
+  );
   const updateTextNode = useCallback(
     (node: CanvasNode, value: string) => {
       if (node.type !== "prompt") return;
@@ -15325,6 +15318,9 @@ export default function SuperCanvas() {
           onFocusNodes={focusAgentDockNodes}
           onApplyImages={applyAgentDockImages}
           onApplyText={applyAgentDockText}
+          onCreateAgentNode={applyAgentDockAgentNode}
+          onUseAsImagePrompt={applyAgentDockImageBranch}
+          onUseAsVideoPrompt={applyAgentDockVideoBranch}
           notify={notify}
         />
         {contextGroup && contextMenu?.menu === "group" && contextMenu.groupId ? (
