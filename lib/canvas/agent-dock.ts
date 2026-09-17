@@ -149,7 +149,29 @@ export function buildCanvasAgentDockContext(
     const relations = selectionRelations(document, ids);
     if (relations.length) lines.push(`连接关系：${relations.join("；")}`);
   }
-  return { text: lines.join("\n").slice(0, CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS), nodeIds: ids };
+  return { text: clipCanvasAgentDockLines(lines), nodeIds: ids };
+}
+
+/**
+ * 按行裁剪：硬切 slice 会把某条节点摘要截成半句，模型会照着半句话下判断。
+ * 超限时丢掉整行，并写明还有多少行没带过去。
+ */
+function clipCanvasAgentDockLines(lines: readonly string[]) {
+  const kept: string[] = [];
+  let used = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (used + line.length + 1 > CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS) {
+      const note = `（节点信息过长，已省略后续 ${lines.length - index} 行）`;
+      if (used + note.length + 1 <= CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS) kept.push(note);
+      break;
+    }
+    kept.push(line);
+    used += line.length + 1;
+  }
+  if (kept.length) return kept.join("\n");
+  /* 单行就超限时至少给出开头，不能让模型完全没有上下文。 */
+  return String(lines[0] || "").slice(0, CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS);
 }
 
 /** The context travels inside the user turn so the transcript stays readable. */

@@ -963,6 +963,14 @@ html[data-theme="dark"] .canvas-workspace{
 @keyframes canvas-agent-dock-caret{0%,100%{opacity:1}50%{opacity:0}}
 .canvas-agent-dock-message p{margin:0;white-space:pre-wrap;word-break:break-word;color:var(--text-2);font-size:10px;line-height:1.55}
 .canvas-agent-dock-message.user p{color:var(--text)}
+/* 长回复默认折叠：折叠只影响显示，复制和存为节点仍是完整内容。 */
+.canvas-agent-dock-more{justify-self:start;height:22px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--muted);font-size:9px;user-select:none;-webkit-user-select:none}
+.canvas-agent-dock-more:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+/* 中途停止的部分回答标一下，别让人以为回答就这么完了。 */
+.canvas-agent-dock-message.is-interrupted>p::after{content:"（已停止）";color:var(--muted)}
+/* 上滑看历史时才有用：跳回最新消息。sticky 而不是 absolute——滚动容器里的 absolute 会跟着内容滚走。 */
+.canvas-agent-dock-jump{position:sticky;bottom:4px;align-self:flex-end;height:24px;margin-top:-30px;padding:0 11px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--panel) 92%,transparent);color:var(--text-2);font-size:9px;box-shadow:0 6px 16px rgba(8,9,14,.18)}
+.canvas-agent-dock-jump:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-agent-dock-media{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
 .canvas-agent-dock-media img{width:100%;aspect-ratio:1 / 1;object-fit:cover;border:1px solid var(--line);border-radius:9px}
 .canvas-agent-dock-message-tools{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}

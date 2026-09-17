@@ -16,6 +16,7 @@ import {
 } from "@/lib/creation/settings";
 import { generateCanvasAgent } from "@/lib/canvas/api";
 import {
+  CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
   canvasAgentDockAcceptsImages,
   composeCanvasAgentDockMessage,
@@ -38,6 +39,8 @@ export type CanvasAgentDockMessage = {
   error?: string;
   /** 失败时存一份用户原话：重试直接用这句，@ 编号按当时的选区再解析一次。 */
   retryText?: string;
+  /** 用户中途停止时留下的部分回答：可以在这条消息上接着写。 */
+  interrupted?: boolean;
   applied?: boolean;
 };
 
@@ -71,6 +74,10 @@ type Props = {
 };
 
 const MESSAGE_LIMIT = 40;
+/* 这类回答常见几千字，默认全展开会让面板只能靠滚动翻。 */
+const MESSAGE_COLLAPSE_CHARS = 900;
+/* 距底多少像素以内算“贴在底部”，决定流式内容要不要跟着滚。 */
+const SCROLL_BOTTOM_GAP = 48;
 const EMPTY_SAMPLES = [
   "这几个节点的问题在哪？",
   "帮我写一版更细的提示词",
@@ -138,6 +145,26 @@ function taskStatusText(counts: { running: number; queued: number; failed: numbe
   if (counts.running + counts.queued) parts.push(`${counts.running + counts.queued} 个在跑`);
   if (counts.failed) parts.push(`${counts.failed} 个失败`);
   return parts.join(" · ");
+}
+
+/* 面板里的 @1 只对当时的选区有意义。发送时把用户那句话里的 @1 落成自解释的名字，
+   历史消息回看才不会歧义（同一份文本也会作为后续轮次的上下文发给模型）。 */
+function labelReferenceMentions(text: string, references: readonly CanvasAgentDockReference[]) {
+  return String(text || "").replace(/@([0-9]+)/g, (token, rawIndex: string) => {
+    const index = Number(rawIndex) - 1;
+    const reference = index >= 0 && index < references.length ? references[index] : undefined;
+    if (!reference) return token;
+    const kind = reference.kind === "video" ? "参考视频" : reference.kind === "text" ? "引用文本" : "参考图";
+    return `${kind}${index + 1}「${reference.name}」`;
+  });
+}
+
+/* 长回复先给开头一段，展开再看全文；折叠只影响显示，复制和存为节点仍是完整内容。 */
+function messagePreview(content: string) {
+  if (content.length <= MESSAGE_COLLAPSE_CHARS) return content;
+  const cut = content.slice(0, MESSAGE_COLLAPSE_CHARS);
+  const lastBreak = cut.lastIndexOf("\n");
+  return `${(lastBreak > 200 ? cut.slice(0, lastBreak) : cut).trimEnd()}…`;
 }
 
 /* 芯片和 @ 引用是同一份选区的两种呈现，所以共用一套顺序：芯片上的编号就是 @编号。 */
@@ -239,6 +266,8 @@ export default function CanvasAgentDock({
   const [skillActive, setSkillActive] = useState(0);
   const [skills, setSkills] = useState<SkillPickerEntry[]>([]);
   const [chipOrder, setChipOrder] = useState<string[]>([]);
+  const [expandedMessages, setExpandedMessages] = useState<ReadonlySet<string>>(() => new Set());
+  const [atBottom, setAtBottom] = useState(true);
   const [dragChipId, setDragChipId] = useState<string | null>(null);
   const contextRef = useRef<HTMLDivElement | null>(null);
   const chipDragRef = useRef<{ id: string; pointerId: number; x: number; y: number } | null>(null);
@@ -247,6 +276,9 @@ export default function CanvasAgentDock({
   const abortRef = useRef<AbortController | null>(null);
   /* 失败后要能重试，所以留一份最近一次发送的原话。 */
   const lastUserTextRef = useRef("");
+  /* 停止时不能丢掉已经流回来的内容，所以流式文本同时记一份在 ref 里。 */
+  const streamTextRef = useRef("");
+  const stickToBottomRef = useRef(true);
   const logRef = useRef<HTMLDivElement | null>(null);
   const mentionEditorRef = useRef<HTMLDivElement | null>(null);
   const skillMenuFromSlashRef = useRef(false);
@@ -276,10 +308,32 @@ export default function CanvasAgentDock({
     }
   }, [hydrated, messages, model, webMode, autoApply]);
 
+  /* 只有本来就贴在底部时才跟着滚：上滑看历史的时候，流式内容不该把人拽回底部。 */
+  const trackLogScroll = useCallback(() => {
+    const node = logRef.current;
+    if (!node) return;
+    const next = node.scrollHeight - node.scrollTop - node.clientHeight <= SCROLL_BOTTOM_GAP;
+    stickToBottomRef.current = next;
+    setAtBottom(next);
+  }, []);
+
+  const jumpToBottom = useCallback(() => {
+    const node = logRef.current;
+    if (!node) return;
+    stickToBottomRef.current = true;
+    setAtBottom(true);
+    node.scrollTop = node.scrollHeight;
+  }, []);
+
   useEffect(() => {
     const node = logRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [messages, streamText, open]);
+    if (node && stickToBottomRef.current) node.scrollTop = node.scrollHeight;
+  }, [messages, streamText]);
+
+  /* 面板每次打开都从最新的地方看起。 */
+  useEffect(() => {
+    if (open) jumpToBottom();
+  }, [jumpToBottom, open]);
 
   /* 芯片和 @ 引用是同一份选区的两种呈现，共用一套顺序：芯片上的编号就是 @编号。 */
   const orderedChips = useMemo(
@@ -437,7 +491,7 @@ export default function CanvasAgentDock({
   }, []);
 
   const send = useCallback(
-    async (raw?: string) => {
+    async (raw?: string, options: { fromMessageId?: string } = {}) => {
       const text = String(raw ?? input).trim();
       if (!text) {
         notify("先输入要问 Agent 的内容。", "error");
@@ -451,10 +505,25 @@ export default function CanvasAgentDock({
       }
       closeSkillMenu();
       lastUserTextRef.current = text;
+      streamTextRef.current = "";
+      /* 自己发的新消息一定要看到，所以这一次强制贴底。 */
+      stickToBottomRef.current = true;
       // 输入框里显示 @1，模型收到的应该是它指向的那张图，否则编号对不上。
       const mentionText = resolveReferenceMentions(text, orderedReferences);
-      const userMessage: CanvasAgentDockMessage = { id: createId(), role: "user", content: text };
-      const history = [...messages, userMessage];
+      /* 重跑某一轮时先把它之后的内容丢掉，否则会留下两份回答。 */
+      const base = options.fromMessageId
+        ? (() => {
+            const index = messages.findIndex((message) => message.id === options.fromMessageId);
+            return index >= 0 ? messages.slice(0, index) : messages;
+          })()
+        : messages;
+      const userMessage: CanvasAgentDockMessage = {
+        id: createId(),
+        role: "user",
+        /* 存自解释的引用名：三天后回看这条消息，也不再依赖当时的 @ 编号。 */
+        content: labelReferenceMentions(text, orderedReferences),
+      };
+      const history = [...base, userMessage];
       setMessages(history);
       setInput("");
       setStreamText("");
@@ -480,7 +549,11 @@ export default function CanvasAgentDock({
             signal: controller.signal,
           },
           (event) => {
-            if (event.type === "delta" && event.text) setStreamText((value) => value + String(event.text));
+            if (event.type === "delta" && event.text) {
+              const chunk = String(event.text);
+              streamTextRef.current += chunk;
+              setStreamText((value) => value + chunk);
+            }
           },
         );
         const content = String(response.message || "").trim() || "（Agent 没有返回文本内容）";
@@ -510,7 +583,14 @@ export default function CanvasAgentDock({
       } catch (error) {
         const message = error instanceof Error ? error.message : "Agent 请求失败";
         if (message.includes("已停止") || (error instanceof DOMException && error.name === "AbortError")) {
-          setMessages((value) => [...value, { id: createId(), role: "assistant", content: "已停止这一轮回答。" }]);
+          /* 已经流回来的那半截是继续写的上下文，不能丢。 */
+          const partial = streamTextRef.current.trim();
+          setMessages((value) => [
+            ...value,
+            partial
+              ? { id: createId(), role: "assistant", content: partial, interrupted: true }
+              : { id: createId(), role: "assistant", content: "已停止这一轮回答。" },
+          ]);
         } else {
           const friendly = describeAgentError(message, typeof navigator === "undefined" ? true : navigator.onLine);
           setMessages((value) => [
@@ -539,11 +619,52 @@ export default function CanvasAgentDock({
   }, []);
 
   const clearSession = useCallback(() => {
+    /* 新建对话会清掉整段记录且不可恢复，非空时先问一句。 */
+    if (messages.length && typeof window !== "undefined" && !window.confirm("清空当前对话？画布内容不受影响。"))
+      return;
     stop();
     setMessages([]);
     setStreamText("");
+    setExpandedMessages(new Set());
     notify("已开始新的 Agent 对话");
-  }, [notify, stop]);
+  }, [messages.length, notify, stop]);
+
+  const toggleMessageExpanded = useCallback((id: string) => {
+    setExpandedMessages((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const collapsedMessages = useMemo(() => {
+    const collapsed = new Set<string>();
+    for (const message of messages)
+      if (message.content.length > MESSAGE_COLLAPSE_CHARS && !expandedMessages.has(message.id))
+        collapsed.add(message.id);
+    return collapsed;
+  }, [expandedMessages, messages]);
+
+  const lastAssistantId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1)
+      if (messages[index].role === "assistant") return messages[index].id;
+    return null;
+  }, [messages]);
+
+  /* 重跑某一轮：用那条用户消息重新提问（引用已经落成名字，重发不会再走 @ 解析）。 */
+  const regenerate = useCallback(
+    (assistantId: string) => {
+      const index = messages.findIndex((message) => message.id === assistantId);
+      for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+        if (messages[cursor].role !== "user") continue;
+        void send(messages[cursor].content, { fromMessageId: messages[cursor].id });
+        return;
+      }
+      notify("这一轮没有找到对应的提问，没法重新生成。", "error");
+    },
+    [messages, notify, send],
+  );
 
   const copyMessage = useCallback(
     (content: string) => {
@@ -682,6 +803,9 @@ export default function CanvasAgentDock({
               {selectedNodeTotal > CANVAS_AGENT_DOCK_MAX_REFERENCES
                 ? ` · 引用最多带 ${CANVAS_AGENT_DOCK_MAX_REFERENCES} 个`
                 : ""}
+              {selectedNodeTotal > CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES
+                ? ` · 节点信息最多带 ${CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES} 个`
+                : ""}
               {selectedTaskText ? ` · ${selectedTaskText}` : ""}
               {!selectedTaskText && canvasTaskText ? ` · 画布上 ${canvasTaskText}` : ""}
             </small>
@@ -745,6 +869,7 @@ export default function CanvasAgentDock({
         ref={logRef}
         role="log"
         aria-live={busy ? "off" : "polite"}
+        onScroll={trackLogScroll}
         onMouseUp={updateSelection}
         onKeyUp={updateSelection}
         onTouchEnd={updateSelection}
@@ -762,7 +887,7 @@ export default function CanvasAgentDock({
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`canvas-agent-dock-message ${message.role} ${message.error ? "is-error" : ""} ${message.role === "user" && message.images?.length ? "has-media" : ""}`}
+            className={`canvas-agent-dock-message ${message.role} ${message.error ? "is-error" : ""} ${message.interrupted ? "is-interrupted" : ""} ${message.role === "user" && message.images?.length ? "has-media" : ""}`}
           >
             {message.role === "assistant" ? (
               <div className="canvas-agent-dock-role">
@@ -777,7 +902,16 @@ export default function CanvasAgentDock({
                 ))}
               </div>
             ) : null}
-            <p>{message.content}</p>
+            <p>{collapsedMessages.has(message.id) ? messagePreview(message.content) : message.content}</p>
+            {message.content.length > MESSAGE_COLLAPSE_CHARS ? (
+              <button
+                type="button"
+                className="canvas-agent-dock-more"
+                onClick={() => toggleMessageExpanded(message.id)}
+              >
+                {collapsedMessages.has(message.id) ? `展开全文（${message.content.length.toLocaleString()} 字）` : "收起"}
+              </button>
+            ) : null}
             {message.images?.length ? (
               <div className="canvas-agent-dock-media">
                 {message.images.map((image, index) => (
@@ -806,6 +940,16 @@ export default function CanvasAgentDock({
                   重试
                 </button>
               ) : null}
+              {message.role === "assistant" && message.id === lastAssistantId && !message.error ? (
+                <button type="button" disabled={busy} onClick={() => regenerate(message.id)}>
+                  重新生成
+                </button>
+              ) : null}
+              {message.interrupted && message.id === lastAssistantId ? (
+                <button type="button" disabled={busy} onClick={() => void send("继续")}>
+                  继续
+                </button>
+              ) : null}
               {message.images?.length ? (
                 <button
                   type="button"
@@ -827,6 +971,11 @@ export default function CanvasAgentDock({
           <div className="canvas-agent-dock-message assistant is-streaming">
             <p>{streamText || "正在思考…"}</p>
           </div>
+        ) : null}
+        {!atBottom ? (
+          <button type="button" className="canvas-agent-dock-jump" onClick={jumpToBottom} aria-label="回到最新消息">
+            ↓ 最新消息
+          </button>
         ) : null}
       </div>
       {selection ? (
@@ -875,7 +1024,7 @@ export default function CanvasAgentDock({
           className="canvas-agent-dock-mention-editor"
           menuClassName="canvas-mention-menu canvas-agent-dock-mention-menu"
           ariaLabel="给 Agent 的消息"
-          placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行；输入 @ 引用选中节点"
+          placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行；输入 @ 引用选中节点，生成中按 Esc 停止"
           transformPastedText={(value) => replaceNaturalReferenceLabels(value, mentionOptions).value}
           onChange={(value) => {
             setInput(value);
@@ -918,6 +1067,12 @@ export default function CanvasAgentDock({
                 applySkill(visibleSkills[Math.min(Math.max(skillActive, 0), visibleSkills.length - 1)]);
                 return;
               }
+            }
+            /* 生成中按 Esc 停：聊天面板的通用约定。 */
+            if (event.key === "Escape" && busy) {
+              event.preventDefault();
+              stop();
+              return;
             }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();

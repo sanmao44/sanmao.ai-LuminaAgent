@@ -81,7 +81,11 @@ test("agent text and images land on the canvas through the shared undostack", ()
 test("canvas status and node summaries are capped before they reach the model", () => {
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS = 1600/);
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES = 12/);
-  assert.match(context, /lines\.join\("\\n"\)\.slice\(0, CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS\)/);
+  // 按行裁剪：硬切 slice 会把某条节点摘要截成半句，模型会照着半句话下判断。
+  assert.doesNotMatch(context, /lines\.join\("\\n"\)\.slice\(0, CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS\)/);
+  assert.match(context, /function clipCanvasAgentDockLines\(lines: readonly string\[\]\)/);
+  assert.match(context, /if \(used \+ line\.length \+ 1 > CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS\) \{/);
+  assert.match(context, /（节点信息过长，已省略后续 \$\{lines\.length - index\} 行）/);
   assert.match(context, /export const CANVAS_AGENT_DOCK_MAX_REFERENCES = 8/);
 });
 
@@ -330,4 +334,48 @@ test("a failed agent turn explains itself and can be retried", () => {
 test("the dock stops announcing every streamed token to screen readers", () => {
   assert.match(component, /aria-live=\{busy \? "off" : "polite"\}/);
   assert.match(component, /role="log"/);
+});
+
+test("the dock keeps a long conversation readable", () => {
+  // 之前每次 messages/streamText 变化都无条件跳到底部：上滑看历史会被拽回去。
+  assert.match(component, /const trackLogScroll = useCallback\(\(\) => \{/);
+  assert.match(component, /stickToBottomRef\.current = next;/);
+  assert.match(component, /if \(node && stickToBottomRef\.current\) node\.scrollTop = node\.scrollHeight;/);
+  assert.match(component, /onScroll=\{trackLogScroll\}/);
+  assert.match(component, /className="canvas-agent-dock-jump"/);
+  assert.match(component, /onClick=\{jumpToBottom\} aria-label="回到最新消息"/);
+  assert.match(styles, /\.canvas-agent-dock-log\{flex:1;min-height:0;overflow:auto;/);
+  // sticky 而不是 absolute：滚动容器里的 absolute 会跟着内容一起滚走。
+  assert.match(styles, /\.canvas-agent-dock-jump\{position:sticky;bottom:4px;align-self:flex-end/);
+  // 几千字的回复默认折叠，展开按钮给全文入口；折叠不动真实内容。
+  assert.match(component, /const MESSAGE_COLLAPSE_CHARS = 900;/);
+  assert.match(component, /const collapsedMessages = useMemo\(\(\) => \{/);
+  assert.match(component, /collapsedMessages\.has\(message\.id\) \? messagePreview\(message\.content\) : message\.content/);
+  assert.match(component, /function messagePreview\(content: string\)/);
+  assert.match(component, /展开全文（\$\{message\.content\.length\.toLocaleString\(\)\} 字）/);
+  assert.match(styles, /\.canvas-agent-dock-more\{justify-self:start/);
+});
+
+test("a turn can be re-run, continued or stopped from the keyboard", () => {
+  // 答偏了只能重新打字太笨，所以给重新生成；停止时已经流回来的半截要留下才能续写。
+  assert.match(component, /const regenerate = useCallback\(/);
+  assert.match(component, /void send\(messages\[cursor\]\.content, \{ fromMessageId: messages\[cursor\]\.id \}\)/);
+  assert.match(component, /const base = options\.fromMessageId/);
+  assert.match(component, /async \(raw\?: string, options: \{ fromMessageId\?: string \} = \{\}\) => \{/);
+  assert.match(component, /const partial = streamTextRef\.current\.trim\(\);/);
+  assert.match(component, /\{ id: createId\(\), role: "assistant", content: partial, interrupted: true \}/);
+  assert.match(component, /已经流回来的那半截是继续写的上下文/);
+  assert.match(component, /message\.interrupted && message\.id === lastAssistantId/);
+  assert.match(component, /onClick=\{\(\) => void send\("继续"\)\}/);
+  assert.match(styles, /\.canvas-agent-dock-message\.is-interrupted>p::after\{content:"（已停止）"/);
+  // 停止也要能用键盘：Esc。
+  assert.match(component, /if \(event\.key === "Escape" && busy\) \{/);
+  assert.match(component, /生成中按 Esc 停止/);
+  // 新建对话会清掉整段记录，先问一句。
+  assert.match(component, /!window\.confirm\("清空当前对话？画布内容不受影响。"\)/);
+  // 历史消息里的 @1 落成名字，回看不歧义。
+  assert.match(component, /function labelReferenceMentions\(text: string, references: readonly CanvasAgentDockReference\[\]\)/);
+  assert.match(component, /content: labelReferenceMentions\(text, orderedReferences\),/);
+  // 上下文条数上限要对用户可见，而不是只写给模型。
+  assert.match(component, /节点信息最多带 \$\{CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES\} 个/);
 });
