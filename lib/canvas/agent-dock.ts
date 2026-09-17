@@ -1,5 +1,5 @@
 import { nodeById, nodeSize } from "./model";
-import type { CanvasDocument, CanvasNode } from "./types";
+import type { CanvasDocument, CanvasGenerationStatus, CanvasNode } from "./types";
 
 /** The dock sends a compact snapshot instead of the whole document. */
 export const CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES = 12;
@@ -33,6 +33,8 @@ export type CanvasAgentDockChip = {
   label: string;
   kind: "text" | "image" | "video" | "audio";
   thumb?: string;
+  /** 节点的生成状态。面板头部只统计选中节点的任务，所以状态跟着芯片一起进面板。 */
+  status?: CanvasGenerationStatus;
 };
 
 const STATUS_LABELS: Record<string, string> = {

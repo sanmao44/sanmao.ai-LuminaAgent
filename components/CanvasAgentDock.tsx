@@ -36,6 +36,8 @@ export type CanvasAgentDockMessage = {
   images?: Array<{ url: string; revisedPrompt?: string }>;
   skills?: Array<{ id: string; name: string }>;
   error?: string;
+  /** 失败时存一份用户原话：重试直接用这句，@ 编号按当时的选区再解析一次。 */
+  retryText?: string;
   applied?: boolean;
 };
 
@@ -52,6 +54,8 @@ type Props = {
   status: CanvasAgentDockStatus;
   chips: CanvasAgentDockChip[];
   references: CanvasAgentDockReference[];
+  /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
+  selectedTotal?: number;
   contextBlock: string;
   runtime: PublicState | null;
   onFocusNodes: (ids: string[]) => void;
@@ -100,6 +104,40 @@ function resolveReferenceMentions(text: string, references: readonly CanvasAgent
     if (!reference) return token;
     return reference.kind === "video" ? `参考视频${index + 1}` : reference.kind === "text" ? `引用文本${index + 1}` : `参考图${index + 1}`;
   });
+}
+
+/* 请求失败的原文（Failed to fetch / 401 / 超时…）对用户没有可操作性，统一换成能照做的说法。 */
+function describeAgentError(message: string, online: boolean) {
+  const text = String(message || "").trim();
+  if (/Failed to fetch|NetworkError|Load failed|ECONNREFUSED|ENOTFOUND|network/i.test(text))
+    return online
+      ? "连不上 Agent 服务（网络不通或服务没起来），稍后重试这一句。"
+      : "网络已断开，连上后重试这一句。";
+  if (/timeout|超时/i.test(text)) return "Agent 响应超时，可以重试这一句，或换一个模型。";
+  if (/\b(401|403)\b|unauthorized|api\s?key/i.test(text))
+    return "模型密钥无效或没配置，去设置里检查模型连接。";
+  if (/\b429\b|rate limit|too many requests/i.test(text)) return "请求太频繁，等几秒重试这一句。";
+  const server = text.match(/\b5\d\d\b/);
+  if (server) return `模型服务暂时不可用（${server[0]}），稍后重试这一句。`;
+  return text || "Agent 请求失败";
+}
+
+/* 头部只统计选中节点自己的任务：把整张画布的任务数挂在选中提示后面，会让人以为问题出在自己选的东西上。 */
+function countSelectedTaskStatus(chips: readonly CanvasAgentDockChip[]) {
+  const counts = { running: 0, queued: 0, failed: 0 };
+  for (const chip of chips) {
+    if (chip.status === "running") counts.running += 1;
+    else if (chip.status === "queued") counts.queued += 1;
+    else if (chip.status === "failed") counts.failed += 1;
+  }
+  return counts;
+}
+
+function taskStatusText(counts: { running: number; queued: number; failed: number }) {
+  const parts: string[] = [];
+  if (counts.running + counts.queued) parts.push(`${counts.running + counts.queued} 个在跑`);
+  if (counts.failed) parts.push(`${counts.failed} 个失败`);
+  return parts.join(" · ");
 }
 
 /* 芯片和 @ 引用是同一份选区的两种呈现，所以共用一套顺序：芯片上的编号就是 @编号。 */
@@ -154,6 +192,8 @@ function readSession(): CanvasAgentDockSession | null {
             ...(Array.isArray(message.skills) && message.skills.length
               ? { skills: message.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
               : {}),
+            ...(message.error ? { error: String(message.error) } : {}),
+            ...(message.retryText ? { retryText: String(message.retryText) } : {}),
             ...(message.applied ? { applied: true } : {}),
           }))
           .filter((message) => message.content || message.images?.length)
@@ -175,6 +215,7 @@ export default function CanvasAgentDock({
   status,
   chips,
   references,
+  selectedTotal,
   contextBlock,
   runtime,
   onFocusNodes,
@@ -204,6 +245,8 @@ export default function CanvasAgentDock({
   const chipDragMovedRef = useRef(false);
   const chipClickBlockedRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  /* 失败后要能重试，所以留一份最近一次发送的原话。 */
+  const lastUserTextRef = useRef("");
   const logRef = useRef<HTMLDivElement | null>(null);
   const mentionEditorRef = useRef<HTMLDivElement | null>(null);
   const skillMenuFromSlashRef = useRef(false);
@@ -243,8 +286,13 @@ export default function CanvasAgentDock({
     () => (chipOrder.length ? orderByReferenceIds(chips, chipOrder, (chip) => chip.id) : chips),
     [chipOrder, chips],
   );
+  /* 引用有上限，@ 编号必须和真正发出去的引用一一对应，所以这里先夹一次。 */
   const orderedReferences = useMemo(
-    () => (chipOrder.length ? orderByReferenceIds(references, chipOrder, referenceOrderKey) : references),
+    () =>
+      (chipOrder.length ? orderByReferenceIds(references, chipOrder, referenceOrderKey) : references).slice(
+        0,
+        CANVAS_AGENT_DOCK_MAX_REFERENCES,
+      ),
     [chipOrder, references],
   );
   const mentionOptions = useMemo<ReferenceMentionOption[]>(
@@ -262,6 +310,10 @@ export default function CanvasAgentDock({
     () => new Map(orderedReferences.map((reference, index) => [referenceOrderKey(reference), index + 1] as const)),
     [orderedReferences],
   );
+  const selectedTaskText = useMemo(() => taskStatusText(countSelectedTaskStatus(orderedChips)), [orderedChips]);
+  const canvasTaskText = taskStatusText(status);
+  /* 画布传进来的选中数量是完整的，芯片只有前几个，头部要报真实数字。 */
+  const selectedNodeTotal = selectedTotal ?? chips.length;
   const moveChip = useCallback(
     (draggedId: string, targetId: string) => {
       const order = orderedChips.map((chip) => chip.id);
@@ -398,6 +450,7 @@ export default function CanvasAgentDock({
         return;
       }
       closeSkillMenu();
+      lastUserTextRef.current = text;
       // 输入框里显示 @1，模型收到的应该是它指向的那张图，否则编号对不上。
       const mentionText = resolveReferenceMentions(text, orderedReferences);
       const userMessage: CanvasAgentDockMessage = { id: createId(), role: "user", content: text };
@@ -459,8 +512,18 @@ export default function CanvasAgentDock({
         if (message.includes("已停止") || (error instanceof DOMException && error.name === "AbortError")) {
           setMessages((value) => [...value, { id: createId(), role: "assistant", content: "已停止这一轮回答。" }]);
         } else {
-          setMessages((value) => [...value, { id: createId(), role: "assistant", content: `请求失败：${message}`, error: message }]);
-          notify(message, "error");
+          const friendly = describeAgentError(message, typeof navigator === "undefined" ? true : navigator.onLine);
+          setMessages((value) => [
+            ...value,
+            {
+              id: createId(),
+              role: "assistant",
+              content: `请求失败：${friendly}`,
+              error: message,
+              retryText: lastUserTextRef.current,
+            },
+          ]);
+          notify(friendly, "error");
         }
       } finally {
         abortRef.current = null;
@@ -615,9 +678,12 @@ export default function CanvasAgentDock({
           <div>
             <b>Agent 助手</b>
             <small>
-              {chips.length ? `已选中 ${chips.length} 个节点` : "未选中节点 · 选中后提问更准"}
-              {status.running + status.queued > 0 ? ` · ${status.running + status.queued} 个在跑` : ""}
-              {status.failed > 0 ? ` · ${status.failed} 个失败` : ""}
+              {chips.length ? `已选中 ${selectedNodeTotal} 个节点` : "未选中节点 · 选中后提问更准"}
+              {selectedNodeTotal > CANVAS_AGENT_DOCK_MAX_REFERENCES
+                ? ` · 引用最多带 ${CANVAS_AGENT_DOCK_MAX_REFERENCES} 个`
+                : ""}
+              {selectedTaskText ? ` · ${selectedTaskText}` : ""}
+              {!selectedTaskText && canvasTaskText ? ` · 画布上 ${canvasTaskText}` : ""}
             </small>
           </div>
         </div>
@@ -673,11 +739,12 @@ export default function CanvasAgentDock({
           <small>在画布上选中节点后，这里会显示它们，并把节点信息一起发给 Agent；编号＝输入 @ 时用的编号，拖动可调整顺序。</small>
         )}
       </div>
+      {/* 流式时逐字播报会把读屏塞满，所以只在回答结束后才播报。 */}
       <div
         className="canvas-agent-dock-log"
         ref={logRef}
         role="log"
-        aria-live="polite"
+        aria-live={busy ? "off" : "polite"}
         onMouseUp={updateSelection}
         onKeyUp={updateSelection}
         onTouchEnd={updateSelection}
@@ -732,6 +799,11 @@ export default function CanvasAgentDock({
               {message.role === "user" ? (
                 <button type="button" onClick={() => copyMessage(message.content)}>
                   复制
+                </button>
+              ) : null}
+              {message.error && message.retryText ? (
+                <button type="button" disabled={busy} onClick={() => void send(message.retryText)}>
+                  重试
                 </button>
               ) : null}
               {message.images?.length ? (

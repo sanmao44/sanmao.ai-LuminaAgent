@@ -180,6 +180,7 @@ import CanvasAgentDock, {
   CANVAS_AGENT_DOCK_OPEN_KEY,
 } from "@/components/CanvasAgentDock";
 import {
+  CANVAS_AGENT_DOCK_MAX_REFERENCES,
   buildCanvasAgentDockContext,
   canvasAgentDockNodeLabel,
   canvasAgentDockStatus,
@@ -3250,7 +3251,7 @@ export default function SuperCanvas() {
   );
   const agentDockChips = useMemo<CanvasAgentDockChip[]>(
     () =>
-      agentDockContext.nodeIds.slice(0, 8).flatMap((id) => {
+      agentDockContext.nodeIds.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES).flatMap((id) => {
         const node = nodeById(document, id);
         if (!node) return [];
         const kind: CanvasAgentDockChip["kind"] =
@@ -3269,6 +3270,7 @@ export default function SuperCanvas() {
             label: canvasAgentDockNodeLabel(node),
             kind,
             ...(thumb ? { thumb } : {}),
+            ...(node.data.status ? { status: node.data.status } : {}),
           },
         ];
       }),
@@ -3296,7 +3298,7 @@ export default function SuperCanvas() {
                 },
               ],
         )
-        .slice(0, 8),
+        .slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
     [agentDockContext.nodeIds, document],
   );
   useEffect(() => {
@@ -15313,6 +15315,7 @@ export default function SuperCanvas() {
           status={agentDockStatus}
           chips={agentDockChips}
           references={agentDockReferences}
+          selectedTotal={agentDockContext.nodeIds.length}
           contextBlock={agentDockContext.text}
           runtime={runtime}
           onFocusNodes={focusAgentDockNodes}

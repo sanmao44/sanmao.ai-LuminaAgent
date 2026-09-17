@@ -286,3 +286,48 @@ test("dock select-text actions fall back to the viewport centre without a select
   assert.match(canvas, /\(text: string\) => createViewerAgentNode\(selectedSingle \|\| selectedNodes\[0\] \|\| null, text\)/);
   assert.match(canvas, /return anchor\s*\?\s*addEdge\(withNode, anchor\.id, nextImageNode\.id/);
 });
+
+test("the dock header counts the tasks of the selected nodes", () => {
+  // 头部曾经拿整张画布的任务数当“你的任务”：选中的节点明明是好的，也会显示“3 个失败”。
+  assert.match(context, /status\?: CanvasGenerationStatus;/);
+  assert.match(canvas, /\.\.\.\(node\.data\.status \? \{ status: node\.data\.status \} : \{\}\),/);
+  assert.match(canvas, /selectedTotal=\{agentDockContext\.nodeIds\.length\}/);
+  assert.match(component, /function countSelectedTaskStatus\(chips: readonly CanvasAgentDockChip\[\]\)/);
+  assert.match(component, /const selectedTaskText = useMemo\(\(\) => taskStatusText\(countSelectedTaskStatus\(orderedChips\)\), \[orderedChips\]\);/);
+  assert.match(component, /已选中 \$\{selectedNodeTotal\} 个节点/);
+  assert.match(component, /const selectedNodeTotal = selectedTotal \?\? chips\.length;/);
+  // 选中里没有任务时才提整张画布，而且必须写明是“画布上”，不能混进选中数字里。
+  assert.match(component, /\{!selectedTaskText && canvasTaskText \? ` · 画布上 \$\{canvasTaskText\}` : ""\}/);
+  assert.doesNotMatch(component, /status\.failed > 0 \? ` · \$\{status\.failed\} 个失败`/);
+});
+
+test("the dock tells the user when the selection is larger than the reference limit", () => {
+  // 引用有上限，超出的节点不会发给模型，面板必须说出来。
+  assert.match(canvas, /agentDockContext\.nodeIds\.slice\(0, CANVAS_AGENT_DOCK_MAX_REFERENCES\)/);
+  assert.match(canvas, /\.slice\(0, CANVAS_AGENT_DOCK_MAX_REFERENCES\),\s*\n\s*\[agentDockContext\.nodeIds, document\],/);
+  assert.doesNotMatch(canvas, /agentDockContext[\s\S]{0,60}?\.slice\(0, 8\)/);
+  // @ 编号和真正发出去的引用共用一份夹过上限的列表。
+  assert.match(component, /orderByReferenceIds\(references, chipOrder, referenceOrderKey\) : references\)\.slice\(\s*\n\s*0,\s*\n\s*CANVAS_AGENT_DOCK_MAX_REFERENCES,/);
+  assert.match(component, /引用最多带 \$\{CANVAS_AGENT_DOCK_MAX_REFERENCES\} 个/);
+});
+
+test("a failed agent turn explains itself and can be retried", () => {
+  // 原文（Failed to fetch / 401 / 超时…）对用户没有可操作性。
+  assert.match(component, /function describeAgentError\(message: string, online: boolean\)/);
+  assert.match(component, /网络已断开，连上后重试这一句。/);
+  assert.match(component, /模型密钥无效或没配置，去设置里检查模型连接。/);
+  assert.match(component, /模型服务暂时不可用/);
+  assert.match(component, /const friendly = describeAgentError\(message, typeof navigator === "undefined" \? true : navigator\.onLine\);/);
+  assert.match(component, /notify\(friendly, "error"\);/);
+  // 重试要用用户原话，不用重新打字；刷新后也要还在。
+  assert.match(component, /const lastUserTextRef = useRef\(""\);/);
+  assert.match(component, /lastUserTextRef\.current = text;/);
+  assert.match(component, /retryText: lastUserTextRef\.current,/);
+  assert.match(component, /message\.error && message\.retryText \? \(\s*\n\s*<button type="button" disabled=\{busy\} onClick=\{\(\) => void send\(message\.retryText\)\}>/);
+  assert.match(component, /\.\.\.\(message\.retryText \? \{ retryText: String\(message\.retryText\) \} : \{\}\),/);
+});
+
+test("the dock stops announcing every streamed token to screen readers", () => {
+  assert.match(component, /aria-live=\{busy \? "off" : "polite"\}/);
+  assert.match(component, /role="log"/);
+});
