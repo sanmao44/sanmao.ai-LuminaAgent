@@ -924,8 +924,14 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px 4px 4px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--text-2);font-size:9px;transition:border-color .16s,color .16s,transform .16s}
 .canvas-agent-dock-chip img{width:22px;height:22px;flex:none;border-radius:7px;object-fit:cover}
 .canvas-agent-dock-chip i{width:22px;height:22px;display:grid;place-items:center;flex:none;border-radius:7px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;font-style:normal}
-.canvas-agent-dock-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-agent-dock-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:88px}
+.canvas-agent-dock-chip{cursor:grab}
+.canvas-agent-dock-chip:active{cursor:grabbing}
 .canvas-agent-dock-chip:hover{border-color:var(--accent);color:var(--accent-text);transform:translateY(-1px)}
+/* 拖动中的芯片要弱化，和主界面引用缩略图的 dragging 反馈保持一致。 */
+.canvas-agent-dock-chip.dragging{opacity:.45;transform:scale(.96)}
+/* 编号＝输入 @ 时用的编号，沿用主界面引用缩略图上的角标样式。 */
+.canvas-agent-dock-chip-index{min-width:18px;height:18px;display:grid;place-items:center;flex:none;padding:0 4px;border-radius:6px;background:rgba(15,16,22,.76);color:#fff;font-size:9px;font-weight:900;font-style:normal;line-height:1}
 .canvas-agent-dock-log{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:2px}
 .canvas-agent-dock-empty{display:grid;gap:6px;padding:12px;border:1px solid var(--line);border-radius:15px;background:color-mix(in srgb,var(--panel-2) 82%,transparent)}
 .canvas-agent-dock-empty b{color:var(--muted);font-size:9px;letter-spacing:.06em}
@@ -967,9 +973,12 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-quick button:active:not(:disabled){transform:translateY(1px)}
 .canvas-agent-dock-composer{position:relative;display:grid;gap:7px;flex:none;padding:8px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--panel-2) 90%,transparent);transition:border-color .16s,box-shadow .16s}
 .canvas-agent-dock-composer:focus-within{border-color:color-mix(in srgb,var(--accent) 62%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
-.canvas-agent-dock-composer textarea{min-height:56px;max-height:190px;overflow:hidden;resize:none;padding:5px 4px;border:0;background:transparent;color:var(--text);font:inherit;font-size:10px;line-height:1.55}
-.canvas-agent-dock-composer textarea:focus{outline:0}
-.canvas-agent-dock-composer textarea:focus-visible,.canvas-workspace .canvas-agent-dock-composer textarea:focus-visible{outline:0;box-shadow:none}
+/* 输入框是 @ 引用编辑器（内容可编辑），高度自适应到上限后才在内部滚动。 */
+.canvas-agent-dock .canvas-agent-dock-mention-editor .reference-mention-editor-content{min-height:56px;max-height:190px;overflow-x:hidden;overflow-y:auto;padding:5px 4px;border:0;background:transparent;color:var(--text);font-size:10px;line-height:1.55}
+.canvas-agent-dock .canvas-agent-dock-mention-editor .reference-mention-editor-content:focus{outline:0}
+.canvas-agent-dock .canvas-agent-dock-mention-editor .reference-mention-editor-content:focus-visible{outline:0;box-shadow:none}
+/* 面板贴在屏幕底部，@ 菜单必须向上展开，并贴着输入框宽度。 */
+.canvas-agent-dock-mention-menu{min-width:0;max-width:100%}
 .canvas-agent-dock-composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
 .canvas-agent-dock-composer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .canvas-agent-dock-model{min-width:88px;flex:1}
@@ -978,6 +987,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-skill svg{color:var(--accent-text)}
 .canvas-agent-dock-skill:hover,.canvas-agent-dock-skill.is-active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-agent-dock-composer .agent-skill-menu{left:0;right:0;width:auto;bottom:calc(100% + 7px);max-height:min(240px,42vh);border-radius:14px}
+.canvas-agent-dock-composer .canvas-mention-menu{left:0;right:0;width:auto;max-height:min(260px,46vh);border-radius:14px}
 .canvas-agent-dock-web:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
 .canvas-agent-dock-auto{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:9px}
 .canvas-agent-dock-send{margin-left:auto;height:31px;min-width:76px;padding:0 15px;border:1px solid transparent;border-radius:11px;background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#fff;font-size:10px;font-weight:850;box-shadow:0 7px 18px color-mix(in srgb,var(--accent) 26%,transparent);transition:transform .16s,filter .16s,box-shadow .16s}

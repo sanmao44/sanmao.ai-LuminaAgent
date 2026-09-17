@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SelectMenu from "@/components/SelectMenu";
 import SkillManager from "@/components/SkillManager";
 import SkillIcon from "@/components/SkillIcon";
 import AgentSkillMenu from "@/components/AgentSkillMenu";
+import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
+import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
+import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import {
   agentModelOptions,
@@ -84,6 +87,39 @@ function messageElementOf(node: Node | null) {
   return element?.closest<HTMLElement>(".canvas-agent-dock-message") || null;
 }
 
+function referenceOrderKey(reference: CanvasAgentDockReference) {
+  return reference.nodeId || reference.id;
+}
+
+/* 输入框里的 @1 指的是“第 1 个选中引用”，发给模型前要还原成它代表的东西。 */
+function resolveReferenceMentions(text: string, references: readonly CanvasAgentDockReference[]) {
+  return String(text || "").replace(/@([0-9]+)/g, (token, rawIndex: string) => {
+    const index = Number(rawIndex) - 1;
+    const reference = index >= 0 && index < references.length ? references[index] : undefined;
+    if (!reference) return token;
+    return reference.kind === "video" ? `参考视频${index + 1}` : reference.kind === "text" ? `引用文本${index + 1}` : `参考图${index + 1}`;
+  });
+}
+
+/* 芯片和 @ 引用是同一份选区的两种呈现，所以共用一套顺序：芯片上的编号就是 @编号。 */
+function orderByReferenceIds<T>(items: readonly T[], order: readonly string[], keyOf: (item: T) => string) {
+  const rank = new Map(order.map((id, index) => [id, index]));
+  return [...items].sort(
+    (a, b) =>
+      (rank.get(keyOf(a)) ?? Number.MAX_SAFE_INTEGER) - (rank.get(keyOf(b)) ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+function reorderReferenceIds(ids: readonly string[], fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= ids.length || toIndex >= ids.length)
+    return null;
+  const next = [...ids];
+  const [moved] = next.splice(fromIndex, 1);
+  if (!moved) return null;
+  next.splice(toIndex, 0, moved);
+  return next;
+}
+
 function readSession(): CanvasAgentDockSession | null {
   if (typeof window === "undefined") return null;
   try {
@@ -147,9 +183,11 @@ export default function CanvasAgentDock({
   const [skillQuery, setSkillQuery] = useState("");
   const [skillActive, setSkillActive] = useState(0);
   const [skills, setSkills] = useState<SkillPickerEntry[]>([]);
+  const [chipOrder, setChipOrder] = useState<string[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const mentionEditorRef = useRef<HTMLDivElement | null>(null);
   const skillMenuFromSlashRef = useRef(false);
 
   useEffect(() => {
@@ -182,19 +220,37 @@ export default function CanvasAgentDock({
     if (node) node.scrollTop = node.scrollHeight;
   }, [messages, streamText, open]);
 
-  useLayoutEffect(() => {
-    // Grow upward with the text and only scroll inside the field once it hits its cap.
-    const field = textareaRef.current;
-    if (!field) return;
-    const styles = window.getComputedStyle(field);
-    const minHeight = parseFloat(styles.minHeight) || 56;
-    const maxHeight = parseFloat(styles.maxHeight) || 190;
-    field.style.height = "auto";
-    const contentHeight = field.scrollHeight;
-    field.style.height = `${Math.min(Math.max(contentHeight, minHeight), maxHeight)}px`;
-    field.style.overflowX = "hidden";
-    field.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
-  }, [input, open]);
+  /* 芯片和 @ 引用是同一份选区的两种呈现，共用一套顺序：芯片上的编号就是 @编号。 */
+  const orderedChips = useMemo(
+    () => (chipOrder.length ? orderByReferenceIds(chips, chipOrder, (chip) => chip.id) : chips),
+    [chipOrder, chips],
+  );
+  const orderedReferences = useMemo(
+    () => (chipOrder.length ? orderByReferenceIds(references, chipOrder, referenceOrderKey) : references),
+    [chipOrder, references],
+  );
+  const mentionOptions = useMemo<ReferenceMentionOption[]>(
+    () =>
+      orderedReferences.map((reference) => ({
+        id: reference.id,
+        kind: reference.kind,
+        name: reference.name,
+        ...(reference.url ? { url: reference.url } : {}),
+        ...(reference.text ? { text: reference.text } : {}),
+      })),
+    [orderedReferences],
+  );
+  const chipMentionIndexes = useMemo(
+    () => new Map(orderedReferences.map((reference, index) => [referenceOrderKey(reference), index + 1] as const)),
+    [orderedReferences],
+  );
+  const applyChipOrder = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      const next = reorderReferenceIds(orderedChips.map((chip) => chip.id), fromIndex, toIndex);
+      if (next) setChipOrder(next);
+    },
+    [orderedChips],
+  );
 
   const modelOptions = useMemo(() => {
     const models = agentModelOptions(runtime);
@@ -249,15 +305,17 @@ export default function CanvasAgentDock({
       setInput((value) => skillMessageValue(value, skill.name));
       closeSkillMenu();
       window.setTimeout(() => {
-        const node = textareaRef.current;
+        const node = mentionEditorRef.current;
         if (!node) return;
         node.focus();
-        const end = node.value.length;
-        try {
-          node.setSelectionRange(end, end);
-        } catch {
-          /* 隐藏状态下部分浏览器会拒绝设置选区 */
-        }
+        /* contenteditable 没有 setSelectionRange：把光标折叠到内容末尾。 */
+        const selection = window.getSelection();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
       }, 0);
     },
     [closeSkillMenu],
@@ -277,7 +335,14 @@ export default function CanvasAgentDock({
         return;
       }
       if (busy) return;
+      const invalidMentions = invalidReferenceMentionNumbers(text, orderedReferences);
+      if (invalidMentions.length) {
+        notify(`引用编号无效：${invalidMentions.map((number) => `@${number}`).join("、")}`, "error");
+        return;
+      }
       closeSkillMenu();
+      // 输入框里显示 @1，模型收到的应该是它指向的那张图，否则编号对不上。
+      const mentionText = resolveReferenceMentions(text, orderedReferences);
       const userMessage: CanvasAgentDockMessage = { id: createId(), role: "user", content: text };
       const history = [...messages, userMessage];
       setMessages(history);
@@ -290,7 +355,7 @@ export default function CanvasAgentDock({
         role: message.role,
         content:
           index === history.length - 1
-            ? composeCanvasAgentDockMessage(message.content, contextBlock)
+            ? composeCanvasAgentDockMessage(resolveReferenceMentions(message.content, orderedReferences), contextBlock)
             : message.content,
       }));
       try {
@@ -301,7 +366,7 @@ export default function CanvasAgentDock({
             webMode,
             // 画布上下文只给模型看，意图判断必须用用户自己那句话。
             intentText: text,
-            references: references.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
+            references: orderedReferences.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
             signal: controller.signal,
           },
           (event) => {
@@ -329,7 +394,7 @@ export default function CanvasAgentDock({
           },
         ]);
         if (images.length && autoApply) {
-          onApplyImages(images, { prompt: text, model: response.model });
+          onApplyImages(images, { prompt: mentionText, model: response.model });
           setMessages((value) => value.map((message, index) => (index === value.length - 1 ? { ...message, applied: true } : message)));
         }
       } catch (error) {
@@ -346,7 +411,7 @@ export default function CanvasAgentDock({
         setStreamText("");
       }
     },
-    [autoApply, busy, closeSkillMenu, contextBlock, input, messages, model, notify, onApplyImages, references, webMode],
+    [autoApply, busy, closeSkillMenu, contextBlock, input, messages, model, notify, onApplyImages, orderedReferences, webMode],
   );
 
   const cycleWebMode = useCallback(() => {
@@ -510,21 +575,49 @@ export default function CanvasAgentDock({
         </div>
       </header>
       <div className="canvas-agent-dock-context">
-        {chips.length ? (
-          chips.map((chip) => (
-            <button
-              type="button"
-              key={chip.id}
-              className="canvas-agent-dock-chip"
-              onClick={() => onFocusNodes([chip.id])}
-              title={`定位到${chip.label}`}
-            >
-              {chip.thumb ? <img src={chip.thumb} alt="" /> : <i aria-hidden="true">{chip.kind === "text" ? "T" : "▣"}</i>}
-              <span>{chip.label}</span>
-            </button>
-          ))
+        {orderedChips.length ? (
+          orderedChips.map((chip, index) => {
+            const mentionIndex = chipMentionIndexes.get(chip.id);
+            return (
+              <button
+                type="button"
+                key={chip.id}
+                className={`canvas-agent-dock-chip${dragIndex === index ? " dragging" : ""}`}
+                draggable
+                onDragStart={(event) => {
+                  setDragIndex(index);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", chip.id);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (dragIndex !== null) applyChipOrder(dragIndex, index);
+                  setDragIndex(null);
+                }}
+                onDragEnd={() => setDragIndex(null)}
+                onClick={() => onFocusNodes([chip.id])}
+                title={
+                  mentionIndex
+                    ? `定位到${chip.label} · 输入 @${mentionIndex} 引用它 · 拖动可调整顺序`
+                    : `定位到${chip.label} · 拖动可调整顺序`
+                }
+              >
+                {mentionIndex ? (
+                  <b className="canvas-agent-dock-chip-index" aria-hidden="true">
+                    {mentionIndex}
+                  </b>
+                ) : null}
+                {chip.thumb ? <img src={chip.thumb} alt="" /> : <i aria-hidden="true">{chip.kind === "text" ? "T" : "▣"}</i>}
+                <span>{chip.label}</span>
+              </button>
+            );
+          })
         ) : (
-          <small>在画布上选中节点后，这里会显示它们，并把节点信息一起发给 Agent。</small>
+          <small>在画布上选中节点后，这里会显示它们，并把节点信息一起发给 Agent；编号＝输入 @ 时用的编号，拖动可调整顺序。</small>
         )}
       </div>
       <div
@@ -650,11 +743,16 @@ export default function CanvasAgentDock({
           else void send();
         }}
       >
-        <textarea
-          ref={textareaRef}
+        <ReferenceMentionEditor
+          ref={mentionEditorRef}
           value={input}
-          onChange={(event) => {
-            const value = event.target.value;
+          references={mentionOptions}
+          className="canvas-agent-dock-mention-editor"
+          menuClassName="canvas-mention-menu canvas-agent-dock-mention-menu"
+          ariaLabel="给 Agent 的消息"
+          placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行；输入 @ 引用选中节点"
+          transformPastedText={(value) => replaceNaturalReferenceLabels(value, mentionOptions).value}
+          onChange={(value) => {
             setInput(value);
             const slashQuery = skillSlashQuery(value);
             if (slashQuery !== null) {
@@ -701,9 +799,6 @@ export default function CanvasAgentDock({
               if (!busy) void send();
             }
           }}
-          placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行"
-          rows={3}
-          aria-label="给 Agent 的消息"
         />
         <div className="canvas-agent-dock-composer-row">
           <button
