@@ -75,3 +75,16 @@ test('cancelled searches do not enter provider fallback or cache a partial respo
   assert.ok(route.includes('if (requestController.signal.aborted) throw requestController.signal.reason || error'));
   assert.ok(route.includes('if (signal?.aborted) return;'));
 });
+
+test('a running reply shows motion and a live clock so a long wait never looks frozen', () => {
+  const normalized = page.replace(/\r\n/g, '\n');
+  assert.ok(normalized.includes('className: "message-pending"'));
+  assert.ok(normalized.includes('className: "message-pending-clock"'));
+  assert.ok(normalized.includes('pendingSince: Date.now(),'));
+  assert.ok(normalized.includes('message.pendingSince ?'));
+  assert.ok(normalized.includes("if (!generateBusy && !activeAgentBusy && section !== 'logs') return;"));
+  assert.ok(normalized.includes('        generateBusy,\n        activeAgentBusy,\n        section\n    ]);'));
+  assert.ok(styles.includes('.message-pending{display:flex'));
+  assert.ok(styles.includes('.message-pending>.mini-loader{'));
+  assert.ok(styles.includes('.message-pending-clock{'));
+});

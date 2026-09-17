@@ -3132,6 +3132,7 @@ export default function SuperCanvas() {
   const openCanvasPanel = useCallback(
     (panel: CanvasPanel) => {
       closeCanvasOverlayConflicts();
+      setAgentDockOpen(false);
       setActivePanel(panel);
     },
     [closeCanvasOverlayConflicts],
@@ -3235,6 +3236,13 @@ export default function SuperCanvas() {
       /* the dock stays usable without persisted state */
     }
   }, [agentDockOpen]);
+  const applyAgentDockOpen = useCallback(
+    (open: boolean) => {
+      if (open) closeCanvasOverlayConflicts();
+      setAgentDockOpen(open);
+    },
+    [closeCanvasOverlayConflicts],
+  );
   const agentDockStatus = useMemo(() => canvasAgentDockStatus(document), [document]);
   const agentDockContext = useMemo(
     () => buildCanvasAgentDockContext(document, selectedIds, currentProject?.name || "无限画布"),
@@ -13925,19 +13933,15 @@ export default function SuperCanvas() {
           </button>
           {!topbarCollapsed && <button
             type="button"
-            className="canvas-soft-button canvas-shortcuts-button"
-            onClick={() => {
-              openCanvasPanel("shortcuts");
-            }}
+            className={`canvas-soft-button canvas-shortcuts-button ${activePanel === "shortcuts" ? "active" : ""}`}
+            onClick={() => activePanel === "shortcuts" ? setActivePanel(null) : openCanvasPanel("shortcuts")}
           >
             ⌨ 快捷键
           </button>}
           {!topbarCollapsed && <button
             type="button"
-            className="canvas-soft-button canvas-settings-button"
-            onClick={() => {
-              openCanvasPanel("settings");
-            }}
+            className={`canvas-soft-button canvas-settings-button ${activePanel === "settings" ? "active" : ""}`}
+            onClick={() => activePanel === "settings" ? setActivePanel(null) : openCanvasPanel("settings")}
           >
             ⚙ 设置
           </button>}
@@ -13963,7 +13967,7 @@ export default function SuperCanvas() {
             className={`canvas-soft-button canvas-panel-button canvas-agent-button ${agentDockOpen ? "active" : ""}`}
             aria-pressed={agentDockOpen}
             title="Agent 助手：右侧面板，可读取选中节点并生成到画布"
-            onClick={() => setAgentDockOpen((value) => !value)}
+            onClick={() => applyAgentDockOpen(!agentDockOpen)}
           >
             ✦ Agent
           </button>
@@ -15312,7 +15316,7 @@ export default function SuperCanvas() {
         />
         <CanvasAgentDock
           open={agentDockOpen}
-          onToggle={setAgentDockOpen}
+          onToggle={applyAgentDockOpen}
           status={agentDockStatus}
           chips={agentDockChips}
           references={agentDockReferences}
@@ -20774,7 +20778,16 @@ function CanvasTextLightbox({
 }
 
 function CanvasPanelShell({ title, subtitle, onClose, children, className = "" }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; className?: string }) {
-  return <div className="canvas-modal-backdrop canvas-panel-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+  /* The right-hand slot is a dock rather than a modal: CSS drops the scrim and
+     its click-outside close so the topbar can switch panels in one click. */
+  return <div className="canvas-modal-backdrop canvas-panel-backdrop">
     <aside className={`canvas-side-panel ${className}`}>
       <header><div><b>{title}</b><small>{subtitle}</small></div><button type="button" onClick={onClose} aria-label={`关闭${title}`}>×</button></header>
       <div className="canvas-side-panel-body">{children}</div>

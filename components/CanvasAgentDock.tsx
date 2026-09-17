@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import SelectMenu from "@/components/SelectMenu";
 import SkillManager from "@/components/SkillManager";
+import SkillIcon from "@/components/SkillIcon";
 import AgentSkillMenu from "@/components/AgentSkillMenu";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import {
@@ -375,7 +376,7 @@ export default function CanvasAgentDock({
           </div>
         </div>
         <div className="canvas-agent-dock-head-actions">
-          <SkillManager disabled={busy} icon={<span aria-hidden="true">★</span>} />
+          <SkillManager disabled={busy} icon={<SkillIcon size={14} />} />
           <button type="button" onClick={clearSession} title="新建对话" aria-label="新建对话">
             ＋
           </button>
@@ -560,7 +561,7 @@ export default function CanvasAgentDock({
             aria-haspopup="listbox"
             aria-expanded={skillMenuOpen}
           >
-            <i aria-hidden="true">✦</i>
+            <SkillIcon size={14} />
             <span>技能</span>
           </button>
           <SelectMenu
@@ -594,7 +595,7 @@ export default function CanvasAgentDock({
           onActiveIndexChange={setSkillActive}
           onSelect={applySkill}
           onClose={closeSkillMenu}
-          emptyHint="还没有启用中的技能。点右上角的 ★ 可以安装或启用。"
+          emptyHint="还没有启用中的技能。点右上角的「技能」按钮可以安装或启用。"
         />
       </form>
     </aside>

@@ -69,7 +69,7 @@ test("asset drawer makes new collection creation a clear primary action", () => 
 });
 
 test("asset drawer keeps the media preview primary across responsive layouts", () => {
-  assert.match(styles, /\.canvas-asset-drawer\{width:min\(480px,calc\(100vw - 32px\)\)\}/);
+  assert.match(styles, /\.canvas-asset-drawer\{[^}]*width:var\(--canvas-panel-width\)/);
   assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-kind\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)\}/);
   assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-filters\{grid-template-columns:minmax\(0,1\.25fr\) repeat\(2,minmax\(0,1fr\)\)\}/);
   assert.match(styles, /\.canvas-asset-drawer \.canvas-global-asset-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:10px\}/);

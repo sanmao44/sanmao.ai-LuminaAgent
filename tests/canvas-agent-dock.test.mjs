@@ -25,6 +25,32 @@ test("closing the dock leaves a rail entry point and the open state is remembere
   assert.match(canvas, /localStorage\.getItem\(CANVAS_AGENT_DOCK_OPEN_KEY\) === "1"/);
 });
 
+test("the right-hand slot hosts one panel at a time", () => {
+  assert.match(canvas, /const applyAgentDockOpen = useCallback\(/);
+  assert.match(canvas, /if \(open\) closeCanvasOverlayConflicts\(\);/);
+  assert.match(canvas, /closeCanvasOverlayConflicts\(\);\s*setAgentDockOpen\(false\);\s*setActivePanel\(panel\);/);
+  assert.match(canvas, /onToggle=\{applyAgentDockOpen\}/);
+  assert.match(canvas, /onClick=\{\(\) => applyAgentDockOpen\(!agentDockOpen\)\}/);
+});
+
+test("the right-hand slot reads as one dock instead of separate overlays", () => {
+  // One geometry token set drives the drawer, the dock and the shell panels.
+  assert.match(styles, /\.canvas-panel-backdrop\{[^}]*padding:var\(--canvas-panel-top\) var\(--canvas-panel-right\) var\(--canvas-panel-bottom\)/);
+  assert.match(styles, /\.canvas-side-panel\{pointer-events:auto;width:var\(--canvas-panel-width\)/);
+  assert.match(styles, /@media\(max-width:1280px\)\{:root\{--canvas-panel-width:min\(430px,calc\(100vw - 32px\)\)\}/);
+  assert.match(styles, /@media\(max-width:960px\)\{\s*:root\{--canvas-panel-width:min\(390px,calc\(100vw - 32px\)\)\}/);
+  // No breakpoint may pin the drawer to a width the side panels do not share.
+  assert.doesNotMatch(styles, /\.canvas-asset-drawer\{width:min\(/);
+  // The slot is a dock, so it must not dim the app or swallow topbar clicks.
+  assert.match(styles, /\.canvas-panel-backdrop\{[^}]*background:transparent;backdrop-filter:none;pointer-events:none\}/);
+  assert.match(styles, /\.canvas-workspace:has\(:is\(\.canvas-asset-drawer,\.canvas-panel-backdrop\)\) \.canvas-deck\{left:16px;transform:none;width:min\(900px,calc\(100% - 528px\)\)\}/);
+  // Escape and the topbar button both close an open shell panel.
+  assert.match(canvas, /function CanvasPanelShell[\s\S]{0,400}?if \(event\.key === "Escape"\) onClose\(\);[\s\S]{0,400}?className="canvas-modal-backdrop canvas-panel-backdrop">/);
+  assert.doesNotMatch(canvas, /canvas-panel-backdrop" onClick=/);
+  assert.match(canvas, /onClick=\{\(\) => activePanel === "settings" \? setActivePanel\(null\) : openCanvasPanel\("settings"\)\}/);
+  assert.match(canvas, /onClick=\{\(\) => activePanel === "shortcuts" \? setActivePanel\(null\) : openCanvasPanel\("shortcuts"\)\}/);
+});
+
 test("the dock sends canvas context only with the message being sent", () => {
   assert.match(component, /index === history\.length - 1[\s\S]*?composeCanvasAgentDockMessage\(message\.content, contextBlock\)/);
   assert.match(component, /references: references\.slice\(0, CANVAS_AGENT_DOCK_MAX_REFERENCES\)/);
@@ -54,12 +80,14 @@ test("audio nodes are never sent as agent references", () => {
 });
 
 test("the dock keeps a right-hand dock layout and shifts the composer aside", () => {
-  assert.match(styles, /\.canvas-agent-dock\{[^}]*position:fixed[^}]*right:18px[^}]*top:86px/);
+  assert.match(styles, /\.canvas-agent-dock\{[^}]*position:fixed[^}]*right:var\(--canvas-panel-right\)[^}]*top:var\(--canvas-panel-top\)/);
   assert.match(styles, /\.canvas-agent-dock-rail\{[^}]*position:fixed[^}]*right:18px/);
-  // The panel is wide enough for the composer row; the deck shifts by half of it.
-  assert.match(styles, /\.canvas-agent-dock\{[^}]*width:min\(460px,calc\(100vw - 36px\)\)/);
+  // Every right-hand panel shares one slot, so the dock reads the slot tokens.
+  assert.match(styles, /--canvas-panel-width:min\(480px,calc\(100vw - 32px\)\)/);
+  assert.match(styles, /\.canvas-agent-dock\{[^}]*width:var\(--canvas-panel-width\)/);
   assert.match(styles, /\.canvas-workspace:has\(\.canvas-agent-dock\) \.canvas-deck:not\(\.collapsed\)\{left:calc\(50% - 230px\)/);
-  assert.match(styles, /\.canvas-workspace:has\(\.canvas-asset-drawer\) \.canvas-agent-dock\{right:434px\}/);
+  // The drawer and the dock take turns in the slot, so the dock never parks beside it.
+  assert.doesNotMatch(styles, /canvas-asset-drawer\) \.canvas-agent-dock\{right:/);
 });
 
 test("the dock never deletes canvas content on its own", () => {
@@ -89,7 +117,7 @@ test("the dock session is persisted only after hydration so reloads keep the con
 
 test("the dock reuses the shared skill manager so canvas chats install skills too", () => {
   assert.match(component, /import SkillManager from "@\/components\/SkillManager";/);
-  assert.match(component, /canvas-agent-dock-head-actions[\s\S]*?<SkillManager disabled=\{busy\} icon=\{<span aria-hidden="true">★<\/span>\} \/>/);
+  assert.match(component, /canvas-agent-dock-head-actions[\s\S]*?<SkillManager disabled=\{busy\} icon=\{<SkillIcon size=\{14\} \/>\} \/>/);
   assert.match(styles, /\.canvas-agent-dock-head-actions>button\[data-tooltip\]::after\{left:auto;right:0;top:calc\(100% \+ 8px\)/);
 });
 
@@ -130,7 +158,7 @@ test("the dock composer calls the shared skill picker with slash and a toolbar b
   assert.match(component, /const slashQuery = skillSlashQuery\(value\);/);
   assert.match(component, /className=\{`canvas-agent-dock-skill \$\{skillMenuOpen \? "is-active" : ""\}`\}/);
   assert.match(component, /setInput\(\(value\) => skillMessageValue\(value, skill\.name\)\)/);
-  assert.match(component, /<AgentSkillMenu[\s\S]*?emptyHint="还没有启用中的技能。点右上角的 ★ 可以安装或启用。"/);
+  assert.match(component, /<AgentSkillMenu[\s\S]*?emptyHint="还没有启用中的技能。点右上角的「技能」按钮可以安装或启用。"/);
   assert.match(styles, /\.canvas-agent-dock-skill\{/);
   assert.match(styles, /\.canvas-agent-dock-composer \.agent-skill-menu\{/);
 });

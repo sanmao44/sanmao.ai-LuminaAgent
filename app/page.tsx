@@ -33,6 +33,7 @@ import { editConversationMemory, prepareConversationMemory, selectRelevantConver
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
 import SkillManager from '@/components/SkillManager';
+import SkillIcon from '@/components/SkillIcon';
 import AgentSkillMenu from '@/components/AgentSkillMenu';
 import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
 import { normalizeConversationPersona } from '@/lib/agent-persona';
@@ -6106,15 +6107,17 @@ export default function Page() {
         };
     }, []);
     useEffect(()=>{
-        if (!generateBusy && section !== 'logs') return;
+        // A running reply shows a live clock, so keep resetting the clock while it waits.
+        if (!generateBusy && !activeAgentBusy && section !== 'logs') return;
         const timer = window.setInterval(()=>{
             setGenerateClock(Date.now());
-            void refreshGenerationLogs();
+            if (generateBusy || section === 'logs') void refreshGenerationLogs();
             if (section === 'logs') void refreshVideoTasks();
         }, 1000);
         return ()=>window.clearInterval(timer);
     }, [
         generateBusy,
+        activeAgentBusy,
         section
     ]);
     useEffect(()=>{
@@ -9000,6 +9003,7 @@ export default function Page() {
             role: 'assistant',
             content: likelyImageRequest ? '正在构思画面…' : '正在判断是否需要联网…',
             pending: true,
+            pendingSince: Date.now(),
             activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' }
         };
         const requestId = uid('agent-request');
@@ -10818,49 +10822,6 @@ export default function Page() {
                                             })
                                         ]
                                     }),
-                                    section === 'agent' && messages.length > 0 && shareSelectionMode && /*#__PURE__*/ _jsxs("div", {
-                                        className: "conversation-share-controls",
-                                        role: "toolbar",
-                                        "aria-label": "分享内容选择",
-                                        children: [
-                                            /*#__PURE__*/ _jsxs("span", {
-                                                className: "conversation-share-count",
-                                                children: [
-                                                    selectedShareGroups.size,
-                                                    "/",
-                                                    selectableShareGroups.length
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsx("button", {
-                                                type: "button",
-                                                className: "conversation-share-control",
-                                                disabled: !selectableShareGroups.length,
-                                                onClick: toggleAllShareGroups,
-                                                children: allShareGroupsSelected ? '取消全选' : '全选'
-                                            }),
-                                            /*#__PURE__*/ _jsx("button", {
-                                                type: "button",
-                                                className: "conversation-share-control",
-                                                disabled: !selectedShareGroups.size,
-                                                onClick: clearShareGroupSelection,
-                                                children: '清空'
-                                            }),
-                                            /*#__PURE__*/ _jsx("button", {
-                                                type: "button",
-                                                className: "conversation-share-control",
-                                                onClick: resetShareSelection,
-                                                children: '取消'
-                                            }),
-                                            /*#__PURE__*/ _jsx("button", {
-                                                type: "button",
-                                                className: "conversation-share-control primary",
-                                                disabled: shareBusy || !selectedShareMessages.length || activeAgentBusy || messages.some((message)=>message.pending),
-                                                onClick: ()=>void shareConversation(),
-                                                title: !selectedShareMessages.length ? '请先选择要分享的问答组' : activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览选中的对话长图',
-                                                children: shareBusy ? '生成中…' : '预览'
-                                            })
-                                        ]
-                                    }),
                                     /*#__PURE__*/ _jsxs("button", {
                                         className: "theme-toggle",
                                         "aria-label": theme === 'light' ? '切换深色主题' : '切换浅色主题',
@@ -11083,6 +11044,13 @@ export default function Page() {
                                                                          disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
                                                                         onSelect: (direction)=>void continueAgentFromChat(message, direction)
                                                                     }
+                                                                }) : message.role === 'assistant' && message.pending ? /*#__PURE__*/ _jsxs("div", {
+                                                                    className: "message-pending",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", { className: "mini-loader", "aria-hidden": "true" }),
+                                                                        /*#__PURE__*/ _jsx("p", { className: "pending", children: message.content }),
+                                                                        message.pendingSince ? /*#__PURE__*/ _jsx("span", { className: "message-pending-clock", children: `${Math.max(1, Math.round((generateClock - message.pendingSince) / 1000))}s` }) : null
+                                                                    ]
                                                                 }) : /*#__PURE__*/ _jsx("p", {
                                                                     className: message.pending ? 'pending' : '',
                                                                     children: message.content
@@ -11572,7 +11540,7 @@ export default function Page() {
                                                                     title: "选择技能：把某个技能指定给本轮任务",
                                                                     "aria-label": "选择技能",
                                                                     children: [
-                                                                        /*#__PURE__*/ _jsx(Icon, { name: "star", size: 14 }),
+                                                                        /*#__PURE__*/ _jsx(SkillIcon, { size: 14 }),
                                                                         /*#__PURE__*/ _jsx("span", { children: "技能" })
                                                                     ]
                                                                 }),
@@ -11678,7 +11646,7 @@ export default function Page() {
                                     }, `persona-${activeChatId}`),
                                     /*#__PURE__*/ _jsx(SkillManager, {
                                         disabled: activeAgentBusy,
-                                        icon: /*#__PURE__*/ _jsx(Icon, { name: 'star', size: 16 })
+                                        icon: /*#__PURE__*/ _jsx(SkillIcon, { size: 16 })
                                     }, 'skills'),
                                     messages.length > 0 && !shareSelectionMode && /*#__PURE__*/ _jsxs("button", {
                                         type: "button",
@@ -11695,7 +11663,50 @@ export default function Page() {
                                                 children: '分享'
                                             })
                                         ]
-                                    }, "share-entry")
+                                    }, "share-entry"),
+                                        messages.length > 0 && shareSelectionMode && /*#__PURE__*/ _jsxs("div", {
+                                            className: "conversation-share-controls",
+                                            role: "toolbar",
+                                            "aria-label": "分享内容选择",
+                                            children: [
+                                                /*#__PURE__*/ _jsxs("span", {
+                                                    className: "conversation-share-count",
+                                                    children: [
+                                                        selectedShareGroups.size,
+                                                        "/",
+                                                        selectableShareGroups.length
+                                                    ]
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "conversation-share-control",
+                                                    disabled: !selectableShareGroups.length,
+                                                    onClick: toggleAllShareGroups,
+                                                    children: allShareGroupsSelected ? '取消全选' : '全选'
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "conversation-share-control",
+                                                    disabled: !selectedShareGroups.size,
+                                                    onClick: clearShareGroupSelection,
+                                                    children: '清空'
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "conversation-share-control",
+                                                    onClick: resetShareSelection,
+                                                    children: '取消'
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "conversation-share-control primary",
+                                                    disabled: shareBusy || !selectedShareMessages.length || activeAgentBusy || messages.some((message)=>message.pending),
+                                                    onClick: ()=>void shareConversation(),
+                                                    title: !selectedShareMessages.length ? '请先选择要分享的问答组' : activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览选中的对话长图',
+                                                    children: shareBusy ? '生成中…' : '预览'
+                                                })
+                                            ]
+                                        }),
                                     ]
                                 })
                             }),

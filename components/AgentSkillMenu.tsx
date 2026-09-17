@@ -62,7 +62,7 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
         </button>
       )) : (
         <p className="agent-skill-menu-empty">
-          {skills.length ? `没有匹配「${query}」的技能` : emptyHint || '还没有启用中的技能。点聊天区左上角的 ☆ 按钮可以安装或启用。'}
+          {skills.length ? `没有匹配「${query}」的技能` : emptyHint || '还没有启用中的技能。点聊天区左上角的「技能」按钮可以安装或启用。'}
         </p>
       )}
       <p className="agent-skill-menu-tip">助手平时会自己挑技能，这里用来精确指定；输入 / 也能随时呼出。</p>

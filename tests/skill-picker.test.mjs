@@ -52,6 +52,6 @@ test("主界面把技能入口接到了输入框工具条和斜杠菜单", async
   assert.match(page, /_jsx\(AgentSkillMenu, \{/);
   assert.match(page, /openAgentSkillMenu\(''\)/);
   assert.match(component, /className="reference-mention-menu agent-mention-menu agent-skill-menu"/);
-  assert.match(component, /还没有启用中的技能。点聊天区左上角的 ☆ 按钮可以安装或启用。/);
+  assert.match(component, /还没有启用中的技能。点聊天区左上角的「技能」按钮可以安装或启用。/);
   assert.match(globals, /\.agent-skill-menu-copy strong\{/);
 });
