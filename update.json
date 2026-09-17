@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.47/SANMAO.AI-0.7.47.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.47/SANMAO.AI-0.7.47.zip"
   ],
-  "sha256": "e1a6d780ff753eda4b7d17bbc55d97fdf0915ab190730a80086308c467415a08",
+  "sha256": "080139ca970ce5b90f157c3a30e7c5b22c303f45f3d6765303f94fa51734d905",
   "publishedAt": "2026-09-17T18:05:00+08:00",
   "notes": [
     "画布的 Agent 助手面板：面板里的回复可直接选中文字，弹出与节点文本相同的工具栏，一键复制选段、创建 Agent 节点、转图片或转视频；右侧面板合并成一个槽位，打开面板不再挤动画布顶栏。",
