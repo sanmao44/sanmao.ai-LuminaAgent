@@ -24,11 +24,14 @@ type SkillSummary = {
   installer: { kind: string; name?: string; detail?: string; at: number };
   files: SkillFileRecord[];
   warnings: string[];
+  sourceHash?: string;
+  sourceCheckedAt?: number;
 };
 
 type LocalCandidate = { key: string; id: string; name: string; description: string; root: string };
 type SkillSettingsView = { enabled: boolean; autoApprove: boolean };
 type Tab = 'installed' | 'create' | 'import';
+type UpdateState = { status: 'checking' | 'same' | 'updated' | 'error'; message: string };
 
 const SOURCE_LABELS: Record<string, string> = { local: '本机', url: '链接', github: 'GitHub', zip: '压缩包', agent: '助手安装' };
 const EMPTY_DRAFT = { name: '', description: '', body: '', tags: '' };
@@ -43,6 +46,35 @@ async function requestJson(url: string, init?: RequestInit) {
 function formatTime(value: number) {
   if (!value) return '';
   try { return new Date(value).toLocaleDateString('zh-CN'); } catch { return ''; }
+}
+
+const SCRIPT_FILE_PATTERN = /\.(?:sh|bash|zsh|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i;
+
+function formatBytes(bytes: number) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return value + ' B';
+  return (value / 1024).toFixed(1) + ' KB';
+}
+
+function sourceLabel(skill: SkillSummary) {
+  const url = String(skill.sourceUrl || '').trim();
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    try { return new URL(url).host; } catch { return ''; }
+  }
+  return url.length > 48 ? url.slice(0, 48) + '…' : url;
+}
+
+function canCheckUpdate(skill: SkillSummary) {
+  if (skill.pending) return false;
+  const url = String(skill.sourceUrl || '').trim();
+  if (!url) return false;
+  if (skill.source === 'github') return true;
+  return url.startsWith('http://') || url.startsWith('https://');
+}
+
+function hasScriptFile(files: SkillFileRecord[]) {
+  return (files || []).some((file) => SCRIPT_FILE_PATTERN.test(String(file.path || '')));
 }
 
 export default function SkillManager({ disabled, icon }: { disabled: boolean; icon: ReactNode }) {
@@ -64,6 +96,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [notice, setNotice] = useState('');
   const [fileLabel, setFileLabel] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  const [updates, setUpdates] = useState<Record<string, UpdateState>>({});
   const dialog = useRef<HTMLDialogElement>(null);
   useBodyScrollLock(open);
 
@@ -210,6 +243,51 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     });
   }
 
+  /* 检查来源更新：只比对内容哈希；确认更新后可一键重装（保留启用状态与本地别名）。 */
+  async function checkUpdate(skill: SkillSummary, apply = false) {
+    await run(async () => {
+      setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'checking', message: apply ? '正在更新…' : '正在检查来源…' } }));
+      try {
+        const data = await requestJson('/api/skills/' + encodeURIComponent(skill.id) + '/update-check', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apply }) });
+        const result = data.result as { status?: string; localEdited?: boolean; remote?: { version?: string } } | undefined;
+        if (apply) {
+          applyPayload(data);
+          setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'same', message: '已更新到最新版本。' } }));
+          setNotice('已把「' + ((data.skill as { name?: string })?.name || skill.name) + '」更新到最新版本。');
+          return;
+        }
+        if (result?.status === 'updated') {
+          const version = result.remote?.version ? '（来源版本 ' + result.remote.version + '）' : '';
+          setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'updated', message: '发现来源更新' + version + (result.localEdited ? '，重装会覆盖本地修改' : '') } }));
+          return;
+        }
+        setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'same', message: '已是最新版本。' } }));
+      } catch (failure) {
+        setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'error', message: failure instanceof Error ? failure.message : '检查更新失败。' } }));
+      }
+    });
+  }
+
+  /* 导出为 SKILL.md 下载，方便分享给别人导入。 */
+  async function exportSkill(skill: SkillSummary) {
+    await run(async () => {
+      const response = await fetch('/api/skills/' + encodeURIComponent(skill.id) + '/export');
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({} as Record<string, unknown>));
+        throw new Error(String((data as { error?: string }).error || '导出失败。'));
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = skill.id + '.md';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setNotice('已导出「' + skill.name + '」，可以直接分享给别人导入。');
+    });
+  }
+
   const overwriteToggle = (
     <label className={styles.check}>
       <input type="checkbox" checked={overwrite} disabled={busy} onChange={(event) => setOverwrite(event.target.checked)} />
@@ -252,8 +330,17 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
             <div className={styles.rowTitle}>
               <strong>{skill.name}</strong>
               <span className={styles.badge}>{SOURCE_LABELS[skill.source] || skill.source}</span>
+              {hasScriptFile(skill.files) && <span className={styles.warnBadge}>含脚本文件</span>}
             </div>
             <p className={styles.description}>{skill.description || '没有填写简介'}</p>
+            <p className={styles.meta}>
+              {sourceLabel(skill) ? `来源：${sourceLabel(skill)} · ` : ''}
+              {skill.files.length ? `${skill.files.length} 个附件` : '没有附件'}
+              {skill.tags?.length ? ` · 别名：${skill.tags.join('、')}` : ''}
+            </p>
+            {skill.files.length > 0 && <p className={styles.meta}>附件：{skill.files.slice(0, 4).map((file) => `${file.path}（${formatBytes(file.bytes)}）`).join('、')}{skill.files.length > 4 ? ` 等 ${skill.files.length} 个` : ''}</p>}
+            {hasScriptFile(skill.files) && <p className={styles.warnLine}>包含脚本文件：安装后只作参考资料，脚本永远不会被执行。</p>}
+            {skill.warnings.map((warning) => <p key={warning} className={styles.warnLine}>{warning}</p>)}
             {skill.installer?.detail && <p className={styles.meta}>{skill.installer.detail}</p>}
           </div>
           <div className={styles.rowActions}>
@@ -282,12 +369,15 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
             ? <>
                 {skills.length > 3 && <input type="text" value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、别名或简介" aria-label="搜索技能" />}
                 {visibleSkills.length
-                  ? visibleSkills.map((skill) => <article key={skill.id} className={styles.row}>
+                  ? visibleSkills.map((skill) => {
+                    const update = updates[skill.id];
+                    return <article key={skill.id} className={styles.row}>
                 <div className={styles.rowMain}>
                   <div className={styles.rowTitle}>
                     <strong>{skill.name}</strong>
                     <span className={styles.badge}>{SOURCE_LABELS[skill.source] || skill.source}</span>
                     {!skill.enabled && <span className={styles.badgeMuted}>未启用</span>}
+                    {update?.status === 'updated' && <span className={styles.updateBadge}>有更新</span>}
                   </div>
                   <p className={styles.description}>{skill.description || '没有填写简介'}</p>
                   <p className={styles.meta}>
@@ -296,8 +386,13 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                     {skill.tools?.length ? `需要工具：${skill.tools.join('、')} · ` : ''}
                     {skill.files.length ? `${skill.files.length} 个附件 · ` : ''}
                     更新于 {formatTime(skill.updatedAt)}
+                    {skill.sourceCheckedAt ? ` · 上次检查 ${formatTime(skill.sourceCheckedAt)}` : ''}
                     {skill.installer?.detail ? ` · ${skill.installer.detail}` : ''}
                   </p>
+                  {update?.message && <p className={`${styles.updateLine} ${update.status === 'updated' ? styles.isUpdate : ''} ${update.status === 'error' ? styles.isError : ''}`}>
+                    <span>{update.message}</span>
+                    {update.status === 'updated' && <button type="button" className={styles.primary} disabled={busy} onClick={() => void checkUpdate(skill, true)}>更新重装</button>}
+                  </p>}
                 </div>
                 <div className={styles.rowActions}>
                   <label className={styles.check}>
@@ -306,9 +401,12 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                   </label>
                   <button type="button" disabled={busy} onClick={() => void openEditor(skill)}>编辑</button>
                   <button type="button" disabled={busy} onClick={() => void openPreview(skill)}>预览</button>
+                  {canCheckUpdate(skill) && <button type="button" disabled={busy} onClick={() => void checkUpdate(skill)}>{update?.status === 'checking' ? '检查中…' : '检查更新'}</button>}
+                  <button type="button" disabled={busy} onClick={() => void exportSkill(skill)}>导出</button>
                   <button type="button" disabled={busy} onClick={() => void removeSkill(skill)}>{confirming === skill.id ? '确认删除' : '删除'}</button>
                 </div>
-              </article>)
+              </article>;
+                  })
                   : <p className={styles.empty}>没有匹配「{query}」的技能。</p>}
               </>
             : <p className={styles.empty}>还没有技能。可以新建、导入别人的 SKILL.md、粘贴 GitHub 仓库，或让助手自己安装。</p>)}

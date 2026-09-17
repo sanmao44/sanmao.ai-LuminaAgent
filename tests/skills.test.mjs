@@ -410,7 +410,9 @@ test('技能接口覆盖列表、导入、待确认与设置', async () => {
   const detail = await readFile(new URL('../app/api/skills/[id]/route.ts', import.meta.url), 'utf8');
   const importRoute = await readFile(new URL('../app/api/skills/import/route.ts', import.meta.url), 'utf8');
   const pending = await readFile(new URL('../app/api/skills/pending/[id]/route.ts', import.meta.url), 'utf8');
-  for (const route of [list, detail, importRoute, pending]) {
+  const updateRoute = await readFile(new URL('../app/api/skills/[id]/update-check/route.ts', import.meta.url), 'utf8');
+  const exportRoute = await readFile(new URL('../app/api/skills/[id]/export/route.ts', import.meta.url), 'utf8');
+  for (const route of [list, detail, importRoute, pending, updateRoute, exportRoute]) {
     assert.ok(route.includes('isAdminRequest(request)'));
     assert.ok(route.includes("export const runtime = 'nodejs';"));
   }
@@ -422,6 +424,11 @@ test('技能接口覆盖列表、导入、待确认与设置', async () => {
   assert.match(importRoute, /listLocalAgentSkills\(\)\.find/);
   assert.match(pending, /approvePendingSkill\(key\)/);
   assert.match(pending, /discardPendingSkill\(key\)/);
+  assert.match(updateRoute, /planSkillUpdate\(skill, latest\.document\)/);
+  assert.match(updateRoute, /markSkillSourceChecked\(skill\.id/);
+  assert.match(updateRoute, /installSkillFromDocument\(\{/);
+  assert.match(exportRoute, /skillMarkdown\(skill\)/);
+  assert.match(exportRoute, /content-disposition/i);
 });
 
 test('模型写出的工具调用标记会被截断', () => {
@@ -438,4 +445,47 @@ test('GitHub 技能抓取带目录候选与接口通道', async () => {
   assert.match(archive, /async function fetchSkillFilesFromGithubApi/);
   assert.match(archive, /const GITHUB_API_BASE = 'https:\/\/api\.github\.com';/);
   assert.match(archive, /const viaApi = await fetchSkillFilesFromGithubApi\(target, options\);/);
+});
+
+test('技能来源更新检测与导出分享', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    const document = (body) => skills.composeSkillDocument({ name: '更新演示', description: '看更新', version: '1.0' }, body);
+    const installed = skills.installSkillFromDocument({ text: document('# 步骤\n\n第一步。'), source: 'url', sourceUrl: 'https://example.com/SKILL.md' }, store);
+    assert.match(installed.sourceHash, /^[0-9a-f]{64}$/);
+    assert.ok(installed.sourceCheckedAt > 0);
+
+    const same = skills.planSkillUpdate(installed, document('# 步骤\n\n第一步。'));
+    assert.equal(same.status, 'same');
+    assert.equal(same.localEdited, false);
+    assert.equal(same.remote.version, '1.0');
+
+    const changed = skills.planSkillUpdate(installed, document('# 步骤\n\n第二步。'));
+    assert.equal(changed.status, 'updated');
+    assert.ok(changed.remote.chars > 0);
+
+    skills.updateSkill(installed.id, { body: '# 步骤\n\n本地改过。' }, store);
+    const edited = skills.planSkillUpdate(skills.readSkill(installed.id, store), document('# 步骤\n\n第一步。'));
+    assert.equal(edited.status, 'same');
+    assert.equal(edited.localEdited, true);
+
+    const checked = skills.markSkillSourceChecked(installed.id, { sourceHash: changed.sourceHash }, store);
+    assert.equal(checked.sourceHash, changed.sourceHash);
+    assert.ok(checked.sourceCheckedAt > 0);
+
+    const metaPath = path.join(store.dataDir, 'skills', installed.id, 'meta.json');
+    const legacyMeta = JSON.parse(await readFile(metaPath, 'utf8'));
+    delete legacyMeta.sourceHash;
+    await writeFile(metaPath, JSON.stringify(legacyMeta), 'utf8');
+    const legacy = skills.readSkill(installed.id, store);
+    assert.equal(legacy.sourceHash, '');
+    assert.equal(skills.planSkillUpdate(legacy, document('# 步骤\n\n本地改过。')).status, 'same');
+
+    const long = skills.installSkill({ name: '长技能', body: 'x'.repeat(skills.SKILL_BODY_MAX_CHARS + 120) }, store);
+    const markdown = skills.skillMarkdown(long);
+    assert.ok(markdown.includes('name: 长技能'));
+    assert.ok(markdown.includes('x'.repeat(skills.SKILL_BODY_MAX_CHARS + 120)));
+  } finally {
+    await cleanup();
+  }
 });

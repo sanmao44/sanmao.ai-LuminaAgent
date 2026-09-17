@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [route, page, dock, manager, canvasStyles, globals, client] = await Promise.all([
+const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute] = await Promise.all([
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -10,6 +10,8 @@ const [route, page, dock, manager, canvasStyles, globals, client] = await Promis
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
   readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/agent-client.ts", import.meta.url), "utf8"),
+  readFile(new URL("../app/api/skills/[id]/update-check/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../app/api/skills/[id]/export/route.ts", import.meta.url), "utf8"),
 ]);
 
 test("a reply reports back which skills the agent actually read", () => {
@@ -59,4 +61,18 @@ test("the tool round hands the assistant turn back so thinking models accept the
   // 工具轮之后的失败不再静默降级成占位答案。
   assert.match(route, /console\.error\('\[Agent\] 工具轮之后的流式回答失败：', llmFailure\);/);
   assert.match(route, /fallback: `\$\{finalText\}（整理回答失败：\$\{llmFailure\.slice\(0, 200\)\}）`/);
+});
+
+test("installed skills can check source updates, export markdown, and pending cards show details", () => {
+  assert.match(manager, /检查更新/);
+  assert.match(manager, /\/update-check/);
+  assert.match(manager, /更新重装/);
+  assert.match(manager, /含脚本文件/);
+  assert.match(manager, /附件：/);
+  assert.match(manager, /上次检查/);
+  assert.match(updateRoute, /planSkillUpdate\(skill, latest\.document\)/);
+  assert.match(updateRoute, /installSkillFromDocument\(\{/);
+  assert.match(updateRoute, /markSkillSourceChecked\(skill\.id/);
+  assert.match(exportRoute, /skillMarkdown\(skill\)/);
+  assert.match(exportRoute, /content-disposition/i);
 });

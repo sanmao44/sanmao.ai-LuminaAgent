@@ -103,7 +103,7 @@
 .error { color: #b42318; background: #fef3f2; border: 1px solid #fecdca; }
 .notice { color: var(--text-2); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid var(--line); }
 
-.pending { display: grid; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.pending { display: grid; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 7%, transparent); max-height: min(34dvh, 320px); overflow: auto; overscroll-behavior: contain; }
 .pending .row { background: var(--panel, #fff); }
 
 .tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 13px; background: color-mix(in srgb, var(--panel-2) 76%, transparent); align-self: flex-start; }
@@ -146,3 +146,10 @@
 
 .footer { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding-top: 12px; border-top: 1px solid var(--line); }
 .count { color: var(--text-2); font-size: 12px; }
+
+.updateBadge { padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 1.7; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent-text); background: var(--accent-soft); white-space: nowrap; }
+.warnBadge { padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 1.7; border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--line)); color: var(--warning); white-space: nowrap; }
+.updateLine { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.updateLine.isUpdate { color: var(--accent-text); font-weight: 700; }
+.updateLine.isError { color: var(--danger); }
+.warnLine { margin: 0; font-size: 12px; line-height: 1.6; color: var(--warning); overflow-wrap: anywhere; }

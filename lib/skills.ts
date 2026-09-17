@@ -81,6 +81,10 @@ export type SkillMeta = {
   installer: SkillInstaller;
   files: SkillFileRecord[];
   warnings: string[];
+  /** 安装或最近一次检查时来源正文的 sha256，用于判断来源是否有新版本。 */
+  sourceHash: string;
+  /** 最近一次检查来源更新的时间戳；0 表示还没检查过。 */
+  sourceCheckedAt: number;
 };
 
 export type SkillRecord = SkillMeta & { body: string; dir: string; bodyChars: number; bodyClipped: boolean };
@@ -365,6 +369,16 @@ export function composeSkillDocument(meta: { name: string; description: string; 
   return lines.join('\n');
 }
 
+/** 从 SKILL.md 全文取出完整正文（不截断），用于哈希比对与导出。 */
+export function skillDocumentBody(text: unknown) {
+  return splitSkillDocument(text).body;
+}
+
+/** 正文归一化后的 sha256（换行统一为 \n、去掉首尾空白），避免格式差异造成误判。 */
+export function skillContentHash(text: unknown) {
+  return createHash('sha256').update(String(text ?? '').replace(/\r\n?/g, '\n').trim(), 'utf8').digest('hex');
+}
+
 function safeReadDir(dir: string) {
   try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; }
 }
@@ -438,6 +452,8 @@ function readSkillDir(dir: string, id: string, pending: boolean): SkillRecord | 
       : { kind: 'import', at: updatedAt },
     files: files.length ? files : scanSkillFiles(dir),
     warnings: Array.isArray(stored?.warnings) ? stored!.warnings.filter((item) => typeof item === 'string').slice(0, 12) : [],
+    sourceHash: typeof stored?.sourceHash === 'string' ? stored.sourceHash : '',
+    sourceCheckedAt: Number(stored?.sourceCheckedAt) || 0,
     dir,
     body: parsed.body,
     bodyChars: parsed.bodyChars,
@@ -573,6 +589,8 @@ export function installSkill(input: InstallSkillInput, options: SkillStoreOption
     },
     files: files.map((file) => ({ path: file.path, bytes: file.data.byteLength })),
     warnings,
+    sourceHash: skillContentHash(fullBody),
+    sourceCheckedAt: now,
     dir,
     body,
     bodyChars: fullBody.length,
@@ -599,6 +617,7 @@ export function installSkillFromDocument(input: {
   id?: unknown;
   name?: unknown;
   tags?: unknown;
+  enabled?: boolean;
   source?: SkillSource;
   sourceUrl?: unknown;
   installer?: Partial<SkillInstaller>;
@@ -622,6 +641,7 @@ export function installSkillFromDocument(input: {
     tags: [...parsed.tags, ...normalizeSkillTags(input?.tags)],
     tools: parsed.tools,
     body: fullBody,
+    enabled: input?.enabled,
     source: input?.source || 'url',
     sourceUrl: input?.sourceUrl,
     installer: input?.installer,
@@ -667,6 +687,45 @@ export function updateSkill(id: unknown, patch: UpdateSkillInput, options: Skill
   const saved = readSkill(safeId, options);
   if (!saved) throw new Error('技能写入失败');
   return saved;
+}
+
+export type SkillUpdatePlan = {
+  status: 'same' | 'updated';
+  localEdited: boolean;
+  sourceHash: string;
+  remote: { name: string; version: string; description: string; chars: number };
+};
+
+/** 比较本地技能与来源最新正文：来源变了才算有更新，本地改过会单独提示。 */
+export function planSkillUpdate(skill: SkillRecord, remoteDocument: unknown): SkillUpdatePlan {
+  const remoteBody = skillDocumentBody(remoteDocument);
+  const parsed = parseSkillDocument(remoteDocument);
+  const sourceHash = skillContentHash(remoteBody);
+  const baseline = String(skill.sourceHash || '');
+  const localHash = skillContentHash(skillBodyText(skill));
+  const changed = baseline ? baseline !== sourceHash : localHash !== sourceHash;
+  return {
+    status: changed ? 'updated' : 'same',
+    localEdited: baseline ? localHash !== baseline : false,
+    sourceHash,
+    remote: { name: parsed.name, version: parsed.version, description: parsed.description, chars: remoteBody.length },
+  };
+}
+
+/** 记录一次来源检查结果；只改 meta.json，不动技能正文。 */
+export function markSkillSourceChecked(id: unknown, patch: { sourceHash?: unknown; checkedAt?: unknown } = {}, options: SkillStoreOptions = {}) {
+  const record = readSkill(id, options);
+  if (!record) return null;
+  const sourceHash = String(patch?.sourceHash || '');
+  if (sourceHash) record.sourceHash = sourceHash;
+  record.sourceCheckedAt = Number(patch?.checkedAt) || Date.now();
+  writeSkillMeta(record);
+  return record;
+}
+
+/** 导出为可分享的 SKILL.md；超长技能会带上磁盘里的完整正文。 */
+export function skillMarkdown(skill: SkillRecord) {
+  return composeSkillDocument({ name: skill.name, description: skill.description, version: skill.version, tags: skill.tags, tools: skill.tools }, skillBodyText(skill));
 }
 
 export function setSkillEnabled(id: unknown, enabled: boolean, options: SkillStoreOptions = {}) {
@@ -926,10 +985,15 @@ export function assertSkillImportUrl(value: unknown) {
   return url;
 }
 
+/** 常见网络故障的关键字：把 fetch failed 之类的底层报错转成用户能看懂的中文提示。 */
+const SKILL_NETWORK_ERROR_PATTERN = /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|certificate|self signed|network/i;
+
 function skillFetchFailure(error: unknown, callerSignal: AbortSignal | undefined, timeoutMs: number) {
   if (callerSignal?.aborted) return callerSignal.reason instanceof Error ? callerSignal.reason : new Error('已取消');
   const name = error instanceof Error ? error.name : '';
-  if (name === 'TimeoutError' || name === 'AbortError') return new Error('下载超时（超过 ' + Math.round(timeoutMs / 1000) + ' 秒）');
+  if (name === 'TimeoutError' || name === 'AbortError') return new Error('下载超时（超过 ' + Math.round(timeoutMs / 1000) + ' 秒），请检查网络或代理后重试');
+  const message = error instanceof Error ? error.message : '';
+  if (SKILL_NETWORK_ERROR_PATTERN.test(message)) return new Error('网络连接失败（' + message + '），请检查网络或代理后重试');
   return error instanceof Error ? error : new Error('下载失败');
 }
 
