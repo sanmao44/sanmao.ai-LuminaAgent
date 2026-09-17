@@ -87,6 +87,22 @@ test("选中技能后写回输入框，并吃掉刚敲的 /指令", () => {
   assert.equal(picker.skillMessageValue("把这段改得更好", "影视调色"), "用「影视调色」技能：把这段改得更好");
 });
 
+test("技能前缀能被拆成 chip 片段并原样回写", () => {
+  assert.deepEqual(picker.splitSkillMessage("用「影视调色」技能：帮我调暖一点"), [
+    { kind: "skill", name: "影视调色", raw: "用「影视调色」技能：" },
+    { kind: "text", text: "帮我调暖一点" },
+  ]);
+  assert.deepEqual(picker.splitSkillMessage("用「演示周报生成」技能："), [
+    { kind: "skill", name: "演示周报生成", raw: "用「演示周报生成」技能：" },
+  ]);
+  assert.deepEqual(picker.splitSkillMessage("普通问题"), [{ kind: "text", text: "普通问题" }]);
+  assert.deepEqual(picker.splitSkillMessage(""), [{ kind: "text", text: "" }]);
+  const parts = picker.splitSkillMessage("先看这个 用「影视调色」技能：再看 用「演示周报生成」技能：结尾");
+  assert.equal(parts.filter((part) => part.kind === "skill").length, 2);
+  /* chip 的 raw 必须能拼回原文，序列化才不会改动发送内容。 */
+  assert.equal(parts.map((part) => (part.kind === "skill" ? part.raw : part.text)).join(""), "先看这个 用「影视调色」技能：再看 用「演示周报生成」技能：结尾");
+});
+
 test("主界面把技能入口接到了输入框工具条和斜杠菜单", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const component = await readFile(new URL("../components/AgentSkillMenu.tsx", import.meta.url), "utf8");

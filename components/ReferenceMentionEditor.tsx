@@ -20,6 +20,7 @@ import {
   referenceMentionRange,
   type ReferenceMentionRange,
 } from "@/lib/creative-references";
+import { SKILL_MESSAGE_SOURCE } from "@/lib/skill-picker";
 import ReferenceMentionMenu, {
   type ReferenceMentionOption,
 } from "@/components/ReferenceMentionMenu";
@@ -28,9 +29,16 @@ function mentionTokenLength(index: number) {
   return `@${index + 1}`.length;
 }
 
+/* 技能 chip 在纯文本里就是「用 X 技能：」，序列化必须原样回写，模型与历史记录都不受影响。 */
+function skillChipText(node: HTMLElement): string {
+  return typeof node.dataset.skillText === "string" ? node.dataset.skillText : "";
+}
+
 function serializedLength(node: Node): number {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length || 0;
   if (!(node instanceof HTMLElement)) return 0;
+  const skillText = skillChipText(node);
+  if (skillText) return skillText.length;
   const mentionIndex = Number(node.dataset.mentionIndex);
   if (Number.isInteger(mentionIndex) && mentionIndex >= 0) return mentionTokenLength(mentionIndex);
   if (node.tagName === "BR") return 1;
@@ -40,6 +48,8 @@ function serializedLength(node: Node): number {
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
   if (!(node instanceof HTMLElement)) return "";
+  const skillText = skillChipText(node);
+  if (skillText) return skillText;
   const mentionIndex = Number(node.dataset.mentionIndex);
   if (Number.isInteger(mentionIndex) && mentionIndex >= 0) return `@${mentionIndex + 1}`;
   if (node.tagName === "BR") return "\n";
@@ -82,6 +92,11 @@ function caretOffset(root: HTMLElement, container: Node, offset: number) {
       return;
     }
     if (node instanceof HTMLElement) {
+      const skillText = skillChipText(node);
+      if (skillText) {
+        total += skillText.length;
+        return;
+      }
       const mentionIndex = Number(node.dataset.mentionIndex);
       if (Number.isInteger(mentionIndex) && mentionIndex >= 0) {
         total += mentionTokenLength(mentionIndex);
@@ -118,6 +133,22 @@ function setCaretOffset(root: HTMLElement, target: number) {
       return false;
     }
     if (node instanceof HTMLElement) {
+      const skillText = skillChipText(node);
+      if (skillText) {
+        if (remaining <= skillText.length) {
+          const parent = node.parentNode;
+          if (!parent) return false;
+          const range = document.createRange();
+          const index = Array.prototype.indexOf.call(parent.childNodes, node);
+          range.setStart(parent, remaining >= skillText.length ? index + 1 : index);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return true;
+        }
+        remaining -= skillText.length;
+        return false;
+      }
       const mentionIndex = Number(node.dataset.mentionIndex);
       if (Number.isInteger(mentionIndex) && mentionIndex >= 0) {
         const length = mentionTokenLength(mentionIndex);
@@ -190,6 +221,25 @@ function mentionThumbnailHtml(reference: ReferenceMentionOption) {
   return `<span class="reference-mention-fallback-thumbnail">${reference.kind === "video" ? "▶" : "✦"}</span>`;
 }
 
+function skillChipHtml(name: string, raw: string) {
+  return `<span class="skill-inline-mention" contenteditable="false" data-skill-name="${escapeHtml(name)}" data-skill-text="${escapeHtml(raw)}" title="${escapeHtml(`技能 · ${name}`)}"><i aria-hidden="true">✦</i><b>${escapeHtml(name)}</b></span>`;
+}
+
+/** 普通文本按「用 X 技能：」切成文本 + 技能 chip，序列化时再由 chip 原样还原。 */
+function renderSkillChipHtml(value: string) {
+  const pattern = new RegExp(SKILL_MESSAGE_SOURCE, "g");
+  let html = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(value))) {
+    if (match.index > cursor) html += escapeHtml(value.slice(cursor, match.index));
+    html += skillChipHtml(match[1].trim(), match[0]);
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < value.length || !html) html += escapeHtml(value.slice(cursor));
+  return html;
+}
+
 function renderMentionHtml(value: string, references: readonly ReferenceMentionOption[]) {
   let html = "";
   const pattern = /@([0-9]+)\b/g;
@@ -199,11 +249,11 @@ function renderMentionHtml(value: string, references: readonly ReferenceMentionO
     const index = Number(match[1]) - 1;
     const reference = references[index];
     if (!reference) continue;
-    if (match.index > cursor) html += escapeHtml(value.slice(cursor, match.index));
+    if (match.index > cursor) html += renderSkillChipHtml(value.slice(cursor, match.index));
     html += `<span class="reference-inline-mention" contenteditable="false" data-mention-index="${index}" title="${escapeHtml(`引用 @${index + 1}`)}"><span class="reference-inline-mention-thumb">${mentionThumbnailHtml(reference)}</span><span class="reference-inline-mention-label"><b>@${index + 1}</b></span></span>`;
     cursor = match.index + match[0].length;
   }
-  if (cursor < value.length) html += escapeHtml(value.slice(cursor));
+  if (cursor < value.length) html += renderSkillChipHtml(value.slice(cursor));
   return html;
 }
 

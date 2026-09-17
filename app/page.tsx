@@ -35,6 +35,7 @@ import AgentPersonaEditor from '@/components/AgentPersonaEditor';
 import SkillManager from '@/components/SkillManager';
 import SkillIcon from '@/components/SkillIcon';
 import AgentSkillMenu from '@/components/AgentSkillMenu';
+import SkillInlineText from '@/components/SkillInlineText';
 import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
 import { normalizeConversationPersona } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
@@ -11052,9 +11053,9 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("p", { className: "pending", children: message.content }),
                                                                         message.pendingSince ? /*#__PURE__*/ _jsx("span", { className: "message-pending-clock", children: `${Math.max(1, Math.round((generateClock - message.pendingSince) / 1000))}s` }) : null
                                                                     ]
-                                                                }) : /*#__PURE__*/ _jsx("p", {
+                                                                 }) : /*#__PURE__*/ _jsx(SkillInlineText, {
                                                                     className: message.pending ? 'pending' : '',
-                                                                    children: message.content
+                                                                    text: message.content
                                                                 }),
                                                                  message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList, {
                                                                      files: message.files,
