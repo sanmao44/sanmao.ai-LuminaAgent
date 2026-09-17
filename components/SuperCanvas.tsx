@@ -14037,6 +14037,16 @@ export default function SuperCanvas() {
               >
                 重命名
               </button>
+              <button
+                type="button"
+                className="canvas-popover-danger"
+                title="删除当前画布"
+                onClick={() => {
+                  if (activeProjectId) deleteProject(activeProjectId);
+                }}
+              >
+                删除
+              </button>
             </div>
             {projectRename && (
               <div className="canvas-rename-row">
@@ -20883,7 +20893,6 @@ function CanvasSettingsPanel({ theme, connectionStyle, onTheme, onConnectionStyl
     <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon value={item.value} /> }))} /></section>
     <section className="canvas-setting-section"><b>导出工作流</b><button type="button" onClick={onExportWorkflow}>导出 JSON</button></section>
     <section className="canvas-setting-section"><b>导入工作流</b><button type="button" onClick={onImportWorkflow}>选择 JSON 文件</button></section>
-    <p className="canvas-setting-note">选中节点后，直接关联的入边和出边会显示细流光。</p>
   </CanvasPanelShell>;
 }
 
