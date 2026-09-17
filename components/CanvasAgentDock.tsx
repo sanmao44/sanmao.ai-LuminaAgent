@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import SelectMenu from "@/components/SelectMenu";
 import SkillManager from "@/components/SkillManager";
@@ -42,7 +42,9 @@ export type CanvasAgentDockMessage = {
   retryText?: string;
   /** 用户中途停止时留下的部分回答：可以在这条消息上接着写。 */
   interrupted?: boolean;
-  applied?: boolean;
+  /** 这条消息落到画布上的节点 id：存过之后按钮换成定位入口，随时回到画布上看结果。 */
+  imageNodeIds?: string[];
+  textNodeId?: string;
 };
 
 type CanvasAgentDockSession = {
@@ -63,11 +65,12 @@ type Props = {
   contextBlock: string;
   runtime: PublicState | null;
   onFocusNodes: (ids: string[]) => void;
+  /* 落画布后回传新节点 id：消息上的按钮要能变成「定位结果」。 */
   onApplyImages: (
     images: Array<{ url: string; revisedPrompt?: string }>,
     meta: { prompt: string; model?: string },
-  ) => void;
-  onApplyText: (text: string, meta: { prompt: string }) => void;
+  ) => string[];
+  onApplyText: (text: string, meta: { prompt: string }) => string[];
   onCreateAgentNode: (text: string) => void;
   onUseAsImagePrompt: (text: string) => void;
   onUseAsVideoPrompt: (text: string) => void;
@@ -227,7 +230,10 @@ function readSession(): CanvasAgentDockSession | null {
             ...(message.error ? { error: String(message.error) } : {}),
             ...(message.retryText ? { retryText: String(message.retryText) } : {}),
             ...(message.interrupted ? { interrupted: true } : {}),
-            ...(message.applied ? { applied: true } : {}),
+            ...(Array.isArray(message.imageNodeIds) && message.imageNodeIds.length
+              ? { imageNodeIds: message.imageNodeIds.map((id) => String(id || "")).filter(Boolean) }
+              : {}),
+            ...(message.textNodeId ? { textNodeId: String(message.textNodeId) } : {}),
           }))
           .filter((message) => message.content || message.images?.length)
       : [];
@@ -382,7 +388,14 @@ export default function CanvasAgentDock({
     [orderedReferences],
   );
   const selectedTaskText = useMemo(() => taskStatusText(countSelectedTaskStatus(orderedChips)), [orderedChips]);
-  const canvasTaskText = taskStatusText(status);
+  /* 画布上的任务状态可以直接点：把选中和视口一起拉过去，省得在无限画布上自己找。 */
+  const canvasTaskLinks = useMemo(() => {
+    const links: Array<{ key: string; label: string; ids: string[] }> = [];
+    const active = status.running + status.queued;
+    if (active > 0) links.push({ key: "active", label: `${active} 个进行中`, ids: status.activeIds });
+    if (status.failed > 0) links.push({ key: "failed", label: `${status.failed} 个失败`, ids: status.failedIds });
+    return links;
+  }, [status]);
   /* 画布传进来的选中数量是完整的，芯片只有前几个，头部要报真实数字。 */
   const selectedNodeTotal = selectedTotal ?? chips.length;
   const moveChip = useCallback(
@@ -444,14 +457,21 @@ export default function CanvasAgentDock({
     ];
   }, [runtime]);
 
+  /* 画布上真有失败节点时，「排查失败」先把它们选中再提问：否则模型只能收到一句干问。 */
   const quickActions = useMemo(
     () => [
-      { label: "总结选中", prompt: "用 5 条以内的要点总结我选中的这些节点，并指出可继续的方向。" },
-      { label: "写提示词", prompt: "基于选中的节点，给我 3 条可直接用于图片生成的中文提示词。" },
-      { label: "排查失败", prompt: "如果画布上有失败或卡住的节点，说明原因并给出具体修复步骤。" },
-      { label: "下一步建议", prompt: "结合当前选中的节点和它们的关系，告诉我下一步最值得做的 3 件事。" },
+      { label: "总结选中", prompt: "用 5 条以内的要点总结我选中的这些节点，并指出可继续的方向。", ids: [] as string[] },
+      { label: "写提示词", prompt: "基于选中的节点，给我 3 条可直接用于图片生成的中文提示词。", ids: [] as string[] },
+      {
+        label: status.failedIds.length ? `排查失败（${status.failedIds.length}）` : "排查失败",
+        prompt: status.failedIds.length
+          ? "我已在画布上选中失败的节点，请逐个说明失败原因，并给出可直接执行的修复步骤。"
+          : "如果画布上有失败或卡住的节点，说明原因并给出具体修复步骤。",
+        ids: status.failedIds,
+      },
+      { label: "下一步建议", prompt: "结合当前选中的节点和它们的关系，告诉我下一步最值得做的 3 件事。", ids: [] as string[] },
     ],
-    [],
+    [status.failedIds],
   );
 
   const refreshSkills = useCallback(async () => {
@@ -622,8 +642,10 @@ export default function CanvasAgentDock({
           },
         ]);
         if (images.length && autoApply) {
-          onApplyImages(images, { prompt: mentionText, model: response.model });
-          setMessages((value) => value.map((message, index) => (index === value.length - 1 ? { ...message, applied: true } : message)));
+          const appliedIds = onApplyImages(images, { prompt: mentionText, model: response.model });
+          setMessages((value) =>
+            value.map((message, index) => (index === value.length - 1 ? { ...message, imageNodeIds: appliedIds } : message)),
+          );
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Agent 请求失败";
@@ -721,6 +743,17 @@ export default function CanvasAgentDock({
       );
     },
     [notify],
+  );
+
+  /* 存成节点后记下画布节点 id：按钮从此变成定位入口，能直接跳回画布看这段回复。 */
+  const storeReplyNode = useCallback(
+    (message: CanvasAgentDockMessage) => {
+      const ids = onApplyText(message.content, { prompt: "Agent 回复" });
+      setMessages((value) =>
+        value.map((item) => (item.id === message.id ? { ...item, textNodeId: ids[0] } : item)),
+      );
+    },
+    [onApplyText],
   );
 
   const [selection, setSelection] = useState<{
@@ -854,7 +887,24 @@ export default function CanvasAgentDock({
                 ? ` · 节点信息最多带 ${CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES} 个`
                 : ""}
               {selectedTaskText ? ` · ${selectedTaskText}` : ""}
-              {!selectedTaskText && canvasTaskText ? ` · 画布上 ${canvasTaskText}` : ""}
+              {!selectedTaskText && canvasTaskLinks.length ? (
+                <>
+                  {" · 画布上"}
+                  {canvasTaskLinks.map((link, index) => (
+                    <Fragment key={link.key}>
+                      {index ? " · " : " "}
+                      <button
+                        type="button"
+                        className="canvas-agent-dock-head-task"
+                        onClick={() => onFocusNodes(link.ids)}
+                        title={`在画布上定位：${link.label}`}
+                      >
+                        {link.label}
+                      </button>
+                    </Fragment>
+                  ))}
+                </>
+              ) : null}
             </small>
           </div>
         </div>
@@ -985,9 +1035,11 @@ export default function CanvasAgentDock({
             <div className="canvas-agent-dock-message-tools">
               {message.role === "assistant" && !message.error ? (
                 <>
-                  <button type="button" onClick={() => onApplyText(message.content, { prompt: "Agent 回复" })}>
-                    存为节点
-                  </button>
+                  {message.textNodeId ? (
+                    <button type="button" onClick={() => onFocusNodes(message.textNodeId ? [message.textNodeId] : [])}>定位节点</button>
+                  ) : (
+                    <button type="button" onClick={() => storeReplyNode(message)}>存为节点</button>
+                  )}
                   <button type="button" onClick={() => copyMessage(message.content)}>
                     复制
                   </button>
@@ -1019,18 +1071,27 @@ export default function CanvasAgentDock({
                 </button>
               ) : null}
               {message.images?.length ? (
-                <button
-                  type="button"
-                  disabled={message.applied}
-                  onClick={() => {
-                    onApplyImages(message.images || [], { prompt: "Agent 图片", model: message.model });
-                    setMessages((value) =>
-                      value.map((item) => (item.id === message.id ? { ...item, applied: true } : item)),
-                    );
-                  }}
-                >
-                  {message.applied ? "已加入画布" : "加入画布"}
-                </button>
+                message.imageNodeIds?.length ? (
+                  <button
+                    type="button"
+                    onClick={() => onFocusNodes(message.imageNodeIds || [])}
+                    title="已加入画布，点击定位这组图片节点"
+                  >
+                    定位结果
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ids = onApplyImages(message.images || [], { prompt: "Agent 图片", model: message.model });
+                      setMessages((value) =>
+                        value.map((item) => (item.id === message.id ? { ...item, imageNodeIds: ids } : item)),
+                      );
+                    }}
+                  >
+                    加入画布
+                  </button>
+                )
               ) : null}
             </div>
           </div>
@@ -1072,7 +1133,15 @@ export default function CanvasAgentDock({
       ) : null}
       <div className="canvas-agent-dock-quick">
         {quickActions.map((action) => (
-          <button key={action.label} type="button" onClick={() => setInput(action.prompt)} disabled={busy}>
+          <button
+            key={action.label}
+            type="button"
+            onClick={() => {
+              if (action.ids.length) onFocusNodes(action.ids);
+              setInput(action.prompt);
+            }}
+            disabled={busy}
+          >
             {action.label}
           </button>
         ))}

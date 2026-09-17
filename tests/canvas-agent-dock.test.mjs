@@ -304,7 +304,8 @@ test("the dock header counts the tasks of the selected nodes", () => {
   assert.match(component, /已选中 \$\{selectedNodeTotal\} 个节点/);
   assert.match(component, /const selectedNodeTotal = selectedTotal \?\? chips\.length;/);
   // 选中里没有任务时才提整张画布，而且必须写明是“画布上”，不能混进选中数字里。
-  assert.match(component, /\{!selectedTaskText && canvasTaskText \? ` · 画布上 \$\{canvasTaskText\}` : ""\}/);
+  assert.match(component, /\{!selectedTaskText && canvasTaskLinks\.length \? \(/);
+  assert.match(component, /canvasTaskLinks\.map\(\(link, index\) => \(/);
   assert.doesNotMatch(component, /status\.failed > 0 \? ` · \$\{status\.failed\} 个失败`/);
 });
 
@@ -430,4 +431,27 @@ test("replies render as markdown and a long run streams in one frame", () => {
   assert.match(component, /const fromMessageId = options\.fromMessageId \?\? editingMessageId \?\? undefined;/);
   assert.ok(component.includes("正在编辑这条提问 · 发送后会替换它之后的回答"));
   assert.match(styles, /\.canvas-agent-dock-editing\{display:flex;align-items:center/);
+});
+
+test("the dock header drills from the canvas task counts to the real nodes", () => {
+  // 画布上的「进行中 / 失败」不只是数字：点一下就把选中和视口拉过去。
+  assert.match(context, /activeIds: string\[\];/);
+  assert.match(context, /failedIds: string\[\];/);
+  assert.match(context, /status\.activeIds\.push\(node\.id\);/);
+  assert.match(context, /status\.failedIds\.push\(node\.id\);/);
+  assert.match(component, /className="canvas-agent-dock-head-task"/);
+  assert.match(component, /onClick=\{\(\) => onFocusNodes\(link\.ids\)\}/);
+  assert.match(styles, /\.canvas-agent-dock-head-task\{/);
+  // 「排查失败」先把失败的节点选中，模型才拿得到失败原因。
+  assert.match(component, /label: status\.failedIds\.length \? `排查失败（\$\{status\.failedIds\.length\}）` : "排查失败"/);
+  assert.match(component, /if \(action\.ids\.length\) onFocusNodes\(action\.ids\);/);
+  // 落到画布上的结果回传节点 id，消息按钮变成定位入口。
+  assert.match(canvas, /return nodes\.map\(\(node\) => node\.id\);/);
+  assert.match(canvas, /return \[node\.id\];/);
+  assert.match(component, /imageNodeIds: appliedIds/);
+  assert.match(component, /onClick=\{\(\) => onFocusNodes\(message\.imageNodeIds \|\| \[\]\)\}/);
+  assert.match(component, /onClick=\{\(\) => onFocusNodes\(message\.textNodeId \? \[message\.textNodeId\] : \[\]\)\}/);
+  // 刷新后这些定位入口要还在：节点 id 跟着会话一起存。
+  assert.match(component, /imageNodeIds: message\.imageNodeIds\.map\(\(id\) => String\(id \|\| ""\)\)\.filter\(Boolean\)/);
+  assert.match(component, /\.\.\.\(message\.textNodeId \? \{ textNodeId: String\(message\.textNodeId\) \} : \{\}\),/);
 });

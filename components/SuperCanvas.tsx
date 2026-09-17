@@ -9812,7 +9812,7 @@ export default function SuperCanvas() {
       meta: { prompt: string; model?: string },
     ) => {
       const incoming = images.filter((image) => Boolean(String(image.url || "").trim()));
-      if (!incoming.length) return;
+      if (!incoming.length) return [];
       const anchor = selectedSingle || selectedNodes[0] || null;
       const origin = anchor
         ? { x: anchor.x, y: anchor.y }
@@ -9866,6 +9866,7 @@ export default function SuperCanvas() {
       });
       notify(`已把 ${nodes.length} 张 Agent 图片加入画布`);
       fitView(nodes.map((node) => node.id));
+      return nodes.map((node) => node.id);
     },
     [
       agentDockReferences,
@@ -9883,7 +9884,7 @@ export default function SuperCanvas() {
   const applyAgentDockText = useCallback(
     (text: string, meta: { prompt: string }) => {
       const content = String(text || "").trim();
-      if (!content) return;
+      if (!content) return [];
       const anchor = selectedSingle || selectedNodes[0] || null;
       const origin = anchor
         ? { x: anchor.x, y: anchor.y }
@@ -9914,6 +9915,7 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setContextMenu(null);
       notify("已把 Agent 回复存成节点");
+      return [node.id];
     },
     [
       commit,

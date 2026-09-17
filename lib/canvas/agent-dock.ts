@@ -11,6 +11,9 @@ export type CanvasAgentDockStatus = {
   running: number;
   queued: number;
   failed: number;
+  /* 面板头部把「进行中 / 失败」做成可点的定位入口，所以状态里要带节点 id。 */
+  activeIds: string[];
+  failedIds: string[];
 };
 
 export type CanvasAgentDockContext = {
@@ -89,12 +92,26 @@ export function canvasAgentDockNodeSummary(node: CanvasNode, index: number) {
 }
 
 export function canvasAgentDockStatus(document: CanvasDocument): CanvasAgentDockStatus {
-  const status: CanvasAgentDockStatus = { nodes: document.nodes.length, running: 0, queued: 0, failed: 0 };
+  const status: CanvasAgentDockStatus = {
+    nodes: document.nodes.length,
+    running: 0,
+    queued: 0,
+    failed: 0,
+    activeIds: [],
+    failedIds: [],
+  };
   for (const node of document.nodes) {
     const value = node.data.status;
-    if (value === "running") status.running += 1;
-    else if (value === "queued") status.queued += 1;
-    else if (value === "failed") status.failed += 1;
+    if (value === "running") {
+      status.running += 1;
+      status.activeIds.push(node.id);
+    } else if (value === "queued") {
+      status.queued += 1;
+      status.activeIds.push(node.id);
+    } else if (value === "failed") {
+      status.failed += 1;
+      status.failedIds.push(node.id);
+    }
   }
   return status;
 }
