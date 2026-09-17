@@ -15574,32 +15574,6 @@ export default function SuperCanvas() {
                 </span>
                 <small className="canvas-menu-shortcut">Z</small>
               </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  setContextMenu(null);
-                  exportWorkflow();
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⇩</span>
-                <span className="canvas-menu-copy">
-                  <b>导出工作流 JSON</b>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  setContextMenu(null);
-                  workflowInputRef.current?.click();
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
-                <span className="canvas-menu-copy">
-                  <b>导入工作流 JSON</b>
-                </span>
-              </button>
             </div>
           </CanvasContextMenuFrame>
         ) : null}

@@ -251,8 +251,6 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
     "<b>一键整理</b>",
     "清理空内容（",
     "<b>适应视图</b>",
-    "<b>导出工作流 JSON</b>",
-    "<b>导入工作流 JSON</b>",
   ];
   const actionPositions = actionMarkers.map((marker) => toolsMenu.indexOf(marker));
   assert.deepEqual(
@@ -269,6 +267,11 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.match(toolsMenu, /<b>清理空内容（\{emptyContentNodes\.length\}）<\/b>/);
   assert.match(toolsMenu, /deleteEmptyContentNodes\(\)/);
   assert.match(toolsMenu, /disabled=\{!emptyContentNodes\.length\}/);
+  // 工作流 JSON 的入口在“画布设置”，画布操作菜单不再重复一遍。
+  assert.doesNotMatch(toolsMenu, /导出工作流 JSON/);
+  assert.doesNotMatch(toolsMenu, /导入工作流 JSON/);
+  assert.match(component, /<section className="canvas-setting-section"><b>导出工作流<\/b>/);
+  assert.match(component, /<section className="canvas-setting-section"><b>导入工作流<\/b>/);
   assert.match(toolsMenu, /canvas-menu-item-danger/);
   assert.match(styles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
   assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
