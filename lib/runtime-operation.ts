@@ -114,7 +114,7 @@ async function cleanupStaleRequests() {
 
 async function readOperationLock() {
   try {
-    return JSON.parse(await readFile(operationLockPath, 'utf8')) as Partial<RuntimeOperationLock>;
+    return JSON.parse((await readFile(operationLockPath, 'utf8')).replace(/^\uFEFF/, '')) as Partial<RuntimeOperationLock>;
   } catch {
     return null;
   }

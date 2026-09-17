@@ -30,18 +30,25 @@ function Write-UpdateLog([string]$Message) {
   } catch {}
 }
 
+function Write-JsonFile([string]$Path, $Value) {
+  # The Node runtime reads these files as UTF-8, so never write the BOM that
+  # Windows PowerShell 5.1 adds for -Encoding UTF8.
+  $json = $Value | ConvertTo-Json -Depth 5
+  [System.IO.File]::WriteAllText($Path, $json, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Write-UpdateProgress([string]$Stage, [string]$Message, [int]$Percent) {
   if (-not $ProgressPath) { return }
   for ($attempt = 0; $attempt -lt 4; $attempt++) { try {
     $progress = if (Test-Path -LiteralPath $ProgressPath) {
-      Get-Content -LiteralPath $ProgressPath -Raw | ConvertFrom-Json
+      Get-Content -LiteralPath $ProgressPath -Raw -Encoding UTF8 | ConvertFrom-Json
     } else { [pscustomobject]@{} }
     $progress.stage = $Stage
     $progress.message = $Message
     $progress.percent = $Percent
     $progress.updatedAt = (Get-Date).ToUniversalTime().ToString('o')
     $temporaryProgressPath = "$ProgressPath.$PID.tmp"
-    $progress | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporaryProgressPath -Encoding UTF8
+    Write-JsonFile -Path $temporaryProgressPath -Value $progress
     Move-Item -LiteralPath $temporaryProgressPath -Destination $ProgressPath -Force
       return
     } catch {
@@ -63,7 +70,7 @@ function Claim-UpdateLock {
   if ([string]$lock.token -ne $OperationToken) { throw '更新任务锁校验失败，操作已取消' }
   $lock.pid = $PID
   $temporaryLockPath = "$lockPath.$PID.tmp"
-  $lock | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporaryLockPath -Encoding UTF8
+  Write-JsonFile -Path $temporaryLockPath -Value $lock
   Move-Item -LiteralPath $temporaryLockPath -Destination $lockPath -Force
 }
 

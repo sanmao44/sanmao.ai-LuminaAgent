@@ -109,7 +109,7 @@ function persistUpdateProgress(progress: UpdateProgress) {
 
 async function readPersistedUpdateProgress() {
   try {
-    const parsed = JSON.parse(await readFile(progressFilePath, 'utf8')) as Partial<UpdateProgress>;
+    const parsed = JSON.parse((await readFile(progressFilePath, 'utf8')).replace(/^\uFEFF/, '')) as Partial<UpdateProgress>;
     if (!parsed.jobId || !parsed.version || !parsed.stage || !parsed.updatedAt) return null;
     return parsed as UpdateProgress;
   } catch {
