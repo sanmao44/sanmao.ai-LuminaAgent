@@ -30,6 +30,8 @@ type SkillSummary = {
 };
 
 type LocalCandidate = { key: string; id: string; name: string; description: string; root: string };
+type ArchiveChoice = { key: string; root: string; name: string; description: string };
+type ChoiceSource = { kind: 'file'; file: File } | { kind: 'url'; url: string };
 type SkillSettingsView = { enabled: boolean; autoApprove: boolean };
 type Tab = 'installed' | 'create' | 'import';
 type UpdateState = { status: 'checking' | 'same' | 'updated' | 'error'; message: string };
@@ -142,8 +144,11 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [updates, setUpdates] = useState<Record<string, UpdateState>>({});
   const [indexLimit, setIndexLimit] = useState(0);
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
+  const [choices, setChoices] = useState<ArchiveChoice[] | null>(null);
+  const [choicesTotal, setChoicesTotal] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null);
   const retryImport = useRef<(() => Promise<void>) | null>(null);
+  const choiceSource = useRef<ChoiceSource | null>(null);
   const importFooterRef = useRef<HTMLDivElement>(null);
   useBodyScrollLock(open);
 
@@ -296,6 +301,20 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     });
   }
 
+  /* 归档里有多个技能时先不安装，列出候选让用户挑选；返回 true 表示已进入选择步骤。 */
+  function applyChoices(data: Record<string, unknown>, source: ChoiceSource) {
+    const list = Array.isArray(data.choices) ? data.choices as ArchiveChoice[] : [];
+    if (list.length < 2) return false;
+    choiceSource.current = source;
+    setChoices(list);
+    setChoicesTotal(list.length);
+    setConflict('');
+    setRetryAvailable(false);
+    setNotice('');
+    retryImport.current = null;
+    return true;
+  }
+
   async function importFromUrl(force = false) {
     retryImport.current = () => importFromUrl(true);
     setConflict('');
@@ -303,6 +322,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     await run(async () => {
       try {
         const data = await requestJson('/api/skills/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: importUrl, overwrite: overwrite || force }) });
+        if (applyChoices(data, { kind: 'url', url: importUrl.trim() })) return;
         applyPayload(data);
         setImportUrl('');
         setTab('installed');
@@ -327,10 +347,59 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
         form.append('file', file);
         form.append('overwrite', String(overwrite || force));
         const data = await requestJson('/api/skills/import', { method: 'POST', body: form });
+        if (applyChoices(data, { kind: 'file', file })) return;
         applyPayload(data);
         setTab('installed');
         const warnings = Array.isArray(data.warnings) ? data.warnings as string[] : [];
         setNotice(warnings.length ? `已导入，注意：${warnings[0]}` : `已导入「${(data.skill as { name?: string })?.name || file.name}」。`);
+      } catch (failure) {
+        if (!isExistingSkillError(failure)) throw failure;
+        setConflict(conflictNotice());
+        setRetryAvailable(true);
+      }
+    });
+  }
+
+  /* 安装勾选的候选技能：单个或全部；失败的留在选择区，方便勾选覆盖后重试。 */
+  async function installChoice(keys: string[], force = false) {
+    const source = choiceSource.current;
+    if (!source || !keys.length) return;
+    retryImport.current = () => installChoice(keys, true);
+    setConflict('');
+    setRetryAvailable(false);
+    await run(async () => {
+      try {
+        let data: Record<string, unknown>;
+        if (source.kind === 'file') {
+          const form = new FormData();
+          form.append('file', source.file);
+          form.append('overwrite', String(overwrite || force));
+          form.append('dirs', JSON.stringify(keys));
+          data = await requestJson('/api/skills/import', { method: 'POST', body: form });
+        } else {
+          data = await requestJson('/api/skills/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: source.url, dirs: keys, overwrite: overwrite || force }) });
+        }
+        applyPayload(data);
+        const installed = Array.isArray(data.installed) ? data.installed as Array<{ skill?: { name?: string } }> : [];
+        const failed = Array.isArray(data.failed) ? data.failed as Array<{ dir: string; error: string }> : [];
+        if (!installed.length) throw new Error(failed.length ? failed[0].error : '没有安装任何技能，请重新选择后再试。');
+        const names = installed.map((item) => item.skill?.name || '').filter(Boolean);
+        if (failed.length) {
+          const label = (key: string) => (choices || []).find((choice) => choice.key === key)?.name || key;
+          setChoices((previous) => (previous || []).filter((choice) => failed.some((item) => item.dir === choice.key)));
+          const detail = failed.slice(0, 2).map((item) => {
+            const name = label(item.dir);
+            return item.error.includes(name) ? item.error : name + '（' + item.error + '）';
+          }).join('；');
+          setNotice('已导入 ' + installed.length + ' 个技能，' + failed.length + ' 个失败：' + detail + (failed.length > 2 ? ' 等' : '') + '。可勾选「覆盖同名技能」后重试。');
+          return;
+        }
+        setChoices(null);
+        choiceSource.current = null;
+        setImportUrl('');
+        setFileLabel('');
+        setTab('installed');
+        setNotice(names.length > 1 ? '已导入「' + names[0] + '」等 ' + names.length + ' 个技能。' : '已导入「' + (names[0] || keys[0]) + '」。');
       } catch (failure) {
         if (!isExistingSkillError(failure)) throw failure;
         setConflict(conflictNotice());
@@ -440,7 +509,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   );
 
   return <>
-    <button type="button" className={styles.trigger} data-tooltip={pendingCount ? `技能 · ${pendingCount} 个待确认` : '技能'} aria-label={pendingCount ? `技能（${pendingCount} 个待确认）` : '技能'} aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConflict(''); setRetryAvailable(false); retryImport.current = null; setPreview(null); setConfirming(''); setDiscarding(''); setFileLabel(''); setDragActive(false); setOpen(true); }}>{icon}{pendingCount > 0 && <span className={styles.pendingBadge} aria-hidden="true">{pendingCount > 9 ? '9+' : pendingCount}</span>}</button>
+    <button type="button" className={styles.trigger} data-tooltip={pendingCount ? `技能 · ${pendingCount} 个待确认` : '技能'} aria-label={pendingCount ? `技能（${pendingCount} 个待确认）` : '技能'} aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConflict(''); setRetryAvailable(false); retryImport.current = null; setPreview(null); setConfirming(''); setDiscarding(''); setFileLabel(''); setDragActive(false); setChoices(null); choiceSource.current = null; setOpen(true); }}>{icon}{pendingCount > 0 && <span className={styles.pendingBadge} aria-hidden="true">{pendingCount > 9 ? '9+' : pendingCount}</span>}</button>
     {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="skill-manager-title" onClose={() => setOpen(false)} onCancel={(event) => { if (busy) event.preventDefault(); }}>
       <header className={styles.header}>
         <div className={styles.titleBlock}>
@@ -579,12 +648,35 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
         </section>}
 
         {tab === 'import' && <section className={styles.form}>
+          {choices ? <div className={styles.choices}>
+            <div className={styles.choiceHead}>
+              <p className={styles.choiceTitle}>{choices.length < choicesTotal
+                ? `还有 ${choices.length} 个技能没有安装成功`
+                : `${choiceSource.current?.kind === 'url' ? '这个仓库' : '这个压缩包'}里有 ${choices.length} 个技能`}</p>
+              <p className={styles.hint}>选一个安装，或一次性全部安装；同名冲突仍由下方「覆盖同名技能」控制。</p>
+            </div>
+            <div className={styles.localList}>
+              {choices.map((choice) => <article key={choice.key} className={styles.row}>
+                <div className={styles.rowMain}>
+                  <div className={styles.rowTitle}><strong>{choice.name || choice.key}</strong><span className={styles.badge}>{choice.root || '根目录'}</span></div>
+                  <p className={styles.description}>{choice.description || '没有填写简介'}</p>
+                </div>
+                <div className={styles.rowActions}>
+                  <button type="button" disabled={busy} onClick={() => void installChoice([choice.key])}>安装</button>
+                </div>
+              </article>)}
+            </div>
+            <div className={styles.formFooter}>
+              <button type="button" disabled={busy} onClick={() => { setChoices(null); choiceSource.current = null; }}>返回重新选择来源</button>
+              <button type="button" className={styles.primary} disabled={busy} onClick={() => void installChoice(choices.map((choice) => choice.key))}>全部安装（{choices.length}）</button>
+            </div>
+          </div> : <>
           <label htmlFor="skill-url">GitHub 仓库或 SKILL.md 链接</label>
           <div className={styles.inline}>
             <input id="skill-url" value={importUrl} disabled={busy} onChange={(event) => setImportUrl(event.target.value)} placeholder="owner/repo、https://github.com/owner/repo/tree/main/skills/demo 或直链" />
             <button type="button" className={styles.primary} disabled={busy || !importUrl.trim()} onClick={() => void importFromUrl()}>导入</button>
           </div>
-          <p className={styles.hint}>只允许 https 地址，内网与本机地址会被拒绝；GitHub 会整仓库下载后只安装含 SKILL.md 的目录。</p>
+          <p className={styles.hint}>只允许 https 地址，内网与本机地址会被拒绝；仓库或压缩包里含多个 SKILL.md 时，会先列出技能让你选择安装。</p>
 
           <div className={styles.orDivider}><span>或</span></div>
 
@@ -620,6 +712,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                 </div>
               </article>)}
             </div>
+          </>}
+
           </>}
 
           {conflict && <p className={styles.conflict} role="alert">

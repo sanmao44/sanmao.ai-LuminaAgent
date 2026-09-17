@@ -160,6 +160,11 @@
 .inline input { flex: 1 1 320px; }
 .localList { display: grid; gap: 8px; max-height: 220px; overflow: auto; overscroll-behavior: contain; }
 
+.choices { display: grid; gap: 10px; padding: 13px 14px; border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.choiceHead { display: grid; gap: 3px; }
+.choiceTitle { margin: 0; font-size: 13px; font-weight: 800; color: var(--text); }
+.choices .localList { max-height: min(38dvh, 300px); }
+
 .preview { display: grid; gap: 10px; }
 .previewHead { display: flex; align-items: center; gap: 10px; }
 .preview pre { margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--text-2) 5%, transparent); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }

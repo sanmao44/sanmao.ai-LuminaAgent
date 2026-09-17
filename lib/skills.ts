@@ -86,6 +86,8 @@ export type SkillMeta = {
   sourceHash: string;
   /** 最近一次检查来源更新的时间戳；0 表示还没检查过。 */
   sourceCheckedAt: number;
+  /** 多技能仓库/归档里选中的技能目录；检查更新时按它精确取回同一个技能。 */
+  sourceDir: string;
 };
 
 export type SkillRecord = SkillMeta & { body: string; dir: string; bodyChars: number; bodyClipped: boolean };
@@ -108,6 +110,7 @@ export type InstallSkillInput = {
   tools?: unknown;
   source?: SkillSource;
   sourceUrl?: unknown;
+  sourceDir?: unknown;
   installer?: Partial<SkillInstaller>;
   files?: SkillFileInput[];
   enabled?: boolean;
@@ -488,6 +491,7 @@ function readSkillDir(dir: string, id: string, pending: boolean): SkillRecord | 
     tools: parsed.tools.length ? parsed.tools : normalizeSkillTools(stored?.tools),
     source,
     sourceUrl: typeof stored?.sourceUrl === 'string' ? stored.sourceUrl : '',
+    sourceDir: typeof stored?.sourceDir === 'string' ? stored.sourceDir : '',
     enabled: pending ? false : stored?.enabled !== false,
     pending,
     createdAt: Number(stored?.createdAt) || updatedAt,
@@ -607,7 +611,7 @@ export function installSkill(input: InstallSkillInput, options: SkillStoreOption
   const id = resolveSkillId(input?.id || name);
   const root = pending ? resolvePendingSkillsDir(options) : resolveSkillsDir(options);
   const dir = path.join(root, id);
-  if (existsSync(dir) && !input?.overwrite) throw new Error('技能 ' + id + ' 已存在，请改名或选择覆盖');
+  if (existsSync(dir) && !input?.overwrite) throw new Error('技能「' + name + '」已存在，请改名或选择覆盖');
   const existing = input?.overwrite ? readSkill(id, { ...options, pending }) : null;
   const { files, warnings } = normalizeSkillFileInputs(input?.files);
   if (fullBody.length > SKILL_FILE_MAX_BYTES) warnings.push('正文超过 ' + SKILL_FILE_MAX_BYTES + ' 字符，超出部分未保存');
@@ -622,6 +626,7 @@ export function installSkill(input: InstallSkillInput, options: SkillStoreOption
     tools: normalizeSkillTools(input?.tools),
     source,
     sourceUrl: typeof input?.sourceUrl === 'string' ? input.sourceUrl.trim().slice(0, 500) : '',
+    sourceDir: typeof input?.sourceDir === 'string' ? normalizeSkillFilePath(input.sourceDir) || '' : '',
     enabled: pending ? false : input?.enabled !== false,
     pending,
     createdAt: existing?.createdAt || now,
@@ -667,6 +672,7 @@ export function installSkillFromDocument(input: {
   enabled?: boolean;
   source?: SkillSource;
   sourceUrl?: unknown;
+  sourceDir?: unknown;
   installer?: Partial<SkillInstaller>;
   files?: SkillFileInput[];
   pending?: boolean;
@@ -691,6 +697,7 @@ export function installSkillFromDocument(input: {
     enabled: input?.enabled,
     source: input?.source || 'url',
     sourceUrl: input?.sourceUrl,
+    sourceDir: input?.sourceDir,
     installer: input?.installer,
     files: input?.files,
     pending: input?.pending,

@@ -142,7 +142,7 @@ const tools = [
           name: { type: 'string', description: '技能名称。' },
           description: { type: 'string', description: '一句话说明适用场景。' },
           body: { type: 'string', description: '技能正文（Markdown），写清目标、步骤和注意事项；从链接安装时留空。' },
-          url: { type: 'string', description: '可选：GitHub 仓库或 SKILL.md 直链。' },
+          url: { type: 'string', description: '可选：GitHub 仓库或 SKILL.md 直链。仓库里有多个技能时安装会返回候选目录，需要先和用户确认装哪一个，再用带目录的链接重试。' },
           id: { type: 'string', description: '可选：英文技能标识。' },
           tags: { type: 'string', description: '可选：中文别名，逗号分隔（例如“报错,调试,修bug”）。安装英文技能时尽量补上，方便之后用中文检索到它。' },
         }, required: ['name'],
@@ -882,7 +882,11 @@ export async function POST(request: Request) {
           const githubTarget = /github\.com\//i.test(sourceRef) || !/^[a-z]+:\/\//i.test(sourceRef) ? parseGithubSkillTarget(sourceRef) : null;
           if (githubTarget) {
             const parsed = await fetchSkillFilesFromGithub(githubTarget, { signal: requestController.signal });
-            installed = installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, tags: args.tags, source: 'github', sourceUrl: sourceRef, installer, pending: !autoApprove });
+            if (parsed.roots.length > 1) {
+              const list = parsed.candidates.slice(0, 8).map((item) => item.key + (item.name ? '（' + item.name + '）' : '')).join('、');
+              return fail('这个仓库里有 ' + parsed.roots.length + ' 个技能：' + list + '。先和用户确认装哪一个，再用 owner/repo/目录 或 /tree/分支/目录 形式的链接重新安装。');
+            }
+            installed = installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, tags: args.tags, source: 'github', sourceUrl: sourceRef, sourceDir: githubTarget.dir, installer, pending: !autoApprove });
           } else {
             const fetched = await fetchSkillText(sourceRef, { signal: requestController.signal });
             installed = installSkillFromDocument({ text: fetched.text, id: args.id, tags: args.tags, source: 'url', sourceUrl: fetched.url, installer, pending: !autoApprove });

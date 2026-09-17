@@ -10,6 +10,7 @@ import {
   githubArchiveUrls,
   isReservedSkillPath,
   isSkillTextPath,
+  parseSkillDocument,
   skillHttpErrorMessage,
   normalizeSkillFilePath,
   shouldSkipSkillPath,
@@ -26,16 +27,48 @@ import {
 const ARCHIVE_SCAN_FILES_MAX = 900;
 const ARCHIVE_SCAN_BYTES_MAX = 48 * 1024 * 1024;
 
+/** 多技能归档里的候选技能：key 用于回传 dir 精确安装，root 是它在压缩包里的完整路径。 */
+export type SkillArchiveCandidate = {
+  key: string;
+  root: string;
+  name: string;
+  description: string;
+};
+
 export type SkillArchiveResult = {
   files: SkillFileInput[];
   document: string;
   root: string;
   roots: string[];
+  candidates: SkillArchiveCandidate[];
   warnings: string[];
 };
 
 function boundedWarnings(warnings: string[]) {
   return warnings.slice(0, 12);
+}
+
+/** 每个根目录取“能唯一识别它的最短后缀”，用户回传这个后缀即可精确命中，不用带压缩包的仓库前缀。 */
+function uniqueRootKeys(roots: string[]) {
+  return roots.map((root) => {
+    const segments = root.split('/').filter(Boolean);
+    for (let take = 1; take <= segments.length; take += 1) {
+      const suffix = segments.slice(segments.length - take).join('/');
+      const matched = roots.filter((item) => item === suffix || item.endsWith('/' + suffix));
+      if (matched.length === 1) return suffix;
+    }
+    return root;
+  });
+}
+
+function documentPreview(text: string) {
+  const parsed = parseSkillDocument(text);
+  return { name: String(parsed.name || ''), description: String(parsed.description || '') };
+}
+
+/** 目录匹配规则：完全相等，或压缩包根路径以 /目录 结尾（带仓库前缀的归档）。 */
+export function archiveRootMatches(root: string, dir: string) {
+  return root === dir || root.endsWith('/' + dir);
 }
 
 export function skillFilesFromArchive(data: Uint8Array, options: { dir?: string } = {}): SkillArchiveResult {
@@ -72,13 +105,22 @@ export function skillFilesFromArchive(data: Uint8Array, options: { dir?: string 
     .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
   if (!roots.length) throw new Error('压缩包里没有找到 SKILL.md');
 
+  const rootText = (item: string) => {
+    const wanted = (item ? item + '/' : '') + 'skill.md';
+    const rel = paths.find((candidate) => candidate.toLowerCase() === wanted.toLowerCase());
+    const bytes = rel ? unzipped[rel] : null;
+    return bytes ? Buffer.from(bytes).toString('utf8') : '';
+  };
+  const keys = uniqueRootKeys(roots);
+  const candidates: SkillArchiveCandidate[] = roots.map((item, index) => ({ key: keys[index], root: item, ...documentPreview(rootText(item)) }));
+
   let root = roots[0];
   if (wantedDir) {
-    const exact = roots.find((item) => item === wantedDir || item.endsWith('/' + wantedDir));
+    const exact = roots.find((item) => archiveRootMatches(item, wantedDir));
     if (exact) root = exact;
     else if (warnings.length < 12) warnings.push('未找到目录 ' + wantedDir + '，已改用 ' + (root || '压缩包根目录'));
   } else if (roots.length > 1 && warnings.length < 12) {
-    warnings.push('压缩包里有 ' + roots.length + ' 个技能，已导入“' + root + '”，其余可通过链接单独导入');
+    warnings.push('压缩包里有 ' + roots.length + ' 个技能，未指定目录时默认选择“' + root + '”');
   }
 
   const prefix = root ? root + '/' : '';
@@ -101,7 +143,7 @@ export function skillFilesFromArchive(data: Uint8Array, options: { dir?: string 
   if (skipped) warnings.push('技能附件超过上限，已跳过 ' + skipped + ' 个文件');
   if (!document.trim()) throw new Error('压缩包里的 SKILL.md 是空文件');
 
-  return { files, document, root, roots, warnings: boundedWarnings(warnings) };
+  return { files, document, root, roots, candidates, warnings: boundedWarnings(warnings) };
 }
 
 export function githubSkillDirCandidates(target: GithubSkillTarget) {
@@ -192,7 +234,7 @@ async function skillFilesFromGithubListing(dir: string, listing: any[], options:
     } catch { skipped += 1; }
   }
   if (skipped) warnings.push('已跳过 ' + skipped + ' 个附件');
-  return { files, document, root: dir, roots: [dir], warnings, sourceUrl: String(documentEntry.html_url || documentEntry.download_url || '') };
+  return { files, document, root: dir, roots: [dir], candidates: [{ key: dir, root: dir, ...documentPreview(document) }], warnings, sourceUrl: String(documentEntry.html_url || documentEntry.download_url || '') };
 }
 
 async function fetchSkillFilesFromGithubApi(target: GithubSkillTarget, options: { signal?: AbortSignal } = {}) {
@@ -207,7 +249,7 @@ async function fetchSkillFilesFromGithubApi(target: GithubSkillTarget, options: 
     if (listing?.type === 'file' && String(listing.name || '').toLowerCase() === 'skill.md') {
       const text = await githubEntryText(listing, options);
       if (!text.trim()) throw new Error('GitHub 上的 SKILL.md 是空文件');
-      return { files: [] as SkillFileInput[], document: text, root: dir, roots: [dir], warnings: ['只导入了 SKILL.md，仓库里的其他附件没有下载'], sourceUrl: String(listing.html_url || listing.download_url || '') };
+      return { files: [] as SkillFileInput[], document: text, root: dir, roots: [dir], candidates: [{ key: dir, root: dir, ...documentPreview(text) }], warnings: ['只导入了 SKILL.md，仓库里的其他附件没有下载'], sourceUrl: String(listing.html_url || listing.download_url || '') };
     }
   }
   const segments = String(target.dir || '').split('/').filter(Boolean);
@@ -231,15 +273,20 @@ async function fetchSkillFilesFromGithubApi(target: GithubSkillTarget, options: 
   return null;
 }
 
-export async function fetchSkillFilesFromGithub(target: GithubSkillTarget, options: { signal?: AbortSignal } = {}) {
-  for (const url of githubRawSkillUrls(target)) {
+export async function fetchSkillFilesFromGithub(target: GithubSkillTarget, options: { signal?: AbortSignal; dir?: string } = {}) {
+  /* dir 覆盖：用户在候选列表里指定了具体技能目录时，后续所有通道都按这个目录找。 */
+  const wantedDir = typeof options.dir === 'string' && options.dir ? options.dir : target.dir;
+  const searchTarget: GithubSkillTarget = wantedDir === target.dir ? target : { ...target, dir: wantedDir };
+  for (const url of githubRawSkillUrls(searchTarget)) {
     try {
       const fetched = await fetchSkillBytes(url, { maxBytes: SKILL_FILE_MAX_BYTES, signal: options.signal, timeoutMs: SKILL_FETCH_TIMEOUT_MS });
+      const document = fetched.data.toString('utf8');
       return {
         files: [] as SkillFileInput[],
-        document: fetched.data.toString('utf8'),
-        root: target.dir,
-        roots: [target.dir],
+        document,
+        root: searchTarget.dir,
+        roots: [searchTarget.dir],
+        candidates: [{ key: searchTarget.dir, root: searchTarget.dir, ...documentPreview(document) }],
         warnings: ['只导入了 SKILL.md，仓库里的其他附件没有下载'],
         sourceUrl: fetched.url,
       };
@@ -250,14 +297,14 @@ export async function fetchSkillFilesFromGithub(target: GithubSkillTarget, optio
 
   let apiError: unknown = null;
   try {
-    const viaApi = await fetchSkillFilesFromGithubApi(target, options);
+    const viaApi = await fetchSkillFilesFromGithubApi(searchTarget, options);
     if (viaApi) return viaApi;
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason || error;
     apiError = error;
   }
 
-  const urls = githubArchiveUrls(target);
+  const urls = githubArchiveUrls(searchTarget);
   let data: Buffer | null = null;
   let sourceUrl = '';
   let lastError: unknown = null;
@@ -282,6 +329,6 @@ export async function fetchSkillFilesFromGithub(target: GithubSkillTarget, optio
     if (apiError instanceof Error) throw new Error(archiveMessage + '；GitHub 接口通道也不可用：' + apiError.message.slice(0, 120));
     throw lastError instanceof Error ? lastError : new Error('仓库下载失败');
   }
-  const parsed = skillFilesFromArchive(data, { dir: target.dir });
+  const parsed = skillFilesFromArchive(data, { dir: searchTarget.dir });
   return { ...parsed, sourceUrl };
 }

@@ -49,3 +49,45 @@ test('ZIP 导入在没有 SKILL.md 时仍然报错', () => {
   const zip = zipSync({ 'readme.md': Buffer.from('no skill here') });
   assert.throws(() => archive.skillFilesFromArchive(zip), /没有找到 SKILL.md/);
 });
+
+test('根目录技能与子目录技能并存时候选里保留根目录', () => {
+  const zip = zipSync({
+    'SKILL.md': Buffer.from('---\nname: 根技能\ndescription: 顶层技能\n---\n\n# 正文\n'),
+    'skills/deep/SKILL.md': Buffer.from('---\nname: 深层技能\ndescription: 子目录技能\n---\n\n# 正文\n'),
+  });
+  const parsed = archive.skillFilesFromArchive(zip);
+  assert.deepEqual(parsed.roots, ['', 'skills/deep']);
+  assert.deepEqual(parsed.candidates.map((item) => item.key), ['', 'deep']);
+  assert.equal(parsed.candidates[0].name, '根技能');
+  const picked = archive.skillFilesFromArchive(zip, { dir: 'deep' });
+  assert.equal(picked.root, 'skills/deep');
+  assert.equal(picked.candidates.length, 2);
+});
+
+test('ZIP 里有多个技能时返回候选列表并支持按目录导入', () => {
+  const zip = zipSync({
+    'repo-main/skills/brief/SKILL.md': Buffer.from('---\nname: 简报\ndescription: 写简报\n---\n\n# 正文\n'),
+    'repo-main/skills/brief/template.md': Buffer.from('模板'),
+    'repo-main/skills/translate/SKILL.md': Buffer.from('---\nname: 翻译\ndescription: 翻译文本\n---\n\n# 正文\n'),
+    'repo-main/skills/nested/deep/SKILL.md': Buffer.from('# 深层技能\n\n步骤\n'),
+  });
+  const parsed = archive.skillFilesFromArchive(zip);
+  assert.equal(parsed.roots.length, 3);
+  assert.deepEqual(parsed.candidates.map((item) => item.key), ['brief', 'translate', 'deep']);
+  assert.deepEqual(parsed.candidates.map((item) => item.name), ['简报', '翻译', '深层技能']);
+  assert.equal(parsed.candidates[0].description, '写简报');
+  assert.equal(parsed.candidates[0].root, 'repo-main/skills/brief');
+  assert.match(parsed.warnings[0], /3 个技能/);
+
+  const picked = archive.skillFilesFromArchive(zip, { dir: 'deep' });
+  assert.equal(picked.root, 'repo-main/skills/nested/deep');
+  assert.match(picked.document, /深层技能/);
+  assert.deepEqual(picked.files, []);
+
+  const brief = archive.skillFilesFromArchive(zip, { dir: 'brief' });
+  assert.equal(brief.root, 'repo-main/skills/brief');
+  assert.deepEqual(brief.files.map((file) => file.path), ['template.md']);
+
+  assert.equal(archive.archiveRootMatches('repo-main/skills/brief', 'brief'), true);
+  assert.equal(archive.archiveRootMatches('repo-main/skills/brief', 'translate'), false);
+});

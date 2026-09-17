@@ -445,6 +445,8 @@ test('Agent 路由接入技能工具与渐进披露', async () => {
   assert.ok(route.match(/system \+= skillPromptSection;/g).length === 2);
   assert.match(route, /skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST/);
   assert.match(route, /skillToolCalls >= SKILL_TOOL_MAX_CALLS/);
+  assert.match(route, /parsed\.roots\.length > 1/);
+  assert.match(route, /parsed\.candidates\.slice\(0, 8\)/);
 });
 
 test('技能接口覆盖列表、导入、待确认与设置', async () => {
@@ -464,11 +466,18 @@ test('技能接口覆盖列表、导入、待确认与设置', async () => {
   assert.match(importRoute, /skillFilesFromArchive\(buffer\)/);
   assert.match(importRoute, /fetchSkillFilesFromGithub\(target\)/);
   assert.match(importRoute, /listLocalAgentSkills\(\)\.find/);
+  assert.match(importRoute, /readSelectionDirs\(/);
+  assert.match(importRoute, /parsed\.roots\.length > 1/);
+  assert.match(importRoute, /choices: parsed\.candidates/);
+  assert.match(importRoute, /installArchiveSelection/);
+  assert.match(importRoute, /installGithubSelection/);
   assert.match(pending, /approvePendingSkill\(key\)/);
   assert.match(pending, /discardPendingSkill\(key\)/);
   assert.match(updateRoute, /planSkillUpdate\(skill, latest\.document\)/);
   assert.match(updateRoute, /markSkillSourceChecked\(skill\.id/);
   assert.match(updateRoute, /installSkillFromDocument\(\{/);
+  assert.match(updateRoute, /fetchSkillFilesFromGithub\(target, sourceDir \? \{ dir: sourceDir \} : \{\}\)/);
+  assert.match(updateRoute, /archiveRootMatches\(parsed\.root, sourceDir\)/);
   assert.match(exportRoute, /skillMarkdown\(skill\)/);
   assert.match(exportRoute, /content-disposition/i);
 });
@@ -486,7 +495,23 @@ test('GitHub 技能抓取带目录候选与接口通道', async () => {
   assert.match(archive, /if \(last\) candidates\.push\('skills\/' \+ last, last\);/);
   assert.match(archive, /async function fetchSkillFilesFromGithubApi/);
   assert.match(archive, /const GITHUB_API_BASE = 'https:\/\/api\.github\.com';/);
-  assert.match(archive, /const viaApi = await fetchSkillFilesFromGithubApi\(target, options\);/);
+  assert.match(archive, /const viaApi = await fetchSkillFilesFromGithubApi\(searchTarget, options\);/);
+  assert.match(archive, /export function archiveRootMatches/);
+});
+
+test('多技能来源目录会被保存并用于精确回抓', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    const text = '---\nname: 翻译演示\ndescription: 演示\n---\n\n# 正文\n';
+    const installed = skills.installSkillFromDocument({ text, source: 'github', sourceUrl: 'owner/repo', sourceDir: 'skills/translate' }, store);
+    assert.equal(installed.sourceDir, 'skills/translate');
+    assert.equal(skills.readSkill(installed.id, store).sourceDir, 'skills/translate');
+    assert.equal(skills.skillSummary(installed).sourceDir, 'skills/translate');
+    const legacy = skills.installSkill({ name: '旧技能演示', body: '# 正文' }, store);
+    assert.equal(skills.readSkill(legacy.id, store).sourceDir, '');
+  } finally {
+    await cleanup();
+  }
 });
 
 test('技能来源更新检测与导出分享', async () => {
