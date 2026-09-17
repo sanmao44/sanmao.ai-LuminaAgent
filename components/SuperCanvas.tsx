@@ -2920,6 +2920,11 @@ export default function SuperCanvas() {
     nodeId: string;
     compare: boolean;
   } | null>(null);
+  /* Agent 面板里还没落画布的图也要能看大图：复用同一个媒体预览器。 */
+  const [agentDockPreview, setAgentDockPreview] = useState<{
+    images: Array<{ url: string; revisedPrompt?: string }>;
+    index: number;
+  } | null>(null);
   const [panoramaNodeId, setPanoramaNodeId] = useState<string | null>(null);
   const [reuseDraft, setReuseDraft] = useState<CanvasReuseDraft | null>(null);
   const [reusePromptBeforeOptimization, setReusePromptBeforeOptimization] = useState<string | null>(null);
@@ -3237,6 +3242,8 @@ export default function SuperCanvas() {
       /* the dock stays usable without persisted state */
     }
   }, [agentDockOpen]);
+  /* 面板收起后仍可能在生成，工具栏的 Agent 按钮要能看到这件事。 */
+  const [agentDockBusy, setAgentDockBusy] = useState(false);
   const applyAgentDockOpen = useCallback(
     (open: boolean) => {
       if (open) closeCanvasOverlayConflicts();
@@ -13959,12 +13966,13 @@ export default function SuperCanvas() {
           </button>
           <button
             type="button"
-            className={`canvas-soft-button canvas-panel-button canvas-agent-button ${agentDockOpen ? "active" : ""}`}
+            className={`canvas-soft-button canvas-panel-button canvas-agent-button ${agentDockOpen ? "active" : ""}${agentDockBusy ? " is-busy" : ""}`}
             aria-pressed={agentDockOpen}
-            title="Agent 助手：右侧面板，可读取选中节点并生成到画布"
+            title={agentDockBusy ? "Agent 正在生成，点开面板查看或停止" : "Agent 助手：右侧面板，可读取选中节点并生成到画布"}
             onClick={() => applyAgentDockOpen(!agentDockOpen)}
           >
             ✦ Agent
+            {agentDockBusy ? <i aria-hidden="true" /> : null}
           </button>
           </>}
           {!topbarCollapsed && <button
@@ -15325,6 +15333,8 @@ export default function SuperCanvas() {
           onUseAsImagePrompt={applyAgentDockImageBranch}
           onUseAsVideoPrompt={applyAgentDockVideoBranch}
           notify={notify}
+          onBusyChange={setAgentDockBusy}
+          onPreviewImages={(images, index) => setAgentDockPreview({ images, index })}
         />
         {contextGroup && contextMenu?.menu === "group" && contextMenu.groupId ? (
           <CanvasGroupContextMenu
@@ -15641,6 +15651,27 @@ export default function SuperCanvas() {
             downloadCanvasNode(viewerNode);
           }}
         />;
+      })()}
+      {agentDockPreview && (() => {
+        const image = agentDockPreview.images[agentDockPreview.index];
+        if (!image?.url) return null;
+        const label = (index: number) => `Agent 图片 ${index + 1}`;
+        return (
+          <MediaViewer
+            item={{
+              id: `agent-dock-${agentDockPreview.index}`,
+              kind: "image",
+              url: image.url,
+              name: label(agentDockPreview.index),
+              prompt: String(image.revisedPrompt || ""),
+            }}
+            references={agentDockPreview.images
+              .map((item, index) => ({ id: `agent-dock-${index}`, kind: "image" as const, url: item.url, name: label(index) }))
+              .filter((reference) => reference.url && reference.url !== image.url)}
+            onClose={() => setAgentDockPreview(null)}
+            onNotify={notify}
+          />
+        );
       })()}
       {reusePreview && (
         <div className="canvas-modal-backdrop canvas-reference-preview-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setReusePreview(null); }}>

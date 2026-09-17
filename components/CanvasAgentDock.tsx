@@ -71,6 +71,10 @@ type Props = {
   onUseAsImagePrompt: (text: string) => void;
   onUseAsVideoPrompt: (text: string) => void;
   notify: (message: string, kind?: "ok" | "error") => void;
+  /* 面板收起后仍可能在生成：把运行状态报给画布，工具栏的 Agent 按钮要能显示「生成中」。 */
+  onBusyChange?: (busy: boolean) => void;
+  /* 预览交给画布渲染：媒体预览器一直挂在画布层，和节点预览是同一个。 */
+  onPreviewImages: (images: Array<{ url: string; revisedPrompt?: string }>, index: number) => void;
 };
 
 const MESSAGE_LIMIT = 40;
@@ -221,6 +225,7 @@ function readSession(): CanvasAgentDockSession | null {
               : {}),
             ...(message.error ? { error: String(message.error) } : {}),
             ...(message.retryText ? { retryText: String(message.retryText) } : {}),
+            ...(message.interrupted ? { interrupted: true } : {}),
             ...(message.applied ? { applied: true } : {}),
           }))
           .filter((message) => message.content || message.images?.length)
@@ -252,6 +257,8 @@ export default function CanvasAgentDock({
   onUseAsImagePrompt,
   onUseAsVideoPrompt,
   notify,
+  onBusyChange,
+  onPreviewImages,
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
   const [input, setInput] = useState("");
@@ -334,6 +341,10 @@ export default function CanvasAgentDock({
   useEffect(() => {
     if (open) jumpToBottom();
   }, [jumpToBottom, open]);
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
 
   /* 芯片和 @ 引用是同一份选区的两种呈现，共用一套顺序：芯片上的编号就是 @编号。 */
   const orderedChips = useMemo(
@@ -780,13 +791,13 @@ export default function CanvasAgentDock({
     return (
       <button
         type="button"
-        className="canvas-agent-dock-rail"
+        className={`canvas-agent-dock-rail${busy ? " is-busy" : ""}`}
         onClick={() => onToggle(true)}
-        title="展开 Agent 助手"
-        aria-label="展开 Agent 助手"
+        title={busy ? "Agent 正在生成，点开面板查看或停止" : "展开 Agent 助手"}
+        aria-label={busy ? "Agent 正在生成，展开面板查看或停止" : "展开 Agent 助手"}
       >
         <span aria-hidden="true">✦</span>
-        <em>Agent</em>
+        <em>{busy ? "生成中" : "Agent"}</em>
         {status.running + status.queued > 0 && <b>{status.running + status.queued}</b>}
       </button>
     );
@@ -915,7 +926,15 @@ export default function CanvasAgentDock({
             {message.images?.length ? (
               <div className="canvas-agent-dock-media">
                 {message.images.map((image, index) => (
-                  <img key={`${message.id}-${index}`} src={image.url} alt={image.revisedPrompt || "Agent 图片"} />
+                  <button
+                    type="button"
+                    key={`${message.id}-${index}`}
+                    className="canvas-agent-dock-media-item"
+                    onClick={() => onPreviewImages(message.images || [], index)}
+                    title="点开看大图：同一轮返回的其它图可以直接对比"
+                  >
+                    <img src={image.url} alt={image.revisedPrompt || "Agent 图片"} />
+                  </button>
                 ))}
               </div>
             ) : null}
@@ -1076,7 +1095,9 @@ export default function CanvasAgentDock({
             }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              if (!busy) void send();
+              /* 生成中回车不再默默吞掉：告诉用户怎么停。 */
+              if (busy) notify("Agent 正在生成，按 Esc 可以停止当前回答");
+              else void send();
             }
           }}
         />

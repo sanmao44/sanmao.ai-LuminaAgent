@@ -973,6 +973,9 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-jump:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-agent-dock-media{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
 .canvas-agent-dock-media img{width:100%;aspect-ratio:1 / 1;object-fit:cover;border:1px solid var(--line);border-radius:9px}
+/* 点开看大图：图片本身是按钮，复用的预览器负责缩放/对比/下载。 */
+.canvas-agent-dock-media-item{display:block;width:100%;padding:0;border:0;background:transparent;cursor:zoom-in}
+.canvas-agent-dock-media-item:hover img,.canvas-agent-dock-media-item:focus-visible img{border-color:var(--accent)}
 .canvas-agent-dock-message-tools{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}
 .canvas-agent-dock-message-tools button{height:24px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text-2);font-size:9px}
 .canvas-agent-dock-message-tools button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
@@ -1009,8 +1012,12 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-rail em{font-size:10px;font-style:normal;letter-spacing:.02em}
 .canvas-agent-dock-rail b{position:absolute;right:-5px;top:-6px;min-width:18px;height:18px;display:grid;place-items:center;padding:0 4px;border:2px solid var(--bg);border-radius:10px;background:var(--accent);color:#fff;font-size:7px}
 .canvas-agent-dock-rail:hover{border-color:var(--accent);background:var(--accent-soft)}
+/* 收起面板后仍在生成：rail 和工具栏按钮都要看得出来，否则用户不知道还有一轮在跑。 */
+.canvas-agent-dock-rail.is-busy span,.canvas-agent-button.is-busy i{animation:canvas-pulse 1.2s ease-in-out infinite}
+.canvas-agent-dock-rail.is-busy em{color:var(--accent)}
+.canvas-agent-button.is-busy i{width:6px;height:6px;display:inline-block;margin-left:5px;border-radius:50%;background:var(--accent);vertical-align:middle;font-style:normal}
 @media(min-width:1001px){.canvas-workspace:has(.canvas-topbar:not(.collapsed)) .canvas-agent-dock-rail{display:none}}
-@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-agent-dock,html:not([data-motion="on"]) .canvas-agent-dock-rail{transition:none!important}html:not([data-motion="on"]) .canvas-agent-dock-message.is-streaming p::after{animation:none}}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-agent-dock,html:not([data-motion="on"]) .canvas-agent-dock-rail{transition:none!important}html:not([data-motion="on"]) .canvas-agent-dock-message.is-streaming p::after,html:not([data-motion="on"]) .canvas-agent-dock-rail.is-busy span,html:not([data-motion="on"]) .canvas-agent-button.is-busy i{animation:none}}
 .canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 230px);width:min(880px,calc(100% - 512px))}
 @media(max-width:1280px){:root{--canvas-panel-width:min(430px,calc(100vw - 32px))}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 210px);width:min(820px,calc(100% - 472px))}}
 @media(max-width:1000px){.canvas-agent-dock{left:10px;right:10px;top:auto;bottom:10px;height:min(64vh,540px);width:auto}.canvas-agent-dock-rail{right:10px;top:auto;bottom:96px;transform:none}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:50%;width:calc(100% - 32px)}}

@@ -20,7 +20,7 @@ test("the canvas agent dock mounts in SuperCanvas and is bound to the selection"
 });
 
 test("closing the dock leaves a rail entry point and the open state is remembered", () => {
-  assert.match(component, /className="canvas-agent-dock-rail"/);
+  assert.match(component, /canvas-agent-dock-rail\$\{busy \? " is-busy" : ""\}/);
   assert.match(component, /onClick=\{\(\) => onToggle\(true\)\}/);
   assert.match(component, /onClick=\{\(\) => onToggle\(false\)\}/);
   assert.match(canvas, /localStorage\.setItem\(CANVAS_AGENT_DOCK_OPEN_KEY/);
@@ -193,7 +193,9 @@ test("the dock composer is the same @ reference editor as the rest of the app", 
   assert.match(component, /transformPastedText=\{\(value\) => replaceNaturalReferenceLabels\(value, mentionOptions\)\.value\}/);
   // Enter 发送 / Shift+Enter 换行，以及 / 技能菜单的回车选中都必须保留。
   assert.match(component, /if \(event\.key === "Enter" && !event\.shiftKey && !event\.nativeEvent\.isComposing\)/);
-  assert.match(component, /if \(!busy\) void send\(\);/);
+  // 生成中回车不能既不发也不说：先提示怎么停。
+  assert.ok(component.includes('if (busy) notify("Agent 正在生成，按 Esc 可以停止当前回答");'));
+  assert.match(component, /else void send\(\);/);
   // 高度还是自适应到上限后才在内部滚动。
   assert.match(styles, /\.canvas-agent-dock \.canvas-agent-dock-mention-editor \.reference-mention-editor-content\{[^}]*min-height:56px;max-height:190px;/);
   assert.match(styles, /\.canvas-agent-dock \.canvas-agent-dock-mention-editor \.reference-mention-editor-content\{[^}]*overflow-y:auto/);
@@ -378,4 +380,26 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
   assert.match(component, /content: labelReferenceMentions\(text, orderedReferences\),/);
   // 上下文条数上限要对用户可见，而不是只写给模型。
   assert.match(component, /节点信息最多带 \$\{CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES\} 个/);
+});
+test("the dock keeps reporting a run and previews its images", () => {
+  // 收起面板不等于停：rail 和工具栏都要显示「生成中」。
+  assert.match(component, /canvas-agent-dock-rail\$\{busy \? " is-busy" : ""\}/);
+  assert.match(component, /<em>\{busy \? "生成中" : "Agent"\}<\/em>/);
+  assert.match(component, /onBusyChange\?\.\(busy\);/);
+  assert.match(canvas, /onBusyChange=\{setAgentDockBusy\}/);
+  assert.match(canvas, /const \[agentDockBusy, setAgentDockBusy\] = useState\(false\)/);
+  assert.match(canvas, /canvas-agent-button \$\{agentDockOpen \? "active" : ""\}\$\{agentDockBusy \? " is-busy" : ""\}/);
+  assert.match(styles, /\.canvas-agent-dock-rail\.is-busy span,\.canvas-agent-button\.is-busy i\{animation:canvas-pulse/);
+  // 停止留下的半截要能撑过刷新，否则「继续」和「（已停止）」都会丢。
+  assert.ok(component.includes("...(message.interrupted ? { interrupted: true } : {}),"));
+  // Agent 返回的图点开用画布同一套预览器（挂在画布层，和节点预览是同一个），面板不自己再造一个。
+  assert.match(component, /className="canvas-agent-dock-media-item"/);
+  assert.match(component, /onClick=\{\(\) => onPreviewImages\(message\.images \|\| \[\], index\)\}/);
+  assert.match(component, /onPreviewImages: \(images: Array<\{ url: string; revisedPrompt\?: string \}>, index: number\) => void;/);
+  assert.doesNotMatch(component, /MediaViewer/);
+  assert.match(canvas, /onPreviewImages=\{\(images, index\) => setAgentDockPreview\(\{ images, index \}\)\}/);
+  assert.match(canvas, /const \[agentDockPreview, setAgentDockPreview\] = useState<\{/);
+  assert.match(styles, /\.canvas-agent-dock-media-item\{display:block;width:100%;/);
+  // 生成中按回车不再无声无息。
+  assert.ok(component.includes('if (busy) notify("Agent 正在生成，按 Esc 可以停止当前回答");'));
 });
