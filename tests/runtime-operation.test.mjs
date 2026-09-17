@@ -103,3 +103,24 @@ test('Windows restart status is written in a Node-readable UTF-8 format', () => 
   assert.doesNotMatch(statusWriter, /Set-Content/);
   assert.match(service, /content\.replace\(\/\^\\uFEFF\//);
 });
+
+test('lan mode can be switched back to local from the settings card', () => {
+  const route = read('app/api/runtime/route.ts');
+  const component = read('components/RuntimeServiceControl.tsx');
+  const switcher = read('scripts/switch-local.ps1');
+  // 局域网模式下应用内重启仍被拒绝，但允许本机请求明确切回本地模式。
+  assert.match(route, /const switchingToLocal = body\.action === 'switch-local'/);
+  assert.match(route, /局域网模式请使用启动器重启/);
+  assert.match(route, /process\.platform !== 'win32'/);
+  assert.match(route, /spawnRuntimeHelper\(switchingToLocal \? 'switch-local' : 'restart'/);
+  // Next 在局域网模式下给出的 request.url 是监听地址 0.0.0.0，同源判断必须看 Host 头，
+  // 否则页面里的重启/切换请求会被当成跨站而全部 403。
+  assert.match(route, /request\.headers\.get\('x-forwarded-host'\) \|\| request\.headers\.get\('host'\)/);
+  assert.match(read('app/api/update/apply/route.ts'), /request\.headers\.get\('x-forwarded-host'\) \|\| request\.headers\.get\('host'\)/);
+  // 切模式必须由启动器不带 -Lan 重新拉起服务，否则模式不会变。
+  assert.match(switcher, /'-NonInteractive', '-FreeRelay', '-OperationToken'/);
+  assert.doesNotMatch(switcher, /'-Lan'/);
+  // 前端在局域网模式下提供入口，并在完成后回到本机地址。
+  assert.match(component, /postAction\('switch-local', false\)/);
+  assert.match(component, /includes\(url\.hostname\)/);
+});

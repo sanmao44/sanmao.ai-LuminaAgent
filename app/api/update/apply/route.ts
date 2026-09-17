@@ -28,6 +28,14 @@ function sameLocalOrigin(request: Request) {
   if (!origin) return true;
   try {
     const source = new URL(origin);
+    // Next 生成的 request.url 用的是监听地址（局域网模式下是 0.0.0.0、本地模式是 127.0.0.1），
+    // 和浏览器实际访问的 localhost 对不上，会让页面里的更新请求被判定为跨站。改用 Host 头。
+    const host = (request.headers.get('x-forwarded-host') || request.headers.get('host') || '').trim();
+    if (host) {
+      const forwardedProto = (request.headers.get('x-forwarded-proto') || '').trim();
+      if (forwardedProto && source.protocol !== `${forwardedProto}:`) return false;
+      return source.host === host;
+    }
     const target = new URL(request.url);
     return source.protocol === target.protocol && source.host === target.host;
   } catch {

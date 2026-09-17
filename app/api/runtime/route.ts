@@ -22,6 +22,14 @@ function sameLocalOrigin(request: Request) {
   if (!origin) return true;
   try {
     const source = new URL(origin);
+    // Next 生成的 request.url 用的是监听地址（局域网模式下是 0.0.0.0、本地模式是 127.0.0.1），
+    // 和浏览器实际访问的 localhost 对不上，会让页面里所有操作都被判定为跨站。改用 Host 头。
+    const host = (request.headers.get('x-forwarded-host') || request.headers.get('host') || '').trim();
+    if (host) {
+      const forwardedProto = (request.headers.get('x-forwarded-proto') || '').trim();
+      if (forwardedProto && source.protocol !== `${forwardedProto}:`) return false;
+      return source.host === host;
+    }
     const target = new URL(request.url);
     return source.protocol === target.protocol && source.host === target.host;
   } catch {
@@ -66,9 +74,9 @@ async function writeRestartStatus(status: Record<string, unknown>) {
   await rename(temporary, file);
 }
 
-async function spawnRestartHelper(operationId: string, token: string, port: number) {
+async function spawnRuntimeHelper(script: string, operationId: string, token: string, port: number) {
   const root = process.cwd();
-  const scriptPath = path.join(root, 'scripts', process.platform === 'win32' ? 'restart.ps1' : 'restart.sh');
+  const scriptPath = path.join(root, 'scripts', process.platform === 'win32' ? `${script}.ps1` : `${script}.sh`);
   if (process.platform === 'win32') {
     const scriptArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Port', String(port), '-OperationId', operationId, '-OperationToken', token]
       .map(powershellLiteral).join(', ');
@@ -90,13 +98,19 @@ export async function POST(request: Request) {
   if (!isTrustedAppRequest(request) || !sameLocalOrigin(request)) {
     return Response.json({ error: '重启请求未通过本地安全校验' }, { status: 403, headers: noStoreHeaders });
   }
-  if (networkMode() !== 'local') {
-    return Response.json({ error: '局域网模式请使用启动器重启，避免影响其他设备' }, { status: 409, headers: noStoreHeaders });
-  }
 
   const parsedBody = await request.json().catch(() => ({}));
   const body = parsedBody && typeof parsedBody === 'object' ? parsedBody as { action?: unknown; force?: unknown } : {};
-  if (body.action !== 'restart') return Response.json({ error: '不支持的服务操作' }, { status: 400, headers: noStoreHeaders });
+  const switchingToLocal = body.action === 'switch-local';
+  if (body.action !== 'restart' && !switchingToLocal) return Response.json({ error: '不支持的服务操作' }, { status: 400, headers: noStoreHeaders });
+
+  if (switchingToLocal) {
+    // 网络模式来自启动参数，应用内无法直接改写，只能让启动器按本地模式重新拉起服务。
+    if (networkMode() === 'local') return Response.json({ error: '当前已经是本地模式' }, { status: 409, headers: noStoreHeaders });
+    if (process.platform !== 'win32') return Response.json({ error: '请使用桌面启动器切回本地模式' }, { status: 409, headers: noStoreHeaders });
+  } else if (networkMode() !== 'local') {
+    return Response.json({ error: '局域网模式请使用启动器重启，避免影响其他设备' }, { status: 409, headers: noStoreHeaders });
+  }
 
   const operationId = randomUUID();
   const operation = await acquireRuntimeOperationLock('restart', operationId);
@@ -121,7 +135,7 @@ export async function POST(request: Request) {
     return Response.json({ error: '更新任务正在进行，请更新完成后再重启' }, { status: 409, headers: noStoreHeaders });
   }
   const runtimeStatus = await getRuntimeStatus();
-  if (runtimeStatus.dependenciesChanged) {
+  if (!switchingToLocal && runtimeStatus.dependenciesChanged) {
     await cancelRuntimeDrain(operationId);
     await removeOwnedRuntimeOperationLock(token);
     return Response.json({ error: '检测到 package.json 或 package-lock.json 已变化，请使用正式更新流程，以便安全处理依赖', requiresFormalUpdate: true }, { status: 409, headers: noStoreHeaders });
@@ -132,14 +146,14 @@ export async function POST(request: Request) {
     return Response.json({ error: '重启任务锁定失败，请稍候重试' }, { status: 409, headers: noStoreHeaders });
   }
 
-  await writeRestartStatus({ operationId, state: 'starting', version: runtimeStatus.version, startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), activeRequests: drain.activeRequests });
+  await writeRestartStatus({ operationId, state: 'starting', targetMode: switchingToLocal ? 'local' : undefined, version: runtimeStatus.version, startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), activeRequests: drain.activeRequests });
   try {
-    await spawnRestartHelper(operationId, token, requestPort(request));
+    await spawnRuntimeHelper(switchingToLocal ? 'switch-local' : 'restart', operationId, token, requestPort(request));
     return Response.json({ started: true, operationId, activeRequests: drain.activeRequests }, { status: 202, headers: noStoreHeaders });
   } catch (error) {
     await cancelRuntimeDrain(operationId);
     await removeOwnedRuntimeOperationLock(token);
     await writeRestartStatus({ operationId, state: 'failed', error: error instanceof Error ? error.message : '重启程序启动失败', updatedAt: new Date().toISOString() });
-    return Response.json({ error: '重启程序启动失败，请使用桌面启动器重试' }, { status: 500, headers: noStoreHeaders });
+    return Response.json({ error: switchingToLocal ? '切换本地模式失败，请使用桌面启动器重试' : '重启程序启动失败，请使用桌面启动器重试' }, { status: 500, headers: noStoreHeaders });
   }
 }

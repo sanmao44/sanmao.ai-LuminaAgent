@@ -21,6 +21,8 @@ const restartInProgress = new Set<RestartState>(['starting', 'stopping', 'buildi
 function reloadPage() {
   try {
     const url = new URL(window.location.href);
+    // 重启（含从局域网切回本地）之后服务只监听本机，用局域网 IP 打开的页面会连不上。
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) url.hostname = 'localhost';
     url.searchParams.set('sanmao_reload', String(Date.now()));
     window.location.replace(url.toString());
   } catch {
@@ -67,14 +69,15 @@ export default function RuntimeServiceControl() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  const postRestart = async (force: boolean) => {
+  const postAction = async (action: 'restart' | 'switch-local', force: boolean) => {
+    const switching = action === 'switch-local';
     setBusy(true);
-    setMessage(force ? '正在强制重启服务…' : '正在准备重启服务…');
+    setMessage(force ? '正在强制重启服务…' : switching ? '正在切回本地模式…' : '正在准备重启服务…');
     try {
       const response = await fetch('/api/runtime', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'restart', ...(force ? { force: true } : {}) }),
+        body: JSON.stringify({ action, ...(force ? { force: true } : {}) }),
         cache: 'no-store',
       });
       const result = await response.json().catch(() => ({})) as { operationId?: string; error?: string; requiresConfirmation?: boolean; requiresFormalUpdate?: boolean };
@@ -82,7 +85,7 @@ export default function RuntimeServiceControl() {
         const confirmed = window.confirm(`${result.error || '当前有任务正在执行'}。
 
 强制重启会中断这些任务，是否继续？`);
-        if (confirmed) return void postRestart(true);
+        if (confirmed) return void postAction(action, true);
         setBusy(false);
         setMessage('已取消重启，当前任务会继续运行。');
         return;
@@ -93,7 +96,7 @@ export default function RuntimeServiceControl() {
         return;
       }
       setOperationId(result.operationId || '');
-      setMessage('重启任务已启动，正在停止旧服务并构建…');
+      setMessage(switching ? '正在切回本地模式，完成后会自动刷新页面…' : '重启任务已启动，正在停止旧服务并构建…');
     } catch (error) {
       setBusy(false);
       setMessage(error instanceof Error ? error.message : '重启请求失败');
@@ -123,13 +126,19 @@ export default function RuntimeServiceControl() {
         <span>构建 <b>{status?.buildId ? status.buildId.slice(0, 10) : '未就绪'}</b></span>
         <span>活动任务 <b className={status?.activeRequests ? 'warning' : ''}>{status?.activeRequests ?? '—'}</b></span>
       </div>
-      {lan ? <div className="runtime-service-hint">当前是局域网模式。为避免影响其他设备，请使用桌面启动器重启。</div> : null}
+      {lan ? <div className="runtime-service-hint">当前是局域网模式，同一网络的设备都能访问。切回本地模式后只在本机可用，其他设备会断开。</div> : null}
       {dependencyWarning ? <div className="runtime-service-hint warning">检测到依赖文件发生变化，请使用正式更新流程，不要用普通重启。</div> : null}
       {status?.sourceStale && !dependencyWarning ? <div className="runtime-service-hint warning">检测到源码尚未构建，点击重启后会重新构建。</div> : null}
       {message ? <div className={`runtime-service-message ${restart === 'failed' || restart === 'failed-rolled-back' ? 'error' : ''}`}>{message}</div> : null}
-      <button type="button" className="primary-small runtime-restart-button" disabled={lan || dependencyWarning || inProgress} onClick={() => void postRestart(false)}>
-        {inProgress ? '正在重启…' : '重启并载入最新代码'}
-      </button>
+      {lan ? (
+        <button type="button" className="primary-small runtime-restart-button" disabled={inProgress} onClick={() => void postAction('switch-local', false)}>
+          {inProgress ? '正在切换…' : '切回本地模式'}
+        </button>
+      ) : (
+        <button type="button" className="primary-small runtime-restart-button" disabled={dependencyWarning || inProgress} onClick={() => void postAction('restart', false)}>
+          {inProgress ? '正在重启…' : '重启并载入最新代码'}
+        </button>
+      )}
     </section>
   );
 }
