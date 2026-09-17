@@ -56,7 +56,9 @@ test("audio nodes are never sent as agent references", () => {
 test("the dock keeps a right-hand dock layout and shifts the composer aside", () => {
   assert.match(styles, /\.canvas-agent-dock\{[^}]*position:fixed[^}]*right:18px[^}]*top:86px/);
   assert.match(styles, /\.canvas-agent-dock-rail\{[^}]*position:fixed[^}]*right:18px/);
-  assert.match(styles, /\.canvas-workspace:has\(\.canvas-agent-dock\) \.canvas-deck:not\(\.collapsed\)\{left:calc\(50% - 200px\)/);
+  // The panel is wide enough for the composer row; the deck shifts by half of it.
+  assert.match(styles, /\.canvas-agent-dock\{[^}]*width:min\(460px,calc\(100vw - 36px\)\)/);
+  assert.match(styles, /\.canvas-workspace:has\(\.canvas-agent-dock\) \.canvas-deck:not\(\.collapsed\)\{left:calc\(50% - 230px\)/);
   assert.match(styles, /\.canvas-workspace:has\(\.canvas-asset-drawer\) \.canvas-agent-dock\{right:434px\}/);
 });
 

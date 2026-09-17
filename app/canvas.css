@@ -899,7 +899,7 @@ html[data-theme="dark"] .canvas-workspace{
 
 /* Canvas Agent dock: a collapsible right-hand assistant bound to the current
    selection. The rail keeps the entry point visible while the panel is closed. */
-.canvas-agent-dock{position:fixed;z-index:var(--canvas-z-asset-drawer);right:18px;top:86px;bottom:18px;width:min(400px,calc(100vw - 36px));display:flex;flex-direction:column;gap:9px;padding:10px;border:1px solid var(--line-strong);border-radius:22px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 24px 60px rgba(0,0,0,.3),inset 0 1px 0 color-mix(in srgb,#fff 7%,transparent);backdrop-filter:blur(20px);overscroll-behavior:contain;transition:right .18s ease,box-shadow .18s ease}
+.canvas-agent-dock{position:fixed;z-index:var(--canvas-z-asset-drawer);right:18px;top:86px;bottom:18px;width:min(460px,calc(100vw - 36px));display:flex;flex-direction:column;gap:9px;padding:10px;border:1px solid var(--line-strong);border-radius:22px;background:color-mix(in srgb,var(--panel) 96%,transparent);box-shadow:0 24px 60px rgba(0,0,0,.3),inset 0 1px 0 color-mix(in srgb,#fff 7%,transparent);backdrop-filter:blur(20px);overscroll-behavior:contain;transition:right .18s ease,box-shadow .18s ease}
 .canvas-agent-dock-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:none;padding-bottom:9px;border-bottom:1px solid var(--line)}
 .canvas-agent-dock-title{display:flex;align-items:center;gap:8px;min-width:0}
 .canvas-agent-dock-title>span{width:32px;height:32px;display:grid;place-items:center;flex:none;border-radius:11px;background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#fff;font-size:15px;box-shadow:0 6px 16px color-mix(in srgb,var(--accent) 28%,transparent)}
@@ -971,9 +971,9 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-rail:hover{border-color:var(--accent);background:var(--accent-soft)}
 @media(min-width:1001px){.canvas-workspace:has(.canvas-topbar:not(.collapsed)) .canvas-agent-dock-rail{display:none}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-agent-dock,html:not([data-motion="on"]) .canvas-agent-dock-rail{transition:none!important}html:not([data-motion="on"]) .canvas-agent-dock-message.is-streaming p::after{animation:none}}
-.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 200px);width:min(880px,calc(100% - 452px))}
+.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 230px);width:min(880px,calc(100% - 512px))}
 .canvas-workspace:has(.canvas-asset-drawer) .canvas-agent-dock{right:434px}
-@media(max-width:1280px){.canvas-agent-dock{width:min(360px,calc(100vw - 28px))}.canvas-workspace:has(.canvas-asset-drawer) .canvas-agent-dock{right:454px}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 180px);width:min(820px,calc(100% - 412px))}}
+@media(max-width:1280px){.canvas-agent-dock{width:min(420px,calc(100vw - 28px))}.canvas-workspace:has(.canvas-asset-drawer) .canvas-agent-dock{right:454px}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 210px);width:min(820px,calc(100% - 472px))}}
 @media(max-width:1000px){.canvas-agent-dock{left:10px;right:10px;top:auto;bottom:10px;height:min(64vh,540px);width:auto}.canvas-agent-dock-rail{right:10px;top:auto;bottom:96px;transform:none}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:50%;width:calc(100% - 32px)}}
 
 /* Node-first editor surface: the canvas remains the layout, each node owns
