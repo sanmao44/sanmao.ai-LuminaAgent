@@ -35,7 +35,7 @@ export default function AgentMemoryEditor({ summary, disabled, icon, onSave }: P
     }}>{icon}</button>
     {open && createPortal(<dialog ref={dialog} className={styles.dialog} aria-labelledby="agent-memory-title" onClose={() => setOpen(false)} onCancel={(event) => { if (saving) event.preventDefault(); }}>
       <form onSubmit={(event) => { event.preventDefault(); if (editing && !saving && !disabled) void save(draft); }}>
-        <h2 id="agent-memory-title">当前对话记忆</h2>
+        <h2 id="agent-memory-title"><i aria-hidden="true">{icon}</i>当前对话记忆</h2>
         {editing ? <>
           <label htmlFor="agent-memory-summary">早期对话摘要</label>
           <textarea id="agent-memory-summary" autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={MEMORY_MAX_CHARS} disabled={saving || disabled} placeholder="暂无摘要" />
@@ -46,10 +46,10 @@ export default function AgentMemoryEditor({ summary, disabled, icon, onSave }: P
           {editing ? <>
             <button type="button" className={styles.clear} disabled={saving || disabled || !summary} onClick={() => void save('')}>清空摘要</button>
             <button type="button" disabled={saving} onClick={() => { setEditing(false); setError(''); }}>取消</button>
-            <button type="submit" disabled={saving || disabled}>{saving ? '保存中…' : '保存'}</button>
+            <button type="submit" className={styles.primary} disabled={saving || disabled}>{saving ? '保存中…' : '保存'}</button>
           </> : <>
             <button type="button" onClick={() => dialog.current?.close()}>关闭</button>
-            <button type="button" disabled={disabled} onClick={() => { setDraft(summary); setEditing(true); }}>编辑</button>
+            <button type="button" className={styles.primary} disabled={disabled} onClick={() => { setDraft(summary); setEditing(true); }}>编辑</button>
           </>}
         </footer>
       </form>

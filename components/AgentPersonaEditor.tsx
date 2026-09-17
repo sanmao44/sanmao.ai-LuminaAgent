@@ -27,7 +27,7 @@ export default function AgentPersonaEditor({ persona, disabled, icon, onSave }: 
     <button type="button" className={styles.trigger} data-tooltip="角色设定" aria-label="角色设定" aria-haspopup="dialog" disabled={disabled} onClick={() => { setDraft(persona); setError(''); setOpen(true); }}>{icon}</button>
     {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="agent-persona-title" onClose={() => setOpen(false)} onCancel={(event) => { if (saving) event.preventDefault(); }}>
       <form onSubmit={(event) => { event.preventDefault(); if (!saving) void save(); }}>
-        <h2 id="agent-persona-title">角色设定</h2>
+        <h2 id="agent-persona-title"><i aria-hidden="true">{icon}</i>角色设定</h2>
         <p className={styles.hint}>为当前对话设定身份、语气和工作方式；只影响保存后的新消息。</p>
         <label htmlFor="agent-persona">角色设定文案</label>
         <textarea id="agent-persona" autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={PERSONA_MAX_CHARS} disabled={saving || disabled} placeholder="例如：你是一名严谨、简洁的品牌文案顾问。" />
@@ -36,7 +36,7 @@ export default function AgentPersonaEditor({ persona, disabled, icon, onSave }: 
         <footer>
           <button type="button" className={styles.clear} disabled={saving || disabled || !draft} onClick={() => { setDraft(''); }}>清空</button>
           <button type="button" disabled={saving} onClick={() => setOpen(false)}>取消</button>
-          <button type="submit" disabled={saving || disabled}>{saving ? '保存中…' : '保存'}</button>
+          <button type="submit" className={styles.primary} disabled={saving || disabled}>{saving ? '保存中…' : '保存'}</button>
         </footer>
       </form>
     </dialog>}
