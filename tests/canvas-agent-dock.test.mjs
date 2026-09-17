@@ -185,6 +185,20 @@ test("the floating rail and minimap restore use the shared control shadow", () =
   assert.doesNotMatch(styles, /0 10px 28px rgba\(0,0,0,\.22\)/);
 });
 
+test("the dock picks the agent model with the shared model picker", () => {
+  // 全站选模型都是同一套 ModelPicker（推荐 / 最近调用 / 收藏 / 搜索 / 按服务商筛选），
+  // 面板之前用普通下拉，几十个对话模型只能一行行翻，也没有收藏。
+  assert.match(component, /import ModelPicker from "@\/components\/ModelPicker"/);
+  assert.match(component, /<ModelPicker[\s\S]*?capability="chat"/);
+  assert.match(component, /models=\{runtime\?\.models \|\| \[\]\}/);
+  assert.match(component, /defaultModelId=\{runtime\?\.settings\.agentModelId\}/);
+  assert.match(component, /dialogPortalZIndex=\{CANVAS_Z_INDEX\.modelDialog\}/);
+  assert.doesNotMatch(component, /<SelectMenu/);
+  // 生成中不给换模型：ModelPicker 没有 disabled，用 inert 把整块挡住。
+  assert.match(component, /canvas-agent-dock-model-wrap\$\{busy \? " is-busy" : ""\}`\} inert=\{busy \? true : undefined\}/);
+  assert.match(styles, /\.canvas-agent-dock-model \.model-picker-trigger\{height:30px/);
+});
+
 test("the dock composer is the same @ reference editor as the rest of the app", () => {
   // 全项目输入框都是 ReferenceMentionEditor，面板不能自己再留一个 textarea。
   assert.match(component, /import ReferenceMentionEditor from "@\/components\/ReferenceMentionEditor";/);
@@ -509,4 +523,30 @@ test("the canvas hands a selection to the dock with one click", () => {
   assert.match(canvas, /focusSignal=\{agentDockFocusSignal\}/);
   assert.match(component, /focusSignal\?: number;/);
   assert.match(component, /if \(!open \|\| !focusSignal\) return;\s*\r?\n    focusEditorEnd\(\);/);
+});
+
+test("the blank canvas and the keyboard can hand the whole canvas to the dock", () => {
+  // 右键空白处没有可选的节点，不能沿用“先选中”的入口：整张画布就是上下文。
+  assert.match(canvas, /const askAgentAboutCanvas = useCallback\(\(\) => \{\s*\r?\n    applyAgentDockOpen\(true\);/);
+  assert.doesNotMatch(canvas, /const askAgentAboutCanvas = useCallback\(\(\) => \{[\s\S]{0,200}?notify\(/);
+  assert.ok(canvas.includes("canvas-menu-item canvas-menu-item-agent"));
+  // 「画布操作」菜单是紧凑列表：不加描述行，也不多加分隔线。
+  const toolsStart = canvas.indexOf('ariaLabel="画布操作菜单"');
+  const toolsMenu = canvas.slice(toolsStart, canvas.indexOf("</CanvasContextMenuFrame>", toolsStart));
+  assert.ok(toolsMenu.includes("<b>问 Agent</b>"));
+  assert.ok(toolsMenu.includes("Ctrl/Cmd + K"));
+  // 菜单项和快捷键共用这条入口：从哪进去，面板的状态都一样。
+  assert.match(canvas, /\} else if \(!event\.repeat && modifier && key === "k"\) \{\s*\r?\n[\s\S]{0,160}?askAgentAboutCanvas\(\);/);
+  assert.match(canvas, /\{ keys: \["Ctrl", "K"\], label: "打开 Agent 助手并聚焦输入框，选中的节点会作为上下文" \},/);
+  assert.match(canvas, /aria-keyshortcuts="Control\+K"/);
+});
+
+test("quick questions about the selection are only offered when there is a selection", () => {
+  // 没选中节点时问“总结选中”，模型只能回一句“看不到选中对象”，所以先置灰。
+  assert.match(component, /const needsSelection = selectedNodeTotal === 0;/);
+  assert.match(component, /disabled: needsSelection/);
+  assert.match(component, /disabled=\{busy \|\| action\.disabled\}/);
+  assert.match(component, /title=\{action\.title\}/);
+  // 空选中区要说清“没有选中时 Agent 读整张画布”。
+  assert.ok(component.includes("没有选中时，Agent 读整张画布的概况。"));
 });

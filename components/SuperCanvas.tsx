@@ -912,6 +912,7 @@ const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["+", "="], label: "放大画布视图" },
   { keys: ["-"], label: "缩小画布视图" },
   { keys: ["Ctrl", "Enter"], label: "执行当前生成任务" },
+  { keys: ["Ctrl", "K"], label: "打开 Agent 助手并聚焦输入框，选中的节点会作为上下文" },
 ];
 
 function clamp(value: number, min: number, max: number) {
@@ -9823,6 +9824,11 @@ export default function SuperCanvas() {
     applyAgentDockOpen(true);
     setAgentDockFocusSignal((value) => value + 1);
   }, [agentDockContext.nodeIds.length, applyAgentDockOpen, notify]);
+  /* 空白画布和快捷键的入口：不要求先选中，整张画布自动成为这次提问的上下文。 */
+  const askAgentAboutCanvas = useCallback(() => {
+    applyAgentDockOpen(true);
+    setAgentDockFocusSignal((value) => value + 1);
+  }, [applyAgentDockOpen]);
   /* 从面板拖出来的图片：落点就是松手的位置，和拖入文件、拖入资产是同一种手感。 */
   const dropAgentDockImage = useCallback(
     (payload: string, point: Point) => {
@@ -12089,6 +12095,11 @@ export default function SuperCanvas() {
       } else if (!event.repeat && modifier && key === "g") {
         event.preventDefault();
         event.shiftKey ? breakGroup() : makeGroup();
+      } else if (!event.repeat && modifier && key === "k") {
+        /* 画布上一键把 Agent 叫出来：选中的节点自动成为上下文。 */
+        event.preventDefault();
+        event.stopPropagation();
+        askAgentAboutCanvas();
       } else if (!event.repeat && !modifier && isKeyA) {
         event.preventDefault();
         toggleAssetLibrary();
@@ -12118,6 +12129,7 @@ export default function SuperCanvas() {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [
+    askAgentAboutCanvas,
     breakGroup,
     cancelReferencePicker,
     clearSelection,
@@ -13527,6 +13539,23 @@ export default function SuperCanvas() {
     selectedGroup,
     selectedImageDownloads.length,
   ]);
+  /* 对象组也要能整组交给 Agent：组工具栏和组右键菜单共用同一条入口。 */
+  const groupQuickActionsWithAgent = useMemo<CanvasQuickToolbarActions>(
+    () => ({
+      ...groupQuickActions,
+      primaryActions: [
+        ...groupQuickActions.primaryActions,
+        {
+          id: "ask-agent",
+          icon: "agent",
+          label: "问 Agent",
+          title: "打开 Agent 助手并聚焦输入框，整组节点会自动作为上下文",
+          onClick: askAgentAboutSelection,
+        },
+      ],
+    }),
+    [askAgentAboutSelection, groupQuickActions],
+  );
   const contextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
     const node = contextNode;
     if (!node) return [];
@@ -13810,6 +13839,28 @@ export default function SuperCanvas() {
     reorderSelection,
     selectedIds,
   ]);
+  /* 节点右键菜单也补上同一入口：右键会把节点选中，所以上下文就是刚点的这些节点。 */
+  const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup[]>(
+    () => [
+      {
+        label: "Agent",
+        actions: [
+          {
+            id: "ask-agent",
+            icon: "✦",
+            label: "问 Agent",
+            title: "打开 Agent 助手并聚焦输入框，选中的节点会自动作为上下文",
+            onClick: () => {
+              setContextMenu(null);
+              askAgentAboutSelection();
+            },
+          },
+        ],
+      },
+      ...contextMenuGroups,
+    ],
+    [askAgentAboutSelection, contextMenuGroups],
+  );
 
   const groupContextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
     if (!contextGroup) return [];
@@ -13817,17 +13868,17 @@ export default function SuperCanvas() {
       setContextMenu(null);
       action();
     };
-    const primary = groupQuickActions.primaryActions.map((action) => ({
+    const primary = groupQuickActionsWithAgent.primaryActions.map((action) => ({
       ...action,
       onClick: close(action.id === "arrange-group" ? () => arrangeCanvasAction() : action.onClick),
     }));
-    const groupOperations = groupQuickActions.menuGroups.find(
+    const groupOperations = groupQuickActionsWithAgent.menuGroups.find(
       (group) => group.id === "group-actions",
     );
-    const layer = groupQuickActions.menuGroups.find(
+    const layer = groupQuickActionsWithAgent.menuGroups.find(
       (group) => group.id === "layer",
     );
-    const dangerAction = groupQuickActions.dangerAction;
+    const dangerAction = groupQuickActionsWithAgent.dangerAction;
     return [
       {
         label: "组操作",
@@ -13860,7 +13911,7 @@ export default function SuperCanvas() {
           : [],
       },
     ].filter((group) => group.actions.length > 0);
-  }, [arrangeCanvasAction, contextGroup, copySelection, groupQuickActions]);
+  }, [arrangeCanvasAction, contextGroup, copySelection, groupQuickActionsWithAgent]);
 
   // Below this threshold the canvas is an overview, not a reading surface.
   // The CSS tier removes filters and animation-heavy decoration while keeping
@@ -14049,7 +14100,8 @@ export default function SuperCanvas() {
             type="button"
             className={`canvas-soft-button canvas-panel-button canvas-agent-button ${agentDockOpen ? "active" : ""}${agentDockBusy ? " is-busy" : ""}`}
             aria-pressed={agentDockOpen}
-            title={agentDockBusy ? "Agent 正在生成，点开面板查看或停止" : "Agent 助手：右侧面板，可读取选中节点并生成到画布"}
+            aria-keyshortcuts="Control+K"
+            title={agentDockBusy ? "Agent 正在生成，点开面板查看或停止" : "Agent 助手：右侧面板，可读取选中节点并生成到画布（Ctrl/Cmd + K）"}
             onClick={() => applyAgentDockOpen(!agentDockOpen)}
           >
             ✦ Agent
@@ -15007,14 +15059,14 @@ export default function SuperCanvas() {
         {selectedGroupId &&
           selectedGroup &&
           !nodeGestureActive &&
-          (groupQuickActions.primaryActions.length > 0 ||
-            groupQuickActions.menuGroups.some((group) => group.actions.length > 0) ||
-            Boolean(groupQuickActions.dangerAction)) && (
+          (groupQuickActionsWithAgent.primaryActions.length > 0 ||
+            groupQuickActionsWithAgent.menuGroups.some((group) => group.actions.length > 0) ||
+            Boolean(groupQuickActionsWithAgent.dangerAction)) && (
             <CanvasQuickToolbar
               target={{ kind: "group", group: selectedGroup }}
               document={document}
               stageRef={stageRef}
-              actions={groupQuickActions}
+              actions={groupQuickActionsWithAgent}
               menuSubtitle="组操作"
               actionRenderer={(action, button) =>
                 action.id === "arrange-group" ? (
@@ -15464,7 +15516,7 @@ export default function SuperCanvas() {
           <CanvasNodeContextMenu
             node={contextNode}
             selectionCount={selectedIds.size}
-            groups={contextMenuGroups}
+            groups={contextMenuGroupsWithAgent}
             position={contextMenu}
           />
         ) : contextMenu?.menu === "create" ? (
@@ -15589,6 +15641,21 @@ export default function SuperCanvas() {
               <span>画布操作</span>
             </div>
             <div className="canvas-context-menu-body">
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-agent"
+                aria-keyshortcuts="Control+K"
+                onClick={() => {
+                  setContextMenu(null);
+                  askAgentAboutCanvas();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">✦</span>
+                <span className="canvas-menu-copy">
+                  <b>问 Agent</b>
+                </span>
+                <small className="canvas-menu-shortcut">Ctrl/Cmd + K</small>
+              </button>
               <button
                 type="button"
                 className="canvas-menu-item canvas-menu-item-tool"

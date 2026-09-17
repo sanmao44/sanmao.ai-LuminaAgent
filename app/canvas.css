@@ -399,9 +399,9 @@ html[data-motion="off"] :is(.canvas-edge.related,.canvas-edge-flow-stroke){anima
 .creation-field .model-picker-trigger,.creation-field .select-menu-trigger{min-height:30px;height:30px;padding:5px 8px;border-radius:8px}
 .creation-field .model-picker-trigger-copy,.creation-field .select-menu-trigger-copy{font-size:9px}
 .creation-field .model-picker-trigger-copy span{max-width:160px}
-.canvas-deck .model-picker-trigger[data-tooltip],.canvas-node-editor-popover .model-picker-trigger[data-tooltip]{overflow:visible}
-.canvas-deck .model-picker-trigger[data-tooltip]::after,.canvas-node-editor-popover .model-picker-trigger[data-tooltip]::after{top:auto;bottom:calc(100% + 8px);transform:translate(-50%,4px)}
-.canvas-deck .model-picker-trigger[data-tooltip]:hover::after,.canvas-deck .model-picker-trigger[data-tooltip]:focus-visible::after,.canvas-node-editor-popover .model-picker-trigger[data-tooltip]:hover::after,.canvas-node-editor-popover .model-picker-trigger[data-tooltip]:focus-visible::after{transform:translate(-50%,0)}
+.canvas-deck .model-picker-trigger[data-tooltip],.canvas-node-editor-popover .model-picker-trigger[data-tooltip],.canvas-agent-dock .model-picker-trigger[data-tooltip]{overflow:visible}
+.canvas-deck .model-picker-trigger[data-tooltip]::after,.canvas-node-editor-popover .model-picker-trigger[data-tooltip]::after,.canvas-agent-dock .model-picker-trigger[data-tooltip]::after{top:auto;bottom:calc(100% + 8px);transform:translate(-50%,4px)}
+.canvas-deck .model-picker-trigger[data-tooltip]:hover::after,.canvas-deck .model-picker-trigger[data-tooltip]:focus-visible::after,.canvas-node-editor-popover .model-picker-trigger[data-tooltip]:hover::after,.canvas-node-editor-popover .model-picker-trigger[data-tooltip]:focus-visible::after,.canvas-agent-dock .model-picker-trigger[data-tooltip]:hover::after,.canvas-agent-dock .model-picker-trigger[data-tooltip]:focus-visible::after{transform:translate(-50%,0)}
 .creation-pixel-fields{gap:4px}
 .creation-pixel-fields input,.creation-custom-ratio input{height:30px;border-radius:8px}
 .creation-pixel-fields b{padding-bottom:7px}
@@ -1020,7 +1020,14 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-mention-menu{min-width:0;max-width:100%}
 .canvas-agent-dock-composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
 .canvas-agent-dock-composer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.canvas-agent-dock-model{min-width:88px;flex:1}
+.canvas-agent-dock-model-wrap{min-width:88px;flex:1;display:flex}
+.canvas-agent-dock-model-wrap.is-busy{opacity:.5}
+.canvas-agent-dock-model{min-width:0;flex:1}
+/* 面板里的模型选择沿用节点编辑器那套紧凑触发器尺寸。 */
+.canvas-agent-dock-model .model-picker-trigger{height:30px;padding:0 9px;gap:6px;border-radius:9px;background:var(--panel-2)}
+.canvas-agent-dock-model .model-picker-trigger-copy>b{padding:2px 5px;font-size:7px}
+.canvas-agent-dock-model .model-picker-trigger-copy>span{font-size:9px}
+.canvas-agent-dock-model .model-picker-trigger i{width:7px;height:7px}
 .canvas-agent-dock-web{height:30px;display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:calc(20px + 4em);padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:9px}
 .canvas-agent-dock-skill{height:30px;display:inline-flex;align-items:center;gap:4px;flex:none;padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:9px;transition:border-color .16s,background .16s,color .16s}
 .canvas-agent-dock-skill svg{color:var(--accent-text)}

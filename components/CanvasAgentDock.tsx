@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import SelectMenu from "@/components/SelectMenu";
+import ModelPicker from "@/components/ModelPicker";
 import SkillManager from "@/components/SkillManager";
 import SkillIcon from "@/components/SkillIcon";
 import AgentSkillMenu from "@/components/AgentSkillMenu";
@@ -11,10 +11,7 @@ import AgentMarkdown from "@/components/AgentMarkdown";
 import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
-import {
-  agentModelOptions,
-  type AgentWebMode,
-} from "@/lib/creation/settings";
+import type { AgentWebMode } from "@/lib/creation/settings";
 import { generateCanvasAgent } from "@/lib/canvas/api";
 import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
@@ -26,6 +23,7 @@ import {
   type CanvasAgentDockReference,
   type CanvasAgentDockStatus,
 } from "@/lib/canvas/agent-dock";
+import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import type { PublicState } from "@/lib/types";
 
 export const CANVAS_AGENT_DOCK_OPEN_KEY = "sanmao.canvas.agentdock.open.v1";
@@ -449,34 +447,26 @@ export default function CanvasAgentDock({
       event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
 
-  const modelOptions = useMemo(() => {
-    const models = agentModelOptions(runtime);
+  /* 画布上真有失败节点时，「排查失败」先把它们选中再提问：否则模型只能收到一句干问。
+     与「选中」强相关的提问在没选中节点时会被模型直接回绝，所以先置灰并说明怎么用。 */
+  const quickActions = useMemo(() => {
+    const needsSelection = selectedNodeTotal === 0;
+    const selectionTitle = needsSelection ? "先在画布上选中节点，再点这条提问" : "用当前选中的节点回答";
     return [
-      { value: "auto", label: "自动选择", description: "按画布设置挑一个可用模型" },
-      ...models.map((item) => ({
-        value: item.id,
-        label: item.displayName || item.id,
-        description: item.providerName || item.providerId || "",
-      })),
-    ];
-  }, [runtime]);
-
-  /* 画布上真有失败节点时，「排查失败」先把它们选中再提问：否则模型只能收到一句干问。 */
-  const quickActions = useMemo(
-    () => [
-      { label: "总结选中", prompt: "用 5 条以内的要点总结我选中的这些节点，并指出可继续的方向。", ids: [] as string[] },
-      { label: "写提示词", prompt: "基于选中的节点，给我 3 条可直接用于图片生成的中文提示词。", ids: [] as string[] },
+      { label: "总结选中", prompt: "用 5 条以内的要点总结我选中的这些节点，并指出可继续的方向。", ids: [] as string[], disabled: needsSelection, title: selectionTitle },
+      { label: "写提示词", prompt: "基于选中的节点，给我 3 条可直接用于图片生成的中文提示词。", ids: [] as string[], disabled: needsSelection, title: selectionTitle },
       {
         label: status.failedIds.length ? `排查失败（${status.failedIds.length}）` : "排查失败",
         prompt: status.failedIds.length
           ? "我已在画布上选中失败的节点，请逐个说明失败原因，并给出可直接执行的修复步骤。"
           : "如果画布上有失败或卡住的节点，说明原因并给出具体修复步骤。",
         ids: status.failedIds,
+        disabled: false,
+        title: status.failedIds.length ? "选中失败的节点后提问" : "画布上有失败或卡住的节点时最有用",
       },
-      { label: "下一步建议", prompt: "结合当前选中的节点和它们的关系，告诉我下一步最值得做的 3 件事。", ids: [] as string[] },
-    ],
-    [status.failedIds],
-  );
+      { label: "下一步建议", prompt: "结合当前选中的节点和它们的关系，告诉我下一步最值得做的 3 件事。", ids: [] as string[], disabled: needsSelection, title: selectionTitle },
+    ];
+  }, [selectedNodeTotal, status.failedIds]);
 
   const refreshSkills = useCallback(async () => {
     try {
@@ -973,7 +963,7 @@ export default function CanvasAgentDock({
             );
           })
         ) : (
-          <small>在画布上选中节点后，这里会显示它们，并把节点信息一起发给 Agent；编号＝输入 @ 时用的编号，拖动可调整顺序。</small>
+          <small>在画布上选中节点后，这里会显示它们，并把节点信息一起发给 Agent；编号＝输入 @ 时用的编号，拖动可调整顺序。没有选中时，Agent 读整张画布的概况。</small>
         )}
       </div>
       {/* 流式时逐字播报会把读屏塞满，所以只在回答结束后才播报。 */}
@@ -1160,11 +1150,12 @@ export default function CanvasAgentDock({
           <button
             key={action.label}
             type="button"
+            title={action.title}
             onClick={() => {
               if (action.ids.length) onFocusNodes(action.ids);
               setInput(action.prompt);
             }}
-            disabled={busy}
+            disabled={busy || action.disabled}
           >
             {action.label}
           </button>
@@ -1269,14 +1260,22 @@ export default function CanvasAgentDock({
             <SkillIcon size={14} />
             <span>技能</span>
           </button>
-          <SelectMenu
-            value={model}
-            options={modelOptions}
-            onChange={setModel}
-            ariaLabel="选择 Agent 模型"
-            className="canvas-agent-dock-model"
-            disabled={busy}
-          />
+          {/* 模型选择复用全站同一套 ModelPicker：搜索、收藏、最近调用、按服务商筛选都在里面。 */}
+          <div className={`canvas-agent-dock-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
+            <ModelPicker
+              models={runtime?.models || []}
+              value={model}
+              capability="chat"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+              defaultProviderId={runtime?.settings.defaultProviderId}
+              defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+              defaultModelId={runtime?.settings.agentModelId}
+              placeholder="选择对话模型"
+              onChange={setModel}
+              className="canvas-agent-dock-model"
+            />
+          </div>
           <button type="button" className="canvas-agent-dock-web" onClick={cycleWebMode} disabled={busy}>
             {WEB_MODE_LABELS[webMode]}
           </button>

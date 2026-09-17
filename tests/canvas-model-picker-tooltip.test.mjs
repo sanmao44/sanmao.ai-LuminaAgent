@@ -10,11 +10,11 @@ const styles = await readFile(
 test("canvas model picker shows the complete name above the trigger", () => {
   assert.match(
     styles,
-    /\.canvas-deck \.model-picker-trigger\[data-tooltip\],\.canvas-node-editor-popover \.model-picker-trigger\[data-tooltip\]\{overflow:visible\}/,
+    /\.canvas-deck \.model-picker-trigger\[data-tooltip\],\.canvas-node-editor-popover \.model-picker-trigger\[data-tooltip\],\.canvas-agent-dock \.model-picker-trigger\[data-tooltip\]\{overflow:visible\}/,
   );
   assert.match(
     styles,
-    /\.canvas-deck \.model-picker-trigger\[data-tooltip\]::after,.canvas-node-editor-popover \.model-picker-trigger\[data-tooltip\]::after\{top:auto;bottom:calc\(100% \+ 8px\);transform:translate\(-50%,4px\)\}/,
+    /\.canvas-deck \.model-picker-trigger\[data-tooltip\]::after,.canvas-node-editor-popover \.model-picker-trigger\[data-tooltip\]::after,.canvas-agent-dock \.model-picker-trigger\[data-tooltip\]::after\{top:auto;bottom:calc\(100% \+ 8px\);transform:translate\(-50%,4px\)\}/,
   );
   assert.doesNotMatch(
     styles,

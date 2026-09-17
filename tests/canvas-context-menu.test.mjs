@@ -137,7 +137,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(styles, /\.canvas-node-quick-menu-trigger\.open/);
   assert.match(groupContextMenu, /label: "复制组内容"/);
   assert.match(groupContextMenu, /title: "复制组到剪贴板"/);
-  assert.match(groupContextMenu, /const dangerAction = groupQuickActions\.dangerAction/);
+  assert.match(groupContextMenu, /const dangerAction = groupQuickActionsWithAgent\.dangerAction/);
   assert.match(groupContextMenu, /label: "删除"/);
   assert.match(groupContextMenu, /label: "复制组内容"/);
   assert.match(groupQuickActions, /id: "duplicate-group"[\s\S]*?label: "复制组"/);
@@ -151,6 +151,11 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.doesNotMatch(groupContextMenu, /图片编辑|局部编辑|复制图片|作为参考|继续生成/);
   assert.match(component, /target: CanvasQuickToolbarTarget/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
+  // 「问 Agent」要能从每条选中路径进：节点工具栏、多选工具栏、对象组工具栏、两种右键菜单。
+  assert.match(groupQuickActions, /id: "ask-agent",[\s\S]{0,120}?label: "问 Agent",/);
+  assert.match(component, /const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup\[]>/);
+  assert.match(component, /groups=\{contextMenuGroupsWithAgent\}/);
+  assert.match(quickActions, /id: "ask-agent",[\s\S]{0,140}?label: "问 Agent",/);
   assert.match(component, /const runImageAngleGeneration = useCallback/);
   assert.match(component, /const pendingOutput = (?:createPendingNode \? )?createMedia\("image", "", "角度控制结果"/);
   assert.match(component, /status: "running"[\s\S]*?processingStartedAt: startedAt[\s\S]*?jobId: taskId/);
