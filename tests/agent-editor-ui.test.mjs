@@ -14,7 +14,7 @@ const primaryActions = (source) => (source.match(/className=\{styles\.primary\}/
 test('agent memory and persona dialogs reuse the shared dialog shell', () => {
   assert.match(moduleCss, /\.dialog \{[\s\S]*?border-radius: 20px;/);
   assert.match(moduleCss, /\.dialog \{[\s\S]*?background: color-mix\(in srgb, var\(--panel\) 98%, transparent\);/);
-  assert.match(moduleCss, /\.dialog \{[\s\S]*?box-shadow: var\(--shadow\);/);
+  assert.match(moduleCss, /\.dialog \{[\s\S]*?box-shadow: var\(--shadow-soft\);/);
   const backdrop = /\.dialog::backdrop \{ background: color-mix\(in srgb, #05060b 62%, transparent\); backdrop-filter: blur\(3px\); \}/;
   assert.match(moduleCss, backdrop, 'memory and persona dialogs dim the page like the skill manager');
   assert.match(skillCss, backdrop, 'the shared backdrop must not drift from the skill manager');
