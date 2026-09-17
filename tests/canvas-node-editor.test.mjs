@@ -793,7 +793,7 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
 test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {
   assert.match(component, /function CanvasQuickToolbar\(/);
   assert.match(component, /data-canvas-group-id=\{group\.id\}/);
-  assert.match(component, /placeCanvasGroupToolbar\(anchor, stageSize, overlay, 10\)/);
+  assert.match(component, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
   assert.match(component, /arrangeCanvasGroup\(docRef\.current, activeGroup\.id, mode\)/);
   assert.doesNotMatch(component, /arrangeCanvas\(docRef\.current, selected, mode\)/);
   assert.match(component, /title="按节点父子关系整理选中对象"/);

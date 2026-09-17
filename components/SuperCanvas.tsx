@@ -2552,6 +2552,24 @@ function isEditableTarget(target: EventTarget | null) {
   );
 }
 
+/* 右侧 Agent 面板打开时会盖在画布上：这里量出它真正占掉的宽度（CSS px）。
+   面板收起只剩 rail、或者窄屏时被媒体查询挪到底部横条的时候，都不该让位。 */
+function canvasRightOverlayInset(stage: HTMLElement | null) {
+  const stageRect = stage?.getBoundingClientRect();
+  const panel = typeof window === "undefined" ? null : window.document.querySelector(".canvas-agent-dock");
+  if (!stageRect || !(panel instanceof HTMLElement)) return 0;
+  const rect = panel.getBoundingClientRect();
+  if (rect.width <= 0 || rect.left <= stageRect.left + stageRect.width / 2) return 0;
+  return Math.max(0, stageRect.right - rect.left + 16);
+}
+
+/* 浮层摆放用的可用宽度：扣掉右侧面板，并且至少留 240px 看得见的画布。 */
+function canvasVisibleStageWidth(stage: HTMLElement | null) {
+  const width = Math.max(1, stage?.clientWidth || 1);
+  const inset = Math.min(canvasRightOverlayInset(stage), Math.max(0, width - 240));
+  return Math.max(1, width - inset);
+}
+
 function isCanvasClipboardPayload(
   value: unknown,
 ): value is CanvasClipboardPayload {
@@ -5330,9 +5348,10 @@ export default function SuperCanvas() {
     [updateDoc],
   );
   /* rightInset 是右侧浮层（Agent 面板）占掉的宽度：取景只按它左边那块可见区域算，
-     否则「定位节点」和刚落下的结果会有半边藏在面板后面。 */
+     否则「定位节点」和刚落下的结果会有半边藏在面板后面。
+     默认值就是面板当前的真实占位，所以适应视图、搜索定位、排列这些入口都不用逐个传。 */
   const fitView = useCallback(
-    (ids?: string[], rightInset = 0) => {
+    (ids?: string[], rightInset = canvasRightOverlayInset(stageRef.current)) => {
       const targets = ids?.length
         ? ids
         : docRef.current.nodes.map((node) => node.id);
@@ -5371,18 +5390,6 @@ export default function SuperCanvas() {
     },
     [updateDoc],
   );
-
-  /* Agent 面板量的就是它在屏幕上的真实位置：媒体查询把它挪到底部那条时不让位。
-     收起面板（只剩 rail）时它不占画布，也不让位。 */
-  const agentDockRightInset = useCallback(() => {
-    if (!agentDockOpen) return 0;
-    const stage = stageRef.current?.getBoundingClientRect();
-    const panel = typeof window === "undefined" ? null : window.document.querySelector(".canvas-agent-dock");
-    if (!stage || !(panel instanceof HTMLElement)) return 0;
-    const rect = panel.getBoundingClientRect();
-    if (rect.width <= 0 || rect.left <= stage.left + stage.width / 2) return 0;
-    return Math.max(0, stage.right - rect.left + 16);
-  }, [agentDockOpen]);
 
   const arrangeCanvasAction = useCallback((modeOverride?: CanvasArrangeMode) => {
     const selected = selectedIds.size ? [...selectedIds] : undefined;
@@ -9829,9 +9836,9 @@ export default function SuperCanvas() {
       }
       setSelectedIds(new Set(targets));
       setSelectedGroupId(null);
-      fitView(targets, agentDockRightInset());
+      fitView(targets);
     },
-    [agentDockRightInset, fitView, notify],
+    [fitView, notify],
   );
   /* 画布一侧的入口：选中节点后直接开面板并聚焦输入框，选中内容会自动成为上下文。 */
   const askAgentAboutSelection = useCallback(() => {
@@ -9938,12 +9945,11 @@ export default function SuperCanvas() {
         ...(anchor ? { parentId: anchor.id } : {}),
       });
       notify(`已把 ${nodes.length} 张 Agent 图片加入画布`);
-      fitView(nodes.map((node) => node.id), agentDockRightInset());
+      fitView(nodes.map((node) => node.id));
       return nodes.map((node) => node.id);
     },
     [
       agentDockReferences,
-      agentDockRightInset,
       commit,
       fitView,
       notify,
@@ -9991,10 +9997,13 @@ export default function SuperCanvas() {
       setSelectedGroupId(null);
       setContextMenu(null);
       notify("已把 Agent 回复存成节点");
+      /* 和「加入画布」一致：新节点默认落在选中节点右侧，不把视图挪过去就会被面板挡住。 */
+      fitView([node.id]);
       return [node.id];
     },
     [
       commit,
+      fitView,
       notify,
       openNodePosition,
       screenToWorld,
@@ -17765,9 +17774,11 @@ function CanvasQuickToolbar({
       width: toolbarRef.current?.offsetWidth || (compact ? 280 : 520),
       height: toolbarRef.current?.offsetHeight || 40,
     };
+    /* 摆放用的宽度扣掉右侧 Agent 面板：工具栏宁可贴到面板左边，也别被压在面板下面。 */
+    const placementStage = { ...stageSize, width: canvasVisibleStageWidth(stage) };
     const nextPosition: CanvasQuickToolbarPosition = target.kind === "group"
-      ? placeCanvasGroupToolbar(anchor, stageSize, overlay, 10)
-      : placeCanvasNodeToolbar(anchor, stageSize, overlay, 10);
+      ? placeCanvasGroupToolbar(anchor, placementStage, overlay, 10)
+      : placeCanvasNodeToolbar(anchor, placementStage, overlay, 10);
     setPosition((current) =>
       current.left === nextPosition.left &&
       current.top === nextPosition.top &&
@@ -18667,9 +18678,10 @@ function CanvasNodeEditorPopover({
     // Use the node's real screen-space anchor for every editor mode. The
     // panel may clamp to the stage margins when it is wider than the node,
     // but it must not be recentered independently from the node.
+    /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
     const fittedPosition = fitCanvasNodeEditorBelow(
         anchor,
-        { width: stageWidth, height: stageHeight },
+        { width: canvasVisibleStageWidth(stage), height: stageHeight },
         { width: popoverWidth, height: popoverHeight },
         14,
         12,
