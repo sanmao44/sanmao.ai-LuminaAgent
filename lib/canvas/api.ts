@@ -714,6 +714,7 @@ export async function generateCanvasAgent(
     durationSeconds?: number;
     deliverable?: AgentDeliverable;
     intentReason?: string;
+    intentText?: string;
     signal?: AbortSignal;
   },
   onEvent?: (event: CanvasAgentStreamEvent) => void,
@@ -752,6 +753,7 @@ export async function generateCanvasAgent(
         references: preparedReferences,
         ...(input.deliverable ? { deliverable: input.deliverable } : {}),
         ...(input.intentReason ? { intentReason: input.intentReason } : {}),
+        ...(input.intentText ? { intentText: input.intentText } : {}),
       },
       { signal: controller.signal, onEvent },
     );

@@ -299,6 +299,8 @@ export default function CanvasAgentDock({
             messages: outbound,
             model,
             webMode,
+            // 画布上下文只给模型看，意图判断必须用用户自己那句话。
+            intentText: text,
             references: references.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
             signal: controller.signal,
           },

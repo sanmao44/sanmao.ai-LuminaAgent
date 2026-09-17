@@ -15,7 +15,7 @@ import { isImageContinuationRequest, likelyFileGenerationRequest, resolveAgentWe
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
-import { classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
+import { agentInstructionText, classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { memoryContextMessage } from '@/lib/agent-memory';
 import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
@@ -433,11 +433,14 @@ export async function POST(request: Request) {
     const imageModelText = imageModels.length ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n') : '- 当前没有可用生图模型';
     const latest = latestUser(messages);
     const latestRefs = normalizeCreativeReferences(latest?.references, 16);
+    // 画布等调用方会把系统上下文拼在用户消息末尾（"画布 / 图片 / 渲染"这些词都在里面）。
+    // 意图判断一律只看用户原话，避免把普通提问判成生图请求。
+    const latestInstruction = agentInstructionText(body.intentText, latest?.content || '');
     const supportsVideoInput = agentRuntime.model.capabilities.includes('video-input');
     if (latestRefs.some((reference) => reference.kind === 'video') && !supportsVideoInput) {
       return Response.json({ error: '当前对话模型没有明确声明 video-input 能力，已阻止发送视频引用；请切换支持视频输入的模型。' }, { status: 400 });
     }
-    const intentDecision = classifyAgentDeliverable(latest?.content || '', {
+    const intentDecision = classifyAgentDeliverable(latestInstruction, {
       messages: messages.slice(0, -1),
       hasReferences: latestRefs.length > 0,
       hasFiles: Boolean(latest?.files?.length),
@@ -542,14 +545,14 @@ export async function POST(request: Request) {
       '只返回润色后的正文，不要解释、道歉、加标题、加引号或使用 Markdown。',
       '[原文]',
     ].join('\n');
-    const identityQuestion = isModelIdentityQuestion(latest?.content || '');
+    const identityQuestion = isModelIdentityQuestion(latestInstruction);
     const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
-    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask && !identityQuestion && likelyFileGenerationRequest(latest?.content || '');
+    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isPromptOptimizationTask && !identityQuestion && likelyFileGenerationRequest(latestInstruction);
     const webMode = resolveAgentWebMode(body.webMode, body.webSearch);
     const webSearchEnabled = webMode !== 'off';
     llmWebSearchStatus = webMode === 'off' ? 'disabled' : 'not-needed';
     const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isCinematicDirectorTask || isPromptOptimizationTask || identityQuestion;
-    const rawWebDecision = shouldUseAgentWebSearch(webMode, latest?.content || '', messages.slice(0, -1));
+    const rawWebDecision = shouldUseAgentWebSearch(webMode, latestInstruction, messages.slice(0, -1));
     const webDecision: AgentWebDecision = searchExcludedTask
       ? { ...rawWebDecision, shouldSearch: false, reason: 'ordinary-chat' }
       : rawWebDecision;

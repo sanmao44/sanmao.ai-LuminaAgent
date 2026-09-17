@@ -35,6 +35,8 @@ export type AgentRequestPayload = {
   webSearch?: boolean;
   deliverable?: AgentDeliverable;
   intentReason?: string;
+  /** 用户原话。画布等调用方会把系统上下文拼进 messages，意图判断只认这段文字。 */
+  intentText?: string;
 };
 
 export type AgentGeneratedFile = {

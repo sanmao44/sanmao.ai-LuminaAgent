@@ -30,7 +30,8 @@ const otherLabel = '通用对话';
 // Do not treat the noun "画面" as the verb "画". This distinction matters
 // for requests such as "描述一下这个画面", especially when a reference image
 // is attached: the requested deliverable is text, not a new image.
-const imageActionPattern = /(?:画(?!面)|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
+// 「画布 / 画板 / 画框」同理是名词：画布上下文里到处是"画布"，不能当成"画"这个动作。
+const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
 const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
 const imageEditPattern = /(?:修改|调整|改一下|改成|换成|替换|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
 const textArtifactPattern = /(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|总结|翻译|邮件|回复|文字|方向|创意|灵感|思路|markdown|json|csv|html|css)/i;
@@ -118,6 +119,16 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
     return result('OTHER', '更像是在提问、分析或寻求方法，不是直接索要视觉产物。', 'medium', ['问答/分析']);
   }
   return result('OTHER', '暂时没有足够信号判断具体交付物，先按普通 Agent 任务处理。', 'low', ['信号不足']);
+}
+
+/**
+ * 画布等调用方会把系统上下文（节点摘要、提示词等）拼在用户消息末尾，这些内容不是
+ * 用户指令：一旦参与意图判断，"画布 / 图片 / 渲染"等词会把普通提问误判成生图请求。
+ * 调用方可以把用户原话单独传进来，这里只做取值和兜底。
+ */
+export function agentInstructionText(intentText: unknown, fallback: unknown) {
+  const value = clean(intentText);
+  return (value || clean(fallback)).slice(0, 4000);
 }
 
 export function agentDeliverableLabel(value: unknown) {
