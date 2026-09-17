@@ -105,6 +105,7 @@ import {
 import {
   canvasProjectFromDocument,
   deleteCanvasProject,
+  describeCanvasSaveFailure,
   ensureCanvasStorage,
   loadCanvasDocument,
   saveCanvasDocument,
@@ -3810,7 +3811,7 @@ export default function SuperCanvas() {
               : project,
           ),
         );
-      else notify("画布保存失败，请先导出工作流 JSON。", "error");
+      else notify(describeCanvasSaveFailure(), "error");
     }, 350);
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
@@ -15563,6 +15564,32 @@ export default function SuperCanvas() {
                 </span>
                 <small className="canvas-menu-shortcut">Z</small>
               </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  setContextMenu(null);
+                  exportWorkflow();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⇩</span>
+                <span className="canvas-menu-copy">
+                  <b>导出工作流 JSON</b>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-tool"
+                onClick={() => {
+                  setContextMenu(null);
+                  workflowInputRef.current?.click();
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
+                <span className="canvas-menu-copy">
+                  <b>导入工作流 JSON</b>
+                </span>
+              </button>
             </div>
           </CanvasContextMenuFrame>
         ) : null}
@@ -15711,6 +15738,8 @@ export default function SuperCanvas() {
           connectionStyle={connectionStyle}
           onTheme={toggleTheme}
           onConnectionStyleChange={setConnectionStyle}
+          onExportWorkflow={exportWorkflow}
+          onImportWorkflow={() => workflowInputRef.current?.click()}
           onClose={() => setActivePanel(null)}
         />
       )}
@@ -20848,10 +20877,12 @@ function CanvasActivityDrawer({
   );
 }
 
-function CanvasSettingsPanel({ theme, connectionStyle, onTheme, onConnectionStyleChange, onClose }: { theme: CanvasTheme; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onClose: () => void }) {
+function CanvasSettingsPanel({ theme, connectionStyle, onTheme, onConnectionStyleChange, onExportWorkflow, onImportWorkflow, onClose }: { theme: CanvasTheme; connectionStyle: ConnectionStyle; onTheme: () => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onExportWorkflow: () => void; onImportWorkflow: () => void; onClose: () => void }) {
   return <CanvasPanelShell title="画布设置" subtitle="只保留画布与应用配置" onClose={onClose} className="canvas-settings-panel">
     <section className="canvas-setting-section"><b>界面主题</b><button type="button" onClick={onTheme}>{theme === "light" ? "☾ 切换深色" : "☀ 切换浅色"}</button></section>
     <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon value={item.value} /> }))} /></section>
+    <section className="canvas-setting-section"><b>导出工作流</b><button type="button" onClick={onExportWorkflow}>导出 JSON</button></section>
+    <section className="canvas-setting-section"><b>导入工作流</b><button type="button" onClick={onImportWorkflow}>选择 JSON 文件</button></section>
     <p className="canvas-setting-note">选中节点后，直接关联的入边和出边会显示细流光。</p>
   </CanvasPanelShell>;
 }

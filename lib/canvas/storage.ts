@@ -20,11 +20,31 @@ function readJson<T>(key: string, fallback: T): T {
   } catch { return fallback; }
 }
 
+let storageQuotaExceeded = false;
+
+function isQuotaExceededError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const name = (error as { name?: unknown }).name;
+  const code = (error as { code?: unknown }).code;
+  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014;
+}
+
 function writeJson(key: string, value: unknown) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
+    storageQuotaExceeded = false;
     return true;
-  } catch { return false; }
+  } catch (error) {
+    storageQuotaExceeded = isQuotaExceededError(error);
+    return false;
+  }
+}
+
+/** 最近一次画布写入失败的提示：区分浏览器存储配额不足与其它写入失败。 */
+export function describeCanvasSaveFailure() {
+  return storageQuotaExceeded
+    ? '浏览器本地存储已满：请先导出工作流 JSON，再清理生成任务记录或删除无用画布。'
+    : '画布保存失败，请先导出工作流 JSON。';
 }
 
 function normalizeProjects(value: unknown): CanvasProject[] {
@@ -112,13 +132,17 @@ export function loadCanvasDocument(id: string) {
 }
 
 export function saveCanvasDocument(id: string, document: CanvasDocument) {
+  storageQuotaExceeded = false;
   const key = `${CANVAS_PROJECT_PREFIX}${id}`;
   const current = readJson<Record<string, unknown> | null>(key, null);
   if (current && current.version !== CANVAS_VERSION) {
     const backupKey = `${CANVAS_V1_BACKUP_PREFIX}${id}`;
     try {
       if (!window.localStorage.getItem(backupKey)) window.localStorage.setItem(backupKey, JSON.stringify({ backedUpAt: new Date().toISOString(), sourceVersion: current.version || 'nova-compatible', document: current }));
-    } catch { return false; }
+    } catch (error) {
+      storageQuotaExceeded = isQuotaExceededError(error);
+      return false;
+    }
   }
   const ok = writeJson(key, { ...normalizeDocument(document), version: CANVAS_VERSION });
   if (ok) emitWorkspaceChange();

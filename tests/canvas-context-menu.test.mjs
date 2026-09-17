@@ -251,6 +251,8 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
     "<b>一键整理</b>",
     "清理空内容（",
     "<b>适应视图</b>",
+    "<b>导出工作流 JSON</b>",
+    "<b>导入工作流 JSON</b>",
   ];
   const actionPositions = actionMarkers.map((marker) => toolsMenu.indexOf(marker));
   assert.deepEqual(

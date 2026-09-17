@@ -41,6 +41,7 @@ import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
+import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
 import { appendTextReferenceContext, normalizeCreativeReference, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
@@ -5871,40 +5872,7 @@ export default function Page() {
     ]);
     useEffect(()=>{
         if (!generateTasksReady) return;
-        const compactTasks = generateTasks.slice(0, 12).map((task)=>{
-            const request = task.request ? {
-                ...task.request
-            } : undefined;
-            if (request) {
-                const referenceBytes = request.references.reduce((total, ref)=>total + (ref.dataUrl?.length || 0), 0) + (request.mask?.dataUrl?.length || 0);
-                if (referenceBytes > 2500000) {
-                    request.references = [];
-                    request.mask = null;
-                    request.referencesOmitted = true;
-                }
-            }
-            return {
-                ...task,
-                items: [],
-                itemIds: task.itemIds?.length ? task.itemIds : task.items.map((item)=>item.id),
-                request
-            };
-        });
-        try {
-            localStorage.setItem('sanmao-generate-tasks', JSON.stringify(compactTasks));
-        } catch  {
-            try {
-                localStorage.setItem('sanmao-generate-tasks', JSON.stringify(compactTasks.map((task)=>({
-                        ...task,
-                        request: task.request ? {
-                            ...task.request,
-                            references: [],
-                            mask: null,
-                            referencesOmitted: true
-                        } : undefined
-                    }))));
-            } catch  {}
-        }
+        persistGenerateTasks(generateTasks);
     }, [
         generateTasksReady,
         generateTasks
