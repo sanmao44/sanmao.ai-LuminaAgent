@@ -6,6 +6,7 @@ import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validate
 import { getDefaultStoragePath, getStorageRoots } from '@/lib/image-storage';
 import { createLocalSnapshot } from '@/lib/local-snapshots';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { listInstalledSkillDirs, listSkillFilesForBackup, resolveSkillArchivePath, resolveSkillsDir, shouldSkipSkillPath } from '@/lib/skills';
 import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
 
 export const runtime = 'nodejs';
@@ -83,11 +84,29 @@ async function exportArchive(client: unknown) {
     }
   }
 
+  const skillsRoot = resolveSkillsDir();
+  let skillCount = 0;
+  let skillFileCount = 0;
+  let skillOmittedFiles = 0;
+  for (const skill of listInstalledSkillDirs(skillsRoot)) {
+    let included = 0;
+    for (const file of listSkillFilesForBackup(skill.dir)) {
+      const name = `skills/${skill.id}/${file.path}`;
+      if (Buffer.byteLength(name, 'utf8') > 256) { skillOmittedFiles += 1; continue; }
+      entries.push({ name, data: await readFile(file.file) });
+      included += 1;
+    }
+    if (included) { skillCount += 1; skillFileCount += included; }
+  }
+
   const manifest = {
     format: 'sanmao-ai-local-backup-archive',
     version: 2,
     exportedAt: new Date().toISOString(),
     imageCount: seen.size,
+    skillCount,
+    skillFileCount,
+    skillOmittedFiles,
     portableImageStorage: true,
     externalMasterKey: Boolean(process.env.SANMAO_MASTER_KEY?.trim()),
     files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: sha256(entry.data) })),
@@ -146,7 +165,22 @@ async function restoreArchive(archive: Buffer) {
     await writeFile(target, entry.data);
     restoredImages += 1;
   }
-  return { client: clientEntry ? JSON.parse(clientEntry.data.toString('utf8')) : {}, manifest, restoredImages, externalMasterKey: Boolean(manifest.externalMasterKey) };
+
+  const skillsRoot = resolveSkillsDir();
+  const restoredSkillIds = new Set<string>();
+  let restoredSkillFiles = 0;
+  for (const entry of entries.filter((value) => value.name.startsWith('skills/'))) {
+    const relative = entry.name.slice('skills/'.length);
+    if (relative.split('/').length < 2 || shouldSkipSkillPath(relative)) continue;
+    const target = resolveSkillArchivePath(skillsRoot, relative);
+    if (!target) continue;
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, entry.data);
+    restoredSkillFiles += 1;
+    restoredSkillIds.add(relative.split('/')[0]);
+  }
+
+  return { client: clientEntry ? JSON.parse(clientEntry.data.toString('utf8')) : {}, manifest, restoredImages, restoredSkills: restoredSkillIds.size, restoredSkillFiles, externalMasterKey: Boolean(manifest.externalMasterKey) };
 }
 
 export async function POST(request: Request) {
@@ -168,6 +202,7 @@ export async function POST(request: Request) {
         'Content-Disposition': `attachment; filename="SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup"`,
         'X-SANMAO-Backup-Version': '2',
         'X-SANMAO-Backup-Encrypted': '1',
+        'X-SANMAO-Backup-Skills': String(result.manifest.skillCount),
       },
     });
   } catch (error) {

@@ -489,3 +489,39 @@ test('技能来源更新检测与导出分享', async () => {
     await cleanup();
   }
 });
+test('备份用技能目录枚举与路径解析', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    skills.installSkill({ name: '备份演示', description: '备份', body: '# 正文' }, store);
+    const id = skills.resolveSkillId('备份演示');
+    const skillDir = path.join(store.dataDir, 'skills', id);
+    await mkdir(path.join(skillDir, 'references'), { recursive: true });
+    await writeFile(path.join(skillDir, 'references', '说明.md'), '# 参考', 'utf8');
+    await mkdir(path.join(skillDir, 'node_modules'), { recursive: true });
+    await writeFile(path.join(skillDir, 'node_modules', 'x.js'), 'x', 'utf8');
+    await writeFile(path.join(skillDir, '.hidden'), 'x', 'utf8');
+
+    const root = skills.resolveSkillsDir(store);
+    assert.deepEqual(skills.listInstalledSkillDirs(root).map((entry) => entry.id), [id]);
+
+    const listed = skills.listSkillFilesForBackup(skillDir).map((entry) => entry.path).sort();
+    assert.deepEqual(listed, ['SKILL.md', 'meta.json', 'references/说明.md']);
+
+    assert.equal(skills.resolveSkillArchivePath(root, id + '/SKILL.md'), path.join(root, id, 'SKILL.md'));
+    assert.equal(skills.resolveSkillArchivePath(root, id + '/references/说明.md'), path.join(root, id, 'references', '说明.md'));
+    assert.equal(skills.resolveSkillArchivePath(root, '../outside.md'), '');
+    assert.equal(skills.resolveSkillArchivePath(root, 'a/../../b.md'), '');
+    assert.equal(skills.resolveSkillArchivePath(root, 'SKILL.md'), '');
+    assert.equal(skills.resolveSkillArchivePath(root, 'C:/x.md'), '');
+    assert.equal(skills.resolveSkillArchivePath(root, ''), '');
+  } finally {
+    await cleanup();
+  }
+});
+test('来源接口状态码转成可读提示', () => {
+  assert.equal(skills.skillHttpErrorMessage(403), '下载失败（HTTP 403）：来源接口限流，请过几分钟再试');
+  assert.equal(skills.skillHttpErrorMessage(429, 'GitHub 目录接口失败'), 'GitHub 目录接口失败（HTTP 429）：来源接口限流，请过几分钟再试');
+  assert.equal(skills.skillHttpErrorMessage(404), '下载失败：来源地址不存在（HTTP 404）');
+  assert.equal(skills.skillHttpErrorMessage(500), '下载失败（HTTP 500）');
+  assert.equal(skills.skillHttpErrorMessage(500, 'GitHub 目录接口失败'), 'GitHub 目录接口失败（HTTP 500）');
+});

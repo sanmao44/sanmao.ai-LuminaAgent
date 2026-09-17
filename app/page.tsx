@@ -6797,7 +6797,8 @@ export default function Page() {
             anchor.click();
             anchor.remove();
             window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
-            notify(`加密备份完成：${client.gallery.length} 张图片索引、${client.chatSessions.length} 段对话，已包含服务端图片文件`);
+            const skillCount = Number(res.headers.get('X-SANMAO-Backup-Skills') || 0);
+            notify(`加密备份完成：${client.gallery.length} 张图片索引、${client.chatSessions.length} 段对话、${skillCount} 个技能，已包含服务端图片与技能文件`);
         } catch (error) {
             notify(error instanceof Error ? error.message : '导出备份失败');
         } finally{
@@ -6824,7 +6825,7 @@ export default function Page() {
             if (/\.(?:sanmao-backup\.)?tar\.gz$/i.test(file.name) || /\.sanmao-backup$/i.test(file.name) || file.type === 'application/gzip' || file.type === 'application/octet-stream') {
                 setConfirmState({
                     title: '恢复完整本地备份？',
-                     text: '这会覆盖当前服务端配置、日志和浏览器历史，并把备份中的图片恢复到当前数据目录。新格式备份已使用独立密码加密；旧版未加密备份仍可导入。',
+                     text: '这会覆盖当前服务端配置、日志和浏览器历史，并把备份中的图片和技能恢复到当前数据目录。新格式备份已使用独立密码加密；旧版未加密备份仍可导入。',
                     danger: true,
                     confirmText: '确认恢复',
                     action: async ()=>{
@@ -6842,7 +6843,7 @@ export default function Page() {
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || '恢复完整备份失败');
                             await restoreClientBackup(data.client);
-                            notify(`${data.externalMasterKey ? '恢复完成，但原备份依赖 SANMAO_MASTER_KEY；请在当前环境配置相同主密钥。' : `完整备份恢复完成：${data.restoredImages || 0} 个图片文件`}，正在重新加载`);
+                            notify(`${data.externalMasterKey ? '恢复完成，但原备份依赖 SANMAO_MASTER_KEY；请在当前环境配置相同主密钥。' : `完整备份恢复完成：${data.restoredImages || 0} 个图片文件、${data.restoredSkills || 0} 个技能`}，正在重新加载`);
                             window.setTimeout(()=>window.location.reload(), 700);
                         } catch (error) {
                             notify(error instanceof Error ? error.message : '恢复完整备份失败');
@@ -14155,7 +14156,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数和服务端图片文件，并使用独立密码加密。密码不会保存，请务必妥善保管。"
+                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数、服务端图片文件和已安装技能，并使用独立密码加密。密码不会保存，请务必妥善保管。"
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-backup-summary",
@@ -14274,7 +14275,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
                                                         className: "settings-backup-warning",
-                                                         children: "备份文件包含 API Key 恢复所需信息和图片文件；即使已加密，也请勿上传 GitHub 或发送给他人。"
+                                                         children: "备份文件包含 API Key 恢复所需信息、图片和技能文件；即使已加密，也请勿上传 GitHub 或发送给他人。"
                                                     })
                                                 ]
                                             }),

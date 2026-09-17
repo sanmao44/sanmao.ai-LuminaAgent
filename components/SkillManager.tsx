@@ -50,6 +50,19 @@ function formatTime(value: number) {
 
 const SCRIPT_FILE_PATTERN = /\.(?:sh|bash|zsh|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i;
 
+const RATE_LIMIT_PATTERN = /限流|rate limit|HTTP 403|HTTP 429/i;
+
+type UpdateOutcome = { status: 'updated' | 'same'; message: string };
+
+/** 把更新检测结果转成界面文案；限流等失败由调用方按 RATE_LIMIT_PATTERN 判断。 */
+function readUpdateOutcome(result: { status?: string; localEdited?: boolean; remote?: { version?: string } } | undefined): UpdateOutcome {
+  if (result?.status === 'updated') {
+    const version = result.remote?.version ? '（来源版本 ' + result.remote.version + '）' : '';
+    return { status: 'updated', message: '发现来源更新' + version + (result.localEdited ? '，重装会覆盖本地修改' : '') };
+  }
+  return { status: 'same', message: '已是最新版本。' };
+}
+
 function formatBytes(bytes: number) {
   const value = Number(bytes) || 0;
   if (value < 1024) return value + ' B';
@@ -97,6 +110,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [fileLabel, setFileLabel] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [updates, setUpdates] = useState<Record<string, UpdateState>>({});
+  const [indexLimit, setIndexLimit] = useState(0);
+  const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   useBodyScrollLock(open);
 
@@ -108,6 +123,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     if (Array.isArray(data.skills)) setSkills(data.skills as SkillSummary[]);
     if (Array.isArray(data.pending)) setPending(data.pending as SkillSummary[]);
     if (data.settings) setSettings(data.settings as SkillSettingsView);
+    if (typeof data.indexLimit === 'number' && data.indexLimit > 0) setIndexLimit(data.indexLimit);
   }, []);
 
   const run = useCallback(async (task: () => Promise<void>) => {
@@ -132,6 +148,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   }, [open, run, applyPayload]);
 
   const enabledCount = skills.filter((skill) => skill.enabled).length;
+  const checkableCount = skills.filter(canCheckUpdate).length;
   const normalizedQuery = query.trim().toLowerCase();
   const visibleSkills = normalizedQuery
     ? skills.filter((skill) => `${skill.name} ${skill.id} ${skill.description || ''} ${(skill.tags || []).join(' ')}`.toLowerCase().includes(normalizedQuery))
@@ -249,29 +266,25 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
       setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'checking', message: apply ? '正在更新…' : '正在检查来源…' } }));
       try {
         const data = await requestJson('/api/skills/' + encodeURIComponent(skill.id) + '/update-check', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apply }) });
-        const result = data.result as { status?: string; localEdited?: boolean; remote?: { version?: string } } | undefined;
         if (apply) {
           applyPayload(data);
           setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'same', message: '已更新到最新版本。' } }));
           setNotice('已把「' + ((data.skill as { name?: string })?.name || skill.name) + '」更新到最新版本。');
           return;
         }
-        if (result?.status === 'updated') {
-          const version = result.remote?.version ? '（来源版本 ' + result.remote.version + '）' : '';
-          setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'updated', message: '发现来源更新' + version + (result.localEdited ? '，重装会覆盖本地修改' : '') } }));
-          return;
-        }
-        setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'same', message: '已是最新版本。' } }));
+        const outcome = readUpdateOutcome(data.result as { status?: string; localEdited?: boolean; remote?: { version?: string } } | undefined);
+        setUpdates((previous) => ({ ...previous, [skill.id]: { status: outcome.status, message: outcome.message } }));
       } catch (failure) {
         setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'error', message: failure instanceof Error ? failure.message : '检查更新失败。' } }));
       }
     });
   }
 
-  /* 导出为 SKILL.md 下载，方便分享给别人导入。 */
+  /* 导出分享：带附件时打包 zip（SKILL.md 在根目录），没有附件就给单文件 SKILL.md。 */
   async function exportSkill(skill: SkillSummary) {
     await run(async () => {
-      const response = await fetch('/api/skills/' + encodeURIComponent(skill.id) + '/export');
+      const withFiles = skill.files.length > 0;
+      const response = await fetch('/api/skills/' + encodeURIComponent(skill.id) + '/export' + (withFiles ? '?format=zip' : ''));
       if (!response.ok) {
         const data = await response.json().catch(() => ({} as Record<string, unknown>));
         throw new Error(String((data as { error?: string }).error || '导出失败。'));
@@ -279,13 +292,47 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
       const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = skill.id + '.md';
+      anchor.download = skill.id + (withFiles ? '.zip' : '.md');
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 4000);
-      setNotice('已导出「' + skill.name + '」，可以直接分享给别人导入。');
+      setNotice('已导出「' + skill.name + '」' + (withFiles ? '（含 ' + skill.files.length + ' 个附件）' : '') + '，可以直接分享给别人导入。');
     });
+  }
+
+  /* 批量检查来源更新：串行请求避免打爆 GitHub 接口，遇到限流就停下并说明剩余数量。 */
+  async function checkAllUpdates() {
+    const targets = skills.filter(canCheckUpdate);
+    if (!targets.length) return;
+    setError('');
+    setNotice('');
+    let checked = 0;
+    let updated = 0;
+    let failed = 0;
+    let stopped = '';
+    setBatch({ done: 0, total: targets.length });
+    for (let index = 0; index < targets.length; index += 1) {
+      const skill = targets[index];
+      setBatch({ done: index, total: targets.length });
+      setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'checking', message: '正在检查来源…' } }));
+      try {
+        const data = await requestJson('/api/skills/' + encodeURIComponent(skill.id) + '/update-check', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apply: false }) });
+        const outcome = readUpdateOutcome(data.result as { status?: string; localEdited?: boolean; remote?: { version?: string } } | undefined);
+        if (outcome.status === 'updated') updated += 1;
+        setUpdates((previous) => ({ ...previous, [skill.id]: { status: outcome.status, message: outcome.message } }));
+      } catch (failure) {
+        failed += 1;
+        const message = failure instanceof Error ? failure.message : '检查更新失败。';
+        setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'error', message } }));
+        if (RATE_LIMIT_PATTERN.test(message)) { stopped = message; checked += 1; break; }
+      }
+      checked += 1;
+      if (index < targets.length - 1) await new Promise((resolve) => window.setTimeout(resolve, 350));
+    }
+    setBatch(null);
+    const parts = [updated ? updated + ' 个有更新' : '没有发现更新', failed ? failed + ' 个失败' : ''].filter(Boolean).join('，');
+    setNotice('已检查 ' + checked + '/' + targets.length + ' 个技能：' + parts + (stopped ? '；来源接口限流，剩余 ' + (targets.length - checked) + ' 个请过几分钟再试。' : '。'));
   }
 
   const overwriteToggle = (
@@ -367,7 +414,11 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
             </section>
           : skills.length
             ? <>
-                {skills.length > 3 && <input type="text" value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、别名或简介" aria-label="搜索技能" />}
+                {(skills.length > 3 || checkableCount > 1) && <div className={styles.listToolbar}>
+                  {skills.length > 3 && <input type="text" value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、别名或简介" aria-label="搜索技能" />}
+                  {checkableCount > 1 && <button type="button" disabled={busy || Boolean(batch)} onClick={() => void checkAllUpdates()}>{batch ? '检查中 ' + batch.done + '/' + batch.total : '全部检查更新'}</button>}
+                </div>}
+                {indexLimit > 0 && enabledCount > indexLimit && <p className={styles.hint}>已启用 {enabledCount} 个技能，助手每轮只会自动看到最常用的 {indexLimit} 个；其余技能可以在技能菜单里点名，或让助手用 skill_search 检索。</p>}
                 {visibleSkills.length
                   ? visibleSkills.map((skill) => {
                     const update = updates[skill.id];
@@ -384,7 +435,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                     {skill.useCount ? `用过 ${skill.useCount} 次 · ` : ''}
                     {skill.tags?.length ? `别名：${skill.tags.join('、')} · ` : ''}
                     {skill.tools?.length ? `需要工具：${skill.tools.join('、')} · ` : ''}
-                    {skill.files.length ? `${skill.files.length} 个附件 · ` : ''}
+                    {skill.files.length ? `${skill.files.length} 个附件${hasScriptFile(skill.files) ? '（含脚本）' : ''} · ` : ''}
                     更新于 {formatTime(skill.updatedAt)}
                     {skill.sourceCheckedAt ? ` · 上次检查 ${formatTime(skill.sourceCheckedAt)}` : ''}
                     {skill.installer?.detail ? ` · ${skill.installer.detail}` : ''}
@@ -401,8 +452,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                   </label>
                   <button type="button" disabled={busy} onClick={() => void openEditor(skill)}>编辑</button>
                   <button type="button" disabled={busy} onClick={() => void openPreview(skill)}>预览</button>
-                  {canCheckUpdate(skill) && <button type="button" disabled={busy} onClick={() => void checkUpdate(skill)}>{update?.status === 'checking' ? '检查中…' : '检查更新'}</button>}
-                  <button type="button" disabled={busy} onClick={() => void exportSkill(skill)}>导出</button>
+                  {canCheckUpdate(skill) && <button type="button" disabled={busy || Boolean(batch)} onClick={() => void checkUpdate(skill)}>{update?.status === 'checking' ? '检查中…' : '检查更新'}</button>}
+                  <button type="button" disabled={busy} onClick={() => void exportSkill(skill)}>{skill.files.length ? '导出 zip' : '导出 md'}</button>
                   <button type="button" disabled={busy} onClick={() => void removeSkill(skill)}>{confirming === skill.id ? '确认删除' : '删除'}</button>
                 </div>
               </article>;

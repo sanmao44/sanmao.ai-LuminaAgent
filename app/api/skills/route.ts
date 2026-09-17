@@ -1,6 +1,6 @@
 import { isAdminRequest } from '@/lib/auth';
 import { getPublicState, patchSettings } from '@/lib/store';
-import { installSkill, skillsSnapshot, skillSummary } from '@/lib/skills';
+import { SKILL_INDEX_MAX, installSkill, skillsSnapshot, skillSummary } from '@/lib/skills';
 
 export const runtime = 'nodejs';
 
@@ -11,7 +11,7 @@ function skillSettings(settings: { skillsEnabled?: boolean; skillsAutoApprove?: 
 export async function GET(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const state = await getPublicState();
-  return Response.json({ ok: true, ...skillsSnapshot(), settings: skillSettings(state.settings) });
+  return Response.json({ ok: true, ...skillsSnapshot(), indexLimit: SKILL_INDEX_MAX, settings: skillSettings(state.settings) });
 }
 
 export async function POST(request: Request) {

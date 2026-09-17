@@ -10,6 +10,7 @@ import {
   githubArchiveUrls,
   isReservedSkillPath,
   isSkillTextPath,
+  skillHttpErrorMessage,
   normalizeSkillFilePath,
   shouldSkipSkillPath,
   type GithubSkillTarget,
@@ -49,7 +50,8 @@ export function skillFilesFromArchive(data: Uint8Array, options: { dir?: string 
         if (file.name.endsWith('/')) return false;
         const rel = normalizeSkillFilePath(file.name);
         if (!rel) { if (warnings.length < 12) warnings.push('已忽略路径不安全的条目：' + file.name.slice(0, 80)); return false; }
-        if (shouldSkipSkillPath(rel) || isReservedSkillPath(rel)) return false;
+        // SKILL.md 与 meta.json 是保留名，但解压阶段必须放行：后面要按 SKILL.md 定位技能根目录。
+        if (shouldSkipSkillPath(rel)) return false;
         if (file.originalSize > SKILL_FILE_MAX_BYTES) { if (warnings.length < 12) warnings.push('已忽略超大文件：' + rel); return false; }
         if (scanCount >= ARCHIVE_SCAN_FILES_MAX) return false;
         if (scanBytes + file.originalSize > ARCHIVE_SCAN_BYTES_MAX) return false;
@@ -149,7 +151,7 @@ async function fetchGithubContents(target: GithubSkillTarget, dir: string, optio
   const url = GITHUB_API_BASE + '/repos/' + encodeURIComponent(target.owner) + '/' + encodeURIComponent(target.repo) + '/contents' + (pathPart ? '/' + pathPart : '') + query;
   const response = await fetch(url, { headers: githubApiHeaders(), cache: 'no-store', signal: githubRequestSignal(options.signal, GITHUB_API_TIMEOUT_MS) });
   if (response.status === 404) return null;
-  if (!response.ok) throw new Error('GitHub 目录接口返回 HTTP ' + response.status);
+  if (!response.ok) throw new Error(skillHttpErrorMessage(response.status, 'GitHub 目录接口失败'));
   return response.json() as Promise<any>;
 }
 

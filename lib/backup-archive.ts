@@ -12,9 +12,21 @@ function writeOctal(target: Buffer, offset: number, length: number, value: numbe
   writeText(target, offset, length, `${text}\0`);
 }
 
+/** ustar 允许把过长路径的目录部分放进 prefix 字段，避免文件名被静默截断。 */
+function tarNameFields(name: string) {
+  if (Buffer.byteLength(name, 'utf8') <= 100) return { name, prefix: '' };
+  for (let index = name.lastIndexOf('/'); index > 0; index = name.lastIndexOf('/', index - 1)) {
+    const prefix = name.slice(0, index);
+    const rest = name.slice(index + 1);
+    if (Buffer.byteLength(prefix, 'utf8') <= 155 && Buffer.byteLength(rest, 'utf8') <= 100) return { name: rest, prefix };
+  }
+  throw new Error('备份文件名过长');
+}
+
 function tarHeader(name: string, size: number) {
   const header = Buffer.alloc(512, 0);
-  writeText(header, 0, 100, name);
+  const fields = tarNameFields(name);
+  writeText(header, 0, 100, fields.name);
   writeOctal(header, 100, 8, 0o644);
   writeOctal(header, 108, 8, 0);
   writeOctal(header, 116, 8, 0);
@@ -26,6 +38,7 @@ function tarHeader(name: string, size: number) {
   writeText(header, 263, 2, '00');
   writeText(header, 265, 32, 'SANMAO.AI');
   writeText(header, 297, 32, 'SANMAO.AI');
+  if (fields.prefix) writeText(header, 345, 155, fields.prefix);
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
   writeText(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
   return header;
@@ -44,7 +57,7 @@ export function createBackupArchive(entries: BackupArchiveEntry[]) {
   const chunks: Buffer[] = [];
   for (const entry of entries) {
     const name = entry.name.replace(/\\/g, '/').replace(/^\/+/, '');
-    if (!name || name.includes('..')) throw new Error('备份文件名无效');
+    if (!name || name.split('/').includes('..')) throw new Error('备份文件名无效');
     chunks.push(tarHeader(name, entry.data.length), padded(entry.data));
   }
   chunks.push(Buffer.alloc(1024));
@@ -58,7 +71,9 @@ export function extractBackupArchive(archive: Buffer) {
   while (offset + 512 <= tar.length) {
     const header = tar.subarray(offset, offset + 512);
     if (header.every((byte) => byte === 0)) break;
-    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const shortName = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const prefixText = header.subarray(345, 500).toString('utf8').replace(/\0.*$/, '');
+    const name = prefixText ? prefixText + '/' + shortName : shortName;
     const sizeText = header.subarray(124, 136).toString('ascii').replace(/\0.*$/, '').trim();
     const size = sizeText ? Number.parseInt(sizeText, 8) : 0;
     if (!name || !Number.isSafeInteger(size) || size < 0 || name.startsWith('/') || name.split('/').includes('..')) throw new Error('备份归档内容无效');

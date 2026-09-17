@@ -192,6 +192,40 @@ export function shouldSkipSkillPath(rel: string) {
   return String(rel || '').split('/').some((segment) => segment.startsWith('.') || SKILL_SKIP_DIRS.has(segment.toLowerCase()));
 }
 
+/** 备份用：列出已安装技能的目录，跳过隐藏目录与系统目录。 */
+export function listInstalledSkillDirs(root: string) {
+  return safeReadDir(root)
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !shouldSkipSkillPath(entry.name))
+    .map((entry) => ({ id: entry.name, dir: path.join(root, entry.name) }));
+}
+
+/**
+ * 备份用：列出某个技能目录下需要归档的文件，返回相对技能根目录的路径。
+ * 与 scanSkillFiles 不同，这里保留 meta.json 与 SKILL.md，因为备份需要完整快照。
+ */
+export function listSkillFilesForBackup(dir: string, relative = '', depth = 0): Array<{ path: string; file: string }> {
+  if (depth > 6) return [];
+  const files: Array<{ path: string; file: string }> = [];
+  for (const entry of safeReadDir(dir)) {
+    const rel = relative ? relative + '/' + entry.name : entry.name;
+    if (shouldSkipSkillPath(rel)) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) { files.push(...listSkillFilesForBackup(full, rel, depth + 1)); continue; }
+    if (!entry.isFile() || !normalizeSkillFilePath(rel)) continue;
+    files.push({ path: rel, file: full });
+  }
+  return files;
+}
+
+/** 备份恢复用：把归档条目名解析回技能根目录下的绝对路径，越界或非法时返回空串。 */
+export function resolveSkillArchivePath(root: string, relative: unknown) {
+  const rel = normalizeSkillFilePath(relative);
+  if (!rel || !rel.includes('/')) return '';
+  const base = path.resolve(root);
+  const target = path.resolve(base, rel);
+  return target.startsWith(base + path.sep) ? target : '';
+}
+
 export function isSkillTextPath(rel: string) {
   return SKILL_TEXT_EXTENSIONS.has(path.extname(String(rel || '')).toLowerCase());
 }
@@ -988,6 +1022,13 @@ export function assertSkillImportUrl(value: unknown) {
 /** 常见网络故障的关键字：把 fetch failed 之类的底层报错转成用户能看懂的中文提示。 */
 const SKILL_NETWORK_ERROR_PATTERN = /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|certificate|self signed|network/i;
 
+/** 把来源接口的状态码转成中文提示：限流与 404 单独说明，方便用户判断要不要重试。 */
+export function skillHttpErrorMessage(status: number, context = '下载失败') {
+  if (status === 403 || status === 429) return context + '（HTTP ' + status + '）：来源接口限流，请过几分钟再试';
+  if (status === 404) return context + '：来源地址不存在（HTTP 404）';
+  return context + '（HTTP ' + status + '）';
+}
+
 function skillFetchFailure(error: unknown, callerSignal: AbortSignal | undefined, timeoutMs: number) {
   if (callerSignal?.aborted) return callerSignal.reason instanceof Error ? callerSignal.reason : new Error('已取消');
   const name = error instanceof Error ? error.name : '';
@@ -1022,7 +1063,7 @@ export async function fetchSkillBytes(target: string | URL, options: { maxBytes?
       url = assertSkillImportUrl(new URL(location, url).toString());
       continue;
     }
-    if (!response.ok) throw new Error('下载失败（HTTP ' + response.status + '）');
+    if (!response.ok) throw new Error(skillHttpErrorMessage(response.status));
     const declared = Number(response.headers.get('content-length') || 0);
     if (declared && declared > limit) throw new Error('远端文件超过大小限制');
     let data: Buffer;
