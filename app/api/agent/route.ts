@@ -995,7 +995,10 @@ export async function POST(request: Request) {
       }
     }
 
-    const secondMessages: ChatMessage[] = [...llmMessages, { role: 'assistant', content: message?.content || null, tool_calls: toolCalls }, ...toolResults];
+    // 思维链模型（deepseek 思维模式）要求把带 tool_calls 的这轮助手消息原样带回：
+    // 丢了 reasoning_content 会被服务商直接 400 拒绝，用户只看得到一句占位提示。
+    const carriedAssistantFields = typeof message?.reasoning_content === 'string' && message.reasoning_content ? { reasoning_content: message.reasoning_content } : {};
+    const secondMessages: ChatMessage[] = [...llmMessages, { role: 'assistant', content: message?.content || null, tool_calls: toolCalls, ...carriedAssistantFields }, ...toolResults];
     // 技能工具经常需要链式调用（先检索再读取、安装后再核对）。如果后续轮次完全
     // 不给工具，模型会把调用写成文本标记（如 DSML），既不执行也会显示成乱码。
     // 这里只为技能工具补最多两轮原生调用，其余工具仍保持单轮，控制成本与副作用。
@@ -1018,7 +1021,8 @@ export async function POST(request: Request) {
         }
         const followupResults: ChatMessage[] = [];
         for (const followupCall of followupCalls) followupResults.push(await runSkillToolCall(followupCall));
-        secondMessages.push({ role: 'assistant', content: followupMessage?.content || null, tool_calls: followupCalls }, ...followupResults);
+        const carriedFollowupFields = typeof followupMessage?.reasoning_content === 'string' && followupMessage.reasoning_content ? { reasoning_content: followupMessage.reasoning_content } : {};
+        secondMessages.push({ role: 'assistant', content: followupMessage?.content || null, tool_calls: followupCalls, ...carriedFollowupFields }, ...followupResults);
         if (skillToolCalls >= SKILL_TOOL_MAX_CALLS) break;
       }
     }
@@ -1036,7 +1040,11 @@ export async function POST(request: Request) {
         return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
-        return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        // 这一轮以前是静默降级，用户只会看到“已完成联网检索”这类占位答案，也查不到原因。
+        // 记下真实错误，并把它一起返回给用户。
+        llmFailure = error instanceof Error ? error.message : String(error);
+        console.error('[Agent] 工具轮之后的流式回答失败：', llmFailure);
+        return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
     if (followupText) finalText = followupText;
@@ -1048,6 +1056,10 @@ export async function POST(request: Request) {
       }
     } catch (error) {
       if (requestController.signal.aborted) throw requestController.signal.reason || error;
+      llmFailure = error instanceof Error ? error.message : String(error);
+      console.error('[Agent] 工具轮之后的回答失败：', llmFailure);
+      finalText = `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`;
+      await settleLlmLog?.({ status: 'error', responseChars: 0, error: llmFailure });
     }
     llmResponseChars = String(finalText || '').length;
     return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills });
