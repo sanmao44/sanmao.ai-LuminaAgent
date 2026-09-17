@@ -213,8 +213,13 @@ test("dock chips carry the @ number and can be dragged into order", () => {
   assert.match(component, /const mentionIndex = chipMentionIndexes\.get\(chip\.id\);/);
   assert.match(component, /className="canvas-agent-dock-chip-index"/);
   assert.match(component, /function reorderReferenceIds\(/);
-  // 画布 stage 会吃掉原生 HTML5 拖拽（缩略图还带 -webkit-user-drag:none），所以芯片改用指针事件拖。
-  assert.doesNotMatch(component, /\s+draggable\s+onDragStart=/);
+  // 画布 stage 会吃掉原生 HTML5 拖拽（缩略图还带 -webkit-user-drag:none），所以芯片改用指针事件拖；
+  // 只有面板里的图片允许用原生 draggable 拖出去落到画布。
+  const chipOpening = component.slice(
+    component.indexOf("className={`canvas-agent-dock-chip"),
+    component.indexOf("onPointerDown={(event) => beginChipDrag"),
+  );
+  assert.doesNotMatch(chipOpening, /draggable/);
   assert.match(component, /data-chip-id=\{chip\.id\}/);
   assert.match(component, /onPointerDown=\{\(event\) => beginChipDrag\(event, chip\.id\)\}/);
   assert.match(component, /onPointerMove=\{\(event\) => trackChipDrag\(event, chip\.id\)\}/);
@@ -388,7 +393,7 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
 test("the dock keeps reporting a run and previews its images", () => {
   // 收起面板不等于停：rail 和工具栏都要显示「生成中」。
   assert.match(component, /canvas-agent-dock-rail\$\{busy \? " is-busy" : ""\}/);
-  assert.match(component, /<em>\{busy \? "生成中" : "Agent"\}<\/em>/);
+  assert.match(component, /<em>\{busy \? "生成中" : status\.failed \? `\$\{status\.failed\} 个失败` : "Agent"\}<\/em>/);
   assert.match(component, /onBusyChange\?\.\(busy\);/);
   assert.match(canvas, /onBusyChange=\{setAgentDockBusy\}/);
   assert.match(canvas, /const \[agentDockBusy, setAgentDockBusy\] = useState\(false\)/);
@@ -454,4 +459,54 @@ test("the dock header drills from the canvas task counts to the real nodes", () 
   // 刷新后这些定位入口要还在：节点 id 跟着会话一起存。
   assert.match(component, /imageNodeIds: message\.imageNodeIds\.map\(\(id\) => String\(id \|\| ""\)\)\.filter\(Boolean\)/);
   assert.match(component, /\.\.\.\(message\.textNodeId \? \{ textNodeId: String\(message\.textNodeId\) \} : \{\}\),/);
+});
+
+test("an agent image can be dragged out of the dock and dropped where the pointer is", () => {
+  // 面板里的图可以直接拖到画布上落点：和拖入文件、拖入资产是同一种手感。
+  assert.match(context, /export const CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE = "application\/x-sanmao-agent-image";/);
+  assert.match(component, /event\.dataTransfer\.setData\(\s*CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,/);
+  assert.match(component, /draggable/);
+  assert.match(canvas, /const dropAgentDockImage = useCallback\(/);
+  assert.match(canvas, /dropAgentDockImage\(\s*event\.dataTransfer\.getData\(CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE\),\s*screenToWorld\(event\.clientX, event\.clientY\),\s*\);/);
+  assert.match(canvas, /event\.dataTransfer\.types\.includes\(CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE\)/);
+  // 拖回面板自己身上不算落点。
+  assert.match(canvas, /closest\("\.canvas-agent-dock"\),/);
+  assert.ok(canvas.includes("松开以把这张图放到画布上"));
+  assert.ok(canvas.includes("已把这张图放到画布上"));
+});
+
+test("agent results land in free space instead of on top of existing nodes", () => {
+  // 面板落画布曾经用固定偏移：选中节点右边已经有东西时，结果会直接压上去。
+  const dockImages = canvas.slice(canvas.indexOf("const applyAgentDockImages = useCallback"), canvas.indexOf("const applyAgentDockText = useCallback"));
+  assert.match(dockImages, /const placed: CanvasNode\[\] = \[\];/);
+  assert.match(dockImages, /openNodePosition\(desired, draft, placed\)/);
+  const dockText = canvas.slice(canvas.indexOf("const applyAgentDockText = useCallback"), canvas.indexOf("const addNodeReference = useCallback"));
+  assert.match(dockText, /openNodePosition\(\{ x: draft\.x, y: draft\.y \}, draft\)/);
+  const imageBranch = canvas.slice(canvas.indexOf("const createImageBranchFromText = useCallback"), canvas.indexOf("const createVideoBranchFromText = useCallback"));
+  assert.match(imageBranch, /openNodePosition\(origin, imageNode\)/);
+  const videoBranch = canvas.slice(canvas.indexOf("const createVideoBranchFromText = useCallback"), canvas.indexOf("const useAgentResponseAsImagePrompt = useCallback"));
+  assert.match(videoBranch, /openNodePosition\(origin, videoNode\)/);
+});
+
+test("the collapsed rail reports the failed nodes on the canvas", () => {
+  // 收起后只剩一枚 rail：画布上有失败时它要看得出来，否则用户以为一切正常。
+  assert.match(component, /\$\{!busy && status\.failed \? " is-failed" : ""\}/);
+  assert.match(component, /画布上有 \$\{status\.failed\} 个失败节点，点开面板定位/);
+  assert.match(styles, /\.canvas-agent-dock-rail\.is-failed\{[^}]*var\(--danger\)/);
+});
+
+test("the canvas hands a selection to the dock with one click", () => {
+  // 画布一侧的入口：选中节点后直接开面板并聚焦输入框，选中内容自动成为上下文。
+  assert.match(canvas, /const askAgentAboutSelection = useCallback\(\(\) => \{/);
+  assert.ok(canvas.includes('notify("先在画布上选中要对 Agent 说的节点", "error")'));
+  assert.match(canvas, /applyAgentDockOpen\(true\);\s*\r?\n    setAgentDockFocusSignal\(\(value\) => value \+ 1\);/);
+  // 单节点快捷工具栏和多选工具条都接这个入口。
+  assert.match(canvas, /id: "ask-agent",[\s\S]{0,140}?label: "问 Agent",/);
+  assert.match(canvas, /icon: "agent",/);
+  assert.match(canvas, /case "agent":/);
+  assert.ok(canvas.includes('title="打开 Agent 助手，用这些选中节点作为上下文"'));
+  // 信号传给面板：展开后光标落在输入框里，不用再点一次。
+  assert.match(canvas, /focusSignal=\{agentDockFocusSignal\}/);
+  assert.match(component, /focusSignal\?: number;/);
+  assert.match(component, /if \(!open \|\| !focusSignal\) return;\s*\r?\n    focusEditorEnd\(\);/);
 });

@@ -5,6 +5,8 @@ import type { CanvasDocument, CanvasGenerationStatus, CanvasNode } from "./types
 export const CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES = 12;
 export const CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS = 1600;
 export const CANVAS_AGENT_DOCK_MAX_REFERENCES = 8;
+/** 面板把图片拖到画布时用的拖拽类型：画布靠它认出“从对话里拖出来的那张图”。 */
+export const CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE = "application/x-sanmao-agent-image";
 
 export type CanvasAgentDockStatus = {
   nodes: number;

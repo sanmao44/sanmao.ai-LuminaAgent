@@ -180,6 +180,7 @@ import CanvasAgentDock, {
   CANVAS_AGENT_DOCK_OPEN_KEY,
 } from "@/components/CanvasAgentDock";
 import {
+  CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
   buildCanvasAgentDockContext,
   canvasAgentDockNodeLabel,
@@ -3005,6 +3006,8 @@ export default function SuperCanvas() {
     null,
   );
   const [fileDropActive, setFileDropActive] = useState(false);
+  /* 从面板拖出来的图片：和拖文件共用高亮，但提示语要说清它是“落到画布上”。 */
+  const [agentDropActive, setAgentDropActive] = useState(false);
 
   useEffect(() => {
     const syncPresets = () => setCustomImagePresets(readCustomImagePresets());
@@ -3244,6 +3247,8 @@ export default function SuperCanvas() {
   }, [agentDockOpen]);
   /* 面板收起后仍可能在生成，工具栏的 Agent 按钮要能看到这件事。 */
   const [agentDockBusy, setAgentDockBusy] = useState(false);
+  /* 画布上的「问 Agent」只递增这个信号，聚焦输入框交给面板自己处理。 */
+  const [agentDockFocusSignal, setAgentDockFocusSignal] = useState(0);
   const applyAgentDockOpen = useCallback(
     (open: boolean) => {
       if (open) closeCanvasOverlayConflicts();
@@ -6479,6 +6484,7 @@ export default function SuperCanvas() {
       const imageNode = createEmptyMedia("image", origin, imageParams);
       const nextImageNode: CanvasNode = {
         ...imageNode,
+        ...openNodePosition(origin, imageNode),
         data: {
           ...imageNode.data,
           role: "Agent 转图片",
@@ -6509,7 +6515,7 @@ export default function SuperCanvas() {
       setTextLightboxNodeId(null);
       notify("已创建图片分支，文本已填入画布编辑器");
     },
-    [commit, notify, runtime, screenToWorld, stageSize],
+    [commit, notify, openNodePosition, runtime, screenToWorld, stageSize],
   );
 
   const createVideoBranchFromText = useCallback(
@@ -6524,6 +6530,7 @@ export default function SuperCanvas() {
       const videoNode = createEmptyMedia("video", origin, videoParams);
       const nextVideoNode: CanvasNode = {
         ...videoNode,
+        ...openNodePosition(origin, videoNode),
         data: {
           ...videoNode.data,
           role: "Agent 转视频",
@@ -6554,7 +6561,7 @@ export default function SuperCanvas() {
       setTextLightboxNodeId(null);
       notify("已创建视频分支，文本已填入画布编辑器");
     },
-    [commit, notify, runtime, screenToWorld, stageSize],
+    [commit, notify, openNodePosition, runtime, screenToWorld, stageSize],
   );
 
   const useAgentResponseAsImagePrompt = useCallback(
@@ -9799,12 +9806,51 @@ export default function SuperCanvas() {
   const focusAgentDockNodes = useCallback(
     (ids: string[]) => {
       const targets = ids.filter((id) => Boolean(nodeById(docRef.current, id)));
-      if (!targets.length) return;
+      if (!targets.length) {
+        /* 面板里的定位入口记的是节点 id：撤销或删除之后按钮还在，点了却没反应最让人迷惑。 */
+        if (ids.length) notify("这些节点已经不在画布上了", "error");
+        return;
+      }
       setSelectedIds(new Set(targets));
       setSelectedGroupId(null);
       fitView(targets);
     },
-    [fitView],
+    [fitView, notify],
+  );
+  /* 画布一侧的入口：选中节点后直接开面板并聚焦输入框，选中内容会自动成为上下文。 */
+  const askAgentAboutSelection = useCallback(() => {
+    if (!agentDockContext.nodeIds.length) notify("先在画布上选中要对 Agent 说的节点", "error");
+    applyAgentDockOpen(true);
+    setAgentDockFocusSignal((value) => value + 1);
+  }, [agentDockContext.nodeIds.length, applyAgentDockOpen, notify]);
+  /* 从面板拖出来的图片：落点就是松手的位置，和拖入文件、拖入资产是同一种手感。 */
+  const dropAgentDockImage = useCallback(
+    (payload: string, point: Point) => {
+      let url = "";
+      let revisedPrompt = "";
+      try {
+        const parsed = JSON.parse(payload) as { url?: string; revisedPrompt?: string };
+        url = String(parsed?.url || "").trim();
+        revisedPrompt = String(parsed?.revisedPrompt || "").trim();
+      } catch {
+        url = "";
+      }
+      if (!url) {
+        notify("无法读取拖入的图片。", "error");
+        return;
+      }
+      const draft = createMedia("image", url, "Agent 图片", point, {
+        role: "Agent 生成结果",
+        ...(revisedPrompt ? { prompt: revisedPrompt } : {}),
+      });
+      const node = { ...draft, ...openNodePosition(point, draft) };
+      commit((value) => ({ ...value, nodes: [...value.nodes, node] }));
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setContextMenu(null);
+      notify("已把这张图放到画布上");
+    },
+    [commit, notify, openNodePosition],
   );
   const applyAgentDockImages = useCallback(
     (
@@ -9822,15 +9868,18 @@ export default function SuperCanvas() {
       const referenceIds = agentDockReferences.map(
         (reference) => reference.nodeId || reference.id,
       );
-      const nodes = incoming.map((image, index) =>
-        createMedia(
+      /* 落点和画布其它创建入口一致：躲开已有节点，同一批的兄弟节点之间也不互相压住。 */
+      const placed: CanvasNode[] = [];
+      const nodes = incoming.map((image, index) => {
+        const desired = {
+          x: origin.x + anchorWidth + 90 + (index % 2) * 350,
+          y: origin.y + Math.floor(index / 2) * 280,
+        };
+        const draft = createMedia(
           "image",
           image.url,
           `Agent 图片 ${index + 1}`,
-          {
-            x: origin.x + anchorWidth + 90 + (index % 2) * 350,
-            y: origin.y + Math.floor(index / 2) * 280,
-          },
+          desired,
           {
             role: "Agent 生成结果",
             ...(meta.model ? { model: meta.model } : {}),
@@ -9844,8 +9893,11 @@ export default function SuperCanvas() {
             },
             referenceOrder: referenceIds,
           },
-        ),
-      );
+        );
+        const node = { ...draft, ...openNodePosition(desired, draft, placed) };
+        placed.push(node);
+        return node;
+      });
       commit((value) => {
         let next = { ...value, nodes: [...value.nodes, ...nodes] };
         if (anchor)
@@ -9873,6 +9925,7 @@ export default function SuperCanvas() {
       commit,
       fitView,
       notify,
+      openNodePosition,
       runtime,
       screenToWorld,
       selectedNodes,
@@ -9896,6 +9949,7 @@ export default function SuperCanvas() {
       );
       const node: CanvasNode = {
         ...draft,
+        ...openNodePosition({ x: draft.x, y: draft.y }, draft),
         data: {
           ...draft.data,
           text: content,
@@ -9920,6 +9974,7 @@ export default function SuperCanvas() {
     [
       commit,
       notify,
+      openNodePosition,
       screenToWorld,
       selectedNodes,
       selectedSingle,
@@ -13235,6 +13290,23 @@ export default function SuperCanvas() {
     selectedSingle,
     useAgentResponseAsImagePrompt,
   ]);
+  /* 节点快捷工具栏统一补一个「问 Agent」：任何节点都能一键交给右侧面板。 */
+  const quickActionsWithAgent = useMemo<CanvasQuickToolbarActions>(
+    () => ({
+      ...quickActions,
+      primaryActions: [
+        ...quickActions.primaryActions,
+        {
+          id: "ask-agent",
+          icon: "agent",
+          label: "问 Agent",
+          title: "打开 Agent 助手并聚焦输入框，当前节点会自动作为上下文",
+          onClick: askAgentAboutSelection,
+        },
+      ],
+    }),
+    [askAgentAboutSelection, quickActions],
+  );
 
   const contextNode = contextMenu?.menu === "node" && contextMenu.nodeId
     ? nodeById(document, contextMenu.nodeId)
@@ -13798,6 +13870,13 @@ export default function SuperCanvas() {
     <>
       <b>{`已选 ${selectedNodes.length} 个对象`}</b>
       <span />
+      <button
+        type="button"
+        title="打开 Agent 助手，用这些选中节点作为上下文"
+        onClick={askAgentAboutSelection}
+      >
+        ✦ 问 Agent
+      </button>
       <button type="button" onClick={makeGroup}>
         ⌘ 成组
       </button>
@@ -14168,13 +14247,30 @@ export default function SuperCanvas() {
           const isReferenceDrag = Boolean(
             target.closest(".canvas-reference-item"),
           );
+          const isAgentImageDrag = event.dataTransfer.types.includes(
+            CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
+          );
           const isCanvasNodeDrag =
             event.dataTransfer.types.includes("application/x-sanmao-canvas-node") ||
             Boolean(target.closest(".canvas-node"));
-          if (isReferenceDrag || isCanvasNodeDrag) setCursorTask("copying");
+          if (isReferenceDrag || isCanvasNodeDrag || isAgentImageDrag) setCursorTask("copying");
           else event.preventDefault();
         }}
         onDragOver={(event) => {
+          const overAgentDock = Boolean(
+            (event.target as HTMLElement | null)?.closest(".canvas-agent-dock"),
+          );
+          if (
+            !overAgentDock &&
+            event.dataTransfer.types.includes(CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE)
+          ) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            setCursorTask("copying");
+            setFileDropActive(true);
+            setAgentDropActive(true);
+            return;
+          }
           if (hasExternalFileTransfer(event.dataTransfer)) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
@@ -14198,10 +14294,29 @@ export default function SuperCanvas() {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setAssetDropGroupId(null);
             setFileDropActive(false);
+            setAgentDropActive(false);
             setCursorTask("idle");
           }
         }}
         onDrop={(event) => {
+          const droppedOnAgentDock = Boolean(
+            (event.target as HTMLElement | null)?.closest(".canvas-agent-dock"),
+          );
+          if (
+            !droppedOnAgentDock &&
+            event.dataTransfer.types.includes(CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE)
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setFileDropActive(false);
+            setAgentDropActive(false);
+            setCursorTask("idle");
+            dropAgentDockImage(
+              event.dataTransfer.getData(CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE),
+              screenToWorld(event.clientX, event.clientY),
+            );
+            return;
+          }
           if (hasExternalFileTransfer(event.dataTransfer)) {
             event.preventDefault();
             event.stopPropagation();
@@ -14236,7 +14351,7 @@ export default function SuperCanvas() {
         {fileDropActive && (
           <div className="canvas-file-drop-hint" aria-hidden="true">
             <span>↥</span>
-            <b>松开以导入图片或视频</b>
+            <b>{agentDropActive ? "松开以把这张图放到画布上" : "松开以导入图片或视频"}</b>
           </div>
         )}
         {referencePicker && (
@@ -14516,15 +14631,15 @@ export default function SuperCanvas() {
         {selectedSingle &&
           quickToolbarNodeId === selectedSingle.id &&
           !nodeGestureActive &&
-          (quickActions.primaryActions.length > 0 ||
-            quickActions.menuGroups.length > 0 ||
-            Boolean(quickActions.dangerAction)) && (
+          (quickActionsWithAgent.primaryActions.length > 0 ||
+            quickActionsWithAgent.menuGroups.length > 0 ||
+            Boolean(quickActionsWithAgent.dangerAction)) && (
           <CanvasQuickToolbar
             target={{ kind: "node", node: selectedSingle }}
             document={document}
             stageRef={stageRef}
             actions={selectedSingle.type === "generator" ? {
-              ...quickActions,
+              ...quickActionsWithAgent,
               primaryActions: [{
                 id: "smart-variant",
                 icon: "edit",
@@ -14532,8 +14647,8 @@ export default function SuperCanvas() {
                 title: savedSmartVariant ? "查看已保存方案，不调用 AI" : !chatModelsAvailable ? "请先启用对话模型" : !smartVariantSources.length ? "请直接连接有文案的 Agent 节点" : "分析文案并预览变体要求",
                 disabled: smartVariantLoading || (!savedSmartVariant && (!chatModelsAvailable || !smartVariantSources.length)),
                 onClick: () => void openSmartVariant(),
-              }, ...quickActions.primaryActions],
-            } : quickActions}
+              }, ...quickActionsWithAgent.primaryActions],
+            } : quickActionsWithAgent}
             menuSubtitle="节点操作"
           />
         )}
@@ -15329,6 +15444,7 @@ export default function SuperCanvas() {
           contextBlock={agentDockContext.text}
           runtime={runtime}
           onFocusNodes={focusAgentDockNodes}
+          focusSignal={agentDockFocusSignal}
           onApplyImages={applyAgentDockImages}
           onApplyText={applyAgentDockText}
           onCreateAgentNode={applyAgentDockAgentNode}
@@ -17411,6 +17527,8 @@ function CanvasActionIcon({ name }: { name: string }) {
       return svg(<><path d="M18 8.5A7 7 0 1 0 19 14" /><path d="M18 4.5v4h-4" /></>);
     case "image":
       return svg(<><path d="m12 4 1.7 4.3L18 10l-4.3 1.7L12 16l-1.7-4.3L6 10l4.3-1.7L12 4Z" /><path d="m18.5 15 .7 1.8L21 17.5l-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z" /></>);
+    case "agent":
+      return svg(<><path d="M4.5 6.5h15v9h-15z" /><path d="M8.5 19.5 11 15.5" /><path d="m12.2 8 1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5Z" /></>);
     case "preview":
       return svg(<><path d="M8 5H5v3M16 5h3v3M5 16v3h3M19 16v3h-3" /><path d="m9 9 6 6M15 9l-6 6" opacity=".5" /></>);
     case "reverse-prompt":

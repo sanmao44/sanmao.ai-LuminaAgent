@@ -63,7 +63,10 @@ function centeredLeft(
   return anchor.left + anchor.width / 2 - overlay.width / 2;
 }
 
-/** Places the compact action rail above a node and keeps it inside the stage horizontally. */
+/** Places the compact action rail above a node and keeps it inside the stage.
+ * A tall node (or one scrolled past the top edge) would otherwise push the rail
+ * off-screen, so the rail falls back to the node's top edge instead of floating
+ * out of reach — same rule the group toolbar already uses. */
 export function placeCanvasNodeToolbar(
   anchor: CanvasOverlayAnchor,
   stage: CanvasOverlayStage,
@@ -73,9 +76,12 @@ export function placeCanvasNodeToolbar(
   const centered = centeredLeft(anchor, stage, overlay);
   const margin = 10;
   const maxLeft = Math.max(margin, stage.width - overlay.width - margin);
+  const maxTop = Math.max(margin, stage.height - overlay.height - margin);
+  const aboveTop = anchor.top - overlay.height - gap;
+  const insideTop = anchor.top + gap;
   return {
     left: Math.min(Math.max(centered, margin), maxLeft),
-    top: anchor.top - overlay.height - gap,
+    top: aboveTop >= margin ? aboveTop : Math.min(Math.max(insideTop, margin), maxTop),
   };
 }
 

@@ -18,6 +18,7 @@ import {
 import { generateCanvasAgent } from "@/lib/canvas/api";
 import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
+  CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
   canvasAgentDockAcceptsImages,
   composeCanvasAgentDockMessage,
@@ -79,6 +80,8 @@ type Props = {
   onBusyChange?: (busy: boolean) => void;
   /* 预览交给画布渲染：媒体预览器一直挂在画布层，和节点预览是同一个。 */
   onPreviewImages: (images: Array<{ url: string; revisedPrompt?: string }>, index: number) => void;
+  /* 画布上点「问 Agent」时递增：面板展开后要直接把光标放进输入框。 */
+  focusSignal?: number;
 };
 
 const MESSAGE_LIMIT = 40;
@@ -266,6 +269,7 @@ export default function CanvasAgentDock({
   notify,
   onBusyChange,
   onPreviewImages,
+  focusSignal,
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
   const [input, setInput] = useState("");
@@ -515,6 +519,12 @@ export default function CanvasAgentDock({
       selection.addRange(range);
     }, 0);
   }, []);
+
+  /* 画布上点「问 Agent」：面板展开后光标直接落在输入框，少一次点击。 */
+  useEffect(() => {
+    if (!open || !focusSignal) return;
+    focusEditorEnd();
+  }, [focusEditorEnd, focusSignal, open]);
 
   const applySkill = useCallback(
     (skill: SkillPickerEntry) => {
@@ -860,13 +870,19 @@ export default function CanvasAgentDock({
     return (
       <button
         type="button"
-        className={`canvas-agent-dock-rail${busy ? " is-busy" : ""}`}
+        className={`canvas-agent-dock-rail${busy ? " is-busy" : ""}${!busy && status.failed ? " is-failed" : ""}`}
         onClick={() => onToggle(true)}
-        title={busy ? "Agent 正在生成，点开面板查看或停止" : "展开 Agent 助手"}
+        title={
+          busy
+            ? "Agent 正在生成，点开面板查看或停止"
+            : status.failed
+              ? `画布上有 ${status.failed} 个失败节点，点开面板定位`
+              : "展开 Agent 助手"
+        }
         aria-label={busy ? "Agent 正在生成，展开面板查看或停止" : "展开 Agent 助手"}
       >
         <span aria-hidden="true">✦</span>
-        <em>{busy ? "生成中" : "Agent"}</em>
+        <em>{busy ? "生成中" : status.failed ? `${status.failed} 个失败` : "Agent"}</em>
         {status.running + status.queued > 0 && <b>{status.running + status.queued}</b>}
       </button>
     );
@@ -1024,8 +1040,16 @@ export default function CanvasAgentDock({
                     type="button"
                     key={`${message.id}-${index}`}
                     className="canvas-agent-dock-media-item"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "copy";
+                      event.dataTransfer.setData(
+                        CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
+                        JSON.stringify({ url: image.url, revisedPrompt: image.revisedPrompt || "" }),
+                      );
+                    }}
                     onClick={() => onPreviewImages(message.images || [], index)}
-                    title="点开看大图：同一轮返回的其它图可以直接对比"
+                    title="点开看大图：同一轮返回的其它图可以直接对比；也可以把这张图拖到画布上，落在你松开的位置"
                   >
                     <img src={image.url} alt={image.revisedPrompt || "Agent 图片"} />
                   </button>
