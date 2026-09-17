@@ -7,6 +7,7 @@ import SkillManager from "@/components/SkillManager";
 import SkillIcon from "@/components/SkillIcon";
 import AgentSkillMenu from "@/components/AgentSkillMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
+import AgentMarkdown from "@/components/AgentMarkdown";
 import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
@@ -274,6 +275,9 @@ export default function CanvasAgentDock({
   const [skills, setSkills] = useState<SkillPickerEntry[]>([]);
   const [chipOrder, setChipOrder] = useState<string[]>([]);
   const [expandedMessages, setExpandedMessages] = useState<ReadonlySet<string>>(() => new Set());
+  /* 改一改自己那条提问再问一次，比整段重打省事。 */
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const inputBeforeEditRef = useRef("");
   const [atBottom, setAtBottom] = useState(true);
   const [dragChipId, setDragChipId] = useState<string | null>(null);
   const contextRef = useRef<HTMLDivElement | null>(null);
@@ -285,6 +289,8 @@ export default function CanvasAgentDock({
   const lastUserTextRef = useRef("");
   /* 停止时不能丢掉已经流回来的内容，所以流式文本同时记一份在 ref 里。 */
   const streamTextRef = useRef("");
+  /* 一个 token 一次 setState，长回复会把重排堆满主线程；流式文本按帧合并。 */
+  const streamFrameRef = useRef<number | null>(null);
   const stickToBottomRef = useRef(true);
   const logRef = useRef<HTMLDivElement | null>(null);
   const mentionEditorRef = useRef<HTMLDivElement | null>(null);
@@ -474,26 +480,48 @@ export default function CanvasAgentDock({
     [refreshSkills],
   );
 
+  /* contenteditable 没有 setSelectionRange：把光标折叠到内容末尾。 */
+  const focusEditorEnd = useCallback(() => {
+    window.setTimeout(() => {
+      const node = mentionEditorRef.current;
+      if (!node) return;
+      node.focus();
+      const selection = window.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }, 0);
+  }, []);
+
   const applySkill = useCallback(
     (skill: SkillPickerEntry) => {
       setInput((value) => skillMessageValue(value, skill.name));
       closeSkillMenu();
-      window.setTimeout(() => {
-        const node = mentionEditorRef.current;
-        if (!node) return;
-        node.focus();
-        /* contenteditable 没有 setSelectionRange：把光标折叠到内容末尾。 */
-        const selection = window.getSelection();
-        if (!selection) return;
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }, 0);
+      focusEditorEnd();
     },
-    [closeSkillMenu],
+    [closeSkillMenu, focusEditorEnd],
   );
+
+  /* 编辑自己发过的提问：填回输入框，发送时从那一轮重新问。 */
+  const beginEditMessage = useCallback(
+    (message: CanvasAgentDockMessage) => {
+      inputBeforeEditRef.current = input;
+      setEditingMessageId(message.id);
+      setInput(message.content);
+      focusEditorEnd();
+    },
+    [focusEditorEnd, input],
+  );
+
+  /* 取消编辑＝放弃这次改写，输入框还原成点「编辑」之前的内容。 */
+  const cancelEditMessage = useCallback(() => {
+    setEditingMessageId(null);
+    setInput(inputBeforeEditRef.current);
+    focusEditorEnd();
+  }, [focusEditorEnd]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort(new DOMException("已停止", "AbortError"));
@@ -521,10 +549,11 @@ export default function CanvasAgentDock({
       stickToBottomRef.current = true;
       // 输入框里显示 @1，模型收到的应该是它指向的那张图，否则编号对不上。
       const mentionText = resolveReferenceMentions(text, orderedReferences);
-      /* 重跑某一轮时先把它之后的内容丢掉，否则会留下两份回答。 */
-      const base = options.fromMessageId
+      /* 重新问某一轮（重跑或改过之后再问）时先把它之后的内容丢掉，否则会留下两份回答。 */
+      const fromMessageId = options.fromMessageId ?? editingMessageId ?? undefined;
+      const base = fromMessageId
         ? (() => {
-            const index = messages.findIndex((message) => message.id === options.fromMessageId);
+            const index = messages.findIndex((message) => message.id === fromMessageId);
             return index >= 0 ? messages.slice(0, index) : messages;
           })()
         : messages;
@@ -537,6 +566,7 @@ export default function CanvasAgentDock({
       const history = [...base, userMessage];
       setMessages(history);
       setInput("");
+      setEditingMessageId(null);
       setStreamText("");
       setBusy(true);
       const controller = new AbortController();
@@ -563,7 +593,11 @@ export default function CanvasAgentDock({
             if (event.type === "delta" && event.text) {
               const chunk = String(event.text);
               streamTextRef.current += chunk;
-              setStreamText((value) => value + chunk);
+              if (streamFrameRef.current === null)
+                streamFrameRef.current = window.requestAnimationFrame(() => {
+                  streamFrameRef.current = null;
+                  setStreamText(streamTextRef.current);
+                });
             }
           },
         );
@@ -619,10 +653,12 @@ export default function CanvasAgentDock({
       } finally {
         abortRef.current = null;
         setBusy(false);
+        if (streamFrameRef.current !== null) window.cancelAnimationFrame(streamFrameRef.current);
+        streamFrameRef.current = null;
         setStreamText("");
       }
     },
-    [autoApply, busy, closeSkillMenu, contextBlock, input, messages, model, notify, onApplyImages, orderedReferences, webMode],
+    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, orderedReferences, webMode],
   );
 
   const cycleWebMode = useCallback(() => {
@@ -913,7 +949,15 @@ export default function CanvasAgentDock({
                 ))}
               </div>
             ) : null}
-            <p>{collapsedMessages.has(message.id) ? messagePreview(message.content) : message.content}</p>
+            {message.role === "assistant" ? (
+              <AgentMarkdown
+                text={collapsedMessages.has(message.id) ? messagePreview(message.content) : message.content}
+                onCopyCode={copyMessage}
+              />
+            ) : (
+              <p>{message.content}</p>
+            )}
+            {message.interrupted ? <span className="canvas-agent-dock-stopped">（已停止）</span> : null}
             {message.content.length > MESSAGE_COLLAPSE_CHARS ? (
               <button
                 type="button"
@@ -950,9 +994,14 @@ export default function CanvasAgentDock({
                 </>
               ) : null}
               {message.role === "user" ? (
-                <button type="button" onClick={() => copyMessage(message.content)}>
-                  复制
-                </button>
+                <>
+                  <button type="button" disabled={busy} onClick={() => beginEditMessage(message)}>
+                    编辑
+                  </button>
+                  <button type="button" onClick={() => copyMessage(message.content)}>
+                    复制
+                  </button>
+                </>
               ) : null}
               {message.error && message.retryText ? (
                 <button type="button" disabled={busy} onClick={() => void send(message.retryText)}>
@@ -1028,6 +1077,14 @@ export default function CanvasAgentDock({
           </button>
         ))}
       </div>
+      {editingMessageId ? (
+        <div className="canvas-agent-dock-editing">
+          <span>正在编辑这条提问 · 发送后会替换它之后的回答</span>
+          <button type="button" onClick={cancelEditMessage}>
+            取消
+          </button>
+        </div>
+      ) : null}
       <form
         className="canvas-agent-dock-composer"
         onSubmit={(event) => {
@@ -1091,6 +1148,12 @@ export default function CanvasAgentDock({
             if (event.key === "Escape" && busy) {
               event.preventDefault();
               stop();
+              return;
+            }
+            /* 没在生成时，Esc 退出「编辑提问」状态。 */
+            if (event.key === "Escape" && editingMessageId) {
+              event.preventDefault();
+              cancelEditMessage();
               return;
             }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {

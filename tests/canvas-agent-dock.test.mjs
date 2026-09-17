@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [component, canvas, styles, context, canvasApi, route] = await Promise.all([
+const [component, canvas, styles, context, canvasApi, route, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/agent-dock.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
 ]);
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
@@ -252,7 +253,7 @@ test("dock @ mentions resolve against the ordered references before sending", ()
 test("both sides of the conversation can copy their text", () => {
   // 用户常要把自己刚写的那句提示词拿去别处复用，所以自己的消息也要能复制。
   assert.match(component, /const copyMessage = useCallback\(/);
-  assert.match(component, /message\.role === "user" \? \(\s*<button type="button" onClick=\{\(\) => copyMessage\(message\.content\)\}>/);
+  assert.match(component, /message\.role === "user" \? \(\s*<>\s*<button type="button" disabled=\{busy\} onClick=\{\(\) => beginEditMessage\(message\)\}>/);
   assert.match(component, /message\.role === "assistant" && !message\.error \? \([\s\S]{0,400}?copyMessage\(message\.content\)/);
   // 放在气泡左侧，避免在自己的消息里被挤成第二行。
   assert.match(styles, /\.canvas-agent-dock-message\.user>\.canvas-agent-dock-message-tools\{position:absolute;right:100%;bottom:2px;margin-right:5px/);
@@ -362,14 +363,16 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
   // 答偏了只能重新打字太笨，所以给重新生成；停止时已经流回来的半截要留下才能续写。
   assert.match(component, /const regenerate = useCallback\(/);
   assert.match(component, /void send\(messages\[cursor\]\.content, \{ fromMessageId: messages\[cursor\]\.id \}\)/);
-  assert.match(component, /const base = options\.fromMessageId/);
+  assert.match(component, /const base = fromMessageId/);
   assert.match(component, /async \(raw\?: string, options: \{ fromMessageId\?: string \} = \{\}\) => \{/);
   assert.match(component, /const partial = streamTextRef\.current\.trim\(\);/);
   assert.match(component, /\{ id: createId\(\), role: "assistant", content: partial, interrupted: true \}/);
   assert.match(component, /已经流回来的那半截是继续写的上下文/);
   assert.match(component, /message\.interrupted && message\.id === lastAssistantId/);
   assert.match(component, /onClick=\{\(\) => void send\("继续"\)\}/);
-  assert.match(styles, /\.canvas-agent-dock-message\.is-interrupted>p::after\{content:"（已停止）"/);
+  // Markdown 渲染后一段消息会有多个块，所以「已停止」是元素而不是 p::after。
+  assert.ok(component.includes('<span className="canvas-agent-dock-stopped">（已停止）</span>'));
+  assert.match(styles, /\.canvas-agent-dock-stopped\{color:var\(--muted\)/);
   // 停止也要能用键盘：Esc。
   assert.match(component, /if \(event\.key === "Escape" && busy\) \{/);
   assert.match(component, /生成中按 Esc 停止/);
@@ -402,4 +405,29 @@ test("the dock keeps reporting a run and previews its images", () => {
   assert.match(styles, /\.canvas-agent-dock-media-item\{display:block;width:100%;/);
   // 生成中按回车不再无声无息。
   assert.ok(component.includes('if (busy) notify("Agent 正在生成，按 Esc 可以停止当前回答");'));
+});
+
+test("replies render as markdown and a long run streams in one frame", () => {
+  // 回复里的标题、粗体、列表、代码块要按结构显示，而不是把 ## 和 ** 原样摊开。
+  assert.match(component, /<AgentMarkdown/);
+  assert.match(component, /onCopyCode=\{copyMessage\}/);
+  assert.match(markdown, /export function parseAgentMarkdown\(value: string\)/);
+  assert.ok(markdown.includes("className=\"canvas-agent-dock-code\""));
+  assert.match(markdown, /onClick=\{\(\) => onCopyCode\(block\.code\)\}/);
+  // 只渲染 React 元素，绝不注入 HTML；模型给的链接也只放行安全协议。
+  assert.ok(!markdown.includes("dangerouslySetInnerHTML"));
+  assert.match(markdown, /const SAFE_LINK_PATTERN = \/\^\(\?:https\?:/);
+  assert.match(styles, /\.canvas-agent-dock-code pre\{margin:0;padding:8px 9px\}/);
+  // 用户自己打的那句照原样显示，不做 Markdown 解释。
+  assert.match(component, /\) : \(\r?\n              <p>\{message\.content\}<\/p>/);
+  // 流式文本按帧合并，长回复不再一个 token 一次重排；收尾时把挂起的帧取消。
+  assert.match(component, /streamFrameRef\.current = window\.requestAnimationFrame/);
+  assert.match(component, /window\.cancelAnimationFrame\(streamFrameRef\.current\)/);
+  // 自己那条提问可以改完再问一次：发送时从那一轮重新开始。
+  assert.match(component, /const beginEditMessage = useCallback\(/);
+  assert.match(component, /const cancelEditMessage = useCallback\(\(\) => \{/);
+  assert.ok(component.includes("setInput(inputBeforeEditRef.current);"));
+  assert.match(component, /const fromMessageId = options\.fromMessageId \?\? editingMessageId \?\? undefined;/);
+  assert.ok(component.includes("正在编辑这条提问 · 发送后会替换它之后的回答"));
+  assert.match(styles, /\.canvas-agent-dock-editing\{display:flex;align-items:center/);
 });
