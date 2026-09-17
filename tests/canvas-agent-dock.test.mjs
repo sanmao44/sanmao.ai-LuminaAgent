@@ -188,4 +188,9 @@ test("both sides of the conversation can copy their text", () => {
   // 放在气泡左侧，避免在自己的消息里被挤成第二行。
   assert.match(styles, /\.canvas-agent-dock-message\.user>\.canvas-agent-dock-message-tools\{position:absolute;right:100%;bottom:2px;margin-right:5px/);
   assert.match(styles, /\.canvas-agent-dock-message\.user\{position:relative;align-self:flex-end;max-width:calc\(92% - 42px\)/);
+  // 绝对定位 + right:100% 会把宽度塌成 min-content，按钮文字被挤成竖排，必须钉住宽度。
+  assert.match(styles, /\.canvas-agent-dock-message\.user>\.canvas-agent-dock-message-tools\{[^}]*width:max-content\}/);
+  // 带图片的消息按钮更多，左侧空隙不够，回到气泡内部右对齐。
+  assert.match(component, /message\.role === "user" && message\.images\?\.length \? "has-media"/);
+  assert.match(styles, /\.canvas-agent-dock-message\.user\.has-media>\.canvas-agent-dock-message-tools\{position:static/);
 });

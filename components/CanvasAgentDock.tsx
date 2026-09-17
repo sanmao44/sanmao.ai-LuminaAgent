@@ -427,7 +427,7 @@ export default function CanvasAgentDock({
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`canvas-agent-dock-message ${message.role} ${message.error ? "is-error" : ""}`}
+            className={`canvas-agent-dock-message ${message.role} ${message.error ? "is-error" : ""} ${message.role === "user" && message.images?.length ? "has-media" : ""}`}
           >
             {message.role === "assistant" ? (
               <div className="canvas-agent-dock-role">
