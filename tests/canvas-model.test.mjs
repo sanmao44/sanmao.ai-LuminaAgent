@@ -1295,6 +1295,35 @@ test('projects member edges to group boundaries without changing persisted edges
     target: outside.id,
   });
 });
+test('paints a single generated edge into a variant group', () => {
+  const empty = model.normalizeDocument(null);
+  const generator = model.createPrompt({ x: 0, y: 0 }, '变体生成');
+  const first = model.createMedia('image', '/batch-first.png', '变体一', { x: 420, y: 0 });
+  const second = model.createMedia('image', '/batch-second.png', '变体二', { x: 420, y: 420 });
+  let document = { ...empty, nodes: [generator, first, second] };
+  document = model.createGroup(document, [first.id, second.id], '图片变体批次');
+  const group = document.groups[0];
+  document = {
+    ...document,
+    edges: [
+      { id: 'batch-one', source: generator.id, target: first.id, kind: 'generated' },
+      { id: 'batch-two', source: generator.id, target: second.id, kind: 'generated' },
+    ],
+  };
+
+  const [firstEdge, secondEdge] = document.edges;
+  assert.deepEqual(model.canvasEdgeEndpoints(document, firstEdge), {
+    source: generator.id,
+    target: group.id,
+  });
+  assert.deepEqual(model.canvasEdgeEndpoints(document, secondEdge), {
+    source: generator.id,
+    target: group.id,
+  });
+  assert.equal(model.isCanvasEdgeVisible(document, firstEdge), true);
+  assert.equal(model.isCanvasEdgeVisible(document, secondEdge), false);
+  assert.equal(model.edgeRouteLaneOffset(document, firstEdge), 0);
+});
 
 test('keeps grid-compose provenance while hiding its lineage edges', () => {
   const empty = model.normalizeDocument(null);
