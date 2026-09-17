@@ -121,6 +121,10 @@ html[data-theme="dark"] {
   box-shadow:var(--shadow-float);
 }
 
+.canvas-agent-dock {
+  box-shadow:var(--shadow-float),inset 0 1px 0 color-mix(in srgb,#fff 7%,transparent);
+}
+
 .canvas-topbar-main {
   box-shadow:var(--shadow-soft);
 }

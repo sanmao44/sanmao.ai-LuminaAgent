@@ -91,6 +91,21 @@ test("the dock reuses the shared skill manager so canvas chats install skills to
   assert.match(styles, /\.canvas-agent-dock-head-actions>button\[data-tooltip\]::after\{left:auto;right:0;top:calc\(100% \+ 8px\)/);
 });
 
+test("the collapsed rail yields to the expanded topbar and reads horizontally", () => {
+  // Wide screens already expose the Agent button in the topbar; the floating rail is
+  // only the entry point once the topbar is collapsed or the viewport is small.
+  assert.match(styles, /@media\(min-width:1001px\)\{\.canvas-workspace:has\(\.canvas-topbar:not\(\.collapsed\)\) \.canvas-agent-dock-rail\{display:none\}\}/);
+  assert.doesNotMatch(styles, /\.canvas-agent-dock-rail em\{[^}]*writing-mode/);
+  assert.match(styles, /\.canvas-agent-dock-rail\{[^}]*display:inline-flex[^}]*gap:7px/);
+});
+
+test("the web mode button keeps one width so the composer row never reflows", () => {
+  // measured: the 3-character label used to fit on one line while the 4-character
+  // ones pushed the send button onto a second row, so the whole composer jumped.
+  assert.match(styles, /\.canvas-agent-dock-web\{[^}]*flex:none[^}]*min-width:calc\(20px \+ 4em\)/);
+  assert.match(component, /off: "[\s\S]*?auto: "[\s\S]*?always: "/);
+});
+
 test("dock toolbar button sizing never leaks into the skill dialog", () => {
   assert.doesNotMatch(styles, /\.canvas-agent-dock-head-actions button/);
 });
@@ -99,6 +114,13 @@ test("opening the dock never shifts the compact canvas topbar", () => {
   assert.doesNotMatch(styles, /with-agent-dock/);
   assert.doesNotMatch(canvas, /with-agent-dock/);
   assert.match(styles, /\.canvas-topbar-main\{width:max-content;max-width:min\(1360px,calc\(100% - 28px\)\)/);
+});
+
+test("the save and sync badges keep the max-content topbar at a stable width", () => {
+  // The bar hugs its content on wide screens, so every status label change used to
+  // resize the whole bar. Both badges reserve room for their longest label.
+  assert.match(styles, /\.canvas-topbar-main>\.canvas-save-state\{min-width:calc\(29px \+ 4\.5em\)\}/);
+  assert.match(styles, /\.canvas-topbar-main>\.canvas-workspace-sync-state\{min-width:calc\(26px \+ 5\.5em\)\}/);
 });
 
 test("the dock composer calls the shared skill picker with slash and a toolbar button", () => {
