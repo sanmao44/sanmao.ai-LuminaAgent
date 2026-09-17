@@ -32,7 +32,7 @@
   pointer-events: none;
   visibility: hidden;
   opacity: 0;
-  transition: opacity .15s ease, visibility .15s ease;
+  transition: visibility .15s ease;
 }
 .trigger:hover::after, .trigger:focus-visible::after { visibility: visible; opacity: 1; }
 .trigger:hover, .trigger:focus-visible { color: var(--accent-text); border-color: var(--accent); }

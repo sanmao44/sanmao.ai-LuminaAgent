@@ -36,3 +36,10 @@ test('both editors keep their title badge and mark the main action as primary', 
   assert.equal(primaryActions(memory), 2, 'memory dialog marks both save and edit as primary');
   assert.equal(primaryActions(persona), 1, 'persona dialog marks save as primary');
 });
+
+test('trigger tooltips stay opaque instead of fading through the button behind them', () => {
+  for (const css of [moduleCss, skillCss]) {
+    assert.match(css, /\.trigger::after \{[\s\S]*?transition: visibility \.15s ease;/);
+    assert.doesNotMatch(css, /\.trigger::after \{[\s\S]*?transition: opacity/);
+  }
+});
