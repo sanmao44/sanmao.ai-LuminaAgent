@@ -947,7 +947,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-quick button:active:not(:disabled){transform:translateY(1px)}
 .canvas-agent-dock-composer{position:relative;display:grid;gap:7px;flex:none;padding:8px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--panel-2) 90%,transparent);transition:border-color .16s,box-shadow .16s}
 .canvas-agent-dock-composer:focus-within{border-color:color-mix(in srgb,var(--accent) 62%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
-.canvas-agent-dock-composer textarea{min-height:56px;max-height:190px;resize:vertical;padding:5px 4px;border:0;background:transparent;color:var(--text);font:inherit;font-size:10px;line-height:1.55}
+.canvas-agent-dock-composer textarea{min-height:56px;max-height:190px;overflow:hidden;resize:none;padding:5px 4px;border:0;background:transparent;color:var(--text);font:inherit;font-size:10px;line-height:1.55}
 .canvas-agent-dock-composer textarea:focus{outline:0}
 .canvas-agent-dock-composer textarea:focus-visible,.canvas-workspace .canvas-agent-dock-composer textarea:focus-visible{outline:0;box-shadow:none}
 .canvas-agent-dock-composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}

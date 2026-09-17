@@ -140,3 +140,14 @@ test("the floating rail and minimap restore use the shared control shadow", () =
   assert.match(styles, /\.canvas-minimap-restore\{[^}]*box-shadow:var\(--shadow-control\)/);
   assert.doesNotMatch(styles, /0 10px 28px rgba\(0,0,0,\.22\)/);
 });
+
+test("the dock composer grows with its text and only scrolls once it hits the cap", () => {
+  // measured: a fixed three-row box clipped the last line behind an inner scrollbar while typing.
+  assert.match(styles, /\.canvas-agent-dock-composer textarea\{[^}]*min-height:56px;max-height:190px;/);
+  assert.match(styles, /\.canvas-agent-dock-composer textarea\{[^}]*resize:none/);
+  assert.doesNotMatch(styles, /\.canvas-agent-dock-composer textarea\{[^}]*resize:vertical/);
+  assert.match(component, /const contentHeight = field\.scrollHeight;/);
+  assert.match(component, /field\.style\.height = `\$\{Math\.min\(Math\.max\(contentHeight, minHeight\), maxHeight\)\}px`;/);
+  assert.match(component, /field\.style\.overflowY = contentHeight > maxHeight \? "auto" : "hidden";/);
+  assert.match(component, /\}, \[input, open\]\);/);
+});

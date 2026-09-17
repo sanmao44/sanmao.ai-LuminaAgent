@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import SelectMenu from "@/components/SelectMenu";
 import SkillManager from "@/components/SkillManager";
 import AgentSkillMenu from "@/components/AgentSkillMenu";
@@ -168,6 +168,20 @@ export default function CanvasAgentDock({
     const node = logRef.current;
     if (node) node.scrollTop = node.scrollHeight;
   }, [messages, streamText, open]);
+
+  useLayoutEffect(() => {
+    // Grow upward with the text and only scroll inside the field once it hits its cap.
+    const field = textareaRef.current;
+    if (!field) return;
+    const styles = window.getComputedStyle(field);
+    const minHeight = parseFloat(styles.minHeight) || 56;
+    const maxHeight = parseFloat(styles.maxHeight) || 190;
+    field.style.height = "auto";
+    const contentHeight = field.scrollHeight;
+    field.style.height = `${Math.min(Math.max(contentHeight, minHeight), maxHeight)}px`;
+    field.style.overflowX = "hidden";
+    field.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+  }, [input, open]);
 
   const modelOptions = useMemo(() => {
     const models = agentModelOptions(runtime);
