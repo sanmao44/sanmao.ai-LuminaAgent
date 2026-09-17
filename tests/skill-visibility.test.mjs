@@ -99,3 +99,11 @@ test("installed skills can check source updates, export markdown, and pending ca
   assert.match(exportRoute, /skillMarkdown\(skill\)/);
   assert.match(exportRoute, /content-disposition/i);
 });
+
+test("multi-skill archives support checking a selection to install", () => {
+  assert.match(manager, /勾选要安装的（可多选）/);
+  assert.match(manager, /toggleChoice/);
+  assert.match(manager, /安装所选/);
+  assert.match(manager, /setSelectedKeys/);
+  assert.match(manager, /来源目录/);
+});

@@ -18,6 +18,7 @@ type SkillSummary = {
   tools: string[];
   source: string;
   sourceUrl: string;
+  sourceDir?: string;
   enabled: boolean;
   pending: boolean;
   createdAt: number;
@@ -146,6 +147,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const [choices, setChoices] = useState<ArchiveChoice[] | null>(null);
   const [choicesTotal, setChoicesTotal] = useState(0);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const dialog = useRef<HTMLDialogElement>(null);
   const retryImport = useRef<(() => Promise<void>) | null>(null);
   const choiceSource = useRef<ChoiceSource | null>(null);
@@ -308,6 +310,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     choiceSource.current = source;
     setChoices(list);
     setChoicesTotal(list.length);
+    setSelectedKeys([]);
     setConflict('');
     setRetryAvailable(false);
     setNotice('');
@@ -360,7 +363,11 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     });
   }
 
-  /* 安装勾选的候选技能：单个或全部；失败的留在选择区，方便勾选覆盖后重试。 */
+  function toggleChoice(key: string) {
+    setSelectedKeys((previous) => (previous.includes(key) ? previous.filter((item) => item !== key) : [...previous, key]));
+  }
+
+  /* 安装勾选的候选技能：单个、多选或全部；失败的留在选择区，方便勾选覆盖后重试。 */
   async function installChoice(keys: string[], force = false) {
     const source = choiceSource.current;
     if (!source || !keys.length) return;
@@ -387,15 +394,18 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
         if (failed.length) {
           const label = (key: string) => (choices || []).find((choice) => choice.key === key)?.name || key;
           setChoices((previous) => (previous || []).filter((choice) => failed.some((item) => item.dir === choice.key)));
+          setSelectedKeys((previous) => previous.filter((key) => failed.some((item) => item.dir === key)));
           const detail = failed.slice(0, 2).map((item) => {
             const name = label(item.dir);
             return item.error.includes(name) ? item.error : name + '（' + item.error + '）';
           }).join('；');
-          setNotice('已导入 ' + installed.length + ' 个技能，' + failed.length + ' 个失败：' + detail + (failed.length > 2 ? ' 等' : '') + '。可勾选「覆盖同名技能」后重试。');
+          const conflicts = failed.every((item) => /已存在/.test(item.error));
+          setNotice('已导入 ' + installed.length + ' 个技能，' + failed.length + ' 个失败：' + detail + (failed.length > 2 ? ' 等' : '') + '。' + (conflicts ? '可勾选「覆盖同名技能」后重试。' : '可以稍后再试。'));
           return;
         }
         setChoices(null);
         choiceSource.current = null;
+        setSelectedKeys([]);
         setImportUrl('');
         setFileLabel('');
         setTab('installed');
@@ -606,6 +616,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                     {skill.files.length ? `${skill.files.length} 个附件${hasScriptFile(skill.files) ? '（含脚本）' : ''} · ` : ''}
                     更新于 {formatTime(skill.updatedAt)}
                     {skill.sourceCheckedAt ? ` · 上次检查 ${formatTime(skill.sourceCheckedAt)}` : ''}
+                    {skill.sourceDir ? ` · 来源目录 ${skill.sourceDir}` : ''}
                     {skill.installer?.detail ? ` · ${skill.installer.detail}` : ''}
                   </p>
                   {update?.message && <p className={`${styles.updateLine} ${update.status === 'updated' ? styles.isUpdate : ''} ${update.status === 'error' ? styles.isError : ''}`}>
@@ -653,7 +664,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
               <p className={styles.choiceTitle}>{choices.length < choicesTotal
                 ? `还有 ${choices.length} 个技能没有安装成功`
                 : `${choiceSource.current?.kind === 'url' ? '这个仓库' : '这个压缩包'}里有 ${choices.length} 个技能`}</p>
-              <p className={styles.hint}>选一个安装，或一次性全部安装；同名冲突仍由下方「覆盖同名技能」控制。</p>
+              <p className={styles.hint}>勾选要安装的（可多选），或直接全部安装；同名冲突仍由下方「覆盖同名技能」控制。</p>
             </div>
             <div className={styles.localList}>
               {choices.map((choice) => <article key={choice.key} className={styles.row}>
@@ -662,13 +673,20 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                   <p className={styles.description}>{choice.description || '没有填写简介'}</p>
                 </div>
                 <div className={styles.rowActions}>
+                  <label className={styles.check}>
+                    <input type="checkbox" checked={selectedKeys.includes(choice.key)} disabled={busy} onChange={() => toggleChoice(choice.key)} />
+                    <span>选择</span>
+                  </label>
                   <button type="button" disabled={busy} onClick={() => void installChoice([choice.key])}>安装</button>
                 </div>
               </article>)}
             </div>
             <div className={styles.formFooter}>
-              <button type="button" disabled={busy} onClick={() => { setChoices(null); choiceSource.current = null; }}>返回重新选择来源</button>
-              <button type="button" className={styles.primary} disabled={busy} onClick={() => void installChoice(choices.map((choice) => choice.key))}>全部安装（{choices.length}）</button>
+              <button type="button" disabled={busy} onClick={() => { setChoices(null); choiceSource.current = null; setSelectedKeys([]); }}>返回重新选择来源</button>
+              <div className={styles.inline}>
+                <button type="button" disabled={busy || !selectedKeys.length} onClick={() => void installChoice(selectedKeys)}>安装所选{selectedKeys.length ? `（${selectedKeys.length}）` : ''}</button>
+                <button type="button" className={styles.primary} disabled={busy} onClick={() => void installChoice(choices.map((choice) => choice.key))}>全部安装（{choices.length}）</button>
+              </div>
             </div>
           </div> : <>
           <label htmlFor="skill-url">GitHub 仓库或 SKILL.md 链接</label>
