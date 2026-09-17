@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu] = await Promise.all([
+const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline] = await Promise.all([
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -14,6 +14,8 @@ const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, e
   readFile(new URL("../app/api/skills/[id]/export/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/SkillManager.module.css", import.meta.url), "utf8"),
   readFile(new URL("../components/AgentSkillMenu.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../components/ReferenceMentionEditor.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../components/SkillInlineText.tsx", import.meta.url), "utf8"),
 ]);
 
 test("a reply reports back which skills the agent actually read", () => {
@@ -49,6 +51,16 @@ test("the long skill explanation collapses behind a help button so the header st
   assert.match(managerStyles, /\.titleRow \{ display: flex; align-items: center; gap: 9px; \}/);
   assert.match(managerStyles, /\.helpPanel \{/);
   assert.match(managerStyles, /\.help\[aria-expanded='true'\]/);
+});
+
+test("skill references render as icon chips in the composer and message bubbles", () => {
+  assert.match(skillInline, /splitSkillMessage\(text\)/);
+  assert.match(skillInline, /className="skill-inline-mention"/);
+  assert.match(page, /_jsx\(SkillInlineText, \{/);
+  assert.match(mentionEditor, /import \{ SKILL_MESSAGE_SOURCE \} from "@\/lib\/skill-picker";/);
+  assert.match(mentionEditor, /data-skill-text=/);
+  assert.match(mentionEditor, /contenteditable="false" data-skill-name=/);
+  assert.match(globals, /\.skill-inline-mention\{/);
 });
 
 test("installed skills can be searched and edited from the panel", () => {

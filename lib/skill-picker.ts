@@ -44,6 +44,29 @@ export function skillTriggerText(name: string) {
   return `用「${String(name || '').trim()}」技能：`;
 }
 
+/** 「用 X 技能：」前缀的匹配源：输入框 chip 与消息气泡共用同一套规则。 */
+export const SKILL_MESSAGE_SOURCE = '用「([^「」\\n]{1,80})」技能：';
+
+export type SkillMessagePart =
+  | { kind: 'text'; text: string }
+  | { kind: 'skill'; name: string; raw: string };
+
+/** 把带「用 X 技能：」前缀的文本拆成普通文本与技能引用片段；raw 用于原地回写。 */
+export function splitSkillMessage(value: string): SkillMessagePart[] {
+  const pattern = new RegExp(SKILL_MESSAGE_SOURCE, 'g');
+  const text = String(value || '');
+  const parts: SkillMessagePart[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    if (match.index > cursor) parts.push({ kind: 'text', text: text.slice(cursor, match.index) });
+    parts.push({ kind: 'skill', name: match[1].trim(), raw: match[0] });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length || !parts.length) parts.push({ kind: 'text', text: text.slice(cursor) });
+  return parts;
+}
+
 /** 选中技能后写回输入框：吃掉用户刚敲的 /指令，再补上指定技能的前缀。 */
 export function skillMessageValue(current: string, name: string) {
   const rest = String(current || '').replace(/^\/[^\s/]*\s*/, '');

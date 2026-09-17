@@ -346,6 +346,11 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 .reference-inline-mention-label{display:inline-flex;align-items:baseline;gap:4px;min-width:0;max-width:220px}
 .reference-inline-mention-label>b{font-size:11px;font-weight:900;white-space:nowrap}
 .reference-inline-mention:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.skill-inline-mention{display:inline-flex;align-items:center;vertical-align:middle;gap:.32em;max-width:min(100%,20em);margin:0 .14em;padding:.12em .64em .12em .26em;border:1px solid color-mix(in srgb,var(--accent) 52%,var(--line));border-radius:999px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 24%,var(--panel-3)),color-mix(in srgb,var(--accent) 9%,var(--panel-3)));color:var(--accent-text);line-height:1.4;white-space:nowrap;overflow:hidden;box-shadow:0 .1em .4em color-mix(in srgb,var(--accent) 12%,transparent)}
+.skill-inline-mention i{display:grid;place-items:center;width:1.5em;height:1.5em;flex:none;border-radius:.52em;background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#fff;font-size:.74em;font-style:normal;box-shadow:0 .08em .28em color-mix(in srgb,var(--accent) 34%,transparent)}
+.skill-inline-mention b{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:.94em;font-weight:850;letter-spacing:.01em}
+.agent-prompt-mention-editor .skill-inline-mention,.canvas-agent-dock-mention-editor .skill-inline-mention{user-select:none;-webkit-user-select:none}
+.message-body>p .skill-inline-mention{margin-bottom:0}
 .legacy-reference-mention-input{display:none!important}
 .agent-composer .reference-mention-editor{min-height:58px}
 .agent-composer .reference-mention-editor-content{min-height:58px;max-height:320px;padding:12px 72px 12px 13px;border:1px solid var(--agent-composer-divider);border-radius:14px;background:var(--agent-input-bg);overflow-y:auto;font-size:14px;line-height:1.65;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease}

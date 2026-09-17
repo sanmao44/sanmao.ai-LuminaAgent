@@ -438,8 +438,8 @@ test("replies render as markdown and a long run streams in one frame", () => {
   assert.ok(!markdown.includes("dangerouslySetInnerHTML"));
   assert.match(markdown, /const SAFE_LINK_PATTERN = \/\^\(\?:https\?:/);
   assert.match(styles, /\.canvas-agent-dock-code pre\{margin:0;padding:8px 9px\}/);
-  // 用户自己打的那句照原样显示，不做 Markdown 解释。
-  assert.match(component, /\) : \(\r?\n              <p>\{message\.content\}<\/p>/);
+  // 用户自己打的那句照原样显示，不做 Markdown 解释（渲染层可以是纯 <p>，也可以是透传文本的 SkillInlineText）。
+  assert.match(component, /\) : \(\r?\n\s+(?:<p>\{message\.content\}<\/p>|<SkillInlineText text=\{message\.content\} \/>)/);
   // 流式文本按帧合并，长回复不再一个 token 一次重排；收尾时把挂起的帧取消。
   assert.match(component, /streamFrameRef\.current = window\.requestAnimationFrame/);
   assert.match(component, /window\.cancelAnimationFrame\(streamFrameRef\.current\)/);
@@ -578,14 +578,32 @@ test("the dock names the web modes the way the rest of the app does", async () =
 });
 
 test("focusing a node keeps it clear of the open agent panel", () => {
-  // 面板是右侧浮层：定位节点、落下结果都要按面板左边那块可见区域取景，否则有半边藏在面板后面。
-  assert.match(canvas, /const agentDockRightInset = useCallback\(\(\) => \{/);
+  // 面板是右侧浮层：定位节点、落下结果、适应视图都要按面板左边那块可见区域取景，否则有半边藏在面板后面。
+  assert.match(canvas, /function canvasRightOverlayInset\(stage: HTMLElement \| null\) \{/);
+  assert.ok(canvas.includes('window.document.querySelector(".canvas-agent-dock")'));
+  // 默认值就是面板当前占位：所有取景入口都自动让位，不会漏掉哪一处。
+  assert.ok(canvas.includes("(ids?: string[], rightInset = canvasRightOverlayInset(stageRef.current)) => {"));
   assert.match(canvas, /const viewWidth = width - Math\.min\(Math\.max\(rightInset, 0\), Math\.max\(0, width - 240\)\);/);
   assert.match(canvas, /camera: \{ x: viewWidth \/ 2, y: height \/ 2, zoom: 1 \}/);
   assert.match(canvas, /x: viewWidth \/ 2 - \(minX \+ \(maxX - minX\) \/ 2\) \* zoom,/);
-  assert.match(canvas, /fitView\(targets, agentDockRightInset\(\)\);/);
-  assert.match(canvas, /fitView\(nodes\.map\(\(node\) => node\.id\), agentDockRightInset\(\)\);/);
+  assert.doesNotMatch(canvas, /agentDockRightInset/);
   // 窄屏下面板是横在底部的一条，它没占右半边时不该让位。
-  assert.match(canvas, /if \(rect\.width <= 0 \|\| rect\.left <= stage\.left \+ stage\.width \/ 2\) return 0;/);
-  assert.match(canvas, /if \(!agentDockOpen\) return 0;/);
+  assert.match(canvas, /if \(rect\.width <= 0 \|\| rect\.left <= stageRect\.left \+ stageRect\.width \/ 2\) return 0;/);
+});
+
+test("canvas overlays step aside for the open agent panel", () => {
+  // 节点工具栏和参数面板同样是右侧浮层：面板打开时要贴到面板左边，别被压在面板下面。
+  assert.match(canvas, /function canvasVisibleStageWidth\(stage: HTMLElement \| null\) \{/);
+  assert.match(canvas, /const inset = Math\.min\(canvasRightOverlayInset\(stage\), Math\.max\(0, width - 240\)\);/);
+  assert.ok(canvas.includes("const placementStage = { ...stageSize, width: canvasVisibleStageWidth(stage) };"));
+  assert.match(canvas, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
+  assert.match(canvas, /placeCanvasNodeToolbar\(anchor, placementStage, overlay, 10\)/);
+  assert.match(canvas, /\{ width: canvasVisibleStageWidth\(stage\), height: stageHeight \},/);
+});
+
+test("storing a reply as a node brings it into view", () => {
+  // 「存为节点」把回复放在选中节点右侧：不把视图挪过去，新节点就藏在面板后面。
+  const dockText = canvas.slice(canvas.indexOf("const applyAgentDockText = useCallback"), canvas.indexOf("const addNodeReference = useCallback"));
+  assert.match(dockText, /fitView\(\[node\.id\]\);/);
+  assert.match(dockText, /^\s*fitView,$/m);
 });
