@@ -100,7 +100,7 @@
 .rowActions .check { padding: 6px 4px; }
 
 .error, .notice { margin: 0; padding: 10px 12px; border-radius: 12px; font-size: 12.5px; line-height: 1.6; }
-.error { color: #b42318; background: #fef3f2; border: 1px solid #fecdca; }
+.error { color: color-mix(in srgb, var(--danger) 76%, var(--text)); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--line)); }
 .notice { color: var(--text-2); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid var(--line); }
 
 .pending { display: grid; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 7%, transparent); max-height: min(34dvh, 320px); overflow: auto; overscroll-behavior: contain; }
@@ -151,8 +151,14 @@
 .count { color: var(--text-2); font-size: 12px; }
 
 .updateBadge { padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 1.7; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent-text); background: var(--accent-soft); white-space: nowrap; }
-.warnBadge { padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 1.7; border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--line)); color: var(--warning); white-space: nowrap; }
+.warnBadge { padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 1.7; border: 1px solid color-mix(in srgb, var(--warning) 46%, var(--line)); color: color-mix(in srgb, var(--warning) 84%, var(--text)); background: color-mix(in srgb, var(--warning) 12%, transparent); white-space: nowrap; }
 .updateLine { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-2); }
 .updateLine.isUpdate { color: var(--accent-text); font-weight: 700; }
 .updateLine.isError { color: var(--danger); }
-.warnLine { margin: 0; font-size: 12px; line-height: 1.6; color: var(--warning); overflow-wrap: anywhere; }
+.warnLine { margin: 0; font-size: 12px; line-height: 1.6; color: color-mix(in srgb, var(--warning) 86%, var(--text)); overflow-wrap: anywhere; }
+
+.checkAttention { padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--warning) 12%, transparent); outline: 1px solid color-mix(in srgb, var(--warning) 46%, var(--line)); }
+.conflict { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--warning) 10%, transparent); color: color-mix(in srgb, var(--warning) 84%, var(--text)); font-size: 12.5px; line-height: 1.6; }
+.conflictRetry { flex: none; height: 26px; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--warning) 52%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--panel) 72%, transparent); color: inherit; font-size: 12px; font-weight: 700; }
+.conflictRetry:hover:not(:disabled) { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, var(--panel)); }
+.conflictRetry:disabled { opacity: .55; cursor: not-allowed; }

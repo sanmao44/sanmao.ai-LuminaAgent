@@ -370,6 +370,48 @@ test('技能使用次数与编辑已安装技能', async () => {
   }
 });
 
+test('技能附件清单标注文本、二进制与脚本类型', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    const installed = skills.installSkill({
+      id: 'kinds',
+      name: '附件类型',
+      body: '正文',
+      files: [
+        { path: 'references/guide.md', text: '参考资料' },
+        { path: 'scripts/run.py', text: 'print(1)' },
+        { path: 'scripts/check.bat', text: 'echo hi' },
+        { path: 'assets/logo.png', base64: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64') },
+      ],
+    }, store);
+    const content = JSON.parse(skills.buildSkillToolContent(installed));
+    const byPath = Object.fromEntries(content.files.map((file) => [file.path, file]));
+    assert.equal(byPath['references/guide.md'].kind, 'text');
+    assert.equal(byPath['assets/logo.png'].kind, 'binary');
+    assert.equal(byPath['scripts/run.py'].kind, 'script');
+    assert.equal(byPath['scripts/check.bat'].kind, 'script');
+    assert.match(byPath['scripts/run.py'].note, /永不执行/);
+
+    const scriptFile = skills.readSkillFile('kinds', 'scripts/run.py', store);
+    assert.equal(scriptFile.binary, false);
+    const scriptContent = JSON.parse(skills.buildSkillToolContent(installed, scriptFile));
+    assert.equal(scriptContent.kind, 'script');
+    assert.match(scriptContent.script, /永不执行/);
+
+    const textFile = skills.readSkillFile('kinds', 'references/guide.md', store);
+    const textContent = JSON.parse(skills.buildSkillToolContent(installed, textFile));
+    assert.equal(textContent.kind, 'text');
+    assert.equal(textContent.script, undefined);
+
+    const binaryFile = skills.readSkillFile('kinds', 'assets/logo.png', store);
+    assert.equal(binaryFile.binary, true);
+    assert.equal(skills.skillFileKind('assets/logo.png'), 'binary');
+    assert.equal(skills.skillFileKind('scripts/check.bat'), 'script');
+  } finally {
+    await cleanup();
+  }
+});
+
 test('常用技能排在技能索引与检索前面', () => {
   const base = { enabled: true, pending: false, files: [], tools: [], tags: [], body: '正文', description: '', createdAt: 0, updatedAt: 0, lastUsedAt: 0 };
   const records = Array.from({ length: 30 }, (_, index) => ({ ...base, id: 'skill-' + index, name: 'S' + index, useCount: index === 29 ? 5 : 0 }));

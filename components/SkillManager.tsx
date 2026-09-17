@@ -48,7 +48,7 @@ function formatTime(value: number) {
   try { return new Date(value).toLocaleDateString('zh-CN'); } catch { return ''; }
 }
 
-const SCRIPT_FILE_PATTERN = /\.(?:sh|bash|zsh|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i;
+const SCRIPT_FILE_PATTERN = /\.(?:sh|bash|zsh|ps1|psm1|ps|bat|cmd|vbs|py|js|mjs|cjs|ts|tsx|jsx|rb|pl|php|lua)$/i;
 
 const RATE_LIMIT_PATTERN = /限流|rate limit|HTTP 403|HTTP 429/i;
 
@@ -90,6 +90,15 @@ function hasScriptFile(files: SkillFileRecord[]) {
   return (files || []).some((file) => SCRIPT_FILE_PATTERN.test(String(file.path || '')));
 }
 
+/** 同名冲突：导入被拒绝时给出可执行的下一步提示。 */
+function conflictNotice() {
+  return '已存在同名技能，导入被阻止：点「覆盖并重试」，或勾选「覆盖同名技能」后再试一次，原有内容会被替换。';
+}
+
+function isExistingSkillError(failure: unknown) {
+  return failure instanceof Error && failure.message.includes('已存在');
+}
+
 export default function SkillManager({ disabled, icon }: { disabled: boolean; icon: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('installed');
@@ -102,6 +111,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [query, setQuery] = useState('');
   const [importUrl, setImportUrl] = useState('');
   const [overwrite, setOverwrite] = useState(false);
+  const [conflict, setConflict] = useState('');
+  const [retryAvailable, setRetryAvailable] = useState(false);
   const [preview, setPreview] = useState<{ id: string; name: string; body: string } | null>(null);
   const [confirming, setConfirming] = useState('');
   const [busy, setBusy] = useState(false);
@@ -113,10 +124,21 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [indexLimit, setIndexLimit] = useState(0);
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
+  const retryImport = useRef<(() => Promise<void>) | null>(null);
+  const importFooterRef = useRef<HTMLDivElement>(null);
   useBodyScrollLock(open);
 
   useEffect(() => {
     if (open) dialog.current?.showModal();
+  }, [open]);
+
+  /* 导入同名冲突时把提示和覆盖勾选框一起滚进视野，避免用户找不到。 */
+  useEffect(() => {
+    if (!conflict) return;
+    importFooterRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [conflict]);
+
+  useEffect(() => {
   }, [open]);
 
   const applyPayload = useCallback((data: Record<string, unknown>) => {
@@ -226,37 +248,64 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     });
   }
 
-  async function importFromUrl() {
+  async function importFromUrl(force = false) {
+    retryImport.current = () => importFromUrl(true);
+    setConflict('');
+    setRetryAvailable(false);
     await run(async () => {
-      const data = await requestJson('/api/skills/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: importUrl, overwrite }) });
-      applyPayload(data);
-      setImportUrl('');
-      setTab('installed');
-      const warnings = Array.isArray(data.warnings) ? data.warnings as string[] : [];
-      setNotice(warnings.length ? `已导入，注意：${warnings[0]}` : `已导入「${(data.skill as { name?: string })?.name || ''}」。`);
+      try {
+        const data = await requestJson('/api/skills/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: importUrl, overwrite: overwrite || force }) });
+        applyPayload(data);
+        setImportUrl('');
+        setTab('installed');
+        const warnings = Array.isArray(data.warnings) ? data.warnings as string[] : [];
+        setNotice(warnings.length ? `已导入，注意：${warnings[0]}` : `已导入「${(data.skill as { name?: string })?.name || ''}」。`);
+      } catch (failure) {
+        if (!isExistingSkillError(failure)) throw failure;
+        setConflict(conflictNotice());
+        setRetryAvailable(true);
+      }
     });
   }
 
-  async function importFromFile(file: File) {
+  async function importFromFile(file: File, force = false) {
     setFileLabel(file.name);
+    retryImport.current = () => importFromFile(file, true);
+    setConflict('');
+    setRetryAvailable(false);
     await run(async () => {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('overwrite', String(overwrite));
-      const data = await requestJson('/api/skills/import', { method: 'POST', body: form });
-      applyPayload(data);
-      setTab('installed');
-      const warnings = Array.isArray(data.warnings) ? data.warnings as string[] : [];
-      setNotice(warnings.length ? `已导入，注意：${warnings[0]}` : `已导入「${(data.skill as { name?: string })?.name || file.name}」。`);
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('overwrite', String(overwrite || force));
+        const data = await requestJson('/api/skills/import', { method: 'POST', body: form });
+        applyPayload(data);
+        setTab('installed');
+        const warnings = Array.isArray(data.warnings) ? data.warnings as string[] : [];
+        setNotice(warnings.length ? `已导入，注意：${warnings[0]}` : `已导入「${(data.skill as { name?: string })?.name || file.name}」。`);
+      } catch (failure) {
+        if (!isExistingSkillError(failure)) throw failure;
+        setConflict(conflictNotice());
+        setRetryAvailable(true);
+      }
     });
   }
 
-  async function importFromLocal(candidate: LocalCandidate) {
+  async function importFromLocal(candidate: LocalCandidate, force = false) {
+    retryImport.current = () => importFromLocal(candidate, true);
+    setConflict('');
+    setRetryAvailable(false);
     await run(async () => {
-      const data = await requestJson('/api/skills/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ localKey: candidate.key, overwrite }) });
-      applyPayload(data);
-      setTab('installed');
-      setNotice(`已导入本机技能「${(data.skill as { name?: string })?.name || candidate.name}」。`);
+      try {
+        const data = await requestJson('/api/skills/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ localKey: candidate.key, overwrite: overwrite || force }) });
+        applyPayload(data);
+        setTab('installed');
+        setNotice(`已导入本机技能「${(data.skill as { name?: string })?.name || candidate.name}」。`);
+      } catch (failure) {
+        if (!isExistingSkillError(failure)) throw failure;
+        setConflict(conflictNotice());
+        setRetryAvailable(true);
+      }
     });
   }
 
@@ -336,14 +385,14 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   }
 
   const overwriteToggle = (
-    <label className={styles.check}>
-      <input type="checkbox" checked={overwrite} disabled={busy} onChange={(event) => setOverwrite(event.target.checked)} />
+    <label className={styles.check + (conflict ? ' ' + styles.checkAttention : '')}>
+      <input type="checkbox" checked={overwrite} disabled={busy} onChange={(event) => { setOverwrite(event.target.checked); setConflict(''); }} />
       <span>覆盖同名技能</span>
     </label>
   );
 
   return <>
-    <button type="button" className={styles.trigger} data-tooltip="技能" aria-label="技能" aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setPreview(null); setConfirming(''); setFileLabel(''); setDragActive(false); setOpen(true); }}>{icon}</button>
+    <button type="button" className={styles.trigger} data-tooltip="技能" aria-label="技能" aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConflict(''); setRetryAvailable(false); retryImport.current = null; setPreview(null); setConfirming(''); setFileLabel(''); setDragActive(false); setOpen(true); }}>{icon}</button>
     {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="skill-manager-title" onClose={() => setOpen(false)} onCancel={(event) => { if (busy) event.preventDefault(); }}>
       <header className={styles.header}>
         <div className={styles.titleBlock}>
@@ -523,7 +572,11 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
             </div>
           </>}
 
-          <div className={styles.formFooter}>{overwriteToggle}</div>
+          {conflict && <p className={styles.conflict} role="alert">
+            <span>{conflict}</span>
+            {retryAvailable && <button type="button" className={styles.conflictRetry} disabled={busy} onClick={() => void retryImport.current?.()}>覆盖并重试</button>}
+          </p>}
+          <div className={styles.formFooter} ref={importFooterRef}>{overwriteToggle}</div>
         </section>}
       </div>
 
