@@ -10818,7 +10818,7 @@ export default function Page() {
                                             })
                                         ]
                                     }),
-                                    section === 'agent' && messages.length > 0 && (shareSelectionMode ? /*#__PURE__*/ _jsxs("div", {
+                                    section === 'agent' && messages.length > 0 && shareSelectionMode && /*#__PURE__*/ _jsxs("div", {
                                         className: "conversation-share-controls",
                                         role: "toolbar",
                                         "aria-label": "分享内容选择",
@@ -10860,22 +10860,7 @@ export default function Page() {
                                                 children: shareBusy ? '生成中…' : '预览'
                                             })
                                         ]
-                                    }) : /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "conversation-share-entry",
-                                        disabled: shareBusy || !selectableShareGroups.length,
-                                        onClick: beginShareSelection,
-                                        title: !selectableShareGroups.length ? '当前还没有可分享的已完成问答组' : '选择要分享的问答组',
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "share",
-                                                size: 14
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: '分享'
-                                            })
-                                        ]
-                                    }, "share-entry")),
+                                    }),
                                     /*#__PURE__*/ _jsxs("button", {
                                         className: "theme-toggle",
                                         "aria-label": theme === 'light' ? '切换深色主题' : '切换浅色主题',
@@ -11694,7 +11679,23 @@ export default function Page() {
                                     /*#__PURE__*/ _jsx(SkillManager, {
                                         disabled: activeAgentBusy,
                                         icon: /*#__PURE__*/ _jsx(Icon, { name: 'star', size: 16 })
-                                    }, 'skills')
+                                    }, 'skills'),
+                                    messages.length > 0 && !shareSelectionMode && /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "conversation-share-entry",
+                                        disabled: shareBusy || !selectableShareGroups.length,
+                                        onClick: beginShareSelection,
+                                        title: !selectableShareGroups.length ? '当前还没有可分享的已完成问答组' : '选择要分享的问答组',
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "share",
+                                                size: 14
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: '分享'
+                                            })
+                                        ]
+                                    }, "share-entry")
                                     ]
                                 })
                             }),
