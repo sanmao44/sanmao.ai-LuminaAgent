@@ -206,15 +206,32 @@ test("dock chips carry the @ number and can be dragged into order", () => {
   assert.match(component, /const mentionIndex = chipMentionIndexes\.get\(chip\.id\);/);
   assert.match(component, /className="canvas-agent-dock-chip-index"/);
   assert.match(component, /function reorderReferenceIds\(/);
-  assert.match(component, /\s+draggable\s+onDragStart=/);
-  assert.match(component, /onDragStart=\{\(event\) => \{\s*setDragIndex\(index\);/);
-  assert.match(component, /if \(dragIndex !== null\) applyChipOrder\(dragIndex, index\);/);
-  assert.match(component, /onDragEnd=\{\(\) => setDragIndex\(null\)\}/);
+  // 画布 stage 会吃掉原生 HTML5 拖拽（缩略图还带 -webkit-user-drag:none），所以芯片改用指针事件拖。
+  assert.doesNotMatch(component, /\s+draggable\s+onDragStart=/);
+  assert.match(component, /data-chip-id=\{chip\.id\}/);
+  assert.match(component, /onPointerDown=\{\(event\) => beginChipDrag\(event, chip\.id\)\}/);
+  assert.match(component, /onPointerMove=\{\(event\) => trackChipDrag\(event, chip\.id\)\}/);
+  assert.match(component, /event\.currentTarget\.setPointerCapture\(event\.pointerId\);/);
+  assert.match(component, /const moveChip = useCallback\(/);
+  assert.match(component, /reorderReferenceIds\(order, order\.indexOf\(draggedId\), order\.indexOf\(targetId\)\)/);
+  assert.match(component, /const targetId = chipIdUnderPoint\(contextRef\.current, chipId, event\.clientX, event\.clientY\);/);
+  // 落点用命中判定：指针压在哪枚芯片上就换到哪枚的位置，折行时也准。
+  assert.match(component, /function chipIdUnderPoint\(container: HTMLElement \| null, draggedId: string, clientX: number, clientY: number\)/);
+  assert.match(component, /if \(clientX >= rect\.left && clientX <= rect\.right && clientY >= rect\.top && clientY <= rect\.bottom\) return id;/);
+  // 拖完浏览器补的 click 不能把视口带跑。
+  assert.match(component, /chipClickBlockedRef\.current/);
+  assert.match(component, /className=\{`canvas-agent-dock-chip\$\{dragChipId === chip\.id \? " dragging" : ""\}`\}/);
   // 拖动只改面板里的顺序，不能反过来改画布选中顺序（选中顺序由画布 useMemo 决定）。
   assert.doesNotMatch(component, /setSelectedIds|onReorderSelection/);
   assert.match(styles, /\.canvas-agent-dock-chip\.dragging\{/);
-  // 长文件名会把芯片撑满整行，标签宽度必须封顶。
-  assert.match(styles, /\.canvas-agent-dock-chip span\{[^}]*max-width:88px\}/);
+  // 触摸拖动不能被滚动抢走手势。
+  assert.match(styles, /\.canvas-agent-dock-chip\{cursor:grab;touch-action:none\}/);
+  // 芯片按等宽列排满整行，标签自己吃掉列里剩下的宽度，不再留半行的空白。
+  assert.match(styles, /\.canvas-agent-dock-context\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(136px,1fr\)\)/);
+  assert.match(styles, /\.canvas-agent-dock-chip span\{flex:1;min-width:0;/);
+  // 芯片折行后能滚，但不要把滚动条露出来（和主界面 .canvas-input-semantics 一个做法）。
+  assert.match(styles, /\.canvas-agent-dock-context\{[^}]*scrollbar-width:none\}/);
+  assert.match(styles, /\.canvas-agent-dock-context::-webkit-scrollbar\{display:none\}/);
   assert.match(styles, /\.canvas-agent-dock-chip-index\{/);
 });
 

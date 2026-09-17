@@ -785,6 +785,9 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
   assert.match(styles, /\.canvas-selection-layout-group\.alignment/);
   assert.match(styles, /\.canvas-selection-layout-group\.distribution/);
   assert.match(styles, /\.canvas-selection-layout-tooltip::after/);
+  // 按钮本来就装得下，隐藏的 tooltip 会让工具条虚增一段可滚动距离，滚动条不能露出来。
+  assert.match(styles, /\.canvas-selection-layout-toolbar\{[^}]*scrollbar-width:none\}/);
+  assert.match(styles, /\.canvas-selection-layout-toolbar::-webkit-scrollbar\{display:none\}/);
 });
 
 test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {

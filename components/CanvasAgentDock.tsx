@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import SelectMenu from "@/components/SelectMenu";
 import SkillManager from "@/components/SkillManager";
 import SkillIcon from "@/components/SkillIcon";
@@ -120,6 +121,19 @@ function reorderReferenceIds(ids: readonly string[], fromIndex: number, toIndex:
   return next;
 }
 
+/* 落点用命中判定：指针压在哪枚芯片上，就换到那枚芯片的位置；芯片会折行，比按距离算更准。 */
+function chipIdUnderPoint(container: HTMLElement | null, draggedId: string, clientX: number, clientY: number) {
+  if (!container) return null;
+  const elements = Array.from(container.querySelectorAll<HTMLElement>(".canvas-agent-dock-chip[data-chip-id]"));
+  for (const element of elements) {
+    const id = element.dataset.chipId;
+    if (!id || id === draggedId) continue;
+    const rect = element.getBoundingClientRect();
+    if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) return id;
+  }
+  return null;
+}
+
 function readSession(): CanvasAgentDockSession | null {
   if (typeof window === "undefined") return null;
   try {
@@ -184,7 +198,11 @@ export default function CanvasAgentDock({
   const [skillActive, setSkillActive] = useState(0);
   const [skills, setSkills] = useState<SkillPickerEntry[]>([]);
   const [chipOrder, setChipOrder] = useState<string[]>([]);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragChipId, setDragChipId] = useState<string | null>(null);
+  const contextRef = useRef<HTMLDivElement | null>(null);
+  const chipDragRef = useRef<{ id: string; pointerId: number; x: number; y: number } | null>(null);
+  const chipDragMovedRef = useRef(false);
+  const chipClickBlockedRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
   const mentionEditorRef = useRef<HTMLDivElement | null>(null);
@@ -244,13 +262,52 @@ export default function CanvasAgentDock({
     () => new Map(orderedReferences.map((reference, index) => [referenceOrderKey(reference), index + 1] as const)),
     [orderedReferences],
   );
-  const applyChipOrder = useCallback(
-    (fromIndex: number, toIndex: number) => {
-      const next = reorderReferenceIds(orderedChips.map((chip) => chip.id), fromIndex, toIndex);
+  const moveChip = useCallback(
+    (draggedId: string, targetId: string) => {
+      const order = orderedChips.map((chip) => chip.id);
+      const next = reorderReferenceIds(order, order.indexOf(draggedId), order.indexOf(targetId));
       if (next) setChipOrder(next);
     },
     [orderedChips],
   );
+  /* 芯片用指针事件拖：拖动过程中就能看到换位，不必依赖浏览器原生拖拽（画布 stage 里的缩略图
+     带 -webkit-user-drag:none，原生拖拽经常起不来，而且只有正好丢在另一枚芯片上才生效）。 */
+  const beginChipDrag = useCallback((event: ReactPointerEvent<HTMLButtonElement>, chipId: string) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    chipDragRef.current = { id: chipId, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    chipDragMovedRef.current = false;
+    chipClickBlockedRef.current = false;
+    setDragChipId(chipId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* 捕获失败时芯片上的 pointermove 仍然够用 */
+    }
+  }, []);
+  const trackChipDrag = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, chipId: string) => {
+      const drag = chipDragRef.current;
+      if (!drag || drag.id !== chipId || drag.pointerId !== event.pointerId) return;
+      if (!chipDragMovedRef.current) {
+        // 手抖几个像素还是点击（点击＝定位到该节点）。
+        if (Math.abs(event.clientX - drag.x) + Math.abs(event.clientY - drag.y) < 4) return;
+        chipDragMovedRef.current = true;
+      }
+      event.preventDefault();
+      const targetId = chipIdUnderPoint(contextRef.current, chipId, event.clientX, event.clientY);
+      if (targetId) moveChip(chipId, targetId);
+    },
+    [moveChip],
+  );
+  const endChipDrag = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!chipDragRef.current) return;
+    if (chipDragMovedRef.current) chipClickBlockedRef.current = true;
+    chipDragRef.current = null;
+    setDragChipId(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   const modelOptions = useMemo(() => {
     const models = agentModelOptions(runtime);
@@ -574,32 +631,28 @@ export default function CanvasAgentDock({
           </button>
         </div>
       </header>
-      <div className="canvas-agent-dock-context">
+      <div className="canvas-agent-dock-context" ref={contextRef}>
         {orderedChips.length ? (
-          orderedChips.map((chip, index) => {
+          orderedChips.map((chip) => {
             const mentionIndex = chipMentionIndexes.get(chip.id);
             return (
               <button
                 type="button"
                 key={chip.id}
-                className={`canvas-agent-dock-chip${dragIndex === index ? " dragging" : ""}`}
-                draggable
-                onDragStart={(event) => {
-                  setDragIndex(index);
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData("text/plain", chip.id);
+                data-chip-id={chip.id}
+                className={`canvas-agent-dock-chip${dragChipId === chip.id ? " dragging" : ""}`}
+                onPointerDown={(event) => beginChipDrag(event, chip.id)}
+                onPointerMove={(event) => trackChipDrag(event, chip.id)}
+                onPointerUp={endChipDrag}
+                onPointerCancel={endChipDrag}
+                onClick={() => {
+                  // 拖完浏览器还会补一次 click，别让它把视口带跑。
+                  if (chipClickBlockedRef.current) {
+                    chipClickBlockedRef.current = false;
+                    return;
+                  }
+                  onFocusNodes([chip.id]);
                 }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  if (dragIndex !== null) applyChipOrder(dragIndex, index);
-                  setDragIndex(null);
-                }}
-                onDragEnd={() => setDragIndex(null)}
-                onClick={() => onFocusNodes([chip.id])}
                 title={
                   mentionIndex
                     ? `定位到${chip.label} · 输入 @${mentionIndex} 引用它 · 拖动可调整顺序`

@@ -919,17 +919,19 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-head-actions>button{width:26px;height:26px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text-2);font-size:12px;line-height:1}
 .canvas-agent-dock-head-actions>button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-agent-dock-head-actions>button[data-tooltip]::after{left:auto;right:0;top:calc(100% + 8px);transform:none}
-.canvas-agent-dock-context{display:flex;flex-wrap:wrap;gap:5px;flex:none;max-height:96px;overflow:auto;padding:7px;border:1px solid var(--line);border-radius:13px;background:var(--panel-2)}
-.canvas-agent-dock-context>small{color:var(--muted);font-size:9px;line-height:1.45}
-.canvas-agent-dock-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px 4px 4px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--text-2);font-size:9px;transition:border-color .16s,color .16s,transform .16s}
+.canvas-agent-dock-context{display:grid;grid-template-columns:repeat(auto-fill,minmax(136px,1fr));gap:5px;flex:none;max-height:96px;overflow:auto;padding:7px;border:1px solid var(--line);border-radius:13px;background:var(--panel-2);scrollbar-width:none}
+.canvas-agent-dock-context::-webkit-scrollbar{display:none}
+.canvas-agent-dock-context>small{grid-column:1/-1;color:var(--muted);font-size:9px;line-height:1.45}
+.canvas-agent-dock-chip{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;padding:4px 8px 4px 4px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--text-2);font-size:9px;transition:border-color .16s,color .16s,transform .16s}
 .canvas-agent-dock-chip img{width:22px;height:22px;flex:none;border-radius:7px;object-fit:cover}
 .canvas-agent-dock-chip i{width:22px;height:22px;display:grid;place-items:center;flex:none;border-radius:7px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;font-style:normal}
-.canvas-agent-dock-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:88px}
-.canvas-agent-dock-chip{cursor:grab}
+/* 芯片按等宽列排满整行，标签自己吃掉剩下的宽度（列宽就是上限）。 */
+.canvas-agent-dock-chip span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-agent-dock-chip{cursor:grab;touch-action:none}
 .canvas-agent-dock-chip:active{cursor:grabbing}
 .canvas-agent-dock-chip:hover{border-color:var(--accent);color:var(--accent-text);transform:translateY(-1px)}
 /* 拖动中的芯片要弱化，和主界面引用缩略图的 dragging 反馈保持一致。 */
-.canvas-agent-dock-chip.dragging{opacity:.45;transform:scale(.96)}
+.canvas-agent-dock-chip.dragging{opacity:.45;transform:scale(.96);border-color:var(--accent);cursor:grabbing}
 /* 编号＝输入 @ 时用的编号，沿用主界面引用缩略图上的角标样式。 */
 .canvas-agent-dock-chip-index{min-width:18px;height:18px;display:grid;place-items:center;flex:none;padding:0 4px;border-radius:6px;background:rgba(15,16,22,.76);color:#fff;font-size:9px;font-weight:900;font-style:normal;line-height:1}
 .canvas-agent-dock-log{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:2px}
@@ -1591,7 +1593,9 @@ html[data-motion="off"] .canvas-processing-progress.indeterminate>i{transform:no
 
 /* Multi-select alignment and distribution controls stay in a compact bottom
    palette, while the two groups use separate colors to remain scannable. */
-.canvas-selection-layout-toolbar{position:absolute;z-index:var(--canvas-z-selection);left:50%;bottom:calc(var(--canvas-deck-height,0px) + 18px);display:flex;align-items:center;gap:7px;max-width:calc(100% - 24px);overflow-x:auto;padding:5px;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb,var(--panel) 95%,transparent);box-shadow:var(--shadow-soft);backdrop-filter:blur(14px);transform:translateX(-50%);scrollbar-width:thin}
+.canvas-selection-layout-toolbar{position:absolute;z-index:var(--canvas-z-selection);left:50%;bottom:calc(var(--canvas-deck-height,0px) + 18px);display:flex;align-items:center;gap:7px;max-width:calc(100% - 24px);overflow-x:auto;padding:5px;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb,var(--panel) 95%,transparent);box-shadow:var(--shadow-soft);backdrop-filter:blur(14px);transform:translateX(-50%);scrollbar-width:none}
+/* 工具条内容本来就装得下（隐藏的 tooltip 会虚增一段可滚动距离），不要露出滚动条。 */
+.canvas-selection-layout-toolbar::-webkit-scrollbar{display:none}
 .canvas-selection-layout-group{display:flex;align-items:center;gap:2px;flex:none;padding:3px;border:1px solid;border-radius:11px}
 .canvas-selection-layout-group.alignment{border-color:color-mix(in srgb,var(--accent) 44%,var(--line));background:color-mix(in srgb,var(--accent-soft) 38%,var(--panel-2))}
 .canvas-selection-layout-group.distribution{border-color:color-mix(in srgb,var(--success) 44%,var(--line));background:color-mix(in srgb,var(--success-soft) 30%,var(--panel-2))}
