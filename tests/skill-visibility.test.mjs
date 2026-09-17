@@ -41,6 +41,16 @@ test("the skill dialog explains how skills trigger so users do not have to guess
   assert.match(manager, /直接对助手说“用 X 技能做/);
 });
 
+test("the long skill explanation collapses behind a help button so the header stays compact", () => {
+  assert.match(manager, /const \[helpOpen, setHelpOpen\] = useState\(false\);/);
+  assert.match(manager, /aria-label="技能说明" title="技能说明" aria-expanded=\{helpOpen\} aria-controls="skill-manager-help"/);
+  assert.match(manager, /\{helpOpen && <div id="skill-manager-help"/);
+  assert.match(manager, /if \(helpOpen\) \{ event\.preventDefault\(\); setHelpOpen\(false\); \}/);
+  assert.match(managerStyles, /\.titleRow \{ display: flex; align-items: center; gap: 9px; \}/);
+  assert.match(managerStyles, /\.helpPanel \{/);
+  assert.match(managerStyles, /\.help\[aria-expanded='true'\]/);
+});
+
 test("installed skills can be searched and edited from the panel", () => {
   assert.match(manager, /aria-label="搜索技能"/);
   assert.match(manager, /void openEditor\(skill\)/);

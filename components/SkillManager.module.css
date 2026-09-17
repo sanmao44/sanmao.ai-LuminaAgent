@@ -107,6 +107,14 @@
 
 .header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-start; justify-content: space-between; }
 .titleBlock { flex: 1 1 320px; display: grid; gap: 6px; }
+.titleRow { display: flex; align-items: center; gap: 9px; }
+.help { width: 26px; height: 26px; display: grid; place-items: center; flex: none; padding: 0 !important; border-radius: 50% !important; color: var(--muted) !important; font-size: 12px !important; font-weight: 900; line-height: 1; }
+.help[aria-expanded='true'] { border-color: var(--accent) !important; background: var(--accent-soft) !important; color: var(--accent-text) !important; }
+.help:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent); outline-offset: 2px; }
+.helpPanel { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 14px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 8%, var(--panel-2)), var(--panel-2)); box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 9%, transparent); }
+.helpPanelHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.helpPanelHead strong { color: var(--accent-text); font-size: 12.5px; }
+.helpClose { width: 24px; height: 24px; display: grid; place-items: center; flex: none; padding: 0 !important; border-radius: 8px !important; color: var(--muted) !important; font-size: 10px !important; }
 .hint { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.6; }
 .headerAside { display: flex; align-items: flex-start; gap: 10px; }
 .switches { display: grid; gap: 8px; }

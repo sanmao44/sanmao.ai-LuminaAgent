@@ -148,6 +148,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [choices, setChoices] = useState<ArchiveChoice[] | null>(null);
   const [choicesTotal, setChoicesTotal] = useState(0);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [helpOpen, setHelpOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const retryImport = useRef<(() => Promise<void>) | null>(null);
   const choiceSource = useRef<ChoiceSource | null>(null);
@@ -519,13 +520,22 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   );
 
   return <>
-    <button type="button" className={styles.trigger} data-tooltip={pendingCount ? `技能 · ${pendingCount} 个待确认` : '技能'} aria-label={pendingCount ? `技能（${pendingCount} 个待确认）` : '技能'} aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConflict(''); setRetryAvailable(false); retryImport.current = null; setPreview(null); setConfirming(''); setDiscarding(''); setFileLabel(''); setDragActive(false); setChoices(null); choiceSource.current = null; setOpen(true); }}>{icon}{pendingCount > 0 && <span className={styles.pendingBadge} aria-hidden="true">{pendingCount > 9 ? '9+' : pendingCount}</span>}</button>
-    {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="skill-manager-title" onClose={() => setOpen(false)} onCancel={(event) => { if (busy) event.preventDefault(); }}>
+    <button type="button" className={styles.trigger} data-tooltip={pendingCount ? `技能 · ${pendingCount} 个待确认` : '技能'} aria-label={pendingCount ? `技能（${pendingCount} 个待确认）` : '技能'} aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConflict(''); setRetryAvailable(false); retryImport.current = null; setPreview(null); setConfirming(''); setDiscarding(''); setFileLabel(''); setDragActive(false); setChoices(null); choiceSource.current = null; setHelpOpen(false); setOpen(true); }}>{icon}{pendingCount > 0 && <span className={styles.pendingBadge} aria-hidden="true">{pendingCount > 9 ? '9+' : pendingCount}</span>}</button>
+    {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="skill-manager-title" onClose={() => setOpen(false)} onCancel={(event) => { if (busy) { event.preventDefault(); return; } if (helpOpen) { event.preventDefault(); setHelpOpen(false); } }}>
       <header className={styles.header}>
         <div className={styles.titleBlock}>
-          <h2 id="skill-manager-title"><i aria-hidden="true">✦</i>技能</h2>
-          <p className={styles.hint}>技能是助手可复用的流程说明，兼容 Agent Skills 的 SKILL.md。只有已启用的技能才会进入上下文，技能的脚本永远不会被执行。</p>
-          <p className={styles.hint}><strong>怎么用：</strong>安装并启用后不需要手动挑、也不用关键词，助手遇到相关任务会自己读取并按它执行；回答上出现「技能 · 名称」就说明这轮用了它。想指定某个技能时，直接对助手说“用 X 技能做…”，也可以点输入框旁的「技能」按钮或敲 / 呼出技能菜单（超级画布右侧的 Agent 面板同样支持）。</p>
+          <div className={styles.titleRow}>
+            <h2 id="skill-manager-title"><i aria-hidden="true">✦</i>技能</h2>
+            <button type="button" className={styles.help} aria-label="技能说明" title="技能说明" aria-expanded={helpOpen} aria-controls="skill-manager-help" onClick={() => setHelpOpen((value) => !value)}>?</button>
+          </div>
+          {helpOpen && <div id="skill-manager-help" className={styles.helpPanel} role="region" aria-label="技能说明">
+            <div className={styles.helpPanelHead}>
+              <strong>技能说明</strong>
+              <button type="button" className={styles.helpClose} aria-label="收起技能说明" title="收起" onClick={() => setHelpOpen(false)}>✕</button>
+            </div>
+            <p className={styles.hint}>技能是助手可复用的流程说明，兼容 Agent Skills 的 SKILL.md。只有已启用的技能才会进入上下文，技能的脚本永远不会被执行。</p>
+            <p className={styles.hint}><strong>怎么用：</strong>安装并启用后不需要手动挑、也不用关键词，助手遇到相关任务会自己读取并按它执行；回答上出现「技能 · 名称」就说明这轮用了它。想指定某个技能时，直接对助手说“用 X 技能做…”，也可以点输入框旁的「技能」按钮或敲 / 呼出技能菜单（超级画布右侧的 Agent 面板同样支持）。</p>
+          </div>}
         </div>
         <div className={styles.headerAside}>
           <div className={styles.switches}>
