@@ -11,6 +11,7 @@ type SkillSummary = {
   name: string;
   description: string;
   version: string;
+  tags: string[];
   tools: string[];
   source: string;
   sourceUrl: string;
@@ -28,7 +29,7 @@ type SkillSettingsView = { enabled: boolean; autoApprove: boolean };
 type Tab = 'installed' | 'create' | 'import';
 
 const SOURCE_LABELS: Record<string, string> = { local: '本机', url: '链接', github: 'GitHub', zip: '压缩包', agent: '助手安装' };
-const EMPTY_DRAFT = { name: '', description: '', body: '' };
+const EMPTY_DRAFT = { name: '', description: '', body: '', tags: '' };
 
 async function requestJson(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
@@ -256,6 +257,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                   </div>
                   <p className={styles.description}>{skill.description || '没有填写简介'}</p>
                   <p className={styles.meta}>
+                    {skill.tags?.length ? `别名：${skill.tags.join('、')} · ` : ''}
                     {skill.tools?.length ? `需要工具：${skill.tools.join('、')} · ` : ''}
                     {skill.files.length ? `${skill.files.length} 个附件 · ` : ''}
                     更新于 {formatTime(skill.updatedAt)}
@@ -278,6 +280,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
           <input id="skill-name" value={draft.name} disabled={busy} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：短视频分镜脚本" />
           <label htmlFor="skill-description">简介</label>
           <input id="skill-description" value={draft.description} disabled={busy} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="一句话说明什么时候用它" />
+          <label htmlFor="skill-tags">别名（可选）</label>
+          <input id="skill-tags" value={draft.tags} disabled={busy} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="方便用中文检索，逗号分隔，例如：报错, 调试, 修bug" />
           <label htmlFor="skill-body">正文（Markdown）</label>
           <textarea id="skill-body" value={draft.body} disabled={busy} onChange={(event) => setDraft({ ...draft, body: event.target.value })} placeholder={'# 目标\n\n# 步骤\n1. …\n\n# 注意事项\n- …'} />
           <div className={styles.formFooter}>

@@ -120,7 +120,7 @@ const tools = [
     type: 'function',
     function: {
       name: 'skill_search',
-      description: '按关键词检索用户已安装的技能。不确定有没有现成流程时先查一次。',
+      description: '按关键词检索用户已安装的技能（中英文关键词、中文别名都可以）。不确定有没有现成流程时先查一次。',
       parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
     },
   },
@@ -128,8 +128,8 @@ const tools = [
     type: 'function',
     function: {
       name: 'skill_read',
-      description: '读取已启用技能的完整正文，或它附带的参考资料文件。技能索引里只有名称和简介，需要具体步骤时必须先读取。',
-      parameters: { type: 'object', properties: { id: { type: 'string' }, file: { type: 'string', description: '可选，技能目录内的相对路径。' } }, required: ['id'] },
+      description: '读取已启用技能的完整正文，或它附带的参考资料文件。技能索引里只有名称和简介，需要具体步骤时必须先读取。内容被截断时返回 truncated 与 nextOffset，带上 offset 继续读直到读完。',
+      parameters: { type: 'object', properties: { id: { type: 'string' }, file: { type: 'string', description: '可选，技能目录内的相对路径。' }, offset: { type: 'number', description: '可选，从第几个字符开始读，用于接着上一次被截断的位置继续读。' } }, required: ['id'] },
     },
   },
   {
@@ -144,6 +144,7 @@ const tools = [
           body: { type: 'string', description: '技能正文（Markdown），写清目标、步骤和注意事项；从链接安装时留空。' },
           url: { type: 'string', description: '可选：GitHub 仓库或 SKILL.md 直链。' },
           id: { type: 'string', description: '可选：英文技能标识。' },
+          tags: { type: 'string', description: '可选：中文别名，逗号分隔（例如“报错,调试,修bug”）。安装英文技能时尽量补上，方便之后用中文检索到它。' },
         }, required: ['name'],
       },
     },
@@ -848,7 +849,7 @@ export async function POST(request: Request) {
             ok: true,
             query: String(args.query || ''),
             resultCount: found.length,
-            skills: found.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description })),
+            skills: found.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, tags: skill.tags })),
             hint: found.length ? '用 skill_read 读取需要的技能后再执行。' : '没有匹配的技能；如果用户要求安装某个技能，改用 skill_install。',
           }) };
         }
@@ -860,10 +861,12 @@ export async function POST(request: Request) {
           }
           if (!skill.enabled) return fail('技能“' + skill.name + '”当前未启用。');
           const filePath = typeof args.file === 'string' ? args.file.trim() : '';
-          const file = filePath ? readSkillFile(skill.id, filePath, { pending: false }) : null;
+          const offsetValue = Math.trunc(Number(args.offset));
+          const offset = Number.isFinite(offsetValue) && offsetValue > 0 ? offsetValue : 0;
+          const file = filePath ? readSkillFile(skill.id, filePath, { pending: false, offset }) : null;
           if (filePath && !file) return fail('技能里没有这个附带文件：' + filePath.slice(0, 120));
           if (!usedSkills.some((item) => item.id === skill.id)) usedSkills.push({ id: skill.id, name: skill.name });
-          return { role: 'tool', tool_call_id: call.id, content: buildSkillToolContent(skill, file) };
+          return { role: 'tool', tool_call_id: call.id, content: buildSkillToolContent(skill, file, offset) };
         }
         if (skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST) return fail('本轮安装次数已达上限，请先让用户确认已安装的技能。');
         const autoApprove = skillContext.settings.autoApprove;
@@ -878,13 +881,13 @@ export async function POST(request: Request) {
           const githubTarget = /github\.com\//i.test(sourceRef) || !/^[a-z]+:\/\//i.test(sourceRef) ? parseGithubSkillTarget(sourceRef) : null;
           if (githubTarget) {
             const parsed = await fetchSkillFilesFromGithub(githubTarget, { signal: requestController.signal });
-            installed = installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, source: 'github', sourceUrl: sourceRef, installer, pending: !autoApprove });
+            installed = installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, tags: args.tags, source: 'github', sourceUrl: sourceRef, installer, pending: !autoApprove });
           } else {
             const fetched = await fetchSkillText(sourceRef, { signal: requestController.signal });
-            installed = installSkillFromDocument({ text: fetched.text, id: args.id, source: 'url', sourceUrl: fetched.url, installer, pending: !autoApprove });
+            installed = installSkillFromDocument({ text: fetched.text, id: args.id, tags: args.tags, source: 'url', sourceUrl: fetched.url, installer, pending: !autoApprove });
           }
         } else {
-          installed = installSkill({ id: args.id, name: args.name, description: args.description, body: args.body, source: 'agent', installer, pending: !autoApprove });
+          installed = installSkill({ id: args.id, name: args.name, description: args.description, body: args.body, tags: args.tags, source: 'agent', installer, pending: !autoApprove });
         }
         skillInstalls += 1;
         const record = installed;
@@ -893,6 +896,7 @@ export async function POST(request: Request) {
           ok: true,
           id: record.id,
           name: record.name,
+          tags: record.tags,
           status: record.pending ? 'pending-confirmation' : 'enabled',
           files: record.files.map((item) => item.path),
           instruction: record.pending

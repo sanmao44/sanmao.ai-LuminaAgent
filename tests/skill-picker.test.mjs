@@ -33,6 +33,18 @@ test("只列出启用中的技能，并按名称与简介过滤", () => {
   assert.deepEqual(picker.filterSkills(null, ""), []);
 });
 
+test("别名标签也能过滤技能，方便用中文找英文技能", () => {
+  const list = [
+    { id: "bug-fixing", name: "Bug Fixing", description: "fix defects", tags: ["报错", "调试"], enabled: true },
+    { id: "color-grade", name: "影视调色", description: "给出调色参数", enabled: true },
+  ];
+  assert.deepEqual(picker.filterSkills(list, "报错").map((skill) => skill.id), ["bug-fixing"]);
+  assert.deepEqual(picker.filterSkills(list, "调试").map((skill) => skill.id), ["bug-fixing"]);
+  assert.deepEqual(picker.filterSkills(list, "bug").map((skill) => skill.id), ["bug-fixing"]);
+  assert.deepEqual(picker.filterSkills(list, "调色").map((skill) => skill.id), ["color-grade"]);
+});
+
+
 test("选中技能后写回输入框，并吃掉刚敲的 /指令", () => {
   assert.equal(picker.skillTriggerText("演示周报生成"), "用「演示周报生成」技能：");
   assert.equal(picker.skillMessageValue("/周报", "演示周报生成"), "用「演示周报生成」技能：");

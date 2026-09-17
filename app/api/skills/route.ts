@@ -23,6 +23,7 @@ export async function POST(request: Request) {
       name: data.name,
       description: data.description,
       body: data.body,
+      tags: data.tags,
       overwrite: Boolean(data.overwrite),
       source: 'local',
       installer: { kind: 'user', name: '本界面创建' },

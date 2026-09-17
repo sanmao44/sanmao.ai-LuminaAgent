@@ -211,6 +211,126 @@ test('本机技能目录按标识去重', async () => {
   ]);
 });
 
+test('技能别名标签参与检索并写入文档', async () => {
+  const parsed = skills.parseSkillDocument([
+    '---', 'name: Bug Fixing', 'description: 定位并修复缺陷', 'tags: 报错, 修bug', 'aliases: 调试', '---', '', '正文',
+  ].join('\n'));
+  assert.deepEqual(parsed.tags, ['报错', '修bug', '调试']);
+  const listed = skills.parseSkillDocument(['---', 'name: demo', 'tags:', '  - 剪辑', '  - 调色', '---', '', '正文'].join('\n'));
+  assert.deepEqual(listed.tags, ['剪辑', '调色']);
+  assert.deepEqual(skills.normalizeSkillTags('调色 剪辑'), ['调色', '剪辑']);
+  assert.deepEqual(skills.normalizeSkillTags(['报错', '报错', '调试']), ['报错', '调试']);
+  assert.deepEqual(skills.normalizeSkillTags('a, 报错'), ['报错']);
+
+  const composed = skills.composeSkillDocument({ name: 'demo', description: '', version: '', tags: ['剪辑', '调色'] }, '正文');
+  assert.match(composed, /tags: 剪辑, 调色/);
+  assert.deepEqual(skills.parseSkillDocument(composed).tags, ['剪辑', '调色']);
+
+  const { store, cleanup } = await tempStore();
+  try {
+    const installed = skills.installSkill({ id: 'bug-fixing', name: 'Bug Fixing', description: 'fix defects', tags: ['报错', '调试'], body: '正文' }, store);
+    assert.deepEqual(installed.tags, ['报错', '调试']);
+    const reloaded = skills.readSkill('bug-fixing', store);
+    assert.deepEqual(reloaded.tags, ['报错', '调试']);
+    assert.match(skills.buildSkillIndexSection([reloaded]), /（别名：报错、调试）/);
+    const toolContent = JSON.parse(skills.buildSkillToolContent(reloaded));
+    assert.deepEqual(toolContent.tags, ['报错', '调试']);
+    assert.equal(skills.searchSkills('报错', [reloaded])[0].id, 'bug-fixing');
+    assert.equal(skills.searchSkills('调试', [reloaded]).length, 1);
+    assert.equal(skills.searchSkills('修一下这个报错', [reloaded])[0].id, 'bug-fixing');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('技能正文与附件支持按 offset 分段续读', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    const body = 'A'.repeat(12000) + 'B'.repeat(8000);
+    const installed = skills.installSkill({ id: 'long', name: '长技能', body }, store);
+    const first = JSON.parse(skills.buildSkillToolContent(installed));
+    assert.equal(first.offset, 0);
+    assert.equal(first.totalChars, 20000);
+    assert.equal(first.truncated, true);
+    assert.equal(first.content.length, skills.SKILL_TOOL_CONTENT_MAX_CHARS);
+    assert.equal(first.nextOffset, skills.SKILL_TOOL_CONTENT_MAX_CHARS);
+    assert.match(first.hint, /offset=/);
+
+    const second = JSON.parse(skills.buildSkillToolContent(installed, null, first.nextOffset));
+    assert.equal(second.truncated, false);
+    assert.equal(second.nextOffset, null);
+    assert.equal(second.offset, skills.SKILL_TOOL_CONTENT_MAX_CHARS);
+    assert.equal(first.content + second.content, body);
+    const beyond = JSON.parse(skills.buildSkillToolContent(installed, null, 99999));
+    assert.equal(beyond.content, '');
+    assert.equal(beyond.nextOffset, null);
+    assert.match(beyond.hint, /已读完/);
+
+    await writeFile(path.join(store.dataDir, 'skills', 'long', 'SKILL.md'), ['---', 'name: 超长技能', '---', '', 'D'.repeat(30000)].join('\n'));
+    const clipped = skills.readSkill('long', store);
+    assert.equal(clipped.bodyClipped, true);
+    assert.equal(clipped.bodyChars, 30000);
+    assert.equal(clipped.body.length, skills.SKILL_BODY_MAX_CHARS);
+    const clippedHead = JSON.parse(skills.buildSkillToolContent(clipped));
+    assert.equal(clippedHead.totalChars, 30000);
+    assert.equal(clippedHead.truncated, true);
+    const clippedTail = JSON.parse(skills.buildSkillToolContent(clipped, null, skills.SKILL_BODY_MAX_CHARS));
+    assert.equal(clippedTail.truncated, false);
+    assert.equal(clippedTail.content.length, 6000);
+
+    const long = skills.installSkill({ id: 'long-save', name: '超长保存', body: 'E'.repeat(30000) }, store);
+    assert.equal(long.bodyChars, 30000);
+    assert.equal(long.bodyClipped, true);
+    assert.equal(long.body.length, skills.SKILL_BODY_MAX_CHARS);
+    const savedDoc = await readFile(path.join(store.dataDir, 'skills', 'long-save', 'SKILL.md'), 'utf8');
+    assert.ok(savedDoc.trimEnd().endsWith('E'.repeat(500)), '磁盘上必须保留完整正文');
+    const reread = skills.readSkill('long-save', store);
+    const rereadHead = JSON.parse(skills.buildSkillToolContent(reread));
+    assert.equal(rereadHead.totalChars, 30000);
+    assert.equal(rereadHead.truncated, true);
+    const rereadTail = JSON.parse(skills.buildSkillToolContent(reread, null, skills.SKILL_BODY_MAX_CHARS));
+    assert.equal(rereadTail.content.length, 6000);
+    assert.equal(rereadTail.truncated, false);
+    const chunks = [rereadHead.content];
+    let cursor = rereadHead.nextOffset;
+    while (cursor !== null && chunks.length < 5) {
+      const next = JSON.parse(skills.buildSkillToolContent(reread, null, cursor));
+      chunks.push(next.content);
+      cursor = next.nextOffset;
+    }
+    assert.ok(chunks.join('') === 'E'.repeat(30000), '分段读取必须能还原完整正文');
+
+    const fromDoc = skills.installSkillFromDocument({
+      id: 'doc-skill',
+      text: ['---', 'name: 文档技能', 'tags: 剪辑', '---', '', 'F'.repeat(26000)].join('\n'),
+    }, store);
+    assert.equal(fromDoc.bodyChars, 26000);
+    assert.equal(fromDoc.bodyClipped, true);
+    assert.deepEqual(fromDoc.tags, ['剪辑']);
+    assert.equal(JSON.parse(skills.buildSkillToolContent(fromDoc)).totalChars, 26000);
+
+    await mkdir(path.join(store.dataDir, 'skills', 'long', 'references'), { recursive: true });
+    await writeFile(path.join(store.dataDir, 'skills', 'long', 'references', 'big.md'), 'C'.repeat(20000));
+    const head = skills.readSkillFile('long', 'references/big.md', store);
+    assert.equal(head.chars, 20000);
+    assert.equal(head.offset, 0);
+    assert.equal(head.truncated, true);
+    assert.equal(JSON.parse(skills.buildSkillToolContent(installed, head)).nextOffset, skills.SKILL_TOOL_CONTENT_MAX_CHARS);
+    assert.equal(head.text.length, skills.SKILL_TOOL_CONTENT_MAX_CHARS);
+    const tail = skills.readSkillFile('long', 'references/big.md', { ...store, offset: head.text.length });
+    assert.equal(tail.offset, skills.SKILL_TOOL_CONTENT_MAX_CHARS);
+    assert.equal(tail.truncated, false);
+    assert.equal(tail.text.length, 8000);
+    const toolResult = JSON.parse(skills.buildSkillToolContent(installed, tail));
+    assert.equal(toolResult.truncated, false);
+    assert.equal(toolResult.binary, undefined);
+    assert.match(toolResult.content, /^C+$/);
+  } finally {
+    await cleanup();
+  }
+});
+
+
 test('Agent 路由接入技能工具与渐进披露', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
   assert.match(route, /import \{ buildAgentSkillContext,[^}]*\} from '@\/lib\/skills';/);
@@ -218,6 +338,11 @@ test('Agent 路由接入技能工具与渐进披露', async () => {
   assert.match(route, /name: 'skill_search'/);
   assert.match(route, /name: 'skill_read'/);
   assert.match(route, /name: 'skill_install'/);
+  assert.match(route, /offset: \{ type: 'number'/);
+  assert.match(route, /tags: \{ type: 'string'/);
+  assert.match(route, /readSkillFile\(skill\.id, filePath, \{ pending: false, offset \}\)/);
+  assert.match(route, /buildSkillToolContent\(skill, file, offset\)/);
+  assert.match(route, /tags: args\.tags/);
   assert.match(route, /if \(name === 'skill_search' \|\| name === 'skill_read' \|\| name === 'skill_install'\) return skillContext\.settings\.enabled;/);
   assert.match(route, /const skillContext = buildAgentSkillContext\(\{ settings: state\.settings, dataDir: resolveLocalDataDir\(\) \}\);/);
   assert.ok(route.match(/system \+= skillPromptSection;/g).length === 2);

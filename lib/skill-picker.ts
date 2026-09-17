@@ -2,6 +2,7 @@ export type SkillPickerEntry = {
   id: string;
   name: string;
   description?: string;
+  tags?: string[];
   enabled?: boolean;
 };
 
@@ -15,7 +16,7 @@ export function filterSkills<T extends SkillPickerEntry>(skills: readonly T[] | 
   const list = (skills || []).filter((skill): skill is T => Boolean(skill) && skill.enabled !== false);
   const normalized = String(query || '').trim().toLowerCase();
   if (!normalized) return list;
-  return list.filter((skill) => `${skill.name} ${skill.id} ${skill.description || ''}`.toLowerCase().includes(normalized));
+  return list.filter((skill) => `${skill.name} ${skill.id} ${skill.description || ''} ${(skill.tags || []).join(' ')}`.toLowerCase().includes(normalized));
 }
 
 export function skillTriggerText(name: string) {
