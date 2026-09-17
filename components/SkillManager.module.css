@@ -37,6 +37,23 @@
 .trigger:hover::after, .trigger:focus-visible::after { visibility: visible; opacity: 1; }
 .trigger:hover, .trigger:focus-visible { color: var(--accent-text); border-color: var(--accent); }
 .trigger:disabled { opacity: .5; cursor: not-allowed; }
+.pendingBadge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--panel);
+  pointer-events: none;
+}
 
 .dialog {
   box-sizing: border-box;

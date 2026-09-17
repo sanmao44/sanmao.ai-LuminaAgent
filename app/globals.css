@@ -3992,3 +3992,7 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .message-pending>p{margin:0;min-width:0;flex:1;font-size:13px;line-height:1.8;white-space:pre-wrap;color:var(--message-support,var(--muted))}
 .message-pending>.mini-loader{width:13px;height:13px;border-width:2px;margin-top:5px;flex:none}
 .message-pending-clock{flex:none;margin-top:1px;padding:2px 8px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));border-radius:999px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;font-weight:850;font-variant-numeric:tabular-nums}
+
+.agent-skill-menu-head{display:flex;align-items:center;gap:6px;min-width:0}
+.agent-skill-menu-head strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-skill-menu-count{flex:none;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent-text);font-size:8px;font-style:normal;font-weight:700}

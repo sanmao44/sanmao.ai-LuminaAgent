@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute] = await Promise.all([
+const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu] = await Promise.all([
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -12,6 +12,8 @@ const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, e
   readFile(new URL("../lib/agent-client.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/skills/[id]/update-check/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/skills/[id]/export/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../components/SkillManager.module.css", import.meta.url), "utf8"),
+  readFile(new URL("../components/AgentSkillMenu.tsx", import.meta.url), "utf8"),
 ]);
 
 test("a reply reports back which skills the agent actually read", () => {
@@ -45,6 +47,27 @@ test("installed skills can be searched and edited from the panel", () => {
   assert.match(manager, /正在编辑「/);
   assert.match(manager, /editing \? '保存修改' : '保存技能'/);
   assert.match(manager, /用过 \$\{skill\.useCount\} 次/);
+});
+
+test("the skill button shows a badge when the assistant installed something to confirm", () => {
+  assert.match(manager, /const pendingCount = pending\.length;/);
+  assert.match(manager, /data-tooltip=\{pendingCount \? `技能 · \$\{pendingCount\} 个待确认` : '技能'\}/);
+  assert.match(manager, /className=\{styles\.pendingBadge\}/);
+  assert.match(managerStyles, /\.pendingBadge \{/);
+  /* 面板没打开时也在助手忙完后刷新，否则角标不会出现。 */
+  assert.match(manager, /if \(disabled \|\| open\) return;/);
+});
+
+test("the installed list sorts by enable state and recent use, and shows recent activity", () => {
+  assert.match(manager, /skillMatchesTerms\(row\.skill, terms\)/);
+  assert.match(manager, /Number\(b\.skill\.enabled\) - Number\(a\.skill\.enabled\)/);
+  assert.match(manager, /最近使用 \$\{formatSkillAge\(skill\.lastUsedAt\)\}/);
+  assert.match(manager, /function formatSkillAge\(value: number\)/);
+});
+
+test("删除与丢弃的二次确认会自动复位，技能菜单滚动跟随键盘选择", () => {
+  assert.match(manager, /setTimeout\(\(\) => \{ setConfirming\(''\); setDiscarding\(''\); \}, 4000\)/);
+  assert.match(skillMenu, /scrollIntoView\(\{ block: 'nearest' \}\)/);
 });
 test("an enabled skill keeps the request on the tool round so the model can really read it", () => {
   assert.match(route, /const directStream = wantsStream && !skillContext\.skills\.length && !isTextPolishTask/);

@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
+import { skillMatchesTerms, skillQueryTerms } from '@/lib/skill-picker';
 import styles from './SkillManager.module.css';
 
 type SkillFileRecord = { path: string; bytes: number };
@@ -48,6 +49,17 @@ function formatTime(value: number) {
   try { return new Date(value).toLocaleDateString('zh-CN'); } catch { return ''; }
 }
 
+/** 最近使用时间：越近越具体，超过 30 天回退到日期。 */
+function formatSkillAge(value: number) {
+  if (!value) return '';
+  const diff = Date.now() - value;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+  return formatTime(value);
+}
+
 const SCRIPT_FILE_PATTERN = /\.(?:sh|bash|zsh|ps1|psm1|ps|bat|cmd|vbs|py|js|mjs|cjs|ts|tsx|jsx|rb|pl|php|lua)$/i;
 
 const RATE_LIMIT_PATTERN = /限流|rate limit|HTTP 403|HTTP 429/i;
@@ -90,6 +102,12 @@ function hasScriptFile(files: SkillFileRecord[]) {
   return (files || []).some((file) => SCRIPT_FILE_PATTERN.test(String(file.path || '')));
 }
 
+/** 附件列表带上类型标记：脚本单独标出，提醒它只作参考、不会被执行。 */
+function formatSkillFile(file: SkillFileRecord) {
+  const size = formatBytes(file.bytes);
+  return SCRIPT_FILE_PATTERN.test(String(file.path || '')) ? `${file.path}（脚本 · ${size}）` : `${file.path}（${size}）`;
+}
+
 /** 同名冲突：导入被拒绝时给出可执行的下一步提示。 */
 function conflictNotice() {
   return '已存在同名技能，导入被阻止：点「覆盖并重试」，或勾选「覆盖同名技能」后再试一次，原有内容会被替换。';
@@ -115,6 +133,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const [retryAvailable, setRetryAvailable] = useState(false);
   const [preview, setPreview] = useState<{ id: string; name: string; body: string } | null>(null);
   const [confirming, setConfirming] = useState('');
+  const [discarding, setDiscarding] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -169,12 +188,39 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     });
   }, [open, run, applyPayload]);
 
+  /* 助手忙完这一轮可能刚好自己装了技能：面板没打开时也刷新一下，好在按钮上提醒待确认。 */
+  useEffect(() => {
+    if (disabled || open) return;
+    let cancelled = false;
+    void requestJson('/api/skills')
+      .then((data) => { if (!cancelled) applyPayload(data); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [disabled, open, applyPayload]);
+
+  /* 删除 / 丢弃的二次确认会悬着：几秒内没继续操作就自动复位，避免误触确认。 */
+  useEffect(() => {
+    if (!confirming && !discarding) return;
+    const timer = setTimeout(() => { setConfirming(''); setDiscarding(''); }, 4000);
+    return () => clearTimeout(timer);
+  }, [confirming, discarding]);
+
   const enabledCount = skills.filter((skill) => skill.enabled).length;
   const checkableCount = skills.filter(canCheckUpdate).length;
-  const normalizedQuery = query.trim().toLowerCase();
-  const visibleSkills = normalizedQuery
-    ? skills.filter((skill) => `${skill.name} ${skill.id} ${skill.description || ''} ${(skill.tags || []).join(' ')}`.toLowerCase().includes(normalizedQuery))
-    : skills;
+  const pendingCount = pending.length;
+  /* 启用优先、最近用过的排前面；搜索词按空格拆分，和技能菜单共用同一套规则。 */
+  const visibleSkills = useMemo(() => {
+    const terms = skillQueryTerms(query);
+    return skills
+      .map((skill, index) => ({ skill, index }))
+      .filter((row) => skillMatchesTerms(row.skill, terms))
+      .sort((a, b) =>
+        Number(b.skill.enabled) - Number(a.skill.enabled)
+        || (Number(b.skill.lastUsedAt) || 0) - (Number(a.skill.lastUsedAt) || 0)
+        || (Number(b.skill.useCount) || 0) - (Number(a.skill.useCount) || 0)
+        || a.index - b.index)
+      .map((row) => row.skill);
+  }, [skills, query]);
 
   async function updateSettings(patch: Partial<SkillSettingsView>) {
     await run(async () => {
@@ -203,6 +249,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     await run(async () => {
       const data = await requestJson(`/api/skills/pending/${encodeURIComponent(skill.id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, overwrite }) });
       applyPayload(data);
+      setDiscarding('');
       setNotice(action === 'approve' ? `已启用「${skill.name}」。` : `已丢弃「${skill.name}」。`);
     });
   }
@@ -211,6 +258,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
     await run(async () => {
       const data = await requestJson(`/api/skills/${encodeURIComponent(skill.id)}`);
       const record = data.skill as { id: string; name: string; body: string } | undefined;
+      setTab('installed');
       if (record) setPreview(record);
     });
   }
@@ -392,7 +440,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   );
 
   return <>
-    <button type="button" className={styles.trigger} data-tooltip="技能" aria-label="技能" aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConflict(''); setRetryAvailable(false); retryImport.current = null; setPreview(null); setConfirming(''); setFileLabel(''); setDragActive(false); setOpen(true); }}>{icon}</button>
+    <button type="button" className={styles.trigger} data-tooltip={pendingCount ? `技能 · ${pendingCount} 个待确认` : '技能'} aria-label={pendingCount ? `技能（${pendingCount} 个待确认）` : '技能'} aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConflict(''); setRetryAvailable(false); retryImport.current = null; setPreview(null); setConfirming(''); setDiscarding(''); setFileLabel(''); setDragActive(false); setOpen(true); }}>{icon}{pendingCount > 0 && <span className={styles.pendingBadge} aria-hidden="true">{pendingCount > 9 ? '9+' : pendingCount}</span>}</button>
     {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="skill-manager-title" onClose={() => setOpen(false)} onCancel={(event) => { if (busy) event.preventDefault(); }}>
       <header className={styles.header}>
         <div className={styles.titleBlock}>
@@ -434,14 +482,15 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
               {skill.files.length ? `${skill.files.length} 个附件` : '没有附件'}
               {skill.tags?.length ? ` · 别名：${skill.tags.join('、')}` : ''}
             </p>
-            {skill.files.length > 0 && <p className={styles.meta}>附件：{skill.files.slice(0, 4).map((file) => `${file.path}（${formatBytes(file.bytes)}）`).join('、')}{skill.files.length > 4 ? ` 等 ${skill.files.length} 个` : ''}</p>}
+            {skill.files.length > 0 && <p className={styles.meta}>附件：{skill.files.slice(0, 4).map((file) => formatSkillFile(file)).join('、')}{skill.files.length > 4 ? ` 等 ${skill.files.length} 个` : ''}</p>}
             {hasScriptFile(skill.files) && <p className={styles.warnLine}>包含脚本文件：安装后只作参考资料，脚本永远不会被执行。</p>}
             {skill.warnings.map((warning) => <p key={warning} className={styles.warnLine}>{warning}</p>)}
-            {skill.installer?.detail && <p className={styles.meta}>{skill.installer.detail}</p>}
+            {skill.installer?.detail && <p className={styles.meta}>{skill.installer.detail}{skill.installer.at ? ` · ${formatSkillAge(skill.installer.at)}` : ''}</p>}
           </div>
           <div className={styles.rowActions}>
+            <button type="button" disabled={busy} onClick={() => void openPreview(skill)}>预览</button>
             <button type="button" className={styles.primary} disabled={busy} onClick={() => void decide(skill, 'approve')}>允许</button>
-            <button type="button" disabled={busy} onClick={() => void decide(skill, 'discard')}>丢弃</button>
+            <button type="button" disabled={busy} onClick={() => { if (discarding !== skill.id) { setDiscarding(skill.id); return; } void decide(skill, 'discard'); }}>{discarding === skill.id ? '确认丢弃' : '丢弃'}</button>
           </div>
         </article>)}
       </section>}
@@ -476,12 +525,13 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                   <div className={styles.rowTitle}>
                     <strong>{skill.name}</strong>
                     <span className={styles.badge}>{SOURCE_LABELS[skill.source] || skill.source}</span>
+                    {skill.version && <span className={styles.badge}>{skill.version.startsWith('v') ? skill.version : 'v' + skill.version}</span>}
                     {!skill.enabled && <span className={styles.badgeMuted}>未启用</span>}
                     {update?.status === 'updated' && <span className={styles.updateBadge}>有更新</span>}
                   </div>
                   <p className={styles.description}>{skill.description || '没有填写简介'}</p>
                   <p className={styles.meta}>
-                    {skill.useCount ? `用过 ${skill.useCount} 次 · ` : ''}
+                    {skill.useCount ? `用过 ${skill.useCount} 次${skill.lastUsedAt ? ` · 最近使用 ${formatSkillAge(skill.lastUsedAt)}` : ''} · ` : ''}
                     {skill.tags?.length ? `别名：${skill.tags.join('、')} · ` : ''}
                     {skill.tools?.length ? `需要工具：${skill.tools.join('、')} · ` : ''}
                     {skill.files.length ? `${skill.files.length} 个附件${hasScriptFile(skill.files) ? '（含脚本）' : ''} · ` : ''}

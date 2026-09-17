@@ -38,6 +38,13 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
     };
   }, [open, onClose, ignorePointerSelector]);
 
+  /* 技能多时列表会滚动：键盘上下切换后让当前项始终留在视野里。 */
+  useEffect(() => {
+    if (!open) return;
+    const options = rootRef.current?.querySelectorAll<HTMLElement>('[role="option"]');
+    options?.[Math.min(Math.max(activeIndex, 0), options.length - 1)]?.scrollIntoView({ block: 'nearest' });
+  }, [open, activeIndex, visible.length]);
+
   if (!open) return null;
 
   return (
@@ -56,7 +63,10 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
         >
           <span className="agent-skill-menu-mark" aria-hidden="true">✦</span>
           <span className="agent-skill-menu-copy">
-            <strong>{skill.name}</strong>
+            <span className="agent-skill-menu-head">
+              <strong>{skill.name}</strong>
+              {Number(skill.useCount) > 0 && <em className="agent-skill-menu-count">用过 {skill.useCount} 次</em>}
+            </span>
             <small>{skill.description || '（无简介）'}</small>
           </span>
         </button>
