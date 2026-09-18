@@ -295,6 +295,25 @@ export function likelyArtifactGenerationRequest(input: string) {
   return /(?:生成|制作|导出|下载|整理|输出|保存|创建|写|做|出一份|来一份).{0,40}(?:word|docx|文档|报告|方案|合同|简历|总结|汇报|论文|说明书|手册|excel|xlsx|表格|报表|台账|清单|数据表|ppt|pptx|幻灯片|演示文稿|演示|deck)/i.test(text);
 }
 
+/**
+ * 上一轮助手已经提出可以交付某个文件、本轮用户只回了“1 / 好 / 可以”这类选择时，
+ * 也要继续下发 Office 工具：否则模型手里没有工具，只会说“已生成…文件”却拿不出文件。
+ */
+export function isArtifactFollowUpRequest(previousAssistantText: string, input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 24) return false;
+  const picksOption = /^(?:第)?\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:[.、)）:：]|号|个|选项)?$/i.test(text)
+    || /^(?:选|要|用|按)\s*(?:第)?\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:号|个|选项)?$/i.test(text)
+    || /^第\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:个|号|选项)$/i.test(text);
+  const confirms = /^(?:好|好的|好呀|可以|行|要|来吧|来一份|来一个|来一版|要一份|生成|做吧|做一份|就这个|就它|开始|确定|没问题|ok|okay|yes)$/i.test(text);
+  if (!picksOption && !confirms) return false;
+  const previous = String(previousAssistantText || '').replace(/\s+/g, ' ');
+  if (!previous) return false;
+  const mentionsArtifact = /(?:word|docx|excel|xlsx|ppt|pptx|文档|简历|报告|方案|合同|总结|汇报|论文|说明书|手册|表格|报表|台账|清单|数据表|幻灯片|演示文稿|压缩包|打包|文件)/i.test(previous);
+  const offersArtifact = /(?:我可以|我也可以|我能|能帮你|要不要|需要我|要我|帮你|给你|生成|做一?份|做一?版|导成|导出|整理成|打包|压缩成|模板)/.test(previous);
+  return mentionsArtifact && offersArtifact;
+}
+
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();

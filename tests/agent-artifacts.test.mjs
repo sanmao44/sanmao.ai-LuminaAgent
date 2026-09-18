@@ -87,3 +87,18 @@ test('共享类型把 content 变成可选并新增 artifact 字段', () => {
   assert.match(historyTypes, /export type ChatFile = \{[\s\S]*content\?: string;/);
   assert.match(historyTypes, /downloadUrl\?: string;/);
 });
+
+test('文件交付意图在“1/好/可以”这种追问里也要保留，而且不能走直连流式', () => {
+  assert.match(route, /isArtifactFollowUpRequest\(previousAssistantText, latestInstruction\)/);
+  assert.match(route, /const artifactFollowUpRequest = /);
+  assert.match(route, /\|\| artifactFollowUpRequest/);
+  assert.match(route, /const nativeNeedsContinuation = imageGenerationRequest \|\| fileGenerationRequest \|\| artifactGenerationRequest;/);
+  const directIndex = route.indexOf('const directStream = ');
+  assert.notEqual(directIndex, -1);
+  assert.match(route.slice(directIndex, route.indexOf(';', directIndex)), /&& !artifactGenerationRequest$/);
+  const searchedIndex = route.indexOf('const searchedStream = ');
+  assert.notEqual(searchedIndex, -1);
+  assert.match(route.slice(searchedIndex, route.indexOf(';', searchedIndex)), /&& !artifactGenerationRequest$/);
+  assert.match(route, /只要工具没有真正返回成功，就绝对不要说“已生成…文件”/);
+  assert.match(route, /本轮是上文交付选项的确认/);
+});

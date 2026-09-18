@@ -172,3 +172,16 @@ test('recognizes Office and ZIP delivery requests without firing on ordinary cha
     assert.equal(web.likelyArtifactGenerationRequest(input), false, input);
   }
 });
+
+test('上一轮提出可交付文件、本轮只回“1/好/可以”时仍然下发 Office 工具', () => {
+  assert.equal(typeof web.isArtifactFollowUpRequest, 'function');
+  const offer = '1. 通用求职简历模板 2. 应届生简历模板 3. 有经验社招简历模板\n如果暂时没有偏好，我也可以先按“通用求职简历模板”生成。';
+  for (const input of ['1', '1.', '2、', '第三个', '选1', '可以', '好的', '来一份']) {
+    assert.equal(web.isArtifactFollowUpRequest(offer, input), true, input);
+  }
+  for (const input of ['今天天气怎么样', '帮我压缩一下这张图片', '把简历写得更简洁一些，顺便补充项目经历', '']) {
+    assert.equal(web.isArtifactFollowUpRequest(offer, input), false, input);
+  }
+  assert.equal(web.isArtifactFollowUpRequest('今天天气不错，讲个笑话', '1'), false);
+  assert.equal(web.isArtifactFollowUpRequest('这份文档主要讲了三点结论', '2'), false);
+});
