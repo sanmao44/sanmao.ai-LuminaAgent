@@ -21,7 +21,9 @@ import {
   canvasAgentDockRequestsPreviousImageApply,
   composeCanvasAgentDockMessage,
   canvasAgentDockShouldAutoApplyText,
+  buildCanvasAgentDockPlan,
   type CanvasAgentDockChip,
+  type CanvasAgentDockPlan,
   type CanvasAgentDockReference,
   type CanvasAgentDockStatus,
 } from "@/lib/canvas/agent-dock";
@@ -46,6 +48,7 @@ export type CanvasAgentDockMessage = {
   /** 这条消息落到画布上的节点 id：存过之后按钮换成定位入口，随时回到画布上看结果。 */
   imageNodeIds?: string[];
   textNodeId?: string;
+  plan?: CanvasAgentDockPlan;
 };
 
 type CanvasAgentDockSession = {
@@ -61,6 +64,7 @@ type Props = {
   status: CanvasAgentDockStatus;
   chips: CanvasAgentDockChip[];
   references: CanvasAgentDockReference[];
+  selectedNodeIds?: string[];
   /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
   selectedTotal?: number;
   contextBlock: string;
@@ -72,6 +76,7 @@ type Props = {
     meta: { prompt: string; model?: string },
   ) => string[];
   onApplyText: (text: string, meta: { prompt: string }) => string[];
+  onApplyPlan: (plan: CanvasAgentDockPlan, images?: Array<{ url: string; revisedPrompt?: string }>) => string[];
   onCreateAgentNode: (text: string) => void;
   onUseAsImagePrompt: (text: string) => void;
   onUseAsVideoPrompt: (text: string) => void;
@@ -245,6 +250,7 @@ function readSession(): CanvasAgentDockSession | null {
               ? { imageNodeIds: message.imageNodeIds.map((id) => String(id || "")).filter(Boolean) }
               : {}),
             ...(message.textNodeId ? { textNodeId: String(message.textNodeId) } : {}),
+            ...(message.plan && typeof message.plan === "object" ? { plan: message.plan } : {}),
           }))
           .filter((message) => message.content || message.images?.length)
       : [];
@@ -265,12 +271,14 @@ export default function CanvasAgentDock({
   status,
   chips,
   references,
+  selectedNodeIds = [],
   selectedTotal,
   contextBlock,
   runtime,
   onFocusNodes,
   onApplyImages,
   onApplyText,
+  onApplyPlan,
   onCreateAgentNode,
   onUseAsImagePrompt,
   onUseAsVideoPrompt,
@@ -641,6 +649,24 @@ export default function CanvasAgentDock({
         }
         return;
       }
+      const localPlan = buildCanvasAgentDockPlan(text, {
+        targetNodeIds: selectedNodeIds,
+        selectedTotal,
+      });
+      if (localPlan?.kind === "layout-selection") {
+        const appliedIds = localPlan.requiresConfirmation ? [] : onApplyPlan(localPlan);
+        setMessages([
+          ...history,
+          {
+            id: createId(),
+            role: "assistant",
+            content: appliedIds.length ? "已按计划整理画布。" : "我识别到这是一个画布整理操作，请确认下面的执行计划。",
+            ...(appliedIds.length ? { imageNodeIds: appliedIds } : {}),
+            plan: { ...localPlan, ...(appliedIds.length ? { applied: true } : {}) },
+          },
+        ]);
+        return;
+      }
       setBusy(true);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -681,7 +707,22 @@ export default function CanvasAgentDock({
               ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}),
             }))
           : [];
+        const plan = buildCanvasAgentDockPlan(text, {
+          imageCount: images.length,
+          targetNodeIds: selectedNodeIds,
+          selectedTotal,
+        });
         const assistantMessageId = createId();
+        const shouldAutoApply = images.length > 0 && autoApply && (!plan || !plan.requiresConfirmation);
+        let appliedImageIds: string[] = [];
+        if (shouldAutoApply) {
+          if (plan) {
+            appliedImageIds = onApplyPlan(plan, images);
+          } else {
+            const appliedIds = onApplyImages(images, { prompt: mentionText, model: response.model });
+            appliedImageIds = appliedIds;
+          }
+        }
         setMessages((value) => [
           ...value,
           {
@@ -693,14 +734,10 @@ export default function CanvasAgentDock({
             ...(response.skills?.length
               ? { skills: response.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
               : {}),
+            ...(plan ? { plan: { ...plan, ...(appliedImageIds.length ? { applied: true } : {}) } } : {}),
+            ...(appliedImageIds.length ? { imageNodeIds: appliedImageIds } : {}),
           },
         ]);
-        if (images.length && autoApply) {
-          const appliedIds = onApplyImages(images, { prompt: mentionText, model: response.model });
-          setMessages((value) =>
-            value.map((message) => (message.id === assistantMessageId ? { ...message, imageNodeIds: appliedIds } : message)),
-          );
-        }
         if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
           const appliedIds = onApplyText(content, { prompt: mentionText });
           if (appliedIds.length) {
@@ -744,8 +781,23 @@ export default function CanvasAgentDock({
         setStreamText("");
       }
     },
-    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyText, onFocusNodes, orderedReferences, webMode],
+    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, selectedNodeIds, selectedTotal, webMode],
   );
+
+  const applyMessagePlan = useCallback((message: CanvasAgentDockMessage) => {
+    if (!message.plan || message.plan.applied || message.plan.dismissed) return;
+    const ids = onApplyPlan(message.plan, message.images);
+    setMessages((value) => value.map((item) => item.id === message.id
+      ? { ...item, ...(ids.length ? { imageNodeIds: ids } : {}), plan: { ...message.plan!, applied: true } }
+      : item));
+  }, [onApplyPlan]);
+
+  const dismissMessagePlan = useCallback((message: CanvasAgentDockMessage) => {
+    if (!message.plan || message.plan.applied) return;
+    setMessages((value) => value.map((item) => item.id === message.id
+      ? { ...item, plan: { ...message.plan!, dismissed: true } }
+      : item));
+  }, []);
 
   const cycleWebMode = useCallback(() => {
     setWebMode((value) => WEB_MODE_ORDER[(WEB_MODE_ORDER.indexOf(value) + 1) % WEB_MODE_ORDER.length]);
@@ -1119,6 +1171,19 @@ export default function CanvasAgentDock({
                     <img src={image.url} alt={image.revisedPrompt || "Agent 图片"} />
                   </button>
                 ))}
+              </div>
+            ) : null}
+            {message.plan ? (
+              <div className={`canvas-agent-dock-plan${message.plan.applied ? " is-applied" : message.plan.dismissed ? " is-dismissed" : ""}`}>
+                <div className="canvas-agent-dock-plan-head"><strong>画布操作计划</strong><span>{message.plan.applied ? "已应用" : message.plan.dismissed ? "已取消" : "待确认"}</span></div>
+                <b>{message.plan.title}</b>
+                <ol>{message.plan.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+                {!message.plan.applied && !message.plan.dismissed ? (
+                  <div className="canvas-agent-dock-plan-actions">
+                    <button type="button" className="primary" onClick={() => applyMessagePlan(message)}>确认并应用</button>
+                    <button type="button" onClick={() => dismissMessagePlan(message)}>取消</button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             <div className="canvas-agent-dock-message-tools">

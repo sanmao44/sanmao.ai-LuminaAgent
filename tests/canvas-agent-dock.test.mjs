@@ -94,6 +94,20 @@ test("explicit reuse commands stay local and do not call the model again", () =>
   assert.ok(component.includes("上一轮图片已经在画布中，已为你定位结果。"));
 });
 
+test("canvas workflows expose a reviewable plan and apply through one canvas transaction", () => {
+  assert.match(context, /export type CanvasAgentDockPlan/);
+  assert.match(context, /export function buildCanvasAgentDockPlan/);
+  assert.match(context, /kind: "batch-image-layout"/);
+  assert.match(component, /onApplyPlan: \(plan: CanvasAgentDockPlan/);
+  assert.match(component, /画布操作计划/);
+  assert.match(component, /确认并应用/);
+  assert.match(canvas, /const applyAgentDockPlan = useCallback/);
+  assert.match(canvas, /Apply a complete Agent canvas plan as one undoable transaction/);
+  assert.match(canvas, /const result = arrangeCanvas\(next/);
+  assert.match(canvas, /commit\(\(\) => next\)/);
+  assert.match(styles, /\.canvas-agent-dock-plan\{/);
+});
+
 test("canvas status and node summaries are capped before they reach the model", () => {
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS = 1600/);
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES = 12/);

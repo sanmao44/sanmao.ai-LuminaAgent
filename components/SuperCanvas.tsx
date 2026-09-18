@@ -185,6 +185,7 @@ import {
   buildCanvasAgentDockContext,
   canvasAgentDockNodeLabel,
   canvasAgentDockStatus,
+  type CanvasAgentDockPlan,
   type CanvasAgentDockChip,
   type CanvasAgentDockReference,
 } from "@/lib/canvas/agent-dock";
@@ -9962,6 +9963,97 @@ export default function SuperCanvas() {
       stageSize.width,
     ],
   );
+
+  /** Apply a complete Agent canvas plan as one undoable transaction. */
+  const applyAgentDockPlan = useCallback(
+    (
+      plan: CanvasAgentDockPlan,
+      images: Array<{ url: string; revisedPrompt?: string }> = [],
+    ) => {
+      const validImages = images.filter((image) => Boolean(String(image.url || "").trim()));
+      const targetIds = (plan.targetNodeIds || []).filter((id) => Boolean(nodeById(docRef.current, id)));
+      const targetSet = new Set(targetIds);
+      const anchor = targetIds.length ? nodeById(docRef.current, targetIds[0]) : selectedSingle || selectedNodes[0] || null;
+      const imageSettings = readSharedCreationSettings("image", runtime);
+      const referenceIds = agentDockReferences.map((reference) => reference.nodeId || reference.id);
+      let next = docRef.current;
+      const created: CanvasNode[] = [];
+
+      if (validImages.length) {
+        const origin = anchor
+          ? { x: anchor.x, y: anchor.y }
+          : screenToWorld(stageSize.width / 2, stageSize.height / 2);
+        const anchorWidth = anchor ? nodeSize(anchor).w : 320;
+        validImages.forEach((image, index) => {
+          const desired = {
+            x: origin.x + anchorWidth + 90 + (index % 2) * 350,
+            y: origin.y + Math.floor(index / 2) * 280,
+          };
+          const draft = createMedia("image", image.url, `Agent 图片 ${index + 1}`, desired, {
+            role: "Agent 生成结果",
+            generation: {
+              kind: "image",
+              prompt: plan.sourcePrompt || "Agent 批量生成",
+              params: clone(imageSettings),
+              referenceIds,
+              ...(anchor ? { parentNodeId: anchor.id } : {}),
+              createdAt: Date.now(),
+            },
+            referenceOrder: referenceIds,
+          });
+          const placed = { ...draft, ...openNodePosition(desired, draft, created) };
+          created.push(placed);
+        });
+        next = { ...next, nodes: [...next.nodes, ...created] };
+        if (anchor) {
+          created.forEach((node) => {
+            next = addEdge(next, anchor.id, node.id, "right", "left", "generated");
+          });
+        }
+      }
+
+      let affectedIds = created.map((node) => node.id);
+      if (plan.kind === "layout-selection") {
+        const selected = targetIds.length ? targetIds : undefined;
+        const result = arrangeCanvas(next, selected, plan.layout, {
+          aspectRatio: 1.6,
+        });
+        next = result.document;
+        affectedIds = result.arrangedIds;
+      } else if (created.length && plan.layout) {
+        const result = arrangeCanvas(next, created.map((node) => node.id), plan.layout, {
+          aspectRatio: 1.6,
+        });
+        next = result.document;
+        affectedIds = result.arrangedIds;
+      }
+
+      if (next === docRef.current || (next.nodes === docRef.current.nodes && next.edges === docRef.current.edges)) {
+        notify("没有需要应用的画布变更", "error");
+        return [];
+      }
+      commit(() => next);
+      if (created.length) {
+        setSelectedIds(new Set(affectedIds));
+        setSelectedGroupId(null);
+        setContextMenu(null);
+        void recordCanvasImages(validImages, {
+          prompt: plan.sourcePrompt || "Agent 批量生成",
+          source: "canvas",
+          modelId: imageSettings.model,
+          ...(anchor ? { parentId: anchor.id } : {}),
+        });
+        fitView(affectedIds);
+      } else if (targetIds.length) {
+        setSelectedIds(targetSet);
+        setSelectedGroupId(null);
+        fitView(targetIds);
+      }
+      notify(plan.kind === "batch-image-layout" ? `已完成 ${created.length} 张结果的一站式处理` : "已完成画布整理");
+      return affectedIds.length ? affectedIds : targetIds;
+    },
+    [agentDockReferences, commit, fitView, notify, openNodePosition, runtime, screenToWorld, selectedNodes, selectedSingle, stageSize.height, stageSize.width],
+  );
   const applyAgentDockText = useCallback(
     (text: string, meta: { prompt: string }) => {
       const content = String(text || "").trim();
@@ -15517,6 +15609,7 @@ export default function SuperCanvas() {
           status={agentDockStatus}
           chips={agentDockChips}
           references={agentDockReferences}
+          selectedNodeIds={agentDockContext.nodeIds}
           selectedTotal={agentDockContext.nodeIds.length}
           contextBlock={agentDockContext.text}
           runtime={runtime}
@@ -15524,6 +15617,7 @@ export default function SuperCanvas() {
           focusSignal={agentDockFocusSignal}
           onApplyImages={applyAgentDockImages}
           onApplyText={applyAgentDockText}
+          onApplyPlan={applyAgentDockPlan}
           onCreateAgentNode={applyAgentDockAgentNode}
           onUseAsImagePrompt={applyAgentDockImageBranch}
           onUseAsVideoPrompt={applyAgentDockVideoBranch}

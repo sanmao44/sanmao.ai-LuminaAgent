@@ -42,6 +42,22 @@ export type CanvasAgentDockChip = {
   status?: CanvasGenerationStatus;
 };
 
+export type CanvasAgentDockLayout = "grid" | "horizontal" | "vertical";
+
+export type CanvasAgentDockPlan = {
+  kind: "layout-selection" | "batch-image-layout";
+  title: string;
+  steps: string[];
+  layout: CanvasAgentDockLayout;
+  targetNodeIds?: string[];
+  targetCount?: number;
+  imageCount?: number;
+  sourcePrompt?: string;
+  requiresConfirmation: boolean;
+  applied?: boolean;
+  dismissed?: boolean;
+};
+
 const STATUS_LABELS: Record<string, string> = {
   idle: "待运行",
   draft: "草稿",
@@ -231,4 +247,79 @@ export function canvasAgentDockRequestsPreviousImageApply(input: string) {
   if (!text) return false;
   return /(?:刚才|上一轮|上一次|刚生成|刚回复|这张|这些|这组|结果).{0,24}(?:图|图片|图像|结果)/.test(text)
     && /(?:加入|添加|放到|落到|落入|放入|拖到).{0,12}(?:画布|画板|节点)/.test(text);
+}
+
+function canvasAgentDockDirectExecution(input: string) {
+  return /(?:直接执行|直接应用|马上执行|立即执行|不用确认|无需确认|自动执行|确认执行)/.test(
+    String(input || ""),
+  );
+}
+
+function canvasAgentDockLayout(input: string): CanvasAgentDockLayout {
+  const text = String(input || "");
+  if (/(?:横向|水平|一行|左右排列)/.test(text)) return "horizontal";
+  if (/(?:纵向|垂直|一列|上下排列)/.test(text)) return "vertical";
+  return "grid";
+}
+
+function canvasAgentDockLayoutRequested(input: string) {
+  return /(?:排列|排版|整理|布局|平铺|网格|宫格|横向|纵向|水平|垂直|一行|一列|两行|两列)/.test(
+    String(input || ""),
+  );
+}
+
+/**
+ * Turns an explicit canvas workflow into a reviewable plan. This is deliberately
+ * explainable and local: the model still handles creative intent, while the
+ * canvas owns mutations and can keep them transactional.
+ */
+export function buildCanvasAgentDockPlan(input: string, options: {
+  imageCount?: number;
+  targetNodeIds?: string[];
+  selectedTotal?: number;
+} = {}): CanvasAgentDockPlan | null {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const layoutRequested = canvasAgentDockLayoutRequested(text);
+  const imageCount = Math.max(0, Math.floor(Number(options.imageCount || 0)));
+  const batchRequested = imageCount > 1 && /(?:批量|多张|多个|几张|版本|变体|方案|批次|一起)/.test(text);
+  const connectRequested = /(?:连线|连接|接到|接入|关联|串起来|建立关系)/.test(text);
+  const targetNodeIds = options.targetNodeIds?.filter(Boolean);
+  const hasSelection = Boolean(targetNodeIds?.length || options.selectedTotal);
+  const direct = canvasAgentDockDirectExecution(text);
+
+  if (layoutRequested && (hasSelection || /(?:全部|所有|整张画布|整个画布)/.test(text))) {
+    const layout = canvasAgentDockLayout(text);
+    const targetCount = targetNodeIds?.length || options.selectedTotal || 0;
+    const targetLabel = targetCount ? `选中的 ${targetCount} 个节点` : "整张画布的节点";
+    return {
+      kind: "layout-selection",
+      title: `整理${targetLabel}`,
+      steps: [`将${targetLabel}按${layout === "grid" ? "网格" : layout === "horizontal" ? "横向" : "纵向"}重新排列`],
+      layout,
+      sourcePrompt: text,
+      ...(targetNodeIds?.length ? { targetNodeIds } : {}),
+      targetCount: targetCount || undefined,
+      requiresConfirmation: !direct,
+    };
+  }
+
+  if (imageCount > 1 && (batchRequested || layoutRequested || connectRequested)) {
+    const layout = canvasAgentDockLayout(text);
+    const steps = [`将 ${imageCount} 张生成结果加入画布`];
+    if (layoutRequested) steps.push(`按${layout === "grid" ? "网格" : layout === "horizontal" ? "横向" : "纵向"}排列这批结果`);
+    if (connectRequested || hasSelection) steps.push(hasSelection ? "将结果连接到当前选中的节点" : "保留生成结果之间的独立关系");
+    return {
+      kind: "batch-image-layout",
+      title: `批量处理 ${imageCount} 张 Agent 结果`,
+      steps,
+      layout,
+      sourcePrompt: text,
+      ...(targetNodeIds?.length ? { targetNodeIds } : {}),
+      targetCount: targetNodeIds?.length || options.selectedTotal || undefined,
+      imageCount,
+      requiresConfirmation: !direct,
+    };
+  }
+  return null;
 }

@@ -5252,6 +5252,8 @@ export default function Page() {
     const [conversationNavOpen, setConversationNavOpen] = useState(false);
     const [conversationNavHoverId, setConversationNavHoverId] = useState(null);
     const conversationNavigatorRef = useRef(null);
+    const conversationNavPreviewRef = useRef(null);
+    const conversationNavPointerRatioRef = useRef(null);
     const conversationNavCloseTimerRef = useRef(0);
     const conversationNavCloseAfterClickRef = useRef(false);
     const activeChatIdRef = useRef(null);
@@ -5634,6 +5636,7 @@ export default function Page() {
         conversationNavCloseTimerRef.current = 0;
         conversationNavCloseAfterClickRef.current = false;
         setConversationNavHoverId(null);
+        conversationNavPointerRatioRef.current = null;
         setConversationNavOpen(false);
     }, [
         conversationItems.length
@@ -6479,6 +6482,7 @@ export default function Page() {
             if (pointerInside || (!conversationNavCloseAfterClickRef.current && focusInside)) return;
             conversationNavCloseAfterClickRef.current = false;
             setConversationNavHoverId(null);
+            conversationNavPointerRatioRef.current = null;
             setConversationNavOpen(false);
         }, 1000);
     }
@@ -6486,6 +6490,7 @@ export default function Page() {
         clearConversationNavCloseTimer();
         conversationNavCloseAfterClickRef.current = false;
         setConversationNavHoverId(null);
+        conversationNavPointerRatioRef.current = null;
         setConversationNavOpen(false);
     }
     function setThemePreference(next) {
@@ -11284,6 +11289,14 @@ export default function Page() {
                                                         conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator();
                                                     }
                                                 },
+                                                onPointerMove: (event)=>{
+                                                    const rail = event.currentTarget.getBoundingClientRect();
+                                                    const ratio = Math.min(1, Math.max(0, (event.clientY - rail.top) / rail.height));
+                                                    const item = conversationItems[Math.round(ratio * Math.max(0, conversationItems.length - 1))];
+                                                    conversationNavPointerRatioRef.current = ratio;
+                                                    conversationNavPreviewRef.current?.style.setProperty('--conversation-nav-preview-top', `${ratio * 100}%`);
+                                                    if (item) setConversationNavHoverId(item.id);
+                                                },
                                                 children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {
                                                     className: conversationNavHoverId === item.id ? 'is-active' : '',
                                                     onPointerEnter: ()=>setConversationNavHoverId(item.id),
@@ -11293,15 +11306,23 @@ export default function Page() {
                                             }),
                                              conversationNavHoverId && !conversationNavOpen && /*#__PURE__*/ (()=>{
                                                  const item = conversationItems.find((entry)=>entry.id === conversationNavHoverId);
+                                                 const previewPosition = conversationNavPointerRatioRef.current === null
+                                                     ? (item ? (item.index / (conversationItems.length + 1)) * 100 : 50)
+                                                     : conversationNavPointerRatioRef.current * 100;
                                                  return item ? /*#__PURE__*/ _jsx("button", {
                                                      type: "button",
                                                      className: "conversation-nav-preview",
+                                                     ref: conversationNavPreviewRef,
+                                                     style: { '--conversation-nav-preview-top': `${previewPosition}%` },
                                                      onClick: ()=>{
                                                          jumpToMessage(item.id);
                                                          closeConversationNavigator();
                                                      },
                                                      title: item.text,
-                                                     children: item.text
+                                                     children: /*#__PURE__*/ _jsx("span", {
+                                                         className: "conversation-nav-preview-copy",
+                                                         children: item.text
+                                                     }, item.id)
                                                  }) : null;
                                              })(),
                                             !chatNearBottom && /*#__PURE__*/ _jsx("button", {
