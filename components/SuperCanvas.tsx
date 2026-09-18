@@ -186,6 +186,7 @@ import {
   canvasAgentDockNodeLabel,
   canvasAgentDockStatus,
   type CanvasAgentDockPlan,
+  type CanvasAgentDockPlanResult,
   type CanvasAgentDockChip,
   type CanvasAgentDockReference,
 } from "@/lib/canvas/agent-dock";
@@ -9969,9 +9970,14 @@ export default function SuperCanvas() {
     (
       plan: CanvasAgentDockPlan,
       images: Array<{ url: string; revisedPrompt?: string }> = [],
-    ) => {
+    ): CanvasAgentDockPlanResult => {
       const validImages = images.filter((image) => Boolean(String(image.url || "").trim()));
-      const targetIds = (plan.targetNodeIds || []).filter((id) => Boolean(nodeById(docRef.current, id)));
+      const plannedTargetIds = [...new Set((plan.targetNodeIds || []).filter(Boolean))];
+      const targetIds = plannedTargetIds.filter((id) => Boolean(nodeById(docRef.current, id)));
+      if (plannedTargetIds.length && targetIds.length !== plannedTargetIds.length) {
+        notify("画布内容已经变化，原操作计划中的节点不再完整，已取消应用", "error");
+        return { ids: [], error: "画布内容已经变化，请重新选择节点并生成操作计划" };
+      }
       const targetSet = new Set(targetIds);
       const anchor = targetIds.length ? nodeById(docRef.current, targetIds[0]) : selectedSingle || selectedNodes[0] || null;
       const imageSettings = readSharedCreationSettings("image", runtime);
@@ -9995,7 +10001,7 @@ export default function SuperCanvas() {
             );
             if (!result.ok) {
               notify(`无法按顺序连接选中节点：${result.reason || "输入关系不兼容"}`, "error");
-              return [];
+              return { ids: [], error: result.reason || "节点输入关系不兼容，未执行任何连线" };
             }
             planChanged = planChanged || result.document !== next;
             next = result.document;
@@ -10022,9 +10028,15 @@ export default function SuperCanvas() {
           }
         }
 
+        if (plan.layout) {
+          const result = arrangeCanvas(next, selected, plan.layout, { aspectRatio: 1.6 });
+          planChanged = planChanged || result.changed;
+          next = result.document;
+        }
+
         if (!planChanged) {
           notify("当前选中节点已经符合这个操作，无需重复应用", "error");
-          return [];
+          return { ids: [], error: "当前节点已经符合计划，无需重复应用" };
         }
       }
 
@@ -10061,25 +10073,27 @@ export default function SuperCanvas() {
         }
       }
 
-      let affectedIds = created.map((node) => node.id);
+      let affectedIds = plan.kind === "selection-command" ? targetIds : created.map((node) => node.id);
       if (plan.kind === "layout-selection") {
         const selected = targetIds.length ? targetIds : undefined;
         const result = arrangeCanvas(next, selected, plan.layout, {
           aspectRatio: 1.6,
         });
+        planChanged = planChanged || result.changed;
         next = result.document;
         affectedIds = result.arrangedIds;
       } else if (created.length && plan.layout) {
         const result = arrangeCanvas(next, created.map((node) => node.id), plan.layout, {
           aspectRatio: 1.6,
         });
+        planChanged = true;
         next = result.document;
         affectedIds = result.arrangedIds;
       }
 
-      if (!planChanged && (next === docRef.current || (next.nodes === docRef.current.nodes && next.edges === docRef.current.edges))) {
+      if (!planChanged && !created.length) {
         notify("没有需要应用的画布变更", "error");
-        return [];
+        return { ids: [], error: "没有检测到可应用的画布变更" };
       }
       commit(() => next);
       if (created.length) {
@@ -10096,10 +10110,10 @@ export default function SuperCanvas() {
       } else if (targetIds.length) {
         setSelectedIds(targetSet);
         setSelectedGroupId(null);
-        fitView(affectedIds);
+        fitView(targetIds);
       }
       notify(plan.kind === "batch-image-layout" ? `已完成 ${created.length} 张结果的一站式处理` : "已完成画布整理");
-      return affectedIds.length ? affectedIds : targetIds;
+      return { ids: affectedIds.length ? affectedIds : targetIds };
     },
     [agentDockReferences, commit, fitView, notify, openNodePosition, runtime, screenToWorld, selectedNodes, selectedSingle, stageSize.height, stageSize.width],
   );

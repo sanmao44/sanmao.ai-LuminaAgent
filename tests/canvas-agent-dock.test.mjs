@@ -117,6 +117,20 @@ test("selection canvas commands stay reviewable and reuse safe model operations"
   assert.match(canvas, /distributeCanvasNodes\(/);
   assert.match(canvas, /alignCanvasNodes\(/);
   assert.match(canvas, /无法按顺序连接选中节点/);
+  assert.match(context, /mentionedNodeIds/);
+  assert.match(component, /nodeIdsForReferenceMentions\(text, orderedReferences\)/);
+  assert.match(component, /targetNodeIds: orderedSelectedNodeIds/);
+  assert.match(context, /selectionCommand === "connect-selection" && layoutRequested/);
+  assert.match(canvas, /if \(plan\.layout\) \{\s*const result = arrangeCanvas\(next, selected, plan\.layout/);
+  assert.match(canvas, /画布内容已经变化，请重新选择节点并生成操作计划/);
+  assert.match(component, /failureReason: result\.error \|\| "画布没有发生变更，计划未应用"/);
+});
+
+test("an empty selection still gives the Agent a bounded whole-canvas overview", () => {
+  assert.match(context, /以下仅是整张画布概况，不能当作用户明确指定的操作目标/);
+  assert.match(context, /document\.nodes\s*\.slice\(0, CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES\)/);
+  assert.match(context, /概况内连接关系/);
+  assert.match(context, /请他先选中或用 @ 引用节点/);
 });
 
 test("canvas status and node summaries are capped before they reach the model", () => {

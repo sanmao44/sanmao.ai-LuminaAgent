@@ -62,12 +62,21 @@ export type CanvasAgentDockPlan = {
   layout?: CanvasAgentDockLayout;
   command?: CanvasAgentDockSelectionCommand;
   targetNodeIds?: string[];
+  /** Explicit @ references take precedence over the ambient selection. */
+  mentionedNodeIds?: string[];
   targetCount?: number;
   imageCount?: number;
   sourcePrompt?: string;
   requiresConfirmation: boolean;
   applied?: boolean;
   dismissed?: boolean;
+  failed?: boolean;
+  failureReason?: string;
+};
+
+export type CanvasAgentDockPlanResult = {
+  ids: string[];
+  error?: string;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -184,7 +193,19 @@ export function buildCanvasAgentDockContext(
     `画布：${clip(title || "无限画布", 40)}；节点 ${status.nodes}；运行中 ${status.running}；排队 ${status.queued}；失败 ${status.failed}`,
   ];
   if (!ids.length) {
-    lines.push("当前没有选中节点。若用户提到“这个/它/选中的”，先说明看不到选中对象，或请他先在画布上选中节点。");
+    lines.push("当前没有选中节点。以下仅是整张画布概况，不能当作用户明确指定的操作目标：");
+    const overviewIds = document.nodes
+      .slice(0, CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES)
+      .map((node) => node.id);
+    overviewIds.forEach((id, position) => {
+      const node = nodeById(document, id);
+      if (node) lines.push(canvasAgentDockNodeSummary(node, position + 1));
+    });
+    if (document.nodes.length > overviewIds.length)
+      lines.push(`（另有 ${document.nodes.length - overviewIds.length} 个画布节点未展开）`);
+    const relations = selectionRelations(document, overviewIds);
+    if (relations.length) lines.push(`概况内连接关系：${relations.join("；")}`);
+    lines.push("若用户提到“这个/它/选中的”，先说明当前没有明确选中对象，请他先选中或用 @ 引用节点。");
   } else {
     const shown = ids.slice(0, CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES);
     lines.push(`用户当前选中了 ${ids.length} 个节点：`);
@@ -318,6 +339,7 @@ function canvasAgentDockSelectionCommandLabel(command: CanvasAgentDockSelectionC
 export function buildCanvasAgentDockPlan(input: string, options: {
   imageCount?: number;
   targetNodeIds?: string[];
+  mentionedNodeIds?: string[];
   selectedTotal?: number;
 } = {}): CanvasAgentDockPlan | null {
   const text = String(input || "").replace(/\s+/g, " ").trim();
@@ -327,41 +349,58 @@ export function buildCanvasAgentDockPlan(input: string, options: {
   const batchRequested = imageCount > 1 && /(?:批量|多张|多个|几张|版本|变体|方案|批次|一起)/.test(text);
   const connectRequested = /(?:连线|连接|接到|接入|关联|串起来|建立关系)/.test(text);
   const targetNodeIds = options.targetNodeIds?.filter(Boolean);
-  const hasSelection = Boolean(targetNodeIds?.length || options.selectedTotal);
+  const mentionedNodeIds = options.mentionedNodeIds?.filter(Boolean);
+  const requestedNodeIds = mentionedNodeIds?.length
+    ? [...new Set(mentionedNodeIds)]
+    : targetNodeIds;
+  const hasSelection = Boolean(requestedNodeIds?.length || options.selectedTotal);
   const direct = canvasAgentDockDirectExecution(text);
   const selectionCommand = canvasAgentDockSelectionCommand(text);
 
-  if (selectionCommand && targetNodeIds?.length && targetNodeIds.length >= 2) {
+  if (selectionCommand && requestedNodeIds?.length && requestedNodeIds.length >= 2) {
     const commandLabel = canvasAgentDockSelectionCommandLabel(selectionCommand);
+    const followupLayout = selectionCommand === "connect-selection" && layoutRequested
+      ? canvasAgentDockLayout(text)
+      : undefined;
     return {
       kind: "selection-command",
       command: selectionCommand,
-      title: `${commandLabel} ${targetNodeIds.length} 个选中节点`,
+      title: `${commandLabel} ${requestedNodeIds.length} 个节点`,
       steps: [
-        `仅处理当前选中的 ${targetNodeIds.length} 个节点`,
+        mentionedNodeIds && mentionedNodeIds.length >= 2
+          ? `仅处理 @ 引用的 ${requestedNodeIds.length} 个节点`
+          : `仅处理当前选中的 ${requestedNodeIds.length} 个节点`,
         selectionCommand === "connect-selection"
           ? "按画布当前选中顺序建立节点关系"
           : `将节点${commandLabel}`,
+        ...(followupLayout
+          ? [`再按${followupLayout === "grid" ? "网格" : followupLayout === "horizontal" ? "横向" : "纵向"}整理这些节点`]
+          : []),
         "整组操作合并为一个可撤销的画布变更",
       ],
+      ...(followupLayout ? { layout: followupLayout } : {}),
       sourcePrompt: text,
-      targetNodeIds,
-      targetCount: targetNodeIds.length,
+      targetNodeIds: requestedNodeIds,
+      targetCount: requestedNodeIds.length,
       requiresConfirmation: !direct,
     };
   }
 
   if (layoutRequested && (hasSelection || /(?:全部|所有|整张画布|整个画布)/.test(text))) {
     const layout = canvasAgentDockLayout(text);
-    const targetCount = targetNodeIds?.length || options.selectedTotal || 0;
-    const targetLabel = targetCount ? `选中的 ${targetCount} 个节点` : "整张画布的节点";
+    const targetCount = requestedNodeIds?.length || options.selectedTotal || 0;
+    const targetLabel = mentionedNodeIds?.length
+      ? `@ 引用的 ${targetCount} 个节点`
+      : targetCount
+        ? `选中的 ${targetCount} 个节点`
+        : "整张画布的节点";
     return {
       kind: "layout-selection",
       title: `整理${targetLabel}`,
       steps: [`将${targetLabel}按${layout === "grid" ? "网格" : layout === "horizontal" ? "横向" : "纵向"}重新排列`],
       layout,
       sourcePrompt: text,
-      ...(targetNodeIds?.length ? { targetNodeIds } : {}),
+      ...(requestedNodeIds?.length ? { targetNodeIds: requestedNodeIds } : {}),
       targetCount: targetCount || undefined,
       requiresConfirmation: !direct,
     };
@@ -371,15 +410,15 @@ export function buildCanvasAgentDockPlan(input: string, options: {
     const layout = canvasAgentDockLayout(text);
     const steps = [`将 ${imageCount} 张生成结果加入画布`];
     if (layoutRequested) steps.push(`按${layout === "grid" ? "网格" : layout === "horizontal" ? "横向" : "纵向"}排列这批结果`);
-    if (connectRequested || hasSelection) steps.push(hasSelection ? "将结果连接到当前选中的节点" : "保留生成结果之间的独立关系");
+    if (connectRequested || hasSelection) steps.push(mentionedNodeIds?.length ? "将结果连接到 @ 引用的节点" : hasSelection ? "将结果连接到当前选中的节点" : "保留生成结果之间的独立关系");
     return {
       kind: "batch-image-layout",
       title: `批量处理 ${imageCount} 张 Agent 结果`,
       steps,
       layout,
       sourcePrompt: text,
-      ...(targetNodeIds?.length ? { targetNodeIds } : {}),
-      targetCount: targetNodeIds?.length || options.selectedTotal || undefined,
+      ...(requestedNodeIds?.length ? { targetNodeIds: requestedNodeIds } : {}),
+      targetCount: requestedNodeIds?.length || options.selectedTotal || undefined,
       imageCount,
       requiresConfirmation: !direct,
     };

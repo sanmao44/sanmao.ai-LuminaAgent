@@ -24,6 +24,7 @@ import {
   buildCanvasAgentDockPlan,
   type CanvasAgentDockChip,
   type CanvasAgentDockPlan,
+  type CanvasAgentDockPlanResult,
   type CanvasAgentDockReference,
   type CanvasAgentDockStatus,
 } from "@/lib/canvas/agent-dock";
@@ -76,7 +77,7 @@ type Props = {
     meta: { prompt: string; model?: string },
   ) => string[];
   onApplyText: (text: string, meta: { prompt: string }) => string[];
-  onApplyPlan: (plan: CanvasAgentDockPlan, images?: Array<{ url: string; revisedPrompt?: string }>) => string[];
+  onApplyPlan: (plan: CanvasAgentDockPlan, images?: Array<{ url: string; revisedPrompt?: string }>) => CanvasAgentDockPlanResult;
   onCreateAgentNode: (text: string) => void;
   onUseAsImagePrompt: (text: string) => void;
   onUseAsVideoPrompt: (text: string) => void;
@@ -97,7 +98,7 @@ const SCROLL_BOTTOM_GAP = 48;
 const EMPTY_SAMPLES = [
   "这几个节点的问题在哪？",
   "帮我写一版更细的提示词",
-  "选中这张图，继续做 16:9 的版本",
+  "把选中的节点按顺序连线并横向整理",
 ];
 /* 联网方式在主对话页、节点参数面板和这里必须是同一套说法，别让同一件事有三个名字。 */
 const WEB_MODE_LABELS: Record<AgentWebMode, string> = {
@@ -135,6 +136,18 @@ function resolveReferenceMentions(text: string, references: readonly CanvasAgent
     if (!reference) return token;
     return reference.kind === "video" ? `参考视频${index + 1}` : reference.kind === "text" ? `引用文本${index + 1}` : `参考图${index + 1}`;
   });
+}
+
+function nodeIdsForReferenceMentions(text: string, references: readonly CanvasAgentDockReference[]) {
+  const ids: string[] = [];
+  String(text || "").replace(/@([0-9]+)/g, (_token, rawIndex: string) => {
+    const index = Number(rawIndex) - 1;
+    const reference = index >= 0 && index < references.length ? references[index] : undefined;
+    const nodeId = reference?.nodeId || (reference?.kind !== "text" ? reference?.id : undefined);
+    if (nodeId && !ids.includes(nodeId)) ids.push(nodeId);
+    return _token;
+  });
+  return ids;
 }
 
 /* 请求失败的原文（Failed to fetch / 401 / 超时…）对用户没有可操作性，统一换成能照做的说法。 */
@@ -411,6 +424,10 @@ export default function CanvasAgentDock({
       })),
     [orderedReferences],
   );
+  const orderedSelectedNodeIds = useMemo(
+    () => (chipOrder.length ? orderByReferenceIds(selectedNodeIds, chipOrder, (id) => id) : selectedNodeIds),
+    [chipOrder, selectedNodeIds],
+  );
   const chipMentionIndexes = useMemo(
     () => new Map(orderedReferences.map((reference, index) => [referenceOrderKey(reference), index + 1] as const)),
     [orderedReferences],
@@ -491,6 +508,7 @@ export default function CanvasAgentDock({
         title: status.failedIds.length ? "选中失败的节点后提问" : "画布上有失败或卡住的节点时最有用",
       },
       { label: "下一步建议", prompt: "结合当前选中的节点和它们的关系，告诉我下一步最值得做的 3 件事。", ids: [] as string[], disabled: needsSelection, title: selectionTitle },
+      { label: "整理并连线", prompt: "把选中的节点按当前卡片顺序依次连线，并横向整理；先给我看操作计划。", ids: [] as string[], disabled: selectedNodeTotal < 2, title: selectedNodeTotal < 2 ? "至少选中两个节点后使用" : "按顶部卡片顺序生成可确认的画布操作计划" },
     ];
   }, [selectedNodeTotal, status.failedIds]);
 
@@ -595,6 +613,7 @@ export default function CanvasAgentDock({
       stickToBottomRef.current = true;
       // 输入框里显示 @1，模型收到的应该是它指向的那张图，否则编号对不上。
       const mentionText = resolveReferenceMentions(text, orderedReferences);
+      const mentionedNodeIds = nodeIdsForReferenceMentions(text, orderedReferences);
       /* 重新问某一轮（重跑或改过之后再问）时先把它之后的内容丢掉，否则会留下两份回答。 */
       const fromMessageId = options.fromMessageId ?? editingMessageId ?? undefined;
       const base = fromMessageId
@@ -650,19 +669,32 @@ export default function CanvasAgentDock({
         return;
       }
       const localPlan = buildCanvasAgentDockPlan(text, {
-        targetNodeIds: selectedNodeIds,
+        targetNodeIds: orderedSelectedNodeIds,
+        mentionedNodeIds,
         selectedTotal,
       });
-      if (localPlan?.kind === "layout-selection") {
-        const appliedIds = localPlan.requiresConfirmation ? [] : onApplyPlan(localPlan);
+      if (localPlan?.kind === "layout-selection" || localPlan?.kind === "selection-command") {
+        const appliedResult = localPlan.requiresConfirmation ? { ids: [] } : onApplyPlan(localPlan);
+        const appliedIds = appliedResult.ids;
         setMessages([
           ...history,
           {
             id: createId(),
             role: "assistant",
-            content: appliedIds.length ? "已按计划整理画布。" : "我识别到这是一个画布整理操作，请确认下面的执行计划。",
+            content: appliedIds.length
+              ? "已按计划完成画布操作。"
+              : appliedResult.error
+                ? `画布操作未执行：${appliedResult.error}`
+                : "我识别到这是一个画布操作，请确认下面的执行计划。",
             ...(appliedIds.length ? { imageNodeIds: appliedIds } : {}),
-            plan: { ...localPlan, ...(appliedIds.length ? { applied: true } : {}) },
+            plan: {
+              ...localPlan,
+              ...(appliedIds.length
+                ? { applied: true }
+                : appliedResult.error
+                  ? { failed: true, failureReason: appliedResult.error }
+                  : {}),
+            },
           },
         ]);
         return;
@@ -709,7 +741,8 @@ export default function CanvasAgentDock({
           : [];
         const plan = buildCanvasAgentDockPlan(text, {
           imageCount: images.length,
-          targetNodeIds: selectedNodeIds,
+          targetNodeIds: orderedSelectedNodeIds,
+          mentionedNodeIds,
           selectedTotal,
         });
         const assistantMessageId = createId();
@@ -717,7 +750,7 @@ export default function CanvasAgentDock({
         let appliedImageIds: string[] = [];
         if (shouldAutoApply) {
           if (plan) {
-            appliedImageIds = onApplyPlan(plan, images);
+            appliedImageIds = onApplyPlan(plan, images).ids;
           } else {
             const appliedIds = onApplyImages(images, { prompt: mentionText, model: response.model });
             appliedImageIds = appliedIds;
@@ -781,14 +814,21 @@ export default function CanvasAgentDock({
         setStreamText("");
       }
     },
-    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, selectedNodeIds, selectedTotal, webMode],
+    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
   );
 
   const applyMessagePlan = useCallback((message: CanvasAgentDockMessage) => {
     if (!message.plan || message.plan.applied || message.plan.dismissed) return;
-    const ids = onApplyPlan(message.plan, message.images);
+    const result = onApplyPlan(message.plan, message.images);
+    const ids = result.ids;
     setMessages((value) => value.map((item) => item.id === message.id
-      ? { ...item, ...(ids.length ? { imageNodeIds: ids } : {}), plan: { ...message.plan!, applied: true } }
+      ? {
+          ...item,
+          ...(ids.length ? { imageNodeIds: ids } : {}),
+          plan: ids.length
+            ? { ...message.plan!, applied: true }
+            : { ...message.plan!, failed: true, failureReason: result.error || "画布没有发生变更，计划未应用" },
+        }
       : item));
   }, [onApplyPlan]);
 
@@ -1174,11 +1214,12 @@ export default function CanvasAgentDock({
               </div>
             ) : null}
             {message.plan ? (
-              <div className={`canvas-agent-dock-plan${message.plan.applied ? " is-applied" : message.plan.dismissed ? " is-dismissed" : ""}`}>
-                <div className="canvas-agent-dock-plan-head"><strong>画布操作计划</strong><span>{message.plan.applied ? "已应用" : message.plan.dismissed ? "已取消" : "待确认"}</span></div>
+              <div className={`canvas-agent-dock-plan${message.plan.applied ? " is-applied" : message.plan.dismissed ? " is-dismissed" : message.plan.failed ? " is-failed" : ""}`}>
+                <div className="canvas-agent-dock-plan-head"><strong>画布操作计划</strong><span>{message.plan.applied ? "已应用" : message.plan.dismissed ? "已取消" : message.plan.failed ? "未应用" : "待确认"}</span></div>
                 <b>{message.plan.title}</b>
                 <ol>{message.plan.steps.map((step) => <li key={step}>{step}</li>)}</ol>
-                {!message.plan.applied && !message.plan.dismissed ? (
+                {message.plan.failureReason ? <small className="canvas-agent-dock-plan-error">{message.plan.failureReason}</small> : null}
+                {!message.plan.applied && !message.plan.dismissed && !message.plan.failed ? (
                   <div className="canvas-agent-dock-plan-actions">
                     <button type="button" className="primary" onClick={() => applyMessagePlan(message)}>确认并应用</button>
                     <button type="button" onClick={() => dismissMessagePlan(message)}>取消</button>
