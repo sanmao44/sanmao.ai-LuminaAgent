@@ -11362,7 +11362,6 @@ export default function Page() {
                                                             setConversationNavActiveId(item.id);
                                                         },
                                                     "aria-label": `第 ${item.index} 个提问`,
-                                                        title: item.text
                                                     }, item.id))
                                                 })
                                             }),
@@ -11376,7 +11375,6 @@ export default function Page() {
                                                      className: "conversation-nav-preview",
                                                      ref: conversationNavPreviewRef,
                                                      style: { '--conversation-nav-preview-top': `${previewPosition}%` },
-                                                      title: item.text,
                                                      children: /*#__PURE__*/ _jsx("span", {
                                                          className: "conversation-nav-preview-copy",
                                                          children: item.text
