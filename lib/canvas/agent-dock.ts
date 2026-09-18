@@ -53,7 +53,9 @@ export type CanvasAgentDockSelectionCommand =
   | "align-bottom"
   | "distribute-horizontal"
   | "distribute-vertical"
-  | "connect-selection";
+  | "connect-selection"
+  | "group-selection"
+  | "duplicate-selection";
 
 export type CanvasAgentDockPlan = {
   kind: "layout-selection" | "batch-image-layout" | "selection-command";
@@ -61,6 +63,8 @@ export type CanvasAgentDockPlan = {
   steps: string[];
   layout?: CanvasAgentDockLayout;
   command?: CanvasAgentDockSelectionCommand;
+  /** Only explicit names such as “命名为参考素材” are carried into a group operation. */
+  groupName?: string;
   targetNodeIds?: string[];
   /** Explicit @ references take precedence over the ambient selection. */
   mentionedNodeIds?: string[];
@@ -304,6 +308,10 @@ function canvasAgentDockLayoutRequested(input: string) {
 function canvasAgentDockSelectionCommand(input: string): CanvasAgentDockSelectionCommand | null {
   const text = String(input || "").replace(/\s+/g, " ").trim();
   if (!text) return null;
+  if (/(?:复制|拷贝|复刻).{0,16}(?:选中|节点|流程|分支|一份|一版|副本)|(?:把|将).{0,16}(?:选中|节点|流程).{0,8}(?:复制|拷贝|复刻)/.test(text))
+    return "duplicate-selection";
+  if (/(?:成组|组成一组|归为一组|归到一组|创建(?:对象)?组|建立(?:对象)?组|建(?:对象)?组|创建分组)/.test(text))
+    return "group-selection";
   if (/(?:左对齐|靠左|对齐到左)/.test(text)) return "align-left";
   if (/(?:右对齐|靠右|对齐到右)/.test(text)) return "align-right";
   if (/(?:水平居中|横向居中|左右居中)/.test(text)) return "align-center-x";
@@ -314,6 +322,17 @@ function canvasAgentDockSelectionCommand(input: string): CanvasAgentDockSelectio
   if (/(?:垂直|纵向).{0,8}(?:均匀分布|平均分布|等距分布|分布)/.test(text)) return "distribute-vertical";
   if (/(?:依次连线|依次连接|按顺序连线|按顺序连接|串联选中|连接选中)/.test(text)) return "connect-selection";
   return null;
+}
+
+function canvasAgentDockGroupName(input: string) {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  const quoted = text.match(/(?:命名为|名为|叫)\s*[“"「『]([^”"」』]{1,40})[”"」』]/);
+  if (quoted?.[1]) return quoted[1].trim();
+  const plain = text.match(/(?:命名为|名为|叫)\s*([^，。；;！!\n]{1,40})/);
+  const name = plain?.[1]
+    ?.replace(/\s*(?:并|然后|再)(?:把|将|按|进行|横向|纵向|排列|整理|连接|连线).*$/, "")
+    .trim();
+  return name || undefined;
 }
 
 function canvasAgentDockSelectionCommandLabel(command: CanvasAgentDockSelectionCommand) {
@@ -327,6 +346,8 @@ function canvasAgentDockSelectionCommandLabel(command: CanvasAgentDockSelectionC
     "distribute-horizontal": "水平等距分布",
     "distribute-vertical": "垂直等距分布",
     "connect-selection": "按当前顺序依次连线",
+    "group-selection": "创建对象组",
+    "duplicate-selection": "复制为方案分支",
   };
   return labels[command];
 }
@@ -356,29 +377,40 @@ export function buildCanvasAgentDockPlan(input: string, options: {
   const hasSelection = Boolean(requestedNodeIds?.length || options.selectedTotal);
   const direct = canvasAgentDockDirectExecution(text);
   const selectionCommand = canvasAgentDockSelectionCommand(text);
+  const minimumTargetCount = selectionCommand === "duplicate-selection" ? 1 : 2;
 
-  if (selectionCommand && requestedNodeIds?.length && requestedNodeIds.length >= 2) {
+  if (selectionCommand && requestedNodeIds?.length && requestedNodeIds.length >= minimumTargetCount) {
     const commandLabel = canvasAgentDockSelectionCommandLabel(selectionCommand);
-    const followupLayout = selectionCommand === "connect-selection" && layoutRequested
+    const followupLayout = (selectionCommand === "connect-selection" || selectionCommand === "duplicate-selection") && layoutRequested
       ? canvasAgentDockLayout(text)
+      : undefined;
+    const groupName = selectionCommand === "group-selection"
+      ? canvasAgentDockGroupName(text)
       : undefined;
     return {
       kind: "selection-command",
       command: selectionCommand,
       title: `${commandLabel} ${requestedNodeIds.length} 个节点`,
       steps: [
-        mentionedNodeIds && mentionedNodeIds.length >= 2
+        mentionedNodeIds?.length
           ? `仅处理 @ 引用的 ${requestedNodeIds.length} 个节点`
           : `仅处理当前选中的 ${requestedNodeIds.length} 个节点`,
         selectionCommand === "connect-selection"
           ? "按画布当前选中顺序建立节点关系"
-          : `将节点${commandLabel}`,
+          : selectionCommand === "group-selection"
+            ? groupName
+              ? `创建名为「${groupName}」的对象组`
+              : "将这些节点创建为一个对象组"
+            : selectionCommand === "duplicate-selection"
+              ? "复制节点及内部关系，保留可复用输入；完整对象组同时保留边界关系"
+              : `将节点${commandLabel}`,
         ...(followupLayout
-          ? [`再按${followupLayout === "grid" ? "网格" : followupLayout === "horizontal" ? "横向" : "纵向"}整理这些节点`]
+          ? [`再按${followupLayout === "grid" ? "网格" : followupLayout === "horizontal" ? "横向" : "纵向"}整理${selectionCommand === "duplicate-selection" ? "新分支" : "这些节点"}`]
           : []),
         "整组操作合并为一个可撤销的画布变更",
       ],
       ...(followupLayout ? { layout: followupLayout } : {}),
+      ...(groupName ? { groupName } : {}),
       sourcePrompt: text,
       targetNodeIds: requestedNodeIds,
       targetCount: requestedNodeIds.length,

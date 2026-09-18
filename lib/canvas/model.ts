@@ -2795,14 +2795,43 @@ export function createGroup(
 ) {
   const valid = [...new Set(ids)].filter((id) => nodeById(document, id));
   if (valid.length < 2) return document;
-  const groupId = uid("group");
   const selected = new Set(valid);
+  const normalizedName = name?.trim();
+  const exactGroup = document.groups.find(
+    (group) =>
+      group.nodeIds.length === selected.size &&
+      group.nodeIds.every((id) => selected.has(id)),
+  );
+  if (exactGroup) {
+    if (!normalizedName || normalizedName === exactGroup.name) return document;
+    return {
+      ...document,
+      groups: document.groups.map((group) =>
+        group.id === exactGroup.id
+          ? { ...group, name: normalizedName }
+          : group,
+      ),
+    };
+  }
+
+  const groupId = uid("group");
+  const absorbedGroupIds = new Set(
+    document.groups
+      .filter((group) => group.nodeIds.every((id) => selected.has(id)))
+      .map((group) => group.id),
+  );
   const groups = document.groups
     .map((group) => ({
       ...group,
       nodeIds: group.nodeIds.filter((id) => !selected.has(id)),
     }))
     .filter((group) => group.nodeIds.length >= 2);
+  const survivingGroupIds = new Set(groups.map((group) => group.id));
+  const removedGroupIds = new Set(
+    document.groups
+      .filter((group) => !survivingGroupIds.has(group.id))
+      .map((group) => group.id),
+  );
   const survivingMembership = new Map(
     groups.flatMap((group) =>
       group.nodeIds.map((id) => [id, group.id] as const),
@@ -2817,10 +2846,27 @@ export function createGroup(
   );
   groups.push({
     id: groupId,
-    name: name?.trim() || `对象组 ${document.groups.length + 1}`,
+    name: normalizedName || `对象组 ${document.groups.length + 1}`,
     nodeIds: valid,
   });
-  return ensureCanvasGroupLayout({ ...document, nodes, groups }, groupId);
+  const regrouped = {
+    ...document,
+    nodes,
+    groups,
+    edges: document.edges.map((edge) => ({
+      ...edge,
+      source: absorbedGroupIds.has(edge.source) ? groupId : edge.source,
+      target: absorbedGroupIds.has(edge.target) ? groupId : edge.target,
+    })),
+  };
+  const cleaned = removeEdgesAndPruneReferences(
+    regrouped,
+    (edge) =>
+      edge.source === edge.target ||
+      removedGroupIds.has(edge.source) ||
+      removedGroupIds.has(edge.target),
+  );
+  return ensureCanvasGroupLayout(cleaned, groupId);
 }
 
 export function moveNodesToGroup(

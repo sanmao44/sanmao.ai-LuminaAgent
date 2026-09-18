@@ -509,6 +509,7 @@ export default function CanvasAgentDock({
       },
       { label: "下一步建议", prompt: "结合当前选中的节点和它们的关系，告诉我下一步最值得做的 3 件事。", ids: [] as string[], disabled: needsSelection, title: selectionTitle },
       { label: "整理并连线", prompt: "把选中的节点按当前卡片顺序依次连线，并横向整理；先给我看操作计划。", ids: [] as string[], disabled: selectedNodeTotal < 2, title: selectedNodeTotal < 2 ? "至少选中两个节点后使用" : "按顶部卡片顺序生成可确认的画布操作计划" },
+      { label: "复制为分支", prompt: "复制选中的节点或流程作为方案分支；先给我看操作计划。", ids: [] as string[], disabled: needsSelection, title: needsSelection ? "先在画布上选中要复制的节点" : "复制节点及关系，并生成可确认的画布操作计划" },
     ];
   }, [selectedNodeTotal, status.failedIds]);
 

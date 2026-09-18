@@ -1117,6 +1117,29 @@ test('preserves named variant batch groups and result lineage in stable variant 
   assert.equal(results.every((node) => node.data.generation.variantBatchId === 'batch-1'), true);
 });
 
+test('regrouping keeps absorbed group boundary edges and renames an exact group in place', () => {
+  const empty = model.normalizeDocument(null);
+  const source = model.createPrompt({ x: 0, y: 0 }, '来源');
+  const first = model.createMedia('image', '/first.png', '第一张', { x: 360, y: 0 });
+  const second = model.createMedia('image', '/second.png', '第二张', { x: 360, y: 280 });
+  const third = model.createMedia('image', '/third.png', '第三张', { x: 720, y: 0 });
+  let document = { ...empty, nodes: [source, first, second, third] };
+  document = model.createGroup(document, [first.id, second.id], '原素材组');
+  const originalGroupId = document.groups[0].id;
+  document = model.addEdge(document, source.id, originalGroupId);
+
+  document = model.createGroup(document, [first.id, second.id], '参考素材');
+  assert.equal(document.groups[0].id, originalGroupId);
+  assert.equal(document.groups[0].name, '参考素材');
+  assert.equal(document.edges[0].target, originalGroupId);
+
+  document = model.createGroup(document, [first.id, second.id, third.id], '完整方案');
+  const combinedGroup = document.groups.find((group) => group.name === '完整方案');
+  assert.ok(combinedGroup);
+  assert.equal(document.groups.some((group) => group.id === originalGroupId), false);
+  assert.equal(document.edges[0].target, combinedGroup.id);
+});
+
 test('supports selectable canvas edge path styles', () => {
   const empty = model.normalizeDocument(null);
   const source = model.createPrompt({ x: 0, y: 0 }, '输入');

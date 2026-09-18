@@ -9984,12 +9984,84 @@ export default function SuperCanvas() {
       const referenceIds = agentDockReferences.map((reference) => reference.nodeId || reference.id);
       let next = docRef.current;
       const created: CanvasNode[] = [];
+      let duplicatedIds: string[] = [];
+      let duplicatedGroupIds: string[] = [];
+      let createdGroupId: string | null = null;
+      let renamedGroup = false;
       let planChanged = false;
 
       if (plan.kind === "selection-command" && plan.command) {
         const command = plan.command;
         const selected = targetIds;
-        if (command === "connect-selection") {
+        if (command === "duplicate-selection") {
+          const selectedSet = new Set(selected);
+          const selectedForCopy = next.nodes.filter((node) => selectedSet.has(node.id));
+          const branchOffsetX = selectedForCopy.length
+            ? Math.max(...selectedForCopy.map((node) => node.x + nodeSize(node).w)) -
+              Math.min(...selectedForCopy.map((node) => node.x)) +
+              90
+            : 48;
+          const preserveGroupConnections = next.groups.some(
+            (group) =>
+              group.nodeIds.length >= 2 &&
+              group.nodeIds.every((id) => selectedSet.has(id)),
+          );
+          const copies = duplicateNodes(
+            next,
+            selected,
+            { x: branchOffsetX, y: 0 },
+            true,
+            preserveGroupConnections,
+          );
+          if (copies.nodes.length) {
+            next = {
+              ...next,
+              nodes: [...next.nodes, ...copies.nodes],
+              edges: [...next.edges, ...copies.edges],
+              groups: [...next.groups, ...copies.groups],
+            };
+            duplicatedIds = copies.ids;
+            duplicatedGroupIds = copies.groupIds;
+            planChanged = true;
+          }
+        } else if (command === "group-selection") {
+          const selectedSet = new Set(selected);
+          const exactGroup = next.groups.find(
+            (group) =>
+              group.nodeIds.length === selectedSet.size &&
+              group.nodeIds.every((id) => selectedSet.has(id)),
+          );
+          const requestedName = plan.groupName?.trim();
+          if (exactGroup) {
+            createdGroupId = exactGroup.id;
+            if (requestedName && requestedName !== exactGroup.name) {
+              next = createGroup(next, selected, requestedName);
+              renamedGroup = true;
+              planChanged = true;
+            }
+          } else {
+            const splitsGroupToSingleton = next.groups.some((group) => {
+              const selectedFromGroup = group.nodeIds.filter((id) => selectedSet.has(id));
+              return (
+                selectedFromGroup.length > 0 &&
+                selectedFromGroup.length < group.nodeIds.length &&
+                group.nodeIds.length - selectedFromGroup.length < 2
+              );
+            });
+            if (splitsGroupToSingleton) {
+              notify("该选区会拆散已有对象组，请先解组或把整组一起选中", "error");
+              return { ids: [], error: "选区会使已有对象组只剩一个节点，未执行分组" };
+            }
+            const beforeGroupIds = new Set(next.groups.map((group) => group.id));
+            const grouped = createGroup(next, selected, requestedName);
+            const createdGroup = grouped.groups.find((group) => !beforeGroupIds.has(group.id));
+            if (createdGroup) {
+              next = grouped;
+              createdGroupId = createdGroup.id;
+              planChanged = true;
+            }
+          }
+        } else if (command === "connect-selection") {
           for (let index = 1; index < selected.length; index += 1) {
             const result = connectCanvasNodesInDocument(
               next,
@@ -10029,7 +10101,8 @@ export default function SuperCanvas() {
         }
 
         if (plan.layout) {
-          const result = arrangeCanvas(next, selected, plan.layout, { aspectRatio: 1.6 });
+          const layoutIds = command === "duplicate-selection" ? duplicatedIds : selected;
+          const result = arrangeCanvas(next, layoutIds, plan.layout, { aspectRatio: 1.6 });
           planChanged = planChanged || result.changed;
           next = result.document;
         }
@@ -10073,7 +10146,11 @@ export default function SuperCanvas() {
         }
       }
 
-      let affectedIds = plan.kind === "selection-command" ? targetIds : created.map((node) => node.id);
+      let affectedIds = plan.kind === "selection-command"
+        ? duplicatedIds.length
+          ? duplicatedIds
+          : targetIds
+        : created.map((node) => node.id);
       if (plan.kind === "layout-selection") {
         const selected = targetIds.length ? targetIds : undefined;
         const result = arrangeCanvas(next, selected, plan.layout, {
@@ -10107,12 +10184,29 @@ export default function SuperCanvas() {
           ...(anchor ? { parentId: anchor.id } : {}),
         });
         fitView(affectedIds.length ? affectedIds : targetIds);
+      } else if (duplicatedIds.length) {
+        setSelectedIds(new Set(duplicatedIds));
+        setSelectedGroupId(
+          duplicatedGroupIds.length === 1 ? duplicatedGroupIds[0] : null,
+        );
+        setContextMenu(null);
+        fitView(duplicatedIds);
       } else if (targetIds.length) {
         setSelectedIds(targetSet);
-        setSelectedGroupId(null);
+        setSelectedGroupId(createdGroupId);
         fitView(targetIds);
       }
-      notify(plan.kind === "batch-image-layout" ? `已完成 ${created.length} 张结果的一站式处理` : "已完成画布整理");
+      notify(
+        plan.kind === "batch-image-layout"
+          ? `已完成 ${created.length} 张结果的一站式处理`
+          : plan.command === "duplicate-selection"
+            ? `已复制 ${duplicatedIds.length} 个对象为方案分支`
+            : plan.command === "group-selection"
+              ? renamedGroup
+                ? `已将对象组重命名为「${plan.groupName}」`
+                : `已创建对象组${plan.groupName ? `「${plan.groupName}」` : ""}`
+              : "已完成画布整理",
+      );
       return { ids: affectedIds.length ? affectedIds : targetIds };
     },
     [agentDockReferences, commit, fitView, notify, openNodePosition, runtime, screenToWorld, selectedNodes, selectedSingle, stageSize.height, stageSize.width],

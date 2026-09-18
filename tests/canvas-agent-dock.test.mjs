@@ -120,10 +120,31 @@ test("selection canvas commands stay reviewable and reuse safe model operations"
   assert.match(context, /mentionedNodeIds/);
   assert.match(component, /nodeIdsForReferenceMentions\(text, orderedReferences\)/);
   assert.match(component, /targetNodeIds: orderedSelectedNodeIds/);
-  assert.match(context, /selectionCommand === "connect-selection" && layoutRequested/);
-  assert.match(canvas, /if \(plan\.layout\) \{\s*const result = arrangeCanvas\(next, selected, plan\.layout/);
+  assert.match(context, /selectionCommand === "connect-selection" \|\| selectionCommand === "duplicate-selection"/);
+  assert.match(canvas, /const layoutIds = command === "duplicate-selection" \? duplicatedIds : selected;/);
+  assert.match(canvas, /const result = arrangeCanvas\(next, layoutIds, plan\.layout/);
   assert.match(canvas, /画布内容已经变化，请重新选择节点并生成操作计划/);
   assert.match(component, /failureReason: result\.error \|\| "画布没有发生变更，计划未应用"/);
+});
+
+test("the Agent can group or duplicate a selected workflow as one undoable plan", () => {
+  assert.match(context, /\| "group-selection"/);
+  assert.match(context, /\| "duplicate-selection"/);
+  assert.match(context, /function canvasAgentDockGroupName\(input: string\)/);
+  assert.match(context, /\(\?:命名为\|名为\|叫\)/);
+  assert.match(context, /\.{3}\(groupName \? \{ groupName \} : \{\}\)/);
+  assert.match(canvas, /if \(command === "duplicate-selection"\)/);
+  assert.match(canvas, /const copies = duplicateNodes\(/);
+  assert.match(canvas, /const branchOffsetX = selectedForCopy\.length/);
+  assert.match(canvas, /\{ x: branchOffsetX, y: 0 \}/);
+  assert.match(canvas, /nodes: \[\.\.\.next\.nodes, \.\.\.copies\.nodes\]/);
+  assert.match(canvas, /else if \(command === "group-selection"\)/);
+  assert.match(canvas, /const exactGroup = next\.groups\.find\(/);
+  assert.match(canvas, /const splitsGroupToSingleton = next\.groups\.some\(/);
+  assert.match(canvas, /const grouped = createGroup\(next, selected, requestedName\)/);
+  assert.match(canvas, /setSelectedGroupId\(createdGroupId\)/);
+  assert.match(component, /label: "复制为分支"/);
+  assert.match(component, /disabled: needsSelection/);
 });
 
 test("an empty selection still gives the Agent a bounded whole-canvas overview", () => {
