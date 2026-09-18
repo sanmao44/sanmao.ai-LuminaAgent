@@ -2020,6 +2020,7 @@ html[data-theme="light"] .sidebar.expanded{
 .management-nav button:not(.active){color:var(--muted)}
 .coming-soon-mode{opacity:.62}
 .coming-soon-mode:hover{opacity:.9}
+.top-mode-nav button.coming-soon-mode:disabled{opacity:.52;cursor:not-allowed;background:transparent;border-color:transparent}
 .top-mode-nav button.coming-soon-mode{position:relative}
 .top-mode-nav .mode-status{position:absolute;right:4px;top:2px;padding:1px 4px;border:1px solid color-mix(in srgb,var(--warning) 38%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--warning) 10%,var(--panel));color:var(--warning);font-size:6px;font-weight:850;line-height:1.2;white-space:nowrap;transform:translateY(-2px)}
 .top-mode-nav .coming-soon-mode>span{margin-top:3px}
@@ -2904,6 +2905,18 @@ html[data-theme="dark"] .agent-page{
 .sidebar-model-status .status-dot{flex:none;margin:0}.sidebar-model-status>span:nth-child(2){min-width:0;flex:1}.sidebar-model-status svg{transform:rotate(-90deg);color:var(--muted)}
 .sidebar-support-button{min-width:66px;height:36px;flex:none;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--muted);font-size:10px;font-weight:850}
 .sidebar-support-button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+
+/* Long provider registries need a local locator without changing connection state. */
+.provider-list-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px;padding:10px 12px;border-radius:14px}
+.provider-search-box{height:38px;min-width:260px;max-width:520px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--muted)}
+.provider-search-box:focus-within{border-color:var(--accent);background:var(--panel);box-shadow:0 0 0 3px var(--control-focus-ring);color:var(--accent-text)}
+.provider-search-box input{min-width:0;flex:1;border:0;background:transparent;font-size:10px}
+.provider-search-box button{width:24px;height:24px;flex:none;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:15px;line-height:1}
+.provider-search-box button:hover{background:var(--danger-soft);color:var(--danger)}
+.provider-list-toolbar>span{flex:none;color:var(--muted);font-size:9px;font-variant-numeric:tabular-nums}.provider-list-toolbar>span b{color:var(--accent-text);font-size:11px}
+.provider-search-empty{min-height:180px;display:grid;place-items:center;align-content:center;gap:8px;padding:24px;text-align:center;color:var(--muted)}
+.provider-search-empty strong{color:var(--text);font-size:13px}.provider-search-empty span{font-size:9px}.provider-search-empty button{margin-top:4px}
+@media(max-width:620px){.provider-list-toolbar{align-items:stretch;flex-direction:column}.provider-search-box{width:100%;min-width:0;max-width:none}.provider-list-toolbar>span{align-self:flex-end}}
 
 /* Composer: separate writing from tools so the panel reads as one workspace. */
 .agent-composer-wrap{padding:12px 28px 12px;background:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--bg) 72%,transparent) 28%,color-mix(in srgb,var(--bg) 96%,transparent) 58%,var(--bg) 100%)}

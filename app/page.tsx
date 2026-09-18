@@ -5140,6 +5140,7 @@ export default function Page() {
     const [adminBusy, setAdminBusy] = useState(false);
     const [providerEditor, setProviderEditor] = useState(false);
     const [providerEditId, setProviderEditId] = useState(null);
+    const [providerSearch, setProviderSearch] = useState('');
     const [providerBusy, setProviderBusy] = useState(false);
     const [providerTestBusy, setProviderTestBusy] = useState(false);
     const [providerTestResult, setProviderTestResult] = useState('');
@@ -5161,6 +5162,17 @@ export default function Page() {
     const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto' });
     const [manualModelBusy, setManualModelBusy] = useState(false);
     const selectedProviderPreset = getProviderPreset(providerForm.platform);
+    const manageableProviders = useMemo(()=>state.providers.filter((provider)=>provider.platform !== 'jimeng-cli' && provider.videoTransport !== 'jimeng-cli'), [
+        state.providers
+    ]);
+    const visibleProviders = useMemo(()=>{
+        const query = providerSearch.trim().toLowerCase();
+        if (!query) return manageableProviders;
+        return manageableProviders.filter((provider)=>`${provider.name || ''} ${platformLabel(provider.platform)} ${provider.baseUrl || ''} ${provider.type || ''}`.toLowerCase().includes(query));
+    }, [
+        manageableProviders,
+        providerSearch
+    ]);
     const [modelSearch, setModelSearch] = useState('');
     const [modelProviderFilter, setModelProviderFilter] = useState('all');
     const [modelKindFilter, setModelKindFilter] = useState('all');
@@ -10845,7 +10857,8 @@ export default function Page() {
                                         type: "button",
                                         className: "coming-soon-mode",
                                         "aria-label": "音频，即将上线",
-                                        onClick: ()=>notify('音频接口将在下一阶段接入'),
+                                        disabled: true,
+                                        title: "音频工作台即将上线",
                                         children: [
                                             /*#__PURE__*/ _jsx(Icon, {
                                                 name: "audio",
@@ -14880,12 +14893,49 @@ export default function Page() {
                                         ]
                                     })
                                     }), document.body),
-                                    /*#__PURE__*/ _jsx("div", {
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "provider-list-toolbar surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("label", {
+                                                className: "provider-search-box",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "search",
+                                                        size: 15
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("input", {
+                                                        value: providerSearch,
+                                                        onChange: (event)=>setProviderSearch(event.target.value),
+                                                        placeholder: "搜索名称、平台或接口地址…",
+                                                        "aria-label": "搜索接口服务商"
+                                                    }),
+                                                    providerSearch && /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        onClick: ()=>setProviderSearch(''),
+                                                        "aria-label": "清空服务商搜索",
+                                                        children: "×"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                children: [
+                                                    "显示 ",
+                                                    /*#__PURE__*/ _jsx("b", {
+                                                        children: visibleProviders.length
+                                                    }),
+                                                    " / ",
+                                                    manageableProviders.length,
+                                                    " 个"
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    visibleProviders.length ? /*#__PURE__*/ _jsx("div", {
                                         className: "provider-list",
                                         // Jimeng is managed by the dedicated local CLI card above;
                                         // keeping it out of the generic provider list avoids two
                                         // competing connection flows for the same account.
-                                        children: state.providers.filter((provider)=>provider.platform !== 'jimeng-cli' && provider.videoTransport !== 'jimeng-cli').map((provider)=>/*#__PURE__*/ _jsxs("article", {
+                                        children: visibleProviders.map((provider)=>/*#__PURE__*/ _jsxs("article", {
                                                 className: `provider-card surface ${providerEditId === provider.id ? 'editing' : ''}`,
                                                 "aria-current": providerEditId === provider.id || undefined,
                                                 children: [
@@ -14987,6 +15037,26 @@ export default function Page() {
                                                     })
                                                 ]
                                             }, provider.id))
+                                    }) : /*#__PURE__*/ _jsxs("div", {
+                                        className: "provider-search-empty surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "search",
+                                                size: 22
+                                            }),
+                                            /*#__PURE__*/ _jsx("strong", {
+                                                children: "没有找到匹配的接口服务商"
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "可尝试搜索服务商名称、平台或接口地址。"
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "ghost-button",
+                                                onClick: ()=>setProviderSearch(''),
+                                                children: "清空搜索"
+                                            })
+                                        ]
                                     })
                                 ]
                             })),
