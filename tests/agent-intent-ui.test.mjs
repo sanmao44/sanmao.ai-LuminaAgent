@@ -26,3 +26,9 @@ test('automatically persists a Qianfan key after a successful connection test', 
   assert.ok(page.includes('测试成功，已自动保存'));
   assert.ok(page.includes('搜索测试成功，但自动保存失败'));
 });
+
+test('renders follow-up directions only when the reply provided them', () => {
+  assert.ok(page.includes('const isDirectionHeading = directionPicker && directionPicker.directions.length > 0 &&'));
+  assert.ok(page.includes("if (directionPicker?.kind === 'chat' && !directionInserted && directionPicker.directions.length > 0) {"));
+  assert.ok(page.includes('if (!directions.length) return null;'));
+});

@@ -4909,6 +4909,7 @@ function AgentImageLoadingCard({ activity }) {
     });
 }
 function AgentDirectionPicker({ directions, disabled, onSelect }) {
+    if (!directions.length) return null;
     return /*#__PURE__*/ _jsx("div", {
         className: "agent-direction-options",
         children: directions.map((direction, index)=>/*#__PURE__*/ _jsxs("button", {
@@ -4955,7 +4956,7 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
     let directionInserted = false;
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1){
         const line = lines[lineIndex];
-        const isDirectionHeading = directionPicker && (directionPicker.kind === 'chat' ? isChatDirectionHeading(line) : /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line));
+        const isDirectionHeading = directionPicker && directionPicker.directions.length > 0 && (directionPicker.kind === 'chat' ? isChatDirectionHeading(line) : /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line));
         if (isDirectionHeading && !directionInserted) {
             flushNormal();
             blocks.push(/*#__PURE__*/ _jsxs("section", {
@@ -5007,7 +5008,7 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
         onNotify: onNotify
     }, `code-${blocks.length}`));
     flushNormal();
-    if (directionPicker?.kind === 'chat' && !directionInserted) {
+    if (directionPicker?.kind === 'chat' && !directionInserted && directionPicker.directions.length > 0) {
         blocks.push(/*#__PURE__*/ _jsxs("section", {
             className: "agent-direction-section chat-direction-section",
             children: [

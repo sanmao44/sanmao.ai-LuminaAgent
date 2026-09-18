@@ -20,18 +20,6 @@ export type AgentWebDecision = {
   query: string;
 };
 
-export const DEFAULT_AGENT_DIRECTIONS = [
-  '强化构图层级：让主体更突出，优化元素大小、位置和留白。',
-  '优化光线色彩：保持主体与场景不变，调整光影、色温和对比度。',
-  '调整细节风格：保持当前构图与主体，尝试更统一、精致的材质和视觉风格。',
-] as const;
-
-export const DEFAULT_CHAT_DIRECTIONS = [
-  '请结合当前上下文举一个具体例子，帮助我更好理解。',
-  '请换一个角度分析这个问题，并说明利弊或适用场景。',
-  '请把上面的内容整理成一份可以直接执行的步骤清单。',
-] as const;
-
 const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
 const directionHeadingPattern = /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i;
 const chatDirectionHeadingPattern = /(?:你还可以继续|还可以继续|接下来(?:可以|还能)|继续聊什么|进一步(?:了解|讨论|展开))/i;
@@ -70,7 +58,12 @@ function isPromptOnlyRequest(text: string) {
   return !explicitImageAfterPrompt && !explicitImageBeforePrompt && (rejectsImageOutput || asksForPrompt);
 }
 
-/** Extract the numbered/bulleted continuation choices from an assistant caption. */
+/**
+ * Extract the numbered/bulleted continuation choices from an assistant caption.
+ * Returns an empty list when the model did not write its own direction section:
+ * canned suggestions repeat verbatim across unrelated turns, so the UI hides
+ * the section instead of showing generic text.
+ */
 export function extractAgentDirections(content: string) {
   const lines = String(content || '').replace(/\r/g, '').split('\n');
   const headingIndex = lines.findIndex((line) => directionHeadingPattern.test(line));
@@ -87,10 +80,10 @@ export function extractAgentDirections(content: string) {
     }
     if (directions.length) return directions;
   }
-  return [...DEFAULT_AGENT_DIRECTIONS];
+  return [];
 }
 
-/** Extract clickable follow-up prompts from a normal assistant reply. */
+/** Extract clickable follow-up prompts from a normal assistant reply; empty when the model wrote none. */
 export function extractChatDirections(content: string) {
   const lines = String(content || '').replace(/\r/g, '').split('\n');
   const headingIndex = lines.findIndex((line) => chatDirectionHeadingPattern.test(line));
@@ -107,7 +100,7 @@ export function extractChatDirections(content: string) {
     }
     if (directions.length) return directions;
   }
-  return [...DEFAULT_CHAT_DIRECTIONS];
+  return [];
 }
 
 export function isChatDirectionHeading(line: string) {
