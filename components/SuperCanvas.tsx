@@ -5785,8 +5785,23 @@ export default function SuperCanvas() {
     notify("已创建对象组");
   }, [commit, notify, selectedIds]);
   const breakGroup = useCallback(() => {
-    if (!selectedGroupId) return;
-    const id = selectedGroupId;
+    // 框选与 Shift 追加选择都会清空 selectedGroupId（见 selectNode、finishInteraction），
+    // 只认这个字段会让 Ctrl+Shift+G 时灵时不灵；这里按当前选中范围反推出要解散的分组。
+    const groupsInSelection = new Set<string>();
+    for (const nodeId of selectedIds) {
+      const group = groupForNode(docRef.current, nodeId);
+      if (group) groupsInSelection.add(group.id);
+    }
+    const id =
+      [
+        selectedGroupId,
+        groupsInSelection.size === 1 ? [...groupsInSelection][0] : null,
+      ].find((candidate) => candidate && groupById(docRef.current, candidate)) ||
+      null;
+    if (!id) {
+      notify("请先选中一个对象组再解散。", "error");
+      return;
+    }
     commit((value) => {
       const group = groupById(value, id);
       if (!group) return value;
@@ -5805,7 +5820,7 @@ export default function SuperCanvas() {
     });
     clearSelection();
     notify("已解散对象组");
-  }, [clearSelection, commit, notify, selectedGroupId]);
+  }, [clearSelection, commit, notify, selectedGroupId, selectedIds]);
   const removeNodeFromGroup = useCallback(
     (nodeId: string) => {
       const node = nodeById(docRef.current, nodeId);
