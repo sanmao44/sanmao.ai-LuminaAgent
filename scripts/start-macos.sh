@@ -354,6 +354,90 @@ ensure_ffmpeg_binary() {
   return 1
 }
 
+# 首次安装依赖时官方 npm 源在国内网络下常常只有几十 KB/s（首次要下载约 800 MB），
+# 用户会以为程序卡住了。这里做一次很短的探测，官方源慢就整体切到国内镜像；依赖仍由
+# package-lock.json 校验完整性。可用 SANMAO_NO_MIRROR=1 完全禁用镜像，用
+# SANMAO_NPM_REGISTRY 指定自定义源。
+sanmao_mirror_registry=https://registry.npmmirror.com
+
+sanmao_remote_source_fast() {
+  # 只关心能不能在时限内拿到响应，404 也算网络是通的。
+  command -v curl >/dev/null 2>&1 || return 1
+  curl -s -I -o /dev/null --max-time "$2" "$1" >/dev/null 2>&1
+}
+
+sanmao_resolve_npm_registry() {
+  # 输出空字符串表示继续使用 npm 自身的默认源；提示走 stderr，避免污染返回值。
+  if [ "${SANMAO_NO_MIRROR:-0}" = '1' ]; then return 0; fi
+  if [ -n "${SANMAO_NPM_REGISTRY:-}" ]; then printf '%s' "$SANMAO_NPM_REGISTRY"; return 0; fi
+  if sanmao_remote_source_fast 'https://registry.npmjs.org/-/ping' 2; then return 0; fi
+  printf '%s\n' '官方 npm 源响应很慢，本次改用国内镜像 registry.npmmirror.com 下载依赖。' >&2
+  printf '%s\n' '依赖仍按 package-lock.json 校验完整性；如需只用官方源，可先设置环境变量 SANMAO_NO_MIRROR=1。' >&2
+  printf '%s' "$sanmao_mirror_registry"
+}
+
+sanmao_format_duration() {
+  TOTAL_SECONDS=${1:-0}
+  DURATION_HOURS=$((TOTAL_SECONDS / 3600))
+  DURATION_MINUTES=$(((TOTAL_SECONDS % 3600) / 60))
+  DURATION_SECONDS=$((TOTAL_SECONDS % 60))
+  if [ "$DURATION_HOURS" -gt 0 ]; then
+    printf '%s' "${DURATION_HOURS} 小时 ${DURATION_MINUTES} 分"
+  elif [ "$DURATION_MINUTES" -gt 0 ]; then
+    printf '%s' "${DURATION_MINUTES} 分 ${DURATION_SECONDS} 秒"
+  else
+    printf '%s' "${DURATION_SECONDS} 秒"
+  fi
+}
+
+sanmao_dir_size_mb() {
+  SIZE_MB=`du -sm "$1" 2>/dev/null | cut -f1 || true`
+  if [ -z "$SIZE_MB" ]; then SIZE_MB=0; fi
+  printf '%s' "$SIZE_MB"
+}
+
+sanmao_show_log_tail() {
+  [ -s "$1" ] || return 0
+  printf '\n最后几行输出（完整日志：%s）：\n' "$1"
+  tail -n "${2:-20}" "$1" | sed 's/\r$//' | sed 's/^/   /' || true
+}
+
+# 进度提示：长耗时步骤在后台执行并把输出写进日志，前台每隔几秒打印“已用时间 + 目录
+# 体积 + 最近一行输出”，让用户能确认程序仍在下载，而不是卡死。npm 在输出被重定向时
+# 自己不打印进度，所以必须由启动器心跳兜底。返回子进程的退出码。
+sanmao_run_with_progress() {
+  STEP_SIZE_DIR=$1
+  STEP_SIZE_LABEL=$2
+  STEP_LOG_PATH=$3
+  STEP_QUIET_HINT=$4
+  shift 4
+  mkdir -p "`dirname "$STEP_LOG_PATH"`"
+  : > "$STEP_LOG_PATH"
+  STEP_START_TS=`date +%s`
+  "$@" >"$STEP_LOG_PATH" 2>&1 &
+  STEP_PID=$!
+  STEP_TICKS=0
+  while kill -0 "$STEP_PID" 2>/dev/null; do
+    sleep 8
+    kill -0 "$STEP_PID" 2>/dev/null || break
+    STEP_TICKS=$((STEP_TICKS + 1))
+    STEP_ELAPSED=$((`date +%s` - STEP_START_TS))
+    STEP_LINE="   已用 `sanmao_format_duration $STEP_ELAPSED`"
+    if [ -n "$STEP_SIZE_DIR" ]; then
+      STEP_LINE="$STEP_LINE ｜ $STEP_SIZE_LABEL `sanmao_dir_size_mb "$STEP_SIZE_DIR"` MB"
+    fi
+    STEP_TAIL=`tail -n 1 "$STEP_LOG_PATH" 2>/dev/null | tr -d '\r' || true`
+    if [ -n "$STEP_TAIL" ]; then
+      STEP_LINE="$STEP_LINE ｜ $STEP_TAIL"
+    fi
+    printf '%s\n' "$STEP_LINE"
+    if [ -n "$STEP_QUIET_HINT" ] && [ $((STEP_TICKS % 8)) -eq 0 ]; then
+      printf '   提示：%s\n' "$STEP_QUIET_HINT"
+    fi
+  done
+  if wait "$STEP_PID"; then return 0; else return $?; fi
+}
+
 printf '\n==> 检查并安装程序依赖\n'
 NEED_INSTALL=0
 DEPS_READY=1
@@ -373,14 +457,38 @@ if [ "$NEED_INSTALL" -eq 1 ]; then
   if [ "$DEPS_READY" -eq 1 ]; then
     printf '%s\n' '依赖清单有变化，正在增量同步依赖（保留已安装文件，优先使用本地缓存）。'
   else
-    printf '%s\n' '首次运行或依赖不完整，正在安装依赖。这个过程通常需要 1～5 分钟。'
+    printf '%s\n' '首次运行或依赖不完整，正在安装依赖。'
+    printf '%s\n' '首次要下载约 800 MB 依赖（其中 FFmpeg 约 29 MB），网速较慢时可能要十几分钟甚至更久。'
+    printf '%s\n' '安装期间会持续显示进度；下载阶段没有输出属正常现象，请不要关闭窗口。'
   fi
+  printf '%s\n' '正在检测下载源速度…'
+  NPM_REGISTRY=`sanmao_resolve_npm_registry`
+  NPM_REGISTRY_ARG=
+  if [ -n "$NPM_REGISTRY" ]; then NPM_REGISTRY_ARG=" --registry=$NPM_REGISTRY"; fi
+  NPM_LOG="$ROOT_DIR/.data/logs/npm-install.log"
+  NPM_MIRROR_LOG="$ROOT_DIR/.data/logs/npm-install-mirror.log"
+  NPM_HINT='依赖下载阶段通常没有输出，属正常现象；请保持窗口打开。'
+  NPM_SIZE_DIR=node_modules
+  NPM_SIZE_LABEL='依赖目录'
+  STEP_STATUS=0
   if [ -f package-lock.json ] && [ ! -d node_modules ]; then
-    npm ci --include=dev --no-audit --no-fund --prefer-offline --ignore-scripts || fail '依赖安装失败，请检查网络后再次运行启动器。'
-    ensure_ffmpeg_binary || true
-    npm rebuild --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'
+    sanmao_run_with_progress "$NPM_SIZE_DIR" "$NPM_SIZE_LABEL" "$NPM_LOG" "$NPM_HINT" sh -c "npm ci --include=dev --no-audit --no-fund --prefer-offline --ignore-scripts$NPM_REGISTRY_ARG" || STEP_STATUS=$?
+    if [ "$STEP_STATUS" -eq 0 ]; then
+      ensure_ffmpeg_binary || true
+      sanmao_run_with_progress '' '' "$NPM_LOG" '' sh -c "npm rebuild --no-audit --no-fund$NPM_REGISTRY_ARG" || STEP_STATUS=$?
+    fi
   else
-    npm install --include=dev --no-audit --no-fund --prefer-offline || fail '依赖安装失败，请检查网络后再次运行启动器。'
+    sanmao_run_with_progress "$NPM_SIZE_DIR" "$NPM_SIZE_LABEL" "$NPM_LOG" "$NPM_HINT" sh -c "npm install --include=dev --no-audit --no-fund --prefer-offline$NPM_REGISTRY_ARG" || STEP_STATUS=$?
+  fi
+  if [ "$STEP_STATUS" -ne 0 ] && [ -z "$NPM_REGISTRY" ] && [ "${SANMAO_NO_MIRROR:-0}" != 1 ]; then
+    printf '%s\n' '官方源安装失败，正在改用国内镜像重试。'
+    NPM_LOG=$NPM_MIRROR_LOG
+    STEP_STATUS=0
+    sanmao_run_with_progress "$NPM_SIZE_DIR" "$NPM_SIZE_LABEL" "$NPM_LOG" "$NPM_HINT" sh -c "npm install --include=dev --no-audit --no-fund --prefer-offline --registry=$sanmao_mirror_registry" || STEP_STATUS=$?
+  fi
+  if [ "$STEP_STATUS" -ne 0 ]; then
+    sanmao_show_log_tail "$NPM_LOG" 20
+    fail '依赖安装失败，请检查网络后再次运行启动器。'
   fi
   ensure_ffmpeg_binary || true
   if [ -n "$DEPS_FINGERPRINT" ]; then printf '%s' "$DEPS_FINGERPRINT" > node_modules/.sanmao-deps.sha256; fi

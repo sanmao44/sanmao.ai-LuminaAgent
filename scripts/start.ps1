@@ -692,6 +692,133 @@ function Write-Step([string]$text) {
   Write-Host ""
   Write-Host "==> $text" -ForegroundColor Cyan
 }
+# 首次安装依赖时官方 npm 源在国内网络下常常只有几十 KB/s（首次要下载约 800 MB），
+# 用户会以为程序卡住了。这里做一次很短的探测，官方源慢就整体切到国内镜像；依赖仍由
+# package-lock.json 校验完整性。可用 SANMAO_NO_MIRROR=1 完全禁用镜像，用
+# SANMAO_NPM_REGISTRY 指定自定义源。
+function Test-SanmaoRemoteSourceFast([string]$Url, [double]$TimeoutSeconds) {
+  try {
+    $request = [System.Net.HttpWebRequest]::Create($Url)
+    $proxyUrl = $env:HTTPS_PROXY
+    if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+    if ($proxyUrl) {
+      if ($proxyUrl -notmatch '^[a-z]+://') { $proxyUrl = 'http://' + $proxyUrl }
+      $request.Proxy = New-Object System.Net.WebProxy($proxyUrl)
+    } else {
+      $request.Proxy = [System.Net.WebRequest]::DefaultWebProxy
+    }
+    $request.Method = 'HEAD'
+    $request.Timeout = [int]($TimeoutSeconds * 1000)
+    $request.AllowAutoRedirect = $true
+    $request.UserAgent = 'SANMAO.AI-Launcher'
+    $response = $request.GetResponse()
+    $response.Close()
+    return $true
+  } catch [System.Net.WebException] {
+    # 能拿到响应（例如 404）说明网络本身是通的，只是路径不同。
+    if ($_.Exception.Response) { return $true }
+    return $false
+  } catch { return $false }
+}
+
+function Get-SanmaoNpmRegistry {
+  # 返回空字符串表示继续使用 npm 自身的默认源。
+  if ($env:SANMAO_NO_MIRROR -eq '1') { return '' }
+  if ($env:SANMAO_NPM_REGISTRY) { return $env:SANMAO_NPM_REGISTRY }
+  if (Test-SanmaoRemoteSourceFast 'https://registry.npmjs.org/-/ping' 1.2) { return '' }
+  Write-Host '官方 npm 源响应很慢，本次改用国内镜像 registry.npmmirror.com 下载依赖。' -ForegroundColor Yellow
+  Write-Host '依赖仍按 package-lock.json 校验完整性；如需只用官方源，可先设置环境变量 SANMAO_NO_MIRROR=1。' -ForegroundColor DarkGray
+  return 'https://registry.npmmirror.com'
+}
+function Format-SanmaoDuration([TimeSpan]$Span) {
+  if ($Span.TotalHours -ge 1) { return ('{0} 小时 {1} 分' -f [int]$Span.TotalHours, $Span.Minutes) }
+  if ($Span.TotalMinutes -ge 1) { return ('{0} 分 {1} 秒' -f [int]$Span.TotalMinutes, $Span.Seconds) }
+  return ('{0} 秒' -f [int]$Span.TotalSeconds)
+}
+
+function Get-SanmaoFolderSizeMB([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return 0 }
+  try {
+    $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    if (-not $sum) { return 0 }
+    return [int][math]::Round($sum / 1MB)
+  } catch { return 0 }
+}
+
+function Read-SanmaoLogLines([string]$Path, [int]$Tail = 0) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+  try {
+    # 子进程还在写这个日志，必须用共享读方式打开，否则会报“文件被占用”。
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      $reader = New-Object System.IO.StreamReader($stream)
+      $rawText = $reader.ReadToEnd()
+    } finally { $stream.Dispose() }
+  } catch { return @() }
+  $result = @($rawText -split "\r?\n" | Where-Object { $_.Trim() })
+  if ($Tail -gt 0 -and $result.Count -gt $Tail) { $result = $result[($result.Count - $Tail)..($result.Count - 1)] }
+  return $result
+}
+
+function Format-SanmaoLogLine([string]$Line, [int]$MaxLength = 64) {
+  $clean = ($Line -replace ([string][char]27 + '\[[0-9;?]*[a-zA-Z]'), '').Trim()
+  if ($clean.Length -gt $MaxLength) { $clean = $clean.Substring(0, $MaxLength) + '…' }
+  return $clean
+}
+
+function Show-SanmaoLogTail([string]$Path, [int]$TailLines = 20) {
+  $tail = @(Read-SanmaoLogLines -Path $Path -Tail $TailLines)
+  if ($tail.Count -eq 0) { return }
+  Write-Host ''
+  Write-Host "最后几行输出（完整日志：$Path）：" -ForegroundColor Yellow
+  foreach ($line in $tail) { Write-Host ('   ' + (Format-SanmaoLogLine $line -MaxLength 200)) -ForegroundColor DarkGray }
+}
+# 进度提示：长耗时步骤（npm 安装等）在后台执行并把输出写进日志，前台每隔几秒打印
+# “已用时间 + 目录体积 + 最近一行输出”，让用户能确认程序仍在下载，而不是卡死。
+# 这些步骤没有 TTY，npm 自己不打印进度，所以必须由启动器心跳兜底。
+function Invoke-SanmaoProgressStep {
+  param(
+    [Parameter(Mandatory)][string]$CommandLine,
+    [Parameter(Mandatory)][string]$LogPath,
+    [string]$SizePath = '',
+    [string]$SizeLabel = '已写入',
+    [string]$QuietHint = '',
+    [int]$IntervalSeconds = 8
+  )
+
+  $logDir = Split-Path -Parent $LogPath
+  if ($logDir) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+  Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+
+  $comSpec = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $comSpec
+  $startInfo.Arguments = '/d /s /c "' + $CommandLine + ' > "' + $LogPath + '" 2>&1"'
+  $startInfo.WorkingDirectory = $root
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  [void]$process.Start()
+
+  $started = Get-Date
+  $ticks = 0
+  while (-not $process.HasExited) {
+    Start-Sleep -Seconds $IntervalSeconds
+    $process.Refresh()
+    if ($process.HasExited) { break }
+    $ticks++
+    $message = '   已用 ' + (Format-SanmaoDuration ((Get-Date) - $started))
+    if ($SizePath) { $message += ' ｜ ' + $SizeLabel + ' ' + (Get-SanmaoFolderSizeMB $SizePath) + ' MB' }
+    $logLines = @(Read-SanmaoLogLines -Path $LogPath)
+    if ($logLines.Count -gt 0) { $message += ' ｜ ' + (Format-SanmaoLogLine $logLines[-1]) }
+    Write-Host $message -ForegroundColor DarkGray
+    if ($QuietHint -and ($ticks % 8) -eq 0) { Write-Host ('   提示：' + $QuietHint) -ForegroundColor DarkGray }
+  }
+  $process.WaitForExit()
+  return $process.ExitCode
+}
 function Stop-StartedServer {
   if ($script:serverProcess -and -not $script:serverProcess.HasExited) {
     Stop-Process -Id $script:serverProcess.Id -Force -ErrorAction SilentlyContinue
@@ -954,42 +1081,62 @@ if ($SkipBuild.IsPresent) {
     if ($dependenciesReady) {
       Write-Host '依赖清单有变化，正在增量同步依赖（保留已安装文件，优先使用本地缓存）。' -ForegroundColor Yellow
     } else {
-      Write-Host '首次运行或依赖不完整，正在安装依赖。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
+      Write-Host '首次运行或依赖不完整，正在安装依赖。' -ForegroundColor Yellow
+      Write-Host '首次要下载约 800 MB 依赖（其中 FFmpeg 约 29 MB），网速较慢时可能要十几分钟甚至更久。' -ForegroundColor Yellow
+      Write-Host '安装期间会持续显示进度；下载阶段没有输出属正常现象，请不要关闭窗口。' -ForegroundColor Yellow
     }
     foreach ($repairPort in $portRange) {
       if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
     }
     Start-Sleep -Milliseconds 500
     $npmOptions = @('--include=dev', '--no-audit', '--no-fund', '--prefer-offline')
+    $npmOptionArgs = $npmOptions -join ' '
+    $npmLogPath = Join-Path $root '.data\logs\npm-install.log'
+    $npmMirrorLogPath = Join-Path $root '.data\logs\npm-install-mirror.log'
+    $npmSizePath = Join-Path $root 'node_modules'
+    $npmSizeLabel = '依赖目录'
+    $npmQuietHint = '依赖下载阶段通常没有输出，属正常现象；请保持窗口打开。'
+    Write-Host '正在检测下载源速度…' -ForegroundColor DarkGray
+    $npmRegistry = Get-SanmaoNpmRegistry
+    $npmRegistryArg = if ($npmRegistry) { ' --registry=' + $npmRegistry } else { '' }
+    $npmExit = 0
     if ((-not (Test-Path -LiteralPath '.\node_modules')) -and (Test-Path -LiteralPath '.\package-lock.json')) {
       # Clean install: add the packages without running their install scripts,
       # place the FFmpeg binary ourselves, then run the deferred scripts. npm's
       # own FFmpeg downloader is an order of magnitude slower on some networks.
-      & npm ci @npmOptions --ignore-scripts
-      if ($LASTEXITCODE -eq 0) {
+      # In a redirected, non-TTY process npm prints nothing while downloading, so
+      # the launcher heartbeat below is the only progress the user can see.
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm ci' + $npmRegistryArg + ' ' + $npmOptionArgs + ' --ignore-scripts') -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+      if ($npmExit -eq 0) {
         [void](Install-SanmaoFfmpegBinary -TargetPath $ffmpegBinaryPath)
-        & npm rebuild --no-audit --no-fund
+        $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm rebuild --no-audit --no-fund' + $npmRegistryArg) -LogPath $npmLogPath -SizePath '' -SizeLabel '' -QuietHint ''
       }
     } else {
       # Reconcile the existing tree instead of wiping it: npm ci deletes
       # node_modules, which also threw the downloaded FFmpeg binary away.
-      & npm install @npmOptions
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm install' + $npmRegistryArg + ' ' + $npmOptionArgs) -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
     }
-    if ($LASTEXITCODE -ne 0) {
+    if ($npmExit -ne 0 -and -not $npmRegistry -and $env:SANMAO_NO_MIRROR -ne '1') {
+      Write-Host '官方源安装失败，正在改用国内镜像重试。' -ForegroundColor Yellow
+      $npmLogPath = $npmMirrorLogPath
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm install ' + $npmOptionArgs + ' --registry=https://registry.npmmirror.com') -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+    }
+    if ($npmExit -ne 0) {
       Write-Host ''
       Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow
       Write-Host '你可以先在命令行运行：npm config get registry' -ForegroundColor Yellow
+      Show-SanmaoLogTail -Path $npmLogPath
       Fail '依赖安装失败，请检查网络后再次运行启动器。'
     }
     if (-not (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
       [void](Install-SanmaoFfmpegBinary -TargetPath $ffmpegBinaryPath)
+    }
     # Only record success once FFmpeg is usable, so an interrupted or incomplete
     # install is retried (and repaired) on the next launch.
     if ($depsFingerprint -and (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
       $depsFingerprint | Set-Content -LiteralPath $depsMarkerPath -Encoding ASCII
     }
     Remove-Item -LiteralPath '.\node_modules\.sanmao-package-lock.sha256' -Force -ErrorAction SilentlyContinue
-    }
   } else {
     Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
   }
