@@ -83,7 +83,7 @@ test("smart canvas apply only promotes explicit canvas-directed replies", () => 
   assert.match(context, /export function canvasAgentDockShouldAutoApplyText/);
   assert.match(component, /canvasAgentDockShouldAutoApplyText\(text\)/);
   assert.match(component, /textNodeId: appliedIds\[0\]/);
-  assert.ok(component.includes("明确说保存、加入或放到画布时，文字回复也会自动生成节点"));
+  assert.ok(component.includes("开启后，出图结果自动加入画布；明确说保存、加入或放到画布时，文字回复也会创建节点"));
   assert.match(context, /ordinary answers or web-search results/);
 });
 
@@ -218,7 +218,7 @@ test("the dock guide explains the canvas workflow and inserts usable examples", 
   assert.match(component, /id="canvas-agent-dock-help"/);
   assert.ok(component.includes("选择对象"));
   assert.ok(component.includes("输入 @1、@2 精确引用"));
-  assert.ok(component.includes("操作计划确认后才落到画布"));
+  assert.ok(component.includes("结构操作确认后执行；出图完成后自动加入画布"));
   assert.ok(component.includes("Agent 不会自动删除画布内容"));
   assert.match(component, /HELP_EXAMPLES\.map\(\(example\) =>/);
   assert.match(component, /const disabled = selectedNodeTotal < example\.minimumSelection/);

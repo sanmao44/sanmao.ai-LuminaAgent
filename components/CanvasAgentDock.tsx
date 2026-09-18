@@ -1159,14 +1159,14 @@ export default function CanvasAgentDock({
           <div className="canvas-agent-dock-help-head">
             <div>
               <strong>让 Agent 和画布一起工作</strong>
-              <small>从选中对象到执行结果，画布操作默认先经过你确认。</small>
+              <small>结构操作先确认，明确的出图请求会直接生成结果。</small>
             </div>
             <button type="button" onClick={() => setHelpOpen(false)} aria-label="关闭使用指南">×</button>
           </div>
           <ol className="canvas-agent-dock-help-steps">
             <li><b>1</b><span><strong>选择对象</strong><small>选中节点后再提问；未选中时读取整张画布概况。</small></span></li>
             <li><b>2</b><span><strong>说明目标</strong><small>输入 @1、@2 精确引用；拖动顶部卡片可调整处理顺序。</small></span></li>
-            <li><b>3</b><span><strong>确认执行</strong><small>操作计划确认后才落到画布，并合并为一次可撤销变更。</small></span></li>
+            <li><b>3</b><span><strong>确认执行</strong><small>结构操作确认后执行；出图完成后自动加入画布，均支持撤销。</small></span></li>
           </ol>
           <div className="canvas-agent-dock-help-examples">
             <b>点一个示例开始</b>
@@ -1192,7 +1192,7 @@ export default function CanvasAgentDock({
             </div>
           </div>
           <div className="canvas-agent-dock-help-notes">
-            <span><b>智能落画布</b> 只有明确说“保存、加入或放到画布”时才自动创建节点。</span>
+            <span><b>智能落画布</b> 开启后，“画、生成、做一张”等指令会生成图片并加入画布；普通文字仅在明确要求保存时创建节点。</span>
             <span><b>安全边界</b> Agent 不会自动删除画布内容。</span>
             <span><kbd>Ctrl/⌘ K</kbd> 打开 Agent　<kbd>Esc</kbd> 停止生成或关闭指南</span>
           </div>
@@ -1574,7 +1574,7 @@ export default function CanvasAgentDock({
           >
             {WEB_MODE_LABELS[webMode]}
           </button>
-          <label className="canvas-agent-dock-auto" title="明确说保存、加入或放到画布时，文字回复也会自动生成节点；普通问答不会自动落点">
+          <label className="canvas-agent-dock-auto" title="开启后，出图结果自动加入画布；明确说保存、加入或放到画布时，文字回复也会创建节点">
             <input
               type="checkbox"
               checked={autoApply}

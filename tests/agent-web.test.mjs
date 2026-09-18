@@ -67,6 +67,7 @@ test('tool requests stay on planner path while ordinary text can stream directly
   assert.equal(web.likelyAgentToolRequest('生成一张赛博朋克海报', false), true);
   assert.equal(web.likelyAgentToolRequest('生成一只狗', false), true);
   assert.equal(web.likelyImageGenerationRequest('画个猫'), true);
+  assert.equal(web.likelyImageGenerationRequest('画只猫'), true);
   assert.equal(web.likelyImageGenerationRequest('帮我画一个猫'), true);
   assert.equal(web.likelyImageGenerationRequest('画宇宙飞船'), true);
   assert.equal(web.likelyImageGenerationRequest('我想画一个不存在的生物'), true);
@@ -125,6 +126,7 @@ test('keeps text, file, tutorial and prompt-only requests out of image generatio
     '我要一张表格',
     '帮我生成一个 JSON 文件',
     '怎么画一只猫',
+    '怎么画只猫',
     '教我画海报',
     '画图软件怎么用',
     '给我解释这张图',

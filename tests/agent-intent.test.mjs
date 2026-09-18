@@ -15,6 +15,9 @@ test('routes explicit visual requests to an image deliverable', () => {
   assert.equal(intent.classifyAgentDeliverable('给我做一张带夏日特惠文字的新品海报').deliverable, 'IMAGE');
   assert.equal(intent.classifyAgentDeliverable('我只说目标，创意、模型和出图都交给你').deliverable, 'IMAGE');
   assert.equal(intent.classifyAgentDeliverable('生成一张水墨画').deliverable, 'IMAGE');
+  assert.equal(intent.classifyAgentDeliverable('画只猫').deliverable, 'IMAGE');
+  assert.equal(intent.classifyAgentDeliverable('画条鱼').deliverable, 'IMAGE');
+  assert.notEqual(intent.classifyAgentDeliverable('怎么画只猫').deliverable, 'IMAGE');
 });
 
 test('routes prompt and copy requests to text without being fooled by visual nouns', () => {

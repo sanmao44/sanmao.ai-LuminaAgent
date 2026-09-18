@@ -80,7 +80,10 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
   const asksForPrompt = promptOnlyPattern.test(text) && /(?:写|生成|优化|改写|润色|反推|提取|翻译|解释|给我|输出|提供|整理|怎么|如何|只要|仅需)/i.test(text);
   const asksForText = textActionPattern.test(text) || (textArtifactPattern.test(text) && !imageActionPattern.test(text));
   const asksForImage = (imageActionPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || /(?:出图|生图)/i.test(text));
-  const asksForImageWithoutTarget = /(?:画个|画一只|画一个|画一张|画一幅|画出|出图|生图|生成一张|生成一个|做一张|做一个|做个|来一张|来个).{1,80}/i.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
+  // 口语里经常省略“一”（例如“画只猫”“画条鱼”）。这类请求虽然没有
+  // “图片 / 海报”等目标名词，仍然是在明确索要视觉产物。
+  const asksForImageWithoutTarget = /(?:画(?:个|一?只|一个|一张|一幅|一?条|一?头|一?匹|一?朵|一?辆|一?艘|一?座|一?棵|一?位)|画出|出图|生图|生成一张|生成一个|做一张|做一个|做个|来一张|来个).{1,80}/i.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
+  const asksHowToCreateImage = /(?:怎么|如何|教我|教程|步骤|方法|技巧).{0,24}(?:画|绘制|生成图片|做图)/i.test(text);
   const asksForSeparateCopy = separateCopyPattern.test(text) || /(?:图片|海报|封面|宣传图).{0,30}(?:另外|再|同时|并且|以及).{0,30}(?:文案|标题|配文)/i.test(text);
   const textInsideImage = embeddedTextPattern.test(text) && (asksForImage || asksForImageWithoutTarget);
   const asksToEditReference = hasReferences
@@ -100,7 +103,7 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
   if (asksForImage && asksForText && asksForSeparateCopy) {
     return result('BOTH', '同时检测到图片动作和“另外提供文案”的独立交付要求。', 'high', ['图片动作', '独立文案']);
   }
-  if (asksForImage || asksForImageWithoutTarget) {
+  if ((asksForImage || asksForImageWithoutTarget) && !asksHowToCreateImage) {
     return result('IMAGE', textInsideImage ? '文字属于图片内部设计，最终交付物仍然是图片。' : hasReferences && imageEditPattern.test(text) ? '检测到参考图和编辑动作，会优先沿用当前视觉上下文。' : '检测到明确的视觉创作动作和目标。', 'high', [textInsideImage ? '图内文字' : '图片动作', hasReferences ? '参考图' : '']);
   }
   if (asksForText) {
