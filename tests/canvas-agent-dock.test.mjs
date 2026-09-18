@@ -79,6 +79,21 @@ test("agent text and images land on the canvas through the shared undostack", ()
   assert.match(canvas, /role: "Agent 回复"/);
 });
 
+test("smart canvas apply only promotes explicit canvas-directed replies", () => {
+  assert.match(context, /export function canvasAgentDockShouldAutoApplyText/);
+  assert.match(component, /canvasAgentDockShouldAutoApplyText\(text\)/);
+  assert.match(component, /textNodeId: appliedIds\[0\]/);
+  assert.ok(component.includes("明确说保存、加入或放到画布时，文字回复也会自动生成节点"));
+  assert.match(context, /ordinary answers or web-search results/);
+});
+
+test("explicit reuse commands stay local and do not call the model again", () => {
+  assert.match(context, /export function canvasAgentDockRequestsPreviousImageApply/);
+  assert.match(component, /canvasAgentDockRequestsPreviousImageApply\(text\)/);
+  assert.match(component, /previousImageMessage\.imageNodeIds/);
+  assert.ok(component.includes("上一轮图片已经在画布中，已为你定位结果。"));
+});
+
 test("canvas status and node summaries are capped before they reach the model", () => {
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS = 1600/);
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES = 12/);

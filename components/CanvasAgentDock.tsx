@@ -18,7 +18,9 @@ import {
   CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
   canvasAgentDockAcceptsImages,
+  canvasAgentDockRequestsPreviousImageApply,
   composeCanvasAgentDockMessage,
+  canvasAgentDockShouldAutoApplyText,
   type CanvasAgentDockChip,
   type CanvasAgentDockReference,
   type CanvasAgentDockStatus,
@@ -604,6 +606,41 @@ export default function CanvasAgentDock({
       setInput("");
       setEditingMessageId(null);
       setStreamText("");
+      const previousImageMessage = [...base]
+        .reverse()
+        .find((message) => message.role === "assistant" && message.images?.length);
+      if (canvasAgentDockRequestsPreviousImageApply(text) && previousImageMessage?.images?.length) {
+        if (previousImageMessage.imageNodeIds?.length) {
+          onFocusNodes(previousImageMessage.imageNodeIds);
+          setMessages([
+            ...history,
+            {
+              id: createId(),
+              role: "assistant",
+              content: "上一轮图片已经在画布中，已为你定位结果。",
+              model: previousImageMessage.model,
+              imageNodeIds: previousImageMessage.imageNodeIds,
+            },
+          ]);
+        } else {
+          const appliedIds = onApplyImages(previousImageMessage.images, {
+            prompt: "上一轮 Agent 图片",
+            model: previousImageMessage.model,
+          });
+          setMessages([
+            ...history,
+            {
+              id: createId(),
+              role: "assistant",
+              content: `已将上一轮的 ${previousImageMessage.images.length} 张图片加入画布。`,
+              model: previousImageMessage.model,
+              images: previousImageMessage.images,
+              imageNodeIds: appliedIds,
+            },
+          ]);
+        }
+        return;
+      }
       setBusy(true);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -644,10 +681,11 @@ export default function CanvasAgentDock({
               ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}),
             }))
           : [];
+        const assistantMessageId = createId();
         setMessages((value) => [
           ...value,
           {
-            id: createId(),
+            id: assistantMessageId,
             role: "assistant",
             content,
             model: response.model,
@@ -660,8 +698,16 @@ export default function CanvasAgentDock({
         if (images.length && autoApply) {
           const appliedIds = onApplyImages(images, { prompt: mentionText, model: response.model });
           setMessages((value) =>
-            value.map((message, index) => (index === value.length - 1 ? { ...message, imageNodeIds: appliedIds } : message)),
+            value.map((message) => (message.id === assistantMessageId ? { ...message, imageNodeIds: appliedIds } : message)),
           );
+        }
+        if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
+          const appliedIds = onApplyText(content, { prompt: mentionText });
+          if (appliedIds.length) {
+            setMessages((value) =>
+              value.map((message) => (message.id === assistantMessageId ? { ...message, textNodeId: appliedIds[0] } : message)),
+            );
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Agent 请求失败";
@@ -698,7 +744,7 @@ export default function CanvasAgentDock({
         setStreamText("");
       }
     },
-    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, orderedReferences, webMode],
+    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyText, onFocusNodes, orderedReferences, webMode],
   );
 
   const cycleWebMode = useCallback(() => {
@@ -1315,13 +1361,13 @@ export default function CanvasAgentDock({
           >
             {WEB_MODE_LABELS[webMode]}
           </button>
-          <label className="canvas-agent-dock-auto" title="Agent 返回图片时自动生成节点">
+          <label className="canvas-agent-dock-auto" title="明确说保存、加入或放到画布时，文字回复也会自动生成节点；普通问答不会自动落点">
             <input
               type="checkbox"
               checked={autoApply}
               onChange={(event) => setAutoApply(event.target.checked)}
             />
-            <span>自动落画布</span>
+            <span>智能落画布</span>
           </label>
           <button type="submit" className={`canvas-agent-dock-send ${busy ? "is-busy" : ""}`}>
             {busy ? "停止" : "发送"}

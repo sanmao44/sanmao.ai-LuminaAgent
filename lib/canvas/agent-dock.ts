@@ -209,3 +209,26 @@ export function canvasAgentDockAcceptsImages(deliverable?: string) {
   if (!deliverable) return true;
   return deliverable !== "TEXT" && deliverable !== "CLARIFY";
 }
+
+/**
+ * Only explicit canvas-directed wording may turn a normal Agent answer into a
+ * text node. This keeps "智能落画布" useful without silently filling a board
+ * with ordinary answers or web-search results.
+ */
+export function canvasAgentDockShouldAutoApplyText(input: string) {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  const canvasTarget = /(?:画布|画板|节点)/;
+  const saveAction = /(?:保存|存成|存为|加入|添加|放到|落到|落入|落地|同步|写入|创建)/;
+  const directInstruction = /(?:把|将|请|帮我|直接|自动|结果|回复|回答|这段|它).{0,24}(?:保存|存成|存为|加入|添加|放到|落到|落入|落地|同步|写入|创建).{0,24}(?:画布|画板|节点)/;
+  const reverseInstruction = /(?:保存|存成|存为|加入|添加|放到|落到|落入|落地|同步|写入|创建).{0,24}(?:画布|画板|节点)/;
+  return canvasTarget.test(text) && saveAction.test(text) && (directInstruction.test(text) || reverseInstruction.test(text));
+}
+
+/** A low-risk local command: reuse the latest Agent image without another model call. */
+export function canvasAgentDockRequestsPreviousImageApply(input: string) {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  return /(?:刚才|上一轮|上一次|刚生成|刚回复|这张|这些|这组|结果).{0,24}(?:图|图片|图像|结果)/.test(text)
+    && /(?:加入|添加|放到|落到|落入|放入|拖到).{0,12}(?:画布|画板|节点)/.test(text);
+}

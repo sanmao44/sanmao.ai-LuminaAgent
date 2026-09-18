@@ -5250,6 +5250,7 @@ export default function Page() {
     const chatScrollAfterCommitRef = useRef(false);
     const chatScrollFramesRef = useRef({ first: 0, second: 0 });
     const [conversationNavOpen, setConversationNavOpen] = useState(false);
+    const [conversationNavHoverId, setConversationNavHoverId] = useState(null);
     const conversationNavigatorRef = useRef(null);
     const conversationNavCloseTimerRef = useRef(0);
     const conversationNavCloseAfterClickRef = useRef(false);
@@ -5632,6 +5633,7 @@ export default function Page() {
         if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
         conversationNavCloseTimerRef.current = 0;
         conversationNavCloseAfterClickRef.current = false;
+        setConversationNavHoverId(null);
         setConversationNavOpen(false);
     }, [
         conversationItems.length
@@ -6476,12 +6478,14 @@ export default function Page() {
             const focusInside = Boolean(navigator && navigator.contains(document.activeElement));
             if (pointerInside || (!conversationNavCloseAfterClickRef.current && focusInside)) return;
             conversationNavCloseAfterClickRef.current = false;
+            setConversationNavHoverId(null);
             setConversationNavOpen(false);
         }, 1000);
     }
     function closeConversationNavigator() {
         clearConversationNavCloseTimer();
         conversationNavCloseAfterClickRef.current = false;
+        setConversationNavHoverId(null);
         setConversationNavOpen(false);
     }
     function setThemePreference(next) {
@@ -11259,7 +11263,7 @@ export default function Page() {
                                      conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
                                         ref: conversationNavigatorRef,
                                         className: `conversation-navigator ${conversationNavOpen ? 'is-open' : ''}`,
-                                        onPointerEnter: openConversationNavigator,
+                                        onPointerEnter: ()=>{},
                                         onPointerLeave: ()=>scheduleConversationNavClose(),
                                         onFocusCapture: openConversationNavigator,
                                         onBlurCapture: (event)=>{
@@ -11280,8 +11284,26 @@ export default function Page() {
                                                         conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator();
                                                     }
                                                 },
-                                                children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {}, item.id))
+                                                children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {
+                                                    className: conversationNavHoverId === item.id ? 'is-active' : '',
+                                                    onPointerEnter: ()=>setConversationNavHoverId(item.id),
+                                                    "aria-label": `第 ${item.index} 个提问`,
+                                                    title: item.text
+                                                }, item.id))
                                             }),
+                                             conversationNavHoverId && !conversationNavOpen && /*#__PURE__*/ (()=>{
+                                                 const item = conversationItems.find((entry)=>entry.id === conversationNavHoverId);
+                                                 return item ? /*#__PURE__*/ _jsx("button", {
+                                                     type: "button",
+                                                     className: "conversation-nav-preview",
+                                                     onClick: ()=>{
+                                                         jumpToMessage(item.id);
+                                                         closeConversationNavigator();
+                                                     },
+                                                     title: item.text,
+                                                     children: item.text
+                                                 }) : null;
+                                             })(),
                                             !chatNearBottom && /*#__PURE__*/ _jsx("button", {
                                                 type: "button",
                                                 className: "conversation-nav-bottom",
