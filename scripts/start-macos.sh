@@ -288,16 +288,103 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 printf 'npm：%s\n' `npm --version`
 
+# package-lock.json carries the app version in its root entry, so every release
+# rewrote it; compare the declared dependencies instead of the lock file so a
+# version-only update does not trigger a full reinstall.
+dependency_fingerprint() {
+  node -e 'const fs=require("fs");const crypto=require("crypto");const p=JSON.parse(fs.readFileSync("package.json","utf8"));const lines=[];for(const s of ["dependencies","optionalDependencies","peerDependencies","devDependencies"]){const d=p[s]||{};for(const n of Object.keys(d).sort())lines.push(s+"/"+n+"@"+d[n]);}process.stdout.write(crypto.createHash("sha256").update(lines.join("\n")).digest("hex").toUpperCase());' 2>/dev/null || true
+}
+
+ffmpeg_binary_ready() {
+  if [ ! -x node_modules/ffmpeg-static/ffmpeg ]; then return 1; fi
+  node_modules/ffmpeg-static/ffmpeg -version >/dev/null 2>&1
+}
+
+# ffmpeg-static fetches its binary from GitHub through a pipeline that is far
+# slower than a plain request on some networks; download it here when possible so
+# npm does not have to.
+ensure_ffmpeg_binary() {
+  if ffmpeg_binary_ready; then return 0; fi
+  if [ ! -f node_modules/ffmpeg-static/package.json ]; then return 0; fi
+  if ! command -v curl >/dev/null 2>&1; then return 0; fi
+  if ! command -v gunzip >/dev/null 2>&1; then return 0; fi
+  RELEASE=`node -p "require('./node_modules/ffmpeg-static/package.json')['ffmpeg-static']['binary-release-tag']" 2>/dev/null || printf '%s' 'b6.0'`
+  BASE_NAME=`node -p "require('./node_modules/ffmpeg-static/package.json')['ffmpeg-static']['executable-base-name']" 2>/dev/null || printf '%s' 'ffmpeg'`
+  if [ -z "$RELEASE" ]; then RELEASE=b6.0; fi
+  if [ -z "$BASE_NAME" ]; then BASE_NAME=ffmpeg; fi
+  BINARIES_URL=${FFMPEG_BINARIES_URL:-https://github.com/eugeneware/ffmpeg-static/releases/download}
+  if [ -n "${FFMPEG_BINARIES_URL:-}" ]; then
+    # 用户指定了下载源，就只用它。
+    FALLBACK_BINARIES_URL=
+  else
+    # GitHub Release 在国内网络经常连接超时；主地址失败后自动改用公共镜像。
+    FALLBACK_BINARIES_URL=https://registry.npmmirror.com/-/binary/ffmpeg-static
+  fi
+  case "`uname -s`" in
+    Darwin) ASSET_PLATFORM=darwin ;;
+    *) ASSET_PLATFORM=linux ;;
+  esac
+  case "`uname -m`" in
+    arm64|aarch64) ASSET_ARCH=arm64 ;;
+    *) ASSET_ARCH=x64 ;;
+  esac
+  FFMPEG_TARGET="node_modules/ffmpeg-static/$BASE_NAME"
+  FFMPEG_TEMP="$FFMPEG_TARGET.partial-$"
+  FFMPEG_ASSET="$BASE_NAME-$ASSET_PLATFORM-$ASSET_ARCH.gz"
+  for BASE_URL in "$BINARIES_URL" "$FALLBACK_BINARIES_URL"; do
+    [ -n "$BASE_URL" ] || continue
+    printf '%s\n' "正在下载 FFmpeg 组件（$BASE_URL）…"
+    rm -f "$FFMPEG_TEMP" "$FFMPEG_TEMP.gz"
+    if curl -fL --connect-timeout 15 --max-time 900 --retry 2 -o "$FFMPEG_TEMP.gz" "$BASE_URL/$RELEASE/$FFMPEG_ASSET" >/dev/null 2>&1; then
+      if gunzip -c "$FFMPEG_TEMP.gz" > "$FFMPEG_TEMP" 2>/dev/null; then
+        chmod +x "$FFMPEG_TEMP" 2>/dev/null || true
+        if "$FFMPEG_TEMP" -version >/dev/null 2>&1; then
+          mv -f "$FFMPEG_TEMP" "$FFMPEG_TARGET"
+          rm -f "$FFMPEG_TEMP.gz"
+          printf '%s\n' 'FFmpeg 已就绪。'
+          return 0
+        fi
+      fi
+    fi
+    if [ "$BASE_URL" = "$BINARIES_URL" ] && [ -n "$FALLBACK_BINARIES_URL" ]; then
+      printf '%s\n' '主下载地址不可用，改用备用镜像继续。'
+    fi
+  done
+  rm -f "$FFMPEG_TEMP" "$FFMPEG_TEMP.gz"
+  return 1
+}
+
 printf '\n==> 检查并安装程序依赖\n'
 NEED_INSTALL=0
+DEPS_READY=1
 if [ "$SKIP_BUILD" = 1 ]; then
   printf '%s\n' '回滚模式：保留当前依赖，不执行 npm install。'
-elif [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
-  NEED_INSTALL=1
+else
+  if [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ]; then
+    DEPS_READY=0
+  fi
+  DEPS_FINGERPRINT=`dependency_fingerprint`
+  STORED_DEPS_FINGERPRINT=`cat node_modules/.sanmao-deps.sha256 2>/dev/null | tr -d '\r\n' || true`
+  if [ "$DEPS_READY" -eq 0 ] || [ -z "$DEPS_FINGERPRINT" ] || [ "$STORED_DEPS_FINGERPRINT" != "$DEPS_FINGERPRINT" ]; then
+    NEED_INSTALL=1
+  fi
 fi
 if [ "$NEED_INSTALL" -eq 1 ]; then
-  printf '%s\n' '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。'
-  if [ -f package-lock.json ]; then npm ci --include=dev --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; else npm install --include=dev --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'; fi
+  if [ "$DEPS_READY" -eq 1 ]; then
+    printf '%s\n' '依赖清单有变化，正在增量同步依赖（保留已安装文件，优先使用本地缓存）。'
+  else
+    printf '%s\n' '首次运行或依赖不完整，正在安装依赖。这个过程通常需要 1～5 分钟。'
+  fi
+  if [ -f package-lock.json ] && [ ! -d node_modules ]; then
+    npm ci --include=dev --no-audit --no-fund --prefer-offline --ignore-scripts || fail '依赖安装失败，请检查网络后再次运行启动器。'
+    ensure_ffmpeg_binary || true
+    npm rebuild --no-audit --no-fund || fail '依赖安装失败，请检查网络后再次运行启动器。'
+  else
+    npm install --include=dev --no-audit --no-fund --prefer-offline || fail '依赖安装失败，请检查网络后再次运行启动器。'
+  fi
+  ensure_ffmpeg_binary || true
+  if [ -n "$DEPS_FINGERPRINT" ]; then printf '%s' "$DEPS_FINGERPRINT" > node_modules/.sanmao-deps.sha256; fi
+  rm -f node_modules/.sanmao-package-lock.sha256
 else
   printf '%s\n' '依赖已安装。'
 fi

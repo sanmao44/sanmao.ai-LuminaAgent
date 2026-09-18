@@ -4,8 +4,12 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 ROOT_DIR=$SCRIPT_DIR
 cd "$ROOT_DIR"
 . "$SCRIPT_DIR/scripts/free-relay-common.sh"
-if [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ]; then
-  if [ -f package-lock.json ]; then npm ci --include=dev; else npm install --include=dev; fi
+DEPENDENCY_FINGERPRINT=`node -e 'const fs=require("fs");const crypto=require("crypto");const p=JSON.parse(fs.readFileSync("package.json","utf8"));const lines=[];for(const s of ["dependencies","optionalDependencies","peerDependencies","devDependencies"]){const d=p[s]||{};for(const n of Object.keys(d).sort())lines.push(s+"/"+n+"@"+d[n]);}process.stdout.write(crypto.createHash("sha256").update(lines.join("\n")).digest("hex").toUpperCase());' 2>/dev/null || true`
+STORED_DEPENDENCY_FINGERPRINT=`cat node_modules/.sanmao-deps.sha256 2>/dev/null | tr -d '\r\n' || true`
+if [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ -z "$DEPENDENCY_FINGERPRINT" ] || [ "$STORED_DEPENDENCY_FINGERPRINT" != "$DEPENDENCY_FINGERPRINT" ]; then
+  # Incremental sync: npm ci would delete node_modules and the downloaded FFmpeg binary.
+  if [ -f package-lock.json ] && [ ! -d node_modules ]; then npm ci --include=dev --prefer-offline; else npm install --include=dev --prefer-offline; fi
+  printf '%s' "$DEPENDENCY_FINGERPRINT" > node_modules/.sanmao-deps.sha256
 fi
 if [ ! -f .next/BUILD_ID ]; then npm run build; fi
 PORT="${SANMAO_PORT:-3210}"
