@@ -99,7 +99,7 @@ test("an enabled skill keeps the request on the tool round so the model can real
 test("the tool round hands the assistant turn back so thinking models accept the follow-up", () => {
   // deepseek 之类的思维链模型在带 tool_calls 的助手消息上要求回传 reasoning_content，
   // 否则后续请求会被服务商以 400 拒绝，用户只能看到一句占位答案。
-  assert.match(route, /const carriedAssistantFields = typeof message\?\.reasoning_content === 'string'/);
+  assert.match(route, /const carriedAssistantFields = typeof toolCallMessage\?\.reasoning_content === 'string'/);
   assert.match(route, /tool_calls: toolCalls, \.\.\.carriedAssistantFields \}, \.\.\.toolResults\]/);
   assert.match(route, /const carriedFollowupFields = typeof followupMessage\?\.reasoning_content === 'string'/);
   assert.match(route, /tool_calls: followupCalls, \.\.\.carriedFollowupFields \}/);

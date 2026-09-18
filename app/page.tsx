@@ -1178,6 +1178,16 @@ async function renderShareConversationImage(messages) {
     const blob = await new Promise((resolve, reject)=>canvas.toBlob((value)=>value ? resolve(value) : reject(new Error('分享长图导出失败')), 'image/png'));
     return { blob, width: canvas.width, height: canvas.height };
 }
+/** 历史里助手生成过的 Office/ZIP 文件只回传元数据，服务端才能在下一轮继续引用或打包。 */
+function historyArtifactFiles(message) {
+    if (!message || message.role !== 'assistant' || !Array.isArray(message.files)) return [];
+    return message.files.filter((file)=>file && typeof file.artifactId === 'string' && !file.content).slice(0, 8).map((file)=>({
+            name: file.name,
+            mimeType: file.mimeType,
+            artifactId: file.artifactId,
+            size: file.size
+        }));
+}
 async function downloadChatFile(file) {
     if (file.downloadUrl) {
         const response = await fetch(file.downloadUrl, { cache: 'no-store' });
@@ -8960,7 +8970,7 @@ export default function Page() {
                             ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
                             ...(file.artifactId ? { artifactId: file.artifactId } : {}),
                             size: file.size
-                        })) : []
+                        })) : historyArtifactFiles(item)
                 }));
             payloadMessages.push({
                 role: 'user',
@@ -9214,7 +9224,7 @@ export default function Page() {
                             ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
                             ...(file.artifactId ? { artifactId: file.artifactId } : {}),
                             size: file.size
-                        })) : []
+                        })) : historyArtifactFiles(m)
                 }));
             updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
             let streamedText = '';

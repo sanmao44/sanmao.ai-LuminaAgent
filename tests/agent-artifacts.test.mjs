@@ -102,3 +102,30 @@ test('文件交付意图在“1/好/可以”这种追问里也要保留，而�
   assert.match(route, /只要工具没有真正返回成功，就绝对不要说“已生成…文件”/);
   assert.match(route, /本轮是上文交付选项的确认/);
 });
+
+test('同轮“先生成再打包”会补一轮交付物工具，而不是把调用写成文本标记', () => {
+  assert.match(route, /const ARTIFACT_TOOL_MAX_ROUNDS = 2;/);
+  assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
+  assert.match(route, /const runArtifactToolCall = async \(call: any\): Promise<ChatMessage> => \{/);
+  assert.match(route, /toolResults\.push\(await runArtifactToolCall\(call\)\);/);
+  assert.match(route, /toolResults\.push\(await runArtifactToolCall\(call\)\);/);
+  assert.match(route, /if \(artifactGenerationRequest && artifactToolsOnly\.length && toolCalls\.some\(isArtifactToolCall\)/);
+  assert.match(route, /followupResults\.push\(await runArtifactToolCall\(followupCall\)\);/);
+  assert.match(route, /if \(followupText \|\| artifactFollowupText\) finalText = followupText \|\| artifactFollowupText;/);
+  assert.match(route, /必须真的调用 archive_generate 打包/);
+});
+
+test('模型把工具调用写成文本标记时，交付物请求会补一次原生工具轮', () => {
+  assert.match(route, /if \(!toolCalls\.length && artifactGenerationRequest && artifactToolsOnly\.length\) \{/);
+  assert.match(route, /不要把工具调用写成文本标记/);
+  assert.match(route, /toolCallMessage = message;/);
+  assert.match(route, /toolCallMessage = retryMessage;/);
+  assert.match(route, /content: toolCallMessage\?\.content \|\| null, tool_calls: toolCalls/);
+});
+
+test('历史里助手生成的文件回传 artifact 元数据，跨轮打包才拿得到 id', () => {
+  assert.match(page, /function historyArtifactFiles\(message\) \{/);
+  assert.match(page, /message\.role !== 'assistant'/);
+  const payloadMatches = page.match(/\)\) : historyArtifactFiles\((m|item)\)/g) || [];
+  assert.equal(payloadMatches.length, 2);
+});
