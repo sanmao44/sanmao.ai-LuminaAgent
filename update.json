@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.49/SANMAO.AI-0.7.49.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.49/SANMAO.AI-0.7.49.zip"
   ],
-  "sha256": "7716b262e5b8159c0101d4f1096506b241e43681e59b749de6d57aa8139cc0b8",
+  "sha256": "89744ac2d8b77361363f87aa69e692834ef033808650830b5ca9b097815621d1",
   "publishedAt": "2026-09-18T19:08:04+08:00",
   "notes": [
     "会话导航按钮改为居中显示，桌面端与窄屏布局下的定位和悬停反馈更一致。"
