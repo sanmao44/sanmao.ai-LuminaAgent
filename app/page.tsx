@@ -5677,7 +5677,7 @@ export default function Page() {
             if (frame) window.cancelAnimationFrame(frame);
         };
     }, [conversationItems, section]);
-    const conversationNavTickCount = Math.max(31, conversationItems.length * 6 + 1);
+    const conversationNavHeight = Math.min(300, Math.max(64, Math.max(0, conversationItems.length - 1) * 18 + 20));
     const shareGroups = useMemo(()=>buildShareConversationGroups(messages), [
         messages
     ]);
@@ -11303,8 +11303,9 @@ export default function Page() {
                                          ]
                                      }),
                                      conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
-                                        ref: conversationNavigatorRef,
-                                        className: `conversation-navigator ${conversationNavOpen ? 'is-open' : ''}`,
+                                         ref: conversationNavigatorRef,
+                                         className: `conversation-navigator ${conversationNavOpen ? 'is-open' : ''}`,
+                                         style: { '--conversation-nav-height': `${conversationNavHeight}px` },
                                         onPointerEnter: ()=>{},
                                         onPointerLeave: ()=>scheduleConversationNavClose(),
                                         onFocusCapture: openConversationNavigator,
@@ -11341,24 +11342,16 @@ export default function Page() {
                                                 children: /*#__PURE__*/ _jsx("div", {
                                                     className: "conversation-nav-track",
                                                     "aria-hidden": "true",
-                                                    children: [
-                                                        /*#__PURE__*/ _jsx("div", {
-                                                            className: "conversation-nav-minor-ticks",
-                                                            children: Array.from({ length: conversationNavTickCount }, (_, index)=>/*#__PURE__*/ _jsx("span", {
-                                                                style: { top: `${index / Math.max(1, conversationNavTickCount - 1) * 100}%` }
-                                                            }, index))
-                                                        }),
-                                                        conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {
-                                                            className: `${conversationNavHoverId === item.id ? 'is-active ' : ''}${conversationNavActiveId === item.id ? 'is-current' : ''}`.trim(),
-                                                            style: { top: `${conversationItems.length > 1 ? (item.index - 1) / (conversationItems.length - 1) * 100 : 50}%` },
-                                                            onPointerEnter: ()=>{
-                                                                setConversationNavHoverId(item.id);
-                                                                setConversationNavActiveId(item.id);
-                                                            },
-                                                            "aria-label": `第 ${item.index} 个提问`,
-                                                            title: item.text
-                                                        }, item.id))
-                                                    ]
+                                                    children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {
+                                                        className: `${conversationNavHoverId === item.id ? 'is-active ' : ''}${conversationNavActiveId === item.id ? 'is-current' : ''}`.trim(),
+                                                        style: { top: `${conversationItems.length > 1 ? (item.index - 1) / (conversationItems.length - 1) * 100 : 50}%` },
+                                                        onPointerEnter: ()=>{
+                                                            setConversationNavHoverId(item.id);
+                                                            setConversationNavActiveId(item.id);
+                                                        },
+                                                    "aria-label": `第 ${item.index} 个提问`,
+                                                        title: item.text
+                                                    }, item.id))
                                                 })
                                             }),
                                              conversationNavHoverId && !conversationNavOpen && /*#__PURE__*/ (()=>{
