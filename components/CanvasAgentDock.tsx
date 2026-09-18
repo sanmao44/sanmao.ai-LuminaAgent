@@ -100,6 +100,32 @@ const EMPTY_SAMPLES = [
   "帮我写一版更细的提示词",
   "把选中的节点按顺序连线并横向整理",
 ];
+const HELP_EXAMPLES = [
+  {
+    label: "分析整张画布",
+    description: "没有选中节点时也能使用",
+    prompt: "分析整张画布的现状，指出最值得继续的 3 个方向。",
+    minimumSelection: 0,
+  },
+  {
+    label: "整理并连线",
+    description: "按顶部卡片顺序处理",
+    prompt: "把选中的节点按当前卡片顺序依次连线，并横向整理；先给我看操作计划。",
+    minimumSelection: 2,
+  },
+  {
+    label: "命名分组",
+    description: "成组前先预览计划",
+    prompt: "把选中的节点归为一组，命名为参考素材；先给我看操作计划。",
+    minimumSelection: 2,
+  },
+  {
+    label: "复制为分支",
+    description: "保留节点与可复用关系",
+    prompt: "复制选中的节点或流程作为方案分支；先给我看操作计划。",
+    minimumSelection: 1,
+  },
+] as const;
 /* 联网方式在主对话页、节点参数面板和这里必须是同一套说法，别让同一件事有三个名字。 */
 const WEB_MODE_LABELS: Record<AgentWebMode, string> = {
   off: "关闭联网",
@@ -308,6 +334,7 @@ export default function CanvasAgentDock({
   const [webMode, setWebMode] = useState<AgentWebMode>("off");
   const [autoApply, setAutoApply] = useState(true);
   const [hydrated, setHydrated] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [skillQuery, setSkillQuery] = useState("");
   const [skillActive, setSkillActive] = useState(0);
@@ -392,8 +419,21 @@ export default function CanvasAgentDock({
     if (open) {
       jumpToBottom();
       setUnreadReply(false);
+    } else {
+      setHelpOpen(false);
     }
   }, [jumpToBottom, open]);
+
+  useEffect(() => {
+    if (!helpOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setHelpOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [helpOpen]);
 
   useEffect(() => {
     onBusyChange?.(busy);
@@ -840,6 +880,15 @@ export default function CanvasAgentDock({
       : item));
   }, []);
 
+  const useHelpExample = useCallback(
+    (prompt: string) => {
+      setInput(prompt);
+      setHelpOpen(false);
+      focusEditorEnd();
+    },
+    [focusEditorEnd],
+  );
+
   const cycleWebMode = useCallback(() => {
     setWebMode((value) => WEB_MODE_ORDER[(WEB_MODE_ORDER.indexOf(value) + 1) % WEB_MODE_ORDER.length]);
   }, []);
@@ -1084,6 +1133,19 @@ export default function CanvasAgentDock({
         </div>
         <div className="canvas-agent-dock-head-actions">
           <SkillManager disabled={busy} icon={<SkillIcon size={14} />} />
+          <button
+            type="button"
+            className={helpOpen ? "is-active" : ""}
+            onClick={() => setHelpOpen((value) => !value)}
+            title="Agent 使用指南"
+            aria-label="Agent 使用指南"
+            aria-expanded={helpOpen}
+            aria-controls="canvas-agent-dock-help"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4.5 5.5A2.5 2.5 0 0 1 7 3h4v15H7a2.5 2.5 0 0 0-2.5 2.5zM19.5 5.5A2.5 2.5 0 0 0 17 3h-4v15h4a2.5 2.5 0 0 1 2.5 2.5z" />
+            </svg>
+          </button>
           <button type="button" onClick={clearSession} title="新建对话" aria-label="新建对话">
             ＋
           </button>
@@ -1092,6 +1154,50 @@ export default function CanvasAgentDock({
           </button>
         </div>
       </header>
+      {helpOpen ? (
+        <section id="canvas-agent-dock-help" className="canvas-agent-dock-help" aria-label="Agent 使用指南">
+          <div className="canvas-agent-dock-help-head">
+            <div>
+              <strong>让 Agent 和画布一起工作</strong>
+              <small>从选中对象到执行结果，画布操作默认先经过你确认。</small>
+            </div>
+            <button type="button" onClick={() => setHelpOpen(false)} aria-label="关闭使用指南">×</button>
+          </div>
+          <ol className="canvas-agent-dock-help-steps">
+            <li><b>1</b><span><strong>选择对象</strong><small>选中节点后再提问；未选中时读取整张画布概况。</small></span></li>
+            <li><b>2</b><span><strong>说明目标</strong><small>输入 @1、@2 精确引用；拖动顶部卡片可调整处理顺序。</small></span></li>
+            <li><b>3</b><span><strong>确认执行</strong><small>操作计划确认后才落到画布，并合并为一次可撤销变更。</small></span></li>
+          </ol>
+          <div className="canvas-agent-dock-help-examples">
+            <b>点一个示例开始</b>
+            <div>
+              {HELP_EXAMPLES.map((example) => {
+                const disabled = selectedNodeTotal < example.minimumSelection;
+                const requirement = example.minimumSelection
+                  ? `至少选中 ${example.minimumSelection} 个节点`
+                  : example.description;
+                return (
+                  <button
+                    key={example.label}
+                    type="button"
+                    onClick={() => useHelpExample(example.prompt)}
+                    disabled={disabled}
+                    title={disabled ? requirement : `填入：${example.prompt}`}
+                  >
+                    <span>{example.label}</span>
+                    <small>{disabled ? requirement : example.description}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="canvas-agent-dock-help-notes">
+            <span><b>智能落画布</b> 只有明确说“保存、加入或放到画布”时才自动创建节点。</span>
+            <span><b>安全边界</b> Agent 不会自动删除画布内容。</span>
+            <span><kbd>Ctrl/⌘ K</kbd> 打开 Agent　<kbd>Esc</kbd> 停止生成或关闭指南</span>
+          </div>
+        </section>
+      ) : null}
       <div className="canvas-agent-dock-context" ref={contextRef}>
         {orderedChips.length ? (
           orderedChips.map((chip) => {

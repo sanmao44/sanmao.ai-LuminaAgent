@@ -920,8 +920,33 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-head-task:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 .canvas-agent-dock-head-actions{display:flex;align-items:center;gap:5px}
 .canvas-agent-dock-head-actions>button{width:26px;height:26px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text-2);font-size:12px;line-height:1}
-.canvas-agent-dock-head-actions>button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.canvas-agent-dock-head-actions>button:hover,.canvas-agent-dock-head-actions>button.is-active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.canvas-agent-dock-head-actions>button>svg{width:14px;height:14px;display:block;margin:auto;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .canvas-agent-dock-head-actions>button[data-tooltip]::after{left:auto;right:0;top:calc(100% + 8px);transform:none}
+.canvas-agent-dock-help{position:absolute;z-index:var(--canvas-z-local-overlay);left:10px;right:10px;top:62px;bottom:10px;display:grid;align-content:start;gap:10px;overflow:auto;padding:12px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:15px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 9%,var(--panel-2)),var(--panel-2));box-shadow:0 14px 34px rgba(0,0,0,.2),inset 0 1px 0 color-mix(in srgb,#fff 5%,transparent);scrollbar-width:thin}
+.canvas-agent-dock-help-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.canvas-agent-dock-help-head>div{display:grid;gap:3px;min-width:0}
+.canvas-agent-dock-help-head strong{color:var(--text);font-size:11px}
+.canvas-agent-dock-help-head small{color:var(--muted);font-size:9px;line-height:1.45}
+.canvas-agent-dock-help-head>button{width:24px;height:24px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--muted);font-size:15px;line-height:1}
+.canvas-agent-dock-help-head>button:hover{border-color:var(--accent);color:var(--accent-text)}
+.canvas-agent-dock-help-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0;padding:0;list-style:none}
+.canvas-agent-dock-help-steps li{display:flex;align-items:flex-start;gap:7px;min-width:0;padding:8px;border:1px solid var(--line);border-radius:11px;background:color-mix(in srgb,var(--panel) 72%,transparent)}
+.canvas-agent-dock-help-steps li>b{width:19px;height:19px;display:grid;place-items:center;flex:none;border-radius:7px;background:var(--accent-soft);color:var(--accent-text);font-size:8px}
+.canvas-agent-dock-help-steps span{display:grid;gap:3px;min-width:0}
+.canvas-agent-dock-help-steps strong{color:var(--text);font-size:9px}
+.canvas-agent-dock-help-steps small{color:var(--muted);font-size:8px;line-height:1.4}
+.canvas-agent-dock-help-examples{display:grid;gap:6px}
+.canvas-agent-dock-help-examples>b{color:var(--muted);font-size:8px;letter-spacing:.05em}
+.canvas-agent-dock-help-examples>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.canvas-agent-dock-help-examples button{display:grid;gap:3px;min-width:0;padding:8px 9px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text-2);text-align:left}
+.canvas-agent-dock-help-examples button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.canvas-agent-dock-help-examples button:disabled{opacity:.5;cursor:not-allowed}
+.canvas-agent-dock-help-examples button span{font-size:9px;font-weight:850}
+.canvas-agent-dock-help-examples button small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:8px}
+.canvas-agent-dock-help-notes{display:grid;gap:4px;padding-top:8px;border-top:1px solid var(--line);color:var(--muted);font-size:8px;line-height:1.45}
+.canvas-agent-dock-help-notes b{color:var(--text-2)}
+.canvas-agent-dock-help-notes kbd{padding:1px 5px;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:5px;background:var(--panel);color:var(--text-2);font:inherit;font-weight:850}
 .canvas-agent-dock-context{display:grid;grid-template-columns:repeat(auto-fill,minmax(136px,1fr));gap:5px;flex:none;max-height:96px;overflow:auto;padding:7px;border:1px solid var(--line);border-radius:13px;background:var(--panel-2);scrollbar-width:none}
 .canvas-agent-dock-context::-webkit-scrollbar{display:none}
 .canvas-agent-dock-context>small{grid-column:1/-1;color:var(--muted);font-size:9px;line-height:1.45}
@@ -1077,6 +1102,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 230px);width:min(880px,calc(100% - 512px))}
 @media(max-width:1280px){:root{--canvas-panel-width:min(430px,calc(100vw - 32px))}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 210px);width:min(820px,calc(100% - 472px))}}
 @media(max-width:1000px){.canvas-agent-dock{left:10px;right:10px;top:auto;bottom:10px;height:min(64vh,540px);width:auto}.canvas-agent-dock-rail{right:10px;top:auto;bottom:96px;transform:none}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:50%;width:calc(100% - 32px)}}
+@media(max-width:540px){.canvas-agent-dock-help-steps{grid-template-columns:1fr}.canvas-agent-dock-help-examples>div{grid-template-columns:1fr}}
 
 /* Node-first editor surface: the canvas remains the layout, each node owns
    its prompt, inputs, references, parameters and submit action. */

@@ -212,6 +212,24 @@ test("the dock reuses the shared skill manager so canvas chats install skills to
   assert.match(styles, /\.canvas-agent-dock-head-actions>button\[data-tooltip\]::after\{left:auto;right:0;top:calc\(100% \+ 8px\)/);
 });
 
+test("the dock guide explains the canvas workflow and inserts usable examples", () => {
+  assert.match(component, /const \[helpOpen, setHelpOpen\] = useState\(false\);/);
+  assert.match(component, /aria-label="Agent 使用指南"/);
+  assert.match(component, /id="canvas-agent-dock-help"/);
+  assert.ok(component.includes("选择对象"));
+  assert.ok(component.includes("输入 @1、@2 精确引用"));
+  assert.ok(component.includes("操作计划确认后才落到画布"));
+  assert.ok(component.includes("Agent 不会自动删除画布内容"));
+  assert.match(component, /HELP_EXAMPLES\.map\(\(example\) =>/);
+  assert.match(component, /const disabled = selectedNodeTotal < example\.minimumSelection/);
+  assert.match(component, /onClick=\{\(\) => useHelpExample\(example\.prompt\)\}/);
+  assert.match(component, /setInput\(prompt\);\s*setHelpOpen\(false\);\s*focusEditorEnd\(\);/);
+  assert.match(component, /window\.addEventListener\("keydown", closeOnEscape\)/);
+  assert.match(styles, /\.canvas-agent-dock-help\{/);
+  assert.match(styles, /\.canvas-agent-dock-help\{[^}]*position:absolute[^}]*z-index:var\(--canvas-z-local-overlay\)[^}]*top:62px[^}]*bottom:10px/);
+  assert.match(styles, /\.canvas-agent-dock-help-steps\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+});
+
 test("the collapsed rail yields to the expanded topbar and reads horizontally", () => {
   // Wide screens already expose the Agent button in the topbar; the floating rail is
   // only the entry point once the topbar is collapsed or the viewport is small.
