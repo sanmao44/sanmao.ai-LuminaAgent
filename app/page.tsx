@@ -1179,6 +1179,19 @@ async function renderShareConversationImage(messages) {
     return { blob, width: canvas.width, height: canvas.height };
 }
 async function downloadChatFile(file) {
+    if (file.downloadUrl) {
+        const response = await fetch(file.downloadUrl, { cache: 'no-store' });
+        if (!response.ok) throw new Error(response.status === 404 ? '文件已过期或被清理，请重新生成' : '文件下载失败');
+        const remoteUrl = URL.createObjectURL(await response.blob());
+        const remoteAnchor = document.createElement('a');
+        remoteAnchor.href = remoteUrl;
+        remoteAnchor.download = file.name || 'SANMAO-file';
+        document.body.appendChild(remoteAnchor);
+        remoteAnchor.click();
+        remoteAnchor.remove();
+        window.setTimeout(()=>URL.revokeObjectURL(remoteUrl), 1500);
+        return;
+    }
     const blob = file.encoding === 'base64' ? new Blob([
         Uint8Array.from(atob(file.content.replace(/\s/g, '')), (char)=>char.charCodeAt(0))
     ], {
@@ -4391,6 +4404,10 @@ function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify 
         })
     });
 }
+function chatFileTypeLabel(file) {
+    const match = String(file?.name || '').toLowerCase().match(/\.(docx|xlsx|pptx|zip)$/);
+    return match ? `${match[1].toUpperCase()} · ` : '';
+}
 function ChatFileList({ files, onDownload, onPreview, onRemove }) {
     if (!files.length) return null;
     return /*#__PURE__*/ _jsx("div", {
@@ -4414,6 +4431,7 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
                             }),
                             /*#__PURE__*/ _jsxs("small", {
                                 children: [
+                                    chatFileTypeLabel(file),
                                     file.mimeType.replace(/;.*$/, ''),
                                     " \xb7 ",
                                     formatFileSize(file.size)
@@ -8939,8 +8957,8 @@ export default function Page() {
                     files: item.id === latestUserId ? (item.files || []).map((file)=>({
                             name: file.name,
                             mimeType: file.mimeType,
-                            content: file.content,
-                            encoding: file.encoding,
+                            ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
+                            ...(file.artifactId ? { artifactId: file.artifactId } : {}),
                             size: file.size
                         })) : []
                 }));
@@ -8999,12 +9017,12 @@ export default function Page() {
                 if (images.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && typeof file.content === 'string').map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
-                    content: file.content,
-                    encoding: file.encoding === 'base64' ? 'base64' : 'utf8',
+                    ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
+                    ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completedMessages = (pendingChatMessagesRef.current.get(sessionId) || workingMessages).map((item)=>{
@@ -9193,8 +9211,8 @@ export default function Page() {
                     files: m.id === latestUserId ? (m.files || []).map((file)=>({
                             name: file.name,
                             mimeType: file.mimeType,
-                            content: file.content,
-                            encoding: file.encoding,
+                            ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
+                            ...(file.artifactId ? { artifactId: file.artifactId } : {}),
                             size: file.size
                         })) : []
                 }));
@@ -9260,12 +9278,12 @@ export default function Page() {
                 if (items.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && typeof file.content === 'string').map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
-                    content: file.content,
-                    encoding: file.encoding === 'base64' ? 'base64' : 'utf8',
+                    ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
+                    ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completed = [

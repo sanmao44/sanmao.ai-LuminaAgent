@@ -12,6 +12,7 @@ const compiled = ts.transpileModule(source, {
 const web = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 
 test('migrates legacy web preference and accepts explicit modes', () => {
+  assert.equal(typeof web.likelyArtifactGenerationRequest, 'function');
   assert.equal(web.resolveAgentWebMode('always'), 'always');
   assert.equal(web.resolveAgentWebMode('off'), 'off');
   assert.equal(web.resolveAgentWebMode('auto'), 'auto');
@@ -146,4 +147,28 @@ test('keeps text, file, tutorial and prompt-only requests out of image generatio
 test('keeps prompt-only requests out of the agent tool planner', () => {
   assert.equal(web.likelyAgentToolRequest('帮我根据这张图反推提示词', true), false);
   assert.equal(web.likelyAgentToolRequest('先写提示词，再生成一张海报', false), true);
+});
+
+
+test('recognizes Office and ZIP delivery requests without firing on ordinary chat', () => {
+  for (const input of [
+    '帮我生成一份 5 页的 SANMAO.AI 产品介绍 PPT',
+    '把这份项目方案做成 Word 文档',
+    '把下面这组销售数据整理成 Excel',
+    '生成一份季度总结报告',
+    '导出成 .docx 发我',
+    '把刚才生成的文件打包成 zip',
+    '把这些文件压缩一下',
+  ]) {
+    assert.equal(web.likelyArtifactGenerationRequest(input), true, input);
+  }
+  for (const input of [
+    '总结一下这篇文章讲了什么',
+    '这个表格怎么看',
+    '帮我压缩一下这张图片',
+    '今天天气怎么样',
+    '',
+  ]) {
+    assert.equal(web.likelyArtifactGenerationRequest(input), false, input);
+  }
 });

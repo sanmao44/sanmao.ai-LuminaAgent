@@ -1,0 +1,26 @@
+/** Artifact 子系统的集中上限，避免模型一次塞进超大内容把服务打爆。 */
+export const ARTIFACT_MAX_BYTES = 50 * 1024 * 1024;
+export const ARCHIVE_MAX_BYTES = 100 * 1024 * 1024;
+export const ARTIFACT_MAX_PER_TURN = 8;
+export const ARCHIVE_MAX_ENTRIES = 64;
+export const ARTIFACT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const ARTIFACT_ROOT_MAX_BYTES = 512 * 1024 * 1024;
+
+export const DOCUMENT_MAX_SECTIONS = 200;
+export const DOCUMENT_MAX_PARAGRAPHS_PER_SECTION = 300;
+export const DOCUMENT_MAX_BULLETS_PER_SECTION = 200;
+export const DOCUMENT_MAX_TABLE_ROWS = 500;
+export const DOCUMENT_MAX_TABLE_COLUMNS = 20;
+export const DOCUMENT_MAX_TEXT_CHARS = 8000;
+
+export const SPREADSHEET_MAX_SHEETS = 8;
+export const SPREADSHEET_MAX_COLUMNS = 60;
+export const SPREADSHEET_MAX_ROWS_PER_SHEET = 5000;
+export const SPREADSHEET_MAX_CELLS = 100_000;
+export const SPREADSHEET_MAX_CELL_CHARS = 2000;
+
+export const PRESENTATION_MAX_SLIDES = 60;
+export const PRESENTATION_MAX_BULLETS_PER_SLIDE = 6;
+export const PRESENTATION_MAX_TABLE_ROWS = 20;
+export const PRESENTATION_MAX_TABLE_COLUMNS = 8;
+export const PRESENTATION_MAX_TEXT_CHARS = 240;

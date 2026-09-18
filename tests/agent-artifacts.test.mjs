@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+const clientTypes = await readFile(new URL('../lib/agent-client.ts', import.meta.url), 'utf8');
+const historyTypes = await readFile(new URL('../lib/client-history.ts', import.meta.url), 'utf8');
+const downloadRoute = await readFile(new URL('../app/api/artifacts/[id]/route.ts', import.meta.url), 'utf8');
+
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  assert.notEqual(start, -1, `${name} should exist`);
+  const next = source.indexOf('\nfunction ', start + 1);
+  return source.slice(start, next === -1 ? source.length : next);
+}
+
+test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本', () => {
+  for (const tool of ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
+    assert.match(route, new RegExp(`name: '${tool}'`));
+  }
+  assert.match(route, /Word\/Excel\/PPT\/ZIP 必须用专用工具，不允许把 Office 或 ZIP 内容编码成 base64 塞进来/);
+  assert.match(route, /绝对不要把 \.docx\/\.xlsx\/\.pptx\/\.zip 的内容编码成 base64 交给 file_generate/);
+  assert.match(route, /当前不支持解析用户上传的 Word\/Excel\/PPT 内容/);
+});
+
+test('Office 工具按需下发，避免每次对话都带上工具 schema', () => {
+  assert.match(route, /likelyArtifactGenerationRequest/);
+  assert.match(route, /const artifactGenerationRequest = fileGenerationRequest/);
+  assert.match(route, /if \(isArtifactToolCall\(\{ function: \{ name \} \}\)\) return artifactGenerationRequest;/);
+});
+
+test('archive_generate 排在最后执行，并能带上本轮生成的文件', () => {
+  const sortIndex = route.indexOf('const executionCalls = [...toolCalls].sort');
+  assert.notEqual(sortIndex, -1);
+  const sortLine = route.slice(sortIndex, route.indexOf('\n', sortIndex));
+  assert.match(sortLine, /Number\(isArchiveToolCall\(left\)\) - Number\(isArchiveToolCall\(right\)\)/);
+  assert.match(route, /for \(const call of executionCalls\)/);
+  assert.match(route, /args\.includeGeneratedThisTurn === false/);
+  assert.match(route, /const collected = await collectArchiveEntries\(ids\);/);
+});
+
+test('Office/ZIP 结果只回传元数据，绝不带 content', () => {
+  const helper = functionBody(route, 'generatedFileFromArtifact');
+  assert.match(helper, /artifactId: artifact\.id/);
+  assert.match(helper, /downloadUrl: artifact\.downloadUrl/);
+  assert.doesNotMatch(helper, /content/);
+  assert.match(route, /Round 最多生成|本轮最多生成/);
+  assert.match(route, /ARTIFACT_MAX_PER_TURN/);
+});
+
+test('历史文件保留 artifact 元数据，且只给模型摘要', () => {
+  assert.match(route, /typeof file\.content === 'string' \|\| isValidArtifactId\(file\.artifactId\)/);
+  const normalizer = functionBody(route, 'normalizeHistoryFile');
+  assert.match(normalizer, /artifactId/);
+  assert.match(normalizer, /downloadUrl: artifactDownloadUrl\(artifactId\)/);
+  assert.match(route, /\[上一条回复已生成文件：/);
+});
+
+test('下载路由要求本机可信请求，并且只按 id 取件', () => {
+  assert.match(downloadRoute, /export const runtime = 'nodejs';/);
+  assert.match(downloadRoute, /isTrustedAppRequest\(request\)/);
+  assert.match(downloadRoute, /buildArtifactResponse\(String\(id \|\| ''\)\)/);
+  assert.doesNotMatch(downloadRoute, /searchParams\.get\('path'\)/);
+});
+
+test('前端：artifact 文件走服务端下载地址，失败给出提示，旧文件继续内联下载', () => {
+  const download = functionBody(page, 'downloadChatFile');
+  assert.match(download, /if \(file\.downloadUrl\)/);
+  assert.match(download, /fetch\(file\.downloadUrl, \{ cache: 'no-store' \}\)/);
+  assert.match(download, /文件已过期或被清理/);
+  assert.match(download, /file\.encoding === 'base64'/, '旧的内联文本文件下载逻辑必须保留');
+  assert.match(page, /chatFileTypeLabel/);
+});
+
+test('前端 payload 与历史都保留 artifactId，避免二次对话丢失文件', () => {
+  const filterMatches = page.match(/typeof file\.content === 'string' \|\| typeof file\.artifactId === 'string'/g) || [];
+  assert.equal(filterMatches.length, 2);
+  const payloadMatches = page.match(/\.\.\.\(file\.artifactId \? \{ artifactId: file\.artifactId \} : \{\}\),/g) || [];
+  assert.equal(payloadMatches.length, 2);
+});
+
+test('共享类型把 content 变成可选并新增 artifact 字段', () => {
+  assert.match(clientTypes, /export type AgentGeneratedFile = \{[\s\S]*content\?: string;/);
+  assert.match(clientTypes, /artifactId\?: string;/);
+  assert.match(clientTypes, /export type AgentClientFile = \{[\s\S]*content\?: string;/);
+  assert.match(historyTypes, /export type ChatFile = \{[\s\S]*content\?: string;/);
+  assert.match(historyTypes, /downloadUrl\?: string;/);
+});

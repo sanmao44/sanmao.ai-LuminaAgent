@@ -52,9 +52,12 @@ export type ChatFile = {
   id: string;
   name: string;
   mimeType: string;
-  content: string;
+  /** 文本文件内联 content；Office/ZIP artifact 只存元数据与下载地址。 */
+  content?: string;
   encoding?: 'utf8' | 'base64';
   size?: number;
+  artifactId?: string;
+  downloadUrl?: string;
 };
 
 export type ChatMessageVersion = {

@@ -283,6 +283,18 @@ export function likelyFileGenerationRequest(input: string) {
     || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
 }
 
+export function likelyArtifactGenerationRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  if (/\.(?:docx|xlsx|pptx|zip)\b/i.test(text)) return true;
+  if (/打包|压缩包|\bzip\b/i.test(text)) return true;
+  // “压缩”也可能是压缩图片/视频，只有不是媒体压缩时才当成打包意图。
+  if (/压缩/.test(text)
+    && !/(?:图片|照片|图像|视频|音频|画质|图).{0,6}压缩/.test(text)
+    && !/压缩.{0,6}(?:图片|照片|图像|视频|音频|画质)/.test(text)) return true;
+  return /(?:生成|制作|导出|下载|整理|输出|保存|创建|写|做|出一份|来一份).{0,40}(?:word|docx|文档|报告|方案|合同|简历|总结|汇报|论文|说明书|手册|excel|xlsx|表格|报表|台账|清单|数据表|ppt|pptx|幻灯片|演示文稿|演示|deck)/i.test(text);
+}
+
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();

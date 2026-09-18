@@ -8,9 +8,12 @@ export const AGENT_CONTEXT_MESSAGE_LIMIT = 12;
 export type AgentClientFile = {
   name: string;
   mimeType?: string;
-  content: string;
+  /** 旧的内联文本文件仍带 content；Office/ZIP artifact 只带元数据。 */
+  content?: string;
   encoding?: "utf8" | "base64";
   size?: number;
+  artifactId?: string;
+  downloadUrl?: string;
 };
 
 export type AgentClientMessage = {
@@ -42,9 +45,13 @@ export type AgentRequestPayload = {
 export type AgentGeneratedFile = {
   name: string;
   mimeType: string;
-  content: string;
-  encoding: "utf8" | "base64";
   size: number;
+  // 文本文件：继续内联 content
+  content?: string;
+  encoding?: "utf8" | "base64";
+  // 二进制 artifact：只回传元数据与下载地址，二进制不进 SSE / 历史
+  artifactId?: string;
+  downloadUrl?: string;
 };
 
 export type AgentResponse = {
