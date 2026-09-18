@@ -2874,6 +2874,33 @@ html[data-theme="dark"] .agent-page{
 .chat-history-open{padding:9px 39px 9px 12px;gap:5px}.chat-history-open span{display:-webkit-box;overflow:hidden;color:var(--agent-history-title);font-size:10px;font-weight:750;line-height:1.35;white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2}.chat-history-item.active .chat-history-open span{color:var(--text);font-weight:850}.chat-history-open small{color:var(--agent-history-time);font-size:8px;line-height:1.2}.chat-history-open small.busy{color:var(--accent-text)}
 .chat-history-delete{right:7px;width:26px;height:26px;display:grid;opacity:0;pointer-events:none;background:color-mix(in srgb,var(--agent-composer-bg) 70%,transparent);color:var(--agent-history-time)}.chat-history-item:hover .chat-history-delete,.chat-history-item.active .chat-history-delete{display:grid;opacity:1;pointer-events:auto}.chat-history-delete:hover{background:var(--danger-soft);color:var(--danger)}.chat-history-item.selecting .chat-history-open{padding-right:39px}.chat-history-item.selecting .chat-history-delete{display:none}.chat-history-empty{margin:3px;padding:13px 10px;color:var(--agent-history-time);border-color:var(--agent-composer-border);background:var(--agent-history-hover);font-size:8px;line-height:1.5}
 
+/* Sidebar hierarchy: conversations lead; creation follows; administration stays quiet. */
+.sidebar.expanded .new-chat{height:42px;border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 18%,var(--panel)),color-mix(in srgb,var(--accent) 9%,var(--panel)));color:var(--accent-text);font-size:12px;box-shadow:0 5px 16px color-mix(in srgb,var(--accent) 10%,transparent)}
+.sidebar.expanded .new-chat:hover{border-color:var(--accent);background:var(--accent-soft)}
+.sidebar.expanded .nav-caption{padding-top:12px;font-size:11px;letter-spacing:.02em}
+.sidebar.expanded .main-nav button{height:38px;font-size:12px}
+.sidebar.expanded.agent-context .chat-history-head>span{font-size:12px;font-weight:850}
+.sidebar.expanded.agent-context .chat-history-search input{font-size:11px}
+.sidebar.expanded.agent-context .chat-history-open{padding:8px 36px 8px 11px}
+.sidebar.expanded.agent-context .chat-history-open span{font-size:12px;line-height:1.35}
+.sidebar.expanded.agent-context .chat-history-open small{font-size:10px}
+.sidebar.expanded.agent-context .chat-history-item{min-height:54px}
+.sidebar.expanded.agent-context .chat-history-item.active{border-color:color-mix(in srgb,var(--accent) 25%,var(--agent-composer-border));box-shadow:inset 2px 0 0 var(--accent)}
+.chat-history-group{padding:8px 10px 3px;color:var(--agent-history-time);font-size:10px;font-weight:800;letter-spacing:.03em}
+.chat-history-group:first-child{padding-top:3px}
+.chat-history-batch{min-width:28px;font-size:13px;line-height:1}
+.chat-history-batch.active{font-size:10px}
+.nav-section-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:transparent;text-align:left}
+.nav-section-toggle:hover{color:var(--text)}
+.nav-section-toggle svg{transition:transform .16s ease}
+.nav-section-toggle.open svg{transform:rotate(180deg)}
+.sidebar-footer-actions{display:flex;align-items:center;gap:7px;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--line) 78%,transparent)}
+.sidebar-model-status{min-width:0;height:36px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--text-2);font-size:11px;font-weight:800;text-align:left}
+.sidebar-model-status:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.sidebar-model-status .status-dot{flex:none;margin:0}.sidebar-model-status>span:nth-child(2){min-width:0;flex:1}.sidebar-model-status svg{transform:rotate(-90deg);color:var(--muted)}
+.sidebar-support-button{width:36px;height:36px;flex:none;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--muted);font-size:14px;font-weight:900}
+.sidebar-support-button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+
 /* Composer: separate writing from tools so the panel reads as one workspace. */
 .agent-composer-wrap{padding:12px 28px 12px;background:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--bg) 72%,transparent) 28%,color-mix(in srgb,var(--bg) 96%,transparent) 58%,var(--bg) 100%)}
 .agent-composer{max-width:1040px;padding:14px 16px 12px;border-color:var(--agent-composer-border);border-radius:22px;background:var(--agent-composer-bg);box-shadow:var(--agent-composer-shadow),inset 0 1px 0 color-mix(in srgb,#fff 35%,transparent)}

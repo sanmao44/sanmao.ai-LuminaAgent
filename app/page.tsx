@@ -291,6 +291,16 @@ function formatTime(ts) {
         minute: '2-digit'
     });
 }
+function chatHistoryGroupLabel(ts) {
+    const date = new Date(ts);
+    const today = new Date();
+    const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const dayDifference = Math.round((todayDay.getTime() - dateDay.getTime()) / 86400000);
+    if (dayDifference <= 0) return '今天';
+    if (dayDifference === 1) return '昨天';
+    return '更早';
+}
 function nearest16(value) {
     return Math.max(256, Math.round(value / 16) * 16);
 }
@@ -5007,11 +5017,13 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
 }
 export default function Page() {
     const [section, setSectionState] = useState('agent');
+    const [managementNavOpen, setManagementNavOpen] = useState(false);
     const sectionRef = useRef('agent');
     const lastNonAngleSectionRef = useRef('agent');
     function setSection(next) {
         const previousSection = sectionRef.current;
         sectionRef.current = next;
+        if (next === 'models' || next === 'providers' || next === 'settings') setManagementNavOpen(true);
         if (next !== 'angle') {
             lastNonAngleSectionRef.current = next;
             try {
@@ -5693,6 +5705,7 @@ export default function Page() {
             const savedSection = localStorage.getItem(LAST_SECTION_STORAGE_KEY);
             if (isRememberedSection(savedSection)) {
                 if (savedSection === 'logs') setRecordTab('tasks');
+                if (savedSection === 'models' || savedSection === 'providers' || savedSection === 'settings') setManagementNavOpen(true);
                 lastNonAngleSectionRef.current = savedSection;
                 sectionRef.current = savedSection;
                 setSectionState(savedSection);
@@ -10349,7 +10362,9 @@ export default function Page() {
                                                 type: "button",
                                                 className: `chat-history-batch ${chatSelectionMode ? 'active' : ''}`,
                                                 onClick: toggleChatSelectionMode,
-                                                children: chatSelectionMode ? '取消选择' : '批量删除'
+                                                title: chatSelectionMode ? '退出批量管理' : '管理历史对话',
+                                                "aria-label": chatSelectionMode ? '退出批量管理' : '管理历史对话',
+                                                children: chatSelectionMode ? '完成' : '···'
                                             })
                                         ]
                                     })
@@ -10376,71 +10391,81 @@ export default function Page() {
                             }),
                             /*#__PURE__*/ _jsx("div", {
                                 className: "chat-history-list",
-                                children: filteredChatSessions.length ? filteredChatSessions.map((session)=>{
+                                children: filteredChatSessions.length ? filteredChatSessions.map((session, index)=>{
                                     const busy = busyChatIds.includes(session.id);
                                     const renaming = renamingChatId === session.id;
-                                    return /*#__PURE__*/ _jsxs("div", {
-                                        className: `chat-history-item ${activeChatId === session.id ? 'active' : ''} ${chatSelectionMode ? 'selecting' : ''} ${renaming ? 'renaming' : ''}`,
+                                    const historyGroup = chatHistoryGroupLabel(session.updatedAt);
+                                    const previousHistoryGroup = index > 0 ? chatHistoryGroupLabel(filteredChatSessions[index - 1].updatedAt) : '';
+                                    return /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
-                                            renaming ? /*#__PURE__*/ _jsx("input", {
-                                                className: "chat-history-rename",
-                                                value: renamingChatTitle,
-                                                maxLength: 48,
-                                                autoFocus: true,
-                                                onFocus: (event)=>event.currentTarget.select(),
-                                                onChange: (event)=>setRenamingChatTitle(event.target.value),
-                                                onBlur: ()=>void commitChatRename(session),
-                                                onKeyDown: (event)=>{
-                                                    if (event.key === 'Enter') {
-                                                        event.preventDefault();
-                                                        event.stopPropagation();
-                                                        void commitChatRename(session);
-                                                    } else if (event.key === 'Escape') {
-                                                        event.preventDefault();
-                                                        event.stopPropagation();
-                                                        cancelChatRename();
-                                                    }
-                                                }
-                                            }) : /*#__PURE__*/ _jsxs("button", {
-                                                className: "chat-history-open",
-                                                title: "单击打开，双击重命名",
-                                                onClick: ()=>chatSelectionMode ? toggleChatSessionSelection(session.id) : (openChatSession(session), closeSidebarOnMobile()),
-                                                onDoubleClick: (event)=>{
-                                                    event.preventDefault();
-                                                    beginChatRename(session);
-                                                },
+                                            historyGroup !== previousHistoryGroup && /*#__PURE__*/ _jsx("div", {
+                                                className: "chat-history-group",
+                                                children: historyGroup
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: `chat-history-item ${activeChatId === session.id ? 'active' : ''} ${chatSelectionMode ? 'selecting' : ''} ${renaming ? 'renaming' : ''}`,
                                                 children: [
-                                                    /*#__PURE__*/ _jsx("span", {
-                                                        children: session.title
+                                                    renaming ? /*#__PURE__*/ _jsx("input", {
+                                                        className: "chat-history-rename",
+                                                        value: renamingChatTitle,
+                                                        maxLength: 48,
+                                                        autoFocus: true,
+                                                        onFocus: (event)=>event.currentTarget.select(),
+                                                        onChange: (event)=>setRenamingChatTitle(event.target.value),
+                                                        onBlur: ()=>void commitChatRename(session),
+                                                        onKeyDown: (event)=>{
+                                                            if (event.key === 'Enter') {
+                                                                event.preventDefault();
+                                                                event.stopPropagation();
+                                                                void commitChatRename(session);
+                                                            } else if (event.key === 'Escape') {
+                                                                event.preventDefault();
+                                                                event.stopPropagation();
+                                                                cancelChatRename();
+                                                            }
+                                                        }
+                                                    }) : /*#__PURE__*/ _jsxs("button", {
+                                                        className: "chat-history-open",
+                                                        title: "单击打开，双击重命名",
+                                                        onClick: ()=>chatSelectionMode ? toggleChatSessionSelection(session.id) : (openChatSession(session), closeSidebarOnMobile()),
+                                                        onDoubleClick: (event)=>{
+                                                            event.preventDefault();
+                                                            beginChatRename(session);
+                                                        },
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: session.title
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                className: busy ? 'busy' : '',
+                                                                children: busy ? '正在回答…' : formatTime(session.updatedAt)
+                                                            })
+                                                        ]
                                                     }),
-                                                    /*#__PURE__*/ _jsx("small", {
-                                                        className: busy ? 'busy' : '',
-                                                        children: busy ? '正在回答…' : formatTime(session.updatedAt)
+                                                    chatSelectionMode && /*#__PURE__*/ _jsxs("label", {
+                                                        className: "chat-history-check",
+                                                        title: busy ? '正在回答，暂不能删除' : '选择这段对话',
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("input", {
+                                                                type: "checkbox",
+                                                                checked: selectedChatSessions.has(session.id),
+                                                                disabled: busy,
+                                                                onChange: ()=>toggleChatSessionSelection(session.id)
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("span", {})
+                                                        ]
+                                                    }),
+                                                    !chatSelectionMode && !renaming && /*#__PURE__*/ _jsx("button", {
+                                                        className: "chat-history-delete",
+                                                        title: busy ? '正在回答，暂不能删除' : '删除这段对话',
+                                                        disabled: busy,
+                                                        onClick: ()=>askDeleteChatSession(session),
+                                                        children: /*#__PURE__*/ _jsx(Icon, {
+                                                            name: "trash",
+                                                            size: 13
+                                                        })
                                                     })
                                                 ]
-                                            }),
-                                            chatSelectionMode && /*#__PURE__*/ _jsxs("label", {
-                                                className: "chat-history-check",
-                                                title: busy ? '正在回答，暂不能删除' : '选择这段对话',
-                                                children: [
-                                                    /*#__PURE__*/ _jsx("input", {
-                                                        type: "checkbox",
-                                                        checked: selectedChatSessions.has(session.id),
-                                                        disabled: busy,
-                                                        onChange: ()=>toggleChatSessionSelection(session.id)
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("span", {})
-                                                ]
-                                            }),
-                                            !chatSelectionMode && !renaming && /*#__PURE__*/ _jsx("button", {
-                                                className: "chat-history-delete",
-                                                title: busy ? '正在回答，暂不能删除' : '删除这段对话',
-                                                disabled: busy,
-                                                onClick: ()=>askDeleteChatSession(session),
-                                                children: /*#__PURE__*/ _jsx(Icon, {
-                                                    name: "trash",
-                                                    size: 13
-                                                })
                                             })
                                         ]
                                     }, session.id);
@@ -10484,7 +10509,7 @@ export default function Page() {
                     }),
                     /*#__PURE__*/ _jsx("div", {
                         className: "nav-caption image-tools-caption",
-                        children: "图片工具"
+                        children: "创作"
                     }),
                     /*#__PURE__*/ _jsxs("nav", {
                                 className: "main-nav image-tools-nav",
@@ -10532,11 +10557,24 @@ export default function Page() {
                             })
                         ]
                     }),
-                    /*#__PURE__*/ _jsx("div", {
-                        className: "nav-caption",
-                        children: "管理"
+                    /*#__PURE__*/ _jsxs("button", {
+                        type: "button",
+                        className: `nav-caption nav-section-toggle ${managementNavOpen ? 'open' : ''}`,
+                        onClick: ()=>setManagementNavOpen((open)=>!open),
+                        "aria-expanded": managementNavOpen,
+                        "aria-controls": "sidebar-management-nav",
+                        children: [
+                            /*#__PURE__*/ _jsx("span", {
+                                children: "管理与设置"
+                            }),
+                            /*#__PURE__*/ _jsx(Icon, {
+                                name: "chevron",
+                                size: 14
+                            })
+                        ]
                     }),
-                    /*#__PURE__*/ _jsxs("nav", {
+                    (!sidebarOpen || managementNavOpen) && /*#__PURE__*/ _jsxs("nav", {
+                        id: "sidebar-management-nav",
                         className: "main-nav management-nav",
                         children: [
                             /*#__PURE__*/ _jsxs("button", {
@@ -10598,62 +10636,43 @@ export default function Page() {
                     sidebarOpen && /*#__PURE__*/ _jsxs(_Fragment, {
                         children: [
                             /*#__PURE__*/ _jsxs("div", {
-                                className: "runtime-card",
+                                className: "sidebar-footer-actions",
                                 children: [
-                                    /*#__PURE__*/ _jsx("span", {
-                                        className: `status-dot ${availableChatModels.length || availableImageModels.length || availableVideoModels.length ? 'online' : ''}`
-                                    }),
-                                    /*#__PURE__*/ _jsxs("div", {
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        type: "button",
+                                        className: "sidebar-model-status",
+                                        onClick: ()=>{
+                                            setManagementNavOpen(true);
+                                            setSection('models');
+                                            closeSidebarOnMobile();
+                                        },
+                                        title: `${availableImageModels.length} 图片 · ${availableChatModels.length} 对话 · ${availableVideoModels.length} 视频`,
                                         children: [
-                                            /*#__PURE__*/ _jsxs("strong", {
+                                            /*#__PURE__*/ _jsx("span", {
+                                                className: `status-dot ${availableChatModels.length || availableImageModels.length || availableVideoModels.length ? 'online' : ''}`
+                                            }),
+                                            /*#__PURE__*/ _jsxs("span", {
                                                 children: [
-                                                    "共 ",
                                                     availableImageModels.length + availableChatModels.length + availableVideoModels.length,
-                                                    " 个可用模型"
+                                                    " 个模型"
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("small", {
-                                                children: [
-                                                    availableImageModels.length,
-                                                    " 图片 · ",
-                                                    availableChatModels.length,
-                                                    " 对话 · ",
-                                                    availableVideoModels.length,
-                                                    " 视频"
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsx("small", {
-                                                children: state.providers.length ? '模型来自你添加的接口服务' : '还没有连接模型服务'
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "chevron",
+                                                size: 13
                                             })
                                         ]
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                className: "author-contact support-card-launch",
-                                type: "button",
-                                onClick: ()=>{
-                                    setSupportTab('community');
-                                    setSupportOpen(true);
-                                },
-                                "aria-label": "打开交流与支持",
-                                children: [
-                                    /*#__PURE__*/ _jsx("span", {
-                                        className: "author-contact-mark",
-                                        children: /*#__PURE__*/ _jsx(Icon, {
-                                            name: "wechat",
-                                            size: 17
-                                        })
                                     }),
-                                    /*#__PURE__*/ _jsxs("span", {
-                                        children: [
-                                            /*#__PURE__*/ _jsx("strong", {
-                                                children: "交流与支持"
-                                            }),
-                                            /*#__PURE__*/ _jsx("small", {
-                                                children: "QQ群 1104660815 \xb7 赞赏码"
-                                            })
-                                        ]
+                                    /*#__PURE__*/ _jsx("button", {
+                                        className: "sidebar-support-button",
+                                        type: "button",
+                                        onClick: ()=>{
+                                            setSupportTab('community');
+                                            setSupportOpen(true);
+                                        },
+                                        title: "交流与支持",
+                                        "aria-label": "打开交流与支持",
+                                        children: "?"
                                     })
                                 ]
                             })
