@@ -114,6 +114,20 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 .conversation-nav-preview{top:clamp(10%,var(--conversation-nav-preview-top,50%),90%);transform:translateY(-50%) translateX(0);opacity:1;animation:none;transition:top .24s cubic-bezier(.22,1,.36,1),transform .2s cubic-bezier(.22,1,.36,1),border-color .16s ease,background-color .16s ease;will-change:top,transform}
 .conversation-nav-preview-copy{display:block;animation:conversation-nav-preview-copy-in .18s ease-out both}
 @keyframes conversation-nav-preview-copy-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+/* Codex-style dense conversation rail: minor ticks show the scroll rhythm while
+   the larger ticks keep the actual user-message targets discoverable. */
+.conversation-nav-track{position:absolute;inset:10px 0;pointer-events:none}
+.conversation-nav-minor-ticks{position:absolute;inset:0;pointer-events:none}
+.conversation-nav-minor-ticks span{position:absolute;left:50%;display:block;width:7px;height:2px;border-radius:999px;background:color-mix(in srgb,var(--text-2) 38%,transparent);transform:translate(-50%,-50%);transition:width .2s cubic-bezier(.22,1,.36,1),background-color .2s ease,opacity .2s ease}
+.conversation-nav-minor-ticks span:nth-child(5n){width:11px;background:color-mix(in srgb,var(--text-2) 58%,transparent)}
+.conversation-nav-rail:hover .conversation-nav-minor-ticks span,.conversation-nav-rail:focus-visible .conversation-nav-minor-ticks span{background:color-mix(in srgb,var(--accent) 48%,var(--text-2));opacity:.92}
+.conversation-nav-track>i{position:absolute;left:50%;display:block;width:14px;height:3px;border-radius:999px;background:var(--text-2);pointer-events:auto;transform:translate(-50%,-50%);transition:width .2s cubic-bezier(.22,1,.36,1),transform .2s cubic-bezier(.22,1,.36,1),background-color .2s ease,box-shadow .2s ease}
+.conversation-nav-track>i.is-active,.conversation-nav-track>i.is-current,.conversation-nav-track>i:hover{width:24px;background:var(--text);transform:translate(-50%,-50%) scaleY(1.45);box-shadow:0 0 9px color-mix(in srgb,var(--text) 42%,transparent),0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
+.conversation-nav-track>i.is-current:not(.is-active){background:var(--accent-text);box-shadow:0 0 8px color-mix(in srgb,var(--accent) 44%,transparent)}
+.conversation-nav-popover button.is-current{background:color-mix(in srgb,var(--accent) 9%,var(--panel));color:var(--accent-text);font-weight:800}
+.message.conversation-nav-highlight .message-body{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent),0 12px 30px color-mix(in srgb,var(--accent) 13%,transparent);transform:translateX(2px);transition:transform .24s cubic-bezier(.22,1,.36,1),box-shadow .24s ease,border-color .2s ease,background-color .2s ease}
+.message.conversation-nav-highlight .message-avatar{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 13%,transparent);transition:border-color .2s ease,box-shadow .24s ease}
 @media(max-width:780px){.conversation-navigator{right:8px;height:220px}.conversation-nav-popover{right:26px;width:min(300px,calc(100vw - 52px))}}
 
 /* Unified scrollbars: vertical scrolling is the default; horizontal scrolling is opt-in per component. */

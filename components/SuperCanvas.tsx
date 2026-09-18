@@ -9978,6 +9978,55 @@ export default function SuperCanvas() {
       const referenceIds = agentDockReferences.map((reference) => reference.nodeId || reference.id);
       let next = docRef.current;
       const created: CanvasNode[] = [];
+      let planChanged = false;
+
+      if (plan.kind === "selection-command" && plan.command) {
+        const command = plan.command;
+        const selected = targetIds;
+        if (command === "connect-selection") {
+          for (let index = 1; index < selected.length; index += 1) {
+            const result = connectCanvasNodesInDocument(
+              next,
+              selected[index - 1],
+              selected[index],
+              "right",
+              "left",
+              runtime,
+            );
+            if (!result.ok) {
+              notify(`无法按顺序连接选中节点：${result.reason || "输入关系不兼容"}`, "error");
+              return [];
+            }
+            planChanged = planChanged || result.document !== next;
+            next = result.document;
+          }
+        } else if (command === "distribute-horizontal" || command === "distribute-vertical") {
+          const result = distributeCanvasNodes(next, selected, command === "distribute-horizontal" ? "horizontal" : "vertical");
+          if (result.changed) {
+            planChanged = true;
+            next = result.document;
+          }
+        } else {
+          const alignment = {
+            "align-left": "left",
+            "align-center-x": "center-x",
+            "align-right": "right",
+            "align-top": "top",
+            "align-center-y": "center-y",
+            "align-bottom": "bottom",
+          }[command] as CanvasAlignment;
+          const result = alignCanvasNodes(next, selected, alignment);
+          if (result.changed) {
+            planChanged = true;
+            next = result.document;
+          }
+        }
+
+        if (!planChanged) {
+          notify("当前选中节点已经符合这个操作，无需重复应用", "error");
+          return [];
+        }
+      }
 
       if (validImages.length) {
         const origin = anchor
@@ -10028,7 +10077,7 @@ export default function SuperCanvas() {
         affectedIds = result.arrangedIds;
       }
 
-      if (next === docRef.current || (next.nodes === docRef.current.nodes && next.edges === docRef.current.edges)) {
+      if (!planChanged && (next === docRef.current || (next.nodes === docRef.current.nodes && next.edges === docRef.current.edges))) {
         notify("没有需要应用的画布变更", "error");
         return [];
       }
@@ -10043,11 +10092,11 @@ export default function SuperCanvas() {
           modelId: imageSettings.model,
           ...(anchor ? { parentId: anchor.id } : {}),
         });
-        fitView(affectedIds);
+        fitView(affectedIds.length ? affectedIds : targetIds);
       } else if (targetIds.length) {
         setSelectedIds(targetSet);
         setSelectedGroupId(null);
-        fitView(targetIds);
+        fitView(affectedIds);
       }
       notify(plan.kind === "batch-image-layout" ? `已完成 ${created.length} 张结果的一站式处理` : "已完成画布整理");
       return affectedIds.length ? affectedIds : targetIds;

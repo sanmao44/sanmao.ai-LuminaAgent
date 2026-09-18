@@ -5251,6 +5251,7 @@ export default function Page() {
     const chatScrollFramesRef = useRef({ first: 0, second: 0 });
     const [conversationNavOpen, setConversationNavOpen] = useState(false);
     const [conversationNavHoverId, setConversationNavHoverId] = useState(null);
+    const [conversationNavActiveId, setConversationNavActiveId] = useState(null);
     const conversationNavigatorRef = useRef(null);
     const conversationNavPreviewRef = useRef(null);
     const conversationNavPointerRatioRef = useRef(null);
@@ -5636,11 +5637,47 @@ export default function Page() {
         conversationNavCloseTimerRef.current = 0;
         conversationNavCloseAfterClickRef.current = false;
         setConversationNavHoverId(null);
+        setConversationNavActiveId(null);
         conversationNavPointerRatioRef.current = null;
         setConversationNavOpen(false);
     }, [
         conversationItems.length
     ]);
+    useEffect(()=>{
+        if (section !== 'agent' || conversationItems.length === 0) {
+            setConversationNavActiveId(null);
+            return;
+        }
+        let frame = 0;
+        const updateActiveConversation = ()=>{
+            if (frame) return;
+            frame = window.requestAnimationFrame(()=>{
+                frame = 0;
+                const targetY = Math.min(180, window.innerHeight * 0.28);
+                let closestId = conversationItems[0]?.id ?? null;
+                let closestDistance = Infinity;
+                for (const item of conversationItems){
+                    const element = document.getElementById(`message-${item.id}`);
+                    if (!element) continue;
+                    const distance = Math.abs(element.getBoundingClientRect().top - targetY);
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        closestId = item.id;
+                    }
+                }
+                setConversationNavActiveId((currentId)=>currentId === closestId ? currentId : closestId);
+            });
+        };
+        updateActiveConversation();
+        window.addEventListener('scroll', updateActiveConversation, { passive: true });
+        window.addEventListener('resize', updateActiveConversation);
+        return ()=>{
+            window.removeEventListener('scroll', updateActiveConversation);
+            window.removeEventListener('resize', updateActiveConversation);
+            if (frame) window.cancelAnimationFrame(frame);
+        };
+    }, [conversationItems, section]);
+    const conversationNavTickCount = Math.max(31, conversationItems.length * 6 + 1);
     const shareGroups = useMemo(()=>buildShareConversationGroups(messages), [
         messages
     ]);
@@ -10999,7 +11036,7 @@ export default function Page() {
                                                 children: [
                                             messages.map((message)=>/*#__PURE__*/ _jsxs("article", {
                                                     id: `message-${message.id}`,
-                                                    className: `message ${message.role} ${message.interrupted ? 'interrupted' : ''} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
+                                                    className: `message ${message.role} ${message.interrupted ? 'interrupted' : ''} ${conversationNavActiveId === message.id ? 'conversation-nav-highlight' : ''} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
                                                     children: [
                                                         /*#__PURE__*/ _jsx("div", {
                                                             className: "message-avatar",
@@ -11291,18 +11328,38 @@ export default function Page() {
                                                 },
                                                 onPointerMove: (event)=>{
                                                     const rail = event.currentTarget.getBoundingClientRect();
-                                                    const ratio = Math.min(1, Math.max(0, (event.clientY - rail.top) / rail.height));
+                                                    const trackHeight = Math.max(1, rail.height - 20);
+                                                    const ratio = Math.min(1, Math.max(0, (event.clientY - rail.top - 10) / trackHeight));
                                                     const item = conversationItems[Math.round(ratio * Math.max(0, conversationItems.length - 1))];
                                                     conversationNavPointerRatioRef.current = ratio;
                                                     conversationNavPreviewRef.current?.style.setProperty('--conversation-nav-preview-top', `${ratio * 100}%`);
-                                                    if (item) setConversationNavHoverId(item.id);
+                                                    if (item) {
+                                                        setConversationNavHoverId(item.id);
+                                                        setConversationNavActiveId(item.id);
+                                                    }
                                                 },
-                                                children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {
-                                                    className: conversationNavHoverId === item.id ? 'is-active' : '',
-                                                    onPointerEnter: ()=>setConversationNavHoverId(item.id),
-                                                    "aria-label": `第 ${item.index} 个提问`,
-                                                    title: item.text
-                                                }, item.id))
+                                                children: /*#__PURE__*/ _jsx("div", {
+                                                    className: "conversation-nav-track",
+                                                    "aria-hidden": "true",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("div", {
+                                                            className: "conversation-nav-minor-ticks",
+                                                            children: Array.from({ length: conversationNavTickCount }, (_, index)=>/*#__PURE__*/ _jsx("span", {
+                                                                style: { top: `${index / Math.max(1, conversationNavTickCount - 1) * 100}%` }
+                                                            }, index))
+                                                        }),
+                                                        conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {
+                                                            className: `${conversationNavHoverId === item.id ? 'is-active ' : ''}${conversationNavActiveId === item.id ? 'is-current' : ''}`.trim(),
+                                                            style: { top: `${conversationItems.length > 1 ? (item.index - 1) / (conversationItems.length - 1) * 100 : 50}%` },
+                                                            onPointerEnter: ()=>{
+                                                                setConversationNavHoverId(item.id);
+                                                                setConversationNavActiveId(item.id);
+                                                            },
+                                                            "aria-label": `第 ${item.index} 个提问`,
+                                                            title: item.text
+                                                        }, item.id))
+                                                    ]
+                                                })
                                             }),
                                              conversationNavHoverId && !conversationNavOpen && /*#__PURE__*/ (()=>{
                                                  const item = conversationItems.find((entry)=>entry.id === conversationNavHoverId);
@@ -11350,6 +11407,7 @@ export default function Page() {
                                                     }),
                                                     conversationItems.map((item)=>/*#__PURE__*/ _jsx("button", {
                                                             type: "button",
+                                                            className: conversationNavActiveId === item.id ? 'is-current' : '',
                                                             onClick: ()=>{
                                                                 jumpToMessage(item.id);
                                                                 scheduleConversationNavClose(true);

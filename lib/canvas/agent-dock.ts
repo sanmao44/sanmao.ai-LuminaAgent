@@ -44,11 +44,23 @@ export type CanvasAgentDockChip = {
 
 export type CanvasAgentDockLayout = "grid" | "horizontal" | "vertical";
 
+export type CanvasAgentDockSelectionCommand =
+  | "align-left"
+  | "align-center-x"
+  | "align-right"
+  | "align-top"
+  | "align-center-y"
+  | "align-bottom"
+  | "distribute-horizontal"
+  | "distribute-vertical"
+  | "connect-selection";
+
 export type CanvasAgentDockPlan = {
-  kind: "layout-selection" | "batch-image-layout";
+  kind: "layout-selection" | "batch-image-layout" | "selection-command";
   title: string;
   steps: string[];
-  layout: CanvasAgentDockLayout;
+  layout?: CanvasAgentDockLayout;
+  command?: CanvasAgentDockSelectionCommand;
   targetNodeIds?: string[];
   targetCount?: number;
   imageCount?: number;
@@ -268,6 +280,36 @@ function canvasAgentDockLayoutRequested(input: string) {
   );
 }
 
+function canvasAgentDockSelectionCommand(input: string): CanvasAgentDockSelectionCommand | null {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  if (/(?:左对齐|靠左|对齐到左)/.test(text)) return "align-left";
+  if (/(?:右对齐|靠右|对齐到右)/.test(text)) return "align-right";
+  if (/(?:水平居中|横向居中|左右居中)/.test(text)) return "align-center-x";
+  if (/(?:顶部对齐|顶端对齐|上对齐|靠上)/.test(text)) return "align-top";
+  if (/(?:底部对齐|底端对齐|下对齐|靠下)/.test(text)) return "align-bottom";
+  if (/(?:垂直居中|上下居中)/.test(text)) return "align-center-y";
+  if (/(?:水平|横向).{0,8}(?:均匀分布|平均分布|等距分布|分布)/.test(text)) return "distribute-horizontal";
+  if (/(?:垂直|纵向).{0,8}(?:均匀分布|平均分布|等距分布|分布)/.test(text)) return "distribute-vertical";
+  if (/(?:依次连线|依次连接|按顺序连线|按顺序连接|串联选中|连接选中)/.test(text)) return "connect-selection";
+  return null;
+}
+
+function canvasAgentDockSelectionCommandLabel(command: CanvasAgentDockSelectionCommand) {
+  const labels: Record<CanvasAgentDockSelectionCommand, string> = {
+    "align-left": "左对齐",
+    "align-center-x": "水平居中",
+    "align-right": "右对齐",
+    "align-top": "顶部对齐",
+    "align-center-y": "垂直居中",
+    "align-bottom": "底部对齐",
+    "distribute-horizontal": "水平等距分布",
+    "distribute-vertical": "垂直等距分布",
+    "connect-selection": "按当前顺序依次连线",
+  };
+  return labels[command];
+}
+
 /**
  * Turns an explicit canvas workflow into a reviewable plan. This is deliberately
  * explainable and local: the model still handles creative intent, while the
@@ -287,6 +329,27 @@ export function buildCanvasAgentDockPlan(input: string, options: {
   const targetNodeIds = options.targetNodeIds?.filter(Boolean);
   const hasSelection = Boolean(targetNodeIds?.length || options.selectedTotal);
   const direct = canvasAgentDockDirectExecution(text);
+  const selectionCommand = canvasAgentDockSelectionCommand(text);
+
+  if (selectionCommand && targetNodeIds?.length && targetNodeIds.length >= 2) {
+    const commandLabel = canvasAgentDockSelectionCommandLabel(selectionCommand);
+    return {
+      kind: "selection-command",
+      command: selectionCommand,
+      title: `${commandLabel} ${targetNodeIds.length} 个选中节点`,
+      steps: [
+        `仅处理当前选中的 ${targetNodeIds.length} 个节点`,
+        selectionCommand === "connect-selection"
+          ? "按画布当前选中顺序建立节点关系"
+          : `将节点${commandLabel}`,
+        "整组操作合并为一个可撤销的画布变更",
+      ],
+      sourcePrompt: text,
+      targetNodeIds,
+      targetCount: targetNodeIds.length,
+      requiresConfirmation: !direct,
+    };
+  }
 
   if (layoutRequested && (hasSelection || /(?:全部|所有|整张画布|整个画布)/.test(text))) {
     const layout = canvasAgentDockLayout(text);

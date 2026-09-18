@@ -108,6 +108,17 @@ test("canvas workflows expose a reviewable plan and apply through one canvas tra
   assert.match(styles, /\.canvas-agent-dock-plan\{/);
 });
 
+test("selection canvas commands stay reviewable and reuse safe model operations", () => {
+  assert.match(context, /CanvasAgentDockSelectionCommand/);
+  assert.match(context, /kind: "selection-command"/);
+  assert.match(context, /selectionCommand === "connect-selection"/);
+  assert.match(canvas, /plan\.kind === "selection-command" && plan\.command/);
+  assert.match(canvas, /connectCanvasNodesInDocument\(/);
+  assert.match(canvas, /distributeCanvasNodes\(/);
+  assert.match(canvas, /alignCanvasNodes\(/);
+  assert.match(canvas, /无法按顺序连接选中节点/);
+});
+
 test("canvas status and node summaries are capped before they reach the model", () => {
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_CHARS = 1600/);
   assert.match(context, /export const CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES = 12/);
