@@ -19,7 +19,7 @@ import JimengProviderCard from '@/components/JimengProviderCard';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import UpscaleConnectionGuide from '@/components/UpscaleConnectionGuide';
 import VideoRecordCard from '@/components/VideoRecordCard';
-import { getFavoriteModelIds, getLastModelCall, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
+import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
 import { normalizeReferenceRecords } from '@/lib/reference-images';
@@ -225,6 +225,18 @@ function generationLogSourceLabel(log) {
     if (log.mode === 'audio' || log.mediaKind === 'audio') return '音频生成';
     if (log.source === 'agent') return '助手生成';
     return log.mode === 'edit' ? '图片修改' : log.mode === 'upscale' ? '图片超分' : '工作台生成';
+}
+function generationLogTitle(log) {
+    const prompt = String(log.prompt || '').trim();
+    if (!prompt) return generationLogIsLlm(log) ? '未填写对话内容' : '未填写提示词';
+    const contextIndexes = [prompt.indexOf('[画布上下文]'), prompt.indexOf('【画布上下文】')].filter((index)=>index >= 0);
+    const contextIndex = contextIndexes.length ? Math.min(...contextIndexes) : -1;
+    const userPrompt = (contextIndex >= 0 ? prompt.slice(0, contextIndex) : prompt)
+        .replace(/\s+/g, ' ')
+        .replace(/^#{1,6}\s*/, '')
+        .replace(/\*\*|__|`/g, '')
+        .trim();
+    return userPrompt || (generationLogIsLlm(log) ? '画布上下文任务' : '未填写提示词');
 }
 function generationMediaKind(log) {
     if (log.taskKind === 'llm' || log.mode === 'llm') return 'llm';
@@ -1582,6 +1594,16 @@ function Icon({ name, size = 18 }) {
                 })
             ]
         }),
+        support: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-8l-6 4v-13a2 2 0 0 1 2-2Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M9 10h6M9 13h4"
+                })
+            ]
+        }),
         star: /*#__PURE__*/ _jsx("path", {
             d: "m12 3 2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8-5.3 2.8 1-6-4.4-4.2 6-.9L12 3Z"
         }),
@@ -1981,7 +2003,7 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
                                                 /*#__PURE__*/ _jsx("span", {
                                                     children: "质量"
                                                 }),
-                                                /*#__PURE__*/ _jsx(Dropdown, {
+                                             /*#__PURE__*/ _jsx(Dropdown, {
                                                     value: editor.quality,
                                                     options: qualityOptions,
                                                     onChange: (value)=>update({
@@ -5023,6 +5045,7 @@ export default function Page() {
     function setSection(next) {
         const previousSection = sectionRef.current;
         sectionRef.current = next;
+        if (previousSection === 'agent' && next !== 'agent') setSidebarOpen(false);
         if (next === 'models' || next === 'providers' || next === 'settings') setManagementNavOpen(true);
         if (next !== 'angle') {
             lastNonAngleSectionRef.current = next;
@@ -5141,11 +5164,12 @@ export default function Page() {
     const [modelSearch, setModelSearch] = useState('');
     const [modelProviderFilter, setModelProviderFilter] = useState('all');
     const [modelKindFilter, setModelKindFilter] = useState('all');
+    const [modelQuickFilter, setModelQuickFilter] = useState('all');
     const [expandedModelProviders, setExpandedModelProviders] = useState(new Set());
     const modelKindBusyRef = useRef(new Set());
     const [modelKindBusy, setModelKindBusy] = useState(new Set());
-    const modelGroupsInitializedRef = useRef(false);
     const [modelFavorites, setModelFavorites] = useState([]);
+    const [modelRecent, setModelRecent] = useState([]);
     const [messages, setMessages] = useState([]);
     const [chatSessions, setChatSessions] = useState([]);
     const [renamingChatId, setRenamingChatId] = useState(null);
@@ -5303,6 +5327,7 @@ export default function Page() {
     const [generateSettingsReady, setGenerateSettingsReady] = useState(false);
     const modelPreferencesRestoredRef = useRef(false);
     const [generateTasks, setGenerateTasks] = useState([]);
+    const [generateTaskView, setGenerateTaskView] = useState('current');
     const upscaleRecoveryRef = useRef(new Set());
     const [generateTasksReady, setGenerateTasksReady] = useState(false);
     const [generateClock, setGenerateClock] = useState(Date.now());
@@ -5332,6 +5357,7 @@ export default function Page() {
     const [logImageSpecs, setLogImageSpecs] = useState({});
     const [logFilter, setLogFilter] = useState('all');
     const [logSearch, setLogSearch] = useState('');
+    const [logFailureFirst, setLogFailureFirst] = useState(false);
     const [logPage, setLogPage] = useState(1);
     const [selectedLog, setSelectedLog] = useState(null);
     const [localDirectoryHandle, setLocalDirectoryHandle] = useState(null);
@@ -5457,18 +5483,39 @@ export default function Page() {
         modelProviderFilter,
         modelSearch
     ]);
-    const visibleModels = useMemo(()=>matchingModels.filter((model)=>modelKindFilter === 'all' || model.kind === modelKindFilter), [
+    const quickFilteredModels = useMemo(()=>matchingModels.filter((model)=>{
+            if (modelQuickFilter === 'enabled') return model.enabled && model.published;
+            if (modelQuickFilter === 'favorite') return modelFavorites.includes(model.id);
+            if (modelQuickFilter === 'recent') return modelRecent.includes(model.id);
+            return true;
+        }), [
         matchingModels,
+        modelQuickFilter,
+        modelFavorites,
+        modelRecent
+    ]);
+    const visibleModels = useMemo(()=>quickFilteredModels.filter((model)=>modelKindFilter === 'all' || model.kind === modelKindFilter), [
+        quickFilteredModels,
         modelKindFilter
     ]);
-    const modelKindCounts = useMemo(()=>({
+    const modelQuickCounts = useMemo(()=>({
             all: matchingModels.length,
-            chat: matchingModels.filter((model)=>model.kind === 'chat').length,
-            image: matchingModels.filter((model)=>model.kind === 'image').length,
-            video: matchingModels.filter((model)=>model.kind === 'video').length,
-            unknown: matchingModels.filter((model)=>model.kind === 'unknown').length
+            enabled: matchingModels.filter((model)=>model.enabled && model.published).length,
+            favorite: matchingModels.filter((model)=>modelFavorites.includes(model.id)).length,
+            recent: matchingModels.filter((model)=>modelRecent.includes(model.id)).length
         }), [
-        matchingModels
+        matchingModels,
+        modelFavorites,
+        modelRecent
+    ]);
+    const modelKindCounts = useMemo(()=>({
+            all: quickFilteredModels.length,
+            chat: quickFilteredModels.filter((model)=>model.kind === 'chat').length,
+            image: quickFilteredModels.filter((model)=>model.kind === 'image').length,
+            video: quickFilteredModels.filter((model)=>model.kind === 'video').length,
+            unknown: quickFilteredModels.filter((model)=>model.kind === 'unknown').length
+        }), [
+        quickFilteredModels
     ]);
     const modelProviderGroups = useMemo(()=>{
         const groups = new Map();
@@ -5483,15 +5530,10 @@ export default function Page() {
         visibleModels
     ]);
     useEffect(()=>{
-        if (section !== 'models' || modelGroupsInitializedRef.current || !modelProviderGroups.length) return;
-        setExpandedModelProviders(new Set(modelProviderGroups.map(([providerId])=>providerId)));
-        modelGroupsInitializedRef.current = true;
-    }, [
-        section,
-        modelProviderGroups
-    ]);
-    useEffect(()=>{
-        const sync = ()=>setModelFavorites(getFavoriteModelIds());
+        const sync = ()=>{
+            setModelFavorites(getFavoriteModelIds());
+            setModelRecent(getRecentModelIds());
+        };
         sync();
         return subscribeModelPreferences(sync);
     }, []);
@@ -5545,17 +5587,20 @@ export default function Page() {
     ]);
     const filteredGenerationLogs = useMemo(()=>{
         const query = logSearch.trim().toLowerCase();
-        return generationLogs.filter((log)=>{
+        const filtered = generationLogs.filter((log)=>{
             const matchesStatus = logFilter === 'all' || log.status === logFilter;
             const matchesMedia = historyMediaFilter === 'all' || generationMediaKind(log) === historyMediaFilter;
             const matchesQuery = !query || `${log.prompt || ''} ${log.modelName || ''} ${log.providerName || ''} ${generationLogSourceLabel(log)}`.toLowerCase().includes(query);
             return matchesStatus && matchesMedia && matchesQuery;
         });
+        if (!logFailureFirst) return filtered;
+        return [...filtered].sort((left, right)=>Number(right.status === 'error') - Number(left.status === 'error'));
     }, [
         generationLogs,
         logFilter,
         logSearch,
-        historyMediaFilter
+        historyMediaFilter,
+        logFailureFirst
     ]);
     const logTotalPages = Math.max(1, Math.ceil(filteredGenerationLogs.length / generationLogPageSize));
     const pagedGenerationLogs = useMemo(()=>filteredGenerationLogs.slice((Math.min(logPage, logTotalPages) - 1) * generationLogPageSize, Math.min(logPage, logTotalPages) * generationLogPageSize), [
@@ -5686,6 +5731,15 @@ export default function Page() {
     ]);
     const activeGenerateTasks = useMemo(()=>generateTasks.filter((task)=>task.status === 'pending'), [
         generateTasks
+    ]);
+    const visibleGenerateTasks = useMemo(()=>generateTaskView === 'all'
+        ? generateTasks
+        : activeGenerateTasks.length
+            ? activeGenerateTasks
+            : generateTasks.slice(0, 1), [
+        generateTasks,
+        activeGenerateTasks,
+        generateTaskView
     ]);
     const generateBusy = activeGenerateTasks.length > 0;
     const agentWebSearchAvailable = Boolean(state.settings.webSearchConfigured) || Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
@@ -10284,7 +10338,7 @@ export default function Page() {
             ]
         }, model.id);
     }
-    const imageModeActive = section === 'generate' || section === 'angle' || section === 'history' || section === 'logs';
+    const imageModeActive = section === 'generate' || section === 'angle';
     return /*#__PURE__*/ _jsxs("main", {
         className: `app-shell ${section === 'angle' ? 'angle-app-shell' : ''} ${section === 'video' ? 'video-app-shell' : ''} ${sidebarOpen ? 'sidebar-is-open' : ''}`,
         children: [
@@ -10663,7 +10717,7 @@ export default function Page() {
                                             })
                                         ]
                                     }),
-                                    /*#__PURE__*/ _jsx("button", {
+                                    /*#__PURE__*/ _jsxs("button", {
                                         className: "sidebar-support-button",
                                         type: "button",
                                         onClick: ()=>{
@@ -10672,7 +10726,15 @@ export default function Page() {
                                         },
                                         title: "交流与支持",
                                         "aria-label": "打开交流与支持",
-                                        children: "?"
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "support",
+                                                size: 15
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "支持"
+                                            })
+                                        ]
                                     })
                                 ]
                             })
@@ -10745,7 +10807,7 @@ export default function Page() {
                                     /*#__PURE__*/ _jsxs("button", {
                                         type: "button",
                                         className: imageModeActive ? 'active' : '',
-                                        "aria-current": imageModeActive ? 'page' : undefined,
+                                        "aria-pressed": imageModeActive,
                                         onClick: ()=>{
                                             setSection('generate');
                                             closeSidebarOnMobile();
@@ -10764,7 +10826,7 @@ export default function Page() {
                                         type: "button",
                                         className: section === 'video' ? 'active' : '',
                                         "aria-label": "视频工作台",
-                                        "aria-current": section === 'video' ? 'page' : undefined,
+                                        "aria-pressed": section === 'video',
                                         onClick: ()=>{
                                             setSection('video');
                                             closeSidebarOnMobile();
@@ -10801,7 +10863,7 @@ export default function Page() {
                                     /*#__PURE__*/ _jsxs("button", {
                                         type: "button",
                                         className: section === 'agent' ? 'active' : '',
-                                        "aria-current": section === 'agent' ? 'page' : undefined,
+                                        "aria-pressed": section === 'agent',
                                         onClick: ()=>{
                                             setSection('agent');
                                             closeSidebarOnMobile();
@@ -12612,25 +12674,45 @@ export default function Page() {
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         children: [
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: "本轮结果"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("small", {
-                                                                children: generateTasks.length ? `${generateTasks.length} 轮任务 · ${activeGenerateTasks.length} 个进行中 · 结果按轮次分组` : lastGenerateInfo || '生成后会自动保存到“创作记录”'
+                                                             /*#__PURE__*/ _jsx("span", {
+                                                                 children: activeGenerateTasks.length ? "当前创作" : "最近结果"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("small", {
+                                                                 children: generateTasks.length ? `${generateTasks.length} 轮任务 · ${activeGenerateTasks.length} 个进行中 · ${generateTaskView === 'all' ? '显示全部轮次' : activeGenerateTasks.length ? '优先显示进行中' : '显示最新一轮'}` : lastGenerateInfo || '生成后会自动保存到“创作记录”'
                                                             })
                                                         ]
                                                     }),
-                                                    (resultItems.length > 0 || generateTasks.length > 0) && /*#__PURE__*/ _jsxs("div", {
-                                                        className: "panel-title-actions",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("button", {
+                                                     (resultItems.length > 0 || generateTasks.length > 0) && /*#__PURE__*/ _jsxs("div", {
+                                                         className: "panel-title-actions",
+                                                         children: [
+                                                             generateTasks.length > 1 && /*#__PURE__*/ _jsxs("div", {
+                                                                 className: "generation-view-switch",
+                                                                 "aria-label": "结果轮次范围",
+                                                                 children: [
+                                                                     /*#__PURE__*/ _jsx("button", {
+                                                                         type: "button",
+                                                                         className: generateTaskView === 'current' ? 'active' : '',
+                                                                         "aria-pressed": generateTaskView === 'current',
+                                                                         onClick: ()=>setGenerateTaskView('current'),
+                                                                         children: activeGenerateTasks.length ? `正在创作 ${activeGenerateTasks.length}` : '最新一轮'
+                                                                     }),
+                                                                     /*#__PURE__*/ _jsx("button", {
+                                                                         type: "button",
+                                                                         className: generateTaskView === 'all' ? 'active' : '',
+                                                                         "aria-pressed": generateTaskView === 'all',
+                                                                         onClick: ()=>setGenerateTaskView('all'),
+                                                                         children: `全部 ${generateTasks.length}`
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("button", {
                                                                 className: "ghost-button",
                                                                 onClick: ()=>{
                                                                     setGenerateTasks([]);
                                                                     setResultItems([]);
                                                                     setLastGenerateInfo('');
                                                                 },
-                                                                children: "清空本轮"
+                                                                children: "清空结果"
                                                             }),
                                                             /*#__PURE__*/ _jsxs("button", {
                                                                 className: "ghost-button",
@@ -12647,10 +12729,12 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            generateTasks.length ? /*#__PURE__*/ _jsx("div", {
-                                                className: "generation-task-list",
-                                                children: generateTasks.map((task, index)=>/*#__PURE__*/ _jsxs("section", {
-                                                        className: `generation-task-group ${task.status} tone-${index % 6}`,
+                                             generateTasks.length ? /*#__PURE__*/ _jsx("div", {
+                                                 className: "generation-task-list",
+                                                 children: visibleGenerateTasks.map((task)=>{
+                                                     const taskIndex = generateTasks.findIndex((candidate)=>candidate.id === task.id);
+                                                     return /*#__PURE__*/ _jsxs("section", {
+                                                         className: `generation-task-group ${task.status} tone-${taskIndex % 6}`,
                                                         children: [
                                                             /*#__PURE__*/ _jsxs("header", {
                                                                 className: "generation-task-head",
@@ -12660,7 +12744,7 @@ export default function Page() {
                                                                             /*#__PURE__*/ _jsxs("b", {
                                                                                 children: [
                                                                                     "第 ",
-                                                                                    generateTasks.length - index,
+                                                                                     generateTasks.length - taskIndex,
                                                                                     " 轮"
                                                                                 ]
                                                                             }),
@@ -12796,8 +12880,9 @@ export default function Page() {
                                                                 ]
                                                             })
                                                         ]
-                                                    }, task.id))
-                                            }) : resultItems.length ? /*#__PURE__*/ _jsx("div", {
+                                                     }, task.id);
+                                                 })
+                                             }) : resultItems.length ? /*#__PURE__*/ _jsx("div", {
                                                 className: `result-grid ${resultItems.length === 1 ? 'featured-results' : ''}`,
                                                 children: resultItems.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                         item: item,
@@ -13284,8 +13369,8 @@ export default function Page() {
                                                             ['llm', 'LLM']
                                                         ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", disabled: value === 'audio', className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
                                                     }),
-                                                    /*#__PURE__*/ _jsx("div", {
-                                                        className: "filter-chips log-filters",
+                                                     /*#__PURE__*/ _jsx("div", {
+                                                         className: "filter-chips log-filters",
                                                         children: [
                                                             [
                                                                 'all',
@@ -13312,9 +13397,16 @@ export default function Page() {
                                                                         children: value === 'all' ? generationLogs.length : generationLogs.filter((log)=>log.status === value).length
                                                                     })
                                                                 ]
-                                                            }, value))
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("button", {
+                                                             }, value))
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("button", {
+                                                         type: "button",
+                                                         className: `ghost-button log-failure-first ${logFailureFirst ? 'active' : ''}`,
+                                                         "aria-pressed": logFailureFirst,
+                                                         onClick: ()=>setLogFailureFirst((value)=>!value),
+                                                         children: "失败优先"
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("button", {
                                                         className: "ghost-button log-refresh-button",
                                                         onClick: ()=>void refreshGenerationLogs(),
                                                         children: "刷新"
@@ -13559,7 +13651,7 @@ export default function Page() {
                                                                 className: "log-main",
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx("strong", {
-                                                                        children: log.prompt || '未填写提示词'
+                                                                        children: generationLogTitle(log)
                                                                     }),
                                                                     /*#__PURE__*/ _jsxs("small", {
                                                                         children: [
@@ -13576,7 +13668,7 @@ export default function Page() {
                                                                     }),
                                                                     log.error && /*#__PURE__*/ _jsx("small", {
                                                                         className: "log-error",
-                                                                        children: log.error
+                                                                        children: "生成失败 · 查看详情了解原因"
                                                                     })
                                                                 ]
                                                             }),
@@ -15061,9 +15153,28 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                          }))
                                                 ],
                                                 onChange: setModelProviderFilter,
-                                                className: "provider-filter"
-                                            }),
-                                            /*#__PURE__*/ _jsxs("div", {
+                                                 className: "provider-filter"
+                                             }),
+                                             /*#__PURE__*/ _jsx("div", {
+                                                 className: "model-quick-filters",
+                                                 "aria-label": "模型快捷筛选",
+                                                 children: [
+                                                     ['all', '全部'],
+                                                     ['enabled', '已启用'],
+                                                     ['favorite', '收藏'],
+                                                     ['recent', '最近使用']
+                                                 ].map(([value, label])=>/*#__PURE__*/ _jsxs("button", {
+                                                         type: "button",
+                                                         className: modelQuickFilter === value ? 'active' : '',
+                                                         "aria-pressed": modelQuickFilter === value,
+                                                         onClick: ()=>setModelQuickFilter(value),
+                                                         children: [
+                                                             label,
+                                                             /*#__PURE__*/ _jsx("b", { children: modelQuickCounts[value] })
+                                                         ]
+                                                     }, value))
+                                             }),
+                                             /*#__PURE__*/ _jsxs("div", {
                                                 className: "model-count",
                                                 children: [
                                                     "已选择 ",
@@ -15156,7 +15267,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                             }) : /*#__PURE__*/ _jsx("div", {
                                                 className: "model-groups",
                                                 children: modelProviderGroups.map(([providerId, group])=>{
-                                                    const expanded = Boolean(modelSearch.trim()) || expandedModelProviders.has(providerId);
+                                                    const expanded = Boolean(modelSearch.trim()) || modelQuickFilter !== 'all' || modelProviderFilter !== 'all' || expandedModelProviders.has(providerId);
                                                     return /*#__PURE__*/ _jsxs("section", {
                                                         className: `model-group ${expanded ? 'expanded' : ''}`,
                                                         children: [

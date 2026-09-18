@@ -815,6 +815,10 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 
 /* Continuous generation queue: keep every round visually separate while requests run in parallel. */
 .panel-title-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.generation-view-switch{display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+.generation-view-switch button{min-height:28px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:9px;font-weight:850;white-space:nowrap}
+.generation-view-switch button:hover{background:var(--panel);color:var(--text)}
+.generation-view-switch button.active{background:var(--accent-soft);color:var(--accent-text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent)}
 @media(min-width:701px){.result-panel .panel-title>div.panel-title-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;justify-content:flex-start}.result-panel .panel-title-actions .ghost-button{white-space:nowrap}}
 .generate-timing.active{color:var(--accent-text);font-weight:850}
 .generation-task-list{display:grid;gap:14px}
@@ -2898,7 +2902,7 @@ html[data-theme="dark"] .agent-page{
 .sidebar-model-status{min-width:0;height:36px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--text-2);font-size:11px;font-weight:800;text-align:left}
 .sidebar-model-status:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .sidebar-model-status .status-dot{flex:none;margin:0}.sidebar-model-status>span:nth-child(2){min-width:0;flex:1}.sidebar-model-status svg{transform:rotate(-90deg);color:var(--muted)}
-.sidebar-support-button{width:36px;height:36px;flex:none;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--muted);font-size:14px;font-weight:900}
+.sidebar-support-button{min-width:66px;height:36px;flex:none;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--muted);font-size:10px;font-weight:850}
 .sidebar-support-button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 
 /* Composer: separate writing from tools so the panel reads as one workspace. */
@@ -2985,6 +2989,8 @@ html[data-theme="dark"] .agent-page{
 .log-search-clear:hover{background:var(--danger-soft);color:var(--danger)}
 .logs-page .log-filters{margin-left:0;flex:none}
 .logs-page .log-filters button{height:30px}
+.log-failure-first{height:34px;white-space:nowrap}
+.log-failure-first.active{border-color:color-mix(in srgb,var(--danger) 45%,var(--line));background:var(--danger-soft);color:var(--danger)}
 .log-refresh-button{height:34px;flex:none;white-space:nowrap}
 .log-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:13px}
 .log-summary-card{position:relative;min-width:0;min-height:72px;display:grid;align-content:center;gap:3px;padding:10px 12px 10px 15px;border:1px solid var(--line);border-radius:13px;background:var(--panel);overflow:hidden}
@@ -3006,7 +3012,7 @@ html[data-theme="dark"] .agent-page{
 .logs-page .log-row:hover{border-color:color-mix(in srgb,var(--accent) 36%,var(--line));background:color-mix(in srgb,var(--accent) 4%,var(--panel));box-shadow:0 8px 22px color-mix(in srgb,var(--accent) 8%,transparent);transform:translateY(-1px)}
 .logs-page .log-preview,.logs-page .log-preview-placeholder{width:84px;height:64px;border-radius:10px}
 .logs-page .log-main{align-self:stretch;align-content:center;gap:5px}
-.logs-page .log-main strong{display:-webkit-box;white-space:normal;overflow:hidden;text-overflow:ellipsis;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.45}
+.logs-page .log-main strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;line-height:1.45}
 .logs-page .log-main small{line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .logs-page .log-source-line b{color:var(--text-2);font-weight:850}
 .logs-page .log-meta{max-width:430px;align-content:center;row-gap:6px;column-gap:5px;white-space:normal}
@@ -3333,7 +3339,7 @@ html[data-theme="dark"] .agent-page{
 .models-page .default-models .model-library-default-provider>div{min-width:0}
 .models-page .model-toolbar.surface{
   display:grid;
-  grid-template-columns:minmax(260px,1fr) minmax(190px,270px) auto;
+  grid-template-columns:minmax(240px,1fr) minmax(180px,250px) minmax(320px,auto) auto;
   gap:10px;
   padding:10px;
   margin-bottom:14px;
@@ -3343,6 +3349,11 @@ html[data-theme="dark"] .agent-page{
 }
 .models-page .model-toolbar .search-box{min-width:0;width:100%;height:42px}
 .models-page .model-toolbar .provider-filter{width:100%;min-width:0}
+.models-page .model-quick-filters{min-width:0;display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--line);border-radius:11px;background:var(--panel-2)}
+.models-page .model-quick-filters button{min-width:0;height:32px;display:flex;align-items:center;justify-content:center;gap:5px;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:9px;font-weight:850;white-space:nowrap}
+.models-page .model-quick-filters button:hover{background:var(--panel);color:var(--text)}
+.models-page .model-quick-filters button.active{background:var(--accent-soft);color:var(--accent-text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent)}
+.models-page .model-quick-filters button b{min-width:18px;padding:2px 4px;border-radius:999px;background:color-mix(in srgb,var(--text) 7%,transparent);font-size:8px;font-variant-numeric:tabular-nums}
 .models-page .model-count{
   display:flex;
   align-items:center;
@@ -3496,11 +3507,13 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
   gap:7px;
   padding-top:0;
 }
-.models-page .model-type-control .segmented{width:100%;height:28px}
-.models-page .model-type-control .segmented button{font-size:7px}
-.models-page .model-type-control>span{font-size:7px}
+.models-page .model-type-control .segmented{width:100%;height:32px}
+.models-page .model-type-control .segmented button{font-size:9px}
+.models-page .model-type-control>span{font-size:9px}
 .models-page .capability-tags{gap:4px;padding-top:0}
-.models-page .capability-tags span{padding:3px 6px;border-color:transparent}
+.models-page .capability-tags span{min-height:20px;display:inline-flex;align-items:center;padding:3px 7px;border-color:transparent;font-size:8px}
+@media(max-width:1180px){.models-page .model-toolbar.surface{grid-template-columns:minmax(220px,1fr) minmax(180px,240px) auto}.models-page .model-quick-filters{grid-column:1/-1;justify-self:start}.models-page .model-count{grid-column:3;grid-row:1}}
+@media(max-width:780px){.models-page .model-toolbar.surface{grid-template-columns:1fr}.models-page .model-quick-filters{grid-column:auto;width:100%;overflow-x:auto;justify-self:stretch}.models-page .model-count{grid-column:auto;grid-row:auto;border-left:0;border-top:1px solid var(--line)}}
 
 .manual-model-dialog{width:min(540px,100%);max-height:min(720px,calc(100vh - 36px));overflow:auto;background:var(--panel);border:1px solid var(--line-strong);border-radius:18px;padding:20px;box-shadow:var(--shadow)}
 .manual-model-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}
@@ -3609,7 +3622,7 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 }
 .models-page .model-type-control-label>span{
   color:var(--accent-text);
-  font-size:8px;
+  font-size:9px;
   font-weight:900;
 }
 .models-page .model-type-control-label>em,
@@ -3620,7 +3633,7 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
   padding:2px 6px;
   border:1px solid transparent;
   border-radius:999px;
-  font-size:7px;
+  font-size:8px;
   font-style:normal;
   font-weight:850;
 }
