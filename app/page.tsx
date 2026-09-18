@@ -37,7 +37,7 @@ import SkillIcon from '@/components/SkillIcon';
 import AgentSkillMenu from '@/components/AgentSkillMenu';
 import SkillInlineText from '@/components/SkillInlineText';
 import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
-import { normalizeConversationPersona } from '@/lib/agent-persona';
+import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
@@ -5224,6 +5224,7 @@ export default function Page() {
         return ()=>document.removeEventListener('pointerdown', closeMenu);
     }, [webSearchProviderMenuOpen]);
     const [chatHistorySearch, setChatHistorySearch] = useState('');
+    const [chatPersonaOnly, setChatPersonaOnly] = useState(false);
     const [agentFollowUp, setAgentFollowUp] = useState(null);
     const [agentMessageSelectionMode, setAgentMessageSelectionMode] = useState(false);
     const [selectedAgentMessages, setSelectedAgentMessages] = useState(new Set());
@@ -5693,13 +5694,21 @@ export default function Page() {
         selectedShareGroups
     ]);
     const allShareGroupsSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
+    const personaChatCount = useMemo(()=>chatSessions.filter((session)=>normalizeConversationPersona(session.persona)).length, [
+        chatSessions
+    ]);
     const filteredChatSessions = useMemo(()=>{
         const query = chatHistorySearch.trim().toLowerCase();
-        if (!query) return chatSessions;
-        return chatSessions.filter((session)=>`${session.title} ${session.messages.map((message)=>message.content).join(' ')}`.toLowerCase().includes(query));
+        return chatSessions.filter((session)=>{
+        const persona = normalizeConversationPersona(session.persona);
+        if (chatPersonaOnly && !persona) return false;
+        if (!query) return true;
+        return `${session.title} ${persona} ${session.messages.map((message)=>message.content).join(' ')}`.toLowerCase().includes(query);
+        });
     }, [
         chatSessions,
-        chatHistorySearch
+        chatHistorySearch,
+        chatPersonaOnly
     ]);
     const selectableChatSessionIds = useMemo(()=>chatSessions.filter((session)=>!busyChatIds.includes(session.id)).map((session)=>session.id), [
         chatSessions,
@@ -10444,6 +10453,14 @@ export default function Page() {
                                     }),
                                     /*#__PURE__*/ _jsxs("div", {
                                         children: [
+                                            personaChatCount > 0 && /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: `chat-history-persona-filter ${chatPersonaOnly ? 'active' : ''}`,
+                                                onClick: ()=>setChatPersonaOnly((prev)=>!prev),
+                                                title: chatPersonaOnly ? '显示全部历史对话' : `只看带角色设定的对话（${personaChatCount} 段）`,
+                                                "aria-pressed": chatPersonaOnly ? 'true' : 'false',
+                                                children: `角色 ${personaChatCount}`
+                                            }),
                                             /*#__PURE__*/ _jsx("b", {
                                                 children: chatSessions.length || ''
                                             }),
@@ -10485,6 +10502,7 @@ export default function Page() {
                                     const renaming = renamingChatId === session.id;
                                     const historyGroup = chatHistoryGroupLabel(session.updatedAt);
                                     const previousHistoryGroup = index > 0 ? chatHistoryGroupLabel(filteredChatSessions[index - 1].updatedAt) : '';
+                                    const personaLabel = personaBadgeLabel(session.persona);
                                     return /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
                                             historyGroup !== previousHistoryGroup && /*#__PURE__*/ _jsx("div", {
@@ -10515,7 +10533,7 @@ export default function Page() {
                                                         }
                                                     }) : /*#__PURE__*/ _jsxs("button", {
                                                         className: "chat-history-open",
-                                                        title: "单击打开，双击重命名",
+                                                        title: personaLabel ? `角色设定：${personaLabel}（单击打开，双击重命名）` : "单击打开，双击重命名",
                                                         onClick: ()=>chatSelectionMode ? toggleChatSessionSelection(session.id) : (openChatSession(session), closeSidebarOnMobile()),
                                                         onDoubleClick: (event)=>{
                                                             event.preventDefault();
@@ -10525,9 +10543,15 @@ export default function Page() {
                                                             /*#__PURE__*/ _jsx("span", {
                                                                 children: session.title
                                                             }),
-                                                            /*#__PURE__*/ _jsx("small", {
+                                                            /*#__PURE__*/ _jsxs("small", {
                                                                 className: busy ? 'busy' : '',
-                                                                children: busy ? '正在回答…' : formatTime(session.updatedAt)
+                                                                children: [
+                                                                personaLabel && /*#__PURE__*/ _jsx("em", {
+                                                                    className: "chat-history-persona-tag",
+                                                                    children: "角色"
+                                                                }),
+                                                                busy ? '正在回答…' : formatTime(session.updatedAt)
+                                                                ]
                                                             })
                                                         ]
                                                     }),
@@ -10560,7 +10584,7 @@ export default function Page() {
                                     }, session.id);
                                 }) : /*#__PURE__*/ _jsx("div", {
                                     className: "chat-history-empty",
-                                    children: chatSessions.length ? '没有找到匹配的历史对话' : '对话会自动保存在这里'
+                                    children: chatSessions.length ? chatPersonaOnly ? '没有找到带角色设定的对话' : '没有找到匹配的历史对话' : '对话会自动保存在这里'
                                 })
                             })
                         ]

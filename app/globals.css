@@ -2914,6 +2914,14 @@ html[data-theme="dark"] .agent-page{
 .chat-history-group:first-child{padding-top:3px}
 .chat-history-batch{min-width:28px;font-size:13px;line-height:1}
 .chat-history-batch.active{font-size:10px}
+.chat-history-persona-filter{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--agent-composer-border));border-radius:999px;background:var(--agent-history-hover);color:var(--agent-history-time);font-size:8px;font-weight:850;letter-spacing:.02em;transition:background-color .15s ease,border-color .15s ease,color .15s ease}
+.chat-history-persona-filter::before{content:'';width:5px;height:5px;border-radius:999px;background:var(--accent);opacity:.6}
+.chat-history-persona-filter:hover{border-color:color-mix(in srgb,var(--accent) 46%,var(--agent-composer-border));color:var(--accent-text)}
+.chat-history-persona-filter:hover::before{opacity:1}
+.chat-history-persona-filter.active{border-color:color-mix(in srgb,var(--accent) 55%,var(--agent-composer-border));background:var(--accent-soft-2);color:var(--accent-text)}
+.chat-history-persona-filter.active::before{opacity:1;box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 20%,transparent)}
+.chat-history-persona-tag{display:inline-flex;align-items:center;margin-right:5px;padding:1px 5px;border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-radius:999px;background:var(--accent-soft-2);color:var(--accent-text);font-size:.85em;font-style:normal;font-weight:850;letter-spacing:.02em;vertical-align:1px}
+.sidebar.expanded.agent-context .chat-history-persona-filter{height:22px;font-size:9px;padding:0 9px}
 .nav-section-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:transparent;text-align:left}
 .nav-section-toggle:hover{color:var(--text)}
 .nav-section-toggle svg{transition:transform .16s ease}
