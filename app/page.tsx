@@ -5249,7 +5249,6 @@ export default function Page() {
     const chatAutoFollowRef = useRef(false);
     const chatScrollAfterCommitRef = useRef(false);
     const chatScrollFramesRef = useRef({ first: 0, second: 0 });
-    const [conversationNavOpen, setConversationNavOpen] = useState(false);
     const [conversationNavHoverId, setConversationNavHoverId] = useState(null);
     const [conversationNavActiveId, setConversationNavActiveId] = useState(null);
     const conversationNavigatorRef = useRef(null);
@@ -5639,7 +5638,6 @@ export default function Page() {
         setConversationNavHoverId(null);
         setConversationNavActiveId(null);
         conversationNavPointerRatioRef.current = null;
-        setConversationNavOpen(false);
     }, [
         conversationItems.length
     ]);
@@ -6503,32 +6501,11 @@ export default function Page() {
         if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
         conversationNavCloseTimerRef.current = 0;
     }
-    function openConversationNavigator() {
-        clearConversationNavCloseTimer();
-        conversationNavCloseAfterClickRef.current = false;
-        setConversationNavOpen(true);
-    }
-    function scheduleConversationNavClose(afterClick = false) {
-        if (afterClick) conversationNavCloseAfterClickRef.current = true;
-        clearConversationNavCloseTimer();
-        conversationNavCloseTimerRef.current = window.setTimeout(()=>{
-            conversationNavCloseTimerRef.current = 0;
-            const navigator = conversationNavigatorRef.current;
-            const pointerInside = Boolean(navigator?.matches(':hover'));
-            const focusInside = Boolean(navigator && navigator.contains(document.activeElement));
-            if (pointerInside || (!conversationNavCloseAfterClickRef.current && focusInside)) return;
-            conversationNavCloseAfterClickRef.current = false;
-            setConversationNavHoverId(null);
-            conversationNavPointerRatioRef.current = null;
-            setConversationNavOpen(false);
-        }, 1000);
-    }
     function closeConversationNavigator() {
         clearConversationNavCloseTimer();
         conversationNavCloseAfterClickRef.current = false;
         setConversationNavHoverId(null);
         conversationNavPointerRatioRef.current = null;
-        setConversationNavOpen(false);
     }
     function setThemePreference(next) {
         setTheme(next);
@@ -11304,14 +11281,12 @@ export default function Page() {
                                      }),
                                      conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
                                          ref: conversationNavigatorRef,
-                                         className: `conversation-navigator ${conversationNavOpen ? 'is-open' : ''}`,
+                                          className: "conversation-navigator",
                                          style: { '--conversation-nav-height': `${conversationNavHeight}px` },
-                                        onPointerEnter: ()=>{},
-                                        onPointerLeave: ()=>scheduleConversationNavClose(),
-                                        onFocusCapture: openConversationNavigator,
+                                         onPointerLeave: closeConversationNavigator,
                                         onBlurCapture: (event)=>{
                                             const nextTarget = event.relatedTarget;
-                                            if (!(nextTarget instanceof Node && event.currentTarget.contains(nextTarget))) scheduleConversationNavClose();
+                                             if (!(nextTarget instanceof Node && event.currentTarget.contains(nextTarget))) closeConversationNavigator();
                                         },
                                         children: [
                                             /*#__PURE__*/ _jsx("div", {
@@ -11319,12 +11294,25 @@ export default function Page() {
                                                 role: "button",
                                                 tabIndex: 0,
                                                 "aria-label": "打开本次对话导航",
-                                                "aria-expanded": conversationNavOpen,
-                                                onClick: ()=>conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator(),
+                                                onPointerLeave: closeConversationNavigator,
+                                                onClick: (event)=>{
+                                                    const rail = event.currentTarget.getBoundingClientRect();
+                                                    const trackHeight = Math.max(1, rail.height - 20);
+                                                    const ratio = Math.min(1, Math.max(0, (event.clientY - rail.top - 10) / trackHeight));
+                                                    const item = conversationItems[Math.round(ratio * Math.max(0, conversationItems.length - 1))];
+                                                    if (!item) return;
+                                                    setConversationNavActiveId(item.id);
+                                                    jumpToMessage(item.id);
+                                                    closeConversationNavigator();
+                                                },
                                                 onKeyDown: (event)=>{
                                                     if (event.key === 'Enter' || event.key === ' ') {
                                                         event.preventDefault();
-                                                        conversationNavOpen ? scheduleConversationNavClose(true) : openConversationNavigator();
+                                                        const item = conversationItems.find((entry)=>entry.id === conversationNavHoverId) || conversationItems[0];
+                                                        if (!item) return;
+                                                        setConversationNavActiveId(item.id);
+                                                        jumpToMessage(item.id);
+                                                        closeConversationNavigator();
                                                     }
                                                 },
                                                 onPointerMove: (event)=>{
@@ -11354,7 +11342,7 @@ export default function Page() {
                                                     }, item.id))
                                                 })
                                             }),
-                                             conversationNavHoverId && !conversationNavOpen && /*#__PURE__*/ (()=>{
+                                             conversationNavHoverId && /*#__PURE__*/ (()=>{
                                                  const item = conversationItems.find((entry)=>entry.id === conversationNavHoverId);
                                                  const previewPosition = conversationNavPointerRatioRef.current === null
                                                      ? (item ? (item.index / (conversationItems.length + 1)) * 100 : 50)
@@ -11364,11 +11352,7 @@ export default function Page() {
                                                      className: "conversation-nav-preview",
                                                      ref: conversationNavPreviewRef,
                                                      style: { '--conversation-nav-preview-top': `${previewPosition}%` },
-                                                     onClick: ()=>{
-                                                         jumpToMessage(item.id);
-                                                         closeConversationNavigator();
-                                                     },
-                                                     title: item.text,
+                                                      title: item.text,
                                                      children: /*#__PURE__*/ _jsx("span", {
                                                          className: "conversation-nav-preview-copy",
                                                          children: item.text
@@ -11403,7 +11387,7 @@ export default function Page() {
                                                             className: conversationNavActiveId === item.id ? 'is-current' : '',
                                                             onClick: ()=>{
                                                                 jumpToMessage(item.id);
-                                                                scheduleConversationNavClose(true);
+                                                                closeConversationNavigator();
                                                             },
                                                             title: item.text,
                                                             children: item.text

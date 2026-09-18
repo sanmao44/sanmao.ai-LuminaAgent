@@ -124,6 +124,10 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 .conversation-nav-popover button.is-current{background:color-mix(in srgb,var(--accent) 9%,var(--panel));color:var(--accent-text);font-weight:800}
 .message.conversation-nav-highlight .message-body{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent),0 12px 30px color-mix(in srgb,var(--accent) 13%,transparent);transform:translateX(2px);transition:transform .24s cubic-bezier(.22,1,.36,1),box-shadow .24s ease,border-color .2s ease,background-color .2s ease}
 .message.conversation-nav-highlight .message-avatar{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 13%,transparent);transition:border-color .2s ease,box-shadow .24s ease}
+.conversation-nav-popover{display:none!important}
+.conversation-nav-preview{right:38px;width:min(320px,calc(100vw - 88px));max-height:min(132px,calc(100vh - 150px));padding:11px 14px;border-radius:14px;background:color-mix(in srgb,var(--panel) 97%,#111);border-color:color-mix(in srgb,var(--accent) 24%,var(--line-strong));box-shadow:0 14px 32px color-mix(in srgb,#000 24%,transparent),0 0 0 3px color-mix(in srgb,var(--accent) 6%,transparent);font-size:12px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word;transition:top .12s cubic-bezier(.22,1,.36,1),border-color .16s ease,background-color .16s ease,box-shadow .16s ease}
+.conversation-nav-preview:hover{border-color:var(--accent);background:var(--panel);box-shadow:0 16px 36px color-mix(in srgb,#000 28%,transparent),0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent)}
+.conversation-nav-preview-copy{display:block;max-width:100%;overflow:hidden;overflow-wrap:anywhere;word-break:break-word}
 @media(max-width:780px){.conversation-navigator{right:8px;height:220px}.conversation-nav-popover{right:26px;width:min(300px,calc(100vw - 52px))}}
 
 /* Unified scrollbars: vertical scrolling is the default; horizontal scrolling is opt-in per component. */
