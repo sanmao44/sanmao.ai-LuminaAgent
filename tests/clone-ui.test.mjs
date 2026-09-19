@@ -25,6 +25,9 @@ test("克隆弹窗是合法 TSX，并且具备三步式傻瓜操作", () => {
   assert.match(dialog, /预计最多 \{maxShots\} 次生图/);
   assert.match(dialog, /超出默认成本闸门/);
   assert.match(dialog, /capability="speech"/);
+  // 一个在线配音模型都没配时，弹窗要提示服务端有没有「本机离线配音」兜底。
+  assert.match(dialog, /fetch\("\/api\/health", \{ cache: "no-store" \}\)/);
+  assert.match(dialog, /本机离线配音，免费，音色偏机械/);
   assert.match(dialog, /list="clone-voice-presets"/);
   assert.match(dialog, /不贴脸、不换脸、不做数字人/);
 });
@@ -77,6 +80,8 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(route, /beginRuntimeRequest\('clone'\)/);
   assert.match(route, /void runCloneJob\(created\.task\.id\)/);
   assert.match(route, /指定的配音模型不可用/);
+  assert.match(route, /offlineSpeech: offlineSpeechSupported\(\)/);
+  assert.match(route, /capabilities\.offlineSpeech \? OFFLINE_SPEECH_LABEL : undefined/);
   assert.match(route, /没有可用的生图模型/);
   assert.match(jobRoute, /findCloneJob\(id\)/);
   assert.match(cancelRoute, /cancelRequested: true/);
@@ -87,6 +92,13 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
   assert.match(pipeline, /extractFrameFiles\(/);
   assert.match(pipeline, /probeMediaSeconds\(/);
   assert.match(pipeline, /synthesizeSpeech\(runtime, \{ text: shot\.line, voice: job\.options\.voice \}\)/);
+  // 在线 TTS 不可用时用系统自带语音合成，不把「调用不了」留给用户。
+  assert.match(pipeline, /synthesizeOfflineSpeech\(shot\.line, \{ voice: job\.options\.voice \}\)/);
+  assert.match(pipeline, /const voiceMode: 'model' \| 'offline' \| 'none' = speechRuntime \? 'model' : offlineSpeechSupported\(\) \? 'offline' : 'none';/);
+  assert.match(pipeline, /if \(voiceMode !== 'none'\) \{/);
+  // 配音落盘必须按服务商真实返回的容器（Gitee 会忽略 response_format 直接回 wav）。
+  assert.match(pipeline, /persistAudioBuffer\(audio\.buffer, audio\.contentType\)/);
+  assert.match(pipeline, /audioExtension\(audio\.contentType\)/);
   assert.match(pipeline, /generateShotImage\(imageRuntime, started, shot\)/);
   assert.match(pipeline, /createVideoGeneration\(\{ modelId: runtime\.model\.id, input, source: 'canvas' \}\)/);
   assert.match(pipeline, /没有视觉模型/);
@@ -103,7 +115,7 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
 });
 
 test("模型库把 TTS 归类为配音模型并给出配音能力", () => {
-  assert.match(storeLib, /if \(speechish \|\| inferredKind === 'audio'\) return \{ kind: 'audio', capabilities: \['speech'\] \};/);
+  assert.match(storeLib, /if \(isSpeechModelId\(id\) \|\| inferredKind === 'audio'\) return \{ kind: 'audio', capabilities: \['speech'\] \};/);
   assert.match(storeLib, /!\['chat', 'image', 'video', 'audio'\]\.includes\(selectedKind\)/);
   assert.match(match_types, /export type ModelKind = 'chat' \| 'image' \| 'video' \| 'audio' \| 'unknown';/);
   assert.match(match_types, /\| 'speech'/);

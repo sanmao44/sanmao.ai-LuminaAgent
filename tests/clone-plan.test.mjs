@@ -126,7 +126,23 @@ test('三条降级链都给出明确提示', () => {
 
   const full = plan.decideCapabilities({ hasVisionModel: true, hasSpeechModel: true, hasImageModel: true, hasVideoModel: true });
   assert.deepEqual(full.warnings, []);
-  assert.deepEqual(full.capabilities, { vision: true, speech: true, image: true, video: true });
+  assert.deepEqual(full.capabilities, { vision: true, speech: true, offlineSpeech: false, image: true, video: true });
+});
+
+test('没有在线配音模型时用本机离线配音兜底，有在线模型时不抢戏', () => {
+  const offline = plan.decideCapabilities({ hasVisionModel: true, hasSpeechModel: false, hasImageModel: true, hasVideoModel: true, offlineSpeech: true });
+  assert.equal(offline.capabilities.speech, true);
+  assert.equal(offline.capabilities.offlineSpeech, true);
+  assert.deepEqual(offline.warnings, ['没有在线的配音模型：本次改用「本机离线配音」出声（免费、离线、不需联网，音色偏机械）。']);
+
+  const online = plan.decideCapabilities({ hasVisionModel: true, hasSpeechModel: true, hasImageModel: true, hasVideoModel: true, offlineSpeech: true });
+  assert.equal(online.capabilities.offlineSpeech, false);
+  assert.deepEqual(online.warnings, []);
+
+  // 平台不支持（macOS / Linux）时维持原来的「无声 + 字幕」提示。
+  const unsupported = plan.decideCapabilities({ hasVisionModel: true, hasSpeechModel: false, hasImageModel: true, hasVideoModel: true, offlineSpeech: false });
+  assert.equal(unsupported.capabilities.offlineSpeech, false);
+  assert.match(unsupported.warnings.join(' '), /无声 \+ 字幕/);
 });
 
 test('弹窗能力预判与服务端判据一致', () => {

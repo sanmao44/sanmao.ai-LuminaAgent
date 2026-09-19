@@ -55,6 +55,8 @@ export type CloneCapabilities = {
   speech: boolean;
   image: boolean;
   video: boolean;
+  /** 没有在线 TTS 模型时，是否改用系统自带语音合成（Windows 的「本机离线配音」）。 */
+  offlineSpeech: boolean;
 };
 
 export type CloneReference = {

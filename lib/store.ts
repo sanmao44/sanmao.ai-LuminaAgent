@@ -5,7 +5,7 @@ import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, Provi
 import { selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
-import { inferModelKind, isImageEditOnlyModel, resolveModelKind } from './model-kind';
+import { inferModelKind, isImageEditOnlyModel, isNonConversationalModelId, isSpeechModelId, resolveModelKind } from './model-kind';
 import { buildManualModelRecord, mergeProviderModelRecords } from './model-registry';
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
@@ -161,8 +161,10 @@ function maskKey(secret: string) {
 export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSearchProtocol?: NativeSearchProtocol, hints: { displayName?: string; capabilities?: ModelCapability[] } = {}): { kind: ModelKind; capabilities: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection } {
   const id = rawId.toLowerCase();
   const inferredKind = inferModelKind({ rawId, displayName: hints.displayName, capabilities: hints.capabilities });
-  const speechish = /(?:^|[-_.])(?:tts|text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synth|synthesis|model)|speech|cosyvoice|elevenlabs|fish[-_ ]?speech|mimo[-_ ]?(?:tts|audio)|audio[-_ ]?speech)/.test(id) && !/(whisper|transcri|\basr\b|\bstt\b|realtime|audio[-_ ]?preview|speech[-_ ]?to[-_ ]?text)/.test(id);
-  if (speechish || inferredKind === 'audio') return { kind: 'audio', capabilities: ['speech'] };
+  // 与 inferModelKind 共用同一套判据，避免两边正则各自漂移导致「模型库认、弹窗不认」。
+  if (isSpeechModelId(id) || inferredKind === 'audio') return { kind: 'audio', capabilities: ['speech'] };
+  // 向量 / OCR / ASR 这一类即使命中 chatish（qwen3-embedding）也不能当对话模型。
+  if (isNonConversationalModelId(id)) return { kind: 'unknown', capabilities: [] };
   if (platform === 'agnes' || id.startsWith('agnes-')) {
     if (id.startsWith('agnes-video-')) return { kind: 'video', capabilities: ['video-generate', 'video-first-frame', 'video-reference', ...(id.includes('2.5') ? ['video-audio' as const] : [])] };
     if (id.startsWith('agnes-image-')) return { kind: 'image', capabilities: ['generate', 'edit', 'reference'] };

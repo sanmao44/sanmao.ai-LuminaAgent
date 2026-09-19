@@ -1,4 +1,5 @@
 import { isTrustedAppRequest } from '@/lib/auth';
+import { OFFLINE_SPEECH_LABEL, offlineSpeechSupported } from '@/lib/clone/offline-speech';
 import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
 import { runCloneJob } from '@/lib/clone/pipeline';
 import { cloneJobSummary, createCloneJob, listCloneJobs } from '@/lib/clone/store';
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
       hasSpeechModel: Boolean(speechRuntime),
       hasImageModel: Boolean(imageRuntime),
       hasVideoModel: Boolean(videoRuntime),
+      offlineSpeech: offlineSpeechSupported(),
     });
     if (!imageRuntime) {
       return Response.json({ error: '没有可用的生图模型：请先在「模型库」启用一个生图模型，再回来一键出片。' }, { status: 400 });
@@ -70,7 +72,8 @@ export async function POST(request: Request) {
         chat: chatRuntime?.model.displayName || '',
         image: imageRuntime.model.displayName,
         video: videoRuntime?.model.displayName,
-        speech: speechRuntime?.model.displayName,
+        // 走离线兜底时没有模型名，用标签顶上，用户在任务详情里能看出这次是本地合成的。
+        speech: speechRuntime?.model.displayName || (capabilities.offlineSpeech ? OFFLINE_SPEECH_LABEL : undefined),
       },
       // 只存展示名不够：管线要按用户选的模型执行，否则高级设置形同虚设。
       modelIds: {

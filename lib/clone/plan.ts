@@ -237,16 +237,21 @@ export function decideCapabilities(input: {
   hasSpeechModel: boolean;
   hasImageModel: boolean;
   hasVideoModel: boolean;
+  /** 本机离线配音可用（Windows 自带语音合成），只在没有在线 TTS 模型时才兜底。 */
+  offlineSpeech?: boolean;
 }): { capabilities: CloneCapabilities; warnings: string[] } {
+  const offlineSpeech = !input.hasSpeechModel && Boolean(input.offlineSpeech);
   const warnings: string[] = [];
   if (!input.hasVisionModel) warnings.push('没有声明「视觉」的对话模型：跳过画面拆解，按镜头数平均分配时长。');
-  if (!input.hasSpeechModel) warnings.push('没有可用的配音模型：本次成片为无声 + 字幕，时长按字数估算。');
+  if (!input.hasSpeechModel && !offlineSpeech) warnings.push('没有可用的配音模型：本次成片为无声 + 字幕，时长按字数估算。');
+  if (offlineSpeech) warnings.push('没有在线的配音模型：本次改用「本机离线配音」出声（免费、离线、不需联网，音色偏机械）。');
   if (!input.hasImageModel) warnings.push('没有可用的生图模型：无法重新生成画面，请先在模型库启用生图模型。');
   if (!input.hasVideoModel) warnings.push('没有可用的视频模型：镜头改用静态图，成片仍然可以导出。');
   return {
     capabilities: {
       vision: input.hasVisionModel,
-      speech: input.hasSpeechModel,
+      speech: input.hasSpeechModel || offlineSpeech,
+      offlineSpeech,
       image: input.hasImageModel,
       video: input.hasVideoModel,
     },

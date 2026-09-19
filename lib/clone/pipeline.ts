@@ -6,7 +6,8 @@
  *
  * 三条降级链都不静默：全部落到 job.warnings 或 shot.error。
  *   · 没有视觉模型  → 按镜头数平均分配时长（不读参考画面）
- *   · 没有 TTS 模型 → 无声成片，时长按字数估算
+ *   · 没有 TTS 模型 → 没有在线 TTS 时，Windows 用系统自带语音合成兜底（离线免费）；
+ *                    其它平台（含无法启动系统语音时）无声成片，时长按字数估算
  *   · 视频生成失败  → 该镜头退回静态图（时间轴仍按句长排布）
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -25,7 +26,8 @@ import { createVideoGeneration, refreshVideoTask } from '../video-task-service';
 import { askText, chatText, parseJsonBlock } from './chat';
 import { extractFrameFiles, probeMediaSeconds } from './media';
 import { alignShotsWithLines, buildTimeline, clampShotSeconds, frameSampleTimes, normalizeShots, round3, splitLines, type NormalizedShot } from './plan';
-import { resolveSpeechRuntime, synthesizeSpeech } from './speech';
+import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speech';
+import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
 import { findCloneJob, updateCloneJob } from './store';
 import type { CloneJob, CloneShot } from './types';
 
@@ -227,14 +229,19 @@ async function writeScript(runtime: ChatRuntime, job: CloneJob, shots: Normalize
   return { lines: slots.filter((line) => Boolean(line)), prompts };
 }
 
-async function voiceShot(runtime: SpeechRuntime, job: CloneJob, shot: CloneShot, index: number) {
-  const buffer = await synthesizeSpeech(runtime, { text: shot.line, voice: job.options.voice });
+async function voiceShot(runtime: SpeechRuntime | null, job: CloneJob, shot: CloneShot, index: number) {
+  // 在线 TTS 走服务商；一个在线模型都没有时，用系统自带语音合成（Windows）。
+  const audio = runtime
+    ? await synthesizeSpeech(runtime, { text: shot.line, voice: job.options.voice })
+    : await synthesizeOfflineSpeech(shot.line, { voice: job.options.voice });
   const directory = cloneJobDirectory(job.id);
   await mkdir(directory, { recursive: true });
-  const probeFile = path.join(directory, `voice-${index}.mp3`);
-  await writeFile(probeFile, buffer);
+  // 探测用的临时文件必须带对扩展名：Gitee 这类服务商忽略 response_format 直接回 wav，
+  // 写死 .mp3 会让 ffmpeg 的时长探测在部分平台上失败。
+  const probeFile = path.join(directory, `voice-${index}.${audioExtension(audio.contentType)}`);
+  await writeFile(probeFile, audio.buffer);
   const seconds = await probeMediaSeconds(probeFile).catch(() => null);
-  const stored = await persistAudioBuffer(buffer, 'audio/mpeg');
+  const stored = await persistAudioBuffer(audio.buffer, audio.contentType);
   return { url: stored.url, seconds: seconds && seconds > 0 ? round3(seconds) : undefined };
 }
 
@@ -342,8 +349,13 @@ async function executeCloneJob(id: string) {
     const speechRuntime = speechPick.value;
     if (!imageRuntime) throw new Error('没有可用的生图模型。请先在「模型库」启用一个生图模型再试。');
     const runtimeWarnings = [chatPick.warning, imagePick.warning, videoPick.warning, speechPick.warning].filter(Boolean);
-    if (started.capabilities.speech && !speechRuntime) {
+    // 没有在线 TTS 模型时：Windows 用系统自带语音合成兜底，其它平台维持「无声 + 字幕」。
+    const voiceMode: 'model' | 'offline' | 'none' = speechRuntime ? 'model' : offlineSpeechSupported() ? 'offline' : 'none';
+    if (voiceMode === 'none' && started.capabilities.speech) {
       runtimeWarnings.push('创建任务时的配音模型已不可用：本次成片为无声 + 字幕，时长按字数估算。');
+    }
+    if (voiceMode === 'offline' && !started.capabilities.offlineSpeech) {
+      runtimeWarnings.push('在线配音模型不可用：本次改用「本机离线配音」出声（免费、离线、不需联网，音色偏机械）。');
     }
     if (runtimeWarnings.length) await appendWarnings(id, runtimeWarnings);
 
@@ -375,8 +387,8 @@ async function executeCloneJob(id: string) {
       if (scriptWarnings.length) await appendWarnings(id, scriptWarnings);
     }
 
-    if (speechRuntime) {
-      await patchJob(id, { stage: 'voicing', progress: 0.3, message: '正在生成配音' });
+    if (voiceMode !== 'none') {
+      await patchJob(id, { stage: 'voicing', progress: 0.3, message: voiceMode === 'offline' ? '正在用本机语音合成配音' : '正在生成配音' });
       const failures: string[] = [];
       for (const [index, shot] of shots.entries()) {
         if (await isCancelled(id)) return await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });

@@ -86,7 +86,8 @@ export default function CanvasCloneDialog({
   const [aspect, setAspect] = useState<CloneOptions["aspect"]>("9:16");
   const [maxShots, setMaxShots] = useState(CLONE_DEFAULT_MAX_SHOTS);
   const [maxSeconds, setMaxSeconds] = useState(CLONE_DEFAULT_MAX_SECONDS);
-  const [voice, setVoice] = useState(VOICE_PRESETS[0]);
+  // 默认留空：OpenAI 系用默认音色，Gitee 这类没有 voice 参数的服务商也不至于被拒。
+  const [voice, setVoice] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selectedModels, setSelectedModels] = useState({ chat: "auto", image: "auto", video: "auto", speech: "auto" });
   const [costConfirmed, setCostConfirmed] = useState(false);
@@ -94,12 +95,23 @@ export default function CanvasCloneDialog({
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   const [job, setJob] = useState<CloneJob | null>(null);
+  // 服务端是否有本机离线配音兜底（Windows 才有）；只在没有在线配音模型时才用得上。
+  const [offlineSpeech, setOfflineSpeech] = useState(false);
   const [applied, setApplied] = useState(false);
 
   const flags = useMemo(() => cloneCapabilityFlags(models), [models]);
   const reference = references.find((item) => item.nodeId === referenceId) || null;
   const overBudget = maxShots > CLONE_DEFAULT_MAX_SHOTS || maxSeconds > CLONE_DEFAULT_MAX_SECONDS;
   const running = Boolean(job) && !TERMINAL_STAGES.includes(job!.stage);
+
+  useEffect(() => {
+    let disposed = false;
+    void fetch("/api/health", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => { if (!disposed && data?.offlineSpeech) setOfflineSpeech(true); })
+      .catch(() => undefined);
+    return () => { disposed = true; };
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -161,7 +173,7 @@ export default function CanvasCloneDialog({
             maxShots,
             maxSeconds,
             aspect,
-            voice: voice.trim() || VOICE_PRESETS[0],
+            voice: voice.trim(),
           },
           chatModel: selectedModels.chat,
           imageModel: selectedModels.image,
@@ -378,13 +390,17 @@ export default function CanvasCloneDialog({
                   {flags.hasSpeechModel && (
                     <label className="clone-field">
                       <span>配音音色</span>
-                      <input list="clone-voice-presets" value={voice} maxLength={40} onChange={(event) => setVoice(event.target.value)} />
+                      <input list="clone-voice-presets" value={voice} maxLength={40} placeholder="留空用服务商默认音色" onChange={(event) => setVoice(event.target.value)} />
                       <datalist id="clone-voice-presets">
                         {VOICE_PRESETS.map((preset) => <option key={preset} value={preset} />)}
                       </datalist>
                     </label>
                   )}
                 </div>
+
+                {!flags.hasSpeechModel && offlineSpeech && (
+                  <p className="clone-hint">没有在线配音模型：本次用系统自带语音合成出声（免费、离线、不用联网、零配置），音色偏机械；想要更好听，可在「模型库」把 TTS 模型类型改成「配音」并启用。</p>
+                )}
 
                 <div className="clone-cost">
                   <b>预计最多 {maxShots} 次生图{flags.hasVideoModel ? ` + ${maxShots} 次生视频` : ""}{flags.hasSpeechModel ? ` + ${maxShots} 次配音` : ""}</b>
@@ -395,7 +411,7 @@ export default function CanvasCloneDialog({
                   <span className={flags.hasVisionModel ? "ok" : "warn"}>画面拆解：{flags.hasVisionModel ? "可用" : "缺视觉对话模型（按镜头数平均分配时长）"}</span>
                   <span className={flags.hasImageModel ? "ok" : "warn"}>生图：{flags.hasImageModel ? "可用" : "缺少生图模型，无法开始"}</span>
                   <span className={flags.hasVideoModel ? "ok" : "warn"}>图生视频：{flags.hasVideoModel ? "可用" : "没有视频模型，镜头用静态图"}</span>
-                  <span className={flags.hasSpeechModel ? "ok" : "warn"}>配音：{flags.hasSpeechModel ? "可用" : "没有配音模型，成片无声 + 字幕"}</span>
+                  <span className={flags.hasSpeechModel || offlineSpeech ? "ok" : "warn"}>配音：{flags.hasSpeechModel ? "可用" : offlineSpeech ? "可用（本机离线配音，免费，音色偏机械）" : "没有配音模型，成片无声 + 字幕（到「模型库」把 TTS 模型类型改成「配音」并启用）"}</span>
                 </div>
 
                 {overBudget && (
@@ -420,7 +436,7 @@ export default function CanvasCloneDialog({
                       <ModelPicker models={models} capability="video-generate" value={selectedModels.video} onChange={(value) => setSelectedModels((current) => ({ ...current, video: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
                     </label>
                     <label><span>配音模型</span>
-                      <ModelPicker models={models} capability="speech" value={selectedModels.speech} onChange={(value) => setSelectedModels((current) => ({ ...current, speech: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
+                      <ModelPicker models={models} capability="speech" value={selectedModels.speech} onChange={(value) => setSelectedModels((current) => ({ ...current, speech: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} placeholder={flags.hasSpeechModel ? undefined : "未配置配音模型"} />
                     </label>
                   </div>
                 )}
