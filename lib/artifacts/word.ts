@@ -1,14 +1,19 @@
 import {
   AlignmentType,
+  BorderStyle,
   Document,
+  Footer,
   HeadingLevel,
   Packer,
+  PageNumber,
   Paragraph,
   ShadingType,
   Table,
   TableCell,
+  TableLayoutType,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
 } from 'docx';
 import {
@@ -20,12 +25,22 @@ import {
   DOCUMENT_MAX_TEXT_CHARS,
 } from './limits';
 import { forceArtifactExtension } from './sanitize';
+import { textWidthEm } from './typography';
 import { assertArchiveParts } from './validate';
 import type { ArtifactBuild } from './types';
 
 const A4_CONTENT_WIDTH_DXA = 9026;
-const BODY_FONT = '微软雅黑';
-const HEADER_FILL = 'EFF3F8';
+const BODY_FONT = { ascii: '微软雅黑', hAnsi: '微软雅黑', eastAsia: '微软雅黑' };
+const MONO_FONT = { ascii: 'Consolas', hAnsi: 'Consolas', eastAsia: '微软雅黑' };
+const COLOR_TITLE = '0F172A';
+const COLOR_SUBTITLE = '5B6472';
+const COLOR_HEADING = '1D4ED8';
+const COLOR_BODY = '1F2937';
+const COLOR_MUTED = '6B7280';
+const HEADER_FILL = 'DCE6F5';
+const ZEBRA_FILL = 'F4F7FB';
+const TABLE_BORDER = 'D7E0EC';
+const CELL_MARGIN = { top: 80, bottom: 80, left: 120, right: 120 };
 
 export type DocumentTableInput = {
   columns?: string[];
@@ -39,6 +54,41 @@ export type DocumentSectionInput = {
   bullets?: string[];
   tables?: DocumentTableInput[];
 };
+
+type LooseSectionInput = DocumentSectionInput & {
+  type?: string;
+  text?: string;
+  items?: string[];
+  columns?: string[];
+  rows?: Array<Array<string | number | null>>;
+};
+
+/**
+ * 模型可能给 Markdown 块形状（type/text/items）的章节，这里统一归一化成章节结构，
+ * 避免字段名不匹配时静默交付一份空文档。
+ */
+export function normalizeSections(raw: unknown): DocumentSectionInput[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item): DocumentSectionInput[] => {
+    if (!item || typeof item !== 'object') return [];
+    const section = item as LooseSectionInput;
+    const normalized: DocumentSectionInput = {
+      heading: typeof section.heading === 'string' ? section.heading : undefined,
+      level: section.level,
+      paragraphs: Array.isArray(section.paragraphs) ? section.paragraphs.map(String) : undefined,
+      bullets: Array.isArray(section.bullets) ? section.bullets.map(String) : undefined,
+      tables: Array.isArray(section.tables) ? section.tables : undefined,
+    };
+    const text = typeof section.text === 'string' ? section.text : '';
+    if (section.type === 'heading') {
+      return [{ ...normalized, heading: normalized.heading || text, level: normalized.level || 1 }];
+    }
+    if (text && !normalized.paragraphs) normalized.paragraphs = [text];
+    if (Array.isArray(section.items) && !normalized.bullets) normalized.bullets = section.items.map(String);
+    if (Array.isArray(section.rows) && !normalized.tables) normalized.tables = [{ columns: section.columns, rows: section.rows }];
+    return [normalized];
+  });
+}
 
 export type DocumentInput = {
   filename?: string;
@@ -177,16 +227,72 @@ function parseInline(text: string): InlineRun[] {
   return runs.length ? runs : [{ text }];
 }
 
-function textRuns(text: string, warnings: string[], context: string) {
-  const clipped = clipText(text, warnings, context);
-  return parseInline(clipped).map((run) => new TextRun({ text: run.text, bold: run.bold, font: run.code ? 'Consolas' : undefined, size: run.code ? 20 : undefined }));
-}
-
 function clipText(text: string, warnings: string[], context: string) {
   const value = String(text ?? '');
   if (value.length <= DOCUMENT_MAX_TEXT_CHARS) return value;
   warnings.push(`${context}内容过长，已截断到 ${DOCUMENT_MAX_TEXT_CHARS} 字`);
   return value.slice(0, DOCUMENT_MAX_TEXT_CHARS);
+}
+
+function textRuns(text: string, warnings: string[], context: string) {
+  const clipped = clipText(text, warnings, context);
+  return parseInline(clipped).map((run) => new TextRun({
+    text: run.text,
+    bold: run.bold,
+    font: run.code ? MONO_FONT : undefined,
+    size: run.code ? 19 : undefined,
+    color: run.code ? 'B91C5C' : undefined,
+  }));
+}
+
+function cellRuns(text: string, warnings: string[], context: string, bold = false) {
+  const clipped = clipText(text, warnings, context);
+  return parseInline(clipped).map((run) => new TextRun({
+    text: run.text,
+    bold: bold || run.bold,
+    font: run.code ? MONO_FONT : undefined,
+  }));
+}
+
+/** 单元格左右内边距合计（dxa）；测量列宽时必须算进去，否则长表头会被迫折行。 */
+const CELL_MARGIN_DXA = CELL_MARGIN.left + CELL_MARGIN.right;
+/** 表格正文字号：21 半磅 = 10.5pt。 */
+const TABLE_FONT_HALF_POINTS = 21;
+/**
+ * 该字号下一个全角字符的宽度（dxa），用来把 em 宽度换算成版面宽度。
+ * 乘 1.12 是实测放量：Word/WPS 实际渲染的字宽比“字号 = 全角字宽”略宽。
+ */
+const TABLE_EM_DXA = (TABLE_FONT_HALF_POINTS / 2 / 72) * 1440 * 1.12;
+
+/**
+ * 表格列宽：先给每列留出“放下最长内容 + 内边距”的最小宽度，再把剩余宽度按内容权重分配，
+ * 这样内容放得下时所有单元格都是单行；放不下才等比收缩。总和严格等于正文宽度，永不出框。
+ */
+export function distributeTableWidths(matrix: string[][], columnCount: number) {
+  const floor = Math.floor(A4_CONTENT_WIDTH_DXA * 0.078);
+  const longestOf = (index: number) => matrix.reduce((max, row) => Math.max(max, textWidthEm(row[index] ?? '')), 0);
+  const needs = Array.from({ length: columnCount }, (_, index) => (
+    Math.max(floor, Math.round(longestOf(index) * TABLE_EM_DXA) + CELL_MARGIN_DXA)
+  ));
+  const totalNeed = needs.reduce((sum, value) => sum + value, 0) || columnCount;
+  const weights = Array.from({ length: columnCount }, (_, index) => Math.max(4, Math.min(20, longestOf(index) + 0.6)));
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0) || columnCount;
+  let widths: number[];
+  if (totalNeed <= A4_CONTENT_WIDTH_DXA) {
+    widths = needs.map((need, index) => need + ((A4_CONTENT_WIDTH_DXA - totalNeed) * weights[index]) / totalWeight);
+  } else {
+    // 放不下时只压缩“下限以上的部分”，任何一列都不会被压到放不下一个字。
+    const surplus = totalNeed - A4_CONTENT_WIDTH_DXA;
+    const flexible = needs.reduce((sum, value) => sum + Math.max(0, value - floor), 0);
+    widths = needs.map((need) => (flexible ? need - (surplus * Math.max(0, need - floor)) / flexible : need));
+  }
+  const rounded = widths.map((value) => Math.max(1, Math.round(value)));
+  const drift = A4_CONTENT_WIDTH_DXA - rounded.reduce((sum, value) => sum + value, 0);
+  if (drift) {
+    const widest = rounded.indexOf(Math.max(...rounded));
+    rounded[widest] = Math.max(1, rounded[widest] + drift);
+  }
+  return rounded;
 }
 
 function buildTable(spec: DocumentTableInput, warnings: string[]): Table {
@@ -196,27 +302,48 @@ function buildTable(spec: DocumentTableInput, warnings: string[]): Table {
   );
   const rows = spec.rows.slice(0, DOCUMENT_MAX_TABLE_ROWS);
   if (spec.rows.length > DOCUMENT_MAX_TABLE_ROWS) warnings.push(`表格超过 ${DOCUMENT_MAX_TABLE_ROWS} 行，已截断`);
-  const columnWidth = Math.floor(A4_CONTENT_WIDTH_DXA / maxColumns);
+  if (maxColumns > 8) warnings.push('表格列数较多，建议拆分以免过于拥挤');
+
+  const headerTexts = (spec.columns || []).slice(0, maxColumns).map((column) => String(column ?? '').trim() || ' ');
+  const bodyTexts = rows.map((row) => Array.from({ length: maxColumns }, (_, index) => String(row[index] ?? '')));
+  const widths = distributeTableWidths([headerTexts, ...bodyTexts], maxColumns);
+
+  const cells = (texts: string[], options: { header?: boolean; zebra?: boolean }) => texts.map((text, index) => new TableCell({
+    width: { size: widths[index], type: WidthType.DXA },
+    shading: options.header
+      ? { type: ShadingType.CLEAR, fill: HEADER_FILL }
+      : options.zebra ? { type: ShadingType.CLEAR, fill: ZEBRA_FILL } : undefined,
+    margins: CELL_MARGIN,
+    verticalAlign: VerticalAlign.CENTER,
+    children: [new Paragraph({
+      spacing: { before: 20, after: 20 },
+      alignment: options.header ? AlignmentType.CENTER : AlignmentType.LEFT,
+      children: cellRuns(text, warnings, options.header ? '表头' : '单元格', options.header),
+    })],
+  }));
+
   const tableRows: TableRow[] = [];
-  if (spec.columns?.length) {
-    tableRows.push(new TableRow({
-      tableHeader: true,
-      children: spec.columns.slice(0, maxColumns).map((column) => new TableCell({
-        width: { size: columnWidth, type: WidthType.DXA },
-        shading: { type: ShadingType.CLEAR, fill: HEADER_FILL },
-        children: [new Paragraph({ children: [new TextRun({ text: clipText(column, warnings, '表头'), bold: true, size: 20 })] })],
-      })),
-    }));
+  if (headerTexts.length) {
+    tableRows.push(new TableRow({ tableHeader: true, cantSplit: true, children: cells(headerTexts, { header: true }) }));
   }
-  for (const row of rows) {
-    tableRows.push(new TableRow({
-      children: Array.from({ length: maxColumns }, (_, columnIndex) => new TableCell({
-        width: { size: columnWidth, type: WidthType.DXA },
-        children: [new Paragraph({ children: [new TextRun({ text: clipText(String(row[columnIndex] ?? ''), warnings, '单元格'), size: 20 })] })],
-      })),
-    }));
-  }
-  return new Table({ rows: tableRows, width: { size: A4_CONTENT_WIDTH_DXA, type: WidthType.DXA }, columnWidths: Array.from({ length: maxColumns }, () => columnWidth) });
+  bodyTexts.forEach((texts, index) => {
+    tableRows.push(new TableRow({ cantSplit: true, children: cells(texts, { zebra: index % 2 === 1 }) }));
+  });
+
+  return new Table({
+    rows: tableRows,
+    width: { size: A4_CONTENT_WIDTH_DXA, type: WidthType.DXA },
+    columnWidths: widths,
+    layout: TableLayoutType.FIXED,
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 4, color: TABLE_BORDER },
+      bottom: { style: BorderStyle.SINGLE, size: 4, color: TABLE_BORDER },
+      left: { style: BorderStyle.SINGLE, size: 4, color: TABLE_BORDER },
+      right: { style: BorderStyle.SINGLE, size: 4, color: TABLE_BORDER },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: TABLE_BORDER },
+      insideVertical: { style: BorderStyle.SINGLE, size: 4, color: TABLE_BORDER },
+    },
+  });
 }
 
 function headingLevel(level: number) {
@@ -225,38 +352,99 @@ function headingLevel(level: number) {
   return HeadingLevel.HEADING_3;
 }
 
-export function buildWordDocument(input: DocumentInput): Promise<ArtifactBuild> {
-  const warnings: string[] = [];
-  const sections = [...(Array.isArray(input.sections) ? input.sections : [])];
-  if (typeof input.markdown === 'string' && input.markdown.trim()) sections.push(...markdownToSections(input.markdown));
-  const sectionCount = sections.length;
-  const children: Array<Paragraph | Table> = [];
+function headingParagraph(level: 1 | 2 | 3, text: string, warnings: string[]) {
+  return new Paragraph({
+    heading: headingLevel(level),
+    spacing: { before: level === 1 ? 320 : 260, after: level === 1 ? 160 : 120 },
+    border: level === 1
+      ? { bottom: { style: BorderStyle.SINGLE, size: 6, color: HEADER_FILL, space: 4 } }
+      : undefined,
+    children: textRuns(text, warnings, '小标题'),
+  });
+}
+
+function codeParagraph(text: string, warnings: string[]) {
+  return new Paragraph({
+    // 不显式左对齐时，WPS 会按中文两端对齐把代码里的空格拉开。
+    alignment: AlignmentType.LEFT,
+    spacing: { before: 80, after: 160 },
+    shading: { type: ShadingType.CLEAR, fill: 'F6F8FB' },
+    indent: { left: 120, right: 120 },
+    children: [
+      new TextRun({ text: clipText(text, warnings, '代码'), font: MONO_FONT, size: 19, color: '334155' }),
+    ],
+  });
+}
+
+function titleBlock(input: DocumentInput, warnings: string[]) {
+  const children: Paragraph[] = [];
   if (input.title?.trim()) {
-    children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 160 }, children: [new TextRun({ text: clipText(input.title, warnings, '标题'), bold: true, size: 44 })] }));
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 240, after: 120 },
+      children: [new TextRun({ text: clipText(input.title.trim(), warnings, '标题'), bold: true, size: 44, color: COLOR_TITLE })],
+    }));
   }
   if (input.subtitle?.trim()) {
-    children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 280 }, children: [new TextRun({ text: clipText(input.subtitle, warnings, '副标题'), size: 24, color: '5B6472' })] }));
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 120 },
+      children: [new TextRun({ text: clipText(input.subtitle.trim(), warnings, '副标题'), size: 24, color: COLOR_SUBTITLE })],
+    }));
   }
+  if (children.length) {
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 320 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: HEADER_FILL, space: 6 } },
+      children: [new TextRun({ text: input.author?.trim() || 'SANMAO.AI', size: 18, color: COLOR_MUTED })],
+    }));
+  }
+  return children;
+}
+
+export async function buildWordDocument(input: DocumentInput): Promise<ArtifactBuild> {
+  const warnings: string[] = [];
+  const sections = normalizeSections(input.sections);
+  if (typeof input.markdown === 'string' && input.markdown.trim()) sections.push(...markdownToSections(input.markdown));
+  const sectionCount = sections.length;
+  const titleChildren = titleBlock(input, warnings);
+  const children: Array<Paragraph | Table> = [...titleChildren];
   for (const section of sections.slice(0, DOCUMENT_MAX_SECTIONS)) {
     if (section.heading?.trim()) {
       const level = section.level === 1 || section.level === 2 || section.level === 3 ? section.level : 1;
-      children.push(new Paragraph({ heading: headingLevel(level), spacing: { before: 240, after: 120 }, children: textRuns(section.heading, warnings, '小标题') }));
+      children.push(headingParagraph(level, section.heading, warnings));
     }
     for (const paragraph of (section.paragraphs || []).slice(0, DOCUMENT_MAX_PARAGRAPHS_PER_SECTION)) {
-      for (const line of String(paragraph).split('\n')) {
-        children.push(new Paragraph({ spacing: { after: 120 }, children: textRuns(line, warnings, '正文') }));
+      const lines = String(paragraph).split('\n');
+      const isCode = lines.length > 1 && /^\s{2,}|\t/.test(lines[1] || '');
+      if (isCode) {
+        children.push(codeParagraph(String(paragraph), warnings));
+        continue;
+      }
+      for (const line of lines) {
+        children.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 120 }, children: textRuns(line, warnings, '正文') }));
       }
     }
     for (const bullet of (section.bullets || []).slice(0, DOCUMENT_MAX_BULLETS_PER_SECTION)) {
-      children.push(new Paragraph({ bullet: { level: 0 }, spacing: { after: 60 }, children: textRuns(bullet, warnings, '列表') }));
+      children.push(new Paragraph({
+        bullet: { level: 0 },
+        alignment: AlignmentType.LEFT,
+        spacing: { after: 80 },
+        children: textRuns(bullet, warnings, '列表'),
+      }));
     }
     for (const table of section.tables || []) {
       children.push(buildTable(table, warnings));
-      children.push(new Paragraph({ text: '' }));
+      children.push(new Paragraph({ spacing: { after: 120 }, children: [] }));
     }
   }
   if (sections.length > DOCUMENT_MAX_SECTIONS) warnings.push(`章节超过 ${DOCUMENT_MAX_SECTIONS} 个，已截断`);
   if (!sections.length) throw new Error('Word 文档内容为空：请在 markdown 或 sections 里提供正文内容');
+  if (children.length === titleChildren.length) {
+    throw new Error('Word 文档内容为空：每个 section 至少要有 heading / paragraphs / bullets / tables 之一');
+  }
+
   const document = new Document({
     creator: input.author?.trim() || 'SANMAO.AI',
     title: input.title?.trim() || undefined,
@@ -264,20 +452,42 @@ export function buildWordDocument(input: DocumentInput): Promise<ArtifactBuild> 
     styles: {
       default: {
         document: {
-          run: { font: BODY_FONT, size: 22 },
+          run: { font: BODY_FONT, size: 21, color: COLOR_BODY },
           paragraph: { spacing: { line: 320, after: 120 } },
         },
+        heading1: { run: { font: BODY_FONT, size: 30, bold: true, color: COLOR_HEADING } },
+        heading2: { run: { font: BODY_FONT, size: 26, bold: true, color: COLOR_TITLE } },
+        heading3: { run: { font: BODY_FONT, size: 23, bold: true, color: COLOR_BODY } },
       },
     },
     sections: [{
-      properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } },
+      properties: {
+        page: {
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+          size: { width: 11906, height: 16838 },
+        },
+      },
+      footers: {
+        default: new Footer({
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            border: { top: { style: BorderStyle.SINGLE, size: 4, color: TABLE_BORDER, space: 6 } },
+            children: [
+              new TextRun({ text: 'SANMAO.AI  ·  第 ', size: 16, color: COLOR_MUTED }),
+              new TextRun({ children: [PageNumber.CURRENT], size: 16, color: COLOR_MUTED }),
+              new TextRun({ text: ' 页 / 共 ', size: 16, color: COLOR_MUTED }),
+              new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 16, color: COLOR_MUTED }),
+              new TextRun({ text: ' 页', size: 16, color: COLOR_MUTED }),
+            ],
+          })],
+        }),
+      },
       children,
     }],
   });
-  return Packer.toBuffer(document).then((buffer) => {
-    assertArchiveParts(buffer, ['[Content_Types].xml', 'word/document.xml'], 'Word 文档');
-    return { buffer, warnings };
-  });
+  const buffer = await Packer.toBuffer(document);
+  assertArchiveParts(buffer, ['[Content_Types].xml', 'word/document.xml'], 'Word 文档');
+  return { buffer, warnings };
 }
 
 export function resolveDocumentFileName(rawName: unknown) {

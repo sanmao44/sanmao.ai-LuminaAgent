@@ -7,6 +7,7 @@ import {
   SPREADSHEET_MAX_SHEETS,
 } from './limits';
 import { forceArtifactExtension, sanitizeSheetName } from './sanitize';
+import { spreadsheetWidth } from './typography';
 import { assertArchiveParts } from './validate';
 import type { ArtifactBuild } from './types';
 
@@ -35,11 +36,15 @@ export type SpreadsheetInput = {
   sheets: SpreadsheetSheetInput[];
 };
 
-const HEADER_FILL = 'FFEFF3F8';
-const HEADER_FONT = 'FF1F2937';
+const HEADER_FILL = 'FF2563EB';
+const HEADER_FONT = 'FFFFFFFF';
+const ZEBRA_FILL = 'FFF4F7FB';
+const BORDER_COLOR = 'FFD7E0EC';
 const MAX_FORMULA_CHARS = 240;
-const MIN_COLUMN_WIDTH = 8;
+const MIN_COLUMN_WIDTH = 9;
 const MAX_COLUMN_WIDTH = 60;
+const BODY_ROW_HEIGHT = 19;
+const LINE_HEIGHT = 17;
 
 function isFormulaCell(value: unknown): value is FormulaCell {
   return Boolean(value) && typeof value === 'object' && typeof (value as FormulaCell).formula === 'string';
@@ -71,6 +76,26 @@ function uniqueColumnKeys(keys: string[]) {
   });
 }
 
+/** 工作表名既要唯一又要守住 Excel 的 31 字符上限，去重后缀必须计入长度。 */
+function uniqueSheetName(rawName: unknown, index: number, used: Set<string>) {
+  const base = sanitizeSheetName(rawName, index);
+  if (!used.has(base.toLowerCase())) {
+    used.add(base.toLowerCase());
+    return base;
+  }
+  const withSuffix = (suffix: string) => `${base.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`;
+  for (let counter = 2; counter < 1000; counter += 1) {
+    const candidate = withSuffix(`-${counter}`);
+    if (!used.has(candidate.toLowerCase())) {
+      used.add(candidate.toLowerCase());
+      return candidate;
+    }
+  }
+  const fallback = withSuffix(`-${Date.now() % 1000}`);
+  used.add(fallback.toLowerCase());
+  return fallback;
+}
+
 /** 只有显式 { formula } 才当公式，普通文本永远不会被自动求值。 */
 function toCellValue(value: SpreadsheetCellValue, warnings: string[], sheetName: string): ExcelJS.CellValue {
   if (value === null || value === undefined) return null;
@@ -100,24 +125,62 @@ function toCellValue(value: SpreadsheetCellValue, warnings: string[], sheetName:
   return String(value).slice(0, SPREADSHEET_MAX_CELL_CHARS);
 }
 
-/** 工作表名既要唯一又要守住 Excel 的 31 字符上限，去重后缀必须计入长度。 */
-function uniqueSheetName(rawName: unknown, index: number, used: Set<string>) {
-  const base = sanitizeSheetName(rawName, index);
-  if (!used.has(base.toLowerCase())) {
-    used.add(base.toLowerCase());
-    return base;
+function cellText(value: ExcelJS.CellValue) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    if ('text' in value && typeof (value as { text?: unknown }).text === 'string') return String((value as { text: string }).text);
+    if ('richText' in value) return '';
+    if ('result' in value && (value as { result?: unknown }).result !== undefined) return String((value as { result: unknown }).result);
+    return '';
   }
-  const withSuffix = (suffix: string) => `${base.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`;
-  for (let counter = 2; counter < 1000; counter += 1) {
-    const candidate = withSuffix(`-${counter}`);
-    if (!used.has(candidate.toLowerCase())) {
-      used.add(candidate.toLowerCase());
-      return candidate;
-    }
+  return String(value);
+}
+
+/** 数字按格式显示后会变长（千分位、百分号），列宽必须按显示后的样子测量。 */
+function formatNumber(value: number, format: string) {
+  if (!Number.isFinite(value)) return String(value);
+  const decimals = /\.(0+)/.exec(format.replace(/"[^"]*"/g, ''))?.[1].length ?? 0;
+  const percent = format.includes('%');
+  const scaled = percent && !format.includes('"%"') ? value * 100 : value;
+  const [integer, fraction] = Math.abs(scaled).toFixed(decimals).split('.');
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${scaled < 0 ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}${percent ? '%' : ''}`;
+}
+
+function displayText(value: ExcelJS.CellValue, format?: string) {
+  if (typeof value === 'number' && format) return formatNumber(value, format);
+  return cellText(value);
+}
+
+/** 列宽按内容测量（全角按两个字符宽度），保证文字不会被截断成“####”或半个字。 */
+function measureColumnWidth(header: string, values: string[], explicit?: number) {
+  if (Number.isFinite(explicit) && Number(explicit) > 0) {
+    return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Number(explicit)));
   }
-  const fallback = withSuffix(`-${Date.now() % 1000}`);
-  used.add(fallback.toLowerCase());
-  return fallback;
+  const longest = values.reduce((max, value) => Math.max(max, spreadsheetWidth(value)), spreadsheetWidth(header));
+  return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, longest + 3));
+}
+
+function looksLikePercentHeader(header: string) {
+  return /(率|占比|比例|百分比|完成度)$/.test(header.replace(/\s/g, ''));
+}
+
+/** 数字列自动套用千分位或百分比格式，避免一列数字看起来像原始数据。 */
+function inferNumberFormat(header: string, values: Array<number | null>, explicit?: string) {
+  if (explicit) return String(explicit);
+  const numbers = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (!numbers.length) return undefined;
+  if (looksLikePercentHeader(header)) {
+    // 同一列里既有 0.9 又有 1.07 时按比率解释（90% / 107%），这是“完成率”最常见的写法。
+    if (numbers.every((value) => value >= 0 && value <= 2) && numbers.some((value) => value < 1)) return '0.0%';
+    // 模型有时直接给 104 这样的百分数，这时不能再乘 100。
+    if (numbers.every((value) => value >= 1 && value <= 1000) && numbers.some((value) => !Number.isInteger(value))) return '#,##0.0"%"';
+    if (numbers.every((value) => Number.isInteger(value) && value >= 1 && value <= 1000)) return '#,##0"%"';
+  }
+  // 用 '#,##0.##' 时整数会显示成「1,286,000.」（多一个尾点），所以整数列改用纯整数格式。
+  if (numbers.some((value) => Math.abs(value) >= 1000)) return numbers.every((value) => Number.isInteger(value)) ? '#,##0' : '#,##0.00';
+  if (!numbers.every((value) => Number.isInteger(value))) return '0.00';
+  return undefined;
 }
 
 export async function buildSpreadsheet(input: SpreadsheetInput): Promise<ArtifactBuild> {
@@ -148,32 +211,93 @@ export async function buildSpreadsheet(input: SpreadsheetInput): Promise<Artifac
     const freezeHeader = sheetInput.freezeHeader !== false;
     const worksheet = workbook.addWorksheet(name, {
       views: freezeHeader ? [{ state: 'frozen', ySplit: 1 }] : undefined,
+      properties: { defaultRowHeight: BODY_ROW_HEIGHT },
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        printTitlesRow: '1:1',
+        horizontalCentered: true,
+        margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+      },
     });
-    worksheet.columns = keys.map((key, index) => {
-      const format = rawColumns[index]?.format;
-      return {
-        key,
-        header: headers[index],
-        width: Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Number(rawColumns[index]?.width) || 16)),
-        ...(format ? { style: { numFmt: String(format) } } : {}),
-      };
-    });
-    const headerRow = worksheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: HEADER_FONT } };
-    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
-    headerRow.alignment = { vertical: 'middle' };
-    headerRow.height = 20;
-    headerRow.commit();
 
     const limitedRows = rows.slice(0, SPREADSHEET_MAX_ROWS_PER_SHEET);
+    const cellMatrix: ExcelJS.CellValue[][] = [];
     for (const row of limitedRows) {
       if (totalCells + keys.length > SPREADSHEET_MAX_CELLS) {
         warnings.push(`表格总单元格数超过 ${SPREADSHEET_MAX_CELLS}，后续行已截断`);
         break;
       }
       totalCells += keys.length;
-      worksheet.addRow(normalizeCells(row, keys).map((value) => toCellValue(value, warnings, name)));
+      cellMatrix.push(normalizeCells(row, keys).map((value) => toCellValue(value, warnings, name)));
     }
+
+    const columnFormats = keys.map((_, index) => inferNumberFormat(
+      headers[index],
+      cellMatrix.map((cells) => cells[index]).filter((cell): cell is number => typeof cell === 'number'),
+      rawColumns[index]?.format,
+    ));
+    const textMatrix = cellMatrix.map((cells) => cells.map((cell, index) => displayText(cell, columnFormats[index])));
+    const columnWidths = keys.map((_, index) => measureColumnWidth(
+      headers[index],
+      textMatrix.map((cells) => cells[index] || ''),
+      rawColumns[index]?.width,
+    ));
+
+    worksheet.columns = keys.map((key, index) => ({
+      key,
+      header: headers[index],
+      width: columnWidths[index],
+      style: { alignment: { vertical: 'middle', horizontal: typeof cellMatrix[0]?.[index] === 'number' ? 'right' : 'left' } },
+    }));
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 24;
+    headerRow.font = { bold: true, color: { argb: HEADER_FONT }, size: 11, name: '微软雅黑' };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    headerRow.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: BORDER_COLOR } },
+        left: { style: 'thin', color: { argb: BORDER_COLOR } },
+        bottom: { style: 'thin', color: { argb: BORDER_COLOR } },
+        right: { style: 'thin', color: { argb: BORDER_COLOR } },
+      };
+    });
+    headerRow.commit();
+
+    cellMatrix.forEach((cells, rowOffset) => {
+      const row = worksheet.getRow(rowOffset + 2);
+      cells.forEach((value, index) => {
+        const cell = row.getCell(index + 1);
+        cell.value = value;
+        const width = columnWidths[index];
+        const text = textMatrix[rowOffset][index] || '';
+        const needsWrap = typeof value !== 'number' && spreadsheetWidth(text) > width - 1;
+        cell.alignment = { vertical: 'middle', wrapText: needsWrap, horizontal: typeof value === 'number' ? 'right' : 'left' };
+        cell.font = { name: '微软雅黑', size: 10.5, color: { argb: 'FF1F2937' } };
+        cell.border = {
+          top: { style: 'thin', color: { argb: BORDER_COLOR } },
+          left: { style: 'thin', color: { argb: BORDER_COLOR } },
+          bottom: { style: 'thin', color: { argb: BORDER_COLOR } },
+          right: { style: 'thin', color: { argb: BORDER_COLOR } },
+        };
+        if (rowOffset % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA_FILL } };
+        if (columnFormats[index]) cell.numFmt = columnFormats[index];
+      });
+      const lines = cells.reduce<number>((max, _value, index) => {
+        const text = textMatrix[rowOffset][index] || '';
+        const width = columnWidths[index];
+        if (spreadsheetWidth(text) <= width - 1) return max;
+        return Math.max(max, Math.ceil(spreadsheetWidth(text) / Math.max(4, width - 1)));
+      }, 1);
+      row.height = lines > 1 ? Math.max(BODY_ROW_HEIGHT, lines * LINE_HEIGHT) : BODY_ROW_HEIGHT;
+      row.commit();
+    });
+
     if (sheetInput.autoFilter !== false && keys.length > 1) {
       worksheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: keys.length } };
     }

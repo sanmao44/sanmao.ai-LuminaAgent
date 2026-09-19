@@ -80,8 +80,9 @@ test('非法工作表名被清洗去重，超限内容给出 warning 而不是�
     }, store);
     const buffer = await readFile((await store.read(result.artifact.id)).filePath);
     const workbook = artifacts.readArchiveText(buffer, 'xl/workbook.xml');
-    const names = [...workbook.matchAll(/name="([^"]+)"/g)].map((match) => match[1]);
-    assert.ok(names.length >= 2);
+    const names = [...workbook.matchAll(/<sheet[^>]*?name="([^"]+)"/g)].map((match) => match[1]);
+    assert.ok(names.length >= 2, '应能读到工作表名');
+  assert.equal(names.length, 2, '两张表就是两个工作表名，定义名（如打印标题）不算工作表名');
     for (const name of names) {
       for (const char of ['[', ']', ':', '*', '?', '/', '\\']) {
         assert.ok(!name.includes(char), `工作表名不应包含非法字符 ${char}：${name}`);
