@@ -7,6 +7,8 @@ const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8')
 const clientTypes = await readFile(new URL('../lib/agent-client.ts', import.meta.url), 'utf8');
 const historyTypes = await readFile(new URL('../lib/client-history.ts', import.meta.url), 'utf8');
 const downloadRoute = await readFile(new URL('../app/api/artifacts/[id]/route.ts', import.meta.url), 'utf8');
+const artifactTools = await readFile(new URL('../lib/tools/artifacts.ts', import.meta.url), 'utf8');
+const fileTools = await readFile(new URL('../lib/tools/file.ts', import.meta.url), 'utf8');
 
 function functionBody(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -17,9 +19,10 @@ function functionBody(source, name) {
 
 test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本', () => {
   for (const tool of ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
-    assert.match(route, new RegExp(`name: '${tool}'`));
+    assert.match(artifactTools, new RegExp(`name: '${tool}'`));
   }
-  assert.match(route, /Word\/Excel\/PPT\/ZIP 必须用专用工具，不允许把 Office 或 ZIP 内容编码成 base64 塞进来/);
+  assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolSchemasFor \} from '@\/lib\/tools';/);
+  assert.match(fileTools, /Word\/Excel\/PPT\/ZIP 必须用专用工具，不允许把 Office 或 ZIP 内容编码成 base64 塞进来/);
   assert.match(route, /绝对不要把 \.docx\/\.xlsx\/\.pptx\/\.zip 的内容编码成 base64 交给 file_generate/);
   assert.match(route, /当前不支持解析用户上传的 Word\/Excel\/PPT 内容/);
 });
@@ -27,7 +30,9 @@ test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本',
 test('Office 工具按需下发，避免每次对话都带上工具 schema', () => {
   assert.match(route, /likelyArtifactGenerationRequest/);
   assert.match(route, /const artifactGenerationRequest = fileGenerationRequest/);
-  assert.match(route, /if \(isArtifactToolCall\(\{ function: \{ name \} \}\)\) return artifactGenerationRequest;/);
+  assert.match(route, /const callableTools = toolSchemasFor\(\{/);
+  assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
+  assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
 });
 
 test('archive_generate 排在最后执行，并能带上本轮生成的文件', () => {
@@ -131,9 +136,9 @@ test('历史里助手生成的文件回传 artifact 元数据，跨轮打包才�
 });
 
 test('document_generate 的 sections 暴露生成器已支持的有序列表与代码块', () => {
-  const sectionStart = route.indexOf("description: '结构化章节；与 markdown 二选一或同时使用。'");
+  const sectionStart = artifactTools.indexOf("description: '结构化章节；与 markdown 二选一或同时使用。'");
   assert.notEqual(sectionStart, -1);
-  const schema = route.slice(sectionStart, route.indexOf('required: [],', sectionStart));
+  const schema = artifactTools.slice(sectionStart, artifactTools.indexOf('required: [],', sectionStart));
   assert.match(schema, /orderedBullets: \{ type: 'array', items: \{ type: 'string' \}, description: '有序列表，按 1\. 2\. 3\. 编号排版。' \}/);
   assert.match(schema, /code: \{ type: 'array', items: \{ type: 'string' \}, description: '代码块，每项一段，用等宽字体加底纹排版。' \}/);
 });

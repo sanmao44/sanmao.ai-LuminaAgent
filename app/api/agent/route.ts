@@ -12,6 +12,7 @@ import { isTrustedAppRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyFileGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
+import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolSchemasFor } from '@/lib/tools';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
@@ -96,15 +97,6 @@ function generatedFileFromArtifact(artifact: ArtifactDescriptor): GeneratedFile 
   };
 }
 
-const ARTIFACT_TOOL_NAMES = new Set(['document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']);
-
-function isArtifactToolCall(call: any) {
-  return ARTIFACT_TOOL_NAMES.has(String(call?.function?.name || ''));
-}
-
-function isArchiveToolCall(call: any) {
-  return String(call?.function?.name || '') === 'archive_generate';
-}
 const ARTIFACT_TOOL_MAX_ROUNDS = 2;
 
 
@@ -139,290 +131,6 @@ function describeClientFiles(files: readonly ClientFile[]) {
     .join('、');
 }
 
-const tools = [
-  {
-    type: 'function',
-    function: {
-      name: 'document_generate',
-      description: '用户要生成、导出 Word 文档（.docx、Word、文档、报告、方案、合同、简历、说明书）时调用。内容要么用 markdown 直接写（推荐），要么用 sections 结构化提供；多章节的长文档需要目录时传 toc=true。不要用 file_generate 生成 .docx。',
-      parameters: {
-        type: 'object',
-        properties: {
-          filename: { type: 'string', description: '文件名，建议带 .docx 后缀。' },
-          title: { type: 'string', description: '文档主标题。' },
-          subtitle: { type: 'string', description: '副标题，可选。' },
-          author: { type: 'string', description: '作者/单位，可选，默认 SANMAO.AI。' },
-          toc: { type: 'boolean', description: '默认 false；长文档传 true，会在正文前插入目录，Word 打开时自动刷新页码。' },
-          markdown: { type: 'string', description: '正文 Markdown。支持 #/##/### 标题、- 列表、1. 列表、| 表格、``` 代码块。插图单独占一行写 ![说明](图片ref)，ref 必须来自图片工具返回的 ref。已经写过一遍的内容直接放这里，不要重复改写。' },
-          sections: {
-            type: 'array',
-            description: '结构化章节；与 markdown 二选一或同时使用。',
-            items: {
-              type: 'object',
-              properties: {
-                heading: { type: 'string' },
-                level: { type: 'integer', enum: [1, 2, 3] },
-                paragraphs: { type: 'array', items: { type: 'string' } },
-                bullets: { type: 'array', items: { type: 'string' } },
-                orderedBullets: { type: 'array', items: { type: 'string' }, description: '有序列表，按 1. 2. 3. 编号排版。' },
-                code: { type: 'array', items: { type: 'string' }, description: '代码块，每项一段，用等宽字体加底纹排版。' },
-                images: {
-                  type: 'array',
-                  description: '本章节插图；ref 必须来自图片工具返回的 ref，caption 可选。',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      ref: { type: 'string', description: '图片工具返回的 ref，例如 /api/storage/file?name=xxx.png。' },
-                      caption: { type: 'string', description: '图注，可选。' },
-                    },
-                    required: ['ref'],
-                  },
-                },
-                tables: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      columns: { type: 'array', items: { type: 'string' } },
-                      rows: { type: 'array', items: { type: 'array', items: { type: ['string', 'number', 'null'] } } },
-                    },
-                    required: ['rows'],
-                  },
-                },
-              },
-            },
-          },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'spreadsheet_generate',
-      description: '用户要生成、导出 Excel 表格（.xlsx、Excel、表格、销售数据、报表、台账）时调用。报表类需求建议打开 totals 自动合计，并给状态列加 options 下拉、给关键数值列加 highlight 条件格式。不要用 file_generate 生成 .xlsx。',
-      parameters: {
-        type: 'object',
-        properties: {
-          filename: { type: 'string', description: '文件名，建议带 .xlsx 后缀。' },
-          sheets: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                name: { type: 'string', description: '工作表名，最长 31 字。' },
-                columns: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      key: { type: 'string', description: '与 rows 里对象字段同名。' },
-                      header: { type: 'string' },
-                      width: { type: 'number' },
-                      format: { type: 'string', description: 'Excel 数字格式，如 #,##0、0.00%、yyyy-mm-dd。' },
-                      total: { type: 'string', enum: ['sum', 'average', 'count', 'max', 'min', 'none'], description: '该列的合计方式；none 表示这列不参与合计（如排名、编号）。' },
-                      options: { type: 'array', items: { type: 'string' }, description: '该列候选值，会写成下拉选择，最多 32 项且不能含逗号。' },
-                      highlight: { type: 'string', enum: ['dataBar', 'colorScale', 'negative', 'top10', 'bottom10', 'aboveAverage', 'belowAverage'], description: '该列条件格式：dataBar 数据条、colorScale 色阶、negative 负数标红、top10/bottom10 前后 10%、aboveAverage/belowAverage 高于/低于平均。' },
-                    },
-                    required: ['header'],
-                  },
-                },
-                rows: {
-                  type: 'array',
-                  description: '对象数组（按 columns.key 取值）或数组的数组。单元格可以是字符串、数字、布尔、null；公式必须写成 { "formula": "SUM(B2:B10)" }；链接写成 { "url": "https://...", "text": "..." }。',
-                  items: { type: ['object', 'array'] },
-                },
-                freezeHeader: { type: 'boolean', description: '默认 true，冻结首行。' },
-                autoFilter: { type: 'boolean', description: '默认 true，首行开启筛选。' },
-                totals: { type: 'boolean', description: '默认 false；打开后在数据末尾追加合计行，数值列默认求和（表头含率/占比的取平均，排名/编号/日期列跳过）。' },
-              },
-            },
-          },
-        },
-        required: ['sheets'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'presentation_generate',
-      description: '用户要生成、导出 PPT / 演示文稿 / 幻灯片（.pptx、PPT、deck）时调用。需要图表时用 layout=chart，在 chart 里给数值数据；需要配图时用 layout=image 并传 image.ref（来自图片工具返回的 ref），subtitle 作为图注。不要用 file_generate 生成 .pptx。',
-      parameters: {
-        type: 'object',
-        properties: {
-          filename: { type: 'string', description: '文件名，建议带 .pptx 后缀。' },
-          title: { type: 'string' },
-          subtitle: { type: 'string' },
-          theme: { type: 'string', enum: ['sanmao-dark', 'sanmao-light'], description: '默认 sanmao-dark。' },
-          markdown: { type: 'string', description: '用 Markdown 快速成稿：# 标题页、##/### 内容页、- 要点。' },
-          slides: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                layout: { type: 'string', enum: ['title', 'section', 'bullets', 'two-column', 'table', 'chart', 'image'] },
-                title: { type: 'string' },
-                subtitle: { type: 'string' },
-                bullets: { type: 'array', items: { type: 'string' }, description: '每页建议不超过 6 条，超出会自动续页。' },
-                leftTitle: { type: 'string' },
-                leftBullets: { type: 'array', items: { type: 'string' } },
-                rightTitle: { type: 'string' },
-                rightBullets: { type: 'array', items: { type: 'string' } },
-                columns: { type: 'array', items: { type: 'string' }, description: 'layout=table 时的表头。' },
-                rows: { type: 'array', items: { type: 'array', items: { type: ['string', 'number', 'null'] } } },
-                chart: {
-                  type: 'object',
-                  description: 'layout=chart 时的图表数据，只给数值，不需要图片。',
-                  properties: {
-                    type: { type: 'string', enum: ['bar', 'line', 'pie', 'doughnut', 'area'], description: '默认 bar。' },
-                    categories: { type: 'array', items: { type: ['string', 'number'] }, description: '横轴或分片标签，最多 24 个；不给则自动编号。' },
-                    series: {
-                      type: 'array',
-                      description: '数据系列，最多 6 组；饼图只用第一组。',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          name: { type: 'string', description: '系列名，用作图例。' },
-                          values: { type: 'array', items: { type: ['number', 'null'] } },
-                        },
-                        required: ['values'],
-                      },
-                    },
-                  },
-                  required: ['series'],
-                },
-                image: {
-                  type: 'object',
-                  description: 'layout=image 时的插图；ref 必须来自图片工具返回的 ref。',
-                  properties: {
-                    ref: { type: 'string', description: '图片工具返回的 ref，例如 /api/storage/file?name=xxx.png。' },
-                  },
-                  required: ['ref'],
-                },
-                notes: { type: 'string', description: '演讲者备注，可选。' },
-              },
-            },
-          },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'image_generate',
-      description: '用户明确要求生成一张全新的图片时调用。',
-      parameters: {
-        type: 'object', properties: {
-          prompt: { type: 'string' },
-          aspectRatio: { type: 'string', enum: ['自动', '1:1', '4:5', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9'] },
-          count: { type: 'integer', minimum: 1, maximum: 8 },
-          modelId: { type: 'string' },
-        }, required: ['prompt'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'image_edit',
-      description: '用户提供了参考图，并明确要求修改、重绘、换背景、保持主体、参考风格或基于图片继续生成时调用。参考图由系统自动传入。',
-      parameters: {
-        type: 'object', properties: {
-          prompt: { type: 'string' },
-          aspectRatio: { type: 'string', enum: ['自动', '1:1', '4:5', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9'] },
-          count: { type: 'integer', minimum: 1, maximum: 8 },
-          modelId: { type: 'string' },
-        }, required: ['prompt'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'file_generate',
-      description: '只用于文本/代码类文件：Markdown、TXT、JSON、CSV、HTML、CSS、SVG、XML、YAML、代码。Word/Excel/PPT/ZIP 必须用专用工具，不允许把 Office 或 ZIP 内容编码成 base64 塞进来。',
-      parameters: {
-        type: 'object', properties: {
-          files: {
-            type: 'array', maximum: 8, items: {
-              type: 'object', properties: {
-                filename: { type: 'string' },
-                mimeType: { type: 'string' },
-                encoding: { type: 'string', enum: ['utf8', 'base64'] },
-                content: { type: 'string' },
-              }, required: ['filename', 'content'],
-            },
-          },
-        }, required: ['files'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'archive_generate',
-      description: '用户要把多个文件打成 ZIP 压缩包（.zip、打包、压缩、资料包）时调用。必须最后调用：先生成 Word/Excel/PPT/文本文件，再用本工具打包。',
-      parameters: {
-        type: 'object',
-        properties: {
-          filename: { type: 'string', description: '压缩包文件名，建议带 .zip 后缀。' },
-          artifactIds: { type: 'array', items: { type: 'string' }, description: '要打包的文件 id；必须是之前工具返回过的 artifactId，不要编造。' },
-          includeGeneratedThisTurn: { type: 'boolean', description: '默认 true，把本轮刚生成的文件一并打包。' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'web_search',
-      description: '当用户的问题需要实时、最新、外部事实、当前价格/版本/政策/新闻、资料来源或事实核验时调用。不要要求用户输入固定关键词；由你根据问题判断是否真的需要联网。普通闲聊、创作、代码推理或已有上下文足够回答时不要调用。用户明确说不要联网时不要调用。',
-      parameters: {
-        type: 'object', properties: {
-          query: { type: 'string', description: '适合搜索引擎的简洁中文检索式，包含主题、时间范围和必要限定。' },
-        }, required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'skill_search',
-      description: '按关键词检索用户已安装的技能（中英文关键词、中文别名都可以）。不确定有没有现成流程时先查一次。',
-      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'skill_read',
-      description: '读取已启用技能的完整正文，或它附带的参考资料文件。技能索引里只有名称和简介，需要具体步骤时必须先读取。内容被截断时返回 truncated 与 nextOffset，带上 offset 继续读直到读完。返回的附件清单会标注类型（text / binary / script），脚本内容只作阅读参考，永远不要执行。',
-      parameters: { type: 'object', properties: { id: { type: 'string' }, file: { type: 'string', description: '可选，技能目录内的相对路径。' }, offset: { type: 'number', description: '可选，从第几个字符开始读，用于接着上一次被截断的位置继续读。' } }, required: ['id'] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'skill_install',
-      description: '安装技能：用户要求把某个链接、GitHub 仓库上的技能装进来，或你判断某套可复用流程值得沉淀成技能时调用。安装后需要用户在技能面板确认才会生效。',
-      parameters: {
-        type: 'object', properties: {
-          name: { type: 'string', description: '技能名称。' },
-          description: { type: 'string', description: '一句话说明适用场景。' },
-          body: { type: 'string', description: '技能正文（Markdown），写清目标、步骤和注意事项；从链接安装时留空。' },
-          url: { type: 'string', description: '可选：GitHub 仓库或 SKILL.md 直链。仓库里有多个技能时安装会返回候选目录，需要先和用户确认装哪一个，再用带目录的链接重试。' },
-          id: { type: 'string', description: '可选：英文技能标识。' },
-          tags: { type: 'string', description: '可选：中文别名，逗号分隔（例如“报错,调试,修bug”）。安装英文技能时尽量补上，方便之后用中文检索到它。' },
-        }, required: ['name'],
-      },
-    },
-  },
-];
 
 function latestUser(messages: ClientMessage[]) { return [...messages].reverse().find((m) => m.role === 'user'); }
 
@@ -522,10 +230,6 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; h
     type: 'function',
     function: { name, arguments: JSON.stringify(args) },
   };
-}
-
-function isImageToolCall(call: any) {
-  return call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit';
 }
 
 type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; finalize?: (text: string) => Promise<string> | string; };
@@ -971,14 +675,12 @@ export async function POST(request: Request) {
     // image operation, even if it ignores the tool list and returns an image
     // tool call anyway.
     const imageToolsAllowed = imageGenerationRequest;
-    const callableTools = tools.filter((tool: any) => {
-      const name = tool.function.name;
-      if (name === 'web_search') return false;
-      if (name === 'file_generate') return fileGenerationRequest || artifactGenerationRequest;
-      if (isArtifactToolCall({ function: { name } })) return artifactGenerationRequest;
-      if (name === 'skill_search' || name === 'skill_read' || name === 'skill_install') return skillContext.settings.enabled;
-      if (isImageToolCall({ function: { name } })) return imageToolsAllowed;
-      return false;
+    // 本轮下发哪些工具完全由注册表决定（lib/tools）：模型看不到没启用的能力。
+    const callableTools = toolSchemasFor({
+      fileGeneration: fileGenerationRequest,
+      deliveryRequest: artifactGenerationRequest,
+      skillsEnabled: skillContext.settings.enabled,
+      imageAllowed: imageToolsAllowed,
     });
     const skillToolsOnly = callableTools.filter((tool: any) => String(tool?.function?.name || '').startsWith('skill_'));
     const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }));
@@ -1339,8 +1041,7 @@ export async function POST(request: Request) {
         toolResults.push(await runArtifactToolCall(call));
         continue;
       }
-      const skillToolName = String(call?.function?.name || '');
-      if (skillToolName === 'skill_search' || skillToolName === 'skill_read' || skillToolName === 'skill_install') {
+      if (isSkillToolCall(call)) {
         toolResults.push(await runSkillToolCall(call));
         continue;
       }
