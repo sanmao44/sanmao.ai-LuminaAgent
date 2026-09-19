@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolveStoredFileWithFallback } from '@/lib/image-storage';
+import { ensureMediaLibrary } from '@/lib/media-library';
 import { getPublicState } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
 
@@ -7,6 +8,8 @@ export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return new Response('Unauthorized', { status: 401 });
+  // 后台把历史运行目录里的素材并入固定媒体库，不阻塞本次读取。
+  void ensureMediaLibrary();
   const url = new URL(request.url);
   const name = url.searchParams.get('name') || '';
   const state = await getPublicState();

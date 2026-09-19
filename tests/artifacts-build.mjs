@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'lib/media-paths',
   'lib/image-storage',
   'lib/artifacts/limits',
   'lib/artifacts/types',

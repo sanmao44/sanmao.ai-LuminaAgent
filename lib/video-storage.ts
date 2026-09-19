@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { GeneratedVideo } from './types';
+import { knownMediaRoots, mediaDirectory } from './media-paths';
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
@@ -11,7 +12,8 @@ type PersistedVideo = GeneratedVideo & { localPath: string };
 type LoadedVideo = { buffer: Buffer; ext: string };
 
 function configuredRoot() {
-  return path.resolve(process.env.SANMAO_VIDEO_STORAGE_PATH || path.join(dataDir, 'videos'));
+  // 默认固定到用户级媒体库，换运行目录不再换掉素材。
+  return path.resolve(process.env.SANMAO_VIDEO_STORAGE_PATH || mediaDirectory('video'));
 }
 
 export function getDefaultVideoStoragePath() { return configuredRoot(); }
@@ -90,11 +92,36 @@ export async function persistGeneratedVideos(videos: GeneratedVideo[], configure
   };
 }
 
+export function getLegacyVideoStoragePath() {
+  return path.resolve(path.join(process.cwd(), '..', 'video_generation_records'));
+}
+
+/** 主目录优先，其后是历史运行目录与注册表目录，用于继续读取迁移前生成的视频。 */
+export function getVideoStorageRoots(configuredPath?: string) {
+  const primary = path.resolve(configuredPath?.trim() || configuredRoot());
+  const roots = [primary];
+  const candidates = [getLegacyVideoStoragePath(), path.join(dataDir, 'videos'), ...knownMediaRoots('video')];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
+}
+
 export function resolveStoredVideoFile(root: string, name: string) {
   const base = path.resolve(root || configuredRoot());
   const target = path.resolve(base, name);
   if (target !== base && !target.startsWith(`${base}${path.sep}`)) return null;
   return target;
+}
+
+/** 主目录找不到时回退到历史目录，命中即返回真实文件；都没有则返回主目录候选。 */
+export function resolveStoredVideoFileWithFallback(root: string, name: string) {
+  const candidates = getVideoStorageRoots(root)
+    .map((candidate) => resolveStoredVideoFile(candidate, name))
+    .filter(Boolean) as string[];
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate;
+  return candidates[0] || null;
 }
 
 export function isStoredVideo(root: string, name: string) {

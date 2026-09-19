@@ -9,8 +9,8 @@ const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', i
 const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
 const signedCompiled = ts.transpileModule(signedSource
   .replace(/import \{ resolveStoredFileWithFallback \} from '\.\/image-storage';\r?\n/, 'const resolveStoredFileWithFallback = () => null;\n')
-  .replace(/import \{ resolveStoredVideoFile \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFile = () => null;\n')
-  .replace(/import \{ getDefaultAudioStoragePath, resolveStoredAudioFile \} from '\.\/audio-storage';\r?\n/, 'const getDefaultAudioStoragePath = () => ""; const resolveStoredAudioFile = () => null;\n')
+  .replace(/import \{ resolveStoredVideoFileWithFallback \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFileWithFallback = () => null;\n')
+  .replace(/import \{ resolveStoredAudioFileWithFallback \} from '\.\/audio-storage';\r?\n/, 'const resolveStoredAudioFileWithFallback = () => null;\n')
   .replace(/import \{ resolveLocalDataDir, resolveProviderConfigDir \} from '\.\/data-paths';\r?\n/, 'const resolveLocalDataDir = () => process.env.SANMAO_DATA_DIR || path.join(process.cwd(), ".data"); const resolveProviderConfigDir = resolveLocalDataDir;\n'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: new URL('../lib/signed-media.ts', import.meta.url).pathname,

@@ -573,6 +573,11 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node .canvas-node-kicker span,.canvas-node .canvas-generator-head>span{width:24px;height:24px;display:grid;place-items:center;flex:none;border-radius:8px}
 .canvas-node .canvas-media-state.draft>span{color:var(--node-text)}
 .canvas-node .canvas-media-state.pending>span{color:var(--node-effective)}
+.canvas-node .canvas-media-state.missing{gap:7px;background:color-mix(in srgb,var(--warning) 7%,transparent)}
+.canvas-node .canvas-media-state.missing>span{color:var(--warning)}
+.canvas-node .canvas-media-state.missing>small{display:-webkit-box;max-width:min(240px,calc(100% - 20px));white-space:normal;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:3}
+.canvas-media-retry{height:26px;padding:0 10px;border:1px solid color-mix(in srgb,var(--warning) 38%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--text-2);font-size:9px;font-weight:800;cursor:pointer}
+.canvas-media-retry:hover{border-color:var(--warning);color:var(--text)}
 .canvas-node .canvas-node-footer em{border:1px solid color-mix(in srgb,var(--node-effective) 22%,transparent);background:color-mix(in srgb,var(--node-effective) 12%,var(--panel));color:var(--node-effective)}
 .canvas-node.status-running .canvas-type-icon,.canvas-node.status-running .canvas-node-kicker span,.canvas-node.status-running .canvas-generator-head>span,.canvas-node.status-running .canvas-upscale-card-head>span{background:color-mix(in srgb,var(--node-effective) 14%,transparent);color:var(--node-effective)}
 

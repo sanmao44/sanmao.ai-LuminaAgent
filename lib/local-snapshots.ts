@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { createBackupArchive, extractBackupArchive, type BackupArchiveEntry } from './backup-archive';
 import { decryptBackupPayload, encryptBackupPayload } from './backup-crypto';
 import { getDefaultStoragePath, getStorageRoots } from './image-storage';
+import { getDefaultAudioStoragePath, getAudioStorageRoots } from './audio-storage';
+import { getDefaultVideoStoragePath, getVideoStorageRoots } from './video-storage';
 import { encryptSecret } from './store';
 import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
 
@@ -16,6 +18,56 @@ const workspacePath = path.join(dataDir, 'workspace.json');
 const keyPath = path.join(providerConfigDir, 'master.key');
 const SNAPSHOT_FORMAT = 'sanmao-ai-auto-snapshot';
 const KEEP_SNAPSHOTS = 7;
+/**
+ * 快照会先把媒体读进内存再加密，视频动辄数百 MB，必须限流：
+ * 视频/音频按类别限额（历史上丢的正是视频），超过预算的部分只记跳过数量；
+ * 图片沿用原来的无上限行为，不因新增视频而少备份图片。
+ */
+const SNAPSHOT_MEDIA_PATTERNS = {
+  videos: /\.(mp4|webm|mov|m4v|ogv)$/i,
+  audio: /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i,
+  images: /\.(png|jpe?g|webp)$/i,
+} as const;
+const MAX_SNAPSHOT_MEDIA_FILE_BYTES = Number(process.env.SANMAO_SNAPSHOT_MEDIA_FILE_MAX_BYTES || 256 * 1024 * 1024);
+const SNAPSHOT_MEDIA_BUDGETS = {
+  videos: Number(process.env.SANMAO_SNAPSHOT_VIDEO_MAX_BYTES || 512 * 1024 * 1024),
+  audio: Number(process.env.SANMAO_SNAPSHOT_AUDIO_MAX_BYTES || 128 * 1024 * 1024),
+  images: Number(process.env.SANMAO_SNAPSHOT_IMAGE_MAX_BYTES || Number.POSITIVE_INFINITY),
+};
+
+type SnapshotMediaStats = { videos: number; audio: number; images: number; skipped: number };
+
+async function collectSnapshotMedia(
+  entries: BackupArchiveEntry[],
+  settings: { imageStoragePath?: string; videoStoragePath?: string },
+): Promise<SnapshotMediaStats> {
+  const stats: SnapshotMediaStats = { videos: 0, audio: 0, images: 0, skipped: 0 };
+  const seen = new Set<string>();
+  const targets = [
+    { folder: 'videos' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.videos, roots: getVideoStorageRoots(String(settings.videoStoragePath || '')) },
+    { folder: 'audio' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.audio, roots: getAudioStorageRoots('') },
+    { folder: 'images' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.images, roots: getStorageRoots(String(settings.imageStoragePath || '')) },
+  ];
+  for (const target of targets) {
+    let budget = SNAPSHOT_MEDIA_BUDGETS[target.folder];
+    for (const root of target.roots) {
+      for (const file of await listFiles(root)) {
+        const relative = path.relative(root, file).replace(/\\/g, '/');
+        if (!relative || seen.has(relative) || !target.pattern.test(relative)) continue;
+        seen.add(relative);
+        let size = 0;
+        try { size = (await stat(file)).size; } catch { continue; }
+        if (size <= 0 || size > MAX_SNAPSHOT_MEDIA_FILE_BYTES || size > budget) { stats.skipped += 1; continue; }
+        try {
+          entries.push({ name: `${target.folder}/${relative}`, data: await readFile(file) });
+          budget -= size;
+          stats[target.folder] += 1;
+        } catch { stats.skipped += 1; }
+      }
+    }
+  }
+  return stats;
+}
 let snapshotInFlight: Promise<{ path: string; createdAt: string; bytes: number; imageCount: number; reason: string }> | null = null;
 
 function hash(data: Buffer) { return createHash('sha256').update(data).digest('hex'); }
@@ -58,21 +110,14 @@ async function createLocalSnapshotInternal(reason: string) {
   for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) {
     entries.push({ name: `server/logs/${name}`, data: await readFile(path.join(dataDir, name)) });
   }
-  const stateObject = JSON.parse(state.toString('utf8')) as { settings?: { imageStoragePath?: string } };
-  const seen = new Set<string>();
-  for (const root of getStorageRoots(String(stateObject.settings?.imageStoragePath || ''))) {
-    for (const file of await listFiles(root)) {
-      const relative = path.relative(root, file).replace(/\\/g, '/');
-      if (!relative || seen.has(relative) || !/\.(png|jpe?g|webp)$/i.test(relative)) continue;
-      seen.add(relative);
-      entries.push({ name: `images/${relative}`, data: await readFile(file) });
-    }
-  }
+  const stateObject = JSON.parse(state.toString('utf8')) as { settings?: { imageStoragePath?: string; videoStoragePath?: string } };
+  const media = await collectSnapshotMedia(entries, stateObject.settings || {});
   const manifest = {
     format: SNAPSHOT_FORMAT,
     version: 1,
     reason,
     createdAt: new Date().toISOString(),
+    media,
     files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: hash(entry.data) })),
   };
   const archive = createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
@@ -81,7 +126,16 @@ async function createLocalSnapshotInternal(reason: string) {
   await writeFile(file, encrypted, { flag: 'wx', flush: true });
   const snapshots = await listLocalSnapshots();
   for (const old of snapshots.slice(KEEP_SNAPSHOTS)) await rm(old.path, { force: true });
-  return { path: file, createdAt: manifest.createdAt, bytes: encrypted.byteLength, imageCount: seen.size, reason };
+  return {
+    path: file,
+    createdAt: manifest.createdAt,
+    bytes: encrypted.byteLength,
+    imageCount: media.images,
+    videoCount: media.videos,
+    audioCount: media.audio,
+    skippedMediaCount: media.skipped,
+    reason,
+  };
 }
 
 export async function createLocalSnapshot(reason = 'scheduled') {
@@ -146,17 +200,29 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
   if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await writeFile(keyPath, masterKey.data, { flush: true });
   const workspace = byName.get('server/workspace.json');
   if (workspace) await writeFile(`${workspacePath}.snapshot.tmp`, workspace.data, { flush: true });
-  const root = path.resolve(configuredStoragePath.trim() || getDefaultStoragePath());
+  const imageRoot = path.resolve(configuredStoragePath.trim() || getDefaultStoragePath());
+  const videoRoot = path.resolve(process.env.SANMAO_VIDEO_STORAGE_PATH?.trim() || getDefaultVideoStoragePath());
+  const audioRoot = path.resolve(process.env.SANMAO_AUDIO_STORAGE_PATH?.trim() || getDefaultAudioStoragePath());
+  const restoredImages = await restoreSnapshotMedia(entries, 'images', imageRoot, SNAPSHOT_MEDIA_PATTERNS.images);
+  const restoredVideos = await restoreSnapshotMedia(entries, 'videos', videoRoot, SNAPSHOT_MEDIA_PATTERNS.videos);
+  const restoredAudio = await restoreSnapshotMedia(entries, 'audio', audioRoot, SNAPSHOT_MEDIA_PATTERNS.audio);
+  await rename(`${statePath}.snapshot.tmp`, statePath);
+  if (workspace) await rename(`${workspacePath}.snapshot.tmp`, workspacePath);
+  return { restoredImages, restoredVideos, restoredAudio, restoredWorkspace: Boolean(workspace), state };
+}
+
+/** 把快照里的某一类媒体写回目标目录，路径一律限制在目标目录内。 */
+async function restoreSnapshotMedia(entries: BackupArchiveEntry[], folder: 'images' | 'videos' | 'audio', root: string, pattern: RegExp) {
   await mkdir(root, { recursive: true });
-  for (const entry of entries.filter((value) => value.name.startsWith('images/'))) {
-    const relative = entry.name.slice('images/'.length).replace(/\\/g, '/');
-    if (!relative || relative.startsWith('/') || relative.split('/').includes('..') || !/\.(png|jpe?g|webp)$/i.test(relative)) continue;
+  let restored = 0;
+  for (const entry of entries.filter((value) => value.name.startsWith(`${folder}/`))) {
+    const relative = entry.name.slice(folder.length + 1).replace(/\\/g, '/');
+    if (!relative || relative.startsWith('/') || relative.split('/').includes('..') || !pattern.test(relative)) continue;
     const target = path.resolve(root, relative);
     if (target !== root && !target.startsWith(`${root}${path.sep}`)) continue;
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, entry.data);
+    restored += 1;
   }
-  await rename(`${statePath}.snapshot.tmp`, statePath);
-  if (workspace) await rename(`${workspacePath}.snapshot.tmp`, workspacePath);
-  return { restoredImages: entries.filter((entry) => entry.name.startsWith('images/')).length, restoredWorkspace: Boolean(workspace), state };
+  return restored;
 }

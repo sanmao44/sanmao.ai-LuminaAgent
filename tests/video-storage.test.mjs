@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 const sourceUrl = new URL('../lib/video-storage.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
@@ -12,15 +12,14 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { esModuleInterop: true, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,
 }).outputText;
-const require = createRequire(import.meta.url);
+const requireTs = createTsRequire(new URL('../lib', import.meta.url).pathname);
 
 function loadVideoStorage(dataDir) {
-  const previous = process.env.SANMAO_DATA_DIR;
+  // 媒体库根固定在临时目录内，避免测试写进真实用户目录。
   process.env.SANMAO_DATA_DIR = dataDir;
+  process.env.SANMAO_MEDIA_ROOT = dataDir;
   const module = { exports: {} };
-  new Function('require', 'module', 'exports', compiled)(require, module, module.exports);
-  if (previous === undefined) delete process.env.SANMAO_DATA_DIR;
-  else process.env.SANMAO_DATA_DIR = previous;
+  new Function('require', 'module', 'exports', compiled)(requireTs, module, module.exports);
   return module.exports;
 }
 

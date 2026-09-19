@@ -1,7 +1,8 @@
 import { open, readFile, stat } from 'node:fs/promises';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { ensureMediaLibrary } from '@/lib/media-library';
 import { getPublicState } from '@/lib/store';
-import { resolveStoredVideoFile } from '@/lib/video-storage';
+import { resolveStoredVideoFileWithFallback } from '@/lib/video-storage';
 
 export const runtime = 'nodejs';
 
@@ -12,9 +13,11 @@ function contentType(file: string) {
 
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return new Response('Unauthorized', { status: 401 });
+  // 后台把历史运行目录里的素材并入固定媒体库，不阻塞本次读取。
+  void ensureMediaLibrary();
   const name = new URL(request.url).searchParams.get('name') || '';
   const state = await getPublicState();
-  const file = resolveStoredVideoFile(state.settings.videoStoragePath || '', name);
+  const file = resolveStoredVideoFileWithFallback(state.settings.videoStoragePath || '', name);
   if (!file) return new Response('Invalid file path', { status: 400 });
   try {
     const metadata = await stat(file);

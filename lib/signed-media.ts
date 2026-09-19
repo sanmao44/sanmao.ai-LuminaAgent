@@ -3,8 +3,8 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
-import { resolveStoredVideoFile } from './video-storage';
-import { getDefaultAudioStoragePath, resolveStoredAudioFile } from './audio-storage';
+import { resolveStoredVideoFileWithFallback } from './video-storage';
+import { resolveStoredAudioFileWithFallback } from './audio-storage';
 import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
 
 export const AGNES_PUBLIC_MEDIA_URL_REQUIRED = 'AGNES_PUBLIC_MEDIA_URL_REQUIRED';
@@ -60,7 +60,6 @@ async function configuredStorageRoot(kind: 'image' | 'video' | 'audio') {
       ? process.env.SANMAO_VIDEO_STORAGE_PATH
       : process.env.SANMAO_AUDIO_STORAGE_PATH;
   if (environmentRoot?.trim()) return environmentRoot.trim();
-  if (kind === 'audio') return getDefaultAudioStoragePath();
   try {
     const state = JSON.parse(await readFile(path.join(resolveProviderConfigDir(), 'state.json'), 'utf8')) as { settings?: Record<string, unknown> };
     const configured = state.settings?.[
@@ -234,11 +233,10 @@ async function localReferencePath(value: string, kind: 'image' | 'video' | 'audi
     return resolveStoredFileWithFallback(await configuredStorageRoot(kind), name);
   }
   if (parsed.pathname === '/api/storage/video' && kind === 'video') {
-    const root = path.resolve((await configuredStorageRoot(kind)) || path.join(dataDir(), 'videos'));
-    return resolveStoredVideoFile(root, name);
+    return resolveStoredVideoFileWithFallback(await configuredStorageRoot(kind), name);
   }
   if (parsed.pathname === '/api/storage/audio' && kind === 'audio') {
-    return resolveStoredAudioFile((await configuredStorageRoot(kind)) || getDefaultAudioStoragePath(), name);
+    return resolveStoredAudioFileWithFallback(await configuredStorageRoot(kind), name);
   }
   return null;
 }

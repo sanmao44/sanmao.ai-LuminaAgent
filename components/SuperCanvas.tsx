@@ -19900,6 +19900,9 @@ function CanvasNodeCard({
       : [];
   const [mentionState, setMentionState] = useState<MentionState>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // 媒体文件被删/不在媒体库时给出可见提示，而不是留一片空白或只剩播放按钮。
+  const [mediaUnavailable, setMediaUnavailable] = useState(false);
+  const [mediaRetryKey, setMediaRetryKey] = useState(0);
   const [videoPlaybackState, setVideoPlaybackState] = useState<
     "paused" | "playing" | "ended"
   >("paused");
@@ -19920,6 +19923,7 @@ function CanvasNodeCard({
       } catch {}
     }
     setVideoPlaybackState("paused");
+    setMediaUnavailable(false);
   }, [data.url, videoClip?.startTime]);
 
   useEffect(() => {
@@ -20068,14 +20072,34 @@ function CanvasNodeCard({
                 <b>{data.kind === "video" ? "空视频节点" : data.kind === "audio" ? "空音频节点" : "空图片节点"}</b>
                  <small>{data.kind === "audio" ? "等待导入音频" : "选中后在下方生成"}</small>
               </div>
+            ) : mediaUnavailable ? (
+              <div className="canvas-media-state missing">
+                <span>!</span>
+                <b>素材文件已丢失</b>
+                <small>文件不在媒体库中，可重新生成或上传替换</small>
+                <button
+                  type="button"
+                  className="canvas-media-retry"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMediaUnavailable(false);
+                    setMediaRetryKey((value) => value + 1);
+                  }}
+                >
+                  重试加载
+                </button>
+              </div>
             ) : data.kind === "video" ? (
               <video
+                key={mediaRetryKey}
                 ref={videoRef}
                 src={data.url}
                 muted={videoClip ? videoClip.muted : true}
                 playsInline
                 preload="metadata"
                 draggable={false}
+                onError={() => setMediaUnavailable(true)}
                 style={videoClip ? { objectFit: videoClip.fit, transform: `translate(${(videoClip.x || 0) * 50}%, ${(videoClip.y || 0) * 50}%) scale(${videoClip.scale || 1})`, opacity: videoClip.opacity ?? 1, transformOrigin: "center center" } : undefined}
                 aria-label={`视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
                 onPlay={() => setVideoPlaybackState("playing")}
@@ -20120,9 +20144,11 @@ function CanvasNodeCard({
               </div>
             ) : (
               <img
+                key={mediaRetryKey}
                 src={data.url}
                 alt={data.name || "画布素材"}
                 draggable={false}
+                onError={() => setMediaUnavailable(true)}
                 onLoad={(event) =>
                   onNaturalSize(
                     node.id,
@@ -20132,7 +20158,7 @@ function CanvasNodeCard({
                 }
               />
             )}
-            {data.kind === "video" && data.url && (
+            {data.kind === "video" && data.url && !mediaUnavailable && (
               <button
                 type="button"
                 className={`canvas-video-play${videoIsPlaying ? " is-playing" : ""}${videoHasEnded ? " is-ended" : ""}`}
