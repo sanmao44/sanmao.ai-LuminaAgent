@@ -14,11 +14,13 @@ const MODULES = [
   'lib/tools/web',
   'lib/tools/executor',
   'lib/tools/policy',
+  'lib/tools/mcp-admin',
   'lib/tools/index',
   'lib/mcp/types',
   'lib/mcp/store',
   'lib/mcp/client',
   'lib/mcp/tools',
+  'lib/mcp/admin',
   'lib/mcp/index',
 ];
 

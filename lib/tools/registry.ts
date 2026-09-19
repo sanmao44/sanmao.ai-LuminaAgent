@@ -23,7 +23,7 @@ export type ToolPermissions =
 export type ToolSource = 'native' | 'mcp' | 'plugin';
 
 /** 能力标签：供 Agent 侧做行为分支，不参与下发判断。 */
-export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill' | 'mcp';
+export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill' | 'mcp' | 'mcp-admin';
 
 /** 本轮上下文：决定哪些工具能下发给模型。 */
 export type ToolGatingContext = {
@@ -35,6 +35,8 @@ export type ToolGatingContext = {
   skillsEnabled: boolean;
   /** 本轮允许调用图片工具。 */
   imageAllowed: boolean;
+  /** 本轮用户明确在说 MCP 服务的接入、查看或开关。 */
+  mcpAdmin: boolean;
 };
 
 export type ToolDefinition = {
@@ -68,6 +70,8 @@ export const TOOL_GATE = {
   image: (context: ToolGatingContext) => context.imageAllowed,
   /** 只有技能功能启用时下发。 */
   skills: (context: ToolGatingContext) => context.skillsEnabled,
+  /** 只有本轮在谈 MCP 服务管理时下发。 */
+  mcpAdmin: (context: ToolGatingContext) => context.mcpAdmin,
 } satisfies Record<string, (context: ToolGatingContext) => boolean>;
 
 export function defineTool<const T extends ToolDefinition>(definition: T) {

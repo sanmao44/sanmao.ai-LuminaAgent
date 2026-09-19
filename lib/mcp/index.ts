@@ -37,4 +37,6 @@ export {
   mcpToolDefinitions,
   mcpToolId,
 } from './tools';
+export { MCP_ADMIN_ACTIONS, runMcpManageAction } from './admin';
+export type { McpAdminAction, McpManageOptions, McpManageOutcome } from './admin';
 export type { McpRemoteTool, McpServerConfig, McpToolMeta } from './types';

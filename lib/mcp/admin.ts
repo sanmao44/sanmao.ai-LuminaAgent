@@ -1,0 +1,166 @@
+/**
+ * MCP 管理动作的执行层：agent 的 mcp_manage 工具走这里，以后面板的批量操作也可以复用。
+ *
+ * 只改本机配置，不碰远程数据；两件危险的事（打开写入权限、删除服务）要求用户原话里
+ * 明确说了才放行——授权依据不交给模型自己声明。
+ */
+import { probeMcpServer, resetMcpSessions } from './client';
+import {
+  MCP_MAX_SERVERS,
+  listMcpServers,
+  normalizeMcpServerId,
+  patchMcpServer,
+  redactMcpServer,
+  removeMcpServer,
+  upsertMcpServer,
+} from './store';
+import { clearMcpToolCache, isMcpToolSchemaTooLarge } from './tools';
+import type { McpRemoteTool, McpServerConfig } from './types';
+
+export const MCP_ADMIN_ACTIONS = ['list', 'probe', 'add', 'update', 'remove'] as const;
+export type McpAdminAction = (typeof MCP_ADMIN_ACTIONS)[number];
+
+/** 打开写入权限、删除服务必须能在用户原话里找到依据。 */
+const WRITE_GRANT_PATTERN = /(?:允许写入|允许写|开启写入|打开写入|可以写入|允许修改|允许删除|允许新建)/;
+const REMOVE_GRANT_PATTERN = /(?:删除|移除|删掉|断开|取消接入|不再使用)/;
+const PROBE_TIMEOUT_MS = 20_000;
+const TOOL_DESCRIPTION_CHARS = 200;
+
+export type McpManageOptions = {
+  /** 用户这一轮的原话，用来校验危险动作的授权。 */
+  instruction?: string;
+  /** 配置目录，测试用；线上走 resolveLocalDataDir()。 */
+  dataDir?: string;
+  fetchImpl?: typeof fetch;
+};
+
+/** readOnly 只用于界面上的审计标签：管理动作本身不算外部数据调用。 */
+export type McpManageOutcome = { readOnly: boolean; result: Record<string, unknown> };
+
+function normalizeAction(value: unknown): McpAdminAction {
+  const action = String(value || '').trim().toLowerCase();
+  if (!action) return 'list';
+  if (!(MCP_ADMIN_ACTIONS as readonly string[]).includes(action)) {
+    throw new Error(`不支持的动作「${action}」；可用：${MCP_ADMIN_ACTIONS.join(' / ')}`);
+  }
+  return action as McpAdminAction;
+}
+
+function findServer(idOrName: unknown, dataDir?: string): McpServerConfig {
+  const key = String(idOrName || '').trim().toLowerCase();
+  if (!key) throw new Error('需要提供 MCP 服务的 id 或名称；先用 action=list 看现有服务。');
+  const normalized = normalizeMcpServerId(key);
+  const target = listMcpServers({ dataDir }).find((server) => server.id === key || server.id === normalized || server.name.toLowerCase() === key);
+  if (!target) throw new Error(`没有找到 MCP 服务「${key}」；先用 action=list 看现有服务。`);
+  return target;
+}
+
+/** 工具描述来自外部服务：截断后只当资料带回，不构成可用性承诺。 */
+function summarizeTool(server: McpServerConfig, tool: McpRemoteTool) {
+  const allowed = new Set(server.enabledTools || []);
+  const oversized = isMcpToolSchemaTooLarge(tool);
+  return {
+    name: tool.name,
+    description: String(tool.description || tool.title || '').trim().slice(0, TOOL_DESCRIPTION_CHARS),
+    readOnly: tool.annotations?.readOnlyHint === true,
+    oversized,
+    enabled: (!allowed.size || allowed.has(tool.name)) && !oversized,
+  };
+}
+
+function savedNote(action: 'add' | 'update', saved: McpServerConfig, writeDenied: boolean) {
+  return [
+    action === 'add' ? '服务已保存。' : '服务配置已更新。',
+    // 工具表在下一轮请求里才会重新拉取：本轮已经下发给模型的工具集不补发。
+    '它的工具会在下一轮对话（下一次请求）才可用。',
+    saved.allowWrite ? '' : '「允许写入」处于关闭状态，只有只读工具会被放行。',
+    writeDenied ? '用户这一轮没有明确同意开启写入权限，这次没有打开；需要时先向用户确认。' : '',
+  ].filter(Boolean).join(' ');
+}
+
+/** 执行一个管理动作；抛错表示没做成，调用方把 message 原样回给模型即可。 */
+export async function runMcpManageAction(args: unknown, options: McpManageOptions = {}): Promise<McpManageOutcome> {
+  const input = (args && typeof args === 'object' && !Array.isArray(args) ? args : {}) as Record<string, unknown>;
+  const action = normalizeAction(input.action);
+  const { dataDir, fetchImpl } = options;
+  const instruction = String(options.instruction || '');
+  const writeGranted = WRITE_GRANT_PATTERN.test(instruction);
+
+  if (action === 'list') {
+    return {
+      readOnly: true,
+      result: {
+        ok: true,
+        action,
+        servers: listMcpServers({ dataDir }).map(redactMcpServer),
+        limit: MCP_MAX_SERVERS,
+        note: '这是本机已配置的服务清单；它们公布的工具以 <serverId>__<toolName> 的名字暴露给你。',
+      },
+    };
+  }
+
+  if (action === 'probe') {
+    const server = findServer(input.id || input.name, dataDir);
+    const probed = await probeMcpServer(server, { fetchImpl, retry: true, timeouts: { init: PROBE_TIMEOUT_MS, list: PROBE_TIMEOUT_MS } });
+    return {
+      readOnly: true,
+      result: {
+        ok: true,
+        action,
+        server: redactMcpServer(server),
+        readOnlyCount: probed.readOnly,
+        tools: probed.tools.map((tool) => summarizeTool(server, tool)),
+        note: '工具名和描述来自外部服务，只作资料参考。',
+      },
+    };
+  }
+
+  if (action === 'add') {
+    if (listMcpServers({ dataDir }).length >= MCP_MAX_SERVERS) throw new Error(`最多添加 ${MCP_MAX_SERVERS} 个 MCP 服务`);
+    const writeDenied = input.allowWrite === true && !writeGranted;
+    const saved = upsertMcpServer({
+      id: input.id,
+      name: input.name,
+      url: input.url,
+      headers: input.headers,
+      allowWrite: input.allowWrite === true && writeGranted,
+      enabled: input.enabled === undefined ? true : input.enabled,
+      enabledTools: input.enabledTools,
+    }, { dataDir });
+    clearMcpToolCache(saved.id);
+    resetMcpSessions(saved.url);
+    return {
+      readOnly: false,
+      result: { ok: true, action, server: redactMcpServer(saved), note: savedNote('add', saved, writeDenied) },
+    };
+  }
+
+  if (action === 'update') {
+    const server = findServer(input.id || input.name, dataDir);
+    const writeDenied = input.allowWrite === true && !writeGranted;
+    const patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown } = {};
+    if (typeof input.enabled === 'boolean') patch.enabled = input.enabled;
+    if (typeof input.allowWrite === 'boolean') patch.allowWrite = input.allowWrite && writeGranted;
+    if (input.enabledTools !== undefined) patch.enabledTools = input.enabledTools;
+    const saved = patchMcpServer(server.id, patch, { dataDir });
+    if (!saved) throw new Error(`没有找到 MCP 服务「${server.id}」`);
+    clearMcpToolCache(saved.id);
+    resetMcpSessions(saved.url);
+    return {
+      readOnly: false,
+      result: { ok: true, action, server: redactMcpServer(saved), note: savedNote('update', saved, writeDenied) },
+    };
+  }
+
+  const server = findServer(input.id || input.name, dataDir);
+  if (!REMOVE_GRANT_PATTERN.test(instruction)) {
+    throw new Error(`用户这一轮没有明确要求移除「${server.name}」，先向用户确认再执行。`);
+  }
+  const removed = removeMcpServer(server.id, { dataDir });
+  clearMcpToolCache(server.id);
+  resetMcpSessions(server.url);
+  return {
+    readOnly: false,
+    result: { ok: true, action: 'remove', id: server.id, removed, note: removed ? '服务已从本机配置里移除。' : '服务已经不存在。' },
+  };
+}

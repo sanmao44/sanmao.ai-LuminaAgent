@@ -171,6 +171,10 @@ const contextFollowUpPattern = /(?:^|[\s，。！？])(?:(?:他|她|它|其|这�
 const creativeOrArtifactPattern = /(?:生图|画图|绘图|改图|修图|海报|插画|提示词|prompt|代码|编程|typescript|javascript|python|脚本|文件|附件|总结|概括|改写|润色|翻译|摘要|整理成|数学题|公式|推导|证明|教程|步骤|怎么做|如何制作|设计方案)/i;
 const conversationalPattern = /^(?:你好|嗨|哈喽|谢谢|感谢|晚安|早上好|你好吗|你是谁|你叫什么|能帮我吗|可以吗|在吗|有人吗)[。.!！?？]*$/i;
 const stableConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解).{0,80}(?:概念|原理|定义|理论|算法|语法|函数|定理|物理|化学|数学|生物|编程|代码|机制|方法|光合作用|相对论|递归|向量|概率)[。.!！?？]*$/i;
+// MCP 服务管理的动词/名词分开写：要同时认「接入某个服务」和「把某个服务删掉」两种语序。
+const MCP_MANAGE_VERB = '(?:接入|接个|连上|连接|添加|新增|删除|移除|删掉|断开|停用|启用|自检|查看|列出|配置|检测)';
+const MCP_MANAGE_NOUN = '(?:外部服务|远程服务|工具服务|服务|server)';
+const mcpManagementPattern = new RegExp(`mcp|model\\s+context\\s+protocol|(?:${MCP_MANAGE_VERB}[^，。！？]{0,10}${MCP_MANAGE_NOUN})|(?:${MCP_MANAGE_NOUN}[^，。！？]{0,8}${MCP_MANAGE_VERB})`, 'i');
 
 function normalizeWebText(value: unknown, limit = 320) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
@@ -324,4 +328,16 @@ export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   if (likelyImageGenerationRequest(text)) return true;
   if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
   return likelyFileGenerationRequest(text);
+}
+
+/**
+ * 用户这一轮是不是在说 MCP 服务本身（接入、查看、开关、移除）。
+ *
+ * 只有命中时才把 mcp_manage 下发给模型：普通「服务/服务器连不上」这类提问不该看到它。
+ * 这里只是下发条件，删除服务和打开写入权限还要在 lib/mcp/admin.ts 里按用户原话再校验一次。
+ */
+export function likelyMcpManagementRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  return mcpManagementPattern.test(text);
 }

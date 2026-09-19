@@ -8,7 +8,7 @@
  */
 import type { ToolDefinition, ToolTag } from './registry';
 
-export type ToolExecutionKind = 'web' | 'file' | 'artifact' | 'image' | 'skill' | 'mcp';
+export type ToolExecutionKind = 'web' | 'file' | 'artifact' | 'image' | 'skill' | 'mcp' | 'mcp-manage';
 
 /** 一个工具只归入第一类命中的标签；archive_generate 带 artifact + archive，复用 artifact 分支。 */
 const KIND_BY_TAG: ReadonlyArray<readonly [ToolTag, ToolExecutionKind]> = [
@@ -18,6 +18,7 @@ const KIND_BY_TAG: ReadonlyArray<readonly [ToolTag, ToolExecutionKind]> = [
   ['image', 'image'],
   ['skill', 'skill'],
   ['mcp', 'mcp'],
+  ['mcp-admin', 'mcp-manage'],
 ];
 
 /** 来源比标签更准：MCP 这类运行时工具永远归入自己的分支。 */

@@ -2,6 +2,7 @@ import { archiveGenerateTool, documentGenerateTool, presentationGenerateTool, sp
 import { fileGenerateTool } from './file';
 import { imageEditTool, imageGenerateTool } from './image';
 import { skillInstallTool, skillReadTool, skillSearchTool } from './skills';
+import { mcpManageTool } from './mcp-admin';
 import { toModelToolSchema, type ModelToolSchema, type ToolDefinition, type ToolGatingContext, type ToolPermissions, type ToolSource, type ToolTag } from './registry';
 import { webSearchTool } from './web';
 import { kindForTool, type ToolExecutionKind } from './executor';
@@ -22,6 +23,7 @@ export const TOOL_REGISTRY: readonly ToolDefinition[] = [
   skillSearchTool,
   skillReadTool,
   skillInstallTool,
+  mcpManageTool,
 ];
 
 const TOOL_BY_NAME = new Map(TOOL_REGISTRY.map((tool) => [tool.name, tool]));

@@ -11,6 +11,16 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const web = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 
+test('only offers the MCP manager when the turn is about MCP services', () => {
+  for (const input of ['帮我接入 GitHub 的 MCP 服务', '看看我现在接了哪些 MCP', '添加一个远程服务', '把 stub-notes 服务删掉', '给这个服务自检一下', '停用这个 server']) {
+    assert.equal(web.likelyMcpManagementRequest(input), true, input);
+  }
+  for (const input of ['服务器为什么连不上', '帮我写个服务端接口', '今天天气怎么样', '推荐几个好用的笔记软件']) {
+    assert.equal(web.likelyMcpManagementRequest(input), false, input);
+  }
+  assert.equal(web.likelyMcpManagementRequest(''), false);
+});
+
 test('migrates legacy web preference and accepts explicit modes', () => {
   assert.equal(typeof web.likelyArtifactGenerationRequest, 'function');
   assert.equal(web.resolveAgentWebMode('always'), 'always');

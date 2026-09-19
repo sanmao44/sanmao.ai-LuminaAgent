@@ -24,6 +24,7 @@ test('注册表登记全部内置工具，且每个工具都声明了 schema / �
     'skill_search',
     'skill_read',
     'skill_install',
+    'mcp_manage',
   ], '工具顺序即下发顺序，不能随意调整');
   assert.equal(new Set(tools.TOOL_REGISTRY.map((tool) => tool.name)).size, tools.TOOL_REGISTRY.length, '工具名不能重复');
   for (const tool of tools.TOOL_REGISTRY) {
@@ -43,6 +44,7 @@ test('门控由注册表统一决定：普通对话不下发任何工具', () =>
   assert.deepEqual(namesFor({ ...NONE, fileGeneration: true }), ['file_generate']);
   assert.deepEqual(namesFor({ ...NONE, deliveryRequest: true }), ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'file_generate', 'archive_generate'], '交付物请求会连文本文件工具一起下发');
   assert.deepEqual(namesFor({ ...NONE, fileGeneration: true, deliveryRequest: true }), ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'file_generate', 'archive_generate']);
+  assert.deepEqual(namesFor({ ...NONE, mcpAdmin: true }), ['mcp_manage'], '只有本轮在谈 MCP 服务时才下发管理工具');
   assert.ok(!namesFor(ALL).includes('web_search'), '联网由本地先判断，永远不下发给模型');
 });
 
@@ -82,8 +84,8 @@ test('route.ts 只做编排：工具定义与门控链都搬到 lib/tools', () =
 test('每个能力标签都有执行入口，且入口由注册表标签推导', async () => {
   const executorSource = await readFile(new URL('../lib/tools/executor.ts', import.meta.url), 'utf8');
   // archive_generate 带 artifact + archive 两个标签，归入 artifact 分支；archive 不单独出现。
-  const KIND_ENTRY = { artifact: 'artifact', archive: 'artifact', image: 'image', skill: 'skill', file: 'file', web: 'web' };
-  const MAPPED_TAGS = new Set(['artifact', 'image', 'skill', 'file', 'web']);
+  const KIND_ENTRY = { artifact: 'artifact', archive: 'artifact', image: 'image', skill: 'skill', file: 'file', web: 'web', 'mcp-admin': 'mcp-manage' };
+  const MAPPED_TAGS = new Set(['artifact', 'image', 'skill', 'file', 'web', 'mcp-admin']);
   const tags = new Set(tools.TOOL_REGISTRY.flatMap((tool) => [...tool.tags]));
   for (const tag of tags) {
     const kind = KIND_ENTRY[tag];
