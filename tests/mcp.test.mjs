@@ -314,6 +314,10 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(manager, /允许写入/);
   assert.match(manager, /tool\.oversized \? <span>参数结构过大，不会下发给助手<\/span> : tool\.readOnly \? <span>只读<\/span> : <span>可能写入<\/span>/);
   assert.match(manager, /disabled=\{busy \|\| Boolean\(tool\.oversized\)\}/);
+  assert.match(manager, /import \{ deriveMcpServerName, headersToText, parseMcpConfigText \} from '@\/lib\/mcp\/config-import';/, '面板复用配置识别模块');
+  assert.match(manager, /识别并填入/);
+  assert.match(manager, /让助手自己接/, '帮助说明要写清助手能代劳');
+  assert.match(manager, /本地命令型服务暂时接不了/);
   assert.match(client, /mcpTools\?: AgentMcpToolUse\[\];/);
   assert.match(page, /mcpTools: Array\.isArray\(data\.mcpTools\)/, '把 MCP 调用记进消息');
   assert.match(page, /className: "message-mcp-badge"/);

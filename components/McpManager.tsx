@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
+import { deriveMcpServerName, headersToText, parseMcpConfigText } from '@/lib/mcp/config-import';
 import styles from './McpManager.module.css';
 
 type McpServerView = {
@@ -17,9 +18,9 @@ type McpServerView = {
 
 type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean; oversized?: boolean };
 type ProbeState = { status: 'busy' | 'done' | 'error'; message: string; tools: ProbeTool[]; toolCount: number; readOnly: number };
-type Draft = { name: string; url: string; headers: string; allowWrite: boolean };
+type Draft = { paste: string; name: string; url: string; headers: string; allowWrite: boolean };
 
-const EMPTY_DRAFT: Draft = { name: '', url: '', headers: '', allowWrite: false };
+const EMPTY_DRAFT: Draft = { paste: '', name: '', url: '', headers: '', allowWrite: false };
 
 async function requestJson(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
@@ -96,12 +97,25 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
 
   const enabledCount = servers.filter((server) => server.enabled).length;
 
+  /** 把别处复制来的配置填进表单：只做识别，仍然要用户确认后才提交。 */
+  function importConfig() {
+    try {
+      const parsed = parseMcpConfigText(draft.paste);
+      setDraft((current) => ({ ...current, name: parsed.name, url: parsed.url, headers: headersToText(parsed.headers), paste: '' }));
+      setError('');
+      setNotice(`${parsed.note}；确认无误后点「添加并自检」。`);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : '识别失败');
+    }
+  }
+
   async function addServer() {
     await run(async () => {
+      const name = draft.name.trim() || deriveMcpServerName(draft.url);
       const data = await requestJson('/api/mcp', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: draft.name, url: draft.url, headers: parseHeaders(draft.headers), allowWrite: draft.allowWrite }),
+        body: JSON.stringify({ name, url: draft.url, headers: parseHeaders(draft.headers), allowWrite: draft.allowWrite }),
       });
       applyPayload(data);
       setDraft(EMPTY_DRAFT);
@@ -203,10 +217,13 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 <button type="button" className={styles.helpClose} aria-label="收起 MCP 说明" title="收起" onClick={() => setHelpOpen(false)}>✕</button>
               </div>
               <p className={styles.hint}>MCP（Model Context Protocol）让你把外部服务接进助手：连接后，助手会看到该服务公布的远程工具并在需要时调用，就像内置的联网或出图能力一样。</p>
-              <p className={styles.hint}><strong>只支持远程服务：</strong>这里填的是 <code>https://…</code> 的 MCP 服务地址，不会在本机拉起任何进程。</p>
-              <p className={styles.hint}><strong>安全边界：</strong>请求头的值只存在本机服务端，页面上只显示名称；有副作用的工具默认被拒绝，必须为单个服务显式打开「允许写入」。外部服务返回的内容一律按不可信数据处理，助手不会执行其中的指令。</p>
+              <p className={styles.hint}><strong>让助手自己接：</strong>直接在对话里说「帮我接入 xxx，地址是 https://…」，助手会调用管理工具完成添加、自检和开关；删除服务和打开写入权限需要你明确同意。</p>
+              <p className={styles.hint}><strong>只支持远程服务：</strong>这里填 <code>https://…</code> 的 Streamable HTTP 地址（常见形如 <code>https://host/mcp</code>），不会在本机拉起任何进程；<code>npx</code> / <code>uvx</code> 这类本地命令型服务暂时接不了。</p>
+              <p className={styles.hint}><strong>凭据：</strong>服务要 token 时按「名称: 值」逐行填请求头（例如 <code>Authorization: Bearer …</code>）；值只存在本机服务端，页面上只显示名称。</p>
+              <p className={styles.hint}><strong>只读与写入：</strong>默认只放行只读工具，有副作用的工具必须为单个服务打开「允许写入」。外部服务返回的内容一律按不可信数据处理，助手不会执行其中的指令。</p>
+              <p className={styles.hint}><strong>上限：</strong>最多 {limit || 20} 个服务，每个最多 60 个工具，参数结构超过 12KB 的工具不下发给助手。</p>
             </div>}
-            <p className={styles.hint}>连接后服务公布的工具会在下一轮对话中生效；连不上只会跳过这个服务，不影响其他对话。</p>
+            <p className={styles.hint}>新增或改动的服务在下一轮对话生效；连不上只会跳过这个服务，不影响其他对话。</p>
           </div>
           <div className={styles.headerAside}>
             <button type="button" className={styles.close} aria-label="关闭 MCP 面板" title="关闭" disabled={busy} onClick={() => setOpen(false)}>✕</button>
@@ -217,7 +234,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         {notice && <p className={styles.notice} role="status">{notice}</p>}
 
         <div className={styles.panel}>
-          {!servers.length && <p className={styles.empty}>还没有连接任何 MCP 服务。在下面填写名称和地址即可添加；添加后会自动做一次连接自检。</p>}
+          {!servers.length && <p className={styles.empty}>还没有连接任何 MCP 服务。可以在下面粘贴一份配置或直接填地址；也可以直接在对话里说「帮我接入 xxx，地址是 https://…」。添加后会自动做一次连接自检。</p>}
           {servers.map((server) => {
             const probe = probes[server.id];
             return <article key={server.id} className={styles.row}>
@@ -256,15 +273,21 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
 
         <section className={styles.form}>
           <h3>添加 MCP 服务</h3>
+          <label htmlFor="mcp-paste">快速接入：粘贴配置或地址（可选）</label>
+          <textarea id="mcp-paste" value={draft.paste} disabled={busy} spellCheck={false} placeholder={'{"mcpServers":{"notion":{"url":"https://mcp.notion.com/mcp","headers":{"Authorization":"Bearer …"}}}}\n或直接粘贴 https://example.com/mcp'} onChange={(event) => setDraft((current) => ({ ...current, paste: event.target.value }))} />
+          <div className={styles.inline}>
+            <button type="button" disabled={busy || !draft.paste.trim()} onClick={importConfig}>识别并填入</button>
+            <span className={styles.hint}>支持 mcpServers 配置、单个服务对象或纯地址，会填好名称、地址和请求头。</span>
+          </div>
           <label htmlFor="mcp-name">名称</label>
-          <input id="mcp-name" type="text" value={draft.name} disabled={busy} placeholder="例如 GitHub" onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
+          <input id="mcp-name" type="text" value={draft.name} disabled={busy} placeholder="留空则按地址推断，例如 GitHub" onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
           <label htmlFor="mcp-url">服务地址</label>
-          <input id="mcp-url" type="url" value={draft.url} disabled={busy} placeholder="https://example.com/mcp" onChange={(event) => setDraft((current) => ({ ...current, url: event.target.value }))} />
+          <input id="mcp-url" type="url" value={draft.url} disabled={busy} placeholder="https://example.com/mcp" onChange={(event) => setDraft((current) => ({ ...current, url: event.target.value, name: current.name.trim() ? current.name : deriveMcpServerName(event.target.value) }))} />
           <label htmlFor="mcp-headers">请求头（可选，每行一条 <code>名称: 值</code>，例如 <code>Authorization: Bearer …</code>）</label>
           <textarea id="mcp-headers" value={draft.headers} disabled={busy} spellCheck={false} onChange={(event) => setDraft((current) => ({ ...current, headers: event.target.value }))} />
           <div className={styles.formFooter}>
             <label className={styles.check}><input type="checkbox" checked={draft.allowWrite} disabled={busy} onChange={() => setDraft((current) => ({ ...current, allowWrite: !current.allowWrite }))} />添加后立即允许写入（有副作用的工具会被放行）</label>
-            <button type="button" className={styles.primary} disabled={busy || !draft.name.trim() || !draft.url.trim()} onClick={() => void addServer()}>{busy ? '处理中…' : '添加并自检'}</button>
+            <button type="button" className={styles.primary} disabled={busy || !draft.url.trim()} onClick={() => void addServer()}>{busy ? '处理中…' : '添加并自检'}</button>
           </div>
         </section>
 
