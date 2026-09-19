@@ -9,6 +9,9 @@ export const MCP_TOOL_SEPARATOR = '__';
 export const MCP_TOOL_CACHE_TTL_MS = 60_000;
 export const MCP_MAX_TOOL_DESCRIPTION_CHARS = 600;
 export const MCP_MAX_TOOL_SCHEMA_CHARS = 12_000;
+/** 一轮对话里最多下发多少个 MCP 工具，以及它们的参数结构合计多大。 */
+export const MCP_MAX_TOOL_DEFINITIONS_PER_TURN = 48;
+export const MCP_MAX_SCHEMA_CHARS_PER_TURN = 60_000;
 
 export function mcpToolId(serverId: string, toolName: string) {
   return `${serverId}${MCP_TOOL_SEPARATOR}${toolName}`;
@@ -58,6 +61,29 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
   });
 }
 
+/**
+ * 每个服务的工具数有上限，但服务本身可以有 20 个：真接满时工具表能到上百个，
+ * 光下发就要几十万字符。这里按配置顺序截断，超出的这轮不下发——
+ * 宁可让助手说"这个服务这轮没挂上"，也不让一次对话被工具表拖垮。
+ */
+export function boundMcpToolPayload(definitions: readonly ToolDefinition[]) {
+  const bounded: ToolDefinition[] = [];
+  let schemaChars = 0;
+  for (const definition of definitions) {
+    if (bounded.length >= MCP_MAX_TOOL_DEFINITIONS_PER_TURN) break;
+    let size = 0;
+    try {
+      size = JSON.stringify(definition.schema).length;
+    } catch {
+      continue;
+    }
+    if (schemaChars + size > MCP_MAX_SCHEMA_CHARS_PER_TURN) break;
+    schemaChars += size;
+    bounded.push(definition);
+  }
+  return bounded;
+}
+
 type McpToolCacheEntry = { at: number; tools: ToolDefinition[] };
 const toolCache = new Map<string, McpToolCacheEntry>();
 
@@ -100,7 +126,7 @@ async function loadForServers(servers: readonly McpServerConfig[], options: McpL
     }
   }));
   for (const items of settled) definitions.push(...items);
-  return definitions;
+  return boundMcpToolPayload(definitions);
 }
 
 /**

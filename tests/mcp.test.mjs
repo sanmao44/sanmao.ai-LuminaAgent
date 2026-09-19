@@ -437,3 +437,76 @@ test('MCP 接入没有新增依赖', async () => {
   const names = [...Object.keys(manifest.dependencies || {}), ...Object.keys(manifest.devDependencies || {})];
   assert.equal(names.some((name) => name.includes('modelcontextprotocol')), false);
 });
+
+test('链路本地与云厂商元数据地址不允许接成 MCP 服务', () => {
+  for (const url of [
+    'http://169.254.169.254/latest/meta-data',
+    'http://100.100.100.200/mcp',
+    'http://[fe80::1]/mcp',
+    'http://[::ffff:169.254.169.254]/mcp',
+    'http://metadata.google.internal/mcp',
+  ]) {
+    assert.throws(() => mcp.normalizeMcpServerUrl(url), /元数据|链路本地/, url);
+  }
+  // 本机桥接服务是合法用法，不能顺手拦掉。
+  assert.equal(mcp.normalizeMcpServerUrl('http://127.0.0.1:8899/mcp'), 'http://127.0.0.1:8899/mcp');
+  assert.equal(mcp.normalizeMcpServerUrl('https://mcp.example.com/mcp'), 'https://mcp.example.com/mcp');
+});
+
+test('同一地址配两套凭据时各自握手，会话不共用', async () => {
+  mcp.resetMcpSessions();
+  let initializes = 0;
+  const sessionUsed = [];
+  const fetchImpl = async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    sessionUsed.push(init.headers['mcp-session-id'] || '');
+    if (payload.method === 'initialize') {
+      initializes += 1;
+      return jsonRpc(payload.id, { protocolVersion: mcp.MCP_PROTOCOL_VERSION }, { 'mcp-session-id': `s${initializes}` });
+    }
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    return jsonRpc(payload.id, { tools: [READ_TOOL] });
+  };
+  const first = serverConfig({ id: 'a', name: 'A', headers: { authorization: 'Bearer a' } });
+  const second = serverConfig({ id: 'b', name: 'B', headers: { authorization: 'Bearer b' } });
+
+  await mcp.listMcpServerTools(first, { fetchImpl });
+  await mcp.listMcpServerTools(second, { fetchImpl });
+  assert.equal(initializes, 2, '同一地址不同凭据必须分别握手');
+  // 每个服务三次请求：initialize 还没有会话，通知和 tools/list 都带上自己那份。
+  assert.deepEqual(sessionUsed, ['', 's1', 's1', '', 's2', 's2'], 'B 用的是自己的会话，不是 A 的');
+
+  await mcp.listMcpServerTools(first, { fetchImpl });
+  assert.equal(initializes, 2, '同一份凭据继续复用会话');
+
+  mcp.resetMcpSessions(first.url);
+  await mcp.listMcpServerTools(first, { fetchImpl });
+  assert.equal(initializes, 3, '按地址清会话时要连这个地址下的全部凭据一起清');
+});
+
+test('MCP 工具表在一轮对话里有总量上限，超出的不下发', async () => {
+  mcp.clearMcpToolCache();
+  mcp.resetMcpSessions();
+  const manyTools = (count, schema) => Array.from({ length: count }, (_value, index) => ({ name: `tool_${index}`, description: '工具', inputSchema: schema, annotations: { readOnlyHint: true } }));
+  const fetchImpl = (tools) => async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    if (payload.method === 'initialize') return jsonRpc(payload.id, { protocolVersion: mcp.MCP_PROTOCOL_VERSION });
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    return jsonRpc(payload.id, { tools });
+  };
+  const servers = [
+    serverConfig({ id: 'a', name: 'A', url: 'https://a.example.com/mcp' }),
+    serverConfig({ id: 'b', name: 'B', url: 'https://b.example.com/mcp' }),
+  ];
+
+  const small = { type: 'object', properties: { q: { type: 'string' } } };
+  const capped = await mcp.loadMcpToolDefinitions({ servers, fetchImpl: fetchImpl(manyTools(60, small)), cache: false });
+  assert.equal(capped.length, mcp.MCP_MAX_TOOL_DEFINITIONS_PER_TURN, '两个服务各 60 个工具时按上限截断');
+
+  // 单个工具的结构在上限内，但合计会撑爆预算，这时也要停。
+  const big = { type: 'object', properties: {}, description: 'x'.repeat(11_800) };
+  const budgeted = await mcp.loadMcpToolDefinitions({ servers: [servers[0]], fetchImpl: fetchImpl(manyTools(20, big)), cache: false });
+  const used = budgeted.reduce((sum, tool) => sum + JSON.stringify(tool.schema).length, 0);
+  assert.ok(budgeted.length > 0 && budgeted.length < 20, '结构过大的工具不会无限下发');
+  assert.ok(used <= mcp.MCP_MAX_SCHEMA_CHARS_PER_TURN, '合计参数结构不超过每轮预算');
+});

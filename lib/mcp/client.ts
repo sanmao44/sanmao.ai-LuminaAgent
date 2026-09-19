@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
 import type { McpRemoteTool, McpServerConfig } from './types';
 
@@ -40,14 +41,33 @@ type McpCallOptions = McpClientOptions & {
   retry?: boolean;
 };
 
-/** 已建立的会话（initialize 拿到的 mcp-session-id），按服务 URL 缓存。 */
+/** 已建立的会话（initialize 拿到的 mcp-session-id），按「地址 + 凭据」缓存。 */
 const sessions = new Map<string, string>();
 let sequence = 1;
 
 /** 丢弃缓存的会话；配置改了（地址或请求头）必须让旧会话失效，否则会拿着旧凭据继续用。 */
 export function resetMcpSessions(url?: string) {
-  if (url) sessions.delete(url);
-  else sessions.clear();
+  if (!url) {
+    sessions.clear();
+    return;
+  }
+  const prefix = `${url}\u0000`;
+  for (const key of [...sessions.keys()]) {
+    if (key === url || key.startsWith(prefix)) sessions.delete(key);
+  }
+}
+
+/**
+ * 同一地址配了两套 token 时必须各握手一次：只按 URL 缓存会让 B 服务拿着 A 的会话 ID
+ * 去调用，等于把两个账号的会话混在一起。凭据只参与哈希，不进 Map 的键。
+ */
+function sessionKey(server: McpServerConfig) {
+  const headers = Object.entries(server.headers || {})
+    .map(([name, value]) => `${name}:${value}`)
+    .sort()
+    .join('\n');
+  if (!headers) return server.url;
+  return `${server.url}\u0000${createHash('sha256').update(headers).digest('hex').slice(0, 16)}`;
 }
 
 function nextId() {
@@ -140,11 +160,12 @@ async function post(server: McpServerConfig, payload: Record<string, unknown>, o
       accept: 'application/json, text/event-stream',
       'mcp-protocol-version': MCP_PROTOCOL_VERSION,
     };
-    const session = sessions.get(server.url);
-    if (session) headers['mcp-session-id'] = session;
-    const response = await fetchImpl(server.url, { method: 'POST', headers, body: JSON.stringify(payload), signal });
-    const issued = response.headers.get('mcp-session-id');
-    if (issued) sessions.set(server.url, issued);
+      const key = sessionKey(server);
+      const session = sessions.get(key);
+      if (session) headers['mcp-session-id'] = session;
+      const response = await fetchImpl(server.url, { method: 'POST', headers, body: JSON.stringify(payload), signal });
+      const issued = response.headers.get('mcp-session-id');
+      if (issued) sessions.set(key, issued);
     if (response.status === 401 || response.status === 403) throw new McpError(server.name, `MCP 服务拒绝访问（${response.status}），请检查请求头里的凭据`);
     if (response.status === 404 || response.status === 405) throw new McpError(server.name, `MCP 服务地址不支持 Streamable HTTP（${response.status}），换用支持 Streamable HTTP 的远程地址`);
     if (response.status >= 400) throw new McpError(server.name, `MCP 服务返回 ${response.status}`);
@@ -167,7 +188,7 @@ async function post(server: McpServerConfig, payload: Record<string, unknown>, o
 }
 
 async function ensureSession(server: McpServerConfig, options: McpClientOptions & { signal?: AbortSignal }) {
-  if (sessions.has(server.url)) return;
+  if (sessions.has(sessionKey(server))) return;
   const result = await post(server, {
     jsonrpc: '2.0',
     id: nextId(),
@@ -196,7 +217,7 @@ async function withSession<T>(server: McpServerConfig, options: McpCallOptions, 
     return await run();
   } catch (error) {
     if (options.retry === false || !(error instanceof McpError) || options.signal?.aborted) throw error;
-    sessions.delete(server.url);
+    sessions.delete(sessionKey(server));
     await ensureSession(server, options);
     return await run();
   }

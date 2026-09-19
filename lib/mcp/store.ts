@@ -24,6 +24,31 @@ export function normalizeMcpServerId(value: unknown, fallback = 'server') {
   return safe || fallback;
 }
 
+/** 云厂商的实例元数据地址：读到就等于拿到机器上的临时凭据，任何情况下都不接。 */
+const MCP_BLOCKED_METADATA_HOSTS = new Set(['metadata.google.internal', 'metadata.goog', '100.100.100.200', 'fd00:ec2::254']);
+
+/**
+ * 链路本地地址（169.254.0.0/16、fe80::/10，含 IPv4 映射写法）是元数据服务的落脚点，
+ * 按字面量挡掉。这里不做 DNS 解析：解析结果随时会变，校验阶段拿到的事实不可靠。
+ */
+function toIpv4Literal(host: string) {
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return host;
+  // URL 会把 ::ffff:169.254.169.254 归一化成 ::ffff:a9fe:a9fe，这里再还原回点分四段。
+  const mapped = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (!mapped) return '';
+  const high = parseInt(mapped[1], 16);
+  const low = parseInt(mapped[2], 16);
+  return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+}
+
+function isBlockedMetadataHost(hostname: string) {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) return true;
+  if (MCP_BLOCKED_METADATA_HOSTS.has(host)) return true;
+  if (/^169\.254\./.test(toIpv4Literal(host))) return true;
+  return /^fe[89ab][0-9a-f]:/.test(host);
+}
+
 function uniqueId(base: string, used: Set<string>) {
   if (!used.has(base)) return base;
   for (let index = 2; index < 100; index += 1) {
@@ -65,9 +90,12 @@ export function normalizeMcpServerUrl(value: unknown) {
   try {
     const parsed = new URL(url);
     if (parsed.username || parsed.password) throw new Error('MCP 服务地址不能带用户名密码，请改用请求头');
+    if (isBlockedMetadataHost(parsed.hostname)) throw new Error('MCP 服务地址不能是链路本地地址或云厂商的实例元数据地址');
     return parsed.toString();
   } catch (error) {
-    throw error instanceof Error && error.message.includes('用户名密码') ? error : new Error('MCP 服务地址不是合法 URL');
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('用户名密码') || message.includes('元数据')) throw error as Error;
+    throw new Error('MCP 服务地址不是合法 URL');
   }
 }
 
@@ -135,7 +163,8 @@ export function saveMcpServers(servers: readonly McpServerConfig[], options: Mcp
   const payload = JSON.stringify({ version: 1, servers: servers.slice(0, MCP_MAX_SERVERS) }, null, 2) + '\n';
   // 先写临时文件再改名，避免进程中断留下半截 JSON 导致配置整体读不出来。
   const temporary = `${file}.tmp`;
-  writeFileSync(temporary, payload, 'utf8');
+  // 请求头里可能有 token，文件权限按仅本人可读写（Windows 上由 ACL 决定，这里是尽力而为）。
+  writeFileSync(temporary, payload, { encoding: 'utf8', mode: 0o600 });
   renameSync(temporary, file);
   return servers.slice(0, MCP_MAX_SERVERS);
 }
