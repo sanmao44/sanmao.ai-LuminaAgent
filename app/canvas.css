@@ -4687,6 +4687,8 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
 .clone-button.ghost:hover,.clone-button.ghost:focus-visible{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--accent-text);outline:none}
 .clone-button.primary{border-color:var(--accent);background:var(--accent);color:var(--accent-contrast,#fff);box-shadow:0 6px 16px color-mix(in srgb,var(--accent) 22%,transparent)}
 .clone-button:disabled{opacity:.55;cursor:not-allowed}
+.clone-button.danger{margin-right:auto;border-color:color-mix(in srgb,var(--danger) 32%,var(--line));background:var(--danger-soft);color:var(--danger)}
+.clone-button.danger:hover,.clone-button.danger:focus-visible{border-color:var(--danger);background:var(--danger);color:#fff;outline:none}
 .clone-progress{display:grid;gap:7px}
 .clone-progress-track{height:7px;overflow:hidden;border-radius:999px;background:var(--panel-3)}
 .clone-progress-track i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .3s ease}

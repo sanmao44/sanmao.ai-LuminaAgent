@@ -138,6 +138,17 @@ async function patchJob(id: string, patch: Partial<CloneJob>) {
   return updateCloneJob(id, patch);
 }
 
+/**
+ * 取消收尾：标记已取消，并清掉本任务目录。
+ * 任务记录可能已经被「删除任务」删掉了（patchJob 这时返回 null），目录同样要清：
+ * 里面只有参考视频副本、抽帧和配音探测文件，留下就是一份白占空间的残留。
+ */
+async function finishCancelled(id: string) {
+  const job = await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });
+  await cleanupCloneJobDirectory(id);
+  return job;
+}
+
 /** 把画布里的参考视频落到本地文件：ffmpeg 只认路径。 */
 async function materializeReference(job: CloneJob) {
   const directory = cloneJobDirectory(job.id);
@@ -417,7 +428,7 @@ async function executeCloneJob(id: string) {
       await patchJob(id, { shots, message: `沿用已有的 ${shots.length} 个镜头` });
     } else {
       const frames = await extractFrameFiles(referenceFile, frameSampleTimes(duration), path.join(cloneJobDirectory(id), 'frames'));
-      if (await isCancelled(id)) return await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });
+      if (await isCancelled(id)) return await finishCancelled(id);
       const analysis = await analyzeShots(chatRuntime, frames, started, duration);
       const normalized = analysis.shots;
       // 拆解降级要立刻落库：后面如果文案阶段直接失败，这条提示不能被吞掉。
@@ -444,7 +455,7 @@ async function executeCloneJob(id: string) {
       await patchJob(id, { stage: 'voicing', progress: cloneStageProgress('voicing'), message: voiceMode === 'offline' ? '正在用本机语音合成配音' : '正在生成配音' });
       const voiceWarnings: string[] = [];
       for (const [index, shot] of shots.entries()) {
-        if (await isCancelled(id)) return await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });
+        if (await isCancelled(id)) return await finishCancelled(id);
         if (!shot.line || shot.audioUrl) continue;
         try {
           const voice = await voiceShot(speechRuntime, started, shot, index);
@@ -530,7 +541,7 @@ async function executeCloneJob(id: string) {
       await patchJob(id, { shots, progress: cloneStageProgress('assembling'), message: '没有视频模型，改用静态图合成' });
     }
 
-    if (await isCancelled(id)) return await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });
+    if (await isCancelled(id)) return await finishCancelled(id);
     await patchJob(id, { stage: 'assembling', progress: cloneStageProgress('assembling'), message: '正在合成时间轴' });
     const timeline = buildTimeline(shots, started.options);
     // maxSeconds 只约束「拆解参考视频的长度」，成片长度由配音实际时长决定：

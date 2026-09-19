@@ -276,3 +276,26 @@ test("视频节点的「更多」只放这个节点自己的操作，成片入�
   assert.match(canvas, /const selectedVideos = \[\.\.\.selectedIds\]\.filter/);
   assert.match(canvas, /return selectedVideos\.length === 1 \? selectedVideos\[0\] : null;/);
 });
+
+test("任务可以删除：弹窗有删除入口，DELETE 路由先取消再清记录", () => {
+  // 缺口：出片了不想要、失败或取消的任务会一直顶在弹窗里，原来没有任何删除入口。
+  assert.match(jobRoute, /export async function DELETE\(request: Request, context/);
+  assert.match(jobRoute, /removeCloneJob\(id\)/);
+  assert.match(jobRoute, /cleanupCloneJobDirectory\(id\)/);
+  // 还在跑的任务要先标记取消，否则管线会继续烧生图、生视频。
+  assert.match(jobRoute, /cancelRequested: true/);
+  assert.match(store, /export async function removeCloneJob\(id: string\)/);
+  assert.match(dialog, /className="clone-button danger" onClick=\{removeJob\}/);
+  assert.match(dialog, /method: "DELETE"/);
+  assert.match(dialog, /const \[deleting, setDeleting\] = useState\(false\);/);
+  assert.match(styles, /\.clone-button\.danger\{/);
+});
+
+test("删除运行中的任务不会留下任务目录残留", () => {
+  // 实测：DELETE 之后管线还会 mkdir 一次，不在取消收尾里清目录就会漏下参考视频副本与抽帧。
+  assert.match(pipeline, /async function finishCancelled\(id: string\)/);
+  assert.match(pipeline, /await cleanupCloneJobDirectory\(id\)/);
+  // 三条取消出口都要走同一个收尾，不能只改一处。
+  assert.equal(pipeline.split('return await finishCancelled(id);').length - 1, 3);
+  assert.ok(!pipeline.includes('isCancelled(id)) return await patchJob('), "不再散落内联取消写法");
+});

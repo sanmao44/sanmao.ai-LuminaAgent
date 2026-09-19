@@ -1,6 +1,6 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { runCloneJob } from '@/lib/clone/pipeline';
-import { findCloneJob, updateCloneJob } from '@/lib/clone/store';
+import { cleanupCloneJobDirectory, runCloneJob } from '@/lib/clone/pipeline';
+import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
 
 export const runtime = 'nodejs';
 
@@ -34,4 +34,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   // 续跑是后台任务，立刻把任务交回前端轮询。
   void runCloneJob(id).catch(() => undefined);
   return Response.json({ ok: true, job: await findCloneJob(id) }, { status: 202 });
+}
+
+/**
+ * 删除一条任务记录。
+ * 任务还在跑时先标记取消：管线在下一个检查点会退出，不会留下一条没人认领的后台任务继续生图、生视频。
+ * 只删任务记录与任务目录；已经落到素材库的图片 / 视频 / 配音不删——它们可能已经放进画布了。
+ */
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  const { id } = await context.params;
+  const job = await findCloneJob(id);
+  if (!job) return Response.json({ ok: true, deleted: false });
+  const wasRunning = job.stage !== 'done' && job.stage !== 'failed' && job.stage !== 'cancelled';
+  if (wasRunning) await updateCloneJob(id, { cancelRequested: true });
+  const removed = await removeCloneJob(id);
+  await cleanupCloneJobDirectory(id);
+  return Response.json({ ok: true, deleted: Boolean(removed), cancelled: wasRunning });
 }

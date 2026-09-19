@@ -107,6 +107,7 @@ export default function CanvasCloneDialog({
   // 打开弹窗时先看看有没有上次没跑完 / 还没放进画布的任务：有就接着显示，而不是甩个向导。
   const [restoring, setRestoring] = useState(true);
   const [resuming, setResuming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const flags = useMemo(() => cloneCapabilityFlags(models), [models]);
   const reference = references.find((item) => item.nodeId === referenceId) || null;
@@ -323,6 +324,29 @@ export default function CanvasCloneDialog({
     }
   }
 
+  /**
+   * 删除任务：出片了但不想要、失败或取消之后，把它从弹窗里清掉，免得每次打开都被顶到眼前。
+   * 只删任务记录，已经放进画布的素材与成片节点都不受影响。
+   */
+  async function removeJob() {
+    if (!job || deleting) return;
+    if (!window.confirm(`删除这条克隆任务？已经放进画布的素材不受影响。`)) return;
+    setDeleting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "删除失败。");
+      setJob(null);
+      setApplied(false);
+      notify("已删除该克隆任务", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "删除失败。");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const readyShots = job ? job.shots.filter((shot) => shot.videoUrl || shot.imageUrl).length : 0;
   const progress = job ? (job.stage === "done" ? 1 : cloneStageProgress(job.stage) || job.progress) : 0;
 
@@ -394,6 +418,12 @@ export default function CanvasCloneDialog({
                 </button>
               ) : (
                 <button type="button" className="clone-button ghost" onClick={closeDialog}>关闭</button>
+              )}
+              {/* 删除按钮靠左放：它是破坏性操作，不要和「放入画布」挤在一起让人点错。 */}
+              {!running && (
+                <button type="button" className="clone-button danger" onClick={removeJob} disabled={deleting}>
+                  {deleting ? "删除中…" : "删除任务"}
+                </button>
               )}
               {job.stage === "done" && readyShots > 0 && (
                 <button type="button" className="clone-button primary" onClick={applyResult} disabled={applied}>
