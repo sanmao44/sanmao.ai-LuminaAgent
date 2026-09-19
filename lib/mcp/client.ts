@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { browserExtensionHint } from './browser-extension';
+import { catalogBrowserBridge, findCatalogEntry, isStdioCatalogEntry } from './catalog';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
 import type { McpRemoteTool, McpServerConfig } from './types';
 import {
@@ -270,7 +272,16 @@ export async function callMcpTool(
   args: Record<string, unknown>,
   options: McpCallOptions = {},
 ): Promise<{ text: string; isError: boolean }> {
-  if (server.transport === 'stdio') return callStdioTool(server, toolName, args, options);
+  if (server.transport === 'stdio') {
+    try {
+      const result = await callStdioTool(server, toolName, args, options);
+      // 浏览器条目的报错原文说清了原因，但没说清「现在该做什么」，这里补一段中文指引。
+      return result.isError ? withBrowserHint(result, server) : result;
+    } catch (error) {
+      // 等不到扩展连上来时是「超时异常」而不是错误结果：这种情况更需要那句话。
+      throw withBrowserHintError(error, server);
+    }
+  }
   // 默认不重放：写工具重复执行的代价远高于一次失败。只读工具由调用方显式打开重试。
   return withSession(server, { ...options, retry: options.retry === true }, async () => {
     const result = await post(server, {
@@ -281,6 +292,41 @@ export async function callMcpTool(
     }, { ...options, timeoutMs: options.timeouts?.call ?? MCP_CALL_TIMEOUT_MS, expectReply: true });
     return { text: resultText(result), isError: Boolean(result?.isError) };
   });
+}
+
+/**
+ * 浏览器条目（Playwright）调用失败时，在原文后面补一段能照着做的中文。
+ * 只在失败时读一次目录状态：正常调用不加任何额外开销。
+ */
+/** 浏览器条目的中文指引；其余条目（或翻译失败）返回 null。 */
+function browserHintFor(server: McpServerConfig, text: string): string | null {
+  if (!server.catalogId) return null;
+  try {
+    const entry = findCatalogEntry(server.catalogId);
+    if (!entry || !isStdioCatalogEntry(entry) || !entry.browserExtension) return null;
+    const bridge = catalogBrowserBridge(entry);
+    return browserExtensionHint(text, {
+      browserName: bridge?.browserName,
+      executablePath: bridge?.executablePath ?? null,
+    });
+  } catch {
+    // 翻译失败绝不能盖掉原始报错。
+    return null;
+  }
+}
+
+function withBrowserHint(
+  result: { text: string; isError: boolean },
+  server: McpServerConfig,
+): { text: string; isError: boolean } {
+  const hint = browserHintFor(server, result.text);
+  return hint ? { ...result, text: `${result.text}\n\n${hint}` } : result;
+}
+
+function withBrowserHintError(error: unknown, server: McpServerConfig): unknown {
+  const original = error instanceof Error ? error.message : String(error ?? '');
+  const hint = browserHintFor(server, original);
+  return hint ? new Error(`${original}\n\n${hint}`) : error;
 }
 
 /** 连接自检：能列工具就算连通，顺便把工具名带回去给面板展示。 */

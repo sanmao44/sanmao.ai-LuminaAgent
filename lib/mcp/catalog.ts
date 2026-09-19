@@ -20,6 +20,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import { listFilesystemRoots } from './filesystem-roots';
+import {
+  PLAYWRIGHT_EXTENSION_TOKEN_ENV,
+  browserNameFromPath,
+  detectDefaultBrowserExecutable,
+  extensionInstalledForBrowser,
+  resolveUserDataDir,
+  type McpBrowserExecutable,
+  type McpBrowserExtensionBridge,
+} from './browser-extension';
 import type { ToolPermissions } from '@/lib/tools/registry';
 import type { McpServerConfig } from './types';
 
@@ -159,6 +168,8 @@ export type McpCatalogArgs = {
   browser: McpCatalogBrowser | null;
   /** 浏览器接入方式（目前只有 Playwright 用得上）。 */
   browserMode: McpCatalogBrowserMode;
+  /** 「接日常浏览器」要接的那个可执行文件；null 表示没找到，退回 Playwright 自己的默认行为。 */
+  browserExecutable?: string | null;
   /** 浏览器站点名单：只有填了才传给服务端，空数组等于不限制。 */
   allowedOrigins?: readonly string[];
   blockedOrigins?: readonly string[];
@@ -313,7 +324,7 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
       note: '扩展由微软官方发布（Apache-2.0，源码在 microsoft/playwright 的 packages/extension）。它需要「调试器」和「访问所有网站」两项权限，只在本机与助手通信，数据不出这台电脑。',
     },
     allowedTools: PLAYWRIGHT_TOOLS,
-    args: ({ installRoot, dataDir, browser, browserMode, allowedOrigins, blockedOrigins }) => {
+    args: ({ installRoot, dataDir, browser, browserMode, browserExecutable, allowedOrigins, blockedOrigins }) => {
       const cli = path.join(installRoot, 'node_modules', '@playwright', 'mcp', 'cli.js');
       // 自动命名的截图等产物落到受控目录，不散在工作区里；两种模式都要。
       const output = ['--output-dir', path.join(dataDir, 'browser', 'downloads')];
@@ -325,7 +336,15 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
       if (browserMode === 'extension') {
         // --extension 会忽略 --browser（实测 0.0.82 的 --help）：接的是用户自己开着的浏览器，
         // 不是我们拉起来的那个，所以这里不能再传 --browser / --user-data-dir。
-        return [cli, '--extension', ...output, ...origins];
+        // --executable-path 是关键：不传时 Playwright 只去 Chrome/Edge 的默认 profile 里找扩展，
+        // 用户把扩展装在别的 Chromium（Tabbit、Brave…）里，就会得到一句「未检测到扩展」。
+        return [
+          cli,
+          '--extension',
+          ...(browserExecutable ? ['--executable-path', browserExecutable] : []),
+          ...output,
+          ...origins,
+        ];
       }
       return [
         cli,
@@ -542,6 +561,10 @@ export type McpCatalogStateEntry = {
   allowWrite?: boolean;
   /** 浏览器接入方式：没存过按 managed（内置独立浏览器）走，升级上来的用户行为不变。 */
   browserMode?: McpCatalogBrowserMode;
+  /** 手填的浏览器可执行文件（接日常浏览器用）；不填就自动认系统默认浏览器。 */
+  browserExecutablePath?: string;
+  /** 扩展的免点击连接码：填了之后连接页不再要人点确认。值只留在服务端，不回传前端。 */
+  extensionToken?: string;
   /** 浏览器站点名单：要传 --allowed-origins / --blocked-origins 的项；空数组等于不限制。 */
   allowedOrigins?: string[];
   blockedOrigins?: string[];
@@ -625,6 +648,105 @@ export function catalogEntryBrowserMode(id: unknown, options: { dataDir?: string
 
 export function setCatalogEntryBrowserMode(id: unknown, browserMode: McpCatalogBrowserMode, options: { dataDir?: string } = {}) {
   return patchCatalogState(id, { browserMode }, options);
+}
+
+/** 连接码长度上限：扩展页给的是一串 43 字符的 base64url，再长就不是它了。 */
+export const MCP_CATALOG_MAX_EXTENSION_TOKEN_CHARS = 200;
+
+/**
+ * 手填的浏览器可执行文件。只收绝对路径、且必须真的在；
+ * 文件不在了就当作没设过，免得面板一直拿一个已经不存在的路径去启动。
+ */
+export function normalizeCatalogBrowserExecutablePath(value: unknown): string {
+  const file = String(value ?? '').trim().replace(/^"|"$/g, '');
+  if (!file) return '';
+  if (!path.isAbsolute(file)) throw new Error(`浏览器路径要写完整路径，收到的是「${file}」`);
+  if (!existsSync(file)) throw new Error(`这个路径上没有文件：${file}`);
+  return file;
+}
+
+export function catalogEntryBrowserExecutablePath(id: unknown, options: { dataDir?: string } = {}): string {
+  const entry = findCatalogEntry(id);
+  if (!entry) return '';
+  const saved = readCatalogState(options)[entry.id]?.browserExecutablePath;
+  if (typeof saved !== 'string' || !saved.trim()) return '';
+  return existsSync(saved) ? saved : '';
+}
+
+export function setCatalogEntryBrowserExecutablePath(id: unknown, value: unknown, options: { dataDir?: string } = {}) {
+  return patchCatalogState(id, { browserExecutablePath: normalizeCatalogBrowserExecutablePath(value) || undefined }, options);
+}
+
+/**
+ * 扩展的免点击连接码。留空 = 清除。
+ * 扩展页会把整行 `PLAYWRIGHT_MCP_EXTENSION_TOKEN=xxx` 提供出来，用户多半整行复制，所以这里也认整行。
+ */
+export function normalizeCatalogExtensionToken(value: unknown): string {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const inline = new RegExp(`${PLAYWRIGHT_EXTENSION_TOKEN_ENV}\\s*=\\s*(\\S+)`).exec(text);
+  const token = inline ? inline[1] : text;
+  if (token.length > MCP_CATALOG_MAX_EXTENSION_TOKEN_CHARS) throw new Error('连接码太长了，看着不像扩展页上那一串');
+  if (!/^[A-Za-z0-9_-]{16,}$/.test(token)) throw new Error('连接码只由字母、数字、-、_ 组成：请到扩展页复制完整的一串');
+  return token;
+}
+
+export function catalogEntryExtensionToken(id: unknown, options: { dataDir?: string } = {}): string {
+  const entry = findCatalogEntry(id);
+  if (!entry) return '';
+  const saved = readCatalogState(options)[entry.id]?.extensionToken;
+  return typeof saved === 'string' ? saved : '';
+}
+
+export function setCatalogEntryExtensionToken(id: unknown, value: unknown, options: { dataDir?: string } = {}) {
+  return patchCatalogState(id, { extensionToken: normalizeCatalogExtensionToken(value) || undefined }, options);
+}
+
+/** 读一次浏览器 profile 目录要解析几百 KB 的偏好文件：面板会轮询，结果缓存一分钟。 */
+const extensionCheckCache = new Map<string, { at: number; installed: boolean | null }>();
+const EXTENSION_CHECK_TTL_MS = 60_000;
+
+function cachedExtensionInstalled(executablePath: string | null): boolean | null {
+  if (!executablePath) return null;
+  const hit = extensionCheckCache.get(executablePath);
+  if (hit && Date.now() - hit.at < EXTENSION_CHECK_TTL_MS) return hit.installed;
+  const installed = extensionInstalledForBrowser(executablePath);
+  extensionCheckCache.set(executablePath, { at: Date.now(), installed });
+  return installed;
+}
+
+/**
+ * 「接日常浏览器」要接哪个浏览器：用户手填的优先，其次系统默认浏览器，
+ * 最后才退回 Chrome/Edge 候选。managed 模式不用它（那里只认 --browser 的 chrome/msedge）。
+ */
+export function resolveCatalogBrowserExecutable(
+  entry: McpCatalogEntry,
+  options: { dataDir?: string } = {},
+): McpBrowserExecutable {
+  const override = catalogEntryBrowserExecutablePath(entry.id, options);
+  if (override) return { path: override, name: browserNameFromPath(override), source: 'override' };
+  const preferred = detectDefaultBrowserExecutable();
+  if (preferred) return { path: preferred, name: browserNameFromPath(preferred), source: 'default' };
+  const fallback = detectSystemBrowser();
+  if (fallback.path) return { path: fallback.path, name: browserNameFromPath(fallback.path), source: 'candidate' };
+  return { path: null, name: '', source: 'none' };
+}
+
+/** 面板要显示的「接的是哪个浏览器、扩展装没装、连接码配没配」；非浏览器条目返回 null。 */
+export function catalogBrowserBridge(
+  entry: McpCatalogEntry,
+  options: { dataDir?: string } = {},
+): McpBrowserExtensionBridge | null {
+  if (!entry.browserExtension) return null;
+  const browser = resolveCatalogBrowserExecutable(entry, options);
+  return {
+    browserName: browser.name,
+    executablePath: browser.path,
+    source: browser.source,
+    userDataDir: resolveUserDataDir(browser.path),
+    extensionInstalled: cachedExtensionInstalled(browser.path),
+    tokenConfigured: Boolean(catalogEntryExtensionToken(entry.id, options)),
+  };
 }
 
 /** 站点名单条数上限：再多就不是「限制几个站点」，而是抄一份导航站清单了。 */
@@ -837,6 +959,11 @@ export function catalogServerConfig(
   } catch {}
   const browser = options.browser ?? detectSystemBrowser();
   const browserMode = options.browserMode ?? catalogEntryBrowserMode(entry.id, options);
+  // 扩展模式下要接的是用户自己那份浏览器：路径按「手填 > 系统默认 > 候选」认出来。
+  const browserExecutable = browserMode === 'extension' ? resolveCatalogBrowserExecutable(entry, options).path : null;
+  // 免点击连接码只走环境变量：写进命令行等于把凭据摊在进程列表里。
+  const extensionToken = browserMode === 'extension' ? catalogEntryExtensionToken(entry.id, options) : '';
+  const env = extensionToken ? { [PLAYWRIGHT_EXTENSION_TOKEN_ENV]: extensionToken } : null;
   // 站点名单跟着条目状态走：改了名单要重连才生效（参数变了 = 换进程）。
   const origins = options.origins ?? catalogEntryOrigins(entry.id, options);
   const roots = options.roots ?? [];
@@ -856,10 +983,12 @@ export function catalogServerConfig(
       dataDir,
       browser: browser.channel,
       browserMode,
+      browserExecutable,
       roots,
       allowedOrigins: origins.allowed || [],
       blockedOrigins: origins.blocked || [],
     }),
+    ...(env ? { env } : {}),
     enabledTools: [...entry.allowedTools],
     cwd: workspace,
   };

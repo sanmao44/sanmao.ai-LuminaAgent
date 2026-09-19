@@ -11,6 +11,7 @@ import { listMcpServerTools } from './client';
 import { MCP_STDIO_IDLE_TIMEOUT_MS, closeStdioServer, stdioServerStatus } from './stdio';
 import type { McpProtocolNegotiation } from './protocol';
 import {
+  catalogBrowserBridge,
   catalogEntryBrowserMode,
   catalogEntryEnabled,
   catalogServerConfig,
@@ -24,6 +25,7 @@ import {
   type McpCatalogBrowserMode,
   type McpStdioCatalogEntry,
 } from './catalog';
+import type { McpBrowserExtensionBridge } from './browser-extension';
 
 export const MCP_CATALOG_INSTALL_TIMEOUT_MS = 10 * 60_000;
 const LOG_TAIL_CHARS = 4000;
@@ -47,6 +49,8 @@ export type McpCatalogRuntimeStatus = {
   browser: { channel: McpCatalogBrowser | null; path: string | null };
   /** 浏览器接入方式：内置独立浏览器，或接用户日常浏览器（需要官方扩展）。 */
   browserMode: McpCatalogBrowserMode;
+  /** 接日常浏览器时：接的是哪个浏览器、扩展装没装、连接码配没配；其余条目为 null。 */
+  browserBridge: McpBrowserExtensionBridge | null;
   installRoot: string;
   logTail: string;
   error: string | null;
@@ -231,6 +235,7 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; r
     needsBrowser: entry.needsBrowser,
     browser,
     browserMode,
+    browserBridge: catalogBrowserBridge(entry, options),
     installRoot: resolveCatalogInstallRoot(entry.id, options),
     logTail: (job?.log || '').slice(-LOG_TAIL_CHARS),
     error,
@@ -248,12 +253,19 @@ export async function startCatalogServer(id: unknown, options: { dataDir?: strin
   const entry = requireStdioCatalogEntry(id);
   if (!isCatalogInstalled(entry, options)) throw new Error('这个服务还没安装完成');
   const browser = detectSystemBrowser();
-  if (entry.needsBrowser && !browser.channel) {
-    throw new Error('没有找到可用的浏览器：请先安装 Google Chrome 或 Microsoft Edge，再回来打开这个服务');
-  }
   const browserMode = catalogEntryBrowserMode(entry.id, options);
-  if (browserMode === 'extension' && !entry.browserExtension) {
-    throw new Error(`${entry.name}没有「接日常浏览器」这种用法`);
+  if (browserMode === 'extension') {
+    if (!entry.browserExtension) throw new Error(`${entry.name}没有「接日常浏览器」这种用法`);
+    const bridge = catalogBrowserBridge(entry, options);
+    if (bridge && !bridge.executablePath) {
+      throw new Error('没找到能接的浏览器：装一个 Chromium 系浏览器（Chrome、Edge、Brave…），或在面板里手填它的可执行文件路径');
+    }
+    // 扩展装没装已经有确定结论时先拦下来：否则要等第一次调用白等两分钟才报错。
+    if (bridge && bridge.extensionInstalled === false) {
+      throw new Error(`在「${bridge.browserName}」里没找到 Playwright Extension（查的是 ${bridge.userDataDir}）：先在它的扩展页装好并启用，或者把浏览器路径改成装了扩展的那个`);
+    }
+  } else if (entry.needsBrowser && !browser.channel) {
+    throw new Error('没有找到可用的浏览器：请先安装 Google Chrome 或 Microsoft Edge，再回来打开这个服务');
   }
   // 没有授权目录时服务会打印用法后直接退出：与其让用户看到一段 stderr，不如在这里说清楚缺什么。
   const roots = [...(options.roots ?? [])];

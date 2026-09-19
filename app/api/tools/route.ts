@@ -3,6 +3,7 @@ import {
   MCP_CATALOG_ENTRIES,
   catalogEntryAccount,
   catalogEntryAllowWrite,
+  catalogBrowserBridge,
   catalogEntryBrowserMode,
   catalogEntryEnabled,
   catalogEntryError,
@@ -14,8 +15,10 @@ import {
   isStdioCatalogEntry,
   requireStdioCatalogEntry,
   setCatalogEntryAllowWrite,
+  setCatalogEntryBrowserExecutablePath,
   setCatalogEntryBrowserMode,
   setCatalogEntryEnabled,
+  setCatalogEntryExtensionToken,
   setCatalogEntryWriteGate,
 } from '@/lib/mcp/catalog';
 import {
@@ -52,7 +55,7 @@ export const runtime = 'nodejs';
  * 允许的动作写死在服务端：请求体只能选其中之一，带不了命令、参数或安装路径。
  * 本机运行时（stdio）是安装/启停，远端连接器（http）是连接/断开/配置。
  */
-const TOOL_ACTIONS = ['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-write', 'roots-remove', 'roots-open', 'runtime-open', 'browser-mode', 'extension-open', 'origins', 'tool-policy'] as const;
+const TOOL_ACTIONS = ['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-write', 'roots-remove', 'roots-open', 'runtime-open', 'browser-mode', 'extension-open', 'origins', 'tool-policy', 'browser-exe', 'extension-token'] as const;
 
 /** 工具授权记忆只有这三个值：写别的进来等于清掉记忆，不如直接拒掉。 */
 const TOOL_POLICY_VALUES = ['ask', 'always_allow', 'block'] as const;
@@ -94,6 +97,8 @@ function snapshot() {
       needsBrowser: isStdioCatalogEntry(entry) ? entry.needsBrowser : false,
       // 浏览器接入方式：内置独立浏览器（默认）还是接用户日常浏览器（需要官方扩展）。
       browserMode: isStdioCatalogEntry(entry) && entry.needsBrowser ? catalogEntryBrowserMode(entry.id) : null,
+      // 接日常浏览器时：接的是哪个浏览器、扩展装没装、连接码配没配（连接码的值不出服务端）。
+      browserBridge: isStdioCatalogEntry(entry) ? catalogBrowserBridge(entry) : null,
       /** 需要装扩展的条目：商店地址与权限说明由目录给，面板照着渲染引导。 */
       browserExtension: isStdioCatalogEntry(entry) && entry.browserExtension ? { ...entry.browserExtension } : null,
       // 站点名单：只有浏览器条目才有；空数组表示不限制。
@@ -163,8 +168,9 @@ export async function POST(request: Request) {
     const data = (await request.json().catch(() => ({}))) as {
       action?: unknown;
       id?: unknown;
+      /** 远端凭据（connect / configure 用）或扩展连接码（extension-token 用）：后者留空表示清除。 */
       token?: unknown;
-      /** 授权目录（roots-add / roots-remove / roots-open 用）。 */
+      /** 授权目录（roots-add / roots-remove / roots-open 用）或浏览器可执行文件（browser-exe 用，留空表示自动识别）。 */
       path?: unknown;
       /** 授权目录的写权限（roots-add / roots-write 用）：true 才允许助手改这个目录里的文件。 */
       write?: unknown;
@@ -257,6 +263,24 @@ export async function POST(request: Request) {
         }
       }
       return Response.json({ ok: true, runtimeError, ...snapshot() });
+    }
+    if (action === 'browser-exe') {
+      const entry = requireStdioCatalogEntry(data?.id);
+      if (!entry.needsBrowser) return Response.json({ error: `${entry.name}没有浏览器可执行文件这一项。` }, { status: 400 });
+      setCatalogEntryBrowserExecutablePath(entry.id, data?.path ?? '');
+      // 换浏览器 = 换启动参数：旧进程先收掉，工具表也要重算。
+      closeStdioServer(entry.id);
+      clearMcpToolCache();
+      return Response.json({ ok: true, ...snapshot() });
+    }
+    if (action === 'extension-token') {
+      const entry = requireStdioCatalogEntry(data?.id);
+      if (!entry.browserExtension) return Response.json({ error: `${entry.name}没有扩展连接码这一项。` }, { status: 400 });
+      setCatalogEntryExtensionToken(entry.id, data?.token ?? '');
+      // 连接码是子进程的环境变量：只有换进程才生效。
+      closeStdioServer(entry.id);
+      clearMcpToolCache();
+      return Response.json({ ok: true, ...snapshot() });
     }
     if (action === 'allow-write') {
       const entry = findCatalogEntry(data?.id);

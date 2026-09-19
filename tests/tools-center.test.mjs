@@ -16,7 +16,7 @@ const panelCss = await readFile(new URL('../components/McpManager.module.css', i
 test('工具中心面板接口要求管理员，并只接受白名单动作', () => {
   assert.match(toolsRoute, /if \(!isAdminRequest\(request\)\) return Response\.json\(\{ error: '需要管理员登录。' \}, \{ status: 401 \}\);/);
   assert.equal((toolsRoute.match(/isAdminRequest\(request\)/g) || []).length, 2, 'GET 和 POST 都要挡');
-  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-write', 'roots-remove', 'roots-open', 'runtime-open', 'browser-mode', 'extension-open', 'origins', 'tool-policy'\] as const;/);
+  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-write', 'roots-remove', 'roots-open', 'runtime-open', 'browser-mode', 'extension-open', 'origins', 'tool-policy', 'browser-exe', 'extension-token'\] as const;/);
   assert.match(toolsRoute, /if \(!\(TOOL_ACTIONS as readonly string\[\]\)\.includes\(action\)\) \{/);
 });
 
@@ -28,8 +28,9 @@ test('命令、参数和安装路径都来自代码内置条目，请求体只�
 });
 
 test('装完/停掉之后要丢掉工具缓存，否则模型还会拿着旧工具表', () => {
-  // 六个入口：装/启停、开关写入权限、改能力组、改写权限分项、增删授权目录、切换浏览器接入方式。
-  assert.equal((toolsRoute.match(/clearMcpToolCache\(\);/g) || []).length, 6);
+  // 八个入口：装/启停、开关写入权限、改能力组、改写权限分项、增删授权目录、
+  // 切换浏览器接入方式、换浏览器可执行文件、存/清扩展连接码（后两个都改了启动参数）。
+  assert.equal((toolsRoute.match(/clearMcpToolCache\(\);/g) || []).length, 8);
 });
 
 test('执行代码的工具不能被「以后直接允许」记住，接口和面板都拦一道', () => {

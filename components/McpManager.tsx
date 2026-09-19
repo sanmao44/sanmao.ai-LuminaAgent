@@ -63,6 +63,19 @@ type CatalogWriteGateView = { id: string; label: string };
 type CatalogToolsetView = { id: string; label: string; summary: string; writes: CatalogWriteGateView[] };
 type BrowserExtensionView = { storeName: string; storeUrl: string; storeId: string; note: string };
 
+/**
+ * 「接日常浏览器」那一侧的真实状态：接的是哪个浏览器、扩展装没装、连接码配没配。
+ * extensionInstalled 为 null 是「无法确认」，不是「没装」——两种要在文案上分开。
+ */
+type BrowserBridgeView = {
+  browserName: string;
+  executablePath: string | null;
+  source: 'override' | 'default' | 'candidate' | 'none';
+  userDataDir: string | null;
+  extensionInstalled: boolean | null;
+  tokenConfigured: boolean;
+};
+
 /** 站点名单：填了才传给浏览器服务，空数组等于不限制。 */
 type CatalogOriginsView = { allowed: string[]; blocked: string[] };
 
@@ -99,6 +112,8 @@ type CatalogEntryView = {
   browserMode: 'managed' | 'extension' | null;
   /** 需要装扩展的条目：商店地址与权限说明，面板照着渲染引导。 */
   browserExtension: BrowserExtensionView | null;
+  /** 接日常浏览器时的浏览器/扩展状态；非浏览器条目为 null。 */
+  browserBridge: BrowserBridgeView | null;
   /** 浏览器条目的站点名单；非浏览器条目为 null。 */
   origins: CatalogOriginsView | null;
   allowedTools: number;
@@ -188,6 +203,26 @@ const BROWSER_MODE_LABELS: Record<'managed' | 'extension', string> = {
 };
 
 /**
+ * 接日常浏览器时先回答「接的是哪个浏览器、扩展装没装」：这两件事决定了用户下一步该干什么。
+ * 「自动确认不了」要和「确认没装」分开说，否则又是一次「我明明装了」。
+ */
+function browserBridgeNote(bridge: BrowserBridgeView | null | undefined) {
+  if (!bridge) return '';
+  if (!bridge.executablePath) return '还没找到能接的浏览器：装一个 Chromium 系浏览器，或在下面手填它的可执行文件路径。';
+  const source = bridge.source === 'override'
+    ? '（你指定的路径）'
+    : bridge.source === 'default'
+      ? '（系统默认浏览器）'
+      : '（本机装的 Chrome/Edge）';
+  const installed = bridge.extensionInstalled === true
+    ? '已找到'
+    : bridge.extensionInstalled === false
+      ? `没找到（查的是 ${bridge.userDataDir || bridge.browserName}）`
+      : '没法自动确认（这个浏览器的 profile 目录推不出来），请到它的扩展页看一眼';
+  return `接的是：${bridge.browserName}${source} · ${bridge.executablePath} · 扩展：${installed}`;
+}
+
+/**
  * 审批档位（与 lib/agent/approval.ts 的取值一一对应）。
  * 第一档是 v1 的老行为，第二档是默认值，第三档等价 Codex 的「完全访问」。
  */
@@ -223,6 +258,35 @@ function hostOf(url: string) {
   try { return new URL(url).host; } catch { return url; }
 }
 
+/**
+ * 面板里的折叠区块：标题行本身就是开关，右侧可以挂常驻动作（刷新状态、展开表单）。
+ * 长说明一律放进 body，标题行只留「这是什么 + 现在几项」的摘要，省得用户先读一屏字。
+ */
+function PanelSection({ id, title, summary, aside, open, onToggle, children }: {
+  id: string;
+  title: string;
+  summary?: ReactNode;
+  aside?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return <div className={styles.form}>
+    <div className={styles.formHead}>
+      <h3 className={styles.sectionTitle}>
+        <button type="button" className={styles.sectionToggle} aria-expanded={open} aria-controls={open ? id : undefined} onClick={onToggle}>
+          <span className={styles.sectionIcon} aria-hidden="true" />
+          <span>{title}</span>
+          {summary ? <span className={styles.sectionSummary}>{summary}</span> : null}
+          <span className={styles.sectionChevron} aria-hidden="true">{open ? '−' : '+'}</span>
+        </button>
+      </h3>
+      {aside}
+    </div>
+    {open && <div id={id} className={styles.sectionBody}>{children}</div>}
+  </div>;
+}
+
 export default function McpManager({ disabled, icon }: { disabled: boolean; icon: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [servers, setServers] = useState<McpServerView[]>([]);
@@ -240,6 +304,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [toolPolicies, setToolPolicies] = useState<Record<string, string>>({});
   // 凭据只在内存里放一会儿：提交后立刻清掉，绝不回显已保存的值。
   const [tokens, setTokens] = useState<Record<string, string>>({});
+  /** 扩展的免点击连接码：和远端凭据一个规矩，提交后立刻清空输入框。 */
+  const [extensionTokens, setExtensionTokens] = useState<Record<string, string>>({});
+  /** 手填的浏览器路径：一般留空（跟系统默认浏览器走）。 */
+  const [browserPaths, setBrowserPaths] = useState<Record<string, string>>({});
   const [rootDraft, setRootDraft] = useState('');
   const [limit, setLimit] = useState(0);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -254,6 +322,12 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [approvalPolicy, setApprovalPolicy] = useState('trusted');
   /** 「完全访问」要点两次：第一下只是把按钮变成待确认状态。 */
   const [policyArmed, setPolicyArmed] = useState(false);
+  /**
+   * 折叠区块：值为 true 表示收起。默认收起「运行时详情 / 工具记忆 / 站点名单 / 扩展进阶设置」
+   * 这些一年动不了两次的内容，常看的几块保持展开。
+   */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ runtime: true, memory: true, browserExt: true, origins: true });
+  const toggleSection = useCallback((key: string) => setCollapsed((current) => ({ ...current, [key]: !current[key] })), []);
   const dialog = useRef<HTMLDialogElement>(null);
   useBodyScrollLock(open);
 
@@ -709,8 +783,44 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         return;
       }
       setNotice(mode === 'extension'
-        ? '已切到「接我日常的浏览器」：保持浏览器开着，第一次操作时官方扩展会让你选一个标签页并点一次允许。'
+        ? '已切到「接我日常的浏览器」：保持那个浏览器开着，第一次操作会在它里面弹一个连接页，选一个标签页点「Connect」（想免点击就填下面的扩展连接码）。'
         : '已切回「内置独立浏览器」：助手用它自己的窗口和登录状态，不碰你日常浏览器。');
+    });
+  }
+
+  /** 免点击连接码：填了之后连接页自动确认；clear 为真表示清除（回到每次点一次）。 */
+  async function saveExtensionToken(item: CatalogEntryView, clear = false) {
+    const value = clear ? '' : (extensionTokens[item.id] || '').trim();
+    if (!clear && !value) {
+      setNotice('先把扩展页上的 PLAYWRIGHT_MCP_EXTENSION_TOKEN=… 整行复制到输入框里，再点保存。');
+      return;
+    }
+    await run(async () => {
+      const data = await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'extension-token', id: item.id, token: value }),
+      });
+      applyPayload(data);
+      setExtensionTokens((current) => ({ ...current, [item.id]: '' }));
+      setNotice(clear
+        ? '已清除扩展连接码：下次连接要在弹出的连接页点一次「Connect」。'
+        : '已保存扩展连接码：下次启动后连接页会自动确认，不再需要点。');
+    });
+  }
+
+  /** 浏览器路径：手填就用它（会自动识别系统默认浏览器）；留空表示回到自动识别。 */
+  async function saveBrowserExecutable(item: CatalogEntryView) {
+    const value = (browserPaths[item.id] || '').trim();
+    await run(async () => {
+      const data = await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'browser-exe', id: item.id, path: value }),
+      });
+      applyPayload(data);
+      setBrowserPaths((current) => ({ ...current, [item.id]: '' }));
+      setNotice(value ? '已记住你指定的浏览器路径：下次启动用它。' : '已回到自动识别：按系统默认浏览器来接。');
     });
   }
 
@@ -767,7 +877,11 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               <p className={styles.hint}><strong>按需下发：</strong>服务工具很多时给它打开「按需下发」：只有这一轮提到这个服务（服务名或工具名）才会把它的工具交给助手，省 token 也更少误点；默认关闭，关闭时每轮都下发。</p>
               <p className={styles.hint}><strong>上限：</strong>最多 {limit || 20} 个服务，每个最多 60 个工具，参数结构超过 12KB 的工具不下发给助手。</p>
             </div>}
-            <p className={styles.hint}>新增或改动的服务在下一轮对话生效；连不上只会跳过这个服务，不影响其他对话。</p>
+            <div className={styles.statusBar}>
+              <span className={enabledCount > 0 ? styles.statusPillOn : styles.statusPill}><b>{enabledCount}</b> 个服务已启用</span>
+              <span className={styles.statusPill}>已连接 {servers.length} / {limit || '—'}</span>
+              {approvalPolicy === 'full' && <span className={styles.warnBadge}>审批：完全访问</span>}
+            </div>
           </div>
           <div className={styles.headerAside}>
             <button type="button" className={styles.close} aria-label="关闭 MCP 面板" title="关闭" disabled={busy} onClick={() => setOpen(false)}>✕</button>
@@ -778,19 +892,21 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         {notice && <p className={styles.notice} role="status">{notice}</p>}
 
         <div className={styles.panel}>
-          <section className={styles.form}>
-            <div className={styles.formHead}>
-              <h3>审批档位</h3>
-              {approvalPolicy === 'full'
-                ? <span className={styles.warnBadge}>不再询问</span>
-                : <span className={styles.badgeMuted}>{APPROVAL_POLICIES.find((item) => item.id === approvalPolicy)?.label || approvalPolicy}</span>}
-            </div>
+          <PanelSection
+            id="mcp-section-approval"
+            title="审批档位"
+            open={!collapsed.approval}
+            onToggle={() => toggleSection('approval')}
+            summary={approvalPolicy === 'full'
+              ? <span className={styles.warnBadge}>不再询问</span>
+              : <span className={styles.badgeMuted}>{APPROVAL_POLICIES.find((item) => item.id === approvalPolicy)?.label || approvalPolicy}</span>}
+          >
             <p className={styles.hint}>只影响 MCP 服务的外部调用（浏览器、GitHub、本地文件等）；内置工具（生成文件、技能）另有各自的开关。</p>
-            <div className={styles.policyGrid}>
+            <div className={styles.segments}>
               {APPROVAL_POLICIES.map((item) => <button
                 key={item.id}
                 type="button"
-                className={styles.miniButton}
+                className={approvalPolicy === item.id ? styles.segmentOn : styles.segment}
                 disabled={busy}
                 title={item.summary}
                 onClick={() => void changeApprovalPolicy(item.id)}
@@ -798,8 +914,15 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             </div>
             <p className={styles.meta}>{APPROVAL_POLICIES.find((item) => item.id === approvalPolicy)?.summary || ''}</p>
             {approvalPolicy === 'full' && <p className={styles.hint}>「完全访问」下助手执行提交、付款、删除这类操作也不会再问你，只在你明确信任这些服务时使用。</p>}
-          </section>
+          </PanelSection>
 
+          <PanelSection
+            id="mcp-section-servers"
+            title="已连接的服务"
+            open={!collapsed.servers}
+            onToggle={() => toggleSection('servers')}
+            summary={servers.length ? `${servers.length} 个` : '还没有'}
+          >
           {!servers.length && <p className={styles.empty}>还没有连接任何 MCP 服务。可以在下面粘贴一份配置或直接填地址；也可以直接在对话里说「帮我接入 xxx，地址是 https://…」。添加后会自动做一次连接自检。</p>}
           {servers.map((server) => {
             const probe = probes[server.id];
@@ -850,12 +973,16 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               </div>
             </article>;
           })}
+          </PanelSection>
 
-        <section className={styles.form}>
-          <div className={styles.formHead}>
-            <h3>官方连接器</h3>
-            <button type="button" disabled={busy} onClick={() => void refreshRuntimes()}>{busy ? '处理中…' : '刷新状态'}</button>
-          </div>
+        <PanelSection
+          id="mcp-section-catalog"
+          title="官方连接器"
+          open={!collapsed.catalog}
+          onToggle={() => toggleSection('catalog')}
+          summary={`${catalog.filter((item) => CATALOG_STATE_TONE[item.state] === 'on').length} / ${catalog.length} 个已连接`}
+          aside={<button type="button" disabled={busy} onClick={() => void refreshRuntimes()}>{busy ? '处理中…' : '刷新状态'}</button>}
+        >
           <p className={styles.hint}>这些连接器来自内置清单：命令、参数和安装位置都写在代码里，面板和对话都改不了。远端连接器不下载任何东西，「连接」只是把一份带凭据的配置交给助手用；凭据只存在本机，页面上只看得到名字。</p>
           {!catalog.length && <p className={styles.hint}>正在读取连接器状态…</p>}
           {catalog.map((item) => {
@@ -885,26 +1012,42 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 {runtime?.needsBrowser && <p className={styles.meta}>{runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个'}</p>}
                 {runtime?.needsBrowser && item.browserMode && <div className={styles.policy}>
                   <p className={styles.meta}>接入方式：{BROWSER_MODE_LABELS[item.browserMode]}{item.browserMode === 'managed' ? '（助手用它自己的窗口和登录状态）' : '（用你日常浏览器的登录状态和标签页）'}</p>
-                  <div className={styles.policyGrid}>
+                  <div className={styles.segments}>
                     {(['managed', 'extension'] as const).map((mode) => <button
                       key={mode}
                       type="button"
-                      className={styles.miniButton}
+                      className={item.browserMode === mode ? styles.segmentOn : styles.segment}
                       disabled={busy}
                       onClick={() => void switchBrowserMode(item, mode)}
                     >{item.browserMode === mode ? `✓ ${BROWSER_MODE_LABELS[mode]}` : BROWSER_MODE_LABELS[mode]}</button>)}
                   </div>
                   {item.browserMode === 'extension' && item.browserExtension && <>
-                    <p className={styles.hint}>
-                      第一步：给浏览器装官方扩展
-                      {' '}<a className={styles.link} href={item.browserExtension.storeUrl} target="_blank" rel="noreferrer">{item.browserExtension.storeName}</a>
-                      {' '}（微软官方只发布了 Chrome 网上应用商店这一份，Edge 也能装它）。第二步：保持浏览器开着，回到这里点「启动」，再进行对话。
-                    </p>
+                    <p className={styles.meta}>{browserBridgeNote(item.browserBridge)}</p>
+                    <ol className={styles.steps}>
+                      <li>把官方扩展装到「{item.browserBridge?.browserName || '你日常用的浏览器'}」里：<a className={styles.link} href={item.browserExtension.storeUrl} target="_blank" rel="noreferrer">{item.browserExtension.storeName}</a></li>
+                      <li>保持这个浏览器开着，回到这里点「启动」再对话——第一次操作会在它里面弹一个连接页，选一个标签页点「Connect」。</li>
+                    </ol>
                     <p className={styles.hint}>{item.browserExtension.note}</p>
-                    <div className={styles.inline}>
-                      <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void openExtensionFolder()}>打开自建扩展目录</button>
-                      <span className={styles.hint}>商店打不开时（国内常见）：在项目里运行 npm run build:playwright-extension 生成自建扩展，再到浏览器的扩展页用「加载已解压的扩展程序」选中这个目录。</span>
+                    <div className={styles.advancedHead}>
+                      <button type="button" className={styles.miniButton} aria-expanded={!collapsed.browserExt} aria-controls={collapsed.browserExt ? undefined : `mcp-ext-${item.id}`} onClick={() => toggleSection('browserExt')}>{collapsed.browserExt ? '进阶设置' : '收起进阶设置'}</button>
+                      <span className={styles.hint}>连接码、浏览器路径，以及商店打不开时怎么自建扩展。</span>
                     </div>
+                    {!collapsed.browserExt && <div id={`mcp-ext-${item.id}`} className={styles.advanced}>
+                      <p className={styles.hint}>连接码在扩展页上（把 <code>PLAYWRIGHT_MCP_EXTENSION_TOKEN=…</code> 整行复制进来）：填了之后连接页自动确认，不用每次点。它只存在本机，只交给这个服务进程。</p>
+                      <div className={styles.inline}>
+                        <input type="password" aria-label="扩展连接码" value={extensionTokens[item.id] || ''} disabled={busy} placeholder={item.browserBridge?.tokenConfigured ? '已保存连接码（留空表示不改）' : '扩展连接码（可留空）'} onChange={(event) => setExtensionTokens((current) => ({ ...current, [item.id]: event.target.value }))} />
+                        <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void saveExtensionToken(item)}>保存连接码</button>
+                        {item.browserBridge?.tokenConfigured && <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void saveExtensionToken(item, true)}>清除连接码</button>}
+                      </div>
+                      <div className={styles.inline}>
+                        <input type="text" aria-label="浏览器可执行文件路径" value={browserPaths[item.id] || ''} disabled={busy} placeholder={item.browserBridge?.executablePath || '浏览器可执行文件路径（一般不用填）'} onChange={(event) => setBrowserPaths((current) => ({ ...current, [item.id]: event.target.value }))} />
+                        <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void saveBrowserExecutable(item)}>用这个路径</button>
+                      </div>
+                      <div className={styles.inline}>
+                        <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void openExtensionFolder()}>打开自建扩展目录</button>
+                        <span className={styles.hint}>商店打不开时（国内常见）：在项目里运行 npm run build:playwright-extension 生成自建扩展，再到浏览器的扩展页用「加载已解压的扩展程序」选中这个目录。</span>
+                      </div>
+                    </div>}
                   </>}
                 </div>}
                 {runtime?.running && <p className={styles.meta}>空闲 {Math.max(1, Math.round(runtime.idleTimeoutMs / 60000))} 分钟后自动关闭{runtime.pid ? ` · 进程 ${runtime.pid}` : ''}</p>}
@@ -933,7 +1076,11 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   <p className={styles.hint}>删除仓库、改密钥、force push、分支保护这类操作没有开关，Catalog 里不会执行。</p>
                 </div>}
                 {item.needsBrowser && <div className={styles.rootEditor}>
-                  <p className={styles.meta}>站点名单：留空就是不限制。填了之后浏览器只在这些站点里活动（下载、截图这类动作也只在名单内）。</p>
+                  <div className={styles.advancedHead}>
+                    <button type="button" className={styles.miniButton} aria-expanded={!collapsed.origins} aria-controls={collapsed.origins ? undefined : `mcp-origins-${item.id}`} onClick={() => toggleSection('origins')}>{collapsed.origins ? '站点名单' : '收起站点名单'}</button>
+                    <span className={styles.hint}>留空就是不限制：填了之后浏览器只在这些站点里活动（下载、截图这类动作也只在名单内）。</span>
+                  </div>
+                  {!collapsed.origins && <div id={`mcp-origins-${item.id}`} className={styles.sectionBody}>
                   <label htmlFor={`mcp-origins-allow-${item.id}`}>允许访问的站点（每行一个，例如 <code>https://example.com</code> 或 <code>*://*.example.com</code>）</label>
                   <textarea
                     id={`mcp-origins-allow-${item.id}`}
@@ -966,6 +1113,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                     <button type="button" disabled={busy} onClick={() => void saveOrigins(item)}>保存站点名单</button>
                     <span className={styles.hint}>改完要重启运行时才生效；当前名单对正在运行的浏览器不追溯。</span>
                   </div>
+                  </div>}
                 </div>}
                 {item.needsRoots && <div className={styles.rootEditor}>
                   <p className={styles.meta}>{roots.length ? `已授权 ${roots.length} 个文件夹；勾了「写入」的目录才允许助手改文件。` : '还没有授权文件夹；本地文件服务需要至少一个文件夹才能启动。'}</p>
@@ -992,7 +1140,11 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                       <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void removeRoot(root)}>移除</button>
                     </div>
                   </div>)}
-                  <p className={styles.hint}>助手只能读这个范围里的文件；要让它改文件，勾上对应目录的「写入」。.env、私钥、浏览器 profile 这类文件即使就在里面也不会读。不确定授权的是哪个目录，点这一行的「打开文件夹」看一眼。</p>
+                  <ul className={styles.notes}>
+                    <li>助手只能读这个范围里的文件；要让它改文件，勾上对应目录的「写入」。</li>
+                    <li>.env、私钥、浏览器 profile 这类文件即使就在里面也不会读。</li>
+                    <li>不确定授权的是哪个目录，点这一行的「打开文件夹」看一眼。</li>
+                  </ul>
                 </div>}
               </div>
               <div className={styles.rowActions}>
@@ -1013,12 +1165,15 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               </div>
             </article>;
           })}
-        </section>
+        </PanelSection>
 
-        <section className={styles.form}>
-          <div className={styles.formHead}>
-            <h3>本地工具运行时详情</h3>
-          </div>
+        <PanelSection
+          id="mcp-section-runtime"
+          title="本地工具运行时详情"
+          open={!collapsed.runtime || installingRuntime}
+          onToggle={() => toggleSection('runtime')}
+          summary={`${runtimes.filter((runtime) => runtime.installed).length} / ${runtimes.length} 个已安装`}
+        >
           {!runtimes.length && <p className={styles.hint}>正在读取本地运行时的安装与运行状态…</p>}
           {runtimes.map((runtime) => <article key={runtime.id} className={styles.row}>
             <div className={styles.rowMain}>
@@ -1041,14 +1196,18 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
           </article>)}
           <p className={styles.hint}>依赖装在本机工作目录里，不写进应用自身依赖。浏览器默认用助手自己的 profile（不碰你日常浏览器的登录状态），也可以在上面的浏览器控制卡片里切到「接我日常的浏览器」，用官方扩展接你自己开着的那个窗口；是否逐次确认取决于上面的审批档位。</p>
           <p className={styles.hint}>安装始终由你在这里点；助手只能查看状态，并在你明确说「启动 / 关闭浏览器运行时」时启停它。</p>
-        </section>
+        </PanelSection>
 
-        <section className={styles.form}>
-          <div className={styles.formHead}>
-            <h3>工具授权记忆与最近调用</h3>
-          </div>
+        <PanelSection
+          id="mcp-section-memory"
+          title="工具授权记忆与最近调用"
+          open={!collapsed.memory}
+          onToggle={() => toggleSection('memory')}
+          summary={`已记住 ${Object.keys(toolPolicies).length} 个工具`}
+        >
           {Object.keys(toolPolicies).length > 0 ? <>
             <p className={styles.meta}>这些工具你已经表过态，助手不会再为它们停下来问。换参数不等于换工具，记错了在这里改回来。</p>
+            <div className={styles.memoryList}>
             {Object.entries(toolPolicies).map(([toolId, policy]) => <div key={toolId} className={styles.rootRow}>
               <code>{toolId}</code>
               <em>{policy === 'always_allow' ? '以后直接允许' : '以后直接拒绝'}</em>
@@ -1056,24 +1215,32 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void forgetToolPolicy(toolId)}>改回每次都问</button>
               </div>
             </div>)}
+            </div>
           </> : <p className={styles.hint}>还没有记住任何工具授权：助手每次都会先问你。想少被打断，就在上面每个工具右边点一下「每次都要问」，改成「以后直接允许」或「以后直接拒绝」。</p>}
           {recentCalls.length > 0 && <>
             <p className={styles.meta}>最近调用（只记摘要，不记完整参数与凭据）：</p>
+            <div className={styles.memoryList}>
             {recentCalls.slice(0, 10).map((call, index) => <div key={`${call.at}-${index}-${call.tool}`} className={styles.rootRow}>
               <code>{call.serverName} · {call.tool}</code>
               <em>{DECISION_LABELS[call.decision] || call.decision}{call.allowed ? (call.ok ? '，成功' : '，失败') : ''}</em>
               <small className={styles.meta}>{call.summary}</small>
             </div>)}
+            </div>
           </>}
-        </section>
+        </PanelSection>
 
         <section className={styles.form}>
           <div className={styles.formHead}>
-            <h3>添加 MCP 服务</h3>
-            <button type="button" aria-expanded={showForm} aria-controls="mcp-add-body" disabled={busy} onClick={() => setFormOpen(!showForm)}>{showForm ? '收起' : '展开'}</button>
+            <h3 className={styles.sectionTitle}>
+              <button type="button" className={styles.sectionToggle} aria-expanded={showForm} aria-controls="mcp-add-body" disabled={busy} onClick={() => setFormOpen(!showForm)}>
+                <span className={styles.sectionIcon} aria-hidden="true" />
+                <span>添加 MCP 服务</span>
+                {!showForm && <span className={styles.sectionSummary}>接入新服务时展开这里</span>}
+                <span className={styles.sectionChevron} aria-hidden="true">{showForm ? '−' : '+'}</span>
+              </button>
+            </h3>
           </div>
-          {!showForm && <p className={styles.hint}>接入新服务时展开这里：粘贴一份配置或直接填地址，添加后会自动自检。</p>}
-          {showForm && <>
+          {showForm && <div id="mcp-add-body" className={styles.sectionBody}>
           <label htmlFor="mcp-paste">快速接入：粘贴配置或地址（可选）</label>
           <textarea id="mcp-paste" value={draft.paste} disabled={busy} spellCheck={false} placeholder={'{"mcpServers":{"notion":{"url":"https://mcp.notion.com/mcp","headers":{"Authorization":"Bearer …"}}}}\n或直接粘贴 https://example.com/mcp'} onChange={(event) => setDraft((current) => ({ ...current, paste: event.target.value }))} />
           <div className={styles.inline}>
@@ -1090,13 +1257,14 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             <label className={styles.check}><input type="checkbox" checked={draft.allowWrite} disabled={busy} onChange={() => setDraft((current) => ({ ...current, allowWrite: !current.allowWrite }))} />添加后立即允许写入（有副作用的工具会被放行）</label>
             <button type="button" className={styles.primary} disabled={busy || !draft.url.trim()} onClick={() => void addServer()}>{busy ? '处理中…' : '添加并自检'}</button>
           </div>
-          </>}
+          </div>}
         </section>
 
         </div>
 
         <footer className={styles.footer}>
-          <span className={styles.count}>已连接 {servers.length} / {limit || '—'} 个服务，其中 {enabledCount} 个已启用</span>
+          <span className={styles.count}>新增或改动的服务在下一轮对话生效；连不上只会跳过这个服务，不影响其他对话。</span>
+          <button type="button" className={styles.primary} disabled={busy} onClick={() => setOpen(false)}>完成</button>
         </footer>
       </dialog>}
     </>
