@@ -165,6 +165,8 @@ const externalFactPattern = /(?:人物|公司|机构|组织|品牌|产品|型号
 const recommendationPattern = /(?:推荐|建议买|值得买|适合我|帮我选|选择哪|哪个更好|哪个好|哪家好|性价比|避坑|排行榜|排名|附近|周边|攻略|路线|行程|住宿|酒店|餐厅|咖啡店|门票|活动|展览|演出|旅游|旅行|购物|购买|订票|best|recommend|where to|worth buying|nearby|itinerary|hotel|restaurant)/i;
 const comparisonPattern = /(?:对比|比较|区别|差异|优缺点|哪个好|哪个更|选哪个|vs\.?|versus|compare|comparison|difference|pros?\s*(?:and|&)\s*cons?)/i;
 const locationSensitivePattern = /(?:附近|周边|本地|当地|在我这里|到哪里|哪里可以|哪个城市|路线|天气|温度|空气质量|交通|门票|酒店|餐厅|咖啡店|活动|展览|演出|旅游|旅行|nearby|local|weather|air quality|traffic|route|hotel|restaurant)/i;
+const strongLocationPattern = /(?:附近|周边|当地|在我这里|到哪里|哪里可以|哪个城市|路线|天气|温度|空气质量|交通|门票|酒店|餐厅|咖啡店|展览|演出|旅游|旅行|nearby|near me|weather|air quality|traffic|route|hotel|restaurant)/i;
+const localDeviceResourcePattern = /(?:(?:本机|本设备|这台(?:电脑|机器|设备)|本地|local)\s*(?:的)?\s*(?:笔记|文件|文档|图片|照片|视频|音频|音乐|模型|部署|数据库|代码|项目|仓库|目录|文件夹|磁盘|硬盘|缓存|环境|应用|软件|程序|数据|资料|脚本|配置|日志|端口|主机|服务器|notes?|files?|documents?|models?|database|repo|folder)|(?:笔记|文件|文档|图片|照片|模型|数据|资料|代码|项目|数据库|缓存)[^，。！？]{0,6}(?:都|全)?(?:存|保存|存储|放)(?:在|到)?\s*(?:本机|本设备|本地))/i;
 const contextFollowUpPattern = /(?:^|[\s，。！？])(?:(?:他|她|它|其|这个人|那个人|该人物|该事件|这件事|这个消息|该消息)(?:现在|目前|后来|之后|最近)?(?:怎么样|如何|还在吗|还好吗|是否还在|的情况|的进展)?|(?:后来|之后|现在|目前|最近)(?:怎么样|如何|呢)?|结果呢|进展呢)(?:[\s，。！？]|$)/i;
 const creativeOrArtifactPattern = /(?:生图|画图|绘图|改图|修图|海报|插画|提示词|prompt|代码|编程|typescript|javascript|python|脚本|文件|附件|总结|概括|改写|润色|翻译|摘要|整理成|数学题|公式|推导|证明|教程|步骤|怎么做|如何制作|设计方案)/i;
 const conversationalPattern = /^(?:你好|嗨|哈喽|谢谢|感谢|晚安|早上好|你好吗|你是谁|你叫什么|能帮我吗|可以吗|在吗|有人吗)[。.!！?？]*$/i;
@@ -221,7 +223,8 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   const timeSensitive = timeSensitivePattern.test(text) && (question || hasConcreteTopic(text));
   const recommendation = recommendationPattern.test(text) && hasConcreteTopic(text);
   const comparison = comparisonPattern.test(text) && hasConcreteTopic(text);
-  const locationSensitive = locationSensitivePattern.test(text) && hasConcreteTopic(text);
+  const locationSensitive = locationSensitivePattern.test(text) && hasConcreteTopic(text)
+    && !(localDeviceResourcePattern.test(text) && !strongLocationPattern.test(text));
   const contextFollowUp = contextFollowUpPattern.test(text) && relevantContextForQuery(text, context).length > 0;
   const factQuestion = question && hasConcreteTopic(text);
 

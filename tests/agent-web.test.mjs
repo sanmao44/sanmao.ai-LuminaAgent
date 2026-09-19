@@ -64,6 +64,18 @@ test('keeps stable explanations, creative work and code out of smart search', ()
   }
 });
 
+test('treats local device resources as ordinary chat instead of a location lookup', () => {
+  for (const input of ['帮我列出本地笔记', '本机的资料放在哪', '我的笔记都存在本地']) {
+    const decision = web.shouldUseAgentWebSearch('auto', input);
+    assert.equal(decision.shouldSearch, false, input);
+    assert.equal(decision.reason, 'ordinary-chat', input);
+  }
+  assert.notEqual(web.shouldUseAgentWebSearch('auto', '本地部署的模型怎么选').reason, 'location-sensitive');
+  for (const input of ['附近有什么好吃的', '上海今天天气怎么样', '北京周边适合周末去的民宿', '本地的咖啡店推荐']) {
+    assert.equal(web.shouldUseAgentWebSearch('auto', input).shouldSearch, true, input);
+  }
+});
+
 test('tool requests stay on planner path while ordinary text can stream directly', () => {
   assert.equal(web.likelyAgentToolRequest('生成一张赛博朋克海报', false), true);
   assert.equal(web.likelyAgentToolRequest('生成一只狗', false), true);
