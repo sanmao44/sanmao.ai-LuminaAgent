@@ -24,7 +24,7 @@ test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本',
   assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor \} from '@\/lib\/tools';/);
   assert.match(fileTools, /Word\/Excel\/PPT\/ZIP 必须用专用工具，不允许把 Office 或 ZIP 内容编码成 base64 塞进来/);
   assert.match(route, /绝对不要把 \.docx\/\.xlsx\/\.pptx\/\.zip 的内容编码成 base64 交给 file_generate/);
-  assert.match(route, /当前不支持解析用户上传的 Word\/Excel\/PPT 内容/);
+  assert.match(route, /用户上传的 Word\/Excel\/PPT\/PDF 已由客户端解析成纯文本/);
 });
 
 test('Office 工具按需下发，避免每次对话都带上工具 schema', () => {

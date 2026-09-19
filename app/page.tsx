@@ -547,13 +547,46 @@ const textAttachmentExtensions = new Set([
     'sh',
     'ps1'
 ]);
+const binaryAttachmentExtensions = new Set([
+    'docx',
+    'xlsx',
+    'pptx',
+    'pdf'
+]);
+// Office/PDF 原件比文本文件大得多：服务端解析成纯文字再回传，上下文里存的始终是文本。
+const binaryAttachmentMaxBytes = 20 * 1024 * 1024;
+async function binaryAttachmentToChatFile(file, extension) {
+    if (!file.size) throw new Error(`${file.name} 是空文件，没有可读取的内容`);
+    if (file.size > binaryAttachmentMaxBytes) throw new Error(`${file.name} 超过 20MB，请拆分后上传`);
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch('/api/attachments/extract', {
+        method: 'POST',
+        body: form
+    });
+    const data = await response.json().catch(()=>null);
+    const content = typeof data?.text === 'string' ? data.text : '';
+    if (!response.ok || !content.trim()) throw new Error(data?.error || `${file.name} 没有可读取的文字内容`);
+    return {
+        id: uid('file'),
+        name: file.name || `附件.${extension}`,
+        mimeType: 'text/plain;charset=utf-8',
+        content,
+        encoding: 'utf8',
+        // 上下文按解析出的文字长度算；卡片上仍然显示原件大小。
+        size: new TextEncoder().encode(content).length,
+        sourceSize: file.size,
+        truncated: Boolean(data?.truncated)
+    };
+}
 async function fileToChatFile(file) {
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
+    if (binaryAttachmentExtensions.has(extension)) return binaryAttachmentToChatFile(file, extension);
     if (!file.type.startsWith('text/') && !textAttachmentExtensions.has(extension) && ![
         'application/json',
         'application/xml',
         'image/svg+xml'
-    ].includes(file.type)) throw new Error(`${file.name} 暂不支持直接分析，请先转换为 TXT、Markdown、JSON 或 CSV`);
+    ].includes(file.type)) throw new Error(`${file.name} 暂不支持直接分析；Word/Excel/PPT/PDF 请上传 .docx、.xlsx、.pptx、.pdf，其他内容请转换为 TXT、Markdown、JSON 或 CSV`);
     if (file.size > 2 * 1024 * 1024) throw new Error(`${file.name} 超过 2MB，请先拆分文件`);
     const content = await file.text();
     if (!content.trim()) throw new Error(`${file.name} 没有可读取的文字内容`);
@@ -4432,7 +4465,7 @@ function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify 
     });
 }
 function chatFileTypeLabel(file) {
-    const match = String(file?.name || '').toLowerCase().match(/\.(docx|xlsx|pptx|zip)$/);
+    const match = String(file?.name || '').toLowerCase().match(/\.(docx|xlsx|pptx|pdf|zip)$/);
     return match ? `${match[1].toUpperCase()} · ` : '';
 }
 function ChatFileList({ files, onDownload, onPreview, onRemove }) {
@@ -4461,7 +4494,7 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
                                     chatFileTypeLabel(file),
                                     file.mimeType.replace(/;.*$/, ''),
                                     " \xb7 ",
-                                    formatFileSize(file.size)
+                                    formatFileSize(file.sourceSize || file.size)
                                 ]
                             })
                         ]
@@ -4482,7 +4515,8 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
                                     "预览"
                                 ]
                             }),
-                            /*#__PURE__*/ _jsxs("button", {
+                            // 上传后解析成文本的附件（带 sourceSize）在会话里只存文字，原件已经不在手上，不提供下载。
+                            !file.sourceSize && /*#__PURE__*/ _jsxs("button", {
                                 type: "button",
                                 className: "message-file-download",
                                 onClick: ()=>onDownload(file),
@@ -7467,7 +7501,9 @@ export default function Page() {
         if (!documents.length) return;
         try {
             const room = Math.max(0, 8 - agentFiles.length);
-            const parsed = await Promise.all(documents.slice(0, room).map((file)=>fileToChatFile(file)));
+            // 逐个解析：Office/PDF 要走服务端，并发解析几个大文件容易把内存顶满。
+            const parsed = [];
+            for (const file of documents.slice(0, room)) parsed.push(await fileToChatFile(file));
             const totalBytes = [
                 ...agentFiles,
                 ...parsed
@@ -7481,9 +7517,13 @@ export default function Page() {
                     ...old,
                     ...parsed.map(chatFileToReference)
                 ].slice(0, 16));
-            if (documents.length > room) notify('最多同时分析 8 个文本文件');
+            const notices = documents.length > room ? ['最多同时分析 8 个文件'] : [];
+            const truncated = parsed.filter((file)=>file.truncated).map((file)=>file.name);
+            if (truncated.length === 1) notices.push(`${truncated[0]} 内容较长，只取得了前面的部分`);
+            else if (truncated.length > 1) notices.push(`${truncated.length} 个文件内容较长，只取得了前面的部分`);
+            if (notices.length) notify(notices.join('；'));
         } catch (error) {
-            notify(error instanceof Error ? error.message : '读取文本文件失败');
+            notify(error instanceof Error ? error.message : '读取附件失败');
         }
     }
     async function pasteClipboardImages(target) {
@@ -11930,7 +11970,7 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("input", {
                                                                             type: "file",
                                                                             hidden: true,
-                                                                            accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1",
+                                                                            accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1,.docx,.xlsx,.pptx,.pdf",
                                                                             multiple: true,
                                                                             onChange: (e)=>{
                                                                                 if (e.target.files) void addAgentAttachments(e.target.files);
