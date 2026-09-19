@@ -1389,6 +1389,12 @@ html[data-theme="light"] .angle-model-option.active small { color:var(--angle-ac
 :root{--shell-rail-width:64px;--shell-drawer-width:272px;--shell-content-left:var(--shell-rail-width);--shell-header-height:64px}
 .sidebar{width:var(--shell-rail-width);padding:10px;z-index:130;overflow:hidden;transition:width .2s ease,box-shadow .2s ease,transform .2s ease}
 .sidebar.expanded{width:var(--shell-drawer-width);overflow:hidden;box-shadow:18px 0 48px rgba(10,12,18,.2)}
+
+/* Wheel over the sidebar stays inside it: scrolling the collapsed rail, the
+   history list or any other part of the panel must not scroll the page and the
+   main column behind it. */
+.sidebar{overscroll-behavior:contain}
+.chat-history-list{overscroll-behavior:contain}
 .sidebar-head{height:44px;display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .sidebar-toggle{width:44px;height:44px;flex:none;display:grid;place-items:center;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text-2)}
 .sidebar-toggle:hover,.sidebar-toggle:focus-visible{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
