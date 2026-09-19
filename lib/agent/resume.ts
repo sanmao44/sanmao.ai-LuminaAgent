@@ -14,6 +14,7 @@
 import { chatCompletion, type ChatMessage } from '@/lib/providers';
 import { getRuntimeModel } from '@/lib/store';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
+import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
 import { lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
 import { runToolLoop } from '@/lib/agent/tool-loop';
 import { toModelToolSchema } from '@/lib/tools/registry';
@@ -104,6 +105,8 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       });
       budget -= Date.now() - startedAt;
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
+      if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
+      else noteRemoteCatalogCallSuccess(server);
       executed.push({
         role: 'tool',
         tool_call_id: pending.callId,
@@ -119,6 +122,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       budget -= Date.now() - startedAt;
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
       const reason = error instanceof Error ? error.message : 'MCP 调用失败';
+      noteRemoteCatalogCallFailure(server, reason);
       executed.push({
         role: 'tool',
         tool_call_id: pending.callId,
@@ -177,6 +181,8 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       });
       budget -= Date.now() - startedAt;
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: true, ok: !result.isError });
+      if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
+      else noteRemoteCatalogCallSuccess(server);
       return {
         role: 'tool',
         tool_call_id: callId,
@@ -191,7 +197,9 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     } catch (error) {
       budget -= Date.now() - startedAt;
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: true, ok: false });
-      return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: error instanceof Error ? error.message : 'MCP 调用失败' }) };
+      const reason = error instanceof Error ? error.message : 'MCP 调用失败';
+      noteRemoteCatalogCallFailure(server, reason);
+      return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: reason }) };
     }
   };
 

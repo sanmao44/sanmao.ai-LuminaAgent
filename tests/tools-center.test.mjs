@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -9,11 +9,12 @@ import { buildMcpModule } from './tools-build.mjs';
 const mcp = await buildMcpModule();
 const toolsRoute = await readFile(new URL('../app/api/tools/route.ts', import.meta.url), 'utf8');
 const panel = await readFile(new URL('../components/McpManager.tsx', import.meta.url), 'utf8');
+const panelCss = await readFile(new URL('../components/McpManager.module.css', import.meta.url), 'utf8');
 
 test('工具中心面板接口要求管理员，并只接受白名单动作', () => {
   assert.match(toolsRoute, /if \(!isAdminRequest\(request\)\) return Response\.json\(\{ error: '需要管理员登录。' \}, \{ status: 401 \}\);/);
   assert.equal((toolsRoute.match(/isAdminRequest\(request\)/g) || []).length, 2, 'GET 和 POST 都要挡');
-  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-remove'\] as const;/);
+  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-remove', 'roots-open', 'runtime-open'\] as const;/);
   assert.match(toolsRoute, /if \(!\(TOOL_ACTIONS as readonly string\[\]\)\.includes\(action\)\) \{/);
 });
 
@@ -76,6 +77,70 @@ test('安装期间会轮询状态与日志，装完自动停止轮询', () => {
   assert.match(panel, /const installingRuntime = runtimes\.some\(\(runtime\) => runtime\.installing\);/);
   assert.match(panel, /\}, 2000\);/);
   assert.match(panel, /return \(\) => clearInterval\(timer\);/);
+});
+
+test('面板只有一个滚动区：官方连接器和运行时详情都在里面，不会被对话框裁掉', () => {
+  const panelOpen = panel.indexOf('<div className={styles.panel}>');
+  const lastSection = panel.lastIndexOf('</section>');
+  const panelClose = panel.lastIndexOf('</div>');
+  const footer = panel.indexOf('<footer className={styles.footer}>');
+  assert.ok(panelOpen > -1 && lastSection > -1 && footer > -1, '面板、section、footer 都要在');
+  // 之前这几个 section 是 .dialog 的直接子项，超出部分被对话框的 overflow: hidden 直接裁掉。
+  assert.ok(panelOpen < lastSection && lastSection < panelClose && panelClose < footer, '所有 section 都要落在 .panel 里、footer 之外');
+  assert.doesNotMatch(panelCss, /max-height: min\(56dvh, 520px\)/, '面板是唯一滚动区，自己再限高就会把下面的内容挤没');
+  assert.match(panelCss, /\.panel \{[\s\S]*?flex: 1 1 auto; min-height: 0; overflow: auto;/);
+  assert.match(panelCss, /\.helpPanel \{[\s\S]*?max-height: min\(46dvh, 420px\);[\s\S]*?overflow: auto;/, '展开帮助说明不能把面板挤成 0 高');
+});
+
+/** 假的 spawn：只记下「打算用什么命令打开哪个目录」，测试不会真的弹资源管理器。 */
+function fakeSpawn(calls) {
+  return (command, args) => {
+    calls.push({ command, args });
+    return { on() {}, unref() {} };
+  };
+}
+
+test('「打开文件夹」只认已授权的目录和代码里的安装目录，路径不会进 shell', () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-open-folder-'));
+  const outside = mkdtempSync(path.join(os.tmpdir(), 'sanmao-open-target-'));
+  try {
+    // 打开方式写死在代码里，路径是参数、不是命令的一部分。
+    assert.deepEqual(mcp.folderOpenCommand(outside, 'win32'), { command: 'explorer.exe', args: [outside] });
+    assert.deepEqual(mcp.folderOpenCommand(outside, 'darwin'), { command: 'open', args: [outside] });
+    assert.deepEqual(mcp.folderOpenCommand(outside, 'linux'), { command: 'xdg-open', args: [outside] });
+
+    // 没授权的目录一律拒绝：面板传什么都越不过白名单。
+    assert.throws(() => mcp.openFilesystemRoot(outside, { dataDir, spawnImpl: fakeSpawn([]) }), /只能打开已经授权的文件夹/);
+
+    mcp.addFilesystemRoot(outside, { dataDir });
+    const [root] = mcp.listFilesystemRoots({ dataDir });
+    const calls = [];
+    assert.equal(mcp.openFilesystemRoot(root, { dataDir, platform: 'win32', spawnImpl: fakeSpawn(calls) }), root);
+    assert.deepEqual(calls, [{ command: 'explorer.exe', args: [root] }]);
+
+    // 运行时目录：id 必须是目录里的本机条目，没装就没有目录可打开。
+    assert.throws(() => mcp.openCatalogFolder('not-a-real-entry', { dataDir }), /未知的本地服务/);
+    assert.throws(() => mcp.openCatalogFolder('github', { dataDir }), /未知的本地服务/, '远端连接器没有安装目录');
+    assert.throws(() => mcp.openCatalogFolder('playwright', { dataDir }), /还没安装/);
+    mkdirSync(path.join(dataDir, 'mcp', 'playwright'), { recursive: true });
+    const runtimeCalls = [];
+    const runtimeRoot = mcp.resolveCatalogInstallRoot('playwright', { dataDir });
+    assert.equal(mcp.openCatalogFolder('playwright', { dataDir, platform: 'win32', spawnImpl: fakeSpawn(runtimeCalls) }), runtimeRoot);
+    assert.deepEqual(runtimeCalls, [{ command: 'explorer.exe', args: [runtimeRoot] }]);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('授权目录与安装目录都能一键在系统文件管理器里打开', () => {
+  assert.match(panel, /action: 'roots-open', path \}/);
+  assert.match(panel, /action: 'runtime-open', id: runtime\.id \}/);
+  assert.ok(panel.includes('>打开文件夹</button>'), '授权目录这一行要有打开文件夹');
+  assert.ok(panel.includes('>打开目录</button>'), '运行时详情里要有打开安装目录');
+  // 面板自己不开命令：两个打开动作都走同一个白名单接口。
+  assert.match(toolsRoute, /openFilesystemRoot\(data\?\.path\) : openCatalogFolder\(data\?\.id\)/);
+  assert.doesNotMatch(panel, /explorer|xdg-open/);
 });
 
 test('本机运行时状态按真实实现计算：没装就是未安装，并带空闲上限', () => {

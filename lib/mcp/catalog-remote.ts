@@ -14,6 +14,7 @@ import {
   catalogEntryAuthRequired,
   catalogEntryEnabled,
   catalogEntryError,
+  findCatalogEntry,
   setCatalogEntryAccount,
   catalogEntryToolsets,
   clearCatalogEntryWriteGates,
@@ -259,4 +260,45 @@ export function catalogEntryState(
   if (entry.requiresRoots && !(options.roots || []).length) return 'unavailable';
   if (runtime?.state === 'running') return 'connected';
   return 'installed';
+}
+
+/** 目录条目里能连的那几个（GitHub / Context7）：写状态前先过这一关，用户自己配的服务直接跳过。 */
+function remoteEntryOf(catalogId: unknown): McpRemoteCatalogEntry | null {
+  const entry = findCatalogEntry(catalogId);
+  return entry && isRemoteCatalogEntry(entry) ? entry : null;
+}
+
+/**
+ * 一次真实调用的结果回写到连接器状态。
+ *
+ * 没有这一步的话，面板上的「需要重新连接」只有用户手动点重连才会更新：token 用着用着过期，
+ * 聊天里每次调用都失败，面板却还写着「已连接」，用户根本不知道该去哪儿修。
+ */
+export function noteRemoteCatalogCallSuccess(server: McpServerConfig, options: { dataDir?: string } = {}) {
+  const entry = remoteEntryOf(server.catalogId);
+  if (!entry) return;
+  try {
+    // 成功一次就说明状态正常：把上一次的失败记录清掉，别让旧错误一直挂着。
+    if (catalogEntryError(entry.id, options)) recordCatalogEntryError(entry.id, null, options);
+    if (catalogEntryAuthRequired(entry.id, options)) setCatalogEntryAuthRequired(entry.id, false, options);
+  } catch {}
+}
+
+/**
+ * 失败：401/403 这类凭据问题记成「需要重新连接」，其余记成一般错误。
+ *
+ * onlyAuth 用在「工具自己返回了 isError」这种场合：仓库不存在之类的业务错误不是连接器坏了，
+ * 随便写状态会让面板一直飘着一个不相关的错误。
+ */
+export function noteRemoteCatalogCallFailure(server: McpServerConfig, message: unknown, options: { onlyAuth?: boolean; dataDir?: string } = {}) {
+  const entry = remoteEntryOf(server.catalogId);
+  if (!entry) return;
+  const text = String(message || '调用失败').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!text) return;
+  const auth = isAuthFailure(text);
+  if (options.onlyAuth && !auth) return;
+  try {
+    setCatalogEntryAuthRequired(entry.id, auth, options);
+    recordCatalogEntryError(entry.id, auth ? text : `调用失败：${text}`, options);
+  } catch {}
 }

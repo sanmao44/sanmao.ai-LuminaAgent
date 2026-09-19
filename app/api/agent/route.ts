@@ -18,6 +18,7 @@ import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_
 import { lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
 import { importBrowserArtifacts } from '@/lib/mcp/browser-downloads';
+import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
 import { listFilesystemRoots } from '@/lib/mcp/filesystem-roots';
 import { runMcpManageAction } from '@/lib/mcp/admin';
 import { isMcpRuntimeAction, runMcpRuntimeAction } from '@/lib/mcp/runtime-admin';
@@ -1207,6 +1208,9 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
           });
           mcpTurnBudget -= Date.now() - mcpStartedAt;
           usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
+          // 调用结果回写到连接器状态：面板上的「需要重新连接」不必等用户手动重连才发现。
+          if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
+          else noteRemoteCatalogCallSuccess(server);
           if (!result.isError) recentPageText = appendPageContext(recentPageText, meta.toolName, result.text);
           // 浏览器下载落在受控目录里：收成 artifact，聊天里才有文件卡片。二进制不进上下文，
           // 模型只知道「下载了哪些文件」，要拿内容得靠 artifactId。
@@ -1235,6 +1239,8 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
           mcpTurnBudget -= Date.now() - mcpStartedAt;
           usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
           const reason = error instanceof Error ? error.message : 'MCP 调用失败';
+          // 抛出来的失败是连接层的问题（网络、会话、凭据）：记进连接器状态，面板上能直接看到。
+          noteRemoteCatalogCallFailure(server, reason);
           // 写工具出错时结果是不确定的：服务端可能已经执行成功，只是响应没回来。
           // 这里必须让模型知道，否则它会直接重试，变成重复写入。
           toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: meta.readOnly ? reason : `${reason}；这次调用是否已经在外部生效无法确认，请先核实结果，再决定是否重试。` }) });

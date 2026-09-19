@@ -33,6 +33,7 @@ import {
   type McpCatalogRuntimeStatus,
 } from '@/lib/mcp/catalog-runtime';
 import { addFilesystemRoot, listFilesystemRoots, removeFilesystemRoot, suggestFilesystemRoots } from '@/lib/mcp/filesystem-roots';
+import { openCatalogFolder, openFilesystemRoot } from '@/lib/mcp/open-folder';
 import { listMcpServers, redactMcpServer } from '@/lib/mcp/store';
 import { closeStdioServer } from '@/lib/mcp/stdio';
 import { clearMcpToolCache } from '@/lib/mcp/tools';
@@ -43,7 +44,7 @@ export const runtime = 'nodejs';
  * 允许的动作写死在服务端：请求体只能选其中之一，带不了命令、参数或安装路径。
  * 本机运行时（stdio）是安装/启停，远端连接器（http）是连接/断开/配置。
  */
-const TOOL_ACTIONS = ['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-remove'] as const;
+const TOOL_ACTIONS = ['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-remove', 'roots-open', 'runtime-open'] as const;
 
 function snapshot() {
   // 授权目录整份只读一次：同一个响应里的运行时状态和条目状态必须来自同一份授权清单。
@@ -128,7 +129,7 @@ export async function POST(request: Request) {
       action?: unknown;
       id?: unknown;
       token?: unknown;
-      /** 授权目录（roots-add / roots-remove 用）。 */
+      /** 授权目录（roots-add / roots-remove / roots-open 用）。 */
       path?: unknown;
       allowWrite?: unknown;
       enabled?: unknown;
@@ -141,7 +142,7 @@ export async function POST(request: Request) {
     };
     const action = String(data?.action || '');
     if (!(TOOL_ACTIONS as readonly string[]).includes(action)) {
-      return Response.json({ error: '未知动作，只支持安装、启动、停止、取消、连接、断开、配置和权限设置。' }, { status: 400 });
+      return Response.json({ error: '未知动作，只支持安装、启动、停止、取消、连接、断开、配置、权限设置和打开文件夹。' }, { status: 400 });
     }
     if (action === 'cancel') {
       cancelCatalogInstall(data?.id);
@@ -155,6 +156,12 @@ export async function POST(request: Request) {
       closeStdioServer('filesystem');
       clearMcpToolCache();
       return Response.json({ ok: true, ...snapshot() });
+    }
+    if (action === 'roots-open' || action === 'runtime-open') {
+      // 「打开文件夹」只把授权目录、代码里写死的运行时安装目录交给系统文件管理器：
+      // 路径全在服务端解析，请求体只能给动作名，授权目录还要再过一遍授权清单。
+      const opened = action === 'roots-open' ? openFilesystemRoot(data?.path) : openCatalogFolder(data?.id);
+      return Response.json({ ok: true, opened });
     }
     if (action === 'allow-write') {
       const entry = findCatalogEntry(data?.id);

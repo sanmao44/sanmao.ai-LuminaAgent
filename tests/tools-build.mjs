@@ -28,6 +28,7 @@ const MODULES = [
   'lib/mcp/catalog',
   'lib/mcp/catalog-remote',
   'lib/mcp/filesystem-roots',
+  'lib/mcp/open-folder',
   'lib/mcp/filesystem-policy',
   'lib/mcp/browser-downloads',
   'lib/artifacts/limits',

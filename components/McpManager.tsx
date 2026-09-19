@@ -481,6 +481,30 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     });
   }
 
+  /** 打开文件夹：浏览器拿不到本机目录，交给服务端用系统文件管理器打开；服务端只认授权清单里的路径。 */
+  async function openRoot(path: string) {
+    await run(async () => {
+      await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'roots-open', path }),
+      });
+      setNotice(`已让系统文件管理器打开 ${path}。`);
+    });
+  }
+
+  /** 运行时安装目录同理：目录由服务端按条目 id 算出，面板只能传 id。 */
+  async function openRuntimeFolder(runtime: RuntimeView) {
+    await run(async () => {
+      await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'runtime-open', id: runtime.id }),
+      });
+      setNotice(`已让系统文件管理器打开 ${runtime.name} 的安装目录。`);
+    });
+  }
+
   /** 安装 / 启动 / 停止 / 取消：请求体只有白名单里的动作名 + 条目 id。 */
   async function runRuntime(action: 'install' | 'start' | 'stop' | 'cancel', runtime: RuntimeView) {
     await run(async () => {
@@ -574,7 +598,6 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               </div>
             </article>;
           })}
-        </div>
 
         <section className={styles.form}>
           <div className={styles.formHead}>
@@ -633,7 +656,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   <p className={styles.hint}>删除仓库、改密钥、force push、分支保护这类操作没有开关，Catalog 里不会执行。</p>
                 </div>}
                 {item.needsRoots && <div className={styles.rootEditor}>
-                  <p className={styles.meta}>已授权：{roots.length ? roots.join('、') : '还没有；本地文件服务需要至少一个文件夹才能启动'}</p>
+                  <p className={styles.meta}>{roots.length ? `已授权 ${roots.length} 个文件夹；本地文件服务重启后能在里面读写。` : '还没有授权文件夹；本地文件服务需要至少一个文件夹才能启动。'}</p>
                   <div className={styles.inline}>
                     <input type="text" aria-label="授权文件夹路径" value={rootDraft} disabled={busy} placeholder="例如 D:\文档（绝对路径，只能填文件夹）" onChange={(event) => setRootDraft(event.target.value)} />
                     <button type="button" disabled={busy || !rootDraft.trim()} onClick={() => void addRoot()}>添加授权文件夹</button>
@@ -644,9 +667,12 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   </div>}
                   {roots.map((root) => <div key={root} className={styles.rootRow}>
                     <code>{root}</code>
-                    <button type="button" disabled={busy} onClick={() => void removeRoot(root)}>移除</button>
+                    <div className={styles.folderActions}>
+                      <button type="button" className={styles.miniButton} disabled={busy} title="用系统文件管理器打开这个文件夹" onClick={() => void openRoot(root)}>打开文件夹</button>
+                      <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void removeRoot(root)}>移除</button>
+                    </div>
                   </div>)}
-                  <p className={styles.hint}>助手只能在这个范围里读写；.env、私钥、浏览器 profile 这类文件即使就在里面也不会读。</p>
+                  <p className={styles.hint}>助手只能在这个范围里读写；.env、私钥、浏览器 profile 这类文件即使就在里面也不会读。不确定授权的是哪个目录，点这一行的「打开文件夹」看一眼。</p>
                 </div>}
               </div>
               <div className={styles.rowActions}>
@@ -681,7 +707,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 <span className={runtime.running ? styles.badgeOn : runtime.state === 'error' ? styles.warnBadge : runtime.installed ? styles.badge : styles.badgeMuted}>{RUNTIME_STATE_LABELS[runtime.state] || runtime.state}</span>
                 {runtime.version && <span className={styles.badgeMuted}>{runtime.version}</span>}
               </div>
-              <p className={styles.meta}>{runtime.installRoot}</p>
+              <div className={styles.folderRow}>
+                <code>{runtime.installRoot}</code>
+                {runtime.installed ? <div className={styles.folderActions}><button type="button" className={styles.miniButton} disabled={busy} title="用系统文件管理器打开安装目录" onClick={() => void openRuntimeFolder(runtime)}>打开目录</button></div> : null}
+              </div>
               <p className={styles.meta}>
                 {runtime.needsBrowser ? (runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个') : ''}
                 {runtime.needsBrowser ? ' · ' : ''}空闲 {Math.max(1, Math.round(runtime.idleTimeoutMs / 60000))} 分钟后自动关闭{runtime.pid ? ` · 进程 ${runtime.pid}` : ''}
@@ -719,6 +748,8 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
           </div>
           </>}
         </section>
+
+        </div>
 
         <footer className={styles.footer}>
           <span className={styles.count}>已连接 {servers.length} / {limit || '—'} 个服务，其中 {enabledCount} 个已启用</span>

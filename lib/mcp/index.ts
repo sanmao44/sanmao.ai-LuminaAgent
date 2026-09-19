@@ -92,6 +92,8 @@ export {
   disconnectRemoteCatalogEntry,
   findRemoteCatalogServer,
   isCatalogEntryConnecting,
+  noteRemoteCatalogCallFailure,
+  noteRemoteCatalogCallSuccess,
   remoteCatalogConnectionState,
   remoteCatalogDefaultHeaders,
   setRemoteCatalogToolset,
@@ -124,6 +126,13 @@ export {
   mcpToolDefinitions,
   mcpToolId,
 } from './tools';
+export {
+  folderOpenCommand,
+  openCatalogFolder,
+  openFilesystemRoot,
+  openLocalFolder,
+} from './open-folder';
+export type { FolderOpenOptions } from './open-folder';
 export {
   MCP_MAX_FILESYSTEM_ROOTS,
   addFilesystemRoot,

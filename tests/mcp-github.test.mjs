@@ -222,3 +222,38 @@ test('远端写权限：本机放行和服务端请求头一起改，断开时�
     assert.deepEqual(mcp.catalogEntryToolsets('github', { dataDir }), ['context', 'repos', 'issues', 'pull_requests']);
   });
 });
+
+test('真实调用的结果回写连接器状态：凭据失效记成「需要重新连接」，成功一次就清掉', async () => {
+  await withDataDir(async (dataDir) => {
+    const entry = mcp.findCatalogEntry('github');
+    await mcp.connectRemoteCatalogEntry(entry, { dataDir, token: 'ghp_secret', fetchImpl: fakeRemote().fetchImpl });
+    const server = mcp.findRemoteCatalogServer(entry, { dataDir });
+    assert.ok(server);
+
+    // 工具自己返回的业务错误（仓库不存在）不是凭据问题：onlyAuth 下不写状态，
+    // 否则面板会一直飘着一个跟连接无关的错误。
+    mcp.noteRemoteCatalogCallFailure(server, 'Repository not found', { dataDir, onlyAuth: true });
+    assert.equal(mcp.catalogEntryAuthRequired(entry.id, { dataDir }), false);
+    assert.equal(mcp.catalogEntryError(entry.id, { dataDir }), null);
+
+    // 401 是凭据失效：面板要显示「需要重新连接」，用户才知道该去哪儿修。
+    mcp.noteRemoteCatalogCallFailure(server, 'Bad credentials (401)', { dataDir });
+    assert.equal(mcp.catalogEntryAuthRequired(entry.id, { dataDir }), true);
+    assert.equal(mcp.catalogEntryState(entry, { dataDir }), 'auth_required');
+    assert.match(String(mcp.catalogEntryError(entry.id, { dataDir })), /Bad credentials/);
+
+    // 成功一次就说明状态正常：失败记录和「需要重新连接」一起清掉。
+    mcp.noteRemoteCatalogCallSuccess(server, { dataDir });
+    assert.equal(mcp.catalogEntryAuthRequired(entry.id, { dataDir }), false);
+    assert.equal(mcp.catalogEntryError(entry.id, { dataDir }), null);
+    assert.equal(mcp.catalogEntryState(entry, { dataDir }), 'connected');
+
+    // 用户自己配的服务不在目录里：认不出 catalogId 就不该写状态。
+    mcp.noteRemoteCatalogCallFailure({ ...server, catalogId: 'not-in-catalog' }, 'Bad credentials (401)', { dataDir });
+    assert.equal(mcp.catalogEntryAuthRequired(entry.id, { dataDir }), false);
+
+    // 报错可能很长：截断后再落盘，别让一次失败把状态文件撑大。
+    mcp.noteRemoteCatalogCallFailure(server, `Bad credentials ${'x'.repeat(1000)}`, { dataDir });
+    assert.ok(String(mcp.catalogEntryError(entry.id, { dataDir })).length < 400);
+  });
+});
