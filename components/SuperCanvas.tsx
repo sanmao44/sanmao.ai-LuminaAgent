@@ -3707,8 +3707,9 @@ export default function SuperCanvas() {
   }, [activePanel, ready, refreshGenerationLogs]);
 
   useEffect(() => {
-    // 关掉「克隆出片」弹窗不等于取消：任务在后台跑，这里在工具栏上给进度，
-    // 并在从「跑」变成「完成 / 失败」的那一刻提示一次，免得用户不知道成片已经好了。
+    // 关掉「克隆出片」弹窗不等于取消：任务在后台跑，这里在画布右上角挂一枚状态胶囊给进度，
+    // 并在从「跑」变成「完成 / 失败」的那一刻提示一次，免得用户不知道成片已经好了；
+    // 成片要放进画布，走「双击空白处 → 创建节点 → 克隆出片」，弹窗会自动接回这条任务。
     if (!ready) return;
     let disposed = false;
     const tick = async () => {
@@ -3726,8 +3727,8 @@ export default function SuperCanvas() {
         const watchedId = cloneRunningIdRef.current;
         if (watchedId && watchedId !== running?.id) {
           const finished = jobs.find((job) => job.id === watchedId);
-          if (finished?.stage === "done") notify(`克隆出片已完成（${finished.shotCount || 0} 个镜头），点「✦ 克隆出片」可放入画布`, "ok");
-          else if (finished?.stage === "failed") notify(`克隆出片失败：${finished.message || "可在「✦ 克隆出片」里继续任务"}`, "error");
+          if (finished?.stage === "done") notify(`克隆出片已完成（${finished.shotCount || 0} 个镜头），双击画布空白处打开「创建节点 → 克隆出片」即可放入画布`, "ok");
+          else if (finished?.stage === "failed") notify(`克隆出片失败：${finished.message || "在「创建节点 → 克隆出片」里可继续任务"}`, "error");
           cloneRunningIdRef.current = "";
         }
         if (running) cloneRunningIdRef.current = running.id;
@@ -4418,7 +4419,7 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       // During reference picking, node clicks stay reserved for selecting a
       // reference. Blank canvas clicks must still be able to pan the viewport.
@@ -13460,14 +13461,16 @@ export default function SuperCanvas() {
           id: "video-tools",
           icon: "more",
           label: "更多",
-          actions: [{
-            id: "depth-video",
-            icon: "depth",
-            label: "生成深度图节点",
-            title: "免费在本机生成深度图视频，首次使用会下载模型",
-            disabled: !hasMedia || generationKeys.has(`depth:${node.id}`),
-            onClick: () => void createDepthVideoFromNode(node),
-          }],
+          actions: [
+            {
+              id: "depth-video",
+              icon: "depth",
+              label: "生成深度图节点",
+              title: "免费在本机生成深度图视频，首次使用会下载模型",
+              disabled: !hasMedia || generationKeys.has(`depth:${node.id}`),
+              onClick: () => void createDepthVideoFromNode(node),
+            },
+          ],
         }],
         dangerAction: {
           id: "delete",
@@ -14524,16 +14527,6 @@ export default function SuperCanvas() {
           >
             ＋ 导入素材
           </button>
-          <button
-            type="button"
-            className={`canvas-soft-button canvas-clone-button${cloneTask ? " busy" : ""}`}
-            aria-haspopup="dialog"
-            title={cloneTask ? `克隆出片进行中：${cloneTask.message}` : "克隆出片：拆解一条参考视频的节奏，用平台已配模型重写成你自己的片子"}
-            onClick={() => setCloneDialogOpen(true)}
-          >
-            ✦ 克隆出片
-            {cloneTask ? <span className="canvas-clone-progress">{Math.round(Math.max(0, Math.min(1, cloneTask.progress)) * 100)}%</span> : null}
-          </button>
           {!topbarCollapsed && <button
             type="button"
             className={`canvas-soft-button canvas-shortcuts-button ${activePanel === "shortcuts" ? "active" : ""}`}
@@ -14883,6 +14876,22 @@ export default function SuperCanvas() {
               <small>点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消</small>
             </div>
           </div>
+        )}
+        {cloneTask && (
+          <button
+            type="button"
+            className="canvas-status-chip canvas-clone-chip"
+            title={`克隆出片进行中：${cloneTask.message || "生成中"}，点击查看进度`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setCloneDialogOpen(true);
+            }}
+          >
+            <span aria-hidden="true" />
+            <b>克隆出片</b>
+            <small>{cloneTask.message || "生成中"}</small>
+            <em>{Math.round(Math.max(0, Math.min(1, cloneTask.progress)) * 100)}%</em>
+          </button>
         )}
         <div className="canvas-grid" />
         {snapGuides.length > 0 && (

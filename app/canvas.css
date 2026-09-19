@@ -4616,12 +4616,15 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
 .canvas-popover-actions button.canvas-popover-danger{color:var(--danger)}
 .canvas-popover-actions button.canvas-popover-danger:hover{border-color:color-mix(in srgb,var(--danger) 42%,var(--line));color:var(--danger)}
 /* ── 一键克隆出片（窄管线）──────────────────────────────────────────── */
-.canvas-clone-button{border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line))!important;background:color-mix(in srgb,var(--accent-soft) 62%,var(--panel));color:var(--accent-text)}
-.canvas-clone-button:hover,.canvas-clone-button:focus-visible{background:color-mix(in srgb,var(--accent) 20%,var(--panel));border-color:color-mix(in srgb,var(--accent) 68%,var(--line))!important;color:var(--accent-text)}
-.canvas-clone-button.busy{border-color:color-mix(in srgb,var(--accent) 60%,var(--line))!important;animation:canvas-clone-busy 2s ease-in-out infinite}
-.canvas-clone-progress{margin-left:6px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--accent) 26%,transparent);color:var(--accent-text);font-size:8px;font-weight:850;font-variant-numeric:tabular-nums}
+/* 进度挂在画布右上角的状态胶囊上，顶栏保持清爽。 */
+.canvas-clone-chip{cursor:pointer;border-color:color-mix(in srgb,var(--accent) 38%,var(--line));color:var(--text-2);font:inherit;font-size:8px;text-align:left}
+.canvas-clone-chip:hover,.canvas-clone-chip:focus-visible{border-color:color-mix(in srgb,var(--accent) 68%,var(--line));color:var(--accent-text)}
+.canvas-clone-chip span{flex:none;background:var(--accent);animation:canvas-clone-busy 2s ease-in-out infinite}
+.canvas-clone-chip b{color:var(--text);white-space:nowrap}
+.canvas-clone-chip small{font-size:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:132px}
+.canvas-clone-chip em{padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--accent) 26%,transparent);color:var(--accent-text);font-size:inherit;font-style:normal;font-weight:850;font-variant-numeric:tabular-nums}
 @keyframes canvas-clone-busy{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 30%,transparent)}50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 0%,transparent)}}
-@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-clone-button.busy{animation:none}}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-clone-chip span{animation:none}}
 .canvas-menu-item-clone .canvas-menu-icon{border-color:color-mix(in srgb,#8b5cf6 38%,var(--line));background:color-mix(in srgb,#8b5cf6 16%,var(--panel-3));color:#8b5cf6}
 .clone-backdrop{position:fixed;inset:0;z-index:var(--canvas-z-model-dialog,560);display:grid;place-items:center;padding:24px;background:var(--overlay);backdrop-filter:blur(8px)}
 .clone-dialog{width:min(920px,calc(100vw - 32px));max-height:min(780px,calc(100vh - 32px));display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line-strong);border-radius:16px;background:var(--panel);box-shadow:var(--shadow)}
@@ -4701,4 +4704,4 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
 .clone-shot-copy b{font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .clone-shot-copy small{color:var(--muted);font-size:8px}
 .clone-shot-thumb{width:74px;height:44px;flex:none;border-radius:7px;object-fit:cover;background:var(--panel-3)}
-@media(max-width:720px){.clone-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}.clone-reference-grid{grid-template-columns:1fr 1fr}.clone-row,.clone-advanced{grid-template-columns:1fr}.canvas-topbar .canvas-clone-button::before{content:"✦"}}
+@media(max-width:720px){.clone-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}.clone-reference-grid{grid-template-columns:1fr 1fr}.clone-row,.clone-advanced{grid-template-columns:1fr}}

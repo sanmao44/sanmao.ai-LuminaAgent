@@ -5,7 +5,7 @@
  * 其中串行化写入和「临时文件 + rename」是最容易写错的部分。这里抽成一份共用：
  * 磁盘格式（顶层数组、缩进 2、结尾换行、临时文件原子替换）与并发写入语义都保持原样。
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export type TaskRecord = { id: string; createdAt: string; idempotencyKey?: string };
@@ -23,6 +23,34 @@ export type TaskPageOptions<T> = {
 export type TaskPage<T> = { tasks: T[]; total: number; page: number; pageSize: number; totalPages: number };
 
 const DATA_DIR = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+
+/**
+ * 临时文件改名覆盖目标时，Windows 上防病毒 / 索引器会短暂占用刚写完的文件，
+ * rename 偶发 EPERM / EBUSY / EACCES；这类占用是瞬时的，退避重试几次就过。
+ * 不重试的代价很具体：一次瞬时占用等于丢掉这次状态更新——克隆出片里就表现为
+ * 「镜头退回静态图」或任务永远停在旧阶段，用户完全不知道发生了什么。
+ */
+const TRANSIENT_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'EEXIST']);
+const RENAME_RETRY_DELAYS_MS = [20, 60, 150, 400];
+
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  renameFile: (source: string, target: string) => Promise<void> = rename,
+  delays: readonly number[] = RENAME_RETRY_DELAYS_MS,
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await renameFile(from, to);
+      return;
+    } catch (error) {
+      const code = String((error as NodeJS.ErrnoException).code || '');
+      const delay = delays[attempt];
+      if (delay === undefined || !TRANSIENT_RENAME_CODES.has(code)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 export function createTaskStore<T extends TaskRecord>(options: { fileName: string; fileMode?: number; maxList?: number }) {
   const taskPath = path.join(DATA_DIR, options.fileName);
@@ -42,7 +70,13 @@ export function createTaskStore<T extends TaskRecord>(options: { fileName: strin
     const temporary = `${taskPath}.${process.pid}.${Date.now()}.tmp`;
     const payload = `${JSON.stringify(tasks, null, 2)}\n`;
     await writeFile(temporary, payload, options.fileMode ? { encoding: 'utf8', mode: options.fileMode } : 'utf8');
-    await rename(temporary, taskPath);
+    try {
+      await renameWithRetry(temporary, taskPath);
+    } catch (error) {
+      // 写不进去也不能把数据目录留成垃圾场：临时文件已经没有价值，删掉再把真实错误抛上去。
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
   }
 
   async function mutate<R>(fn: (tasks: T[]) => R | Promise<R>): Promise<R> {

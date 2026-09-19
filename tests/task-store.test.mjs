@@ -55,6 +55,35 @@ test('并发写入串行化，不会互相覆盖', async () => {
   }
 });
 
+test('Windows 上临时占用导致的 rename 失败会退避重试', async () => {
+  const taskStore = await load('task-store');
+  let attempts = 0;
+  await taskStore.renameWithRetry('state.tmp', 'state.json', async () => {
+    attempts += 1;
+    if (attempts < 3) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+  }, [1, 1, 1]);
+  assert.equal(attempts, 3, '瞬时占用要重试到成功为止');
+
+  let hardAttempts = 0;
+  await assert.rejects(
+    () => taskStore.renameWithRetry('state.tmp', 'state.json', async () => {
+      hardAttempts += 1;
+      throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+    }, [1, 1, 1]),
+    /ENOENT/,
+  );
+  assert.equal(hardAttempts, 1, '非瞬时错误不该重试');
+
+  let exhausted = 0;
+  await assert.rejects(
+    () => taskStore.renameWithRetry('state.tmp', 'state.json', async () => {
+      exhausted += 1;
+      throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' });
+    }, [1, 1]),
+    /EBUSY/,
+  );
+  assert.equal(exhausted, 3, '退避次数用尽后抛出最后一次错误');
+});
 test('分页与过滤由存储层统一计算', async () => {
   const page = await videoStore.listVideoTasksPage({ page: 1, pageSize: 2 });
   assert.equal(page.tasks.length, 2);

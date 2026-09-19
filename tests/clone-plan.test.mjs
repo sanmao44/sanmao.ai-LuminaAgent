@@ -194,6 +194,18 @@ test('从 ffmpeg stderr 解析媒体时长', () => {
   assert.equal(plan.parseFfmpegDuration('没有时长信息'), null);
 });
 
+test('中断判定只认非终态且久无心跳的任务', () => {
+  const now = Date.parse('2026-09-19T12:00:00.000Z');
+  const stamp = (offsetMs) => new Date(now + offsetMs).toISOString();
+  assert.equal(plan.isCloneJobStale({ stage: 'imaging', updatedAt: stamp(-plan.CLONE_STALE_JOB_MS - 1) }, now), true);
+  assert.equal(plan.isCloneJobStale({ stage: 'rendering', updatedAt: stamp(-60_000) }, now), false, '正常心跳不能被误判');
+  assert.equal(plan.isCloneJobStale({ stage: 'rendering', updatedAt: stamp(-1) }, now), false);
+  for (const stage of ['done', 'failed', 'cancelled']) {
+    assert.equal(plan.isCloneJobStale({ stage, updatedAt: stamp(-plan.CLONE_STALE_JOB_MS * 10) }, now), false, stage + ' 是终态');
+  }
+  assert.equal(plan.isCloneJobStale({ stage: 'queued' }, now), false, '没有时间戳时不做判断');
+  assert.equal(plan.isCloneJobStale({ stage: 'queued', updatedAt: '不是时间' }, now), false);
+});
 test('阶段进度与说明覆盖全部阶段', () => {
   for (const stage of ['queued', 'analyzing', 'scripting', 'voicing', 'imaging', 'rendering', 'assembling', 'done', 'failed', 'cancelled']) {
     assert.equal(typeof plan.cloneStageProgress(stage), 'number');

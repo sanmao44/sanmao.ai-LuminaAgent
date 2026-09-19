@@ -298,7 +298,22 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   }
 }
 
+/**
+ * 同一个任务会被多个入口同时轮询（画布、生成记录列表、克隆出片管线）。
+ * 并发轮询各自拿着「还没到下次轮询时间」的旧快照往下走，结果是同一个视频被下载好几遍、
+ * 在媒体库里存成多份重复文件。这里做单飞：同一个 id 同时只跑一次，其余调用共享它的结果。
+ */
+const refreshingVideoTasks = new Map<string, Promise<VideoTask | null>>();
+
 export async function refreshVideoTask(id: string) {
+  const inFlight = refreshingVideoTasks.get(id);
+  if (inFlight) return inFlight;
+  const running = refreshVideoTaskOnce(id).finally(() => refreshingVideoTasks.delete(id));
+  refreshingVideoTasks.set(id, running);
+  return running;
+}
+
+async function refreshVideoTaskOnce(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
   if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') return task;

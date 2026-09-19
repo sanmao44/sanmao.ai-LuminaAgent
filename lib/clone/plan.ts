@@ -289,6 +289,18 @@ export function parseFfmpegDuration(stderr: unknown) {
   return Number.isFinite(seconds) && seconds > 0 ? round3(seconds) : null;
 }
 
+/**
+ * 任务心跳超时：管线在等服务商出片（单个镜头最长等 10 分钟）时每 60 秒续一次心跳，
+ * 所以「这么久没有任何更新」只可能是执行进程已经没了（应用重启、进程被杀、机器休眠后进程消失）。
+ */
+export const CLONE_STALE_JOB_MS = 10 * 60 * 1000;
+
+export function isCloneJobStale(job: { stage: CloneStage; updatedAt?: string }, now = Date.now()) {
+  if (job.stage === 'done' || job.stage === 'failed' || job.stage === 'cancelled') return false;
+  const stamp = Date.parse(job.updatedAt || '');
+  return Number.isFinite(stamp) && now - stamp > CLONE_STALE_JOB_MS;
+}
+
 const STAGE_PROGRESS: Record<CloneStage, number> = {
   queued: 0,
   analyzing: 0.08,

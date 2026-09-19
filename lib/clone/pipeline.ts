@@ -27,13 +27,16 @@ import { requiresPublicMediaRelay } from '../video-platform';
 import { createVideoGeneration, refreshVideoTask } from '../video-task-service';
 import { askText, chatText, parseJsonBlock } from './chat';
 import { extractFrameFiles, probeMediaSeconds } from './media';
-import { alignShotsWithLines, buildTimeline, clampShotSeconds, cloneStageProgress, frameSampleTimes, normalizeShots, round3, splitLines, type NormalizedShot } from './plan';
+import { alignShotsWithLines, buildTimeline, clampShotSeconds, cloneStageProgress, frameSampleTimes, isCloneJobStale, normalizeShots, round3, splitLines, type NormalizedShot } from './plan';
 import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speech';
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
-import { findCloneJob, updateCloneJob } from './store';
+import { findCloneJob, listCloneJobs, touchCloneJob, updateCloneJob } from './store';
 import type { CloneJob, CloneShot } from './types';
 
 const VIDEO_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+// 等服务商出片时定期续心跳：前端靠 updatedAt 判断这条任务是真的在跑，还是执行进程已经没了。
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+const CLONE_INTERRUPTED_MESSAGE = '任务中断：没有等到服务商返回（通常是应用重启或长时间无响应）。点「继续任务」接着跑，已经生成好的配音和镜头不会重做。';
 const VIDEO_POLL_INTERVAL_MS = 2000;
 const MAX_REFERENCE_BYTES = 512 * 1024 * 1024;
 const IMAGE_CONCURRENCY = 2;
@@ -299,11 +302,16 @@ async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: Clo
   if (task.status === 'failed') throw new Error(task.error || '视频任务失败。');
   const deadline = Date.now() + VIDEO_POLL_TIMEOUT_MS;
   let current = task;
+  let lastHeartbeat = Date.now();
   while (current.status === 'pending' || current.status === 'running') {
     if (Date.now() > deadline) throw new Error('视频生成等待超时。');
     if (await isCancelled(job.id)) return null;
     await sleep(VIDEO_POLL_INTERVAL_MS);
     current = (await refreshVideoTask(current.id)) || current;
+    if (Date.now() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+      lastHeartbeat = Date.now();
+      await touchCloneJob(job.id);
+    }
   }
   if (current.status !== 'done') throw new Error(current.error || '视频任务未完成。');
   const url = current.videoUrls[0];
@@ -341,6 +349,25 @@ async function resolveReference(job: CloneJob): Promise<[string, number]> {
  * 但每次 POST 都会再调一次 runCloneJob；没有这层锁就会两条管线并行，重复生图、生视频。
  */
 const runningJobs = new Set<string>();
+
+/**
+ * 把「执行进程已经没了、阶段却停在半路」的任务标成失败。应用重启后前端只会看到一条
+ * 永不推进的进度条，用户既不知道要等还是该重来；标成失败后弹窗会出现「继续任务」，
+ * 已经生成好的镜头与配音会被跳过，不会重复计费。
+ */
+export async function reapStaleCloneJobs() {
+  const jobs = await listCloneJobs(50);
+  const stale = jobs.filter((job) => isCloneJobStale(job) && !runningJobs.has(job.id));
+  for (const job of stale) {
+    await updateCloneJob(job.id, {
+      stage: 'failed',
+      message: CLONE_INTERRUPTED_MESSAGE,
+      error: CLONE_INTERRUPTED_MESSAGE,
+      finishedAt: new Date().toISOString(),
+    });
+  }
+  return stale.length;
+}
 
 export async function runCloneJob(id: string) {
   if (runningJobs.has(id)) return await findCloneJob(id);

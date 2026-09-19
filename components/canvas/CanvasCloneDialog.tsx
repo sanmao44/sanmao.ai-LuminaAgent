@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import ModelPicker from "@/components/ModelPicker";
+import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import {
   CLONE_ASPECTS,
   CLONE_DEFAULT_MAX_SECONDS,
@@ -564,16 +565,16 @@ export default function CanvasCloneDialog({
                 {advancedOpen && (
                   <div className="clone-advanced">
                     <label><span>拆解模型（需要视觉）</span>
-                      <ModelPicker models={models} capability="vision" value={selectedModels.chat} onChange={(value) => setSelectedModels((current) => ({ ...current, chat: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
+                      <ModelPicker models={models} capability="vision" value={selectedModels.chat} onChange={(value) => setSelectedModels((current) => ({ ...current, chat: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} />
                     </label>
                     <label><span>生图模型</span>
-                      <ModelPicker models={models} capability="generate" value={selectedModels.image} onChange={(value) => setSelectedModels((current) => ({ ...current, image: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
+                      <ModelPicker models={models} capability="generate" value={selectedModels.image} onChange={(value) => setSelectedModels((current) => ({ ...current, image: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} />
                     </label>
                     <label><span>图生视频模型</span>
-                      <ModelPicker models={models} capability="video-generate" value={selectedModels.video} onChange={(value) => setSelectedModels((current) => ({ ...current, video: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
+                      <ModelPicker models={models} capability="video-generate" value={selectedModels.video} onChange={(value) => setSelectedModels((current) => ({ ...current, video: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} />
                     </label>
                     <label><span>配音模型</span>
-                      <ModelPicker models={models} capability="speech" value={selectedModels.speech} onChange={(value) => setSelectedModels((current) => ({ ...current, speech: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} placeholder={flags.hasSpeechModel ? undefined : "未配置配音模型"} />
+                      <ModelPicker models={models} capability="speech" value={selectedModels.speech} onChange={(value) => setSelectedModels((current) => ({ ...current, speech: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} placeholder={flags.hasSpeechModel ? undefined : "未配置配音模型"} />
                     </label>
                   </div>
                 )}

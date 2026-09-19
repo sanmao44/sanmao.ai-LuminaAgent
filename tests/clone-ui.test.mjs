@@ -54,11 +54,14 @@ test("弹窗按真实任务状态轮询并可取消、可放入画布", () => {
   assert.match(dialog, /job\.stage === "done" && readyShots > 0/);
 });
 
-test("画布工具栏与创建菜单都能打开克隆弹窗", () => {
+test("克隆出片只从「创建节点」菜单进入，顶栏和节点「更多」都不放", () => {
   assert.match(canvas, /import CanvasCloneDialog, \{/);
-  assert.match(canvas, /canvas-soft-button canvas-clone-button/);
-  assert.match(canvas, /✦ 克隆出片/);
   assert.match(canvas, /className="canvas-menu-item canvas-menu-item-clone"/);
+  assert.match(canvas, /<b>克隆出片<\/b>/);
+  // 顶栏不挂常驻按钮，视频节点快捷菜单的「更多」里也没有这条：它属于「新建一条流程」，
+  // 不属于某个节点的属性操作。
+  assert.doesNotMatch(canvas, /canvas-clone-button/);
+  assert.doesNotMatch(canvas, /clone-from-video/);
   assert.match(canvas, /const \[cloneDialogOpen, setCloneDialogOpen\] = useState\(false\)/);
   assert.match(canvas, /references=\{cloneReferences\}/);
   assert.match(canvas, /preselectedReferenceId=\{preselectedCloneReferenceId\}/);
@@ -150,10 +153,15 @@ test("高级设置里选的模型真的生效，降级都不静默，幂等键�
 });
 
 test("克隆弹窗样式跟随画布主题并且窄屏可用", () => {
-  for (const selector of [".clone-backdrop{", ".clone-dialog{", ".clone-reference-card", ".clone-cost", ".clone-shots", ".clone-button.primary", ".clone-progress-track i{", ".clone-reference-stack{", ".clone-import-row{", ".canvas-clone-progress{", ".canvas-clone-button.busy{"]) {
+  for (const selector of [".clone-backdrop{", ".clone-dialog{", ".clone-reference-card", ".clone-cost", ".clone-shots", ".clone-button.primary", ".clone-progress-track i{", ".clone-reference-stack{", ".clone-import-row{", ".canvas-clone-chip{", ".canvas-clone-chip em{"]) {
     assert.ok(styles.includes(selector), selector);
   }
-  assert.match(styles, /\.canvas-topbar \.canvas-clone-button::before\{content:"✦"\}/);
+  assert.match(styles, /\.canvas-clone-chip span\{flex:none/);
+  // 弹窗里的模型选择器必须抬到 .clone-backdrop 之上：默认 300 会被 560 的遮罩压住，点开什么都看不到。
+  assert.match(dialog, /import \{ CANVAS_Z_INDEX \} from "@\/lib\/canvas\/layers"/);
+  const pickers = dialog.match(/portalZIndex=\{CANVAS_Z_INDEX\.modalPopover\}/g) || [];
+  assert.equal(pickers.length, 4, "四枚模型选择器都要显式给 z-index");
+  assert.match(dialog, /dialogPortalZIndex=\{CANVAS_Z_INDEX\.modalPopover\}/);
   assert.match(styles, /@media\(max-width:720px\)\{\.clone-dialog/);
 });
 
@@ -227,15 +235,44 @@ test("没有对话模型也能出片：降级为纯画面，成片超长不静�
   assert.match(pipeline, /本机离线配音没有「/);
 });
 
-test("画布顶栏在弹窗关掉后显示克隆进度，跑完/失败提示一次", () => {
+test("克隆进度挂在画布右上角状态胶囊上，跑完/失败提示一次", () => {
   assert.match(canvas, /const \[cloneTask, setCloneTask\] = useState/);
-  assert.match(canvas, /canvas-soft-button canvas-clone-button\$\{cloneTask \? " busy" : ""\}/);
-  assert.match(canvas, /className="canvas-clone-progress"/);
+  assert.match(canvas, /className="canvas-status-chip canvas-clone-chip"/);
+  assert.match(canvas, /title={`克隆出片进行中：\$\{cloneTask\.message/);
+  assert.match(canvas, /onClick=\{\(event\) => \{\s*\n\s*event\.stopPropagation\(\);\s*\n\s*setCloneDialogOpen\(true\);\s*\n\s*\}\}/);
+  // 画布 stage 会在 pointerdown 时 setPointerCapture，把 click 抢走；胶囊必须列进
+  // 「自己处理指针事件」的浮层清单里，否则点它不会有反应。
+  assert.match(canvas, /\.canvas-context-menu,\.canvas-status-chip,/);
   assert.match(canvas, /const running = jobs\.find\(\(job\) => job\.stage !== "done"/);
   assert.match(canvas, /克隆出片已完成（\$\{finished\.shotCount \|\| 0\} 个镜头）/);
   assert.match(canvas, /克隆出片失败：\$\{finished\.message/);
   assert.match(canvas, /window\.setInterval\(\(\) => void tick\(\), 5000\)/);
   // 隐藏的标签页不轮询；动画跟随项目的 reduced-motion 约定。
   assert.match(canvas, /if \(window\.document\.hidden\) return;/);
-  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{html:not\(\[data-motion="on"\]\) \.canvas-clone-button\.busy\{animation:none\}\}/);
+  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{html:not\(\[data-motion="on"\]\) \.canvas-clone-chip span\{animation:none\}\}/);
+});
+
+test("克隆任务在等不回来时自愈成可续跑，而不是永远卡在旧阶段", () => {
+  // 三个文件在文件顶部已经读过：pipeline / route / store。
+  // 等服务商出片时的静默期必须续心跳，否则 10 分钟没更新就会被判定成中断。
+  assert.match(pipeline, /const HEARTBEAT_INTERVAL_MS = 60 \* 1000;/);
+  assert.match(pipeline, /await touchCloneJob\(job\.id\);/);
+  // 自愈入口挂在画布每 5 秒轮询的列表接口上；正在跑的任务不能被误伤。
+  assert.match(pipeline, /export async function reapStaleCloneJobs\(\)/);
+  assert.match(pipeline, /isCloneJobStale\(job\) && !runningJobs\.has\(job\.id\)/);
+  assert.match(pipeline, /已经生成好的配音和镜头不会重做/);
+  assert.match(route, /await reapStaleCloneJobs\(\);/);
+  assert.match(store, /export async function touchCloneJob\(id: string\)/);
+});
+test("视频节点的「更多」只放这个节点自己的操作，成片入口在创建菜单", () => {
+  const at = canvas.indexOf("id: \"video-tools\"");
+  assert.ok(at > 0, "video-tools menu group missing");
+  const group = canvas.slice(at, at + 600);
+  assert.ok(group.includes("depth-video"), "深度图节点应留在「更多」里");
+  assert.ok(!group.includes("clone-from-video"));
+  // 成片好了之后，靠提示把用户指回创建菜单，弹窗自己会接回这条任务。
+  assert.match(canvas, /双击画布空白处打开「创建节点 → 克隆出片」/);
+  // 用户明确选中一条视频时仍然自动预选，弹窗因此跳过旧任务接回直接进第二步。
+  assert.match(canvas, /const selectedVideos = \[\.\.\.selectedIds\]\.filter/);
+  assert.match(canvas, /return selectedVideos\.length === 1 \? selectedVideos\[0\] : null;/);
 });

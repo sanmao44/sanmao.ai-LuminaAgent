@@ -73,6 +73,18 @@ test('video task API exposes page metadata and filter parameters', async () => {
   assert.match(page, /共 ", videoTotal, " 段 · 第 ", visibleVideoPage/);
 });
 
+test('并发轮询同一个视频任务只跑一次，避免重复下载同一段视频', async () => {
+  const service = await readFile(new URL('../lib/video-task-service.ts', import.meta.url), 'utf8');
+  const route = await readFile(new URL('../app/api/video/tasks/route.ts', import.meta.url), 'utf8');
+  assert.match(service, /const refreshingVideoTasks = new Map<string, Promise<VideoTask \| null>>\(\);/);
+  assert.match(service, /export async function refreshVideoTask\(id: string\) \{/);
+  assert.match(service, /const inFlight = refreshingVideoTasks\.get\(id\);/);
+  assert.match(service, /refreshingVideoTasks\.set\(id, running\);/);
+  assert.match(service, /refreshingVideoTasks\.delete\(id\)/);
+  assert.match(service, /async function refreshVideoTaskOnce\(id: string\) \{/, '真正干活的是内部实现');
+  // 列表接口会并发刷新所有进行中的任务：单飞是它不重复下载的前提。
+  assert.match(route, /result\.tasks\.map\(\(task\) => task\.status === 'pending' \|\| task\.status === 'running' \? refreshVideoTask\(task\.id\) : task\)/);
+});
 test('wide desktop video history uses six columns for complete 12-item rows', () => {
   assert.match(styles, /@media\(min-width:1600px\)\{\.creative-video-grid\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)\}\}/);
   assert.match(styles, /@media\(max-width:760px\)[\s\S]*?\.creative-video-grid\{grid-template-columns:1fr 1fr\}/);

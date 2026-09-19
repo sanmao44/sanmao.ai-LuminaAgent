@@ -56,6 +56,14 @@ export async function createCloneJob(input: CreateCloneJobInput) {
   });
 }
 
+/**
+ * 长时间等待服务商时的心跳：只刷新 updatedAt，用来区分「还在跑」和「执行进程已经没了」。
+ * 没有心跳的话，服务商只是慢了一次就会被误判成中断。
+ */
+export async function touchCloneJob(id: string) {
+  return store.update(id, { updatedAt: new Date().toISOString() });
+}
+
 export async function findCloneJob(id: string) {
   return store.find(id);
 }
