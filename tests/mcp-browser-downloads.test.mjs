@@ -101,4 +101,23 @@ test('浏览器条目被调用时才导入：其他服务与失败调用都不�
   assert.match(agentRouteSource, /importBrowserArtifacts\(\{ since: agentTurnStartedAt/);
 });
 
+test(`Playwright 自己的会话产物不算用户下载：快照与控制台日志都不收`, async () => {
+  await withScene(async ({ dataDir, dir, store }) => {
+    const now = Date.now();
+    // 每开一个页面 Playwright MCP 就往 --output-dir 写一份 page-*.yml 与 console-*.log，
+    // 和用户下载共用同一个目录；收进聊天会凭空多出两张卡片。
+    for (const name of ["page-2026-09-19T16-39-03-417Z.yml", "console-2026-09-19T16-39-01-864Z.log"]) {
+      await writeFile(path.join(dir, name), "SESSION");
+      await touch(path.join(dir, name), now);
+    }
+    // 用户真下载的文件照收，别把过滤做成一刀切。
+    await writeFile(path.join(dir, "user-report.pdf"), "PDF");
+    await touch(path.join(dir, "user-report.pdf"), now);
+
+    const imported = await mcp.importBrowserArtifacts({ dataDir, since: now - 1_000, store });
+    assert.deepEqual(imported.files.map((file) => file.name), ["user-report.pdf"]);
+    assert.equal(imported.skipped, 0, "会话产物是直接跳过，不算收失败");
+  });
+});
+
 const agentRouteSource = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');

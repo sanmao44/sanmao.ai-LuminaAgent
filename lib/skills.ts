@@ -1245,12 +1245,21 @@ export function readLocalSkillDocument(dir: string) {
 // XML 吐出来的 <tool_call> / <function=name>。命中就把标记之后的部分截掉，别把原文露给用户。
 const MODEL_TOOL_MARKUP_PATTERN = /(?:\|\s*)?<[|｜]{0,4}DSML[|｜]{0,4}>|｜｜\s*DSML|<\s*DSML\s*\||<\s*\/?\s*tool_calls?\b|<\s*function\s*=/i;
 
+/** 标记写到一半就被截断时留在末尾的半个 `<`：它不是内容，不该显示给用户。 */
+const TRAILING_PARTIAL_MARKUP = /\s*<\s*$/;
+
+/** 去掉末尾可能剩下的半个标记；没有就原样返回。 */
+function dropPartialMarkupTail(text: string) {
+  if (!TRAILING_PARTIAL_MARKUP.test(text)) return text;
+  return text.replace(TRAILING_PARTIAL_MARKUP, '').trimEnd();
+}
+
 /**
  * 模型把工具调用写成文本标记时（DSML、`<tool_call><function=…>` 这类），截掉标记之后的部分。
  * 只截不猜：真要有下一步，应该让它下一轮发起原生调用（见 route.ts 的 MCP 补轮）。
  */
 export function stripToolCallMarkup(text: string) {
   const match = MODEL_TOOL_MARKUP_PATTERN.exec(text);
-  if (!match) return text;
-  return text.slice(0, match.index).trimEnd();
+  if (!match) return dropPartialMarkupTail(text);
+  return dropPartialMarkupTail(text.slice(0, match.index)).trimEnd();
 }

@@ -20,6 +20,13 @@ const IMPORTED_FINGERPRINT_LIMIT = 200;
 /** 浏览器写盘时的中间态后缀：还在下载的文件不能收。 */
 const INCOMPLETE_SUFFIXES = ['.tmp', '.crdownload', '.part', '.partial', '.download'];
 
+/**
+ * Playwright MCP 自己写的会话产物：`page-<时间戳>.yml` 的页面快照、`console-<时间戳>.log`
+ * 的控制台日志。它们和用户下载的文件共用同一个 --output-dir，但不是用户要的东西：
+ * 收进来会凭空多两张卡片，还会让助手以为这一轮已经产出文件、不再往下操作。
+ */
+const PLAYWRIGHT_SESSION_ARTIFACT = /^(?:page|console)-\d{4}-\d{2}-\d{2}T[\d-]+Z\.(?:yml|log)$/i;
+
 const MIME_TYPES: Record<string, string> = {
   csv: 'text/csv',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -103,6 +110,7 @@ export async function importBrowserArtifacts(options: ImportBrowserArtifactsOpti
     if (!entry.isFile()) continue;
     const lower = entry.name.toLowerCase();
     if (INCOMPLETE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) continue;
+    if (PLAYWRIGHT_SESSION_ARTIFACT.test(lower)) continue;
     const file = path.join(dir, entry.name);
     const info = await stat(file).catch(() => null);
     if (!info || !info.isFile() || info.size <= 0) continue;

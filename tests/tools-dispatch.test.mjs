@@ -108,3 +108,15 @@ test('MCP 工具调用要再补一轮，且和首轮走同一个执行点', () =
   assert.ok(shouldContinue >= 0 && shouldContinue < finalText && finalText < approval, '补轮结构：先判上限，再截文本，最后才是确认卡片');
   assert.ok(approval < route.indexOf("reportProgress({ stage: 'answering'", shouldContinue), '补轮的确认卡片要在收尾之前挡下来');
 });
+
+test(`浏览器下载不算交付物，不能掐掉 MCP 补轮`, () => {
+  // 回归：浏览器自己写的 page-*.yml / console-*.log 会混进 generatedFiles，
+  // 守卫只要还看 generatedFiles.length，就会永远为假——助手打开网页后就停在原地。
+  assert.match(route, /let browserDownloadCount = 0;/);
+  assert.match(route, /browserDownloadCount \+= downloaded\.files\.length;/);
+  assert.match(route, /const generatedDeliveryCount = generatedFiles\.length - browserDownloadCount;/);
+  const guard = route.match(/if \([^)]*!generated\.length[^)]*mcpToolCallCount > 0[^)]*\) \{/);
+  assert.ok(guard, "MCP 补轮的守卫必须还在");
+  assert.ok(!/!generatedFiles\.length/.test(guard[0]), "守卫不能再直接看 generatedFiles.length");
+  assert.match(guard[0], /!generatedDeliveryCount/, "要看的是生成工具产出的文件数");
+});

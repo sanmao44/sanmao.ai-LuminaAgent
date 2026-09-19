@@ -493,6 +493,7 @@ test('模型写出的工具调用标记会被截断', () => {
 test('模型把工具调用写成 <tool_call> 文本时同样截断', () => {
   const markup = '<tool_call>\n<function=playwright_browsersnapshot>\n</function>\n</tool_call>';
   assert.equal(skills.stripToolCallMarkup('已经打开页面了。\n\n' + markup), '已经打开页面了。');
+  assert.equal(skills.stripToolCallMarkup('页面已打开，接下来在搜索框里输入关键词。\n\n<'), '页面已打开，接下来在搜索框里输入关键词。');
   assert.equal(skills.stripToolCallMarkup('<function=browser_click>'), '', '标记在最前面时不该留下空壳');
   assert.equal(skills.stripToolCallMarkup('先看一眼 <tool_calls>再决定'), '先看一眼');
   assert.equal(skills.stripToolCallMarkup('这里提到 tool_call 但没写成标记。'), '这里提到 tool_call 但没写成标记。');

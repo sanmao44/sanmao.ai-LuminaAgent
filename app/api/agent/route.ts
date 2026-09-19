@@ -961,6 +961,8 @@ const auditMcpCall = (
     const generated: Array<{ url: string; revisedPrompt?: string }> = [];
     const generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }> = [];
     const generatedFiles: GeneratedFile[] = [];
+    /** 其中来自浏览器下载的份数：下载是 MCP 调用的正常结果，不算「这一轮已经产出交付物」。 */
+    let browserDownloadCount = 0;
     const toolResults: ChatMessage[] = [];
     const usedSkills: Array<{ id: string; name: string }> = [];
     /** 这一轮真正落到外部 MCP 服务上的调用，回给前端做审计展示。 */
@@ -1290,6 +1292,7 @@ const auditMcpCall = (
           if (!result.isError && server.catalogId === 'playwright') {
             const downloaded = await importBrowserArtifacts({ since: agentTurnStartedAt, max: ARTIFACT_MAX_PER_TURN - generatedFiles.length }).catch(() => ({ files: [], skipped: 0 }));
             generatedFiles.push(...downloaded.files);
+            browserDownloadCount += downloaded.files.length;
             browserFiles = downloaded.files.map((file) => `${file.name}（${Math.max(1, Math.round(file.size / 1024))} KB）`);
           }
           results.push({
@@ -1627,7 +1630,9 @@ const auditMcpCall = (
      */
     let mcpFollowupText = '';
     const mcpFollowupTools = callableTools.filter((tool: any) => toolExecutionKind(tool?.function?.name, mcpTools) === 'mcp');
-    if (!followupText && !artifactFollowupText && !generated.length && !generatedFiles.length && !webSearchData && mcpToolCallCount > 0 && mcpFollowupTools.length) {
+    /** 只有生成工具产出的文件才算这一轮已经收尾；浏览器下载出来的文件不该挡住后面的操作。 */
+    const generatedDeliveryCount = generatedFiles.length - browserDownloadCount;
+    if (!followupText && !artifactFollowupText && !generated.length && !generatedDeliveryCount && !webSearchData && mcpToolCallCount > 0 && mcpFollowupTools.length) {
       /** 这一步（补轮的一轮）之前的历史、模型回复与已执行结果：撞上确认时要用它们存档。 */
       let stepMessages: ChatMessage[] = [];
       let stepReply: any = null;
