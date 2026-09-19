@@ -2,7 +2,7 @@ import { MCP_MAX_TOOLS_PER_SERVER, listMcpServers } from './store';
 import { listMcpServerTools } from './client';
 import type { McpTimeouts } from './client';
 import type { McpRemoteTool, McpServerConfig } from './types';
-import { catalogWritePolicy, catalogWriteToolProblem } from './catalog';
+import { catalogWritePolicy, catalogWriteToolProblem, findCatalogEntry } from './catalog';
 import { isValidToolName, type ToolDefinition } from '@/lib/tools/registry';
 
 /** 模型看到的 MCP 工具名是 <serverId>__<toolName>，避免不同服务的同名工具互相覆盖。 */
@@ -17,6 +17,15 @@ export const MCP_MAX_SCHEMA_CHARS_PER_TURN = 60_000;
 export function mcpToolId(serverId: string, toolName: string) {
   return `${serverId}${MCP_TOOL_SEPARATOR}${toolName}`;
 }
+
+/**
+ * 任何来源都不下发的工具。
+ *
+ * browser_run_code_unsafe 在 MCP 服务进程里跑任意 JS：等于把整台机器交给模型，
+ * 而且它不在 --caps 后面，光靠启动参数关不掉。目录白名单已经排除了它，
+ * 这里再兜一道，免得用户配置里的旧清单又把它放回来。
+ */
+export const MCP_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set(['browser_run_code_unsafe']);
 
 /** 注册表里的运行时 id，和模型看到的名字分开记：名字是给人看的，id 给审计用。 */
 export function mcpRuntimeToolId(serverId: string, toolName: string) {
@@ -52,13 +61,16 @@ export function isMcpToolSchemaTooLarge(tool: McpRemoteTool) {
  * 没打开的项连调用都不放行，理由会带在 blockedReason 里，让助手能直说要打开哪一项。
  */
 export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpRemoteTool[], options: { dataDir?: string } = {}): ToolDefinition[] {
-  const allowed = new Set(server.enabledTools || []);
+  // 内置连接器的工具清单以代码为准：用户配置里那份可能是旧版本写的，甚至包含代码已经排除的工具。
+  // 远端连接器（GitHub 等）白名单为空，表示「不限制」，仍然沿用用户勾选的那份清单。
+  const catalogWhitelist = server.catalogId ? (findCatalogEntry(server.catalogId)?.allowedTools || []) : [];
+  const allowed = new Set(catalogWhitelist.length ? catalogWhitelist : server.enabledTools || []);
   // 写操作策略一次读盘、按需取：没有写权限分项的条目根本不会去读配置。
   let writePolicy: ReturnType<typeof catalogWritePolicy> | undefined;
   const selected = tools
     // 名字要能直接当 function name 下发：上游只接受 [A-Za-z0-9_-]，服务公布怪名字就直接跳过，
     // 否则这一轮整个工具表都会被服务商判成非法请求。
-    .filter((tool) => (!allowed.size || allowed.has(tool.name)) && !isMcpToolSchemaTooLarge(tool) && isValidToolName(mcpToolId(server.id, tool.name)))
+    .filter((tool) => !MCP_FORBIDDEN_TOOLS.has(tool.name) && (!allowed.size || allowed.has(tool.name)) && !isMcpToolSchemaTooLarge(tool) && isValidToolName(mcpToolId(server.id, tool.name)))
     .slice(0, MCP_MAX_TOOLS_PER_SERVER);
   return selected.map((tool) => {
     const readOnly = isMcpReadOnlyTool(tool);

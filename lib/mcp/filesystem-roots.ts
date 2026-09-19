@@ -79,28 +79,54 @@ export function normalizeFilesystemRoot(value: unknown, platform: string = proce
 }
 
 /**
+ * 授权目录条目：读权限人人都有（授权本来就是为了让助手读），写权限要单独打开。
+ *
+ * 启动参数（Filesystem MCP 的允许目录）只吃路径，所以写权限完全由本机这一侧把关
+ * （见 lib/mcp/filesystem-policy.ts）；只读目录仍然会作为 argv 传给服务，否则连读都用不了。
+ */
+export type FilesystemRoot = { path: string; write: boolean };
+
+/**
  * 读授权目录。文件不存在、格式坏了、目录被删了都只是跳过，不影响其他条目：
  * 面板要能打开，助手也不该因为一个失效目录就整轮不可用。
+ *
+ * 兼容 v1：早期版本存的是字符串数组（没有写权限这种说法），升级上来一律按只读处理。
  */
-export function listFilesystemRoots(options: { dataDir?: string } = {}): string[] {
+export function readFilesystemRootEntries(options: { dataDir?: string } = {}): FilesystemRoot[] {
   const file = resolveFilesystemRootsFile(options);
   if (!existsSync(file)) return [];
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8'));
     const values = Array.isArray(parsed?.roots) ? parsed.roots : [];
-    const roots: string[] = [];
+    const entries: FilesystemRoot[] = [];
     for (const value of values) {
-      const root = String(value ?? '').trim();
-      if (!root || roots.some((item) => samePath(item, root))) continue;
+      const root = String(typeof value === 'string' ? value : value?.path ?? '').trim();
+      if (!root || entries.some((item) => samePath(item.path, root))) continue;
       try {
-        if (statSync(root).isDirectory()) roots.push(root);
-      } catch {}
-      if (roots.length >= MCP_MAX_FILESYSTEM_ROOTS) break;
+        if (!statSync(root).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      // 只有显式写了 write:true 的条目才带写权限；v1 的字符串条目一律读-only。
+      entries.push({ path: root, write: typeof value !== 'string' && value?.write === true });
+      if (entries.length >= MCP_MAX_FILESYSTEM_ROOTS) break;
     }
-    return roots;
+    return entries;
   } catch {
     return [];
   }
+}
+
+/** 只要路径的视图：Filesystem 的启动参数、包含判断都按这一份走。 */
+export function listFilesystemRoots(options: { dataDir?: string } = {}): string[] {
+  return readFilesystemRootEntries(options).map((entry) => entry.path);
+}
+
+/** 勾了「写入」的目录：写类工具只认这一份清单，没勾的目录写操作一律拒绝。 */
+export function listFilesystemWriteRoots(options: { dataDir?: string } = {}): string[] {
+  return readFilesystemRootEntries(options)
+    .filter((entry) => entry.write)
+    .map((entry) => entry.path);
 }
 
 /**
@@ -136,23 +162,43 @@ export function suggestFilesystemRoots(options: { home?: string; excluded?: read
   return suggestions.sort();
 }
 
-function writeFilesystemRoots(roots: readonly string[], options: { dataDir?: string } = {}) {
+function writeFilesystemRoots(entries: readonly FilesystemRoot[], options: { dataDir?: string } = {}) {
   const file = resolveFilesystemRootsFile(options);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify({ version: 1, roots: [...roots] }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  const roots = entries.map((entry) => ({ path: entry.path, write: entry.write === true }));
+  writeFileSync(file, `${JSON.stringify({ version: 2, roots }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
-/** 授权目录必须由用户在面板里添加；助手侧的 MCP 管理工具不碰这份文件。 */
-export function addFilesystemRoot(value: unknown, options: { dataDir?: string } = {}) {
+/**
+ * 授权目录必须由用户在面板里添加；助手侧的 MCP 管理工具不碰这份文件。
+ * write 默认 false：新加的目录先是只读，写权限要用户再勾一次。
+ */
+export function addFilesystemRoot(value: unknown, options: { dataDir?: string; write?: boolean } = {}) {
   const root = normalizeFilesystemRoot(value);
   const dataDir = filesystemRootsDataDir(options);
   if (isPathInside(root, dataDir)) throw new Error('这个文件夹在应用自己的数据目录里，助手需要的是你的文档目录');
-  const roots = listFilesystemRoots(options);
-  if (roots.some((item) => samePath(item, root))) return roots;
-  if (roots.length >= MCP_MAX_FILESYSTEM_ROOTS) throw new Error(`最多授权 ${MCP_MAX_FILESYSTEM_ROOTS} 个文件夹`);
-  const next = [...roots, root];
+  const entries = readFilesystemRootEntries(options);
+  const existing = entries.find((entry) => samePath(entry.path, root));
+  // 已经授权过就只当「改写入开关」：点两次不该变成两条，也不该报错。
+  if (existing) {
+    if (existing.write === (options.write === true)) return entries.map((entry) => entry.path);
+    return setFilesystemRootWrite(root, options.write === true, options);
+  }
+  if (entries.length >= MCP_MAX_FILESYSTEM_ROOTS) throw new Error(`最多授权 ${MCP_MAX_FILESYSTEM_ROOTS} 个文件夹`);
+  const next = [...entries, { path: root, write: options.write === true }];
   writeFilesystemRoots(next, options);
-  return next;
+  return next.map((entry) => entry.path);
+}
+
+/** 面板上勾/取消「写入」：只改这一个目录的标记，不影响其他目录。 */
+export function setFilesystemRootWrite(value: unknown, write: boolean, options: { dataDir?: string } = {}) {
+  const raw = String(value ?? '').trim();
+  const entries = readFilesystemRootEntries(options);
+  const target = entries.find((entry) => samePath(entry.path, raw));
+  if (!target) throw new Error('这个文件夹还没有授权，先添加再谈写入');
+  const next = entries.map((entry) => (samePath(entry.path, target.path) ? { path: entry.path, write: write === true } : entry));
+  writeFilesystemRoots(next, options);
+  return next.map((entry) => entry.path);
 }
 
 /**
@@ -161,10 +207,10 @@ export function addFilesystemRoot(value: unknown, options: { dataDir?: string } 
  */
 export function removeFilesystemRoot(value: unknown, options: { dataDir?: string } = {}) {
   const raw = String(value ?? '').trim();
-  const roots = listFilesystemRoots(options);
-  const target = roots.find((root) => samePath(root, raw)) || '';
-  if (!target) return roots;
-  const next = roots.filter((root) => !samePath(root, target));
+  const entries = readFilesystemRootEntries(options);
+  const target = entries.find((entry) => samePath(entry.path, raw));
+  if (!target) return entries.map((entry) => entry.path);
+  const next = entries.filter((entry) => !samePath(entry.path, target.path));
   writeFilesystemRoots(next, options);
-  return next;
+  return next.map((entry) => entry.path);
 }

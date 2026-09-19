@@ -15,7 +15,21 @@ type McpServerView = {
   hasHeaders: boolean;
   enabledTools: string[];
   lazy: boolean;
+  /** 谈成的协议版本；没握过手就是 null。 */
+  protocol?: ProtocolView | null;
 };
+
+/**
+ * 协议版本协商的结果。两边对不上不是错误：规范里由服务端决定后续用什么版本，
+ * 我们照它说的用，只在面板上说明白「现在按哪个版本在跑」。
+ */
+type ProtocolView = { requested: string; negotiated: string; matched: boolean; newerServerVersion: boolean };
+
+/** 版本不一致时给用户看的一句话；一致或还没握手就什么都不说。 */
+function protocolNote(protocol: ProtocolView | null | undefined) {
+  if (!protocol || protocol.matched) return '';
+  return `协议版本不一致：服务端报 ${protocol.negotiated}，本机请求 ${protocol.requested}；已按服务端的版本继续，不影响使用。`;
+}
 
 type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean; oversized?: boolean };
 type ProbeState = { status: 'busy' | 'done' | 'error'; message: string; tools: ProbeTool[]; toolCount: number; readOnly: number };
@@ -35,6 +49,7 @@ type RuntimeView = {
   enabled: boolean;
   needsBrowser: boolean;
   browser: { channel: string | null; path: string | null };
+  browserMode?: 'managed' | 'extension';
   installRoot: string;
   logTail: string;
   error: string | null;
@@ -46,6 +61,23 @@ type CatalogState = 'unavailable' | 'not_installed' | 'installing' | 'installed'
 
 type CatalogWriteGateView = { id: string; label: string };
 type CatalogToolsetView = { id: string; label: string; summary: string; writes: CatalogWriteGateView[] };
+type BrowserExtensionView = { storeName: string; storeUrl: string; storeId: string; note: string };
+
+/** 站点名单：填了才传给浏览器服务，空数组等于不限制。 */
+type CatalogOriginsView = { allowed: string[]; blocked: string[] };
+
+/** 审计日志读出来的一条：面板只显示「谁想调什么、哪一道放行或拦下」。 */
+type RecentCallView = {
+  at: number;
+  serverName: string;
+  tool: string;
+  risk: string;
+  allowed: boolean;
+  decision: string;
+  ok: boolean;
+  durationMs: number;
+  summary: string;
+};
 
 type CatalogEntryView = {
   id: string;
@@ -63,6 +95,12 @@ type CatalogEntryView = {
   version: string;
   installNote: string;
   needsBrowser: boolean;
+  /** 浏览器接入方式：内置独立浏览器（managed）或接日常浏览器（extension）；非浏览器条目为 null。 */
+  browserMode: 'managed' | 'extension' | null;
+  /** 需要装扩展的条目：商店地址与权限说明，面板照着渲染引导。 */
+  browserExtension: BrowserExtensionView | null;
+  /** 浏览器条目的站点名单；非浏览器条目为 null。 */
+  origins: CatalogOriginsView | null;
   allowedTools: number;
   needsRoots: boolean;
   allowWrite: boolean;
@@ -73,12 +111,30 @@ type CatalogEntryView = {
   error: string | null;
   /** 远端连接器连上之后问到的账号名（例如 GitHub 的登录名）。 */
   account: string;
+  /** 谈成的协议版本；服务端没报版本就是 null。 */
+  protocol?: ProtocolView | null;
   auth: { required: boolean; optional: boolean; label: string; helpUrl: string; note: string; configured: boolean };
   /** 远端条目才有：能力组（GitHub toolsets）与写权限分项。 */
   toolsets: CatalogToolsetView[];
   enabledToolsets: string[];
   writeGates: CatalogWriteGateView[];
   enabledWriteGates: string[];
+};
+
+/** 工具授权记忆在面板上的说法：没记住就是「每次都要问」。 */
+const TOOL_MEMORY_LABELS: Record<string, string> = {
+  always_allow: '不再问：直接允许',
+  block: '不再问：直接拒绝',
+};
+
+/** 审计里的判定来源：面板上要能一眼看出「是谁放行的、又是谁拦下的」。 */
+const DECISION_LABELS: Record<string, string> = {
+  policy: '权限拦下',
+  block: '你设的直接拒绝',
+  guard: '路径拦下',
+  approval: '你确认过',
+  rejected: '你拒绝了',
+  call: '直接执行',
 };
 
 const CATALOG_STATE_LABELS: Record<string, string> = {
@@ -126,6 +182,21 @@ const RUNTIME_STATE_LABELS: Record<string, string> = {
 
 const BROWSER_LABELS: Record<string, string> = { chrome: 'Chrome', msedge: 'Edge' };
 
+const BROWSER_MODE_LABELS: Record<'managed' | 'extension', string> = {
+  managed: '内置独立浏览器',
+  extension: '接我日常的浏览器',
+};
+
+/**
+ * 审批档位（与 lib/agent/approval.ts 的取值一一对应）。
+ * 第一档是 v1 的老行为，第二档是默认值，第三档等价 Codex 的「完全访问」。
+ */
+const APPROVAL_POLICIES = [
+  { id: 'always', label: '每次确认', summary: '非只读的 MCP 调用都要你点一次「允许」。' },
+  { id: 'trusted', label: '标准信任', summary: '导航、切标签、截图这类不改动外部数据的动作不问；提交、付款、删除这类不可逆操作仍然会问。' },
+  { id: 'full', label: '完全访问', summary: '所有 MCP 调用直接执行，不再询问——包括提交、付款、删除。' },
+] as const;
+
 const EMPTY_DRAFT: Draft = { paste: '', name: '', url: '', headers: '', allowWrite: false };
 
 async function requestJson(url: string, init?: RequestInit) {
@@ -158,7 +229,15 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [runtimes, setRuntimes] = useState<RuntimeView[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   const [roots, setRoots] = useState<string[]>([]);
+  /** 每个授权目录带不带写权限：面板上的「✓读取 □写入」照这份渲染。 */
+  const [rootEntries, setRootEntries] = useState<{ path: string; write: boolean }[]>([]);
   const [rootSuggestions, setRootSuggestions] = useState<string[]>([]);
+  /** 站点名单的编辑态：按条目 id 存草稿，没编辑过的条目用服务端给的值。 */
+  const [originDrafts, setOriginDrafts] = useState<Record<string, { allowed: string; blocked: string }>>({});
+  /** 最近的 MCP 判定 / 调用（审计日志的读侧）：谁想调什么、哪一道放行或拦下。 */
+  const [recentCalls, setRecentCalls] = useState<RecentCallView[]>([]);
+  /** 工具授权记忆：always_allow / block；ask 不落盘，也不会出现在这里。 */
+  const [toolPolicies, setToolPolicies] = useState<Record<string, string>>({});
   // 凭据只在内存里放一会儿：提交后立刻清掉，绝不回显已保存的值。
   const [tokens, setTokens] = useState<Record<string, string>>({});
   const [rootDraft, setRootDraft] = useState('');
@@ -171,6 +250,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [notice, setNotice] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
+  /** 当前审批档位：存在设置里（/api/settings），面板只负责切换。 */
+  const [approvalPolicy, setApprovalPolicy] = useState('trusted');
+  /** 「完全访问」要点两次：第一下只是把按钮变成待确认状态。 */
+  const [policyArmed, setPolicyArmed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   useBodyScrollLock(open);
 
@@ -185,13 +268,26 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     return () => clearTimeout(timer);
   }, [confirming]);
 
+  /* 「完全访问」的待确认状态同样会自己复位：悬着容易变成下次误点就生效。 */
+  useEffect(() => {
+    if (!policyArmed) return;
+    const timer = setTimeout(() => setPolicyArmed(false), 6000);
+    return () => clearTimeout(timer);
+  }, [policyArmed]);
+
   const applyPayload = useCallback((data: Record<string, unknown>) => {
     if (Array.isArray(data.servers)) setServers(data.servers as McpServerView[]);
     if (Array.isArray(data.runtimes)) setRuntimes(data.runtimes as RuntimeView[]);
     if (Array.isArray(data.catalog)) setCatalog(data.catalog as CatalogEntryView[]);
     if (Array.isArray(data.roots)) setRoots(data.roots as string[]);
+    if (Array.isArray(data.rootEntries)) setRootEntries(data.rootEntries as { path: string; write: boolean }[]);
     if (Array.isArray(data.rootSuggestions)) setRootSuggestions(data.rootSuggestions as string[]);
+    if (Array.isArray(data.recentCalls)) setRecentCalls(data.recentCalls as RecentCallView[]);
+    if (data.toolPolicies && typeof data.toolPolicies === 'object') setToolPolicies(data.toolPolicies as Record<string, string>);
     if (typeof data.limit === 'number' && data.limit > 0) setLimit(data.limit);
+    // 审批档位来自设置：/api/state 直接给 settings，/api/settings 把新的 state 包在 state 里。
+    const settings = ((data.state && typeof data.state === 'object' ? (data.state as Record<string, unknown>) : data).settings || {}) as { mcpApprovalPolicy?: unknown };
+    if (typeof settings.mcpApprovalPolicy === 'string' && settings.mcpApprovalPolicy) setApprovalPolicy(settings.mcpApprovalPolicy);
   }, []);
 
   const run = useCallback(async (task: () => Promise<void>) => {
@@ -212,6 +308,8 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
       applyPayload(await requestJson('/api/mcp'));
       // 本地运行时的安装/运行状态单独取：远程地址和本机进程是两件事。
       applyPayload(await requestJson('/api/tools'));
+      // 审批档位是全局设置，跟 MCP 面板共用一个开关。
+      applyPayload(await requestJson('/api/state'));
     });
   }, [open, run, applyPayload]);
 
@@ -410,7 +508,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         return;
       }
       setNotice(allowWrite
-        ? `已允许「${item.name}」执行有副作用的操作${item.writeGates.length ? '；还要在写权限里逐项打开具体操作' : ''}，每一次写操作仍然要你确认。`
+        ? `已允许「${item.name}」执行有副作用的操作${item.writeGates.length ? '；还要在写权限里逐项打开具体操作' : ''}；是否逐次确认取决于上面的审批档位。`
         : `已把「${item.name}」改回只读，写工具不会下发给助手。`);
     });
   }
@@ -481,6 +579,68 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     });
   }
 
+  /** 写权限单独勾：只读授权和「可以写入」是两件事，取消勾走同一个动作。 */
+  async function toggleRootWrite(path: string, write: boolean) {
+    await run(async () => {
+      applyPayload(await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'roots-write', path, write }),
+      }));
+      setNotice(write ? `已允许助手写入 ${path}。` : `已收回 ${path} 的写入权限，现在只读。`);
+    });
+  }
+
+  /** 站点名单：留空等于不限制；填了之后浏览器只在这些站点里活动（改完要重启运行时才生效）。 */
+  async function saveOrigins(item: CatalogEntryView) {
+    const draft = originDrafts[item.id] || {
+      allowed: (item.origins?.allowed || []).join('\n'),
+      blocked: (item.origins?.blocked || []).join('\n'),
+    };
+    await run(async () => {
+      applyPayload(await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'origins', id: item.id, allowedOrigins: draft.allowed, blockedOrigins: draft.blocked }),
+      }));
+      setNotice('已保存站点名单：浏览器下次启动时按新名单走。');
+    });
+  }
+
+  /** 清掉一条工具授权记忆：清掉之后就回到「每次都问」。 */
+  async function forgetToolPolicy(toolId: string) {
+    await run(async () => {
+      applyPayload(await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'tool-policy', toolId, policy: 'ask' }),
+      }));
+      setNotice('已清掉这条记忆：这个工具下次还会先问你。');
+    });
+  }
+
+  /**
+   * 工具授权记忆：点一下走一格（每次问 → 以后直接允许 → 以后直接拒绝 → 每次问）。
+   * 记的是「这个工具」，不是「这一次参数」——所以按钮上的字要说清记的是什么。
+   */
+  async function cycleToolMemory(server: McpServerView, toolName: string) {
+    const toolId = `mcp:${server.id}:${toolName}`;
+    const current = toolPolicies[toolId];
+    const next = current === 'always_allow' ? 'block' : current === 'block' ? 'ask' : 'always_allow';
+    await run(async () => {
+      applyPayload(await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'tool-policy', toolId, policy: next }),
+      }));
+      setNotice(next === 'always_allow'
+        ? `已记住：${toolName} 以后直接允许，不再问你。`
+        : next === 'block'
+          ? `已记住：${toolName} 以后直接拒绝，助手也不会再问。`
+          : `${toolName} 改回每次都要问。`);
+    });
+  }
+
   /** 打开文件夹：浏览器拿不到本机目录，交给服务端用系统文件管理器打开；服务端只认授权清单里的路径。 */
   async function openRoot(path: string) {
     await run(async () => {
@@ -502,6 +662,67 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         body: JSON.stringify({ action: 'runtime-open', id: runtime.id }),
       });
       setNotice(`已让系统文件管理器打开 ${runtime.name} 的安装目录。`);
+    });
+  }
+
+  /**
+   * 审批档位：全局设置，写在设置里，本机所有 MCP 服务共用。
+   * 「完全访问」要点两次：它会连提交、付款、删除一起放行，不能一下点中就生效。
+   */
+  async function changeApprovalPolicy(next: string) {
+    const known = APPROVAL_POLICIES.find((item) => item.id === next);
+    if (!known) return;
+    if (next === 'full' && !policyArmed) {
+      setPolicyArmed(true);
+      setNotice('再点一次「完全访问」就会生效：之后所有 MCP 调用都直接执行，包括提交、付款、删除，不会再问你。');
+      return;
+    }
+    setPolicyArmed(false);
+    await run(async () => {
+      const data = await requestJson('/api/settings', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mcpApprovalPolicy: next }),
+      });
+      applyPayload(data);
+      setApprovalPolicy(next);
+      setNotice(next === 'full'
+        ? '已切到「完全访问」：MCP 调用不再询问，风险由你承担。想收回随时切回上面两档。'
+        : next === 'always'
+          ? '已切到「每次确认」：非只读的 MCP 调用都会先问你一次。'
+          : '已切到「标准信任」：不改动外部数据的浏览器动作不再打扰你，不可逆操作仍然会问。');
+    });
+  }
+
+  /** 浏览器接入方式：本机条目的启动参数跟着变，服务端会重启进程并顺手自检一次。 */
+  async function switchBrowserMode(item: CatalogEntryView, mode: 'managed' | 'extension') {
+    await run(async () => {
+      const data = await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'browser-mode', id: item.id, mode }),
+      });
+      applyPayload(data);
+      const failure = String(data.runtimeError || '').trim();
+      if (failure) {
+        setNotice(`已切到「${BROWSER_MODE_LABELS[mode]}」，但自检没通过：${failure}`);
+        return;
+      }
+      setNotice(mode === 'extension'
+        ? '已切到「接我日常的浏览器」：保持浏览器开着，第一次操作时官方扩展会让你选一个标签页并点一次允许。'
+        : '已切回「内置独立浏览器」：助手用它自己的窗口和登录状态，不碰你日常浏览器。');
+    });
+  }
+
+  /** 自建扩展目录：从 microsoft/playwright 源码构建的那份，走「加载已解压的扩展程序」。 */
+  async function openExtensionFolder() {
+    await run(async () => {
+      await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'extension-open' }),
+      });
+      setNotice('已让系统文件管理器打开自建扩展目录：在浏览器的扩展页用「加载已解压的扩展程序」选中它即可。');
     });
   }
 
@@ -557,6 +778,28 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         {notice && <p className={styles.notice} role="status">{notice}</p>}
 
         <div className={styles.panel}>
+          <section className={styles.form}>
+            <div className={styles.formHead}>
+              <h3>审批档位</h3>
+              {approvalPolicy === 'full'
+                ? <span className={styles.warnBadge}>不再询问</span>
+                : <span className={styles.badgeMuted}>{APPROVAL_POLICIES.find((item) => item.id === approvalPolicy)?.label || approvalPolicy}</span>}
+            </div>
+            <p className={styles.hint}>只影响 MCP 服务的外部调用（浏览器、GitHub、本地文件等）；内置工具（生成文件、技能）另有各自的开关。</p>
+            <div className={styles.policyGrid}>
+              {APPROVAL_POLICIES.map((item) => <button
+                key={item.id}
+                type="button"
+                className={styles.miniButton}
+                disabled={busy}
+                title={item.summary}
+                onClick={() => void changeApprovalPolicy(item.id)}
+              >{approvalPolicy === item.id ? `✓ ${item.label}` : item.label}{policyArmed && item.id === 'full' ? '（再点一次确认）' : ''}</button>)}
+            </div>
+            <p className={styles.meta}>{APPROVAL_POLICIES.find((item) => item.id === approvalPolicy)?.summary || ''}</p>
+            {approvalPolicy === 'full' && <p className={styles.hint}>「完全访问」下助手执行提交、付款、删除这类操作也不会再问你，只在你明确信任这些服务时使用。</p>}
+          </section>
+
           {!servers.length && <p className={styles.empty}>还没有连接任何 MCP 服务。可以在下面粘贴一份配置或直接填地址；也可以直接在对话里说「帮我接入 xxx，地址是 https://…」。添加后会自动做一次连接自检。</p>}
           {servers.map((server) => {
             const probe = probes[server.id];
@@ -571,6 +814,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   {server.enabledTools.length > 0 && <span className={styles.badge}>已选 {server.enabledTools.length} 个工具</span>}
                 </div>
                 <p className={styles.meta}>{hostOf(server.url)} · {server.url}</p>
+                {protocolNote(server.protocol) && <p className={styles.meta}>{protocolNote(server.protocol)}</p>}
                 {probe && <div className={styles.probe}>
                   <div className={styles.probeHead}>
                     <p className={probe.status === 'error' ? styles.meta : styles.description} role="status">{probe.status === 'busy' ? '正在连接…' : probe.message}</p>
@@ -579,13 +823,18 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                     {probe.status === 'done' && probe.tools.some((tool) => tool.readOnly && !tool.oversized) && <button type="button" disabled={busy} onClick={() => void selectTools(server, probe.tools.filter((tool) => tool.readOnly && !tool.oversized).map((tool) => tool.name), '这个服务没有只读工具，只能逐个勾选。')}>只放行只读</button>}
                   </div>
                   {probe.tools.length > 0 && <div className={styles.toolList}>
-                    {probe.tools.map((tool) => <label key={tool.name} className={styles.toolRow} title={tool.description || tool.title || tool.name}>
-                      <input type="checkbox" checked={tool.enabled} disabled={busy || Boolean(tool.oversized)} onChange={() => void toggleTool(server, tool.name)} />
-                      <span className={styles.toolBody}>
-                        <span className={styles.toolHead}><code>{tool.name}</code>{tool.oversized ? <span>参数结构过大，不会下发给助手</span> : tool.readOnly ? <span>只读</span> : <span>可能写入</span>}</span>
-                        {(tool.description || tool.title) && <span className={styles.toolDescription}>{tool.description || tool.title}</span>}
-                      </span>
-                    </label>)}
+                    {probe.tools.map((tool) => <div key={tool.name} className={styles.toolRow} title={tool.description || tool.title || tool.name}>
+                      <label>
+                        <input type="checkbox" checked={tool.enabled} disabled={busy || Boolean(tool.oversized)} onChange={() => void toggleTool(server, tool.name)} />
+                        <span className={styles.toolBody}>
+                          <span className={styles.toolHead}><code>{tool.name}</code>{tool.oversized ? <span>参数结构过大，不会下发给助手</span> : tool.readOnly ? <span>只读</span> : <span>可能写入</span>}</span>
+                          {(tool.description || tool.title) && <span className={styles.toolDescription}>{tool.description || tool.title}</span>}
+                        </span>
+                      </label>
+                      <button type="button" className={styles.miniButton} disabled={busy} title="点一下依次切换：每次都要问 → 以后直接允许 → 以后直接拒绝" onClick={() => void cycleToolMemory(server, tool.name)}>
+                        {TOOL_MEMORY_LABELS[toolPolicies[`mcp:${server.id}:${tool.name}`]] || '每次都要问'}
+                      </button>
+                    </div>)}
                   </div>}
                 </div>}
               </div>
@@ -624,12 +873,37 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 <p className={styles.description}>{item.summary}</p>
                 <p className={styles.meta}>权限：{item.permissions.map((permission) => PERMISSION_LABELS[permission] || permission).join('、') || '—'} · 能力：{item.capabilities.join('、')}{item.allowedTools ? ` · 放行 ${item.allowedTools} 个工具` : ''}</p>
                 {remote && item.account && <p className={styles.meta}>账号：@{item.account}（连接时确认过一次，换成别的凭据要重新连接）</p>}
+                {protocolNote(item.protocol) && <p className={styles.meta}>{protocolNote(item.protocol)}</p>}
                 {item.blockedReason && <p className={styles.meta}>{item.blockedReason}</p>}
                 {item.state === 'auth_required' && <p className={styles.meta}>上次连接被拒（凭据过期或权限不足）：填一份新的{item.auth.label}再点「连接」。</p>}
                 {(item.error || runtime?.error) && <p className={styles.meta}>上次失败：{item.error || runtime?.error}</p>}
                 {runtime?.installing && <p className={styles.meta}>正在下载依赖，日志会实时刷新；关掉面板不会中断安装。</p>}
                 {runtime?.installing && runtime.logTail && <pre className={styles.logTail}>{runtime.logTail}</pre>}
                 {runtime?.needsBrowser && <p className={styles.meta}>{runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个'}</p>}
+                {runtime?.needsBrowser && item.browserMode && <div className={styles.policy}>
+                  <p className={styles.meta}>接入方式：{BROWSER_MODE_LABELS[item.browserMode]}{item.browserMode === 'managed' ? '（助手用它自己的窗口和登录状态）' : '（用你日常浏览器的登录状态和标签页）'}</p>
+                  <div className={styles.policyGrid}>
+                    {(['managed', 'extension'] as const).map((mode) => <button
+                      key={mode}
+                      type="button"
+                      className={styles.miniButton}
+                      disabled={busy}
+                      onClick={() => void switchBrowserMode(item, mode)}
+                    >{item.browserMode === mode ? `✓ ${BROWSER_MODE_LABELS[mode]}` : BROWSER_MODE_LABELS[mode]}</button>)}
+                  </div>
+                  {item.browserMode === 'extension' && item.browserExtension && <>
+                    <p className={styles.hint}>
+                      第一步：给浏览器装官方扩展
+                      {' '}<a className={styles.link} href={item.browserExtension.storeUrl} target="_blank" rel="noreferrer">{item.browserExtension.storeName}</a>
+                      {' '}（微软官方只发布了 Chrome 网上应用商店这一份，Edge 也能装它）。第二步：保持浏览器开着，回到这里点「启动」，再进行对话。
+                    </p>
+                    <p className={styles.hint}>{item.browserExtension.note}</p>
+                    <div className={styles.inline}>
+                      <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void openExtensionFolder()}>打开自建扩展目录</button>
+                      <span className={styles.hint}>商店打不开时（国内常见）：在项目里运行 npm run build:playwright-extension 生成自建扩展，再到浏览器的扩展页用「加载已解压的扩展程序」选中这个目录。</span>
+                    </div>
+                  </>}
+                </div>}
                 {runtime?.running && <p className={styles.meta}>空闲 {Math.max(1, Math.round(runtime.idleTimeoutMs / 60000))} 分钟后自动关闭{runtime.pid ? ` · 进程 ${runtime.pid}` : ''}</p>}
                 {remote && <div className={styles.inline}>
                   <input type="password" aria-label={item.auth.label || '凭据'} value={token} disabled={busy} placeholder={item.auth.configured ? '已保存（留空表示不改）' : item.auth.label || '凭据'} onChange={(event) => setTokens((current) => ({ ...current, [item.id]: event.target.value }))} />
@@ -655,8 +929,43 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   </div>
                   <p className={styles.hint}>删除仓库、改密钥、force push、分支保护这类操作没有开关，Catalog 里不会执行。</p>
                 </div>}
+                {item.needsBrowser && <div className={styles.rootEditor}>
+                  <p className={styles.meta}>站点名单：留空就是不限制。填了之后浏览器只在这些站点里活动（下载、截图这类动作也只在名单内）。</p>
+                  <label htmlFor={`mcp-origins-allow-${item.id}`}>允许访问的站点（每行一个，例如 <code>https://example.com</code> 或 <code>*://*.example.com</code>）</label>
+                  <textarea
+                    id={`mcp-origins-allow-${item.id}`}
+                    value={originDrafts[item.id]?.allowed ?? (item.origins?.allowed || []).join('\n')}
+                    disabled={busy}
+                    spellCheck={false}
+                    onChange={(event) => setOriginDrafts((current) => ({
+                      ...current,
+                      [item.id]: {
+                        allowed: event.target.value,
+                        blocked: current[item.id]?.blocked ?? (item.origins?.blocked || []).join('\n'),
+                      },
+                    }))}
+                  />
+                  <label htmlFor={`mcp-origins-block-${item.id}`}>禁止访问的站点（每行一个，优先级高于上面的名单）</label>
+                  <textarea
+                    id={`mcp-origins-block-${item.id}`}
+                    value={originDrafts[item.id]?.blocked ?? (item.origins?.blocked || []).join('\n')}
+                    disabled={busy}
+                    spellCheck={false}
+                    onChange={(event) => setOriginDrafts((current) => ({
+                      ...current,
+                      [item.id]: {
+                        blocked: event.target.value,
+                        allowed: current[item.id]?.allowed ?? (item.origins?.allowed || []).join('\n'),
+                      },
+                    }))}
+                  />
+                  <div className={styles.inline}>
+                    <button type="button" disabled={busy} onClick={() => void saveOrigins(item)}>保存站点名单</button>
+                    <span className={styles.hint}>改完要重启运行时才生效；当前名单对正在运行的浏览器不追溯。</span>
+                  </div>
+                </div>}
                 {item.needsRoots && <div className={styles.rootEditor}>
-                  <p className={styles.meta}>{roots.length ? `已授权 ${roots.length} 个文件夹；本地文件服务重启后能在里面读写。` : '还没有授权文件夹；本地文件服务需要至少一个文件夹才能启动。'}</p>
+                  <p className={styles.meta}>{roots.length ? `已授权 ${roots.length} 个文件夹；勾了「写入」的目录才允许助手改文件。` : '还没有授权文件夹；本地文件服务需要至少一个文件夹才能启动。'}</p>
                   <div className={styles.inline}>
                     <input type="text" aria-label="授权文件夹路径" value={rootDraft} disabled={busy} placeholder="例如 D:\文档（绝对路径，只能填文件夹）" onChange={(event) => setRootDraft(event.target.value)} />
                     <button type="button" disabled={busy || !rootDraft.trim()} onClick={() => void addRoot()}>添加授权文件夹</button>
@@ -667,12 +976,20 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   </div>}
                   {roots.map((root) => <div key={root} className={styles.rootRow}>
                     <code>{root}</code>
+                    <label className={styles.check}>
+                      <input
+                        type="checkbox"
+                        checked={rootEntries.find((entry) => entry.path === root)?.write === true}
+                        disabled={busy}
+                        onChange={(event) => void toggleRootWrite(root, event.target.checked)}
+                      />允许写入
+                    </label>
                     <div className={styles.folderActions}>
                       <button type="button" className={styles.miniButton} disabled={busy} title="用系统文件管理器打开这个文件夹" onClick={() => void openRoot(root)}>打开文件夹</button>
                       <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void removeRoot(root)}>移除</button>
                     </div>
                   </div>)}
-                  <p className={styles.hint}>助手只能在这个范围里读写；.env、私钥、浏览器 profile 这类文件即使就在里面也不会读。不确定授权的是哪个目录，点这一行的「打开文件夹」看一眼。</p>
+                  <p className={styles.hint}>助手只能读这个范围里的文件；要让它改文件，勾上对应目录的「写入」。.env、私钥、浏览器 profile 这类文件即使就在里面也不会读。不确定授权的是哪个目录，点这一行的「打开文件夹」看一眼。</p>
                 </div>}
               </div>
               <div className={styles.rowActions}>
@@ -719,8 +1036,32 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               {runtime.installNote && <p className={styles.hint}>{runtime.installNote}</p>}
             </div>
           </article>)}
-          <p className={styles.hint}>依赖装在本机工作目录里，不写进应用自身依赖。运行时会用自己的浏览器 profile，不碰你日常浏览器里的登录状态；会改动外部数据的操作仍然要你逐次确认。</p>
+          <p className={styles.hint}>依赖装在本机工作目录里，不写进应用自身依赖。浏览器默认用助手自己的 profile（不碰你日常浏览器的登录状态），也可以在上面的浏览器控制卡片里切到「接我日常的浏览器」，用官方扩展接你自己开着的那个窗口；是否逐次确认取决于上面的审批档位。</p>
           <p className={styles.hint}>安装始终由你在这里点；助手只能查看状态，并在你明确说「启动 / 关闭浏览器运行时」时启停它。</p>
+        </section>
+
+        <section className={styles.form}>
+          <div className={styles.formHead}>
+            <h3>工具授权记忆与最近调用</h3>
+          </div>
+          {Object.keys(toolPolicies).length > 0 ? <>
+            <p className={styles.meta}>这些工具你已经表过态，助手不会再为它们停下来问。换参数不等于换工具，记错了在这里改回来。</p>
+            {Object.entries(toolPolicies).map(([toolId, policy]) => <div key={toolId} className={styles.rootRow}>
+              <code>{toolId}</code>
+              <em>{policy === 'always_allow' ? '以后直接允许' : '以后直接拒绝'}</em>
+              <div className={styles.folderActions}>
+                <button type="button" className={styles.miniButton} disabled={busy} onClick={() => void forgetToolPolicy(toolId)}>改回每次都问</button>
+              </div>
+            </div>)}
+          </> : <p className={styles.hint}>还没有记住任何工具授权：助手每次都会先问你。想少被打断，就在上面每个工具右边点一下「每次都要问」，改成「以后直接允许」或「以后直接拒绝」。</p>}
+          {recentCalls.length > 0 && <>
+            <p className={styles.meta}>最近调用（只记摘要，不记完整参数与凭据）：</p>
+            {recentCalls.slice(0, 10).map((call, index) => <div key={`${call.at}-${index}-${call.tool}`} className={styles.rootRow}>
+              <code>{call.serverName} · {call.tool}</code>
+              <em>{DECISION_LABELS[call.decision] || call.decision}{call.allowed ? (call.ok ? '，成功' : '，失败') : ''}</em>
+              <small className={styles.meta}>{call.summary}</small>
+            </div>)}
+          </>}
         </section>
 
         <section className={styles.form}>

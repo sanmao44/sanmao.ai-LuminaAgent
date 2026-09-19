@@ -3,15 +3,19 @@ import {
   MCP_CATALOG_ENTRIES,
   catalogEntryAccount,
   catalogEntryAllowWrite,
+  catalogEntryBrowserMode,
   catalogEntryEnabled,
   catalogEntryError,
   catalogEntryToolsets,
   catalogEntryWriteGates,
   findCatalogEntry,
+  isCatalogInstalled,
   isRemoteCatalogEntry,
   isStdioCatalogEntry,
   requireStdioCatalogEntry,
   setCatalogEntryAllowWrite,
+  setCatalogEntryBrowserMode,
+  setCatalogEntryEnabled,
   setCatalogEntryWriteGate,
 } from '@/lib/mcp/catalog';
 import {
@@ -32,11 +36,15 @@ import {
   stopCatalogServer,
   type McpCatalogRuntimeStatus,
 } from '@/lib/mcp/catalog-runtime';
-import { addFilesystemRoot, listFilesystemRoots, removeFilesystemRoot, suggestFilesystemRoots } from '@/lib/mcp/filesystem-roots';
-import { openCatalogFolder, openFilesystemRoot } from '@/lib/mcp/open-folder';
+import { addFilesystemRoot, listFilesystemRoots, readFilesystemRootEntries, removeFilesystemRoot, setFilesystemRootWrite, suggestFilesystemRoots } from '@/lib/mcp/filesystem-roots';
+import { catalogEntryOrigins, setCatalogEntryOrigins } from '@/lib/mcp/catalog';
+import { readToolApprovalPolicies, setToolApprovalPolicy } from '@/lib/agent/approval';
+import { MCP_AUDIT_RECENT_LIMIT, recentMcpCalls } from '@/lib/mcp/audit';
+import { openBrowserExtensionFolder, openCatalogFolder, openFilesystemRoot } from '@/lib/mcp/open-folder';
 import { listMcpServers, redactMcpServer } from '@/lib/mcp/store';
 import { closeStdioServer } from '@/lib/mcp/stdio';
 import { clearMcpToolCache } from '@/lib/mcp/tools';
+import { resolveMcpProtocolNegotiation } from '@/lib/mcp/client';
 
 export const runtime = 'nodejs';
 
@@ -44,11 +52,15 @@ export const runtime = 'nodejs';
  * 允许的动作写死在服务端：请求体只能选其中之一，带不了命令、参数或安装路径。
  * 本机运行时（stdio）是安装/启停，远端连接器（http）是连接/断开/配置。
  */
-const TOOL_ACTIONS = ['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-remove', 'roots-open', 'runtime-open'] as const;
+const TOOL_ACTIONS = ['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-write', 'roots-remove', 'roots-open', 'runtime-open', 'browser-mode', 'extension-open', 'origins', 'tool-policy'] as const;
+
+/** 工具授权记忆只有这三个值：写别的进来等于清掉记忆，不如直接拒掉。 */
+const TOOL_POLICY_VALUES = ['ask', 'always_allow', 'block'] as const;
 
 function snapshot() {
   // 授权目录整份只读一次：同一个响应里的运行时状态和条目状态必须来自同一份授权清单。
-  const roots = listFilesystemRoots();
+  const rootEntries = readFilesystemRootEntries();
+  const roots = rootEntries.map((entry) => entry.path);
   const runtimes: McpCatalogRuntimeStatus[] = [];
   for (const entry of MCP_CATALOG_ENTRIES) {
     if (!isStdioCatalogEntry(entry)) continue;
@@ -58,10 +70,12 @@ function snapshot() {
       // 单个条目取不到状态不该让整个面板打不开。
     }
   }
-  const servers = listMcpServers().map(redactMcpServer);
+  const rawServers = listMcpServers();
+  // 协议版本跟着传输走：远程 HTTP 记在客户端会话里，本地 stdio 记在进程状态里。
+  const servers = rawServers.map((server) => ({ ...redactMcpServer(server), protocol: resolveMcpProtocolNegotiation(server) }));
   const catalog = MCP_CATALOG_ENTRIES.map((entry) => {
     const runtime = runtimes.find((item) => item.id === entry.id);
-    const config = servers.find((item) => item.id === entry.id);
+    const config = rawServers.find((item) => item.id === entry.id);
     return {
       id: entry.id,
       name: entry.name,
@@ -78,6 +92,12 @@ function snapshot() {
       version: entry.version || '',
       installNote: entry.installNote || '',
       needsBrowser: isStdioCatalogEntry(entry) ? entry.needsBrowser : false,
+      // 浏览器接入方式：内置独立浏览器（默认）还是接用户日常浏览器（需要官方扩展）。
+      browserMode: isStdioCatalogEntry(entry) && entry.needsBrowser ? catalogEntryBrowserMode(entry.id) : null,
+      /** 需要装扩展的条目：商店地址与权限说明由目录给，面板照着渲染引导。 */
+      browserExtension: isStdioCatalogEntry(entry) && entry.browserExtension ? { ...entry.browserExtension } : null,
+      // 站点名单：只有浏览器条目才有；空数组表示不限制。
+      origins: isStdioCatalogEntry(entry) && entry.needsBrowser ? catalogEntryOrigins(entry.id) : null,
       allowedTools: entry.allowedTools.length,
       allowWrite: catalogEntryAllowWrite(entry.id),
       enabled: catalogEntryEnabled(entry.id),
@@ -89,6 +109,8 @@ function snapshot() {
       error: catalogEntryError(entry.id),
       /** 连上之后问到的账号名：面板显示「连的是谁」，空字符串表示还没问到。 */
       account: catalogEntryAccount(entry.id),
+      /** 谈成的协议版本：两边不一致时面板标注一句；服务端没报版本就是 null。 */
+      protocol: runtime?.protocol ?? (config ? resolveMcpProtocolNegotiation(config) : null),
       // 凭据只回「配没配」和去哪儿申请，值永远不出服务端。
       auth: {
         required: entry.setup.requiresAuth,
@@ -96,7 +118,7 @@ function snapshot() {
         label: entry.auth?.label || '',
         helpUrl: entry.auth?.helpUrl || '',
         note: entry.auth?.note || '',
-        configured: Boolean(config?.hasHeaders),
+        configured: Boolean(config && Object.keys(config.headers || {}).length),
       },
       // 远端条目的可选项：能力组（toolsets）与写权限分项。写权限项打平成一维，
       // 面板只关心「有哪几项、哪几项是开的」。
@@ -113,7 +135,20 @@ function snapshot() {
   });
   // 常用位置：主目录下的桌面 / 文档 / 下载。只做建议，加不加仍然由用户点。
   const rootSuggestions = suggestFilesystemRoots({ excluded: roots });
-  return { runtimes, catalog, servers, roots, rootSuggestions, installTimeoutMs: MCP_CATALOG_INSTALL_TIMEOUT_MS };
+  return {
+    runtimes,
+    catalog,
+    servers,
+    roots,
+    // 每个目录带不带写权限：面板上「✓读取 □写入」就是照这份渲染的。
+    rootEntries,
+    rootSuggestions,
+    // 最近几次 MCP 判定/调用：谁想调什么、哪一道放行或拦下。这是审计日志的读侧接口。
+    recentCalls: recentMcpCalls(MCP_AUDIT_RECENT_LIMIT),
+    // 工具授权记忆（ask 不落盘，所以这里只出现 always_allow / block）。
+    toolPolicies: readToolApprovalPolicies(),
+    installTimeoutMs: MCP_CATALOG_INSTALL_TIMEOUT_MS,
+  };
 }
 
 /** 面板状态：本地工具运行时的安装/运行情况 + 官方连接器状态 + 用户自己配的远程服务（凭据只回键名）。 */
@@ -131,6 +166,14 @@ export async function POST(request: Request) {
       token?: unknown;
       /** 授权目录（roots-add / roots-remove / roots-open 用）。 */
       path?: unknown;
+      /** 授权目录的写权限（roots-add / roots-write 用）：true 才允许助手改这个目录里的文件。 */
+      write?: unknown;
+      /** 工具授权记忆（tool-policy 动作用）：工具 id 与 ask / always_allow / block。 */
+      toolId?: unknown;
+      policy?: unknown;
+      /** 站点名单（origins 动作用）：浏览器条目放行 / 拦截的站点。 */
+      allowedOrigins?: unknown;
+      blockedOrigins?: unknown;
       allowWrite?: unknown;
       enabled?: unknown;
       lazy?: unknown;
@@ -139,6 +182,8 @@ export async function POST(request: Request) {
       toolset?: unknown;
       /** 写权限分项（write-gate 动作用）：要开/关的项 id。 */
       gate?: unknown;
+      /** 浏览器接入方式（browser-mode 动作用）：managed / extension。 */
+      mode?: unknown;
     };
     const action = String(data?.action || '');
     if (!(TOOL_ACTIONS as readonly string[]).includes(action)) {
@@ -150,18 +195,67 @@ export async function POST(request: Request) {
     }
     if (action === 'roots-add' || action === 'roots-remove') {
       // 授权文件夹只能由用户在面板里维护：助手侧的管理工具不碰这份清单（任务书 §12/§42）。
-      if (action === 'roots-add') addFilesystemRoot(data?.path);
+      // 新增默认只读；用户勾了「写入」才连写权限一起给。
+      if (action === 'roots-add') addFilesystemRoot(data?.path, { write: data?.write === true });
       else removeFilesystemRoot(data?.path);
       // 启动参数变了：旧进程还带着上一份目录，先收掉；工具表也要重算。
       closeStdioServer('filesystem');
       clearMcpToolCache();
       return Response.json({ ok: true, ...snapshot() });
     }
+    if (action === 'roots-write') {
+      // 写权限只改这一行，启动参数（Filesystem 只吃路径）没变，所以不用重拉进程。
+      setFilesystemRootWrite(data?.path, data?.write === true);
+      return Response.json({ ok: true, ...snapshot() });
+    }
+    if (action === 'tool-policy') {
+      const policy = String(data?.policy || '');
+      if (!(TOOL_POLICY_VALUES as readonly string[]).includes(policy)) {
+        return Response.json({ error: '未知的工具授权记忆，只支持 ask / always_allow / block。' }, { status: 400 });
+      }
+      // 只记「这个工具以后怎么处理」，不记参数：同一个工具换个参数风险可能完全不同。
+      setToolApprovalPolicy(data?.toolId, policy);
+      return Response.json({ ok: true, ...snapshot() });
+    }
+    if (action === 'origins') {
+      const entry = requireStdioCatalogEntry(data?.id);
+      if (!entry.needsBrowser) return Response.json({ error: `${entry.name}没有站点名单这一项。` }, { status: 400 });
+      setCatalogEntryOrigins(entry.id, { allowed: data?.allowedOrigins, blocked: data?.blockedOrigins });
+      // 站点名单是启动参数：旧进程还带着上一套名单，先收掉，下次调用按新的拉起。
+      closeStdioServer(entry.id);
+      return Response.json({ ok: true, ...snapshot() });
+    }
     if (action === 'roots-open' || action === 'runtime-open') {
       // 「打开文件夹」只把授权目录、代码里写死的运行时安装目录交给系统文件管理器：
       // 路径全在服务端解析，请求体只能给动作名，授权目录还要再过一遍授权清单。
-      const opened = action === 'roots-open' ? openFilesystemRoot(data?.path) : openCatalogFolder(data?.id);
+      const opened = action === 'roots-open' ? await openFilesystemRoot(data?.path) : await openCatalogFolder(data?.id);
       return Response.json({ ok: true, opened });
+    }
+    if (action === 'extension-open') {
+      // 我们自建的扩展目录（scripts/build-playwright-extension.mjs 的产物）：路径由服务端算，面板只能给动作名。
+      return Response.json({ ok: true, opened: await openBrowserExtensionFolder() });
+    }
+    if (action === 'browser-mode') {
+      const entry = requireStdioCatalogEntry(data?.id);
+      if (!entry.needsBrowser) return Response.json({ error: `${entry.name}没有「接日常浏览器」这种说法。` }, { status: 400 });
+      const mode = data?.mode === 'extension' ? 'extension' : 'managed';
+      const wasEnabled = catalogEntryEnabled(entry.id);
+      setCatalogEntryBrowserMode(entry.id, mode);
+      // 启动参数跟着模式变：旧进程还带着上一套参数，先收掉；工具表缓存也要丢。
+      closeStdioServer(entry.id);
+      clearMcpToolCache();
+      // 装过且开着就顺手自检一次：失败原因原样带回面板（没装扩展、浏览器没开、没授权都要说清）。
+      let runtimeError = '';
+      if (isCatalogInstalled(entry) && wasEnabled) {
+        try {
+          await startCatalogServer(entry.id, { roots: listFilesystemRoots() });
+        } catch (error) {
+          runtimeError = error instanceof Error ? error.message : '自检失败';
+          // 换模式不应该顺手把用户的「启用」关掉：自检失败只报告原因，开关仍按用户原来的选择。
+          setCatalogEntryEnabled(entry.id, wasEnabled);
+        }
+      }
+      return Response.json({ ok: true, runtimeError, ...snapshot() });
     }
     if (action === 'allow-write') {
       const entry = findCatalogEntry(data?.id);

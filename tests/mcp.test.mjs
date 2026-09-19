@@ -145,6 +145,64 @@ test('客户端完成握手、翻页列工具，并在调用后带回会话 id',
   assert.equal(probe.readOnly, 1);
 });
 
+test('协议版本对不上只记录不报错，后续请求按协商结果走', async () => {
+  mcp.resetMcpSessions();
+  const seen = [];
+  const fetchImpl = async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    seen.push({ method: payload.method, header: init.headers['mcp-protocol-version'], requested: payload.params?.protocolVersion });
+    if (payload.method === 'initialize') return jsonRpc(payload.id, { protocolVersion: '2024-11-05', serverInfo: { name: 'old' } });
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (payload.method === 'tools/list') return jsonRpc(payload.id, { tools: [READ_TOOL] });
+    throw new Error(`unexpected ${payload.method}`);
+  };
+  const server = serverConfig();
+  // 服务端报的是更老的版本：调用照常成功，只是把差异记下来。
+  const tools = await mcp.listMcpServerTools(server, { fetchImpl });
+  assert.deepEqual(tools.map((tool) => tool.name), ['search']);
+  const negotiation = mcp.resolveMcpProtocolNegotiation(server);
+  assert.equal(negotiation.requested, mcp.MCP_PROTOCOL_VERSION);
+  assert.equal(negotiation.negotiated, '2024-11-05');
+  assert.equal(negotiation.matched, false);
+  assert.equal(negotiation.newerServerVersion, false);
+  // initialize 按我们请求的版本发；工具列表按服务端报的版本发。
+  assert.equal(seen[0].requested, mcp.MCP_PROTOCOL_VERSION);
+  assert.equal(seen.at(-1).header, '2024-11-05');
+  assert.equal(mcp.compareMcpProtocolVersion('2025-06-18', '2024-11-05'), 1);
+  assert.equal(mcp.compareMcpProtocolVersion('2025-06-18', '2025-06-18'), 0);
+  mcp.resetMcpSessions();
+});
+
+test('服务端报的版本比我们新时，下一次握手直接按它来问', async () => {
+  mcp.resetMcpSessions();
+  const requested = [];
+  let listCalls = 0;
+  const fetchImpl = async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    if (payload.method === 'initialize') {
+      requested.push(payload.params.protocolVersion);
+      return jsonRpc(payload.id, { protocolVersion: '2026-01-01' });
+    }
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (payload.method === 'tools/list') {
+      listCalls += 1;
+      // 第一次列工具断线：会话被丢掉重来，这正是「重新握手」的真实触发点。
+      if (listCalls === 1) throw new Error('socket hang up');
+      return jsonRpc(payload.id, { tools: [] });
+    }
+    throw new Error(`unexpected ${payload.method}`);
+  };
+  const server = serverConfig({ id: 'newer' });
+  await mcp.listMcpServerTools(server, { fetchImpl });
+  // 会话重来时按服务端报的新版本问，而不是继续用本地常量。
+  assert.deepEqual(requested, [mcp.MCP_PROTOCOL_VERSION, '2026-01-01']);
+  // 重来之后两边就一致了，下一次不会再来回切。
+  const settled = mcp.resolveMcpProtocolNegotiation(server);
+  assert.equal(settled.negotiated, '2026-01-01');
+  assert.equal(settled.matched, true);
+  mcp.resetMcpSessions();
+});
+
 test('超长工具结果截断后必须说明，模型才不会当成完整内容', async () => {
   mcp.resetMcpSessions();
   const longText = 'x'.repeat(9000);
@@ -539,4 +597,29 @@ test('按需下发的开关能存下来、改回去，并出现在对外快照�
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('协商结果要接到面板上：连接状态带着版本，不一致时标注一句', async () => {
+  const dir = tempDir();
+  try {
+    // 还没握手时字段存在但为 null：面板照常渲染，不用判断字段缺不缺。
+    const status = mcp.catalogRuntimeStatus('playwright', { dataDir: dir });
+    assert.equal(Object.hasOwn(status, 'protocol'), true);
+    assert.equal(status.protocol, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const runtimeSource = await read('lib/mcp/catalog-runtime.ts');
+  const toolsRoute = await read('app/api/tools/route.ts');
+  const manager = await read('components/McpManager.tsx');
+  // 本地 stdio 的版本来自进程状态，先握过手才有值。
+  assert.match(runtimeSource, /protocol: process\.protocol,/);
+  // 面板的两处入口都要拿到版本：用户自己配的服务，和代码内置的官方连接器。
+  assert.match(toolsRoute, /const servers = rawServers\.map\(\(server\) => \(\{ \.\.\.redactMcpServer\(server\), protocol: resolveMcpProtocolNegotiation\(server\) \}\)\);/);
+  assert.match(toolsRoute, /protocol: runtime\?\.protocol \?\? \(config \? resolveMcpProtocolNegotiation\(config\) : null\),/);
+  assert.match(manager, /function protocolNote\(/);
+  assert.match(manager, /协议版本不一致/);
+  // 两处渲染（用户自己的服务 + 内置连接器），每处都是「先判断再有话说」。
+  assert.equal((manager.match(/\{protocolNote\(/g) || []).length, 4, '服务列表和连接器列表都要显示这一句');
 });

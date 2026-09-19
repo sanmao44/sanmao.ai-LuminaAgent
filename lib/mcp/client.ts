@@ -8,11 +8,13 @@ import {
   MCP_MAX_RESPONSE_BYTES,
   MCP_PROTOCOL_VERSION,
   McpError,
+  negotiateMcpProtocolVersion,
   resultText,
+  type McpProtocolNegotiation,
   type McpRequestOptions,
   type McpTimeouts,
 } from './protocol';
-import { callStdioTool, listStdioServerTools } from './stdio';
+import { callStdioTool, listStdioServerTools, stdioServerStatus } from './stdio';
 
 /**
  * 最小 MCP 客户端：只实现 tools/list 与 tools/call 需要的部分
@@ -33,17 +35,23 @@ type McpCallOptions = McpClientOptions & McpRequestOptions;
 
 /** 已建立的会话（initialize 拿到的 mcp-session-id），按「地址 + 凭据」缓存。 */
 const sessions = new Map<string, string>();
+/** 每个会话协商出来的协议版本：后续请求的协议头和面板标注都用它。 */
+const negotiations = new Map<string, McpProtocolNegotiation>();
 let sequence = 1;
 
 /** 丢弃缓存的会话；配置改了（地址或请求头）必须让旧会话失效，否则会拿着旧凭据继续用。 */
 export function resetMcpSessions(url?: string) {
   if (!url) {
     sessions.clear();
+    negotiations.clear();
     return;
   }
   const prefix = `${url}\u0000`;
   for (const key of [...sessions.keys()]) {
     if (key === url || key.startsWith(prefix)) sessions.delete(key);
+  }
+  for (const key of [...negotiations.keys()]) {
+    if (key === url || key.startsWith(prefix)) negotiations.delete(key);
   }
 }
 
@@ -63,6 +71,11 @@ function sessionKey(server: McpServerConfig) {
 function nextId() {
   sequence += 1;
   return sequence;
+}
+
+/** 面板与自检要显示「和这个服务谈成了哪个协议版本」；没握过手就是 null。 */
+export function resolveMcpProtocolNegotiation(server: McpServerConfig): McpProtocolNegotiation | null {
+  return negotiations.get(sessionKey(server)) || null;
 }
 
 function timeoutSignal(external: AbortSignal | undefined, ms: number) {
@@ -139,18 +152,23 @@ async function parseMcpResponse(server: McpServerConfig, response: Response) {
   }
 }
 
-async function post(server: McpServerConfig, payload: Record<string, unknown>, options: McpClientOptions & { timeoutMs: number; expectReply: boolean; signal?: AbortSignal }) {
+async function post(
+  server: McpServerConfig,
+  payload: Record<string, unknown>,
+  options: McpClientOptions & { timeoutMs: number; expectReply: boolean; signal?: AbortSignal; protocolVersion?: string },
+) {
   const fetchImpl = options.fetchImpl || fetch;
   const { signal, release } = timeoutSignal(options.signal, options.timeoutMs);
   try {
+    const key = sessionKey(server);
     const headers: Record<string, string> = {
       ...(server.headers || {}),
       // 协议头放在用户请求头之后：用户能加自己的凭据，但不能把协议头改成别的值。
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
-      'mcp-protocol-version': MCP_PROTOCOL_VERSION,
+      // 协商过的版本优先：服务端报了哪个版本，后续请求就按哪个版本来。
+      'mcp-protocol-version': options.protocolVersion || negotiations.get(key)?.negotiated || MCP_PROTOCOL_VERSION,
     };
-      const key = sessionKey(server);
       const session = sessions.get(key);
       if (session) headers['mcp-session-id'] = session;
       const response = await fetchImpl(server.url, { method: 'POST', headers, body: JSON.stringify(payload), signal });
@@ -177,19 +195,25 @@ async function post(server: McpServerConfig, payload: Record<string, unknown>, o
   }
 }
 
-async function ensureSession(server: McpServerConfig, options: McpClientOptions & { signal?: AbortSignal }) {
-  if (sessions.has(sessionKey(server))) return;
+async function ensureSession(server: McpServerConfig, options: McpClientOptions & { signal?: AbortSignal; protocolVersion?: string }) {
+  const key = sessionKey(server);
+  if (sessions.has(key)) return;
+  // 上一次握手发现服务端版本更新时，这一次直接按它来问；默认仍是本地常量。
+  const known = negotiations.get(key);
+  const requested = options.protocolVersion || (known?.newerServerVersion ? known.negotiated : MCP_PROTOCOL_VERSION);
   const result = await post(server, {
     jsonrpc: '2.0',
     id: nextId(),
     method: 'initialize',
     params: {
-      protocolVersion: MCP_PROTOCOL_VERSION,
+      protocolVersion: requested,
       capabilities: {},
       clientInfo: { name: 'SANMAO.AI', version: '1.0' },
     },
-  }, { ...options, timeoutMs: options.timeouts?.init ?? MCP_INIT_TIMEOUT_MS, expectReply: true });
+  }, { ...options, protocolVersion: requested, timeoutMs: options.timeouts?.init ?? MCP_INIT_TIMEOUT_MS, expectReply: true });
   if (!result || typeof result !== 'object') throw new McpError(server.name, 'MCP 服务没有完成握手');
+  // 版本对不上只记下来（面板上标注），不当成错误：连得上比版本号一致更重要。
+  negotiations.set(key, negotiateMcpProtocolVersion(result?.protocolVersion, requested));
   // 规范要求的确认通知；服务端不回内容，失败也不影响后续调用。
   await post(server, { jsonrpc: '2.0', method: 'notifications/initialized' }, { ...options, timeoutMs: options.timeouts?.init ?? MCP_INIT_TIMEOUT_MS, expectReply: false }).catch(() => null);
 }
@@ -262,11 +286,17 @@ export async function callMcpTool(
 /** 连接自检：能列工具就算连通，顺便把工具名带回去给面板展示。 */
 export async function probeMcpServer(server: McpServerConfig, options: McpCallOptions = {}) {
   const tools = await listMcpServerTools(server, options);
-  return { tools, readOnly: tools.filter((tool) => tool.annotations?.readOnlyHint === true).length };
+  // 协商结果一并带回去：面板要能显示「服务端报的是哪个版本」，差异只提示不拦截。
+  // 两种传输各记一处：HTTP 在会话表里，stdio 在子进程状态里。
+  return {
+    tools,
+    readOnly: tools.filter((tool) => tool.annotations?.readOnlyHint === true).length,
+    protocol: server.transport === 'stdio' ? stdioServerStatus(server.id).protocol : resolveMcpProtocolNegotiation(server),
+  };
 }
 
 export type { McpRemoteTool };
 
 // 协议层的东西从这里再导出一次，历史代码和测试按 '@/lib/mcp/client' 导入不用改。
 export { MCP_CALL_TIMEOUT_MS, MCP_INIT_TIMEOUT_MS, MCP_LIST_TIMEOUT_MS, MCP_MAX_RESPONSE_BYTES, MCP_MAX_TOOL_RESULT_CHARS, MCP_PROTOCOL_VERSION, McpError } from './protocol';
-export type { McpRequestOptions, McpTimeouts } from './protocol';
+export type { McpProtocolNegotiation, McpRequestOptions, McpTimeouts } from './protocol';

@@ -90,7 +90,7 @@
 .dialog button:disabled { opacity: .55; cursor: not-allowed; }
 .dialog button.primary { color: #fff; border-color: transparent; background: linear-gradient(145deg, var(--accent), var(--accent-2)); font-weight: 850; box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 24%, transparent); }
 .dialog button.primary:hover:not(:disabled) { color: #fff; background: linear-gradient(145deg, var(--accent), var(--accent-2)); filter: brightness(1.07); }
-.dialog input[type='text'], .dialog input[type='url'], .dialog input:not([type]), .dialog textarea {
+.dialog input[type='text'], .dialog input[type='url'], .dialog input[type='password'], .dialog input:not([type]), .dialog textarea {
   box-sizing: border-box;
   width: 100%;
   padding: 9px 11px;
@@ -155,6 +155,9 @@
 .probeHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .toolList { display: grid; gap: 4px; max-height: min(40dvh, 320px); overflow: auto; overscroll-behavior: contain; }
 .toolRow { display: flex; align-items: flex-start; gap: 8px; padding: 5px 6px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
+.toolRow > label { flex: 1 1 auto; min-width: 0; display: flex; align-items: flex-start; gap: 8px; }
+.toolRow > label > input { flex: none; margin-top: 2px; }
+.toolRow > .miniButton { flex: none; }
 .toolRow:hover { background: color-mix(in srgb, var(--panel) 70%, transparent); }
 .toolBody { display: grid; gap: 2px; min-width: 0; }
 .toolHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

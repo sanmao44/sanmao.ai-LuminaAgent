@@ -21,6 +21,12 @@ import { isPathInside } from './filesystem-roots';
 export const MCP_FILESYSTEM_PATH_KEYS = ['path', 'paths', 'source', 'destination', 'target', 'from', 'to'] as const;
 
 /**
+ * 会改动磁盘的 Filesystem 工具。这些工具除了「路径在授权目录里」，还要求那个目录
+ * 打开了写入：只读授权只换到读权限，不该顺带把写也放了。
+ */
+export const MCP_FILESYSTEM_WRITE_TOOLS: readonly string[] = ['write_file', 'edit_file', 'create_directory', 'move_file'];
+
+/**
  * 默认 DENY：私钥、凭据库、云厂商/SSH 配置、Git 内部文件。
  * 这些文件一旦被读进来就会进入对话上下文并可能被上传到模型服务商，不存在「顺手读一下」的正当场景。
  */
@@ -139,6 +145,23 @@ export type McpCallGuardDecision =
   | { ok: true; args: Record<string, unknown>; approval: string | null }
   | { ok: false; error: string };
 
+/**
+ * 写工具的额外一道：目标必须落在勾了「写入」的目录里。
+ * 只读授权只换到读权限，写文件和读文件是两件事，不能顺手一起放行。
+ */
+function filesystemWriteProblem(
+  target: unknown,
+  options: { writeRoots?: readonly string[]; platform?: string },
+): string | null {
+  const platform = options.platform || process.platform;
+  const raw = String(target ?? '').trim();
+  const writeRoots = options.writeRoots || [];
+  const resolved = resolveForPolicy(raw);
+  if (writeRoots.some((root) => isPathInside(resolved, root, platform))) return null;
+  if (!writeRoots.length) return '还没有任何授权目录打开写入：先在「MCP 服务」面板里给「本地文件」的目录勾上「写入」，助手才能改文件';
+  return `这个路径不在任何「可写入」的授权目录里：${raw}；要写文件得先在面板里给对应目录勾上「写入」（当前可写：${writeRoots.join('、')}）`;
+}
+
 function asArgs(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
 }
@@ -146,13 +169,16 @@ function asArgs(value: unknown) {
 /**
  * Filesystem 工具的入参检查。命中的第一个问题就返回：一次说清一个问题，
  * 模型改起来比面对一长串错误容易。
+ *
+ * toolName 是可选的：给了才知道这次是不是写工具（写工具要额外落在可写目录里）。
  */
 export function guardFilesystemCall(
   args: unknown,
-  options: { roots: readonly string[]; dataDir?: string; platform?: string },
+  options: { roots: readonly string[]; dataDir?: string; platform?: string; toolName?: string; writeRoots?: readonly string[] },
 ): McpCallGuardDecision {
   const input = asArgs(args);
   const roots = options.roots;
+  const writeTool = options.toolName ? MCP_FILESYSTEM_WRITE_TOOLS.includes(options.toolName) : false;
   let approval: string | null = null;
   for (const key of MCP_FILESYSTEM_PATH_KEYS) {
     const value = input[key];
@@ -162,6 +188,11 @@ export function guardFilesystemCall(
       if (typeof item !== 'string') return { ok: false, error: `参数 ${key} 必须是文件路径字符串` };
       const problem = filesystemPathProblem(item, { roots, dataDir: options.dataDir, platform: options.platform });
       if (problem) return { ok: false, error: problem };
+      // 写工具还要落进「已勾写入」的目录：move_file 的 source / destination 两边都要过。
+      if (writeTool) {
+        const writeProblem = filesystemWriteProblem(item, options);
+        if (writeProblem) return { ok: false, error: writeProblem };
+      }
       approval = approval || filesystemApprovalReason(item, { roots, dataDir: options.dataDir, platform: options.platform });
     }
   }
@@ -216,10 +247,10 @@ export function guardMcpServerCall(
   server: { id?: string; catalogId?: string } | null | undefined,
   toolName: string,
   args: unknown,
-  options: { roots: readonly string[]; dataDir?: string; platform?: string },
+  options: { roots: readonly string[]; dataDir?: string; platform?: string; writeRoots?: readonly string[] },
 ): McpCallGuardDecision {
   const catalogId = String(server?.catalogId || server?.id || '');
-  if (catalogId === 'filesystem') return guardFilesystemCall(args, options);
+  if (catalogId === 'filesystem') return guardFilesystemCall(args, { ...options, toolName: String(toolName) });
   if (catalogId === 'playwright' && String(toolName) === 'browser_file_upload') return guardUploadCall(args, options);
   return { ok: true, args: asArgs(args), approval: null };
 }

@@ -2,7 +2,7 @@ import { listFilesystemRoots } from './filesystem-roots';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
-import { findCatalogEntry, listCatalogServers } from './catalog';
+import { findCatalogEntry, isStdioCatalogEntry, listCatalogServers } from './catalog';
 import type { McpServerConfig } from './types';
 
 export const MCP_MAX_SERVERS = 20;
@@ -154,7 +154,29 @@ export function listMcpServers(options: McpStoreOptions = {}): McpServerConfig[]
   // 授权目录只有一份（lib/mcp/filesystem-roots.ts）：这里补默认值，调用方不必各自记得传，
   // 否则漏传一次就等于「Filesystem 服务静默消失」，很难查。
   const roots = options.roots ?? listFilesystemRoots({ dataDir: options.dataDir });
-  return [...readUserMcpServers(options), ...listCatalogServers({ ...options, roots })].slice(0, MCP_MAX_SERVERS);
+  // 内置连接器的命令、参数和工具白名单由代码维护（lib/mcp/catalog.ts）。用户配置里如果留着同名旧副本，
+  // 两边会同时生效：参数按旧的来、白名单也可能对不上代码（早期版本写进去的 browser_run_code_unsafe
+  // 就是这么漏出来的）。这里按目录条目 id 认领：属于内置连接器的 id 只认代码这一份。
+  const userServers = readUserMcpServers(options).filter((server) => !isBuiltinStdioServerId(server.id) && !isBuiltinStdioServerId(server.catalogId));
+  // 同一个 id 只保留第一条：用户配置里的旧副本可能和目录条目重名。
+  const seen = new Set<string>();
+  const merged = [...userServers, ...listCatalogServers({ ...options, roots })].filter((server) => {
+    if (seen.has(server.id)) return false;
+    seen.add(server.id);
+    return true;
+  });
+  return merged.slice(0, MCP_MAX_SERVERS);
+}
+
+/**
+ * 这个 id 是不是内置的「本机」条目（stdio）：它的命令、参数和工具白名单全部由代码维护。
+ *
+ * 远端连接器（GitHub / Context7）不算在内——它们的地址、请求头和凭据本来就存在 servers.json 里，
+ * 跟着一起丢掉的话，用户刚连上的 GitHub 会在下一次 listMcpServers 时凭空消失。
+ */
+function isBuiltinStdioServerId(value: unknown) {
+  const entry = findCatalogEntry(value);
+  return Boolean(entry && isStdioCatalogEntry(entry));
 }
 
 /**

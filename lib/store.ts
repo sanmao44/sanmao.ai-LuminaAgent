@@ -9,6 +9,7 @@ import { inferModelKind, isImageEditOnlyModel, isNonConversationalModelId, isSpe
 import { buildManualModelRecord, mergeProviderModelRecords } from './model-registry';
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
+import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -668,6 +669,8 @@ export async function patchSettings(patch: Partial<AppSettings>) {
     if ('videoStoragePath' in patch) state.settings.videoStoragePath = String(patch.videoStoragePath || '').trim();
     if ('skillsEnabled' in patch) state.settings.skillsEnabled = Boolean(patch.skillsEnabled);
     if ('skillsAutoApprove' in patch) state.settings.skillsAutoApprove = Boolean(patch.skillsAutoApprove);
+    // 审批档位只认三个已知值：写进来一个拼错的字符串等于静默降级到默认档，不如在这里归一化。
+    if ('mcpApprovalPolicy' in patch) state.settings.mcpApprovalPolicy = normalizeMcpApprovalPolicy(patch.mcpApprovalPolicy);
     return state.settings;
   });
 }

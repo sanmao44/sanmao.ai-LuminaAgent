@@ -25,6 +25,14 @@ import type { McpServerConfig } from './types';
 
 export type McpCatalogBrowser = 'chrome' | 'msedge';
 
+/**
+ * 浏览器接入方式：
+ * - managed   内置独立浏览器：我们拉起一个独立 profile 的浏览器，零安装、可随包发布。
+ * - extension 接日常浏览器：连用户自己开着的 Chrome/Edge（需要官方 Playwright Extension），
+ *             因此登录态、Cookie、正在看的标签页都是他熟悉的那一份。
+ */
+export type McpCatalogBrowserMode = 'managed' | 'extension';
+
 /** stdio：本机子进程；http：远端 Streamable HTTP。 */
 export type McpCatalogTransport = 'stdio' | 'http';
 
@@ -111,6 +119,11 @@ export type McpCatalogEntry = {
   version?: string;
   installNote?: string;
   needsBrowser?: boolean;
+  /**
+   * 需要用户自己装扩展的浏览器条目：商店地址与说明写在这里，面板照着渲染引导，
+   * 免得「去哪儿装」这种事散落在组件文案里。
+   */
+  browserExtension?: { storeName: string; storeUrl: string; storeId: string; note: string };
   /** stdio 专用：必须至少有一个用户授权目录才能启动（Filesystem 就是这种）。 */
   requiresRoots?: boolean;
   /** stdio 专用：组装启动参数（不含 Node 本身）。 */
@@ -144,6 +157,11 @@ export type McpCatalogArgs = {
   installRoot: string;
   dataDir: string;
   browser: McpCatalogBrowser | null;
+  /** 浏览器接入方式（目前只有 Playwright 用得上）。 */
+  browserMode: McpCatalogBrowserMode;
+  /** 浏览器站点名单：只有填了才传给服务端，空数组等于不限制。 */
+  allowedOrigins?: readonly string[];
+  blockedOrigins?: readonly string[];
   /** 用户授权的目录（Filesystem 专用），已经过 lib/mcp/filesystem-roots.ts 归一化。 */
   roots: readonly string[];
 };
@@ -288,18 +306,38 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
     version: '0.0.82',
     installNote: '约 60 MB，只装一次，装在项目数据目录里，不动系统环境',
     needsBrowser: true,
+    browserExtension: {
+      storeName: 'Playwright Extension',
+      storeUrl: 'https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm',
+      storeId: 'mmlmfjhmonkocbjadbfplnigmagldckm',
+      note: '扩展由微软官方发布（Apache-2.0，源码在 microsoft/playwright 的 packages/extension）。它需要「调试器」和「访问所有网站」两项权限，只在本机与助手通信，数据不出这台电脑。',
+    },
     allowedTools: PLAYWRIGHT_TOOLS,
-    args: ({ installRoot, dataDir, browser }) => [
-      path.join(installRoot, 'node_modules', '@playwright', 'mcp', 'cli.js'),
-      ...(browser ? ['--browser', browser] : []),
-      // 独立 profile：不复用用户日常浏览器的登录态，也避免和用户自己开的窗口打架。
-      '--user-data-dir',
-      path.join(dataDir, 'browser', 'profiles', 'default'),
-      // 自动命名的截图等产物落到受控目录，不散在工作区里。
-      '--output-dir',
-      path.join(dataDir, 'browser', 'downloads'),
-      // 不传 --caps：vision / pdf / devtools（含 run-code）这类高权限能力第一版一律不开。
-    ],
+    args: ({ installRoot, dataDir, browser, browserMode, allowedOrigins, blockedOrigins }) => {
+      const cli = path.join(installRoot, 'node_modules', '@playwright', 'mcp', 'cli.js');
+      // 自动命名的截图等产物落到受控目录，不散在工作区里；两种模式都要。
+      const output = ['--output-dir', path.join(dataDir, 'browser', 'downloads')];
+      // 站点名单：用户填了才传，空着等于不限制（默认行为不变）。服务端按分号分隔解析。
+      const origins = [
+        ...(allowedOrigins?.length ? ['--allowed-origins', allowedOrigins.join(';')] : []),
+        ...(blockedOrigins?.length ? ['--blocked-origins', blockedOrigins.join(';')] : []),
+      ];
+      if (browserMode === 'extension') {
+        // --extension 会忽略 --browser（实测 0.0.82 的 --help）：接的是用户自己开着的浏览器，
+        // 不是我们拉起来的那个，所以这里不能再传 --browser / --user-data-dir。
+        return [cli, '--extension', ...output, ...origins];
+      }
+      return [
+        cli,
+        ...(browser ? ['--browser', browser] : []),
+        // 独立 profile：不复用用户日常浏览器的登录态，也避免和用户自己开的窗口打架。
+        '--user-data-dir',
+        path.join(dataDir, 'browser', 'profiles', 'default'),
+        ...output,
+        ...origins,
+        // 不传 --caps：vision / pdf / devtools（含 run-code）这类高权限能力第一版一律不开。
+      ];
+    },
   },
   {
     id: 'filesystem',
@@ -502,6 +540,11 @@ export type McpCatalogStateEntry = {
   enabled?: boolean;
   /** 写权限：Filesystem 用它放开写工具；GitHub 还额外受 writeGates 逐项限制。 */
   allowWrite?: boolean;
+  /** 浏览器接入方式：没存过按 managed（内置独立浏览器）走，升级上来的用户行为不变。 */
+  browserMode?: McpCatalogBrowserMode;
+  /** 浏览器站点名单：要传 --allowed-origins / --blocked-origins 的项；空数组等于不限制。 */
+  allowedOrigins?: string[];
+  blockedOrigins?: string[];
   /** 远端条目的能力组（GitHub toolsets）：没存过就用条目默认值。 */
   toolsets?: string[];
   /** 远端条目的写权限分项：默认一项都不开，用户逐项打开。 */
@@ -571,6 +614,58 @@ export function catalogEntryAllowWrite(id: unknown, options: { dataDir?: string 
 
 export function setCatalogEntryAllowWrite(id: unknown, allowWrite: boolean, options: { dataDir?: string } = {}) {
   return patchCatalogState(id, { allowWrite }, options);
+}
+
+/** 浏览器接入方式：默认内置独立浏览器；只有明确存过 extension 才算接日常浏览器。 */
+export function catalogEntryBrowserMode(id: unknown, options: { dataDir?: string } = {}): McpCatalogBrowserMode {
+  const entry = findCatalogEntry(id);
+  if (!entry) return 'managed';
+  return readCatalogState(options)[entry.id]?.browserMode === 'extension' ? 'extension' : 'managed';
+}
+
+export function setCatalogEntryBrowserMode(id: unknown, browserMode: McpCatalogBrowserMode, options: { dataDir?: string } = {}) {
+  return patchCatalogState(id, { browserMode }, options);
+}
+
+/** 站点名单条数上限：再多就不是「限制几个站点」，而是抄一份导航站清单了。 */
+export const MCP_CATALOG_MAX_ORIGINS = 50;
+
+/**
+ * 归一化站点名单：接受数组，也接受面板里直接粘的一整段（换行 / 逗号 / 分号分隔）。
+ * 填错一项就整次拒绝并说清是哪一项——静默丢掉一条会让人以为限制生效了。
+ */
+export function normalizeCatalogOrigins(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : String(value ?? '').split(/[\n,;]/);
+  const origins: string[] = [];
+  for (const item of list) {
+    const origin = String(item ?? '').trim();
+    if (!origin) continue;
+    if (origin.length > 200) throw new Error(`站点名单里的这一项太长了：${origin.slice(0, 40)}…`);
+    if (/[\s;]/.test(origin)) throw new Error(`站点名单里的这一项不能含空格或分号：${origin}`);
+    const shaped = /^(\*|[a-z][a-z0-9+.-]*):\/\/\S+$/i.test(origin) || /^[a-z0-9*][a-z0-9.*-]{2,}$/i.test(origin);
+    if (!shaped) throw new Error(`站点名单里的这一项既不像网址也不像域名：${origin}`);
+    if (!origins.includes(origin)) origins.push(origin);
+    if (origins.length >= MCP_CATALOG_MAX_ORIGINS) break;
+  }
+  return origins;
+}
+
+/** 浏览器条目的站点名单：没存过就是不限制（两个都空）。 */
+export function catalogEntryOrigins(id: unknown, options: { dataDir?: string } = {}): { allowed: string[]; blocked: string[] } {
+  const entry = findCatalogEntry(id);
+  if (!entry) return { allowed: [], blocked: [] };
+  const saved = readCatalogState(options)[entry.id];
+  return { allowed: [...(saved?.allowedOrigins || [])], blocked: [...(saved?.blockedOrigins || [])] };
+}
+
+export function setCatalogEntryOrigins(
+  id: unknown,
+  origins: { allowed?: unknown; blocked?: unknown },
+  options: { dataDir?: string } = {},
+): McpCatalogStateEntry {
+  const allowed = normalizeCatalogOrigins(origins?.allowed);
+  const blocked = normalizeCatalogOrigins(origins?.blocked);
+  return patchCatalogState(id, { allowedOrigins: allowed, blockedOrigins: blocked }, options);
 }
 
 /** 记下/清掉最后一次失败：面板要靠它把「需要重新连接」和一般错误分开。 */
@@ -724,7 +819,15 @@ export function catalogWriteToolProblem(policy: McpCatalogWritePolicy | null, to
  */
 export function catalogServerConfig(
   entry: McpStdioCatalogEntry,
-  options: { dataDir?: string; enabled?: boolean; browser?: { channel: McpCatalogBrowser | null }; roots?: readonly string[]; allowWrite?: boolean } = {},
+  options: {
+    dataDir?: string;
+    enabled?: boolean;
+    browser?: { channel: McpCatalogBrowser | null };
+    roots?: readonly string[];
+    allowWrite?: boolean;
+    browserMode?: McpCatalogBrowserMode;
+    origins?: { allowed?: readonly string[]; blocked?: readonly string[] };
+  } = {},
 ): McpServerConfig {
   const dataDir = catalogDataDir(options);
   const installRoot = resolveCatalogInstallRoot(entry.id, options);
@@ -733,6 +836,9 @@ export function catalogServerConfig(
     mkdirSync(workspace, { recursive: true });
   } catch {}
   const browser = options.browser ?? detectSystemBrowser();
+  const browserMode = options.browserMode ?? catalogEntryBrowserMode(entry.id, options);
+  // 站点名单跟着条目状态走：改了名单要重连才生效（参数变了 = 换进程）。
+  const origins = options.origins ?? catalogEntryOrigins(entry.id, options);
   const roots = options.roots ?? [];
   return {
     id: entry.id,
@@ -745,7 +851,15 @@ export function catalogServerConfig(
     allowWrite: options.allowWrite ?? catalogEntryAllowWrite(entry.id, options),
     catalogId: entry.id,
     command: process.execPath,
-    args: entry.args({ installRoot, dataDir, browser: browser.channel, roots }),
+    args: entry.args({
+      installRoot,
+      dataDir,
+      browser: browser.channel,
+      browserMode,
+      roots,
+      allowedOrigins: origins.allowed || [],
+      blockedOrigins: origins.blocked || [],
+    }),
     enabledTools: [...entry.allowedTools],
     cwd: workspace,
   };

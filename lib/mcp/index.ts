@@ -12,7 +12,10 @@ export {
   listMcpServerTools,
   probeMcpServer,
   resetMcpSessions,
+  resolveMcpProtocolNegotiation,
 } from './client';
+export { MCP_INIT_TIMEOUT_MS, MCP_LIST_TIMEOUT_MS, MCP_MAX_TOOL_RESULT_CHARS, compareMcpProtocolVersion, negotiateMcpProtocolVersion } from './protocol';
+export type { McpProtocolNegotiation } from './protocol';
 export {
   MCP_MAX_SERVERS,
   listMcpServers,
@@ -36,10 +39,13 @@ export {
 export type { McpStdioStatus } from './stdio';
 export {
   MCP_CATALOG_ENTRIES,
+  MCP_CATALOG_MAX_ORIGINS,
   catalogEntryAccount,
   catalogEntryAllowWrite,
+  catalogEntryOrigins,
   catalogEntryAuthRequired,
   catalogEntryBinPath,
+  catalogEntryBrowserMode,
   catalogEntryEnabled,
   catalogEntryError,
   catalogEntryReady,
@@ -55,6 +61,7 @@ export {
   isRemoteCatalogEntry,
   isStdioCatalogEntry,
   listCatalogServers,
+  normalizeCatalogOrigins,
   readCatalogState,
   recordCatalogEntryError,
   remoteCatalogEntries,
@@ -65,7 +72,9 @@ export {
   setCatalogEntryAccount,
   setCatalogEntryAllowWrite,
   setCatalogEntryAuthRequired,
+  setCatalogEntryBrowserMode,
   setCatalogEntryEnabled,
+  setCatalogEntryOrigins,
   setCatalogEntryToolset,
   setCatalogEntryWriteGate,
   stdioCatalogEntries,
@@ -73,6 +82,7 @@ export {
 export type {
   McpCatalogAuth,
   McpCatalogBrowser,
+  McpCatalogBrowserMode,
   McpCatalogEntry,
   McpCatalogToolset,
   McpCatalogWriteGate,
@@ -112,6 +122,7 @@ export {
 export type { McpCatalogRuntimeState, McpCatalogRuntimeStatus } from './catalog-runtime';
 export {
   MCP_LAZY_KEYWORD_LIMIT,
+  MCP_FORBIDDEN_TOOLS,
   MCP_MAX_SCHEMA_CHARS_PER_TURN,
   MCP_MAX_TOOL_DEFINITIONS_PER_TURN,
   MCP_TOOL_CACHE_TTL_MS,
@@ -131,6 +142,8 @@ export {
   openCatalogFolder,
   openFilesystemRoot,
   openLocalFolder,
+  openBrowserExtensionFolder,
+  resolveBrowserExtensionFolder,
 } from './open-folder';
 export type { FolderOpenOptions } from './open-folder';
 export {
@@ -139,14 +152,19 @@ export {
   filesystemRootsDataDir,
   isPathInside,
   listFilesystemRoots,
+  listFilesystemWriteRoots,
   normalizeFilesystemRoot,
+  readFilesystemRootEntries,
   removeFilesystemRoot,
   resolveFilesystemRootsFile,
+  setFilesystemRootWrite,
   suggestFilesystemRoots,
   samePath,
 } from './filesystem-roots';
+export type { FilesystemRoot } from './filesystem-roots';
 export {
   MCP_FILESYSTEM_PATH_KEYS,
+  MCP_FILESYSTEM_WRITE_TOOLS,
   filesystemApprovalReason,
   filesystemPathProblem,
   guardFilesystemCall,
@@ -154,6 +172,17 @@ export {
   guardUploadCall,
   uploadSourceDirs,
 } from './filesystem-policy';
+export {
+  MCP_AUDIT_MAX_FILE_BYTES,
+  MCP_AUDIT_MAX_SUMMARY_CHARS,
+  MCP_AUDIT_RECENT_LIMIT,
+  MCP_AUDIT_RETENTION_DAYS,
+  recentMcpCalls,
+  recordMcpCall,
+  resolveMcpCallsDir,
+  summarizeMcpAuditText,
+} from './audit';
+export type { McpAuditDecision, McpAuditOptions, McpAuditRecord, McpCallAuditEntry } from './audit';
 export {
   BROWSER_DOWNLOAD_MAX_BYTES,
   importBrowserArtifacts,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -210,6 +210,146 @@ test('删除记录后读不到，也不会碰到别的记录', () => {
     assert.equal(approval.readApproval(record.id, { dataDir }), null);
     assert.equal(approval.readApproval(other.id, { dataDir }).id, other.id, '删一条不能影响别的记录');
     assert.equal(approval.deleteApproval('apv_00000000000000000000000000000000', { dataDir }), true);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * 审批档位（三档）：always 每次确认 / trusted 标准信任（默认）/ full 完全访问。
+ * 这里是「打开网页要不要点允许」的回归护栏：Playwright 把 browser_navigate 标成写入类，
+ * 按风险等级一刀切的话，用户每开一个页面都要点一次，而截图反而不问。
+ */
+
+test('标准信任档：导航、切标签这类只改变「看什么」的动作不再打扰用户', () => {
+  const navigate = { definition: mcpTool('browser_navigate', 'external_side_effect'), args: { url: 'https://www.bilibili.com' } };
+  assert.equal(approval.assessToolApproval({ ...navigate, policy: 'trusted' }).required, false);
+  // 不传档位等于默认档：升级上来的老用户走的就是这条。
+  assert.equal(approval.assessToolApproval(navigate).required, false);
+  assert.equal(approval.assessToolApproval({ ...navigate, policy: 'always' }).required, true, '每次确认档下打开网页仍然要问');
+  for (const toolName of ['browser_navigate_back', 'browser_reload', 'browser_tabs', 'browser_resize', 'browser_hover', 'browser_wait_for']) {
+    const definition = mcpTool(toolName, 'external_side_effect');
+    assert.equal(approval.assessToolApproval({ definition, args: {}, policy: 'trusted' }).required, false, `${toolName} 不改动外部数据，不该打扰用户`);
+  }
+});
+
+test('标准信任档不放过不可逆操作：提交、删除、付款仍然要确认', () => {
+  const click = (pageText, args = { element: '按钮' }) => approval.assessToolApproval({ definition: mcpTool('browser_click', 'external_side_effect'), args, pageText, policy: 'trusted' });
+  assert.equal(click('搜索结果 第 2 页', { element: '下一页' }).required, false, '翻页不是不可逆操作');
+  assert.equal(click('', { element: '提交订单' }).required, true);
+  assert.equal(click('账户设置\n删除账户').required, true);
+  assert.equal(click('结算页', { element: '立即购买' }).required, true);
+});
+
+test('标准信任档不放过非浏览器的写工具、dangerous 与页面内执行代码', () => {
+  const assess = (definition) => approval.assessToolApproval({ definition, args: {}, policy: 'trusted' });
+  assert.equal(assess(mcpTool('create_issue', 'external_side_effect')).required, true, '非浏览器的写工具照旧要问');
+  assert.equal(assess(mcpTool('delete_repo', 'dangerous')).required, true);
+  assert.equal(assess(mcpTool('browser_evaluate', 'external_side_effect')).required, true, '在页面里执行代码不能靠档位放行');
+  assert.equal(assess(mcpTool('browser_run_code_unsafe', 'external_side_effect')).required, true);
+});
+
+test('读本机敏感文件在任何档位都要确认，只有完全访问不拦', () => {
+  const read = (policy) => approval.assessToolApproval({ definition: mcpTool('read_text_file', 'read'), args: { path: '.env' }, sensitiveHint: '要读取敏感配置文件 .env', policy });
+  assert.equal(read('always').required, true);
+  assert.equal(read('trusted').required, true);
+  assert.equal(read(undefined).required, true);
+  assert.equal(read('full').required, false, '完全访问等价「不再询问」，连读凭据也一起放行');
+});
+
+test('完全访问档：提交、付款、删除与页面内执行代码都不再询问', () => {
+  for (const name of ['browser_click', 'create_issue', 'delete_repo', 'browser_run_code_unsafe']) {
+    const definition = mcpTool(name, name === 'delete_repo' || name === 'browser_run_code_unsafe' ? 'dangerous' : 'external_side_effect');
+    const verdict = approval.assessToolApproval({ definition, args: {}, pageText: '确认支付', sensitiveHint: '要读取敏感配置文件 .env', policy: 'full' });
+    assert.equal(verdict.required, false, `${name} 在完全访问档下不该再问`);
+    assert.equal(verdict.reason, '');
+  }
+  // 完全访问只改 MCP 工具这一层：内置工具本来就不进审批。
+  assert.equal(approval.assessToolApproval({ definition: nativeTool('document_generate', 'write'), args: {}, policy: 'always' }).required, false);
+});
+
+test('档位只认三个已知值，写坏了退回标准信任', () => {
+  assert.equal(approval.DEFAULT_MCP_APPROVAL_POLICY, 'trusted');
+  assert.equal(approval.normalizeMcpApprovalPolicy('always'), 'always');
+  assert.equal(approval.normalizeMcpApprovalPolicy(' FULL '), 'full');
+  assert.equal(approval.normalizeMcpApprovalPolicy('trusted'), 'trusted');
+  for (const bad of ['', 'nope', null, undefined, 1, {}, 'every-time']) {
+    assert.equal(approval.normalizeMcpApprovalPolicy(bad), 'trusted', `${JSON.stringify(bad)} 应该退回默认档`);
+  }
+});
+
+test('工具授权记忆：记一个工具、改它、删它，落盘的只有 id 和策略', () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-tool-memory-'));
+  try {
+    const toolId = 'mcp:playwright:browser_click';
+    assert.equal(approval.normalizeToolApprovalPolicy('ALWAYS_ALLOW'), 'always_allow');
+    assert.equal(approval.normalizeToolApprovalPolicy('随便写的'), 'ask');
+    assert.equal(approval.toolApprovalPolicy(toolId, { dataDir }), 'ask', '没记过就是每次都问');
+    assert.equal(approval.toolApprovalPolicy('', { dataDir }), 'ask');
+    assert.throws(() => approval.setToolApprovalPolicy('   ', 'block', { dataDir }), /缺少工具 id/);
+
+    approval.setToolApprovalPolicy(toolId, 'always_allow', { dataDir });
+    assert.equal(approval.toolApprovalPolicy(toolId, { dataDir }), 'always_allow');
+    assert.deepEqual(JSON.parse(readFileSync(approval.resolveToolApprovalsFile({ dataDir }), 'utf8')), { [toolId]: 'always_allow' });
+
+    approval.setToolApprovalPolicy(toolId, 'block', { dataDir });
+    assert.equal(approval.toolApprovalPolicy(toolId, { dataDir }), 'block');
+
+    approval.setToolApprovalPolicy(toolId, 'ask', { dataDir });
+    assert.equal(approval.toolApprovalPolicy(toolId, { dataDir }), 'ask');
+    assert.deepEqual(approval.readToolApprovalPolicies({ dataDir }), {}, 'ask 等于没记忆，不该留在文件里');
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('工具授权记忆：block 直接拒绝，always_allow 也不越过敏感文件', () => {
+  const risky = () => ({
+    definition: mcpTool('create_issue', 'external_side_effect'),
+    args: { title: '写工具' },
+  });
+  assert.equal(approval.assessToolApproval(risky()).required, true, '没记过时照旧要确认');
+
+  const allowed = approval.assessToolApproval({ ...risky(), toolPolicy: 'always_allow' });
+  assert.equal(allowed.required, false, '记住「以后直接允许」之后不该再弹卡片');
+  // 但「这一次要读哪个文件」是另一个问题，记忆不该把它一起放过去。
+  const sensitive = approval.assessToolApproval({
+    definition: mcpTool('read_text_file', 'read'),
+    args: { path: '.env' },
+    sensitiveHint: '要读取敏感配置文件 .env',
+    toolPolicy: 'always_allow',
+  });
+  assert.equal(sensitive.required, true);
+
+  const blocked = approval.assessToolApproval({ ...risky(), toolPolicy: 'block' });
+  assert.equal(blocked.blocked, true);
+  assert.equal(blocked.required, false, 'block 不给确认入口');
+  assert.equal(
+    approval.assessToolApproval({ ...risky(), toolPolicy: 'block', policy: 'full' }).blocked,
+    true,
+    '用户对单个工具的决定比档位更优先',
+  );
+
+  // 内置工具不吃这套：它的副作用都在本机，有自己的门控。
+  assert.equal(approval.assessToolApproval({ definition: nativeTool('document_generate', 'write'), args: {}, toolPolicy: 'block' }).blocked, undefined);
+  assert.equal(approval.assessToolApproval({ definition: null, args: {}, toolPolicy: 'block' }).blocked, undefined);
+});
+
+test('工具授权记忆有上限：记满了只挡新增，改旧的照旧放行', () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-tool-memory-cap-'));
+  try {
+    // 先记一条，把目录建出来；之后直接铺满整份文件，省掉 200 次写盘。
+    approval.setToolApprovalPolicy('mcp:playwright:tool_0', 'always_allow', { dataDir });
+    const many = {};
+    for (let index = 0; index < approval.TOOL_APPROVAL_MAX_ENTRIES; index += 1) many[`mcp:playwright:tool_${index}`] = 'always_allow';
+    writeFileSync(approval.resolveToolApprovalsFile({ dataDir }), `${JSON.stringify(many)}\n`, 'utf8');
+    assert.equal(Object.keys(approval.readToolApprovalPolicies({ dataDir })).length, approval.TOOL_APPROVAL_MAX_ENTRIES);
+    assert.throws(() => approval.setToolApprovalPolicy('mcp:playwright:brand_new', 'block', { dataDir }), /太多/);
+    approval.setToolApprovalPolicy('mcp:playwright:tool_0', 'block', { dataDir });
+    assert.equal(approval.toolApprovalPolicy('mcp:playwright:tool_0', { dataDir }), 'block');
+    // 文件坏了不能把整个面板带崩：读不出来就当没记过。
+    writeFileSync(approval.resolveToolApprovalsFile({ dataDir }), '这不是 JSON\n', 'utf8');
+    assert.deepEqual(approval.readToolApprovalPolicies({ dataDir }), {});
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }

@@ -111,6 +111,51 @@ test('路径策略：授权目录里放行，越界与 `..` 一律拒绝', async
   });
 });
 
+test('授权目录：v1 的字符串数组升级上来默认只读，写入要单独勾', async () => {
+  await withScene(async ({ dataDir, root }) => {
+    // v1 老文件里没有写权限这种说法：读出来必须是只读，否则升级会静默把写权限送出去。
+    await mkdir(path.join(dataDir, 'mcp'), { recursive: true });
+    await writeFile(path.join(dataDir, 'mcp', 'filesystem-roots.json'), `${JSON.stringify({ version: 1, roots: [root] })}\n`);
+    assert.deepEqual(mcp.listFilesystemRoots({ dataDir }), [root]);
+    assert.deepEqual(mcp.listFilesystemWriteRoots({ dataDir }), []);
+    // 勾上写入之后落盘是 v2；再收回写入也只改标记，不丢目录本身。
+    assert.deepEqual(mcp.setFilesystemRootWrite(root, true, { dataDir }), [root]);
+    assert.deepEqual(mcp.listFilesystemWriteRoots({ dataDir }), [root]);
+    const saved = JSON.parse(await readFile(path.join(dataDir, 'mcp', 'filesystem-roots.json'), 'utf8'));
+    assert.equal(saved.version, 2);
+    assert.deepEqual(saved.roots, [{ path: root, write: true }]);
+    assert.deepEqual(mcp.setFilesystemRootWrite(root, false, { dataDir }), [root]);
+    assert.deepEqual(mcp.listFilesystemWriteRoots({ dataDir }), []);
+    assert.deepEqual(mcp.listFilesystemRoots({ dataDir }), [root]);
+    // 没有授权过的目录谈不上写入。
+    assert.throws(() => mcp.setFilesystemRootWrite(path.join(root, 'sub'), true, { dataDir }), /还没有授权/);
+  });
+});
+
+test('写工具落在只读目录被拒，落在勾了写入的目录才放行', async () => {
+  await withScene(async ({ base, dataDir, root }) => {
+    mcp.addFilesystemRoot(root, { dataDir });
+    const target = path.join(root, 'note.txt');
+    const readOnly = { roots: mcp.listFilesystemRoots({ dataDir }), writeRoots: mcp.listFilesystemWriteRoots({ dataDir }), dataDir };
+    const blocked = mcp.guardMcpServerCall({ catalogId: 'filesystem' }, 'write_file', { path: target, content: 'x' }, readOnly);
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.error, /写入/);
+    // 只读工具不受影响：授权目录里的普通文件照样能读。
+    assert.equal(mcp.guardMcpServerCall({ catalogId: 'filesystem' }, 'read_text_file', { path: target }, readOnly).ok, true);
+    mcp.setFilesystemRootWrite(root, true, { dataDir });
+    const writable = { ...readOnly, writeRoots: mcp.listFilesystemWriteRoots({ dataDir }) };
+    assert.equal(mcp.guardMcpServerCall({ catalogId: 'filesystem' }, 'write_file', { path: target, content: 'x' }, writable).ok, true);
+    // move_file 的 source 与 destination 两边都要在可写目录里：只写一半不算数。
+    const moved = mcp.guardMcpServerCall({ catalogId: 'filesystem' }, 'move_file', { source: target, destination: path.join(base, 'outside.txt') }, writable);
+    assert.equal(moved.ok, false);
+    assert.match(moved.error, /不在授权文件夹里/);
+    // 目录本身没勾写入时，写在自己的子目录上同样被拒。
+    mcp.setFilesystemRootWrite(root, false, { dataDir });
+    const noWriteRoots = { ...readOnly, writeRoots: mcp.listFilesystemWriteRoots({ dataDir }) };
+    assert.equal(mcp.guardMcpServerCall({ catalogId: 'filesystem' }, 'create_directory', { path: path.join(root, 'sub', 'new') }, noWriteRoots).ok, false);
+  });
+});
+
 test('符号链接指向授权目录之外时，realpath 之后必须拒绝', async (t) => {
   await withScene(async ({ base, dataDir, root }) => {
     const outside = path.join(base, 'outside');
@@ -197,8 +242,8 @@ test('授权目录变化后，read/resume/tools 三处都要走同一套路径�
   assert.match(agentRoute, /const guard = guardMcpCall\(mcpGuardMeta, args\);/);
   assert.match(agentRoute, /sensitiveHint: mcpGuardApproval/);
   assert.match(agentRoute, /const mcpFilesystemRoots = listFilesystemRoots\(\);/);
-  assert.match(resume, /const guardOptions = \{ roots: listFilesystemRoots\(\), dataDir: resolveLocalDataDir\(\) \};/);
+  assert.match(resume, /const guardOptions = \{ roots: listFilesystemRoots\(\), writeRoots: listFilesystemWriteRoots\(\), dataDir: resolveLocalDataDir\(\) \};/);
   assert.equal((resume.match(/guardMcpServerCall\(server, meta\.toolName, args, guardOptions\)/g) || []).length, 2);
-  assert.match(toolsRoute, /if \(action === 'roots-add'\) addFilesystemRoot\(data\?\.path\);/);
+  assert.match(toolsRoute, /if \(action === 'roots-add'\) addFilesystemRoot\(data\?\.path, \{ write: data\?\.write === true \}\);/);
   assert.match(toolsRoute, /closeStdioServer\('filesystem'\);/);
 });

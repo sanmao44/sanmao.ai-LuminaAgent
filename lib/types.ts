@@ -1,3 +1,5 @@
+import type { McpApprovalPolicy } from '@/lib/agent/approval';
+
 export type ProviderType = 'openai-compatible' | 'google-gemini';
 export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes' | 'gitee';
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
@@ -171,6 +173,8 @@ export type AppSettings = {
   webSearchQianfanConfigured?: boolean;
   skillsEnabled?: boolean;
   skillsAutoApprove?: boolean;
+  /** MCP 工具的审批档位：每次确认 / 标准信任 / 完全访问，缺省按标准信任。 */
+  mcpApprovalPolicy?: McpApprovalPolicy;
 };
 
 export type PublicState = {

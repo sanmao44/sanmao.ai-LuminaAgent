@@ -16,6 +16,13 @@ const RISK_LABELS: Record<string, string> = {
   read: "只读",
 };
 
+/** 挡位说明：用户看到「这次为什么问了 / 为什么没问」要能一眼对上设置里的那一档。 */
+const POLICY_NOTES: Record<string, string> = {
+  always: "当前档位：每次确认（非只读的 MCP 调用都要你点一次）。",
+  trusted: "当前档位：标准信任（导航、截图这类不改动外部数据的动作不问；提交、付款、删除这类不可逆操作仍然会问）。",
+  full: "当前档位：完全访问（所有 MCP 调用直接执行，不再询问）。",
+};
+
 type Props = {
   approval: AgentApproval;
   /**
@@ -29,13 +36,15 @@ type Props = {
  * 待到确认的外部操作（任务书 §12）。
  *
  * 用户必须看到「将要发生什么」：哪个服务、哪个工具、什么风险、参数是什么。
- * 这里只提供「允许本次 / 拒绝」两个动作，不做「永远允许所有危险操作」。
+ * 这里只提供「允许本次 / 拒绝」两个动作：要不要「以后不再问」是审批档位与工具记忆的事，
+ * 那些在 MCP 面板里改（每个工具一行「以后直接允许 / 直接拒绝」），卡片不就地开后门。
  */
 export default function AgentApprovalCard({ approval, onResolved }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const expired = Number(approval?.expiresAt || 0) <= Date.now();
   const calls = Array.isArray(approval?.calls) ? approval.calls : [];
+  const policyNote = POLICY_NOTES[String(approval?.policy || "")] || "";
 
   async function decide(action: "approve" | "reject") {
     if (busy) return;
@@ -53,6 +62,7 @@ export default function AgentApprovalCard({ approval, onResolved }: Props) {
       setBusy(false);
     }
   }
+
 
   return (
     <div className="agent-approval">
@@ -88,6 +98,7 @@ export default function AgentApprovalCard({ approval, onResolved }: Props) {
           </button>
         </div>
       )}
+      {policyNote ? <p className="agent-approval-note">{policyNote}</p> : null}
       <p className="agent-approval-note">只执行这一次，不会自动重试；确认内容 10 分钟后作废。</p>
       {error ? <p className="agent-approval-error">{error}</p> : null}
     </div>

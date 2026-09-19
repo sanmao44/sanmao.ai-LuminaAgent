@@ -223,3 +223,23 @@ test('默认上限是保守值，避免工具循环失控', () => {
   assert.equal(loop.TOOL_LOOP_DEFAULT_MAX_CALLS, 12);
   assert.equal(loop.TOOL_LOOP_DEFAULT_DEADLINE_MS, 180_000);
 });
+
+test('调用指纹：同 server + 同工具 + 同参数才算同一个，参数键序不影响', () => {
+  const a = loop.mcpCallSignature('playwright', 'browser_click', { element: '提交', index: 1 });
+  assert.equal(a, loop.mcpCallSignature('playwright', 'browser_click', { index: 1, element: '提交' }), '键序不同是同一个调用');
+  assert.notEqual(a, loop.mcpCallSignature('playwright', 'browser_click', { element: '删除', index: 1 }));
+  assert.notEqual(a, loop.mcpCallSignature('playwright', 'browser_snapshot', { element: '提交', index: 1 }));
+  assert.notEqual(a, loop.mcpCallSignature('filesystem', 'browser_click', { element: '提交', index: 1 }));
+  assert.equal(loop.mcpCallSignature(undefined, undefined, undefined), loop.mcpCallSignature('', '', {}));
+});
+
+test('连续三次同参数同结果才算卡住，结果一变就重新计数', () => {
+  assert.equal(loop.TOOL_LOOP_MCP_REPEAT_LIMIT, 3);
+  const tracker = new Map();
+  const key = loop.mcpCallSignature('playwright', 'browser_click', { element: '提交' });
+  assert.equal(loop.trackMcpRepeat(tracker, key, '页面没变'), 1);
+  assert.equal(loop.trackMcpRepeat(tracker, key, '页面没变'), 2);
+  assert.equal(loop.trackMcpRepeat(tracker, key, '页面没变'), 3, '第三次就是该停下的信号');
+  assert.equal(loop.trackMcpRepeat(tracker, key, '页面变了'), 1, '结果变了就是有新信息，重新计数');
+  assert.equal(loop.trackMcpRepeat(tracker, loop.mcpCallSignature('playwright', 'browser_snapshot', {}), '页面没变'), 1, '换工具单独计数');
+});

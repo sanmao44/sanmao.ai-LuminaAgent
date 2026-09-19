@@ -14,7 +14,7 @@ const panelCss = await readFile(new URL('../components/McpManager.module.css', i
 test('工具中心面板接口要求管理员，并只接受白名单动作', () => {
   assert.match(toolsRoute, /if \(!isAdminRequest\(request\)\) return Response\.json\(\{ error: '需要管理员登录。' \}, \{ status: 401 \}\);/);
   assert.equal((toolsRoute.match(/isAdminRequest\(request\)/g) || []).length, 2, 'GET 和 POST 都要挡');
-  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-remove', 'roots-open', 'runtime-open'\] as const;/);
+  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-write', 'roots-remove', 'roots-open', 'runtime-open', 'browser-mode', 'extension-open', 'origins', 'tool-policy'\] as const;/);
   assert.match(toolsRoute, /if \(!\(TOOL_ACTIONS as readonly string\[\]\)\.includes\(action\)\) \{/);
 });
 
@@ -26,12 +26,13 @@ test('命令、参数和安装路径都来自代码内置条目，请求体只�
 });
 
 test('装完/停掉之后要丢掉工具缓存，否则模型还会拿着旧工具表', () => {
-  // 五个入口：装/启停、开关写入权限、改能力组、改写权限分项、增删授权目录。
-  assert.equal((toolsRoute.match(/clearMcpToolCache\(\);/g) || []).length, 5);
+  // 六个入口：装/启停、开关写入权限、改能力组、改写权限分项、增删授权目录、切换浏览器接入方式。
+  assert.equal((toolsRoute.match(/clearMcpToolCache\(\);/g) || []).length, 6);
 });
 
 test('面板状态只回脱敏配置', () => {
-  assert.match(toolsRoute, /const servers = listMcpServers\(\)\.map\(redactMcpServer\);/);
+  // 先整体脱敏，再各挂一条协商结果：请求头只留键名，值永远不出服务端。
+  assert.match(toolsRoute, /const servers = rawServers\.map\(\(server\) => \(\{ \.\.\.redactMcpServer\(server\), protocol: resolveMcpProtocolNegotiation\(server\) \}\)\);/);
   assert.doesNotMatch(toolsRoute, /headers:/);
 });
 
@@ -92,15 +93,21 @@ test('面板只有一个滚动区：官方连接器和运行时详情都在里�
   assert.match(panelCss, /\.helpPanel \{[\s\S]*?max-height: min\(46dvh, 420px\);[\s\S]*?overflow: auto;/, '展开帮助说明不能把面板挤成 0 高');
 });
 
-/** 假的 spawn：只记下「打算用什么命令打开哪个目录」，测试不会真的弹资源管理器。 */
-function fakeSpawn(calls) {
-  return (command, args) => {
-    calls.push({ command, args });
-    return { on() {}, unref() {} };
+/** 假的 spawn：只记下「打算用什么命令、什么选项打开哪个目录」，测试不会真的弹资源管理器。 */
+function fakeSpawn(calls, failWith = null) {
+  return (command, args, options) => {
+    calls.push({ command, args, options });
+    return {
+      once(event, handler) {
+        if (event === 'error' && failWith) handler(failWith);
+        if (event === 'spawn' && !failWith) handler();
+      },
+      unref() {},
+    };
   };
 }
 
-test('「打开文件夹」只认已授权的目录和代码里的安装目录，路径不会进 shell', () => {
+test('「打开文件夹」只认已授权的目录和代码里的安装目录，路径不会进 shell', async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-open-folder-'));
   const outside = mkdtempSync(path.join(os.tmpdir(), 'sanmao-open-target-'));
   try {
@@ -110,23 +117,34 @@ test('「打开文件夹」只认已授权的目录和代码里的安装目录�
     assert.deepEqual(mcp.folderOpenCommand(outside, 'linux'), { command: 'xdg-open', args: [outside] });
 
     // 没授权的目录一律拒绝：面板传什么都越不过白名单。
-    assert.throws(() => mcp.openFilesystemRoot(outside, { dataDir, spawnImpl: fakeSpawn([]) }), /只能打开已经授权的文件夹/);
+    await assert.rejects(mcp.openFilesystemRoot(outside, { dataDir, spawnImpl: fakeSpawn([]) }), /只能打开已经授权的文件夹/);
 
     mcp.addFilesystemRoot(outside, { dataDir });
     const [root] = mcp.listFilesystemRoots({ dataDir });
     const calls = [];
-    assert.equal(mcp.openFilesystemRoot(root, { dataDir, platform: 'win32', spawnImpl: fakeSpawn(calls) }), root);
-    assert.deepEqual(calls, [{ command: 'explorer.exe', args: [root] }]);
+    assert.equal(await mcp.openFilesystemRoot(root, { dataDir, platform: 'win32', spawnImpl: fakeSpawn(calls) }), root);
+    assert.deepEqual(calls.map((call) => ({ command: call.command, args: call.args })), [{ command: 'explorer.exe', args: [root] }]);
+    // 只能用 detached + stdio ignore：加了 windowsHide 之后资源管理器会把窗口按隐藏创建，
+    // 实测 IsWindowVisible=False——用户点了按钮只会觉得「什么都没发生」。
+    assert.equal(calls[0].options.detached, true);
+    assert.equal('windowsHide' in calls[0].options, false, 'windowsHide 会让资源管理器开出隐形窗口');
 
     // 运行时目录：id 必须是目录里的本机条目，没装就没有目录可打开。
-    assert.throws(() => mcp.openCatalogFolder('not-a-real-entry', { dataDir }), /未知的本地服务/);
-    assert.throws(() => mcp.openCatalogFolder('github', { dataDir }), /未知的本地服务/, '远端连接器没有安装目录');
-    assert.throws(() => mcp.openCatalogFolder('playwright', { dataDir }), /还没安装/);
+    await assert.rejects(mcp.openCatalogFolder('not-a-real-entry', { dataDir }), /未知的本地服务/);
+    await assert.rejects(mcp.openCatalogFolder('github', { dataDir }), /未知的本地服务/, '远端连接器没有安装目录');
+    await assert.rejects(mcp.openCatalogFolder('playwright', { dataDir }), /还没安装/);
     mkdirSync(path.join(dataDir, 'mcp', 'playwright'), { recursive: true });
     const runtimeCalls = [];
     const runtimeRoot = mcp.resolveCatalogInstallRoot('playwright', { dataDir });
-    assert.equal(mcp.openCatalogFolder('playwright', { dataDir, platform: 'win32', spawnImpl: fakeSpawn(runtimeCalls) }), runtimeRoot);
-    assert.deepEqual(runtimeCalls, [{ command: 'explorer.exe', args: [runtimeRoot] }]);
+    assert.equal(await mcp.openCatalogFolder('playwright', { dataDir, platform: 'win32', spawnImpl: fakeSpawn(runtimeCalls) }), runtimeRoot);
+    assert.deepEqual(runtimeCalls.map((call) => ({ command: call.command, args: call.args })), [{ command: 'explorer.exe', args: [runtimeRoot] }]);
+
+    // 系统里没有这个命令（精简 Linux 没装 xdg-open）：要报出来，不能假装成功。
+    const missing = Object.assign(new Error('spawn xdg-open ENOENT'), { code: 'ENOENT' });
+    await assert.rejects(
+      mcp.openFilesystemRoot(root, { dataDir, platform: 'linux', spawnImpl: fakeSpawn([], missing) }),
+      /ENOENT/,
+    );
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
@@ -139,7 +157,7 @@ test('授权目录与安装目录都能一键在系统文件管理器里打开',
   assert.ok(panel.includes('>打开文件夹</button>'), '授权目录这一行要有打开文件夹');
   assert.ok(panel.includes('>打开目录</button>'), '运行时详情里要有打开安装目录');
   // 面板自己不开命令：两个打开动作都走同一个白名单接口。
-  assert.match(toolsRoute, /openFilesystemRoot\(data\?\.path\) : openCatalogFolder\(data\?\.id\)/);
+  assert.match(toolsRoute, /await openFilesystemRoot\(data\?\.path\) : await openCatalogFolder\(data\?\.id\)/);
   assert.doesNotMatch(panel, /explorer|xdg-open/);
 });
 

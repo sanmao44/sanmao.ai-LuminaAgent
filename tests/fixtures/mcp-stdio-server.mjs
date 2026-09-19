@@ -53,7 +53,9 @@ function callTool(id, name, args) {
 function handle(message) {
   const id = message?.id;
   if (message?.method === 'initialize') {
-    return reply(id, { result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fake-stdio', version: '1.0' } } });
+    // 允许用例把服务端报的版本换掉，用来验证「版本对不上也照常调用」。
+    const protocolVersion = process.env.MCP_FIXTURE_PROTOCOL_VERSION || '2025-06-18';
+    return reply(id, { result: { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fake-stdio', version: '1.0' } } });
   }
   if (message?.method === 'notifications/initialized') return undefined;
   if (message?.method === 'tools/list') {

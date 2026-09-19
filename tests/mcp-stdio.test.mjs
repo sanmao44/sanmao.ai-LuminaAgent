@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { buildMcpModule } from './tools-build.mjs';
+import { buildMcpModule, importTwiceByPath } from './tools-build.mjs';
 
 const mcp = await buildMcpModule();
 const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-stdio-server.mjs', import.meta.url));
@@ -111,7 +111,23 @@ test('stdio：probe 走同一条协议，能列工具也能统计只读工具', 
   const probe = await mcp.probeMcpServer(stdioServer({ id: 'probe' }));
   assert.equal(probe.tools.length, 7);
   assert.ok(probe.readOnly >= 3);
+  // 协商结果跟着状态回传：本地服务没报版本时按「一致」记。
+  assert.equal(probe.protocol.matched, true);
+  assert.equal(mcp.stdioServerStatus('probe').protocol.negotiated, mcp.MCP_PROTOCOL_VERSION);
   mcp.closeStdioServer('probe');
+});
+
+test('stdio：会话表挂在 globalThis 上，模块热更新不会把进程表弄丢', async () => {
+  const [first, second] = await importTwiceByPath('lib/mcp/stdio.mjs');
+  assert.notEqual(first, second, '两次导入必须是两个模块实例，否则这个用例证明不了热更新');
+  const server = stdioServer({ id: 'hmr' });
+  await first.callStdioTool(server, 'ping', {});
+  const pid = first.stdioServerStatus('hmr').pid;
+  assert.ok(pid);
+  // 换成另一个模块实例读同一张表：拿到的还是同一个进程，而不是「表是空的」再拉一个。
+  assert.equal(second.stdioServerStatus('hmr').pid, pid);
+  second.closeStdioServer('hmr');
+  assert.equal(first.stdioServerStatus('hmr').running, false);
 });
 
 test('stdio：读取工具名超长或带非法字符时同样按 function name 规则过滤', async () => {
@@ -122,4 +138,22 @@ test('stdio：读取工具名超长或带非法字符时同样按 function name 
   assert.equal(definitions[0].risk, 'read');
   assert.equal(definitions.find((tool) => tool.name === 'naming__fail')?.risk, 'external_side_effect');
   mcp.closeStdioServer('naming');
+});
+
+test('stdio：服务端报的协议版本进进程状态，版本对不上也照常调用', async () => {
+  const server = stdioServer({ id: 'protocol', env: { MCP_FIXTURE_PROTOCOL_VERSION: '2024-11-05' } });
+  try {
+    assert.deepEqual(await mcp.callMcpTool(server, 'echo', { text: '你好' }), { text: '你好', isError: false });
+    const protocol = mcp.stdioServerStatus('protocol').protocol;
+    assert.equal(protocol.requested, mcp.MCP_PROTOCOL_VERSION);
+    assert.equal(protocol.negotiated, '2024-11-05');
+    assert.equal(protocol.matched, false);
+    assert.equal(protocol.newerServerVersion, false);
+  } finally {
+    mcp.closeStdioServer('protocol');
+  }
+});
+
+test('stdio：没握过手时状态里的协议是 null，面板不用额外判断缺字段', () => {
+  assert.equal(mcp.stdioServerStatus('never-handshaken').protocol, null);
 });

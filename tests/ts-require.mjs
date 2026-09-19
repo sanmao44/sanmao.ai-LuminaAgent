@@ -19,10 +19,20 @@ export function createTsRequire(baseDir) {
   const nodeRequire = createRequire(path.join(base, 'noop.cjs'));
   const cache = new Map();
 
+  /**
+   * 项目里用 tsconfig 的 `@/lib/...` 指项目内的模块，和 lib/ 的目录结构一一对应。
+   * 装载器只认相对路径时，被实例化的模块一旦引入带别名的依赖（store.ts 引 approval.ts 就是），
+   * 测试会崩在 MODULE_NOT_FOUND，而且报出来的是别名，看不出真正原因。
+   */
+  const aliasFile = (specifier) => (specifier.startsWith('@/lib/')
+    ? `${path.join(base, normalizePath(specifier.slice('@/lib/'.length)))}.ts`
+    : null);
+
   const load = (id) => {
     const normalized = normalizePath(id);
-    if (!normalized.startsWith('.') && !path.isAbsolute(normalized)) return nodeRequire(id);
-    const resolved = path.isAbsolute(normalized) ? normalized : path.resolve(base, normalized);
+    const aliased = aliasFile(normalized);
+    if (!aliased && !normalized.startsWith('.') && !path.isAbsolute(normalized)) return nodeRequire(id);
+    const resolved = aliased || (path.isAbsolute(normalized) ? normalized : path.resolve(base, normalized));
     const file = resolved.endsWith('.ts') ? resolved : `${resolved}.ts`;
     if (cache.has(file)) return cache.get(file).exports;
     const compiled = ts.transpileModule(readFileSync(file, 'utf8'), {
@@ -31,9 +41,13 @@ export function createTsRequire(baseDir) {
     }).outputText;
     const module = { exports: {} };
     cache.set(file, module);
-    const localRequire = (next) => (next.startsWith('.') || path.isAbsolute(next)
-      ? load(path.resolve(path.dirname(file), normalizePath(next)))
-      : nodeRequire(next));
+    const localRequire = (next) => {
+      const normalizedNext = normalizePath(next);
+      if (aliasFile(normalizedNext)) return load(normalizedNext);
+      return normalizedNext.startsWith('.') || path.isAbsolute(normalizedNext)
+        ? load(path.resolve(path.dirname(file), normalizedNext))
+        : nodeRequire(normalizedNext);
+    };
     new Function('require', 'module', 'exports', compiled)(localRequire, module, module.exports);
     return module.exports;
   };

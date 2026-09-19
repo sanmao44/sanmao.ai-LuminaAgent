@@ -17,6 +17,35 @@ export const TOOL_LOOP_DEFAULT_MAX_STEPS = 4;
 export const TOOL_LOOP_DEFAULT_MAX_CALLS = 12;
 /** 默认整个循环的总时长上限。 */
 export const TOOL_LOOP_DEFAULT_DEADLINE_MS = 180_000;
+/** 同一个调用连续拿到这么多次完全一样的结果，就认为它卡住了，停下来让模型换做法。 */
+export const TOOL_LOOP_MCP_REPEAT_LIMIT = 3;
+
+/**
+ * 同 server + 同工具 + 同参数的调用指纹。
+ * 键里带参数是为了不误伤：换个查询词再试一次是正常行为，同一个调用原地打转才是问题。
+ * 参数按键名排序后再序列化，`{a,b}` 和 `{b,a}` 算同一个调用。
+ */
+export function mcpCallSignature(serverId: unknown, toolName: unknown, args: unknown) {
+  let payload = '';
+  try {
+    const source = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+    payload = JSON.stringify(args ?? {}, Object.keys(source).sort());
+  } catch {
+    payload = String(args);
+  }
+  return `${String(serverId || '')}\u0000${String(toolName || '')}\u0000${payload}`;
+}
+
+export type McpRepeatTracker = Map<string, { count: number; text: string }>;
+
+/** 记一次调用结果，返回「同参数、同结果」连续出现的次数。结果一变就重新计数。 */
+export function trackMcpRepeat(tracker: McpRepeatTracker, key: string, text: unknown): number {
+  const settled = String(text ?? '');
+  const previous = tracker.get(key);
+  const count = previous && previous.text === settled ? previous.count + 1 : 1;
+  tracker.set(key, { count, text: settled });
+  return count;
+}
 
 export type ToolLoopCall = { id?: string; function?: { name?: string; arguments?: string } };
 

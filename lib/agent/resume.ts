@@ -20,9 +20,10 @@ import { runToolLoop } from '@/lib/agent/tool-loop';
 import { toModelToolSchema } from '@/lib/tools/registry';
 import { selectToolsForTurn } from '@/lib/tools/selector';
 import { resolveToolPolicy } from '@/lib/tools/policy';
-import { claimApproval, type PendingToolCall } from '@/lib/agent/approval';
+import { claimApproval, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
-import { listFilesystemRoots } from '@/lib/mcp/filesystem-roots';
+import { listFilesystemRoots, listFilesystemWriteRoots } from '@/lib/mcp/filesystem-roots';
+import { recordMcpCall, type McpAuditDecision } from '@/lib/mcp/audit';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import { stripToolCallMarkup } from '@/lib/skills';
 
@@ -35,6 +36,28 @@ export type AgentResumeMcpToolUse = { server: string; name: string; readOnly: bo
 
 function toolFailure(call: PendingToolCall, error: string): ChatMessage {
   return { role: 'tool', tool_call_id: call.callId, content: JSON.stringify({ ok: false, error }) };
+}
+
+/**
+ * 续跑执行的调用也要留痕：这些都是用户点过「允许」的操作，最需要事后能查到。
+ * 同样只写摘要，不写完整参数（见 lib/mcp/audit.ts）。
+ */
+function auditResumeCall(
+  meta: { serverId: string; serverName: string; toolName: string; readOnly: boolean },
+  risk: string,
+  input: { allowed: boolean; decision: McpAuditDecision; ok: boolean; durationMs: number; summary: unknown },
+) {
+  recordMcpCall({
+    serverId: meta.serverId,
+    serverName: meta.serverName,
+    tool: meta.toolName,
+    risk: risk || (meta.readOnly ? 'read' : 'external_side_effect'),
+    allowed: input.allowed,
+    decision: input.decision,
+    ok: input.ok,
+    durationMs: input.durationMs,
+    summary: input.summary,
+  });
 }
 
 /** 续跑时按用户原始那句话决定「按需下发」的服务这一轮算不算被提到。 */
@@ -56,6 +79,20 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   if (!record) return { status: 404, body: { error: '这条待确认操作已失效（超过 10 分钟会作废），请重新发起。' } };
 
   if (action === 'reject') {
+    // 拒绝也要留痕：用户明确说过「不做」，这和「从没发生过」不是一回事。
+    for (const pending of record.pending) {
+      recordMcpCall({
+        serverId: pending.serverId,
+        serverName: pending.serverName,
+        tool: pending.toolName,
+        risk: pending.risk,
+        allowed: false,
+        decision: 'rejected',
+        ok: false,
+        durationMs: 0,
+        summary: pending.reason,
+      });
+    }
     return { status: 200, body: { ok: true, rejected: true, message: '已取消这一步操作，没有执行。' } };
   }
 
@@ -69,7 +106,8 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
 
   // 续跑同样要过一遍路径策略：用户点了「允许」只代表他同意这一次操作，
   // 不代表授权目录在这中间被改过——所以按现在的授权清单重新判。
-  const guardOptions = { roots: listFilesystemRoots(), dataDir: resolveLocalDataDir() };
+  // 写权限清单和读清单分开：用户点「允许」只代表同意这一次，不代表那个目录可以写。
+  const guardOptions = { roots: listFilesystemRoots(), writeRoots: listFilesystemWriteRoots(), dataDir: resolveLocalDataDir() };
   const executed: ChatMessage[] = Array.isArray(record.executed) ? (record.executed as ChatMessage[]) : [];
   const usedMcpTools: AgentResumeMcpToolUse[] = [];
   let budget = MCP_TURN_TIME_BUDGET_MS;
@@ -83,6 +121,14 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       executed.push(toolFailure(pending, '这一步已经不能执行了：服务被移除、停用，或者写入权限被改过。请重新发起。'));
       continue;
     }
+    // 等待期间用户可能刚把这个工具设成「直接拒绝」：续跑同样不能执行它。
+    if (policy.tool?.id && toolApprovalPolicy(policy.tool.id) === 'block') {
+      const reason = '这一步被设成了「直接拒绝」，没有执行。';
+      executed.push(toolFailure(pending, reason));
+      usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
+      auditResumeCall(meta, pending.risk, { allowed: false, decision: 'block', ok: false, durationMs: 0, summary: reason });
+      continue;
+    }
     if (callCount >= MCP_TOOL_MAX_CALLS_PER_TURN || budget <= 0) {
       executed.push(toolFailure(pending, '本轮调用外部服务已达上限，这一步没有执行。'));
       continue;
@@ -94,6 +140,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     if (!guard.ok) {
       executed.push(toolFailure(pending, guard.error));
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
+      auditResumeCall(meta, pending.risk, { allowed: false, decision: 'guard', ok: false, durationMs: 0, summary: guard.error });
       continue;
     }
     try {
@@ -107,6 +154,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
       if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
       else noteRemoteCatalogCallSuccess(server);
+      auditResumeCall(meta, pending.risk, { allowed: true, decision: 'approval', ok: !result.isError, durationMs: Date.now() - startedAt, summary: result.text });
       executed.push({
         role: 'tool',
         tool_call_id: pending.callId,
@@ -123,6 +171,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
       const reason = error instanceof Error ? error.message : 'MCP 调用失败';
       noteRemoteCatalogCallFailure(server, reason);
+      auditResumeCall(meta, pending.risk, { allowed: true, decision: 'approval', ok: false, durationMs: Date.now() - startedAt, summary: reason });
       executed.push({
         role: 'tool',
         tool_call_id: pending.callId,

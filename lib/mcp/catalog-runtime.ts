@@ -9,7 +9,9 @@ import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { listMcpServerTools } from './client';
 import { MCP_STDIO_IDLE_TIMEOUT_MS, closeStdioServer, stdioServerStatus } from './stdio';
+import type { McpProtocolNegotiation } from './protocol';
 import {
+  catalogEntryBrowserMode,
   catalogEntryEnabled,
   catalogServerConfig,
   catalogDataDir,
@@ -19,6 +21,7 @@ import {
   resolveCatalogInstallRoot,
   setCatalogEntryEnabled,
   type McpCatalogBrowser,
+  type McpCatalogBrowserMode,
   type McpStdioCatalogEntry,
 } from './catalog';
 
@@ -42,6 +45,8 @@ export type McpCatalogRuntimeStatus = {
   enabled: boolean;
   needsBrowser: boolean;
   browser: { channel: McpCatalogBrowser | null; path: string | null };
+  /** 浏览器接入方式：内置独立浏览器，或接用户日常浏览器（需要官方扩展）。 */
+  browserMode: McpCatalogBrowserMode;
   installRoot: string;
   logTail: string;
   error: string | null;
@@ -49,6 +54,8 @@ export type McpCatalogRuntimeStatus = {
   roots: string[];
   /** 进程空闲多久会被回收，面板用它解释「为什么一会儿自己关了」。 */
   idleTimeoutMs: number;
+  /** 和这个服务谈成的协议版本：两边不一致时面板标注一句，但不影响使用。 */
+  protocol: McpProtocolNegotiation | null;
 };
 
 type InstallJob = { child: ChildProcess | null; log: string; error: string | null; finished: boolean };
@@ -197,6 +204,7 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; r
   const enabled = catalogEntryEnabled(entry.id, options);
   const process = stdioServerStatus(entry.id);
   const browser = detectSystemBrowser();
+  const browserMode = catalogEntryBrowserMode(entry.id, options);
   const installing = Boolean(job && !job.finished);
   const error = job?.error ?? null;
   const state: McpCatalogRuntimeState = installing
@@ -222,11 +230,13 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; r
     enabled,
     needsBrowser: entry.needsBrowser,
     browser,
+    browserMode,
     installRoot: resolveCatalogInstallRoot(entry.id, options),
     logTail: (job?.log || '').slice(-LOG_TAIL_CHARS),
     error,
     roots: [...(options.roots ?? [])],
     idleTimeoutMs: MCP_STDIO_IDLE_TIMEOUT_MS,
+    protocol: process.protocol,
   };
 }
 
@@ -241,13 +251,17 @@ export async function startCatalogServer(id: unknown, options: { dataDir?: strin
   if (entry.needsBrowser && !browser.channel) {
     throw new Error('没有找到可用的浏览器：请先安装 Google Chrome 或 Microsoft Edge，再回来打开这个服务');
   }
+  const browserMode = catalogEntryBrowserMode(entry.id, options);
+  if (browserMode === 'extension' && !entry.browserExtension) {
+    throw new Error(`${entry.name}没有「接日常浏览器」这种用法`);
+  }
   // 没有授权目录时服务会打印用法后直接退出：与其让用户看到一段 stderr，不如在这里说清楚缺什么。
   const roots = [...(options.roots ?? [])];
   if (entry.requiresRoots && !roots.length) {
     throw new Error('这个服务需要至少一个授权文件夹：先在面板里添加要开放的目录，再回来打开');
   }
   setCatalogEntryEnabled(entry.id, true, options);
-  const config = catalogServerConfig(entry, { ...options, enabled: true, browser, roots });
+  const config = catalogServerConfig(entry, { ...options, enabled: true, browser, browserMode, roots });
   try {
     await listMcpServerTools(config, { timeouts: { list: 20_000 } });
   } catch (error) {

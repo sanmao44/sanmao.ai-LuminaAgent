@@ -10,6 +10,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { resolveLocalDataDir } from '@/lib/data-paths';
 import {
   MCP_CALL_TIMEOUT_MS,
   MCP_INIT_TIMEOUT_MS,
@@ -17,7 +18,9 @@ import {
   MCP_MAX_RESPONSE_BYTES,
   MCP_PROTOCOL_VERSION,
   McpError,
+  negotiateMcpProtocolVersion,
   resultText,
+  type McpProtocolNegotiation,
   type McpRequestOptions,
 } from './protocol';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
@@ -49,6 +52,8 @@ type StdioSession = {
   exit: { code: number | null; signal: string | null } | null;
   idleTimer: NodeJS.Timeout | null;
   handshaken: boolean;
+  /** 握手时和服务端谈成的协议版本；没握过手就是 null。 */
+  protocol: McpProtocolNegotiation | null;
 };
 
 export type McpStdioStatus = {
@@ -56,14 +61,44 @@ export type McpStdioStatus = {
   pid: number | null;
   exit: { code: number | null; signal: string | null } | null;
   stderrTail: string;
+  /** 协商出来的协议版本（面板上标注用）；没握过手就是 null。 */
+  protocol: McpProtocolNegotiation | null;
 };
 
-const sessions = new Map<string, StdioSession>();
-let cleanupHooked = false;
+/**
+ * 会话表挂在 globalThis 上。
+ *
+ * 为什么不是模块级 const：Next dev 的模块热更新会重新执行本文件，模块级 const 会被重新
+ * 初始化——表空了，但子进程还活着，下一次调用又拉起一个。挂到 globalThis 之后热更拿到
+ * 的是同一份表，空闲回收和退出清理都照旧。
+ */
+const MCP_STDIO_GLOBAL_KEY = '__sanmaoMcpStdio';
+
+type StdioRegistry = { sessions: Map<string, StdioSession>; cleanupHooked: boolean };
+
+function stdioRegistry(): StdioRegistry {
+  const holder = globalThis as unknown as Record<string, StdioRegistry | undefined>;
+  const existing = holder[MCP_STDIO_GLOBAL_KEY];
+  if (existing) return existing;
+  const created: StdioRegistry = { sessions: new Map(), cleanupHooked: false };
+  holder[MCP_STDIO_GLOBAL_KEY] = created;
+  return created;
+}
+
+const registry = stdioRegistry();
+
+/** 会话键的前缀：不同的数据目录不该共用同一条子进程。 */
+function stdioDataDirScope() {
+  try {
+    return resolveLocalDataDir();
+  } catch {
+    return '';
+  }
+}
 
 /** 配置变了（命令或参数不同）就必须换一个进程，否则会拿着旧参数继续跑。 */
 function sessionKey(server: McpServerConfig) {
-  return `${server.id}\u0000${server.command}\u0000${(server.args || []).join('\u0000')}`;
+  return `${stdioDataDirScope()}\u0000${server.id}\u0000${server.command}\u0000${(server.args || []).join('\u0000')}`;
 }
 
 /**
@@ -97,8 +132,8 @@ function failSession(session: StdioSession, error: Error) {
     if (item.timer) clearTimeout(item.timer);
     item.reject(error);
   }
-  const current = sessions.get(session.key);
-  if (current === session) sessions.delete(session.key);
+  const current = registry.sessions.get(session.key);
+  if (current === session) registry.sessions.delete(session.key);
   try {
     session.child.stdin?.destroy();
   } catch {}
@@ -147,16 +182,16 @@ function onData(session: StdioSession, chunk: string) {
 }
 
 function ensureCleanupHook() {
-  if (cleanupHooked) return;
-  cleanupHooked = true;
+  if (registry.cleanupHooked) return;
+  registry.cleanupHooked = true;
   // 应用退出时把子进程带走，不然会留下孤儿进程。
   process.once('exit', () => {
-    for (const session of [...sessions.values()]) {
+    for (const session of [...registry.sessions.values()]) {
       try {
         session.child.kill();
       } catch {}
     }
-    sessions.clear();
+    registry.sessions.clear();
   });
 }
 
@@ -182,6 +217,7 @@ function spawnSession(server: McpServerConfig): StdioSession {
     exit: null,
     idleTimer: null,
     handshaken: false,
+    protocol: null,
   };
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk: string) => onData(session, chunk));
@@ -205,15 +241,15 @@ function spawnSession(server: McpServerConfig): StdioSession {
 
 async function ensureSession(server: McpServerConfig, options: McpRequestOptions): Promise<StdioSession> {
   const key = sessionKey(server);
-  const existing = sessions.get(key);
+  const existing = registry.sessions.get(key);
   if (existing && !existing.exit) return existing;
-  if (existing) sessions.delete(key);
+  if (existing) registry.sessions.delete(key);
   const session = spawnSession(server);
   // 同一台服务改了命令：旧进程先关掉，避免两份同时活着抢资源。
-  for (const other of [...sessions.values()]) {
+  for (const other of [...registry.sessions.values()]) {
     if (other.key !== key && other.serverId === server.id) closeSession(other);
   }
-  sessions.set(key, session);
+  registry.sessions.set(key, session);
   if (options.signal?.aborted) closeSession(session);
   return session;
 }
@@ -282,12 +318,15 @@ function notify(session: StdioSession, method: string) {
 
 async function handshake(session: StdioSession, server: McpServerConfig, options: McpRequestOptions) {
   if (session.handshaken) return;
+  const requested = options.protocolVersion || MCP_PROTOCOL_VERSION;
   const result = await request(session, 'initialize', {
-    protocolVersion: MCP_PROTOCOL_VERSION,
+    protocolVersion: requested,
     capabilities: {},
     clientInfo: { name: 'SANMAO.AI', version: '1.0' },
   }, { timeoutMs: options.timeouts?.init ?? MCP_INIT_TIMEOUT_MS, signal: options.signal });
   if (!result || typeof result !== 'object') throw new McpError(server.name, '本地 MCP 服务没有完成握手');
+  // 版本对不上只记下来（面板上标注），不当作错误：能连上比版本号一致更重要。
+  session.protocol = negotiateMcpProtocolVersion(result?.protocolVersion, requested);
   notify(session, 'notifications/initialized');
   session.handshaken = true;
 }
@@ -354,21 +393,22 @@ export async function callStdioTool(
 
 /** 面板和自检用的实时状态：进程在不在、pid、退出码、最近的 stderr。 */
 export function stdioServerStatus(serverId: string): McpStdioStatus {
-  for (const session of sessions.values()) {
+  for (const session of registry.sessions.values()) {
     if (session.serverId !== serverId) continue;
     return {
       running: !session.exit,
       pid: session.child.pid ?? null,
       exit: session.exit,
       stderrTail: session.stderr.slice(-2000),
+      protocol: session.protocol,
     };
   }
-  return { running: false, pid: null, exit: null, stderrTail: '' };
+  return { running: false, pid: null, exit: null, stderrTail: '', protocol: null };
 }
 
 /** 关掉指定服务的进程；不传 serverId 表示全部关掉（应用退出、测试清理用）。 */
 export function closeStdioServer(serverId?: string) {
-  for (const session of [...sessions.values()]) {
+  for (const session of [...registry.sessions.values()]) {
     if (serverId && session.serverId !== serverId) continue;
     closeSession(session);
   }

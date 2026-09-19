@@ -21,7 +21,49 @@ export type McpRequestOptions = {
   /** 失败后是否允许重来一次；默认不允许，写类工具重复执行的代价太高。 */
   retry?: boolean;
   timeouts?: McpTimeouts;
+  /** 请求的协议版本；默认 MCP_PROTOCOL_VERSION，服务端只支持别的版本时由调用方指定。 */
+  protocolVersion?: string;
 };
+
+/**
+ * 协议版本协商的结果。
+ *
+ * initialize 的返回值里带服务端实际支持的 protocolVersion。按规范，两边对不上时
+ * 应该由服务端决定后续用什么版本；我们只记录、只在面板上标注，不因此断开连接——
+ * 拿一个能用的版本继续干活，比因为一个日期字符串连不上强。
+ */
+export type McpProtocolNegotiation = {
+  /** 我们请求的版本。 */
+  requested: string;
+  /** 服务端回复的版本；它没报就用请求版本顶上。 */
+  negotiated: string;
+  /** 两边是否一致。 */
+  matched: boolean;
+  /** 服务端报的版本比我们请求的还新：下次可以上调请求版本。 */
+  newerServerVersion: boolean;
+};
+
+/** 版本号就是 YYYY-MM-DD，按日期比较即可，用不上语义化版本那套规则。 */
+export function compareMcpProtocolVersion(left: unknown, right: unknown): number {
+  const toTime = (value: unknown) => {
+    const match = String(value ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    const time = Date.parse(`${match[1]}-${match[2]}-${match[3]}T00:00:00Z`);
+    return Number.isFinite(time) ? time : null;
+  };
+  const a = toTime(left);
+  const b = toTime(right);
+  if (a === null || b === null) return 0;
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/** 把 initialize 的结果折成一条协商记录；服务端没报版本时按「一致」处理。 */
+export function negotiateMcpProtocolVersion(serverVersion: unknown, requested: string = MCP_PROTOCOL_VERSION): McpProtocolNegotiation {
+  const settled = String(serverVersion ?? '').trim() || requested;
+  const diff = compareMcpProtocolVersion(settled, requested);
+  return { requested, negotiated: settled, matched: diff === 0, newerServerVersion: diff > 0 };
+}
 
 export class McpError extends Error {
   readonly server: string;

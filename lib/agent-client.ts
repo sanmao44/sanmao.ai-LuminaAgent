@@ -78,6 +78,8 @@ export type AgentApproval = {
   id: string;
   expiresAt: number;
   message: string;
+  /** 生成这条确认时的审批档位（always / trusted / full），老会话可能没有这一项。 */
+  policy?: string;
   calls: AgentApprovalCall[];
 };
 
@@ -211,6 +213,7 @@ export async function resumeAgentRun(
 
 import type { AgentProgressSnapshot, AgentProgressStage } from "@/lib/agent/progress";
 export type { AgentProgressSnapshot, AgentProgressStage };
+
 
 /**
  * 读一条长任务进度快照：主管线在真正耗时的节点写，前端在这里读。

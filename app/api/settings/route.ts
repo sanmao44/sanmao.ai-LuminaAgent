@@ -16,6 +16,8 @@ export async function PATCH(request: Request) {
       ...('defaultProviderId' in body ? { defaultProviderId: body.defaultProviderId || null } : {}),
       ...('imageStoragePath' in body ? { imageStoragePath: String(body.imageStoragePath || '') } : {}),
       ...('videoStoragePath' in body ? { videoStoragePath: String(body.videoStoragePath || '') } : {}),
+      // MCP 工具的审批档位：每次确认 / 标准信任 / 完全访问（非法值在 patchSettings 里归一化）。
+      ...('mcpApprovalPolicy' in body ? { mcpApprovalPolicy: body.mcpApprovalPolicy } : {}),
     });
     if (body.webSearchApi && typeof body.webSearchApi === 'object') {
       const provider = (String(body.webSearchApi.provider || 'baidu-qianfan') || 'baidu-qianfan') as WebSearchApiProvider;

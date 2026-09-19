@@ -34,6 +34,52 @@ const BROWSER_ACTION_TOOLS = new Set([
   'browser_type',
 ]);
 
+/**
+ * 审批档位（任务书 §9–§15 的加档）：
+ * - always  每次确认：非只读的 MCP 调用一律要用户点一次，v1 的老行为。
+ * - trusted 标准信任（默认）：只读工具与非副作用的浏览器动作不打扰用户，
+ *           提交、付款、删除这类不可逆操作仍然要确认。
+ * - full    完全访问：连不可逆操作都不问，等价 Codex 的「完全访问」。
+ */
+export type McpApprovalPolicy = 'always' | 'trusted' | 'full';
+
+/** 没设置过的用户走这一档：既不给不可逆操作开后门，也不为了「打开个网页」停两次。 */
+export const DEFAULT_MCP_APPROVAL_POLICY: McpApprovalPolicy = 'trusted';
+
+export function normalizeMcpApprovalPolicy(value: unknown): McpApprovalPolicy {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return raw === 'always' || raw === 'full' || raw === 'trusted' ? (raw as McpApprovalPolicy) : DEFAULT_MCP_APPROVAL_POLICY;
+}
+
+/**
+ * 标准信任档下可以静默执行的浏览器动作：它们只改变「看什么」，不改动外部数据。
+ *
+ * Playwright 把这些工具标成 action（写入类），只读标记拦不住它们——打开一个网页
+ * 因此被当成「改动外部数据」，用户每开一个页面都要点一次允许。这里放行的是白名单，
+ * 写操作（点击、填表、上传）不在里面，仍然按页面内容判风险。
+ */
+const BROWSER_SILENT_TOOLS = new Set([
+  'browser_navigate',
+  'browser_navigate_back',
+  'browser_navigate_forward',
+  'browser_reload',
+  'browser_tabs',
+  'browser_close',
+  'browser_resize',
+  'browser_hover',
+  'browser_wait_for',
+  'browser_emulate_media',
+  'browser_highlight',
+  'browser_hide_highlight',
+  'browser_annotate',
+]);
+
+/**
+ * 在页面里执行代码的浏览器工具：等于把整台浏览器（含登录态）交给模型。
+ * 这一条不跟着档位走——标准信任档也要停下来问一句，免得「导航不问」被顺手扩成「跑代码也不问」。
+ */
+const BROWSER_CODE_TOOLS = new Set(['browser_evaluate', 'browser_run_code_unsafe']);
+
 /** 不可逆或涉及钱与数据的动作。命中就要用户确认。 */
 const RISKY_ACTION_PATTERN = /(提交|下单|购买|付款|支付|转账|汇款|提现|充值|删除|注销|解绑|退订|发布|发送|授权|确认订单|确认支付|confirm\s+(order|payment)|submit|purchase|checkout|\bpay\b|transfer|delete|remove|publish|unsubscribe|authorize|revoke|deploy)/i;
 
@@ -68,10 +114,75 @@ export type ToolApprovalRecord = {
   gating: ToolGatingContext;
 };
 
-export type ApprovalAssessment = { required: boolean; risk: ToolRisk; reason: string };
+/** blocked 表示「不许执行、也不给确认入口」：只有用户设成「直接拒绝」的工具会走到这里。 */
+export type ApprovalAssessment = { required: boolean; risk: ToolRisk; reason: string; blocked?: boolean };
 
 export function resolveApprovalDir(options: { dataDir?: string } = {}) {
   return path.join(options.dataDir || resolveLocalDataDir(), 'agent', 'approvals');
+}
+
+/**
+ * 每个工具的记忆：`ask` 每次都问（默认）、`always_allow` 以后不再问、`block` 以后直接拒绝。
+ *
+ * 记的是「工具」这一层，不是「这一次调用」：同一个工具换个参数风险可能完全不同
+ * （browser_click 翻页和 browser_click 提交订单），所以面板上的按钮要写清它记的是什么。
+ * 存 `.data/agent/tool-approvals.json`（0600）：只存工具 id 和这三个值，不存参数。
+ */
+export type ToolApprovalPolicy = 'ask' | 'always_allow' | 'block';
+
+export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = 'ask';
+/** 记忆条数上限：这是「常用工具白名单」，不是历史记录，攒再多也没用。 */
+export const TOOL_APPROVAL_MAX_ENTRIES = 200;
+
+export function normalizeToolApprovalPolicy(value: unknown): ToolApprovalPolicy {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return raw === 'always_allow' || raw === 'block' || raw === 'ask' ? (raw as ToolApprovalPolicy) : DEFAULT_TOOL_APPROVAL_POLICY;
+}
+
+export function resolveToolApprovalsFile(options: { dataDir?: string } = {}) {
+  return path.join(options.dataDir || resolveLocalDataDir(), 'agent', 'tool-approvals.json');
+}
+
+export function readToolApprovalPolicies(options: { dataDir?: string } = {}): Record<string, ToolApprovalPolicy> {
+  const file = resolveToolApprovalsFile(options);
+  if (!existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const policies: Record<string, ToolApprovalPolicy> = {};
+    for (const [toolId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const policy = normalizeToolApprovalPolicy(value);
+      // 'ask' 就是「没记忆」，落盘时不再保留这一条。
+      if (policy !== 'ask' && toolId.trim()) policies[toolId] = policy;
+    }
+    return policies;
+  } catch {
+    return {};
+  }
+}
+
+/** 这个工具记住的是什么；没记过就是 ask（每次都问）。 */
+export function toolApprovalPolicy(toolId: unknown, options: { dataDir?: string } = {}): ToolApprovalPolicy {
+  const key = String(toolId ?? '').trim();
+  if (!key) return DEFAULT_TOOL_APPROVAL_POLICY;
+  return readToolApprovalPolicies(options)[key] || DEFAULT_TOOL_APPROVAL_POLICY;
+}
+
+/** 改一条记忆；传 ask 等于删掉它（回到默认行为）。超过上限就不再记新的，避免文件无限涨。 */
+export function setToolApprovalPolicy(toolId: unknown, policy: unknown, options: { dataDir?: string } = {}) {
+  const key = String(toolId ?? '').trim();
+  if (!key) throw new Error('缺少工具 id');
+  const next = normalizeToolApprovalPolicy(policy);
+  const policies = readToolApprovalPolicies(options);
+  if (next === 'ask') delete policies[key];
+  else if (policies[key] !== next) {
+    if (!policies[key] && Object.keys(policies).length >= TOOL_APPROVAL_MAX_ENTRIES) throw new Error('记住的工具太多了，先清掉几条再记新的');
+    policies[key] = next;
+  }
+  const file = resolveToolApprovalsFile(options);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(policies, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  return policies;
 }
 
 function approvalFile(id: string, options: { dataDir?: string } = {}) {
@@ -199,16 +310,49 @@ export function assessToolApproval(input: {
    * 只读工具平时不需要确认，但读凭据类配置会把秘密带进对话上下文，所以要停下来问一次。
    */
   sensitiveHint?: string;
+  /** 审批档位：没传按默认档（标准信任）走，等价于旧行为的只有 'always'。 */
+  policy?: McpApprovalPolicy | string | null;
+  /**
+   * 用户给这个工具记下的策略：ask 每次都问、always_allow 以后不再问、block 直接拒绝。
+   * 没传按 ask 走。block 比档位更优先——它是用户对「这一个工具」的明确决定。
+   */
+  toolPolicy?: ToolApprovalPolicy | string | null;
 }): ApprovalAssessment {
   const definition = input.definition;
   if (!definition || definition.source !== 'mcp') return { required: false, risk: definition?.risk || 'read', reason: '' };
   const risk = definition.risk;
+  const remembered = normalizeToolApprovalPolicy(input.toolPolicy);
+  if (remembered === 'block') {
+    return { blocked: true, required: false, risk, reason: '你已经把这一步设成「直接拒绝」，它不会再被调用。' };
+  }
+  const assessment = assessMcpToolCall(definition, risk, input);
+  // 「以后直接允许」只跳过按风险要的确认：读敏感文件那一次仍然要问，
+  // 因为那是「这一次读什么」，和「这个工具平时能不能用」是两件事。
+  if (remembered === 'always_allow' && assessment.required && !String(input.sensitiveHint || '').trim()) {
+    return { ...assessment, required: false };
+  }
+  return assessment;
+}
+
+/** 纯内容判断：只按风险等级、工具名和页面文本决定要不要确认。 */
+function assessMcpToolCall(
+  definition: Pick<ToolDefinition, 'id' | 'name' | 'risk' | 'source'>,
+  risk: ToolRisk,
+  input: { args: unknown; pageText?: string; sensitiveHint?: string; policy?: McpApprovalPolicy | string | null },
+): ApprovalAssessment {
+  const policy = normalizeMcpApprovalPolicy(input.policy);
+  // 完全访问：连不可逆的操作也不问。切到这一档要在面板上再确认一次，并写清后果。
+  if (policy === 'full') return { required: false, risk, reason: '' };
   const sensitive = String(input.sensitiveHint || '').trim();
   if (risk === 'read') {
     if (sensitive) return { required: true, risk, reason: sensitive };
     return { required: false, risk, reason: '' };
   }
   const toolName = String(definition.name || '').split('__').pop() || '';
+  // 在页面里执行代码等于把那台浏览器（含登录态）交给模型：不跟着档位走，任何档位都要问。
+  if (BROWSER_CODE_TOOLS.has(toolName)) {
+    return { required: true, risk, reason: '这一步会在页面里执行代码，风险等同改动外部数据' };
+  }
   if (BROWSER_ACTION_TOOLS.has(toolName)) {
     let argsText = '';
     try {
@@ -220,6 +364,8 @@ export function assessToolApproval(input: {
     }
     return { required: false, risk, reason: '' };
   }
+  // 标准信任：导航、切标签这类只改变「看什么」的动作不再逐个打扰用户。
+  if (policy === 'trusted' && BROWSER_SILENT_TOOLS.has(toolName)) return { required: false, risk, reason: '' };
   if (risk === 'dangerous') return { required: true, risk, reason: '这个操作可能造成不可逆的损失' };
   return { required: true, risk, reason: '这个工具会改动本机以外的数据' };
 }

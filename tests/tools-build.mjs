@@ -39,6 +39,7 @@ const MODULES = [
   'lib/mcp/stdio',
   'lib/mcp/catalog-runtime',
   'lib/mcp/tools',
+  'lib/mcp/audit',
   'lib/mcp/admin',
   'lib/mcp/runtime-admin',
   'lib/mcp/index',
@@ -115,6 +116,16 @@ export async function buildToolPolicyModule() {
 /** 同一套转译结果里的 MCP 模块，测试要用真实的 store / client / 工具翻译逻辑。 */
 export async function buildMcpModule() {
   return load('lib/mcp/index.mjs');
+}
+
+/**
+ * 把同一个转译文件按两个不同的 URL 各导入一次，模拟 dev 下的模块热更新：
+ * ESM 按完整 URL 缓存，问号不同就是两个模块实例，模块级 const 会被重新初始化。
+ */
+export async function importTwiceByPath(entry) {
+  const outDir = await ensureBuilt();
+  const url = pathToFileURL(path.join(outDir, entry)).href;
+  return [await import(url), await import(`${url}?hmr=1`)];
 }
 
 /** 通用工具循环：纯逻辑、无依赖，单独跑真实实现。 */

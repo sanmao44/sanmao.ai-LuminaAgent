@@ -10,10 +10,12 @@ const card = await readFile(new URL('../components/AgentApprovalCard.tsx', impor
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 
 test('风险调用不当场执行，而是整批延后等确认', () => {
-  assert.match(route, /import \{ appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, type PendingToolCall \} from '@\/lib\/agent\/approval';/);
+  assert.match(route, /import \{[^}]*assessToolApproval[^}]*\} from '@\/lib\/agent\/approval';/, '审批判定只能来自共享模块，不能各写一套');
   // MCP 调用先过本机一侧的路径检查（Filesystem、上传来源），再进审批判定。
   assert.match(route, /const guard = guardMcpCall\(mcpGuardMeta, args\);/);
-  assert.match(route, /const assessment = assessToolApproval\(\{ definition: policy\.tool, args, pageText: recentPageText, sensitiveHint: mcpGuardApproval \}\);/);
+  // 两处审批判定（本轮整批延后、续跑前的复核）都要把用户当前的档位交进去。
+  const tiered = route.match(/policy: state\.settings\.mcpApprovalPolicy/g) || [];
+  assert.ok(tiered.length >= 2, '本轮与续跑两处审批都要按当前档位判断');
   assert.match(route, /if \(assessment\.required && policy\.tool\?\.mcp\) \{/);
   assert.match(route, /deferredCalls = executionCalls\.slice\(callIndex\);/);
   // 页面文本只在同一次执行循环里顺手累积，结果失败时不作数。

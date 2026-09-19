@@ -117,7 +117,7 @@ test('被拒绝的调用与管理动作都会记进审计标签，动作名用�
   assert.match(route, /const MCP_MANAGE_LABELS: Record<string, string> = \{ list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' \};/);
   assert.match(route, /usedMcpTools\.push\(\{ server: '本机配置', name: actionLabel/);
   assert.match(route, /const deniedMcp = policy\.tool\?\.mcp;/);
-  assert.match(route, /if \(deniedMcp\) usedMcpTools\.push\(\{ server: deniedMcp\.serverName, name: deniedMcp\.toolName, readOnly: deniedMcp\.readOnly, ok: false \}\);/);
+  assert.match(route, /usedMcpTools\.push\(\{ server: deniedMcp\.serverName, name: deniedMcp\.toolName, readOnly: deniedMcp\.readOnly, ok: false \}\);/);
 });
 
 test('管理工具能把某个服务改成按需下发，也能改回来', async () => {

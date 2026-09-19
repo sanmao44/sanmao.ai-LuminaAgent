@@ -20,12 +20,14 @@ import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
 import { importBrowserArtifacts } from '@/lib/mcp/browser-downloads';
 import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
 import { listFilesystemRoots } from '@/lib/mcp/filesystem-roots';
+import { listFilesystemWriteRoots } from '@/lib/mcp/filesystem-roots';
+import { recordMcpCall, summarizeMcpAuditText, type McpAuditDecision } from '@/lib/mcp/audit';
 import { runMcpManageAction } from '@/lib/mcp/admin';
 import { isMcpRuntimeAction, runMcpRuntimeAction } from '@/lib/mcp/runtime-admin';
 
-import { runToolLoop, type ToolLoopTraceStep } from '@/lib/agent/tool-loop';
+import { TOOL_LOOP_MCP_REPEAT_LIMIT, mcpCallSignature, runToolLoop, trackMcpRepeat, type McpRepeatTracker, type ToolLoopTraceStep } from '@/lib/agent/tool-loop';
 import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, type AgentProgressStage } from '@/lib/agent/progress';
-import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, type PendingToolCall } from '@/lib/agent/approval';
+import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
@@ -730,6 +732,8 @@ export async function POST(request: Request) {
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
 // 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
 const mcpFilesystemRoots = listFilesystemRoots();
+// 「勾了写入」的目录是另一份：只读授权只换到读权限，写工具按这份清单把关。
+const mcpFilesystemWriteRoots = listFilesystemWriteRoots();
 const localDataDir = resolveLocalDataDir();
 // 浏览器下载只收这一轮开始之后写下的文件：上一轮的产物不该在这一轮又冒出来一次。
 const agentTurnStartedAt = Date.now();
@@ -738,7 +742,26 @@ const agentTurnStartedAt = Date.now();
  * 结果是「拒绝」还是「需要用户确认」都在这里定，执行分支只管照做。
  */
 const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: unknown) =>
-  guardMcpServerCall(mcpServerById.get(meta.serverId), meta.toolName, callArgs, { roots: mcpFilesystemRoots, dataDir: localDataDir });
+  guardMcpServerCall(mcpServerById.get(meta.serverId), meta.toolName, callArgs, { roots: mcpFilesystemRoots, writeRoots: mcpFilesystemWriteRoots, dataDir: localDataDir });
+/**
+ * 每一次 MCP 判定和调用都记一笔审计（谁、什么工具、哪一道放行或拦下、成没成、多久）。
+ * 只写摘要和结果前 200 字，完整参数与凭据不进日志，落盘见 lib/mcp/audit.ts。
+ */
+const auditMcpCall = (
+  meta: { serverId: string; serverName: string; toolName: string; readOnly: boolean },
+  input: { risk?: string; allowed: boolean; decision: McpAuditDecision; ok: boolean; durationMs?: number; summary?: unknown },
+) =>
+  recordMcpCall({
+    serverId: meta.serverId,
+    serverName: meta.serverName,
+    tool: meta.toolName,
+    risk: input.risk || (meta.readOnly ? 'read' : 'external_side_effect'),
+    allowed: input.allowed,
+    decision: input.decision,
+    ok: input.ok,
+    durationMs: input.durationMs || 0,
+    summary: summarizeMcpAuditText(input.summary),
+  });
     // 浏览器这类大工具表只在「这一轮像要用浏览器」时才下发。关键词要往前多看几条消息：
     // 用户第一轮说「打开 example.com」、第二轮只说「继续」时，工具不能凭空消失。
     const recentTurnText = messages
@@ -1083,6 +1106,9 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
 
     let recentPageText = '';
     let deferredCalls: any[] = [];
+    // 同一个调用原地打转的检测表：同 server + 工具 + 参数连续拿到同样的结果就该停了。
+    const mcpRepeatTracker: McpRepeatTracker = new Map();
+    let stalledMcpReason = '';
     for (let callIndex = 0; callIndex < executionCalls.length; callIndex += 1) {
       const call = executionCalls[callIndex];
       // 唯一一道执行权限判断：native 与 MCP 走同一条路。被拒绝时把原因作为工具结果回给
@@ -1091,7 +1117,10 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
       if (!policy.allowed) {
         // MCP 工具被拦下时也记一笔：界面上要能看到「助手想调用，但被拒绝」。
         const deniedMcp = policy.tool?.mcp;
-        if (deniedMcp) usedMcpTools.push({ server: deniedMcp.serverName, name: deniedMcp.toolName, readOnly: deniedMcp.readOnly, ok: false });
+        if (deniedMcp) {
+          usedMcpTools.push({ server: deniedMcp.serverName, name: deniedMcp.toolName, readOnly: deniedMcp.readOnly, ok: false });
+          auditMcpCall(deniedMcp, { risk: policy.tool?.risk, allowed: false, decision: 'policy', ok: false, summary: policy.reason });
+        }
         toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: policy.reason }) });
         continue;
       }
@@ -1106,6 +1135,7 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
         const guard = guardMcpCall(mcpGuardMeta, args);
         if (!guard.ok) {
           usedMcpTools.push({ server: mcpGuardMeta.serverName, name: mcpGuardMeta.toolName, readOnly: mcpGuardMeta.readOnly, ok: false });
+          auditMcpCall(mcpGuardMeta, { risk: policy.tool?.risk, allowed: false, decision: 'guard', ok: false, summary: guard.error });
           toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: guard.error }) });
           continue;
         }
@@ -1114,7 +1144,16 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
       }
       // 执行分支由注册表标签推导（lib/tools/executor.ts）：不按工具名硬编码，新工具声明标签就会自动落到对应分支。
       // 会改动本机以外数据的调用不当场执行：先存成待确认，等用户在界面上点一次「允许」。
-      const assessment = assessToolApproval({ definition: policy.tool, args, pageText: recentPageText, sensitiveHint: mcpGuardApproval });
+      // 用户给这个工具记过的策略（以后直接允许 / 直接拒绝）：记的是工具，不是这一次调用。
+      const rememberedToolPolicy = policy.tool?.id ? toolApprovalPolicy(policy.tool.id) : 'ask';
+      const assessment = assessToolApproval({ definition: policy.tool, args, pageText: recentPageText, sensitiveHint: mcpGuardApproval, policy: state.settings.mcpApprovalPolicy, toolPolicy: rememberedToolPolicy });
+      // 「直接拒绝」不给确认入口：用户已经明确表示这个工具不要用了，弹卡片等于再问一遍。
+      if (assessment.blocked && mcpGuardMeta) {
+        usedMcpTools.push({ server: mcpGuardMeta.serverName, name: mcpGuardMeta.toolName, readOnly: mcpGuardMeta.readOnly, ok: false });
+        auditMcpCall(mcpGuardMeta, { risk: policy.tool?.risk, allowed: false, decision: 'block', ok: false, summary: assessment.reason });
+        toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: `${assessment.reason}请换一个能达成目的的做法，或者直接说明这一步做不到。` }) });
+        continue;
+      }
       if (assessment.required && policy.tool?.mcp) {
         deferredCalls = executionCalls.slice(callIndex);
         break;
@@ -1212,6 +1251,24 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
           if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
           else noteRemoteCatalogCallSuccess(server);
           if (!result.isError) recentPageText = appendPageContext(recentPageText, meta.toolName, result.text);
+          auditMcpCall(meta, { risk: policy.tool?.risk, allowed: true, decision: 'call', ok: !result.isError, durationMs: Date.now() - mcpStartedAt, summary: result.text });
+          // 停滞检测：同一个调用连着拿到同样的结果，说明再试也没有新信息。
+          // 第三次就停下并说清楚，别把整轮预算耗在一个已经卡住的循环里。
+          const repeats = trackMcpRepeat(mcpRepeatTracker, mcpCallSignature(meta.serverId, meta.toolName, args), result.text);
+          if (repeats >= TOOL_LOOP_MCP_REPEAT_LIMIT) {
+            stalledMcpReason = `「${meta.serverName} · ${meta.toolName}」连续 ${repeats} 次返回同样的结果`;
+            toolResults.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: JSON.stringify({ ok: false, error: `同一个调用已经连续 ${repeats} 次拿到完全一样的结果，继续重复不会有新信息。请停下来，用已经有${result.isError ? '' : '的'}结果回答，或者直接告诉用户还缺什么。` }),
+            });
+            // 后面的调用这一轮不执行了。必须给每个 tool_call 补一条结果：历史里留下没有
+            // 结果的 tool_calls，服务商下一次请求就会直接 400。
+            for (const rest of executionCalls.slice(callIndex + 1)) {
+              toolResults.push({ role: 'tool', tool_call_id: rest.id, content: JSON.stringify({ ok: false, error: '上一步陷入重复，这一轮已经提前停止，这个调用没有执行。' }) });
+            }
+            break;
+          }
           // 浏览器下载落在受控目录里：收成 artifact，聊天里才有文件卡片。二进制不进上下文，
           // 模型只知道「下载了哪些文件」，要拿内容得靠 artifactId。
           let browserFiles: string[] = [];
@@ -1346,7 +1403,21 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
           continue;
         }
         deferredArgs = deferredGuard.args;
-        const deferredAssessment = assessToolApproval({ definition: deferredPolicy.tool, args: deferredArgs, pageText: recentPageText, sensitiveHint: deferredGuard.approval || '' });
+        const deferredAssessment = assessToolApproval({
+          definition: deferredPolicy.tool,
+          args: deferredArgs,
+          pageText: recentPageText,
+          sensitiveHint: deferredGuard.approval || '',
+          policy: state.settings.mcpApprovalPolicy,
+          // 等待期间用户可能刚刚把这一步设成「直接拒绝」：那就不再进确认卡片。
+          toolPolicy: deferredPolicy.tool.id ? toolApprovalPolicy(deferredPolicy.tool.id) : 'ask',
+        });
+        if (deferredAssessment.blocked) {
+          auditMcpCall(deferredMeta, { risk: deferredPolicy.tool.risk, allowed: false, decision: 'block', ok: false, summary: deferredAssessment.reason });
+          toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: `${deferredAssessment.reason}这一步没有执行，也不要再尝试调用它。` }) });
+          settledCallIds.add(call.id);
+          continue;
+        }
         pendingCalls.push({
           callId: call.id,
           name: deferredPolicy.tool.name,
@@ -1362,7 +1433,7 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
       }
       if (pendingCalls.length) {
         const approvalMessage = approvalMessageFor(pendingCalls);
-        let approvalPayload: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> } | null = null;
+        let approvalPayload: { id: string; expiresAt: number; message: string; policy: string; calls: Array<Record<string, unknown>> } | null = null;
         try {
           const approvalRecord = createApproval({
             provider: agentRuntime.provider.name,
@@ -1373,7 +1444,8 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
             pending: pendingCalls,
             gating: gatingContext,
           });
-          approvalPayload = { id: approvalRecord.id, expiresAt: approvalRecord.expiresAt, message: approvalMessage, calls: pendingCalls.map(describePendingCall) };
+          // 把当时的档位带回前端：用户看到「为什么这次不问了」，才不用去翻设置。
+          approvalPayload = { id: approvalRecord.id, expiresAt: approvalRecord.expiresAt, message: approvalMessage, policy: normalizeMcpApprovalPolicy(state.settings.mcpApprovalPolicy), calls: pendingCalls.map(describePendingCall) };
         } catch (error) {
           // 存不下就当场取消这一步：绝不执行一个自己都记不住的操作。
           const reason = error instanceof Error ? error.message : '待确认的操作没能保存下来';
@@ -1470,6 +1542,8 @@ const guardMcpCall = (meta: { serverId: string; toolName: string }, callArgs: un
       ? `已完成${generated.length ? ` ${generated.length} 张图片` : ''}${generated.length && generatedFiles.length ? '，' : ''}${generatedFiles.length ? ` ${generatedFiles.length} 个文件` : ''}。`
       : webSearchData
         ? '已完成联网检索。'
+      : stalledMcpReason
+        ? `${stalledMcpReason}，已经提前停下；继续重复同一个调用不会有新结果。`
       : mcpToolCallCount > 0
         ? '已完成外部服务调用。'
       : '工具调用失败，请检查已启用的模型或服务商接口。';
