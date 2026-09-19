@@ -219,3 +219,36 @@ test('标题不足两个时跳过目录并给出 warning', async () => {
     assert.equal(result.warnings.filter((warning) => warning.includes('目录至少需要')).length, 1);
   });
 });
+
+test('markdown 顺序与代码块原样保留：表格不会被挪到文末，代码用等宽字体', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '顺序.docx',
+      markdown: '# 第一节\n\n正文A\n\n| 表头 | 值 |\n| --- | --- |\n| 一 | 1 |\n\n正文B\n\n```\ncode-line\n```\n\n正文C\n',
+    }, store);
+    const xml = artifacts.readArchiveText(await readFile((await store.read(result.artifact.id)).filePath), 'word/document.xml');
+    const order = ['正文A', '<w:tbl>', '正文B', 'code-line', '正文C'].map((token) => xml.indexOf(token));
+    assert.ok(order.every((index) => index > 0), '每段内容都要写进文档');
+    assert.deepEqual([...order].sort((left, right) => left - right), order, '文档顺序必须与 markdown 一致');
+    assert.match(xml, /<w:rFonts[^>]*w:ascii="Consolas"/, '代码块要用等宽字体排版');
+
+    const sections = artifacts.markdownToSections('正文\n\n```\ncode-line\n```\n');
+    assert.deepEqual(sections[0].paragraphs, ['正文']);
+    assert.deepEqual(sections[1].code, ['code-line']);
+  });
+});
+
+test('markdown 顺序不乱、章节也不白切：列表后的正文另起一节，结尾的表格留在原节', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '列表.docx',
+      markdown: '## 一\n\n- 要点一\n- 要点二\n\n补充说明。\n',
+    }, store);
+    const xml = artifacts.readArchiveText(await readFile((await store.read(result.artifact.id)).filePath), 'word/document.xml');
+    assert.ok(xml.indexOf('要点二') < xml.indexOf('补充说明。'), '列表后面的正文不能排到列表前面');
+
+    const trailing = artifacts.markdownToSections('## 一\n\n正文。\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n');
+    assert.equal(trailing.length, 1, '表格在章节末尾时不需要额外切一节');
+    assert.deepEqual(trailing[0].tables?.[0]?.columns, ['A', 'B']);
+  });
+});

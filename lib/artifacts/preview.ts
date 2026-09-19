@@ -11,6 +11,7 @@ import {
   PREVIEW_MAX_IMAGES,
   PREVIEW_MAX_ROWS,
   PREVIEW_MAX_SHEETS,
+  PREVIEW_MAX_TABLES,
 } from './limits';
 import { isValidArtifactId } from './sanitize';
 import { artifactStore, type ArtifactStore } from './storage';
@@ -146,14 +147,38 @@ figure { margin:12px 0; }
 .slide-media { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
 .slide-media img { max-width:100%; max-height:260px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
 .chart-title { font-size:14px; margin:10px 0 6px; }
-.chart-table { margin:8px 0; }
+/* 图表页只有缓存数据可还原，排成紧凑小表比拉满页宽更像「图表说明」。 */
+.chart-table { margin:8px 0; width:auto; max-width:100%; }
+.chart-figure { margin:10px 0 6px; }
+.chart-svg { display:block; width:100%; max-width:560px; height:auto; }
+.chart-label { font-size:11px; fill:currentColor; opacity:.75; }
+.slide-table { margin:10px 0; }
+.doc-toc { margin:10px 0 16px; padding:10px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+.doc-toc ul { margin:0; padding-left:0; list-style:none; }
+.doc-toc li { margin:3px 0; }
+.doc-anchor, .doc-link { color:#1d4ed8; text-decoration:underline; }
+.doc-fg { color:var(--doc-fg); }
+.doc-code { margin:10px 0; padding:10px 12px; overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--fg); font:12.5px/1.6 Consolas, "Courier New", monospace; white-space:pre; }
+.sheet-meta { margin:2px 0 8px; }
+table.sticky-head th { position:sticky; top:0; z-index:1; }
+.dd { margin-left:4px; color:var(--muted); font-size:11px; cursor:help; }
+.slide-cols { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:10px; }
+.slide-col { padding:10px 12px; border:1px solid rgba(127,127,127,.28); border-radius:8px; background:rgba(127,127,127,.08); }
+.slide-col-title { font-weight:700; margin-bottom:6px; }
+.slide-col ul { margin:0; }
 .sheet-title { font-size:15px; font-weight:600; margin:18px 0 8px; }
 .meta { color:var(--muted); font-size:12px; margin:6px 0 12px; }
 .note { margin-top:16px; padding:8px 12px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); font-size:12px; }
 .slide { border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:0 0 14px; background:var(--panel); }
-.slide-index { color:var(--muted); font-size:12px; margin-bottom:6px; }
+.slide-index { color:inherit; opacity:.65; font-size:12px; margin-bottom:6px; }
 .slide-title { font-size:16px; font-weight:700; margin:0 0 8px; }
 .empty { color:var(--muted); padding:26px 4px; }
+.theme-dark .doc-anchor, .theme-dark .doc-link { color:#93c5fd; }
+.theme-dark .doc-fg { color:color-mix(in srgb, var(--doc-fg) 30%, #ffffff 70%); }
+@media (prefers-color-scheme: dark) {
+  .theme-auto .doc-anchor, .theme-auto .doc-link { color:#93c5fd; }
+  .theme-auto .doc-fg { color:color-mix(in srgb, var(--doc-fg) 30%, #ffffff 70%); }
+}
 `;
 
 function previewShell(options: { title: string; theme: string; body: string }) {
@@ -199,6 +224,49 @@ function numericCellValue(cell: ExcelJS.Cell) {
   return null;
 }
 
+function groupThousands(digits: string) {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * 数字格式串只还原常见写法：百分比、千分位、小数位、货币/单位前后缀。
+ * 认不出来的格式返回 null，让调用方退回原文本，绝不猜数字。
+ */
+function formatNumber(value: number, numFmt: string) {
+  const sections = numFmt.split(';');
+  const negative = value < 0;
+  // 分号分段：第二段是负数格式，第三段是零值；预览只区分正负。
+  const section = negative && sections[1] !== undefined ? sections[1] : sections[0];
+  const body = section
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/_.|\*./g, '')
+    .replace(/\\(.)/g, '$1');
+  const placeholders = body.match(/[0#?]+(?:[.,][0#?]+)*/);
+  if (!placeholders) return null;
+  const token = placeholders[0];
+  const percent = body.includes('%');
+  const [integerPart, fractionPart = ''] = token.split('.');
+  const scaled = percent ? value * 100 : value;
+  const [rawInteger, rawFraction] = Math.abs(scaled).toFixed(fractionPart.length).split('.');
+  const integer = integerPart.includes(',') ? groupThousands(rawInteger) : rawInteger;
+  const prefix = body.slice(0, body.indexOf(token)).replace(/["']/g, '');
+  const suffix = body.slice(body.indexOf(token) + token.length).replace(/["']/g, '');
+  // 括号已经表达负数时不再叠加减号，免得出现 (-1,234.00)。
+  const signed = scaled < 0 && !(body.includes('(') && body.includes(')')) ? '-' : '';
+  return `${prefix}${signed}${integer}${rawFraction ? `.${rawFraction}` : ''}${suffix}`;
+}
+
+/** exceljs 的 cell.text 不做数字格式化（0.03 不会显示成 3.0%），这里按 numFmt 还原单元格显示值。 */
+function cellDisplayText(cell: ExcelJS.Cell) {
+  const numFmt = String(cell.numFmt || '').trim();
+  const value = numericCellValue(cell);
+  if (value !== null && numFmt && numFmt.toLowerCase() !== 'general') {
+    const formatted = formatNumber(value, numFmt);
+    if (formatted) return formatted;
+  }
+  return String(cell.text ?? '').replace(/\s+$/, '');
+}
+
 /** Excel 的颜色一律是 ARGB，预览只认 6 位十六进制（其余如主题色直接放弃）。 */
 function argbToCss(value: unknown) {
   const argb = String((value as { argb?: string } | null | undefined)?.argb || '').replace(/^#/, '').toUpperCase();
@@ -229,6 +297,38 @@ function parseCellRange(ref: string) {
     lastColumn: columnIndex(match[3] || match[1]),
     lastRow: Number(match[4] || match[2]),
   };
+}
+
+type SheetView = { state?: string; ySplit?: number };
+type ValidationEntry = { type?: string; formulae?: unknown[] };
+
+/** 冻结窗格写在 view 里；只有纵向冻结才对预览的粘性表头有意义。 */
+function frozenHeader(sheet: ExcelJS.Worksheet) {
+  return ((sheet.views || []) as SheetView[]).some((view) => view.state === 'frozen' && Number(view.ySplit) > 0);
+}
+
+/**
+ * 数据验证按单元格逐个记录（B2、B3…），这里按列收口成候选值，
+ * 用于表头标出「这列有下拉」。取不出候选值就不标，避免误导。
+ */
+function listOptionsByColumn(sheet: ExcelJS.Worksheet, columnCount: number) {
+  // exceljs 的 worksheet.dataValidations 没进类型声明，和生成器一样按最小接口读取。
+  const model = (sheet as unknown as { dataValidations?: { model?: Record<string, ValidationEntry> } }).dataValidations?.model;
+  const options = new Map<number, string[]>();
+  for (const [address, validation] of Object.entries(model || {})) {
+    if (validation?.type !== 'list') continue;
+    const letters = /^\$?([A-Z]+)/i.exec(String(address).trim())?.[1];
+    if (!letters) continue;
+    const column = columnIndex(letters);
+    if (column < 1 || column > columnCount) continue;
+    const existing = options.get(column) || [];
+    for (const value of String(validation.formulae?.[0] ?? '').replace(/^"|"$/g, '').split(',')) {
+      const option = value.trim();
+      if (option && !existing.includes(option)) existing.push(option);
+    }
+    options.set(column, existing);
+  }
+  return options;
 }
 
 type ConditionalRule = {
@@ -445,6 +545,10 @@ async function spreadsheetPreview(data: Buffer) {
     const columnCount = Math.min(Math.max(totalColumns, 1), PREVIEW_MAX_COLUMNS);
     if (totalRows > rowCount || totalColumns > columnCount) truncated = true;
     const conditional = conditionalBlocks(sheet);
+    const options = listOptionsByColumn(sheet, columnCount);
+    const frozen = frozenHeader(sheet);
+    const widths = Array.from({ length: columnCount }, (_value, index) => Number(sheet.getColumn(index + 1).width) || 0);
+    const widthTotal = widths.reduce((sum, value) => sum + value, 0);
     const rows: SpreadsheetCell[][] = [];
     for (let rowIndex = 1; rowIndex <= rowCount; rowIndex += 1) {
       const row = sheet.getRow(rowIndex);
@@ -452,7 +556,7 @@ async function spreadsheetPreview(data: Buffer) {
       for (let columnIndex = 1; columnIndex <= columnCount; columnIndex += 1) {
         const cell = row.getCell(columnIndex);
         cells.push({
-          text: String(cell.text ?? '').replace(/\s+$/, ''),
+          text: cellDisplayText(cell),
           numeric: cellIsNumeric(cell),
           style: cellStyle(cell, conditional, rowIndex, columnIndex),
         });
@@ -462,10 +566,24 @@ async function spreadsheetPreview(data: Buffer) {
     const head = rows[0] || [];
     const body = rows.slice(1);
     blocks.push(`<h2 class="sheet-title">${escapeHtml(sheet.name)}</h2>`);
-    blocks.push('<table>');
+    const meta = [
+      frozen ? '冻结首行' : '',
+      sheet.autoFilter ? '自动筛选' : '',
+      options.size ? `${options.size} 列带下拉候选` : '',
+    ].filter(Boolean);
+    if (meta.length) blocks.push(`<p class="meta sheet-meta">${escapeHtml(meta.join(' · '))}</p>`);
+    blocks.push(`<table${frozen ? ' class="sticky-head"' : ''}>`);
+    // 列宽按 Excel 里的相对比例还原，备注这类宽列不再被挤成和数字列一样宽。
+    if (widthTotal > 0) {
+      blocks.push(`<colgroup>${widths.map((width) => `<col style="width:${((width / widthTotal) * 100).toFixed(2)}%" />`).join('')}</colgroup>`);
+    }
     if (head.length) {
       blocks.push('<thead><tr>');
-      for (const cell of head) blocks.push(`<th${styleAttribute(cell.style)}>${escapeHtml(cell.text)}</th>`);
+      for (const [index, cell] of head.entries()) {
+        const values = options.get(index + 1);
+        const marker = values?.length ? `<span class="dd" title="下拉候选：${escapeHtml(values.slice(0, 8).join('、'))}">▾</span>` : '';
+        blocks.push(`<th${styleAttribute(cell.style)}>${escapeHtml(cell.text)}${marker}</th>`);
+      }
       blocks.push('</tr></thead>');
     }
     blocks.push('<tbody>');
@@ -480,16 +598,52 @@ async function spreadsheetPreview(data: Buffer) {
   return blocks.join('');
 }
 
-/** 段落保留粗体这类 run 级信息（同类项目 docx-preview 的目标也是保住 HTML 语义，而非还原像素）。 */
-function wordRunsHtml(paragraph: string) {
+function wordRunHtml(run: string) {
+  const text = wordRunText(run);
+  if (!text) return '';
+  const enabled = (tag: string) => {
+    const match = new RegExp(`<w:${tag}\\b([^>]*)\\/?>`).exec(run);
+    return match ? !/w:val="(?:0|false|off|none)"/.test(match[1] || '') : false;
+  };
+  let html = escapeHtml(text);
+  if (enabled('strike')) html = `<s>${html}</s>`;
+  if (enabled('u')) html = `<u>${html}</u>`;
+  if (enabled('i')) html = `<em>${html}</em>`;
+  if (enabled('b')) html = `<strong>${html}</strong>`;
+  const color = argbToCss({ argb: `FF${/<w:color\b[^>]*w:val="([0-9A-Fa-f]{6})"/.exec(run)?.[1] || ''}` });
+  // 字色走 CSS 变量：文档是按白底排版的，深色主题下要整体提亮，否则标题会变成「深底深字」看不见。
+  return color ? `<span class="doc-fg" style="--doc-fg:${color}">${html}</span>` : html;
+}
+
+/** 段落保留粗体、下划线、字色这类 run 级信息（同类项目 docx-preview 的目标也是保住 HTML 语义，而非还原像素）。 */
+function wordRunsFragment(fragment: string) {
   const parts: string[] = [];
-  for (const run of paragraph.match(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/g) || []) {
-    const text = wordRunText(run);
-    if (!text) continue;
-    const bold = /<w:b\b([^>]*)\/?>/.exec(run);
-    parts.push(bold && !/w:val="(?:0|false|off)"/.test(bold[1] || '') ? `<strong>${escapeHtml(text)}</strong>` : escapeHtml(text));
+  for (const run of fragment.match(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/g) || []) {
+    parts.push(wordRunHtml(run));
   }
   return parts.join('');
+}
+
+/**
+ * <w:hyperlink> 有两种：指向书签的目录项在预览里能直接跳转，外链在 iframe sandbox 里打不开，
+ * 因此只做样式还原；域代码（TOC \h \o …）不是正文，先剥掉再取文本。
+ */
+function wordRunsHtml(paragraph: string) {
+  const source = paragraph.replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, '');
+  let html = '';
+  let lastIndex = 0;
+  for (const match of source.matchAll(/<w:hyperlink\b[^>]*>[\s\S]*?<\/w:hyperlink>/g)) {
+    const start = match.index ?? 0;
+    html += wordRunsFragment(source.slice(lastIndex, start));
+    // 链接字色交给 .doc-anchor/.doc-link 决定（深色主题下要提亮），去掉 run 上的颜色包裹。
+    const inner = wordRunsFragment(match[0]).replace(/<span class="doc-fg" style="--doc-fg:#[0-9a-f]{6}">([\s\S]*?)<\/span>/g, '$1');
+    const anchor = /w:anchor="([^"]+)"/.exec(match[0])?.[1];
+    html += anchor
+      ? `<a class="doc-anchor" href="#${escapeHtml(anchor)}">${inner}</a>`
+      : `<span class="doc-link">${inner}</span>`;
+    lastIndex = start + match[0].length;
+  }
+  return html + wordRunsFragment(source.slice(lastIndex));
 }
 
 function paragraphHtml(paragraph: string) {
@@ -526,9 +680,13 @@ function orderedListNumbers(entries: Record<string, Uint8Array>) {
   return ordered;
 }
 
+type WordTocEntry = { level: number; text: string; id: string };
+
 type WordBlock =
-  | { kind: 'heading'; level: number; text: string }
+  | { kind: 'heading'; level: number; text: string; id: string }
   | { kind: 'paragraph'; html: string }
+  | { kind: 'code'; text: string }
+  | { kind: 'toc'; entries: WordTocEntry[] }
   | { kind: 'list'; ordered: boolean; items: string[] }
   | { kind: 'table'; rows: WordTableCell[][] }
   | { kind: 'image'; src: string };
@@ -537,6 +695,8 @@ function wordBlocks(xml: string, resolveImage: (relationshipId: string) => strin
   const source = xml.replace(/<w:p\b[^>]*\/>/g, '');
   const tokens = source.match(/<w:tbl\b[\s\S]*?<\/w:tbl>|<w:p\b[^>]*>[\s\S]*?<\/w:p>/g) || [];
   const blocks: WordBlock[] = [];
+  const headings: WordTocEntry[] = [];
+  let tocIndex = -1;
   for (const token of tokens) {
     if (blocks.length >= PREVIEW_MAX_BLOCKS) break;
     if (token.startsWith('<w:tbl')) {
@@ -550,13 +710,33 @@ function wordBlocks(xml: string, resolveImage: (relationshipId: string) => strin
       const src = resolveImage(relationshipId);
       if (src) blocks.push({ kind: 'image', src });
     }
+    // 域代码里的 TOC 指令不是正文；目录块统一在解析完标题后重建，避免出现「TOC \h \o 1-3」这种原始指令。
+    if (/<w:instrText\b[^>]*>\s*TOC\b/.test(token)) {
+      if (tocIndex < 0) {
+        tocIndex = blocks.length;
+        blocks.push({ kind: 'toc', entries: [] });
+      }
+      continue;
+    }
+    // 目录缓存条目会和下面的 toc 块重复，直接跳过。
+    if (/<w:pStyle\b[^>]*w:val="TOC\d+"/.test(token)) continue;
+    // 等宽字体或浅底纹是代码段的标志，正文段落不会同时具备。
+    if (/<w:rFonts\b[^>]*w:ascii="Consolas"/.test(token) || /<w:shd\b[^>]*w:fill="F6F8FB"/i.test(token)) {
+      const code = wordRunText(token).replace(/^\n+|\n+$/g, '').replace(/\s+$/, '');
+      if (code) blocks.push({ kind: 'code', text: code });
+      continue;
+    }
     const html = paragraphHtml(token);
     if (!html) continue;
     const style = /<w:pStyle\b[^>]*w:val="([^"]+)"/.exec(token)?.[1] || '';
     const heading = /^Heading([1-6])$/i.exec(style) || /^Title$/i.exec(style);
     if (heading) {
       const level = heading[1] && /^\d$/.test(heading[1]) ? Number(heading[1]) : 1;
-      blocks.push({ kind: 'heading', level, text: wordRunText(token).trim() });
+      const text = wordRunText(token).trim();
+      // 生成器把标题书签写成 sanmao-h-N，目录项正好按这个锚点跳转。
+      const id = /<w:bookmarkStart\b[^>]*w:name="([^"]+)"/.exec(token)?.[1] || `preview-h-${headings.length + 1}`;
+      headings.push({ level, text, id });
+      blocks.push({ kind: 'heading', level, text, id });
       continue;
     }
     const numId = /<w:numPr\b[\s\S]*?<w:numId\b[^>]*w:val="(\d+)"/.exec(token)?.[1];
@@ -569,6 +749,7 @@ function wordBlocks(xml: string, resolveImage: (relationshipId: string) => strin
     }
     blocks.push({ kind: 'paragraph', html: `<p>${html}</p>` });
   }
+  if (tocIndex >= 0) blocks[tocIndex] = { kind: 'toc', entries: headings };
   return blocks;
 }
 
@@ -584,7 +765,14 @@ function wordPreview(data: Buffer) {
   }, orderedListNumbers(entries));
   if (!blocks.length) return emptyBlock();
   const html = blocks.map((block) => {
-    if (block.kind === 'heading') return `<h${block.level}>${escapeHtml(block.text)}</h${block.level}>`;
+    if (block.kind === 'heading') return `<h${block.level} id="${escapeHtml(block.id)}">${escapeHtml(block.text)}</h${block.level}>`;
+    if (block.kind === 'toc') {
+      if (!block.entries.length) return '';
+      // 目录项是文档内的书签锚点，预览里点击即可跳到对应标题。
+      const items = block.entries.map((entry) => `<li style="margin-left:${(Math.min(entry.level, 3) - 1) * 16}px"><a class="doc-anchor" href="#${escapeHtml(entry.id)}">${escapeHtml(entry.text)}</a></li>`).join('');
+      return `<nav class="doc-toc"><ul>${items}</ul></nav>`;
+    }
+    if (block.kind === 'code') return `<pre class="doc-code"><code>${escapeHtml(block.text)}</code></pre>`;
     if (block.kind === 'image') return `<figure class="doc-figure"><img src="${block.src}" alt="文档插图" /></figure>`;
     if (block.kind === 'list') {
       const tag = block.ordered ? 'ol' : 'ul';
@@ -608,7 +796,7 @@ function wordPreview(data: Buffer) {
   return `${html}${mediaNote}${truncated ? noteBlock(TRUNCATED_NOTE) : ''}`;
 }
 
-type SlideShape = { lines: string[]; size: number; top: number | null; placeholderTitle: boolean };
+type SlideShape = { lines: string[]; size: number; left: number | null; top: number | null; placeholderTitle: boolean };
 
 function slideShapes(xml: string): SlideShape[] {
   const shapes: SlideShape[] = [];
@@ -622,11 +810,15 @@ function slideShapes(xml: string): SlideShape[] {
     }
     if (!lines.length) continue;
     const sizes = (shape.match(/<a:\w+Pr\b[^>]*sz="(\d+)"/g) || []).map((tag) => Number(/sz="(\d+)"/.exec(tag)?.[1] || 0));
-    const offset = /<a:off\b[^>]*y="(-?\d+)"/.exec(shape);
+    // x/y 分两次取，避免依赖 <a:off> 里的属性顺序。
+    const offset = /<a:off\b[^>]*>/.exec(shape)?.[0] || '';
+    const left = /\bx="(-?\d+)"/.exec(offset)?.[1];
+    const top = /\by="(-?\d+)"/.exec(offset)?.[1];
     shapes.push({
       lines,
       size: sizes.length ? Math.max(...sizes) : 0,
-      top: offset ? Number(offset[1]) : null,
+      left: left ? Number(left) : null,
+      top: top ? Number(top) : null,
       placeholderTitle: /<p:ph\b[^>]*type="(?:title|ctrTitle)"/.test(shape),
     });
   }
@@ -637,6 +829,22 @@ function slideShapes(xml: string): SlideShape[] {
 function slideHeightEmu(entries: Record<string, Uint8Array>) {
   const cy = /<p:sldSz\b[^>]*cy="(\d+)"/.exec(readPart(entries, 'ppt/presentation.xml') || '')?.[1];
   return Number(cy) || 6858000;
+}
+
+/** 幻灯片宽度（EMU），用来按横向位置判断两栏版式。 */
+function slideWidthEmu(entries: Record<string, Uint8Array>) {
+  const cx = /<p:sldSz\b[^>]*cx="(\d+)"/.exec(readPart(entries, 'ppt/presentation.xml') || '')?.[1];
+  return Number(cx) || 12192000;
+}
+
+/** 幻灯片底色写在 <p:bg> 里，缺省时退回母版；取不到就不设，跟随应用主题。 */
+function slideBackground(xml: string, masterXml: string) {
+  for (const source of [xml, masterXml]) {
+    const background = /<p:bg>[\s\S]*?<\/p:bg>/.exec(source)?.[0];
+    const color = background ? /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(background)?.[1] : '';
+    if (color) return `#${color.toLowerCase()}`;
+  }
+  return '';
 }
 
 /** 标题优先取占位符，其次取字号最大的文本框：页脚页码/品牌字号都比正文小。 */
@@ -653,13 +861,43 @@ function slideTitleShape(shapes: SlideShape[]) {
  */
 function slideContentLines(shapes: SlideShape[], titleShape: SlideShape | null, heightEmu: number) {
   const titleLines = new Set(titleShape?.lines || []);
-  return shapes
-    .filter((shape) => shape !== titleShape)
-    .filter((shape) => shape.top === null || (shape.top < heightEmu * 0.85 && shape.top >= heightEmu * 0.12))
+  return slideContentShapes(shapes, titleShape, heightEmu)
     .flatMap((shape) => shape.lines)
     .filter((line) => !titleLines.has(line));
 }
 
+function slideContentShapes(shapes: SlideShape[], titleShape: SlideShape | null, heightEmu: number) {
+  return shapes
+    .filter((shape) => shape !== titleShape)
+    .filter((shape) => shape.top === null || (shape.top < heightEmu * 0.85 && shape.top >= heightEmu * 0.12));
+}
+
+/**
+ * 两栏版式（生成器的 two-column）把每栏文字画在同一列坐标上，这里按 x 聚成两栏，
+ * 否则左右两栏会被拍平成一条分不清归属的列表。
+ */
+function slideColumnGroups(shapes: SlideShape[], widthEmu: number) {
+  if (shapes.length < 2 || shapes.some((shape) => shape.left === null)) return null;
+  const tolerance = widthEmu * 0.08;
+  const bands: SlideShape[][] = [];
+  for (const shape of [...shapes].sort((left, right) => (left.left ?? 0) - (right.left ?? 0))) {
+    const band = bands[bands.length - 1];
+    if (band && Math.abs((band[0].left ?? 0) - (shape.left ?? 0)) <= tolerance) band.push(shape);
+    else bands.push([shape]);
+  }
+  return bands.length === 2 ? bands : null;
+}
+
+/** 每栏第一段文字是栏标题，其余按要点列出。 */
+function slideColumnsHtml(bands: SlideShape[][]) {
+  const columns = bands.map((band) => {
+    const [title, ...rest] = band;
+    const items = rest.flatMap((shape) => shape.lines);
+    const body = items.length ? `<ul>${items.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>` : '';
+    return `<div class="slide-col"><div class="slide-col-title">${escapeHtml(title.lines.join(' '))}</div>${body}</div>`;
+  });
+  return `<div class="slide-cols">${columns.join('')}</div>`;
+}
 /** 幻灯片里的插图只认 <p:pic> 内部的 blip，避免把版式背景当成内容图。 */
 function slidePictureIds(xml: string) {
   const ids: string[] = [];
@@ -678,32 +916,193 @@ function slideChartIds(xml: string) {
   return ids;
 }
 
-/**
- * 原生图表只有 XML，预览里还原不了图形；改成把缓存的数据点排成表格，
- * 至少让「图表页」不至于在预览里一片空白。
- */
-function chartTable(xml: string) {
-  const pointsOf = (block: string) => (block.match(/<c:pt\b[^>]*>[\s\S]*?<\/c:pt>/g) || [])
+type SlideTableCell = { html: string; background: string; align: string; bold: boolean };
+
+function slideTableCell(cellXml: string): SlideTableCell {
+  const paragraphs = (cellXml.match(/<a:p>[\s\S]*?<\/a:p>/g) || [])
+    .map((paragraph) => decodeXml((paragraph.match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g) || [])
+      .map((run) => /<a:t[^>]*>([\s\S]*?)<\/a:t>/.exec(run)?.[1] || '')
+      .join('')).trim())
+    .filter(Boolean);
+  // tcPr 里四条边框同样是 srgbClr，先摘掉边框块才能取到真正的单元格底纹。
+  const properties = (/<a:tcPr\b[^>]*>([\s\S]*?)<\/a:tcPr>/.exec(cellXml)?.[1] || '')
+    .replace(/<a:ln[LRTB]\b[\s\S]*?<\/a:ln[LRTB]>/g, '');
+  const fill = /<a:solidFill>\s*<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(properties)?.[1];
+  return {
+    html: escapeHtml(paragraphs.join(' / ')),
+    background: fill ? `#${fill.toLowerCase()}` : '',
+    align: /<a:pPr\b[^>]*algn="ctr"/.test(cellXml) ? 'center' : '',
+    bold: /<a:rPr\b[^>]*b="1"/.test(cellXml),
+  };
+}
+
+/** 幻灯片表格写在 graphicFrame 里，按 shape 解析会整张表丢掉。 */
+function slideTables(xml: string) {
+  const tables: SlideTableCell[][][] = [];
+  for (const frame of xml.match(/<p:graphicFrame\b[^>]*>[\s\S]*?<\/p:graphicFrame>/g) || []) {
+    const body = /<a:tbl>[\s\S]*?<\/a:tbl>/.exec(frame)?.[0];
+    if (!body) continue;
+    const rows = (body.match(/<a:tr\b[^>]*>[\s\S]*?<\/a:tr>/g) || [])
+      .map((rowXml) => (rowXml.match(/<a:tc\b[^>]*>[\s\S]*?<\/a:tc>/g) || []).map(slideTableCell));
+    if (rows.length) tables.push(rows);
+  }
+  return tables;
+}
+
+function slideTableHtml(rows: SlideTableCell[][]) {
+  const headerRow = rows[0].length > 0 && rows[0].every((cell) => cell.background);
+  const body = rows.map((row, rowIndex) => `<tr>${row.map((cell) => {
+    const declarations = [
+      cell.background ? `background-color:${cell.background}` : '',
+      cell.background ? `color:${readableTextOn(cell.background)}` : '',
+      cell.align ? `text-align:${cell.align}` : '',
+      cell.bold ? 'font-weight:600' : '',
+    ].filter(Boolean);
+    const tag = headerRow && rowIndex === 0 ? 'th' : 'td';
+    return `<${tag}${declarations.length ? ` style="${declarations.join(';')}"` : ''}>${cell.html}</${tag}>`;
+  }).join('')}</tr>`).join('');
+  return `<table class="slide-table">${body}</table>`;
+}
+
+type ChartSeries = { name: string; values: string[]; color: string };
+type ChartData = { type: string; title: string; categories: string[]; series: ChartSeries[]; pointColors: string[] };
+
+/** 图表 XML 里的配色取自幻灯片主题，取不到时用这套兜底。 */
+const CHART_PALETTE = ['#3b82f6', '#22d3ee', '#a855f7', '#f59e0b', '#10b981', '#f43f5e'];
+
+function chartPoints(block: string) {
+  return (block.match(/<c:pt\b[^>]*>[\s\S]*?<\/c:pt>/g) || [])
     .map((point) => decodeXml(/<c:v[^>]*>([\s\S]*?)<\/c:v>/.exec(point)?.[1] || '').trim());
-  const categories = pointsOf(/<c:cat>[\s\S]*?<\/c:cat>/.exec(xml)?.[0] || '');
+}
+
+/** 原生图表只有 XML：先取出缓存的数据点与配色，能画的就画，画不了再退回数据表。 */
+function chartData(xml: string): ChartData {
   const series = (xml.match(/<c:ser>[\s\S]*?<\/c:ser>/g) || [])
-    .map((entry, index) => ({
-      name: pointsOf(/<c:tx>[\s\S]*?<\/c:tx>/.exec(entry)?.[0] || '')[0] || `系列 ${index + 1}`,
-      values: pointsOf(/<c:val>[\s\S]*?<\/c:val>/.exec(entry)?.[0] || ''),
-    }))
+    .map((entry, index) => {
+      // 系列色在 spPr 里，但 spPr 里的 <a:ln> 边框也是 srgbClr，先摘掉边框块。
+      const fill = (/<c:spPr>[\s\S]*?<\/c:spPr>/.exec(entry)?.[0] || '')
+        .replace(/<a:ln\b[\s\S]*?<\/a:ln>|<a:ln\b[^>]*\/>/g, '');
+      const color = /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(fill)?.[1];
+      return {
+        name: chartPoints(/<c:tx>[\s\S]*?<\/c:tx>/.exec(entry)?.[0] || '')[0] || `系列 ${index + 1}`,
+        values: chartPoints(/<c:val>[\s\S]*?<\/c:val>/.exec(entry)?.[0] || ''),
+        color: color ? `#${color.toLowerCase()}` : '',
+      };
+    })
     .filter((entry) => entry.values.length);
-  if (!series.length) return '';
-  const titleText = decodeXml(((/<c:title>[\s\S]*?<\/c:title>/.exec(xml)?.[0] || '').match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g) || [])
+  const title = decodeXml(((/<c:title>[\s\S]*?<\/c:title>/.exec(xml)?.[0] || '').match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g) || [])
     .map((run) => /<a:t[^>]*>([\s\S]*?)<\/a:t>/.exec(run)?.[1] || '')
     .join('')).trim();
-  const head = `<tr>${categories.length ? '<th>类别</th>' : ''}${series.map((entry) => `<th>${escapeHtml(entry.name)}</th>`).join('')}</tr>`;
-  const rowCount = Math.min(Math.max(categories.length, ...series.map((entry) => entry.values.length)), PREVIEW_MAX_ROWS);
+  return {
+    type: (/<c:(bar|line|area|pie|doughnut)Chart>/.exec(xml)?.[1] || '').toLowerCase(),
+    title,
+    categories: chartPoints(/<c:cat>[\s\S]*?<\/c:cat>/.exec(xml)?.[0] || ''),
+    series,
+    // 饼图/环形图的颜色是按数据点分别给的，写在 dPt 里。
+    pointColors: (xml.match(/<c:dPt>[\s\S]*?<\/c:dPt>/g) || [])
+      .map((point) => /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(point)?.[1] || '')
+      .filter(Boolean)
+      .map((color) => `#${color.toLowerCase()}`),
+  };
+}
+
+function chartValuesOf(series: ChartSeries) {
+  return series.values.map((value) => Number(value.replace(/[,\s%]/g, '')));
+}
+
+/** 饼图与环形图共用一套画法：用虚线描边把圆切成扇区。 */
+function chartSlicesSvg(data: ChartData) {
+  const values = chartValuesOf(data.series[0]).map((value) => (Number.isFinite(value) && value > 0 ? value : 0));
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (!total) return '';
+  const doughnut = data.type === 'doughnut';
+  const radius = doughnut ? 74 : 50;
+  const stroke = doughnut ? 32 : 100;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  const slices = values.map((value, index) => {
+    const color = data.pointColors[index] || CHART_PALETTE[index % CHART_PALETTE.length];
+    const length = (value / total) * circumference;
+    const circle = `<circle cx="112" cy="112" r="${radius}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-dasharray="${length.toFixed(2)} ${(circumference - length).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" />`;
+    offset += length;
+    return circle;
+  }).join('');
+  const legend = values.map((value, index) => {
+    const color = data.pointColors[index] || CHART_PALETTE[index % CHART_PALETTE.length];
+    const label = data.categories[index] || `第 ${index + 1} 项`;
+    return `<g><rect x="238" y="${26 + index * 22}" width="10" height="10" rx="2" fill="${color}" /><text x="256" y="${35 + index * 22}" class="chart-label">${escapeHtml(label)} ${Math.round((value / total) * 100)}%</text></g>`;
+  }).join('');
+  return `<svg class="chart-svg" viewBox="0 0 460 240" role="img" aria-label="${escapeHtml(data.title || '图表')}"><g transform="rotate(-90 112 112)">${slices}</g>${legend}</svg>`;
+}
+
+/** 直角坐标系图表：柱状按分组画柱，折线/面积画折线，公用同一套坐标换算。 */
+function chartAxisSvg(data: ChartData) {
+  const grid = data.series.map(chartValuesOf);
+  const numbers = grid.flat().filter((value) => Number.isFinite(value));
+  if (!numbers.length) return '';
+  const max = Math.max(...numbers, 0);
+  const min = Math.min(...numbers, 0);
+  const left = 52;
+  const right = 632;
+  const top = 16;
+  const bottom = 194;
+  const span = max - min || 1;
+  const columnCount = Math.max(1, data.categories.length, ...grid.map((values) => values.length));
+  const step = (right - left) / columnCount;
+  const y = (value: number) => bottom - ((value - min) / span) * (bottom - top);
+  const x = (index: number) => left + step * (index + 0.5);
+  const colorOf = (index: number) => data.series[index].color || CHART_PALETTE[index % CHART_PALETTE.length];
+
+  const bars = data.type === 'bar'
+    ? grid.map((values, seriesIndex) => values.map((value, index) => {
+      if (!Number.isFinite(value)) return '';
+      const barWidth = Math.max(2, (step * 0.7) / grid.length);
+      const offset = x(index) - (step * 0.7) / 2 + barWidth * seriesIndex;
+      const top2 = Math.min(y(value), y(0));
+      const height = Math.max(1, Math.abs(y(value) - y(0)));
+      return `<rect x="${offset.toFixed(1)}" y="${top2.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${height.toFixed(1)}" rx="2" fill="${colorOf(seriesIndex)}" />`;
+    }).join('')).join('')
+    : '';
+
+  const lines = data.type === 'bar' ? '' : grid.map((values, seriesIndex) => {
+    const points = values.map((value, index) => (Number.isFinite(value) ? `${x(index).toFixed(1)},${y(value).toFixed(1)}` : '')).filter(Boolean).join(' ');
+    if (!points) return '';
+    const color = colorOf(seriesIndex);
+    const area = data.type === 'area' && points.includes(' ')
+      ? `<polygon points="${points} ${x(values.length - 1).toFixed(1)},${y(min).toFixed(1)} ${x(0).toFixed(1)},${y(min).toFixed(1)}" fill="${color}" opacity="0.18" />`
+      : '';
+    return `${area}<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linejoin="round" />`;
+  }).join('');
+
+  const labels = data.categories.slice(0, columnCount).map((category, index) => (
+    `<text x="${x(index).toFixed(1)}" y="216" class="chart-label" text-anchor="middle">${escapeHtml(category)}</text>`
+  )).join('');
+  const axis = `<line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="currentColor" opacity="0.25" />`
+    + `<text x="${left - 8}" y="${bottom + 4}" class="chart-label" text-anchor="end">${escapeHtml(String(min))}</text>`
+    + `<text x="${left - 8}" y="${top + 8}" class="chart-label" text-anchor="end">${escapeHtml(String(max))}</text>`;
+  return `<svg class="chart-svg" viewBox="0 0 640 226" role="img" aria-label="${escapeHtml(data.title || '图表')}">${axis}${bars}${lines}${labels}</svg>`;
+}
+
+function chartSvg(data: ChartData) {
+  if (!data.series.length) return '';
+  if (data.type === 'pie' || data.type === 'doughnut') return chartSlicesSvg(data);
+  if (data.type === 'bar' || data.type === 'line' || data.type === 'area') return chartAxisSvg(data);
+  return '';
+}
+
+/** 画出来的图形是示意，缓存数据点仍按原样列出，方便核对具体数值。 */
+function chartHtml(data: ChartData) {
+  const series = data.series;
+  const head = `<tr>${data.categories.length ? '<th>类别</th>' : ''}${series.map((entry) => `<th>${escapeHtml(entry.name)}</th>`).join('')}</tr>`;
+  const rowCount = Math.min(Math.max(data.categories.length, ...series.map((entry) => entry.values.length)), PREVIEW_MAX_ROWS);
   const rows = Array.from({ length: rowCount }, (_value, index) => {
-    const label = categories.length ? `<td>${escapeHtml(categories[index] ?? '')}</td>` : '';
+    const label = data.categories.length ? `<td>${escapeHtml(data.categories[index] ?? '')}</td>` : '';
     const cells = series.map((entry) => `<td class="num">${escapeHtml(entry.values[index] ?? '')}</td>`).join('');
     return `<tr>${label}${cells}</tr>`;
   }).join('');
-  return `${titleText ? `<h4 class="chart-title">${escapeHtml(titleText)}</h4>` : ''}<table class="chart-table">${head}${rows}</table>`;
+  const svg = chartSvg(data);
+  const title = data.title ? `<h4 class="chart-title">${escapeHtml(data.title)}</h4>` : '';
+  return `${title}${svg ? `<figure class="chart-figure">${svg}</figure>` : ''}<table class="chart-table">${head}${rows}</table>`;
 }
 
 function presentationPreview(data: Buffer) {
@@ -715,6 +1114,8 @@ function presentationPreview(data: Buffer) {
   const blocks: string[] = [];
   const budget: PreviewMediaBudget = { images: 0, bytes: 0, skipped: 0 };
   const heightEmu = slideHeightEmu(entries);
+  const widthEmu = slideWidthEmu(entries);
+  const masterXml = readPart(entries, 'ppt/slideMasters/slideMaster1.xml') || '';
   let charts = 0;
   let truncated = slideNames.length > PREVIEW_MAX_BLOCKS;
   slideNames.slice(0, PREVIEW_MAX_BLOCKS).forEach((name, index) => {
@@ -724,18 +1125,22 @@ function presentationPreview(data: Buffer) {
     const titleShape = slideTitleShape(shapes);
     const title = titleShape ? titleShape.lines.join('') : '';
     const lines = slideContentLines(shapes, titleShape, heightEmu);
-    blocks.push('<section class="slide">');
+    const bands = slideColumnGroups(slideContentShapes(shapes, titleShape, heightEmu), widthEmu);
+    const background = slideBackground(xml, masterXml);
+    blocks.push(`<section class="slide"${background ? ` style="background-color:${background};color:${readableTextOn(background)}"` : ''}>`);
     blocks.push(`<div class="slide-index">第 ${index + 1} 页</div>`);
     if (title) blocks.push(`<div class="slide-title">${escapeHtml(title)}</div>`);
     for (const chartId of slideChartIds(xml)) {
       if (charts >= PREVIEW_MAX_CHARTS) break;
       const target = rels.get(chartId);
-      const table = target ? chartTable(readPart(entries, target) || '') : '';
-      if (!table) continue;
+      const data = target ? chartData(readPart(entries, target) || '') : null;
+      if (!data?.series.length) continue;
       charts += 1;
-      blocks.push(table);
+      blocks.push(chartHtml(data));
     }
-    if (lines.length) blocks.push(`<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`);
+    for (const rows of slideTables(xml).slice(0, PREVIEW_MAX_TABLES)) blocks.push(slideTableHtml(rows));
+    if (bands) blocks.push(slideColumnsHtml(bands));
+    else if (lines.length) blocks.push(`<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`);
     const images = slidePictureIds(xml)
       .map((relationshipId) => {
         const target = rels.get(relationshipId);

@@ -71,8 +71,8 @@ test('docx 预览输出标题、列表与表格', async () => {
       name: '方案.docx',
       data: await bufferOf(store, result.artifact.id),
     });
-    assert.match(html, /<h1>目标<\/h1>/);
-    assert.match(html, /<h2>数据<\/h2>/);
+    assert.match(html, /<h1 id="[^"]+">目标<\/h1>/);
+    assert.match(html, /<h2 id="[^"]+">数据<\/h2>/);
     assert.match(html, /本季度目标/);
     assert.match(html, /<li>完成 Office 导出<\/li>/);
     assert.match(html, /3 类文件/);
@@ -179,6 +179,30 @@ test('pptx 预览显示幻灯片插图与图表数据', async () => {
   });
 });
 
+test('pptx 预览把图表画成图形，同时保留缓存数据点', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '图形.pptx',
+      theme: 'sanmao-dark',
+      slides: [
+        { layout: 'chart', title: '月度销量', chart: { type: 'bar', categories: ['1月', '2月'], series: [{ name: '销量', values: [12, 30] }] } },
+        { layout: 'chart', title: '渠道占比', chart: { type: 'pie', categories: ['A', 'B'], series: [{ name: '占比', values: [60, 40] }] } },
+      ],
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'presentation',
+      name: '图形.pptx',
+      data: await bufferOf(store, result.artifact.id),
+      theme: 'dark',
+    });
+    assert.equal((html.match(/<svg class="chart-svg"/g) || []).length, 2, '柱状图与饼图都要画出来');
+    assert.match(html, /<rect [^>]*fill="#3b82f6"/, '柱状图要有真实的柱子');
+    assert.match(html, /<circle [^>]*stroke="#3b82f6" stroke-width="100"/, '饼图要按扇区描边画出来');
+    assert.match(html, /<table class="chart-table">/, '图形之外仍要保留缓存数据');
+    assert.match(html, /<td>1月<\/td><td class="num">12<\/td>/);
+  });
+});
+
 test('xlsx 预览还原底纹与四类条件格式', async () => {
   await withStore(async (store) => {
     const result = await artifacts.generateSpreadsheetArtifact({
@@ -237,5 +261,153 @@ test('docx 预览还原粗体、有序列表与表头底纹的可读配色', asy
     assert.match(html, /<ul><li>无序一<\/li><\/ul>/);
     assert.match(html, /<ol><li>第一步<\/li><li>第二步<\/li><\/ol>/, '有序列表必须用 ol，不能退化成 ul');
     assert.match(html, /<td style="background-color:#dce6f5;text-align:center;color:#1f2937"><strong>指标<\/strong><\/td>/);
+  });
+});
+
+test('pptx 预览还原幻灯片表格', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '清单.pptx',
+      slides: [{ layout: 'table', title: '交付清单', columns: ['模块', '状态'], rows: [['预览', '完成'], ['导出', '进行中']] }],
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'presentation',
+      name: '清单.pptx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    assert.match(html, /<table class="slide-table">/, '表格页不能只剩标题');
+    assert.match(html, /<th style="background-color:#3b82f6;color:#[0-9a-f]{6};text-align:center;font-weight:600">模块<\/th>/);
+    assert.match(html, /<td[^>]*>预览<\/td>/);
+    assert.match(html, /<td[^>]*>进行中<\/td>/);
+  });
+});
+
+test('docx 预览保留链接与粗体的行内样式', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '链接.docx',
+      markdown: '# 链接\n\n参考 [官方文档](https://example.com/docs) 与**重点**内容。\n',
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'document',
+      name: '链接.docx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    // 预览 iframe 的 sandbox 不含 allow-popups，外链只做样式还原，不生成点了没反应的 a。
+    assert.match(html, /<span class="doc-link"><u>官方文档<\/u><\/span>/);
+    assert.match(html, /<strong>重点<\/strong>/);
+  });
+});
+
+test('docx 目录预览重建条目并做成可跳转锚点，不泄漏 TOC 域代码', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '目录.docx',
+      title: '季度报告',
+      toc: true,
+      markdown: '## 第一章 概述\n正文一。\n### 明细\n正文二。\n## 第二章 数据\n正文三。\n',
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'document',
+      name: '目录.docx',
+      data: await bufferOf(store, result.artifact.id),
+      theme: 'dark',
+    });
+    assert.match(html, /<nav class="doc-toc">/, '目录要有一个像目录的块');
+    assert.match(html, /<a class="doc-anchor" href="#sanmao-h-1">第一章 概述<\/a>/, '目录项要指向正文标题的书签');
+    assert.match(html, /margin-left:32px"><a class="doc-anchor" href="#[^"]+">明细<\/a>/, 'h3 目录项要比 h2 缩进更多');
+    assert.ok(!html.includes('TOC \\h'), 'TOC 域代码不能漏进预览正文');
+    assert.match(html, /<h2 id="sanmao-h-1">第一章 概述<\/h2>/, '标题要带锚点 id');
+  });
+});
+
+test('docx 预览把代码块排成等宽代码，而不是正文段落', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '代码.docx',
+      markdown: '## 命令\n\n```\nnpx tsc --noEmit\nnpm test\n```\n',
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'document',
+      name: '代码.docx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    assert.match(html, /<pre class="doc-code"><code>npx tsc --noEmit\nnpm test<\/code><\/pre>/);
+    assert.ok(!html.includes('<p>npx tsc'), '代码块不能再退化成正文段落');
+  });
+});
+
+test('xlsx 预览按 numFmt 还原数字、列宽、冻结与下拉候选', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateSpreadsheetArtifact({
+      filename: '格式.xlsx',
+      sheets: [{
+        name: '销售',
+        columns: [
+          { key: 'month', header: '月份', width: 10 },
+          { key: 'amount', header: '金额', width: 14, format: '¥#,##0.00', total: 'sum' },
+          { key: 'ratio', header: '占比', width: 12, format: '0.0%' },
+          { key: 'status', header: '状态', width: 30, options: ['进行中', '已完成'] },
+        ],
+        rows: [{ month: '1月', amount: 1234567.891, ratio: 0.0345, status: '进行中' }],
+        freezeHeader: true,
+        autoFilter: true,
+      }],
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'spreadsheet',
+      name: '格式.xlsx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    assert.match(html, /¥1,234,567.89/, '货币与千分位要按 numFmt 显示');
+    assert.match(html, /3\.5%|3\.4%/, '百分比要乘 100 再带 %');
+    assert.ok(!html.includes('1234567.891'), '不能把原始数字直接丢出来');
+    const widths = [...html.matchAll(/<col style="width:([\d.]+)%" \/>/g)].map((match) => Number(match[1]));
+    assert.equal(widths.length, 4, '每列都要给出列宽');
+    assert.ok(widths[3] > widths[0], '宽列（状态 30）要比窄列（月份 10）分到更多宽度');
+    assert.match(html, /<table class="sticky-head">/);
+    assert.match(html, /冻结首行 · 自动筛选 · 1 列带下拉候选/);
+    assert.match(html, /状态<span class="dd" title="下拉候选：进行中、已完成">▾<\/span>/);
+  });
+});
+
+test('pptx 预览保留幻灯片底色，并把两栏版式排成两栏', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '对比.pptx',
+      theme: 'sanmao-dark',
+      slides: [{ layout: 'two-column', title: '对比', leftTitle: '改造前', leftBullets: ['只能下载'], rightTitle: '改造后', rightBullets: ['在线预览'] }],
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'presentation',
+      name: '对比.pptx',
+      data: await bufferOf(store, result.artifact.id),
+      theme: 'light',
+    });
+    assert.match(html, /<section class="slide" style="background-color:#0b1220;color:#f8fafc">/, '深色主题的幻灯片不能显示成浅色底');
+    assert.match(html, /<div class="slide-cols">/);
+    assert.match(html, /<div class="slide-col-title">改造前<\/div><ul><li>只能下载<\/li><\/ul>/, '左栏标题与要点要成组');
+    assert.match(html, /<div class="slide-col-title">改造后<\/div><ul><li>在线预览<\/li><\/ul>/, '右栏标题与要点要成组');
+    assert.ok(!html.includes('<li>改造后</li>'), '栏标题不能混进要点列表');
+  });
+});
+
+test('docx 预览的文档字色走 CSS 变量，深色主题下自动提亮', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '封面.docx',
+      title: '季度运营方案',
+      subtitle: '2026 Q3',
+      markdown: '# 正文\n\n内容。\n',
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'document',
+      name: '封面.docx',
+      data: await bufferOf(store, result.artifact.id),
+      theme: 'dark',
+    });
+    assert.match(html, /<span class="doc-fg" style="--doc-fg:#0f172a"><strong>季度运营方案<\/strong><\/span>/, '字色要挂到 CSS 变量上');
+    assert.ok(!html.includes('style="color:#0f172a"'), '深色主题下不能再写死深色内联字色');
+    assert.match(html, /\.theme-dark \.doc-fg \{ color:color-mix\(in srgb, var\(--doc-fg\) 30%, #ffffff 70%\); \}/, '深色主题要整体提亮');
   });
 });

@@ -66,6 +66,8 @@ export type DocumentSectionInput = {
   heading?: string;
   level?: 1 | 2 | 3;
   paragraphs?: string[];
+  /** markdown 代码块：整段用等宽字体加浅底纹排版，不走正文样式。 */
+  code?: string[];
   bullets?: string[];
   orderedBullets?: string[];
   images?: ArtifactImageInput[];
@@ -94,6 +96,7 @@ export function normalizeSections(raw: unknown): DocumentSectionInput[] {
       heading: typeof section.heading === 'string' ? section.heading : undefined,
       level: section.level,
       paragraphs: Array.isArray(section.paragraphs) ? section.paragraphs.map(String) : undefined,
+      code: Array.isArray(section.code) ? section.code.map(String) : undefined,
       bullets: Array.isArray(section.bullets) ? section.bullets.map(String) : undefined,
       orderedBullets: Array.isArray(section.orderedBullets) ? section.orderedBullets.map(String) : undefined,
       images: Array.isArray(section.images) ? section.images : undefined,
@@ -220,26 +223,59 @@ export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
   return blocks;
 }
 
+/** 章节内各块的排版顺序由 buildWordDocument 决定，用来判断后面的块会不会串到前面去。 */
+const BLOCK_ORDER: Record<MarkdownBlock['type'], number> = {
+  heading: -1, paragraph: 0, code: 1, bullets: 2, ordered: 3, table: 4, image: 5,
+};
+
+/**
+ * 同一章节里，只要后面还有排得更靠前的块（例如表格后面又跟了正文），
+ * 成品顺序就会和 markdown 不一致，必须另起一节；否则不动，避免白白切出大量章节。
+ */
+function orderBrokenAfter(blocks: MarkdownBlock[], index: number) {
+  const rank = BLOCK_ORDER[blocks[index].type];
+  for (const next of blocks.slice(index + 1)) {
+    if (next.type === 'heading') return false;
+    if (BLOCK_ORDER[next.type] < rank) return true;
+  }
+  return false;
+}
+
 export function markdownToSections(markdown: string): DocumentSectionInput[] {
+  const blocks = parseMarkdownBlocks(markdown);
   const sections: DocumentSectionInput[] = [];
-  for (const block of parseMarkdownBlocks(markdown)) {
+  let sealed = true;
+  const current = () => {
+    if (sealed) {
+      sections.push({});
+      sealed = false;
+    }
+    return sections[sections.length - 1];
+  };
+  for (const [index, block] of blocks.entries()) {
     if (block.type === 'heading') {
       sections.push({ heading: block.text, level: block.level });
+      sealed = false;
       continue;
     }
-    if (!sections.length) sections.push({});
-    const current = sections[sections.length - 1];
-    if (block.type === 'paragraph' || block.type === 'code') {
-      current.paragraphs = [...(current.paragraphs || []), block.text];
-    } else if (block.type === 'bullets') {
-      current.bullets = [...(current.bullets || []), ...block.items];
-    } else if (block.type === 'ordered') {
-      current.orderedBullets = [...(current.orderedBullets || []), ...block.items];
-    } else if (block.type === 'image') {
-      current.images = [...(current.images || []), { ref: block.ref, caption: block.alt }];
-    } else if (block.type === 'table') {
-      current.tables = [...(current.tables || []), { columns: block.columns, rows: block.rows }];
+    if (block.type === 'code') {
+      sections.push({ code: [block.text] });
+      sealed = orderBrokenAfter(blocks, index);
+      continue;
     }
+    const section = current();
+    if (block.type === 'paragraph') {
+      section.paragraphs = [...(section.paragraphs || []), block.text];
+    } else if (block.type === 'bullets') {
+      section.bullets = [...(section.bullets || []), ...block.items];
+    } else if (block.type === 'ordered') {
+      section.orderedBullets = [...(section.orderedBullets || []), ...block.items];
+    } else if (block.type === 'image') {
+      section.images = [...(section.images || []), { ref: block.ref, caption: block.alt }];
+    } else if (block.type === 'table') {
+      section.tables = [...(section.tables || []), { columns: block.columns, rows: block.rows }];
+    }
+    sealed = orderBrokenAfter(blocks, index);
   }
   return sections;
 }
@@ -540,6 +576,9 @@ export async function buildWordDocument(input: DocumentInput, options: ArtifactG
       for (const line of lines) {
         children.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 120 }, children: textRuns(line, warnings, '正文') }));
       }
+    }
+    for (const block of (section.code || []).slice(0, DOCUMENT_MAX_PARAGRAPHS_PER_SECTION)) {
+      children.push(codeParagraph(String(block), warnings));
     }
     for (const bullet of (section.bullets || []).slice(0, DOCUMENT_MAX_BULLETS_PER_SECTION)) {
       children.push(new Paragraph({
