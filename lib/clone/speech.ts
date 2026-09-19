@@ -61,7 +61,12 @@ export type SpeechRequest = {
   signal?: AbortSignal;
 };
 
-export type SpeechAudio = { buffer: Buffer; contentType: string };
+export type SpeechAudio = {
+  buffer: Buffer;
+  contentType: string;
+  /** 实际用到的音色：只有「本机离线配音」会回填（用户填的音色可能不存在，被系统音色顶替）。 */
+  voice?: string;
+};
 
 /** 有些服务商出错时也回 200 + JSON，这种必须先拦下来，不能当音频存盘。 */
 function looksLikeTextPayload(buffer: Buffer) {

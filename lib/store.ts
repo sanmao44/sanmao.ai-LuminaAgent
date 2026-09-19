@@ -716,6 +716,29 @@ export async function getRuntimeVideoModel(id: string | null | undefined) {
   return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
 }
 
+/**
+ * 「克隆出片」的拆解轨道专用：自动选择时优先挑带 vision 的对话模型。
+ * getRuntimeModel(id, 'chat') 的自动顺序只看默认服务商 / 默认 Agent 模型，而默认 Agent 模型
+ * 常常是纯文本模型，会让画面拆解白白降级成等间隔切分（用户库里明明有带视觉的模型）。
+ * 显式选了模型就尊重用户选择（即使没有 vision），由调用方按能力给出降级提示。
+ */
+export async function getRuntimeVisionModel(id: string | null | undefined) {
+  const state = await readState();
+  const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const compatible = models.filter((item) => {
+    const provider = state.providers.find((candidate) => candidate.id === item.providerId);
+    return isProviderModelLibraryEnabled(provider) && item.kind === 'chat' && item.enabled && item.published;
+  });
+  const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
+  const visionModels = compatible.filter((item) => item.capabilities.includes('vision'));
+  const pool = visionModels.length ? visionModels : compatible;
+  const model = explicit || selectAutomaticModel(pool, state.settings.defaultProviderId, state.settings.agentModelId);
+  if (!model) return null;
+  const provider = state.providers.find((item) => item.id === model.providerId);
+  if (!provider) return null;
+  return { model, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
+}
+
 export async function getRuntimeImageModelForCapability(id: string | null | undefined, capability: ModelCapability) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));

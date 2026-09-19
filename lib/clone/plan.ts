@@ -153,6 +153,19 @@ export function splitLines(raw: unknown): string[] {
  */
 export function alignShotsWithLines(shots: NormalizedShot[], lines: string[]): CloneShot[] {
   if (!shots.length) return [];
+  // 一句文案都没有（没有对话模型，或模型没返回句子、画面描述也是空的）时保留全部镜头，
+  // 只是整条片子不出字幕；早先会塌缩成 1 个镜头，白白丢掉整条参考片的结构。
+  if (!lines.length) {
+    return shots.map((shot, index) => ({
+      index,
+      start: shot.start,
+      end: shot.end,
+      visual: shot.visual,
+      line: '',
+      prompt: shot.prompt || shot.visual,
+      status: 'pending' as const,
+    }));
+  }
   const usableLines = lines.length ? lines : [''];
   const keep = Math.max(1, Math.min(shots.length, usableLines.length));
   const kept = shots.slice(0, keep);
@@ -173,13 +186,22 @@ export function alignShotsWithLines(shots: NormalizedShot[], lines: string[]): C
   });
 }
 
-/** 每个镜头的实际时长：优先用配音真实时长，否则按字数估算。 */
+/**
+ * 每个镜头的实际时长：优先用配音真实时长；没有配音但有文案时按字数估算；
+ * 连文案都没有（没有对话模型）时退回参考视频这一段本身的时长，
+ * 至少保持参考片的节奏，而不是每个镜头都塌成 0.8 秒。
+ */
 export function shotDurations(shots: CloneShot[]) {
-  return shots.map((shot) => round3(clamp(
-    finite(shot.audioSeconds, estimateLineSeconds(shot.line)),
-    CLONE_MIN_SHOT_SECONDS,
-    CLONE_MAX_SHOT_SECONDS,
-  )));
+  return shots.map((shot) => {
+    const fallback = shot.line
+      ? estimateLineSeconds(shot.line)
+      : Math.max(0, finite(shot.end, 0) - finite(shot.start, 0));
+    return round3(clamp(
+      finite(shot.audioSeconds, fallback || estimateLineSeconds(shot.line)),
+      CLONE_MIN_SHOT_SECONDS,
+      CLONE_MAX_SHOT_SECONDS,
+    ));
+  });
 }
 
 /** 生成成片时间轴：视频轨顺序排布，配音与字幕跟随同一句的起点与时长。 */
@@ -237,7 +259,7 @@ export function decideCapabilities(input: {
   hasSpeechModel: boolean;
   hasImageModel: boolean;
   hasVideoModel: boolean;
-  /** 本机离线配音可用（Windows 自带语音合成），只在没有在线 TTS 模型时才兜底。 */
+  /** 本机离线配音可用（Windows / macOS 自带语音合成），只在没有在线 TTS 模型时才兜底。 */
   offlineSpeech?: boolean;
 }): { capabilities: CloneCapabilities; warnings: string[] } {
   const offlineSpeech = !input.hasSpeechModel && Boolean(input.offlineSpeech);
@@ -334,6 +356,8 @@ export function clampShotSeconds(requested: number, limits: ShotSecondsLimits = 
 export function cloneCapabilityFlags(models: readonly CloneModelSignal[]) {
   const usable = models.filter((model) => model.enabled && model.published);
   return {
+    // 对话模型决定有没有口播文案：没有它就只能出「纯画面」成片，弹窗要先说清楚。
+    hasChatModel: usable.some((model) => model.kind === 'chat'),
     hasVisionModel: usable.some((model) => model.kind === 'chat' && (model.capabilities || []).includes('vision')),
     hasSpeechModel: usable.some((model) => model.kind === 'audio'),
     hasImageModel: usable.some((model) => model.kind === 'image' && (model.capabilities || []).includes('generate')),

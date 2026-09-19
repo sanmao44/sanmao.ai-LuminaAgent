@@ -4,28 +4,30 @@
  * 流程：抽帧 → 视觉模型拆镜头 → 重写文案 → 逐句 TTS → 逐镜头生图 → 逐镜头生视频
  *      → 按「配音时长」而不是参考视频时长排时间轴。
  *
- * 三条降级链都不静默：全部落到 job.warnings 或 shot.error。
+ * 四条降级链都不静默：全部落到 job.warnings 或 shot.error。
  *   · 没有视觉模型  → 按镜头数平均分配时长（不读参考画面）
- *   · 没有 TTS 模型 → 没有在线 TTS 时，Windows 用系统自带语音合成兜底（离线免费）；
+ *   · 没有对话模型  → 没有口播文案：成片只有画面，没有配音与字幕
+ *   · 没有 TTS 模型 → 没有在线 TTS 时，Windows / macOS 用系统自带语音合成兜底（离线免费）；
  *                    其它平台（含无法启动系统语音时）无声成片，时长按字数估算
  *   · 视频生成失败  → 该镜头退回静态图（时间轴仍按句长排布）
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveLocalDataDir } from '../data-paths';
 import { persistAudioBuffer } from '../audio-storage';
 import { persistGeneratedImages, resolveStoredFileWithFallback } from '../image-storage';
 import { chatCompletion, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '../providers';
-import { getPublicState, getRuntimeImageGenerationModel, getRuntimeModel, getRuntimeVideoModel } from '../store';
+import { getPublicState, getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '../store';
 import type { VideoGenerationInput } from '../types';
 import { getPublicMediaTransportStatusLive } from '../signed-media';
-import { resolveStoredVideoFile } from '../video-storage';
+import { resolveStoredVideoFileWithFallback } from '../video-storage';
 import { getVideoModelLimits } from '../video-model-limits';
 import { requiresPublicMediaRelay } from '../video-platform';
 import { createVideoGeneration, refreshVideoTask } from '../video-task-service';
 import { askText, chatText, parseJsonBlock } from './chat';
 import { extractFrameFiles, probeMediaSeconds } from './media';
-import { alignShotsWithLines, buildTimeline, clampShotSeconds, frameSampleTimes, normalizeShots, round3, splitLines, type NormalizedShot } from './plan';
+import { alignShotsWithLines, buildTimeline, clampShotSeconds, cloneStageProgress, frameSampleTimes, normalizeShots, round3, splitLines, type NormalizedShot } from './plan';
 import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speech';
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
 import { findCloneJob, updateCloneJob } from './store';
@@ -44,7 +46,7 @@ const VIDEO_RETRY_WAITS_MS = [30_000, 60_000];
 const ANALYZE_SYSTEM = '你是短视频导演。只输出 JSON，不要输出解释、Markdown 或多余文字。';
 const SCRIPT_SYSTEM = '你是短视频编剧。只输出 JSON，不要输出解释、Markdown 或多余文字。';
 
-type ChatRuntime = Awaited<ReturnType<typeof getRuntimeModel>>;
+type ChatRuntime = Awaited<ReturnType<typeof getRuntimeVisionModel>>;
 type ImageRuntime = Awaited<ReturnType<typeof getRuntimeImageGenerationModel>>;
 type VideoRuntime = Awaited<ReturnType<typeof getRuntimeVideoModel>>;
 type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof resolveSpeechRuntime>>>;
@@ -55,6 +57,19 @@ function sleep(ms: number) {
 
 export function cloneJobDirectory(id: string) {
   return path.join(resolveLocalDataDir(), 'clone-jobs', id);
+}
+
+/**
+ * 成片已经落到正式存储（图片 / 音频 / 视频各走各的存储），任务目录里的参考视频副本、
+ * 抽帧和配音探测文件就没有保留价值了。不清理的话每跑一条任务就多留一份参考视频。
+ * 只在 done 之后调用；删除前确认目标确实在 clone-jobs 目录里。
+ */
+export async function cleanupCloneJobDirectory(id: string) {
+  const root = path.join(resolveLocalDataDir(), 'clone-jobs');
+  const directory = cloneJobDirectory(id);
+  const relative = path.relative(root, directory);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return;
+  await rm(directory, { recursive: true, force: true }).catch(() => undefined);
 }
 
 async function mapWithConcurrency<T>(items: readonly T[], limit: number, worker: (item: T, index: number) => Promise<void>) {
@@ -128,8 +143,11 @@ async function materializeReference(job: CloneJob) {
   const state = await getPublicState();
   if (url.startsWith('/api/storage/video')) {
     const name = new URL(url, 'http://localhost').searchParams.get('name') || '';
-    const file = resolveStoredVideoFile(state.settings.videoStoragePath || '', name);
-    if (!file) throw new Error('参考视频已不在本地存储里，请重新导入后再试。');
+    // 必须和 /api/storage/video 用同一套解析（主目录找不到就回退历史目录）：
+    // 用严格路径的话，换过运行目录或旧版本存的素材会解析成一个不存在的文件，
+    // 最后只报一句「没抽到画面」，用户根本不知道是怎么回事。
+    const file = resolveStoredVideoFileWithFallback(state.settings.videoStoragePath || '', name);
+    if (!file || !existsSync(file)) throw new Error('参考视频已不在本地存储里，请重新导入后再试。');
     return file;
   }
   if (url.startsWith('/api/storage/file')) {
@@ -165,13 +183,17 @@ async function frameDataUrls(files: string[]) {
 }
 
 /** 视觉拆解：没有视觉模型或拆解失败时退回等间隔切分，并把降级原因写进 warning。 */
-async function analyzeShots(runtime: ChatRuntime, frameFiles: string[], job: CloneJob, durationSeconds: number): Promise<{ shots: NormalizedShot[]; warning?: string }> {
+async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; error: string }, job: CloneJob, durationSeconds: number): Promise<{ shots: NormalizedShot[]; warning?: string }> {
   const equalShots = () => normalizeShots(null, { durationSeconds, maxShots: job.options.maxShots });
   // 创建任务时已经就「没有视觉模型」给过全局提示，这里不再重复。
   if (!job.capabilities.vision) return { shots: equalShots() };
   if (!runtime) return { shots: equalShots(), warning: '视觉对话模型已不可用：跳过画面拆解，按镜头数平均分配时长。' };
-  const images = await frameDataUrls(frameFiles);
-  if (!images.length) return { shots: equalShots(), warning: '参考视频没有抽到可用画面：跳过画面拆解，按镜头数平均分配时长。' };
+  const images = await frameDataUrls(frames.files);
+  if (!images.length) {
+    // 把真实原因带出去（ffmpeg 报错 / 读不出帧），不然用户只看到「没拆解」，无从下手。
+    const reason = frames.error || (frames.files.length ? '抽出来的帧读不出来' : '没有抽到帧');
+    return { shots: equalShots(), warning: `参考视频拆解不了（${reason}）：跳过画面拆解，按镜头数平均分配时长。` };
+  }
   const instruction = [
     `这是一条 ${round3(durationSeconds)} 秒参考视频按时间顺序抽取的画面。`,
     `请把它拆成不超过 ${job.options.maxShots} 个镜头，每个镜头给出：起止秒数（0 到 ${round3(durationSeconds)}，不能重叠）、画面内容描述（20 字以内）、以及一句用于重新生成同类画面的中文提示词。`,
@@ -230,7 +252,7 @@ async function writeScript(runtime: ChatRuntime, job: CloneJob, shots: Normalize
 }
 
 async function voiceShot(runtime: SpeechRuntime | null, job: CloneJob, shot: CloneShot, index: number) {
-  // 在线 TTS 走服务商；一个在线模型都没有时，用系统自带语音合成（Windows）。
+  // 在线 TTS 走服务商；一个在线模型都没有时，用系统自带语音合成（Windows / macOS）。
   const audio = runtime
     ? await synthesizeSpeech(runtime, { text: shot.line, voice: job.options.voice })
     : await synthesizeOfflineSpeech(shot.line, { voice: job.options.voice });
@@ -242,7 +264,7 @@ async function voiceShot(runtime: SpeechRuntime | null, job: CloneJob, shot: Clo
   await writeFile(probeFile, audio.buffer);
   const seconds = await probeMediaSeconds(probeFile).catch(() => null);
   const stored = await persistAudioBuffer(audio.buffer, audio.contentType);
-  return { url: stored.url, seconds: seconds && seconds > 0 ? round3(seconds) : undefined };
+  return { url: stored.url, seconds: seconds && seconds > 0 ? round3(seconds) : undefined, voice: audio.voice };
 }
 
 async function generateShotImage(runtime: ImageRuntime, job: CloneJob, shot: CloneShot) {
@@ -335,10 +357,11 @@ async function executeCloneJob(id: string) {
   if (!started) throw new Error('任务不存在。');
   if (started.stage === 'done' || started.stage === 'cancelled') return started;
   try {
-    await patchJob(id, { stage: 'analyzing', progress: 0.08, message: '正在拆解参考视频', error: undefined });
+    await patchJob(id, { stage: 'analyzing', progress: cloneStageProgress('analyzing'), message: '正在拆解参考视频', error: undefined });
     // 高级设置里选的模型要真的生效：优先按 job.modelIds 精确取，取不到再退回自动选择。
     const [chatPick, imagePick, videoPick, speechPick] = await Promise.all([
-      resolveSelectedModel(started.modelIds?.chat, '对话 / 拆解模型', (id) => getRuntimeModel(id, 'chat')),
+      // 拆解要真的看图：没显式选模型时优先带 vision 的对话模型。
+      resolveSelectedModel(started.modelIds?.chat, '对话 / 拆解模型', (id) => getRuntimeVisionModel(id)),
       resolveSelectedModel(started.modelIds?.image, '生图模型', (id) => getRuntimeImageGenerationModel(id)),
       resolveSelectedModel(started.modelIds?.video, '图生视频模型', (id) => getRuntimeVideoModel(id)),
       resolveSelectedModel(started.modelIds?.speech, '配音模型', (id) => resolveSpeechRuntime(id)),
@@ -366,21 +389,24 @@ async function executeCloneJob(id: string) {
       shots = started.shots;
       await patchJob(id, { shots, message: `沿用已有的 ${shots.length} 个镜头` });
     } else {
-      const frameFiles = await extractFrameFiles(referenceFile, frameSampleTimes(duration), path.join(cloneJobDirectory(id), 'frames'));
+      const frames = await extractFrameFiles(referenceFile, frameSampleTimes(duration), path.join(cloneJobDirectory(id), 'frames'));
       if (await isCancelled(id)) return await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });
-      const analysis = await analyzeShots(chatRuntime, frameFiles, started, duration);
+      const analysis = await analyzeShots(chatRuntime, frames, started, duration);
       const normalized = analysis.shots;
       // 拆解降级要立刻落库：后面如果文案阶段直接失败，这条提示不能被吞掉。
       if (analysis.warning) await appendWarnings(id, [analysis.warning]);
-      await patchJob(id, { stage: 'scripting', progress: 0.2, message: '正在重写文案' });
+      await patchJob(id, { stage: 'scripting', progress: cloneStageProgress('scripting'), message: '正在重写文案' });
       const { lines, prompts } = await writeScript(chatRuntime, started, normalized);
       const merged = normalized.map((shot, index) => ({ ...shot, prompt: prompts.get(index) || shot.prompt }));
       const scriptLines = lines.length
         ? lines.flatMap((line) => { const parts = splitLines(line); return parts.length ? parts : [line]; })
         : merged.map((shot) => shot.visual).filter(Boolean);
-      if (!scriptLines.length) throw new Error('文案生成失败：对话模型没有返回可用句子，请检查对话模型配置。');
       const scriptWarnings = [
-        lines.length ? '' : '文案重写没有返回可用句子：口播暂时用画面拆解描述代替，建议检查对话模型后重跑（成片仍可导出）。',
+        // 模型没返回句子、但还有画面描述可顶：口播先用画面描述代替。
+        lines.length || !scriptLines.length ? '' : '文案重写没有返回可用句子：口播暂时用画面拆解描述代替，建议检查对话模型后重跑（成片仍可导出）。',
+        // 连画面描述都拿不到（一个对话模型都没配）：不再整条失败，降级成「只有画面」的成片，
+        // 用户至少能拿到片子，而不是白跑一趟生图 / 生视频。两条提示互斥，别同时冒出来。
+        scriptLines.length ? '' : '没有生成出可用的口播文案：本次成片只有画面，没有配音与字幕；在「模型库」启用一个对话模型后重跑就能补上。',
       ].filter(Boolean);
       shots = alignShotsWithLines(merged, scriptLines);
       await patchJob(id, { shots, message: `已拆出 ${shots.length} 个镜头` });
@@ -388,27 +414,32 @@ async function executeCloneJob(id: string) {
     }
 
     if (voiceMode !== 'none') {
-      await patchJob(id, { stage: 'voicing', progress: 0.3, message: voiceMode === 'offline' ? '正在用本机语音合成配音' : '正在生成配音' });
-      const failures: string[] = [];
+      await patchJob(id, { stage: 'voicing', progress: cloneStageProgress('voicing'), message: voiceMode === 'offline' ? '正在用本机语音合成配音' : '正在生成配音' });
+      const voiceWarnings: string[] = [];
       for (const [index, shot] of shots.entries()) {
         if (await isCancelled(id)) return await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });
         if (!shot.line || shot.audioUrl) continue;
         try {
           const voice = await voiceShot(speechRuntime, started, shot, index);
           shots = replaceShot(shots, index, { audioUrl: voice.url, audioSeconds: voice.seconds });
-          await patchJob(id, { shots, progress: round3(0.3 + (0.12 * (index + 1)) / shots.length) });
+          // 用户填的可能是别的平台的音色名（如 OpenAI 的 nova）：离线合成会拿系统中文音色顶上，要说清楚。
+          const requestedVoice = String(started.options.voice || '').trim();
+          if (voice.voice && requestedVoice && voice.voice !== requestedVoice) {
+            voiceWarnings.push('本机离线配音没有「' + requestedVoice + '」这个音色：已改用系统音色「' + voice.voice + '」。');
+          }
+          await patchJob(id, { shots, progress: round3(cloneStageProgress('voicing') + (0.12 * (index + 1)) / shots.length) });
         } catch (error) {
           const message = error instanceof Error ? error.message : '未知错误';
-          failures.push(`第 ${index + 1} 句配音失败：${message}`);
+          voiceWarnings.push(`第 ${index + 1} 句配音失败：${message}`);
           // 镜头级也要留痕：否则用户只看到「少了一句配音」，不知道是哪一句、为什么。
           shots = replaceShot(shots, index, { error: message });
         }
       }
       const job = await findCloneJob(id);
-      await patchJob(id, { shots, warnings: mergeWarnings(job?.warnings || started.warnings, failures) });
+      await patchJob(id, { shots, warnings: mergeWarnings(job?.warnings || started.warnings, voiceWarnings) });
     }
 
-    await patchJob(id, { stage: 'imaging', progress: 0.42, message: '正在生成画面' });
+    await patchJob(id, { stage: 'imaging', progress: cloneStageProgress('imaging'), message: '正在生成画面' });
     const imageWarnings: string[] = [];
     let imagesDone = shots.filter((shot) => shot.imageUrl).length;
     await mapWithConcurrency(shots, IMAGE_CONCURRENCY, async (shot, index) => {
@@ -422,7 +453,7 @@ async function executeCloneJob(id: string) {
         shots = replaceShot(shots, index, { status: 'failed', error: message });
       }
       imagesDone += 1;
-      await patchJob(id, { shots, progress: round3(0.42 + 0.26 * (imagesDone / shots.length)) });
+      await patchJob(id, { shots, progress: round3(cloneStageProgress('imaging') + 0.26 * (imagesDone / shots.length)) });
     });
     if (imageWarnings.length) {
       const job = await findCloneJob(id);
@@ -430,7 +461,7 @@ async function executeCloneJob(id: string) {
     }
 
     if (videoRuntime) {
-      await patchJob(id, { stage: 'rendering', progress: 0.68, message: '正在生成镜头' });
+      await patchJob(id, { stage: 'rendering', progress: cloneStageProgress('rendering'), message: '正在生成镜头' });
       const videoWarnings: string[] = [];
       const useFirstFrame = await firstFrameTransportReady(videoRuntime);
       if (!useFirstFrame) {
@@ -461,7 +492,7 @@ async function executeCloneJob(id: string) {
           shots = replaceShot(shots, index, { status: shots[index].imageUrl ? 'done' : 'failed' });
         }
         rendered += 1;
-        await patchJob(id, { shots, progress: round3(0.68 + 0.26 * Math.min(1, rendered / shots.length)) });
+        await patchJob(id, { shots, progress: round3(cloneStageProgress('rendering') + 0.26 * Math.min(1, rendered / shots.length)) });
       });
       if (videoWarnings.length) {
         const job = await findCloneJob(id);
@@ -469,14 +500,19 @@ async function executeCloneJob(id: string) {
       }
     } else {
       shots = shots.map((shot) => ({ ...shot, status: shot.imageUrl ? 'done' : 'failed' }));
-      await patchJob(id, { shots, progress: 0.94, message: '没有视频模型，改用静态图合成' });
+      await patchJob(id, { shots, progress: cloneStageProgress('assembling'), message: '没有视频模型，改用静态图合成' });
     }
 
     if (await isCancelled(id)) return await patchJob(id, { stage: 'cancelled', message: '已取消', finishedAt: new Date().toISOString() });
-    await patchJob(id, { stage: 'assembling', progress: 0.94, message: '正在合成时间轴' });
+    await patchJob(id, { stage: 'assembling', progress: cloneStageProgress('assembling'), message: '正在合成时间轴' });
     const timeline = buildTimeline(shots, started.options);
+    // maxSeconds 只约束「拆解参考视频的长度」，成片长度由配音实际时长决定：
+    // 文案写长了就会超，要当面说清楚，而不是默默吐出一条超额成片。
+    if (timeline.duration > started.options.maxSeconds + 0.5) {
+      await appendWarnings(id, ['成片 ' + timeline.duration + ' 秒超过设置的参考上限 ' + started.options.maxSeconds + ' 秒（时长按配音实际长度排）：把「镜头数上限」调小，或在要求里限定每句字数。']);
+    }
     const job = await findCloneJob(id);
-    return await patchJob(id, {
+    const finished = await patchJob(id, {
       shots,
       timeline,
       stage: 'done',
@@ -486,6 +522,8 @@ async function executeCloneJob(id: string) {
       warnings: job?.warnings || started.warnings,
       error: undefined,
     });
+    await cleanupCloneJobDirectory(id);
+    return finished;
   } catch (error) {
     const message = error instanceof Error ? error.message : '克隆出片失败';
     return await patchJob(id, { stage: 'failed', progress: 0, message, error: message, finishedAt: new Date().toISOString() });

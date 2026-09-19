@@ -152,8 +152,23 @@ test('弹窗能力预判与服务端判据一致', () => {
     { kind: 'video', enabled: false, published: true, capabilities: ['video-generate'] },
     { kind: 'audio', enabled: true, published: false, capabilities: ['speech'] },
   ]);
-  assert.deepEqual(flags, { hasVisionModel: true, hasSpeechModel: false, hasImageModel: true, hasVideoModel: false });
-  assert.deepEqual(plan.cloneCapabilityFlags([]), { hasVisionModel: false, hasSpeechModel: false, hasImageModel: false, hasVideoModel: false });
+  assert.deepEqual(flags, { hasChatModel: true, hasVisionModel: true, hasSpeechModel: false, hasImageModel: true, hasVideoModel: false });
+  assert.deepEqual(plan.cloneCapabilityFlags([]), { hasChatModel: false, hasVisionModel: false, hasSpeechModel: false, hasImageModel: false, hasVideoModel: false });
+  // 有对话模型但没有视觉：能写文案、拆不了画面，两件事要分开告诉用户。
+  const textOnly = plan.cloneCapabilityFlags([{ kind: 'chat', enabled: true, published: true, capabilities: ['chat'] }]);
+  assert.equal(textOnly.hasChatModel, true);
+  assert.equal(textOnly.hasVisionModel, false);
+});
+
+test('没有对话模型时不塌缩镜头，时长退回参考节奏', () => {
+  const shots = plan.normalizeShots({ shots: [{ start: 0, end: 3 }, { start: 3, end: 9 }] }, { durationSeconds: 9, maxShots: 4 });
+  const kept = plan.alignShotsWithLines(shots, []);
+  // 一句文案都没有时保留全部镜头（只是没字幕），而不是塌成 1 个镜头。
+  assert.equal(kept.length, 2);
+  assert.deepEqual(kept.map((shot) => shot.line), ['', '']);
+  assert.deepEqual(kept.map((shot) => [shot.start, shot.end]), [[0, 3], [3, 9]]);
+  // 没有文案也没有配音时，用参考视频这一段本身的时长兜底，而不是每镜都塌成 0.8 秒。
+  assert.deepEqual(plan.shotDurations(kept), [3, 6]);
 });
 
 test('镜头时长夹到视频模型允许的档位', () => {

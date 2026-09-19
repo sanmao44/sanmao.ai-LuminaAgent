@@ -46,10 +46,14 @@ export async function probeMediaSeconds(file: string) {
   return parseFfmpegDuration(stderr);
 }
 
-/** 按给定时间点抽帧，输出 jpg；单帧失败只是少一帧，不打断整条管线。 */
+/**
+ * 按给定时间点抽帧，输出 jpg；单帧失败只是少一帧，不打断整条管线。
+ * 一帧都没抽到时会带上 ffmpeg 的报错：否则「拆不出画面」这条降级根本没法排查。
+ */
 export async function extractFrameFiles(input: string, times: number[], outDir: string) {
   await mkdir(outDir, { recursive: true });
   const files: string[] = [];
+  let failure = '';
   for (const [index, time] of times.entries()) {
     const out = path.join(outDir, `frame-${String(index).padStart(2, '0')}.jpg`);
     const result = await runFfmpegCapture([
@@ -63,6 +67,7 @@ export async function extractFrameFiles(input: string, times: number[], outDir: 
       out,
     ], 60_000);
     if (result.code === 0) files.push(out);
+    else failure = failure || result.stderr.replace(/\s+/g, ' ').trim().slice(0, 200);
   }
-  return files;
+  return { files, error: files.length ? '' : failure };
 }

@@ -4,7 +4,7 @@ import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
 import { runCloneJob } from '@/lib/clone/pipeline';
 import { cloneJobSummary, createCloneJob, listCloneJobs } from '@/lib/clone/store';
 import type { CloneReference } from '@/lib/clone/types';
-import { getRuntimeImageGenerationModel, getRuntimeModel, getRuntimeVideoModel } from '@/lib/store';
+import { getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '@/lib/store';
 import { resolveSpeechRuntime } from '@/lib/clone/speech';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
@@ -44,7 +44,8 @@ export async function POST(request: Request) {
     const reference = readReference(body.reference);
     const options = normalizeCloneOptions({ ...(body.options || {}), brief: body.brief ?? body.options?.brief });
     const [chatRuntime, imageRuntime, videoRuntime, speechRuntime] = await Promise.all([
-      getRuntimeModel(body.chatModel || null, 'chat'),
+      // 拆解要真的看图：没显式选模型时优先带 vision 的对话模型，否则画面拆解会无谓降级。
+      getRuntimeVisionModel(body.chatModel || null),
       getRuntimeImageGenerationModel(body.imageModel || null),
       getRuntimeVideoModel(body.videoModel || null),
       resolveSpeechRuntime(body.speechModel || null),

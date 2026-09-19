@@ -2881,6 +2881,9 @@ export default function SuperCanvas() {
   const [ready, setReady] = useState(false);
   const [runtime, setRuntime] = useState<CanvasRuntimeState | null>(null);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+  // 弹窗关掉后仍在后台跑的克隆任务：工具栏上给个进度，跑完 / 失败提示一次。
+  const [cloneTask, setCloneTask] = useState<{ id: string; message: string; progress: number } | null>(null);
+  const cloneRunningIdRef = useRef("");
   const [runtimeError, setRuntimeError] = useState("");
   const [projects, setProjects] = useState<CanvasProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
@@ -3702,6 +3705,43 @@ export default function SuperCanvas() {
     const timer = window.setInterval(() => void refreshGenerationLogs(), 5000);
     return () => window.clearInterval(timer);
   }, [activePanel, ready, refreshGenerationLogs]);
+
+  useEffect(() => {
+    // 关掉「克隆出片」弹窗不等于取消：任务在后台跑，这里在工具栏上给进度，
+    // 并在从「跑」变成「完成 / 失败」的那一刻提示一次，免得用户不知道成片已经好了。
+    if (!ready) return;
+    let disposed = false;
+    const tick = async () => {
+      if (window.document.hidden) return;
+      try {
+        const response = await fetch("/api/clone/jobs", { cache: "no-store" });
+        if (!response.ok) return;
+        const body = (await response.json().catch(() => ({}))) as {
+          jobs?: { id: string; stage: string; progress: number; message: string; shotCount?: number }[];
+        };
+        if (disposed) return;
+        const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+        const running = jobs.find((job) => job.stage !== "done" && job.stage !== "failed" && job.stage !== "cancelled") || null;
+        setCloneTask(running ? { id: running.id, message: running.message || "", progress: Number(running.progress) || 0 } : null);
+        const watchedId = cloneRunningIdRef.current;
+        if (watchedId && watchedId !== running?.id) {
+          const finished = jobs.find((job) => job.id === watchedId);
+          if (finished?.stage === "done") notify(`克隆出片已完成（${finished.shotCount || 0} 个镜头），点「✦ 克隆出片」可放入画布`, "ok");
+          else if (finished?.stage === "failed") notify(`克隆出片失败：${finished.message || "可在「✦ 克隆出片」里继续任务"}`, "error");
+          cloneRunningIdRef.current = "";
+        }
+        if (running) cloneRunningIdRef.current = running.id;
+      } catch {
+        // 读不到就等下一轮，不打扰用户。
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 5000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [notify, ready]);
 
   useEffect(() => {
     // React Strict Mode re-runs effects in development. Restore the mount
@@ -14270,14 +14310,18 @@ export default function SuperCanvas() {
     [document.nodes],
   );
 
+  /**
+   * 只有用户明确选中一条视频节点时才当作「预选参考」：
+   * 弹窗自己要靠这个值判断「用户是冲着这条视频来的」，从而不拿旧任务顶掉他的选择。
+   * 画布里只有一条视频的自动选中交给弹窗内部处理。
+   */
   const preselectedCloneReferenceId = useMemo(() => {
     const selectedVideos = [...selectedIds].filter((id) => {
       const node = nodeById(document, id);
       return Boolean(node && node.type === "media" && node.data.kind === "video" && node.data.url);
     });
-    if (selectedVideos.length === 1) return selectedVideos[0];
-    return cloneReferences.length === 1 ? cloneReferences[0].nodeId : null;
-  }, [cloneReferences, document, selectedIds]);
+    return selectedVideos.length === 1 ? selectedVideos[0] : null;
+  }, [document, selectedIds]);
 
   /** 把克隆结果落到画布：镜头素材 + 一个带完整时间轴的视频编辑节点。 */
   const applyCloneJob = useCallback(
@@ -14345,7 +14389,8 @@ export default function SuperCanvas() {
         ...editorDraft,
         data: {
           ...editorDraft.data,
-          name: `克隆成片 · ${job.options.brief || job.reference.name}`,
+          // 用户的一句话要求可以很长，节点标题只留开头，免得在画布上撑成一整行。
+          name: `克隆成片 · ${(job.options.brief || job.reference.name || "未命名").slice(0, 24)}`,
           status: "idle",
           statusLabel: `${clips.filter((clip) => clip.track === "video").length} 个镜头 · ${Math.round(job.timeline.duration)} 秒`,
           videoEditor: normalizeVideoEditorState({
@@ -14481,12 +14526,13 @@ export default function SuperCanvas() {
           </button>
           <button
             type="button"
-            className="canvas-soft-button canvas-clone-button"
+            className={`canvas-soft-button canvas-clone-button${cloneTask ? " busy" : ""}`}
             aria-haspopup="dialog"
-            title="克隆出片：拆解一条参考视频的节奏，用平台已配模型重写成你自己的片子"
+            title={cloneTask ? `克隆出片进行中：${cloneTask.message}` : "克隆出片：拆解一条参考视频的节奏，用平台已配模型重写成你自己的片子"}
             onClick={() => setCloneDialogOpen(true)}
           >
             ✦ 克隆出片
+            {cloneTask ? <span className="canvas-clone-progress">{Math.round(Math.max(0, Math.min(1, cloneTask.progress)) * 100)}%</span> : null}
           </button>
           {!topbarCollapsed && <button
             type="button"
@@ -15939,6 +15985,7 @@ export default function SuperCanvas() {
             defaultProviderName={runtime?.providers.find((provider) => provider.id === runtime?.settings.defaultProviderId)?.name}
             preselectedReferenceId={preselectedCloneReferenceId}
             notify={notify}
+            onImportReference={() => openFilePicker(screenToWorld(stageSize.width / 2, stageSize.height / 2))}
             onClose={() => setCloneDialogOpen(false)}
             onApply={(job) => applyCloneJob(job)}
           />,

@@ -13,6 +13,7 @@ const store = await readFile(new URL("../lib/clone/store.ts", import.meta.url), 
 const match_types = await readFile(new URL("../lib/types.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 const storeLib = await readFile(new URL("../lib/store.ts", import.meta.url), "utf8");
+const cloneTypes = await readFile(new URL("../lib/clone/types.ts", import.meta.url), "utf8");
 
 test("克隆弹窗是合法 TSX，并且具备三步式傻瓜操作", () => {
   const source = ts.createSourceFile("CanvasCloneDialog.tsx", dialog, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -55,7 +56,7 @@ test("弹窗按真实任务状态轮询并可取消、可放入画布", () => {
 
 test("画布工具栏与创建菜单都能打开克隆弹窗", () => {
   assert.match(canvas, /import CanvasCloneDialog, \{/);
-  assert.match(canvas, /className="canvas-soft-button canvas-clone-button"/);
+  assert.match(canvas, /canvas-soft-button canvas-clone-button/);
   assert.match(canvas, /✦ 克隆出片/);
   assert.match(canvas, /className="canvas-menu-item canvas-menu-item-clone"/);
   assert.match(canvas, /const \[cloneDialogOpen, setCloneDialogOpen\] = useState\(false\)/);
@@ -90,6 +91,12 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
 
 test("管线包含抽帧、拆解、配音、生图、生视频五步与三条降级链", () => {
   assert.match(pipeline, /extractFrameFiles\(/);
+  // 参考视频必须和 /api/storage/video 用同一套解析（回退历史目录），否则旧素材会解析成不存在的路径。
+  assert.match(pipeline, /resolveStoredVideoFileWithFallback\(state\.settings\.videoStoragePath \|\| '', name\)/);
+  assert.match(pipeline, /if \(!file \|\| !existsSync\(file\)\) throw new Error\('参考视频已不在本地存储里/);
+  // 抽帧失败要把 ffmpeg 的真实报错带进降级提示，否则「没拆出画面」无从排查。
+  assert.match(pipeline, /const reason = frames\.error \|\| \(frames\.files\.length \? '抽出来的帧读不出来' : '没有抽到帧'\)/);
+  assert.match(pipeline, /参考视频拆解不了（/);
   assert.match(pipeline, /probeMediaSeconds\(/);
   assert.match(pipeline, /synthesizeSpeech\(runtime, \{ text: shot\.line, voice: job\.options\.voice \}\)/);
   // 在线 TTS 不可用时用系统自带语音合成，不把「调用不了」留给用户。
@@ -132,7 +139,7 @@ test("高级设置里选的模型真的生效，降级都不静默，幂等键�
   assert.match(pipeline, /拆解降级要立刻落库/);
   assert.match(pipeline, /口播暂时用画面拆解描述代替/);
   assert.match(pipeline, /shots = replaceShot\(shots, index, \{ error: message \}\)/);
-  assert.match(pipeline, /mergeWarnings\(job\?\.warnings \|\| started\.warnings, failures\)/);
+  assert.match(pipeline, /mergeWarnings\(job\?\.warnings \|\| started\.warnings, voiceWarnings\)/);
   // 幂等键只挡正在跑的任务：已完成/已取消的旧任务不再占着键，避免第二次点「开始」拿回旧成片。
   assert.match(store, /const CLONE_FINISHED_STAGES: CloneStage\[\] = \['done', 'cancelled'\];/);
   assert.match(store, /delete existing\.idempotencyKey;/);
@@ -143,9 +150,92 @@ test("高级设置里选的模型真的生效，降级都不静默，幂等键�
 });
 
 test("克隆弹窗样式跟随画布主题并且窄屏可用", () => {
-  for (const selector of [".clone-backdrop{", ".clone-dialog{", ".clone-reference-card", ".clone-cost", ".clone-shots", ".clone-button.primary", ".clone-progress-track i{"]) {
+  for (const selector of [".clone-backdrop{", ".clone-dialog{", ".clone-reference-card", ".clone-cost", ".clone-shots", ".clone-button.primary", ".clone-progress-track i{", ".clone-reference-stack{", ".clone-import-row{", ".canvas-clone-progress{", ".canvas-clone-button.busy{"]) {
     assert.ok(styles.includes(selector), selector);
   }
   assert.match(styles, /\.canvas-topbar \.canvas-clone-button::before\{content:"✦"\}/);
   assert.match(styles, /@media\(max-width:720px\)\{\.clone-dialog/);
+});
+
+test("关掉弹窗不等于任务丢了：重开接回任务、失败可续跑、成片只放一次", () => {
+  // 打开弹窗先看有没有没跑完 / 没放进画布的任务，有就直接接回来接着显示。
+  assert.match(dialog, /const \[restoring, setRestoring\] = useState\(true\)/);
+  assert.match(dialog, /await fetch\("\/api\/clone\/jobs", \{ cache: "no-store" \}\)/);
+  assert.match(dialog, /if \(item\.appliedAt\) return false;/);
+  // 失败任务只在 24 小时内自动接回：陈年失败任务否则会永远顶掉向导。
+  assert.match(dialog, /const RESTORE_FAILED_WINDOW_MS = 24 \* 60 \* 60 \* 1000;/);
+  assert.match(dialog, /Date\.now\(\) - stamp < RESTORE_FAILED_WINDOW_MS/);
+  // 用户从画布某条视频点名进来时，不让旧任务顶掉他刚选的参考素材。
+  assert.match(dialog, /if \(preselectedReferenceId\) \{/);
+  assert.match(canvas, /return selectedVideos\.length === 1 \? selectedVideos\[0\] : null;/);
+  // 「重新设置」等于明确放弃这条任务，标记已处理后重开弹窗不再拿它来问。
+  assert.match(dialog, /markHandled\(\); setJob\(null\); setApplied\(false\)/);
+  assert.match(dialog, /function markHandled\(\)/);
+  assert.match(dialog, /正在读取最近的克隆任务/);
+  // 关弹窗时讲清楚任务还在跑，免得用户以为白跑一趟。
+  assert.match(dialog, /克隆任务在后台继续跑，重开「克隆出片」可查看进度或放入画布/);
+  assert.match(dialog, /function closeDialog\(\)/);
+  // 放进画布要落一个「已应用」标记，否则重开弹窗会把同一份成片再落一遍节点。
+  assert.match(dialog, /body: JSON\.stringify\(\{ action: "applied" \}\)/);
+  assert.match(jobRoute, /action === 'applied'/);
+  assert.match(jobRoute, /appliedAt: job\.appliedAt \|\| new Date\(\)\.toISOString\(\)/);
+  assert.match(cloneTypes, /appliedAt\?: string;/);
+  assert.match(store, /appliedAt: job\.appliedAt,/);
+  // 失败任务给一个显式的「继续任务」，而不是让用户靠「再点一次开始」去赌幂等键。
+  assert.match(dialog, /action: "resume" \}\)/);
+  assert.match(dialog, /沿用这条任务接着跑/);
+  assert.match(jobRoute, /if \(action !== 'resume'\)/);
+  assert.match(jobRoute, /void runCloneJob\(id\)/);
+});
+
+test("拆解轨道自动优先带视觉的模型，不再被默认纯文本模型拖成等间隔切分", () => {
+  assert.match(storeLib, /export async function getRuntimeVisionModel\(id: string \| null \| undefined\)/);
+  assert.match(storeLib, /const visionModels = compatible\.filter\(\(item\) => item\.capabilities\.includes\('vision'\)\);/);
+  assert.match(route, /getRuntimeVisionModel\(body\.chatModel \|\| null\)/);
+  assert.match(pipeline, /resolveSelectedModel\(started\.modelIds\?\.chat, '对话 \/ 拆解模型', \(id\) => getRuntimeVisionModel\(id\)\)/);
+  // 高级设置里的拆解模型按「视觉」筛，和服务端实际执行口径一致。
+  assert.match(dialog, /<span>拆解模型（需要视觉）<\/span>/);
+  assert.match(dialog, /models=\{models\} capability="vision" value=\{selectedModels\.chat\}/);
+});
+
+test("参考视频可以在弹窗里直接导入，成片落盘后清掉任务临时目录", () => {
+  assert.match(dialog, /onImportReference\?: \(\) => void;/);
+  assert.match(dialog, /＋ 导入参考视频/);
+  assert.match(dialog, /＋ 导入新的参考视频/);
+  assert.match(canvas, /onImportReference=\{\(\) => openFilePicker\(screenToWorld/);
+  // 参考视频副本 / 抽帧 / 配音探测文件在成片落盘后没有保留价值，不清就会一直堆着。
+  assert.match(pipeline, /export async function cleanupCloneJobDirectory\(id: string\)/);
+  assert.match(pipeline, /await cleanupCloneJobDirectory\(id\);/);
+  assert.match(pipeline, /if \(!relative \|\| relative\.startsWith\('\.\.'\) \|\| path\.isAbsolute\(relative\)\) return;/);
+  // 一句话要求可能很长，节点名只留开头。
+  assert.match(canvas, /\(job\.options\.brief \|\| job\.reference\.name \|\| "未命名"\)\.slice\(0, 24\)/);
+});
+test("没有对话模型也能出片：降级为纯画面，成片超长不静默", () => {
+  // 弹窗先把「文案只能靠对话模型」摆出来，用户才知道缺什么。
+  assert.match(dialog, /文案与字幕：\{flags\.hasChatModel \? "可用" : "缺对话模型，成片只有画面"\}/);
+  // 没有对话模型不再整条失败，降级成「只有画面」的成片。
+  assert.doesNotMatch(pipeline, /throw new Error\('文案生成失败/);
+  assert.match(pipeline, /本次成片只有画面，没有配音与字幕/);
+  // 成片时长按配音实际长度排，超过设置上限要提示而不是默默出片。
+  assert.match(pipeline, /秒超过设置的参考上限/);
+  // 阶段进度统一取 plan 的常量，避免两处手写数字漂移。
+  assert.match(pipeline, /progress: cloneStageProgress\('analyzing'\)/);
+  assert.match(pipeline, /progress: round3\(cloneStageProgress\('imaging'\) \+ 0\.26/);
+  assert.doesNotMatch(pipeline, /progress: 0\.(08|2|3|42|68|94)/);
+  // 离线配音真实用到的音色会回传，并在替换掉用户填的音色时说清楚。
+  assert.match(pipeline, /voice: audio\.voice/);
+  assert.match(pipeline, /本机离线配音没有「/);
+});
+
+test("画布顶栏在弹窗关掉后显示克隆进度，跑完/失败提示一次", () => {
+  assert.match(canvas, /const \[cloneTask, setCloneTask\] = useState/);
+  assert.match(canvas, /canvas-soft-button canvas-clone-button\$\{cloneTask \? " busy" : ""\}/);
+  assert.match(canvas, /className="canvas-clone-progress"/);
+  assert.match(canvas, /const running = jobs\.find\(\(job\) => job\.stage !== "done"/);
+  assert.match(canvas, /克隆出片已完成（\$\{finished\.shotCount \|\| 0\} 个镜头）/);
+  assert.match(canvas, /克隆出片失败：\$\{finished\.message/);
+  assert.match(canvas, /window\.setInterval\(\(\) => void tick\(\), 5000\)/);
+  // 隐藏的标签页不轮询；动画跟随项目的 reduced-motion 约定。
+  assert.match(canvas, /if \(window\.document\.hidden\) return;/);
+  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{html:not\(\[data-motion="on"\]\) \.canvas-clone-button\.busy\{animation:none\}\}/);
 });

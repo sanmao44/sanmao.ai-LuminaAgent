@@ -55,7 +55,7 @@ export type CloneCapabilities = {
   speech: boolean;
   image: boolean;
   video: boolean;
-  /** 没有在线 TTS 模型时，是否改用系统自带语音合成（Windows 的「本机离线配音」）。 */
+  /** 没有在线 TTS 模型时，是否改用系统自带语音合成（Windows / macOS 的「本机离线配音」）。 */
   offlineSpeech: boolean;
 };
 
@@ -104,6 +104,8 @@ export type CloneJob = {
   error?: string;
   cancelRequested?: boolean;
   finishedAt?: string;
+  /** 成片已经放进画布的时间：重开弹窗时不再拿旧成片问一遍，避免重复落节点。 */
+  appliedAt?: string;
 };
 
 export type { CanvasVideoEditorClip, CanvasVideoEditorState };

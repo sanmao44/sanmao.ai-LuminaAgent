@@ -86,6 +86,7 @@ export function cloneJobSummary(job: CloneJob) {
     referenceName: job.reference.name,
     duration: job.timeline.duration,
     warnings: job.warnings,
+    appliedAt: job.appliedAt,
   };
 }
 

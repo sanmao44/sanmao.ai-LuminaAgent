@@ -34,6 +34,8 @@ type CanvasCloneDialogProps = {
   defaultProviderName?: string;
   preselectedReferenceId?: string | null;
   notify: (message: string, tone?: "ok" | "error") => void;
+  /** 弹窗内直接导入参考视频（复用画布的导入流程，省得用户先关弹窗再去找工具栏）。 */
+  onImportReference?: () => void;
   onClose: () => void;
   onApply: (job: CloneJob) => void;
 };
@@ -46,6 +48,8 @@ const ASPECT_LABELS: Record<CloneOptions["aspect"], string> = {
 
 const VOICE_PRESETS = ["alloy", "echo", "fable", "nova", "onyx", "shimmer"];
 const TERMINAL_STAGES: CloneJob["stage"][] = ["done", "failed", "cancelled"];
+/** 失败任务只在 24 小时内自动接回：陈年失败任务否则会永远顶掉向导，每次打开弹窗都得先关掉它。 */
+const RESTORE_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SHOT_STATUS_LABELS: Record<string, string> = {
   pending: "等待",
   voicing: "配音",
@@ -77,6 +81,7 @@ export default function CanvasCloneDialog({
   defaultProviderName,
   preselectedReferenceId,
   notify,
+  onImportReference,
   onClose,
   onApply,
 }: CanvasCloneDialogProps) {
@@ -95,9 +100,12 @@ export default function CanvasCloneDialog({
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   const [job, setJob] = useState<CloneJob | null>(null);
-  // 服务端是否有本机离线配音兜底（Windows 才有）；只在没有在线配音模型时才用得上。
+  // 服务端是否有本机离线配音兜底（Windows / macOS 的系统语音合成）；只在没有在线配音模型时才用得上。
   const [offlineSpeech, setOfflineSpeech] = useState(false);
   const [applied, setApplied] = useState(false);
+  // 打开弹窗时先看看有没有上次没跑完 / 还没放进画布的任务：有就接着显示，而不是甩个向导。
+  const [restoring, setRestoring] = useState(true);
+  const [resuming, setResuming] = useState(false);
 
   const flags = useMemo(() => cloneCapabilityFlags(models), [models]);
   const reference = references.find((item) => item.nodeId === referenceId) || null;
@@ -113,13 +121,73 @@ export default function CanvasCloneDialog({
     return () => { disposed = true; };
   }, []);
 
+  /**
+   * 关掉弹窗不等于任务停了：说清楚，免得用户以为白跑一趟。
+   * 重开弹窗会自动接回这条任务（见下面的恢复逻辑）。
+   */
+  function closeDialog() {
+    if (running) notify("克隆任务在后台继续跑，重开「克隆出片」可查看进度或放入画布", "ok");
+    onClose();
+  }
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closeDialog();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  });
+
+  /**
+   * 接回最近一条「还在跑」或「出片了但没放进画布」的任务。
+   * 没有这一步，用户关掉弹窗后任务就只剩一个看不见的后台，重开还以为得从头再来。
+   */
+  useEffect(() => {
+    // 用户是从画布某条视频直接点进来的（右键 → 克隆出片）：他要的就是这条新视频，
+    // 别拿一条旧成片顶掉他刚选好的参考素材。
+    if (preselectedReferenceId) {
+      setRestoring(false);
+      return;
+    }
+    let disposed = false;
+    const restore = async () => {
+      try {
+        const listResponse = await fetch("/api/clone/jobs", { cache: "no-store" });
+        const listData = await listResponse.json().catch(() => ({}));
+        const summaries = Array.isArray(listData?.jobs) ? (listData.jobs as { id: string; stage: CloneJob["stage"]; appliedAt?: string; updatedAt?: string; createdAt?: string }[]) : [];
+        // 列表按最新在前：跳过已取消的、已经放入画布的（appliedAt = 已处理过），
+        // 失败任务只接回最近 24 小时的。
+        const pending = summaries.find((item) => {
+          if (item.appliedAt) return false;
+          if (!TERMINAL_STAGES.includes(item.stage)) return true;
+          if (item.stage === "done") return true;
+          if (item.stage !== "failed") return false;
+          const stamp = Date.parse(item.updatedAt || item.createdAt || "");
+          return Number.isFinite(stamp) && Date.now() - stamp < RESTORE_FAILED_WINDOW_MS;
+        });
+        if (!pending) return;
+        const response = await fetch(`/api/clone/jobs/${pending.id}`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (disposed || !response.ok || !data?.job) return;
+        const restored = data.job as CloneJob;
+        setJob(restored);
+        setApplied(Boolean(restored.appliedAt));
+      } catch {
+        // 接不回来就走正常的向导流程，不打断用户。
+      } finally {
+        if (!disposed) setRestoring(false);
+      }
+    };
+    void restore();
+    return () => { disposed = true; };
+  }, [preselectedReferenceId]);
+
+  // 画布里只有一条视频素材时直接选中并进第二步，用户点一下「开始」就能跑（弹窗内新导入也走这条）。
+  useEffect(() => {
+    if (referenceId || job || restoring || references.length !== 1) return;
+    setReferenceId(references[0].nodeId);
+    setStep(2);
+  }, [references, referenceId, job, restoring]);
 
   const jobId = job?.id || "";
   const jobStage = job?.stage || "";
@@ -212,10 +280,46 @@ export default function CanvasCloneDialog({
     }
   }
 
+  /**
+   * 标记这条任务「已处理」：放进画布，或者用户主动说不要了。
+   * 重开弹窗、画布顶栏的提示都靠它判断，免得同一条旧任务反复来问。
+   */
+  function markHandled() {
+    if (!job) return;
+    void fetch(`/api/clone/jobs/${job.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "applied" }),
+    }).catch(() => undefined);
+  }
+
   function applyResult() {
     if (!job) return;
     onApply(job);
     setApplied(true);
+    markHandled();
+  }
+
+  /** 继续任务：沿用同一条任务接着跑，已经生成好的镜头和配音会跳过，不重复计费。 */
+  async function resume() {
+    if (!job || resuming) return;
+    setResuming(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resume" }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "继续任务失败。");
+      setJob((data.job as CloneJob) || job);
+      notify("已接着跑这条克隆任务", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "继续任务失败。");
+    } finally {
+      setResuming(false);
+    }
   }
 
   const readyShots = job ? job.shots.filter((shot) => shot.videoUrl || shot.imageUrl).length : 0;
@@ -230,7 +334,7 @@ export default function CanvasCloneDialog({
       // 结果按钮收不到 click（和智能一键变体弹窗同一处理）。
       onPointerDown={(event) => {
         event.stopPropagation();
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) closeDialog();
       }}
       onPointerMove={(event) => event.stopPropagation()}
       onPointerUp={(event) => event.stopPropagation()}
@@ -244,7 +348,7 @@ export default function CanvasCloneDialog({
             <b>✦ 克隆出片</b>
             <small>拆解参考视频的结构与节奏，画面全部重新生成</small>
           </div>
-          <button type="button" className="clone-close" onClick={onClose} aria-label="关闭">×</button>
+          <button type="button" className="clone-close" onClick={closeDialog} aria-label="关闭">×</button>
         </header>
 
         {job ? (
@@ -288,7 +392,7 @@ export default function CanvasCloneDialog({
                   {cancelling ? "取消中…" : "取消任务"}
                 </button>
               ) : (
-                <button type="button" className="clone-button ghost" onClick={onClose}>关闭</button>
+                <button type="button" className="clone-button ghost" onClick={closeDialog}>关闭</button>
               )}
               {job.stage === "done" && readyShots > 0 && (
                 <button type="button" className="clone-button primary" onClick={applyResult} disabled={applied}>
@@ -296,12 +400,30 @@ export default function CanvasCloneDialog({
                 </button>
               )}
               {job.stage === "failed" && (
-                <button type="button" className="clone-button primary" onClick={() => { setJob(null); setError(""); }}>重新设置</button>
+                <>
+                  <button
+                    type="button"
+                    className="clone-button ghost"
+                    onClick={() => { markHandled(); setJob(null); setApplied(false); setError(""); }}
+                  >
+                    重新设置
+                  </button>
+                  <button type="button" className="clone-button primary" onClick={resume} disabled={resuming}>
+                    {resuming ? "正在继续…" : "继续任务"}
+                  </button>
+                </>
               )}
             </div>
             {job.stage === "done" && !applied && (
               <p className="clone-hint">成片时长 {formatSeconds(job.timeline.duration)}，可在视频编辑节点里直接微调再导出。</p>
             )}
+            {job.stage === "failed" && (
+              <p className="clone-hint">「继续任务」会沿用这条任务接着跑：已经生成好的配音和镜头会跳过，不会重复计费。</p>
+            )}
+          </div>
+        ) : restoring ? (
+          <div className="clone-body">
+            <p className="clone-empty">正在读取最近的克隆任务…</p>
           </div>
         ) : (
           <div className="clone-body">
@@ -312,7 +434,8 @@ export default function CanvasCloneDialog({
 
             {step === 1 ? (
               references.length ? (
-                <div className="clone-reference-grid">
+                <div className="clone-reference-stack">
+                  <div className="clone-reference-grid">
                   {references.map((option) => (
                     <button
                       type="button"
@@ -327,9 +450,22 @@ export default function CanvasCloneDialog({
                       </span>
                     </button>
                   ))}
+                  </div>
+                  {onImportReference && (
+                    <div className="clone-import-row">
+                      <button type="button" className="clone-button ghost" onClick={onImportReference}>＋ 导入新的参考视频</button>
+                    </div>
+                  )}
                 </div>
               ) : (
-                <p className="clone-empty">画布里还没有视频素材。先用「＋ 导入素材」导入一条参考视频，再回来一键出片。</p>
+                <div className="clone-form">
+                  <p className="clone-empty">画布里还没有视频素材。可以直接导入一条参考视频（也可以用工具栏的「＋ 导入素材」）。</p>
+                  {onImportReference && (
+                    <div className="clone-import-row">
+                      <button type="button" className="clone-button primary" onClick={onImportReference}>＋ 导入参考视频</button>
+                    </div>
+                  )}
+                </div>
               )
             ) : (
               <div className="clone-form">
@@ -378,7 +514,7 @@ export default function CanvasCloneDialog({
                     />
                   </label>
                   <label className="clone-field">
-                    <span>成片时长上限（秒）</span>
+                    <span>参考时长上限（秒）</span>
                     <input
                       type="number"
                       min={CLONE_MIN_SECONDS}
@@ -404,11 +540,12 @@ export default function CanvasCloneDialog({
 
                 <div className="clone-cost">
                   <b>预计最多 {maxShots} 次生图{flags.hasVideoModel ? ` + ${maxShots} 次生视频` : ""}{flags.hasSpeechModel ? ` + ${maxShots} 次配音` : ""}</b>
-                  <small>按镜头数上限估算，实际按拆解结果决定；成片不超过 {formatSeconds(maxSeconds)}。</small>
+                  <small>按镜头数上限估算，实际按拆解结果决定；只拆解参考视频前 {formatSeconds(maxSeconds)}，成片长度按配音实际时长排（文案写长了会略长，任务里会提示）。</small>
                 </div>
 
                 <div className="clone-capabilities">
                   <span className={flags.hasVisionModel ? "ok" : "warn"}>画面拆解：{flags.hasVisionModel ? "可用" : "缺视觉对话模型（按镜头数平均分配时长）"}</span>
+                  <span className={flags.hasChatModel ? "ok" : "warn"}>文案与字幕：{flags.hasChatModel ? "可用" : "缺对话模型，成片只有画面"}</span>
                   <span className={flags.hasImageModel ? "ok" : "warn"}>生图：{flags.hasImageModel ? "可用" : "缺少生图模型，无法开始"}</span>
                   <span className={flags.hasVideoModel ? "ok" : "warn"}>图生视频：{flags.hasVideoModel ? "可用" : "没有视频模型，镜头用静态图"}</span>
                   <span className={flags.hasSpeechModel || offlineSpeech ? "ok" : "warn"}>配音：{flags.hasSpeechModel ? "可用" : offlineSpeech ? "可用（本机离线配音，免费，音色偏机械）" : "没有配音模型，成片无声 + 字幕（到「模型库」把 TTS 模型类型改成「配音」并启用）"}</span>
@@ -426,8 +563,8 @@ export default function CanvasCloneDialog({
                 </button>
                 {advancedOpen && (
                   <div className="clone-advanced">
-                    <label><span>对话 / 拆解模型</span>
-                      <ModelPicker models={models} capability="chat" value={selectedModels.chat} onChange={(value) => setSelectedModels((current) => ({ ...current, chat: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
+                    <label><span>拆解模型（需要视觉）</span>
+                      <ModelPicker models={models} capability="vision" value={selectedModels.chat} onChange={(value) => setSelectedModels((current) => ({ ...current, chat: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
                     </label>
                     <label><span>生图模型</span>
                       <ModelPicker models={models} capability="generate" value={selectedModels.image} onChange={(value) => setSelectedModels((current) => ({ ...current, image: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} />
@@ -451,7 +588,7 @@ export default function CanvasCloneDialog({
               {step === 2 && (
                 <button type="button" className="clone-button ghost" onClick={() => setStep(1)}>上一步</button>
               )}
-              <button type="button" className="clone-button ghost" onClick={onClose}>取消</button>
+              <button type="button" className="clone-button ghost" onClick={closeDialog}>取消</button>
               {step === 2 && (
                 <button type="button" className="clone-button primary" onClick={start} disabled={starting || !reference || !flags.hasImageModel}>
                   {starting ? "正在创建任务…" : "开始克隆出片"}
