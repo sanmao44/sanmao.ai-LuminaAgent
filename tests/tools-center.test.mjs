@@ -34,9 +34,10 @@ test('装完/停掉之后要丢掉工具缓存，否则模型还会拿着旧工�
 
 test('执行代码的工具不能被「以后直接允许」记住，接口和面板都拦一道', () => {
   // 判定层不认这条记忆（见 agent-approval.test.mjs），这里管的是「别让用户勾一个不生效的状态」。
-  assert.match(approvalSource, /if \(next === 'always_allow' && isUnbypassableApprovalTool\(key\)\) \{/);
-  assert.match(probeRoute, /unbypassable: isUnbypassableApprovalTool\(tool\.name\)/);
-  assert.match(panel, /\{tool\.unbypassable/);
+  assert.match(approvalSource, /if \(next === 'always_allow' && unbypassable\) \{/);
+  assert.match(approvalSource, /const unbypassable = unbypassableApprovalReason\(key\);/);
+  assert.match(probeRoute, /unbypassableReason: unbypassableApprovalReason\(tool\.name\)/);
+  assert.match(panel, /\{tool\.unbypassableReason/);
   assert.match(panel, /每次都问（不可记住）/);
 });
 

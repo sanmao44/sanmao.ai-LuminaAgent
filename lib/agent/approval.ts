@@ -82,6 +82,20 @@ const BROWSER_SILENT_TOOLS = new Set([
  */
 const BROWSER_CODE_TOOLS = new Set(['browser_evaluate', 'browser_run_code_unsafe']);
 
+/**
+ * 把本机文件送出去的一步：上传、拖入。
+ *
+ * 页面文案看不出风险（点「上传」和点「搜索」长得一样），但文件出门就收不回来，
+ * 所以不按文案判断，也不吃「以后直接允许」：每次都要用户点一下。
+ */
+const BROWSER_EGRESS_TOOLS = new Set(['browser_file_upload', 'browser_drop']);
+
+/** 免不掉确认的工具（见 unbypassableApprovalReason）与给用户看的理由。 */
+const UNBYPASSABLE_APPROVAL_REASONS: ReadonlyMap<string, string> = new Map([
+  ...[...BROWSER_CODE_TOOLS].map((name) => [name, '它会在页面里执行代码'] as const),
+  ...[...BROWSER_EGRESS_TOOLS].map((name) => [name, '它会把本机文件传到外部站点'] as const),
+]);
+
 /** 不可逆或涉及钱与数据的动作。命中就要用户确认。 */
 const RISKY_ACTION_PATTERN = /(提交|下单|购买|付款|支付|转账|汇款|提现|充值|删除|注销|解绑|退订|发布|发送|授权|确认订单|确认支付|confirm\s+(order|payment)|submit|purchase|checkout|\bpay\b|transfer|delete|remove|publish|unsubscribe|authorize|revoke|deploy)/i;
 
@@ -146,18 +160,28 @@ export function normalizeToolApprovalPolicy(value: unknown): ToolApprovalPolicy 
 }
 
 /**
- * 这个工具的确认能不能被「以后直接允许」免掉。入参接受注册表 id（mcp:服务:工具）、
- * 模型看到的名字（服务__工具）或裸工具名。
- *
- * 现在只有一类：在页面里执行代码的浏览器工具。放行它等于把整台浏览器连同登录态交出去，
- * 所以面板不给它记「以后直接允许」，判定和落盘也各挡一道，旧记忆不会因为存在就生效。
+ * 有两类确认免不掉（见 UNBYPASSABLE_APPROVAL_REASONS）：在页面里执行代码、把本机文件传出去。
+ * 它们不该被「以后直接允许」这种按工具的记忆跳过——记的是工具，不是这一次要做什么；
+ * 面板据此不给记，判定和落盘也各挡一道，旧记忆不会因为存在就生效。
  */
-export function isUnbypassableApprovalTool(value: unknown): boolean {
+
+/** 从注册表 id（mcp:服务:工具）、模型看到的名字（服务__工具）或裸工具名里取出工具名。 */
+function toolNameOf(value: unknown): string {
   const raw = String(value ?? '').trim();
-  if (!raw) return false;
-  if (raw.includes(':')) return BROWSER_CODE_TOOLS.has(raw.split(':').pop() || '');
-  if (raw.includes('__')) return BROWSER_CODE_TOOLS.has(raw.split('__').pop() || '');
-  return BROWSER_CODE_TOOLS.has(raw);
+  if (!raw) return '';
+  if (raw.includes(':')) return raw.split(':').pop() || '';
+  if (raw.includes('__')) return raw.split('__').pop() || '';
+  return raw;
+}
+
+export function isUnbypassableApprovalTool(value: unknown): boolean {
+  return unbypassableApprovalReason(value) !== null;
+}
+
+/** 免不掉确认的理由；null 表示这个工具可以记「以后直接允许」。 */
+export function unbypassableApprovalReason(value: unknown): string | null {
+  const name = toolNameOf(value);
+  return name ? UNBYPASSABLE_APPROVAL_REASONS.get(name) || null : null;
 }
 
 export function resolveToolApprovalsFile(options: { dataDir?: string } = {}) {
@@ -198,8 +222,9 @@ export function setToolApprovalPolicy(toolId: unknown, policy: unknown, options:
   if (!key) throw new Error('缺少工具 id');
   const next = normalizeToolApprovalPolicy(policy);
   // 免不掉确认的工具不留 always_allow：存下来也不生效，只会让状态对不上。
-  if (next === 'always_allow' && isUnbypassableApprovalTool(key)) {
-    throw new Error('这个工具每次都要问：它会在页面里执行代码，不能记成「以后直接允许」');
+  const unbypassable = unbypassableApprovalReason(key);
+  if (next === 'always_allow' && unbypassable) {
+    throw new Error(`这个工具每次都要问：${unbypassable}，不能记成「以后直接允许」`);
   }
   const policies = readToolApprovalPolicies(options);
   if (next === 'ask') delete policies[key];
@@ -354,12 +379,20 @@ export function assessToolApproval(input: {
     return { blocked: true, required: false, risk, reason: '你已经把这一步设成「直接拒绝」，它不会再被调用。' };
   }
   const assessment = assessMcpToolCall(definition, risk, input);
-  // 「以后直接允许」只跳过按风险要的确认：读敏感文件那一次、在页面里执行代码那一次仍然要问，
-  // 因为那是「这一次要做什么」，和「这个工具平时能不能用」是两件事。
+  // 「以后直接允许」只跳过按风险要的确认：读敏感文件、在页面里执行代码、把本机文件传出去
+  // 这几种仍然要问，因为要不要确认取决于「这一次要做什么」，和「这个工具平时能不能用」是两件事。
   if (remembered === 'always_allow' && assessment.required && !assessment.unbypassable && !String(input.sensitiveHint || '').trim()) {
     return { ...assessment, required: false };
   }
   return assessment;
+}
+
+/** browser_drop 的 args 里带没带本机文件：只带 data 的拖拽没有东西出门。 */
+function dropCarriesFiles(args: unknown) {
+  const input = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+  const files = input.paths ?? input.path;
+  const list = Array.isArray(files) ? files : files === undefined || files === null ? [] : [files];
+  return list.some((item) => typeof item === 'string' && item.trim());
 }
 
 /** 纯内容判断：只按风险等级、工具名和页面文本决定要不要确认。 */
@@ -372,11 +405,17 @@ function assessMcpToolCall(
   // 完全访问：连不可逆的操作也不问。切到这一档要在面板上再确认一次，并写清后果。
   if (policy === 'full') return { required: false, risk, reason: '' };
   const sensitive = String(input.sensitiveHint || '').trim();
+  const toolName = toolNameOf(definition.name);
+  // 上传、拖入本机文件：页面文案看不出风险，但文件出门就收不回来，所以每次都问。
+  // 拖入不带本机文件时（拖的是页面里的数据）没有东西出门，照旧按页面文案判断。
+  const sendsLocalFile = BROWSER_EGRESS_TOOLS.has(toolName) && (toolName !== 'browser_drop' || dropCarriesFiles(input.args));
+  if (sendsLocalFile) {
+    return { required: true, risk, reason: '这一步会把本机文件传到外部站点，传出去就收不回来', unbypassable: true };
+  }
   if (risk === 'read') {
     if (sensitive) return { required: true, risk, reason: sensitive, unbypassable: true };
     return { required: false, risk, reason: '' };
   }
-  const toolName = String(definition.name || '').split('__').pop() || '';
   // 在页面里执行代码等于把那台浏览器（含登录态）交给模型：标准信任档也要停下来问。
   // 只有用户明确切到「完全访问」才不问；按工具记的「以后直接允许」不顶用（unbypassable）。
   if (BROWSER_CODE_TOOLS.has(toolName)) {

@@ -1,4 +1,4 @@
-import { isUnbypassableApprovalTool } from '@/lib/agent/approval';
+import { unbypassableApprovalReason } from '@/lib/agent/approval';
 import { isAdminRequest } from '@/lib/auth';
 import { probeMcpServer } from '@/lib/mcp/client';
 import { MCP_MAX_TOOLS_PER_SERVER, listMcpServers, normalizeMcpServerId } from '@/lib/mcp/store';
@@ -36,8 +36,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         readOnly: tool.annotations?.readOnlyHint === true,
         // 参数结构超限的工具不会下发给模型，这里如实标出来，别让用户以为勾了就生效。
         oversized: isMcpToolSchemaTooLarge(tool),
-        // 免不掉确认的工具：面板据此不给「以后直接允许」，免得勾了一个其实不生效的状态。
-        unbypassable: isUnbypassableApprovalTool(tool.name),
+        // 免不掉确认的工具（附理由）：面板据此不给「以后直接允许」，免得勾了一个其实不生效的状态。
+        unbypassableReason: unbypassableApprovalReason(tool.name),
         enabled: (!enabledTools.size || enabledTools.has(tool.name)) && !isMcpToolSchemaTooLarge(tool),
       })),
     });

@@ -350,6 +350,33 @@ test('工具授权记忆：执行代码类的工具不能记成「以后直接�
       assert.equal(verdict.required, true, '在页面里执行代码这一步不能被「以后直接允许」免掉');
       assert.equal(verdict.unbypassable, true);
     }
+    // 上传 / 拖入本机文件：页面文案看不出风险，但文件出门就收不回来。
+    for (const name of ['browser_file_upload', 'browser_drop']) {
+      assert.equal(approval.isUnbypassableApprovalTool(name), true);
+      assert.match(approval.unbypassableApprovalReason(name), /本机文件/);
+    }
+    const upload = approval.assessToolApproval({
+      definition: mcpTool('browser_file_upload', 'external_side_effect'),
+      args: { paths: ['D:\\文档\\报价单.xlsx'] },
+      pageText: '填写表单',
+      toolPolicy: 'always_allow',
+    });
+    assert.equal(upload.required, true, '上传本机文件不该被「以后直接允许」静默放行');
+    assert.equal(upload.unbypassable, true);
+    assert.match(upload.reason, /本机文件/);
+    const fileDrop = approval.assessToolApproval({
+      definition: mcpTool('browser_drop', 'external_side_effect'),
+      args: { element: '上传区', paths: ['D:\\文档\\报价单.xlsx'] },
+      toolPolicy: 'always_allow',
+    });
+    assert.equal(fileDrop.required, true, '拖入本机文件同理');
+    // 只拖页面里的数据时没有东西出门，照旧按页面文案判断，也别耽误用户放开记忆。
+    const dataDrop = approval.assessToolApproval({
+      definition: mcpTool('browser_drop', 'external_side_effect'),
+      args: { element: '看板', data: 'card-1' },
+      pageText: '把卡片拖到另一列',
+    });
+    assert.equal(dataDrop.required, false);
     assert.equal(approval.isUnbypassableApprovalTool('browser_click'), false, '普通写入类工具照旧可以记');
     assert.equal(approval.isUnbypassableApprovalTool('mcp:playwright:browser_click'), false);
     assert.equal(approval.isUnbypassableApprovalTool(''), false);
