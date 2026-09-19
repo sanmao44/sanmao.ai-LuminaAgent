@@ -411,3 +411,48 @@ test('docx 预览的文档字色走 CSS 变量，深色主题下自动提亮', a
     assert.match(html, /\.theme-dark \.doc-fg \{ color:color-mix\(in srgb, var\(--doc-fg\) 30%, #ffffff 70%\); \}/, '深色主题要整体提亮');
   });
 });
+
+test('xlsx 预览把没有缓存结果的公式显示成公式，并把超链接地址放进提示', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateSpreadsheetArtifact({
+      filename: '公式.xlsx',
+      sheets: [{
+        name: '测算',
+        columns: [
+          { key: 'item', header: '项目' },
+          { key: 'amount', header: '金额' },
+          { key: 'double', header: '两倍' },
+          { key: 'source', header: '来源' },
+        ],
+        rows: [{ item: '人力', amount: 12000, double: { formula: 'B2*2' }, source: { url: 'https://example.com/a', text: '明细' } }],
+      }],
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'spreadsheet',
+      name: '公式.xlsx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    assert.match(html, /<td class="formula" title="公式 =B2\*2：预览按公式显示，Excel 打开后自动计算"><span class="fx">=B2\*2<\/span><\/td>/, '没有缓存结果的公式不能显示成空白单元格');
+    assert.match(html, /<td class="link-cell" title="链接：https:\/\/example\.com\/a"><span class="ln">明细<\/span><\/td>/, '超链接要给地址提示');
+    assert.ok(!html.includes('<a href="https://example.com/a"'), '沙箱里没有 allow-popups，不能生成点不开的外链');
+  });
+});
+
+test('pptx 预览把演讲者备注排成备注块，备注里的标签只当文本', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '备注.pptx',
+      slides: [
+        { layout: 'title', title: '首页' },
+        { layout: 'bullets', title: '第二页', bullets: ['要点'], notes: '开场先讲成本。\n再讲进度。<b>加粗</b>' },
+      ],
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'presentation',
+      name: '备注.pptx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    assert.match(html, /<div class="slide-notes"><span class="slide-notes-label">备注<\/span>开场先讲成本。\n再讲进度。&lt;b&gt;加粗&lt;\/b&gt;<\/div>/, '备注要还原换行并转义');
+    assert.equal((html.match(/class="slide-notes"/g) || []).length, 1, '没有备注的幻灯片不要输出空备注块');
+  });
+});

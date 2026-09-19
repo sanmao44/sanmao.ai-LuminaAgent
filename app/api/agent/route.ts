@@ -164,6 +164,8 @@ const tools = [
                 level: { type: 'integer', enum: [1, 2, 3] },
                 paragraphs: { type: 'array', items: { type: 'string' } },
                 bullets: { type: 'array', items: { type: 'string' } },
+                orderedBullets: { type: 'array', items: { type: 'string' }, description: '有序列表，按 1. 2. 3. 编号排版。' },
+                code: { type: 'array', items: { type: 'string' }, description: '代码块，每项一段，用等宽字体加底纹排版。' },
                 images: {
                   type: 'array',
                   description: '本章节插图；ref 必须来自图片工具返回的 ref，caption 可选。',

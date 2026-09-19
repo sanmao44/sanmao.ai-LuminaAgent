@@ -142,6 +142,9 @@ table { border-collapse:collapse; width:100%; font-size:13px; }
 th,td { border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; white-space:pre-wrap; word-break:break-word; }
 th { background:var(--head); font-weight:600; }
 td.num { text-align:right; font-variant-numeric:tabular-nums; }
+.fx { color:var(--muted); font-style:italic; }
+.ln { text-decoration:underline dotted; text-underline-offset:2px; }
+.ln::after { content:" ↗"; color:var(--muted); font-size:11px; }
 figure { margin:12px 0; }
 .doc-figure img { display:block; max-width:100%; height:auto; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
 .slide-media { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
@@ -166,6 +169,8 @@ table.sticky-head th { position:sticky; top:0; z-index:1; }
 .slide-col { padding:10px 12px; border:1px solid rgba(127,127,127,.28); border-radius:8px; background:rgba(127,127,127,.08); }
 .slide-col-title { font-weight:700; margin-bottom:6px; }
 .slide-col ul { margin:0; }
+.slide-notes { margin-top:10px; padding:8px 10px; border-left:3px solid currentColor; border-radius:0 8px 8px 0; background:rgba(127,127,127,.14); color:inherit; opacity:.78; font-size:12.5px; white-space:pre-wrap; }
+.slide-notes-label { display:inline-block; margin-right:6px; padding:0 6px; border:1px solid currentColor; border-radius:6px; font-size:11px; }
 .sheet-title { font-size:15px; font-weight:600; margin:18px 0 8px; }
 .meta { color:var(--muted); font-size:12px; margin:6px 0 12px; }
 .note { margin-top:16px; padding:8px 12px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); font-size:12px; }
@@ -206,7 +211,7 @@ function emptyBlock() {
 }
 
 type SpreadsheetCellStyle = { background: string; bold: boolean; color: string; barColor: string; barRatio: number };
-type SpreadsheetCell = { text: string; numeric: boolean; style: SpreadsheetCellStyle };
+type SpreadsheetCell = { text: string; numeric: boolean; style: SpreadsheetCellStyle; formula: string; link: string };
 
 function cellIsNumeric(cell: ExcelJS.Cell) {
   const value = cell.value;
@@ -265,6 +270,24 @@ function cellDisplayText(cell: ExcelJS.Cell) {
     if (formatted) return formatted;
   }
   return String(cell.text ?? '').replace(/\s+$/, '');
+}
+
+/**
+ * 生成器写出的公式不带缓存结果（值要等 Excel 打开后自己算），这时 exceljs 读到的 cell.text
+ * 是空串，预览会把整列公式显示成空白单元格。这里退回公式本身，至少让人看到「这里有个公式」。
+ */
+function cellFormulaText(cell: ExcelJS.Cell) {
+  const value = cell.value as { formula?: unknown; result?: unknown } | null | undefined;
+  const formula = value && typeof value === 'object' && typeof value.formula === 'string' ? value.formula.trim() : '';
+  if (!formula) return '';
+  return value?.result === undefined || value?.result === null ? `=${formula}` : '';
+}
+
+/** 超链接单元格在预览的 sandbox iframe 里点不开（没有 allow-popups），只把地址放进提示，不生成会静默失效的 <a>。 */
+function cellLinkUrl(cell: ExcelJS.Cell) {
+  const value = cell.value as { hyperlink?: unknown } | null | undefined;
+  const url = value && typeof value === 'object' ? String(value.hyperlink || '') : '';
+  return /^https?:\/\//i.test(url) ? url : '';
 }
 
 /** Excel 的颜色一律是 ARGB，预览只认 6 位十六进制（其余如主题色直接放弃）。 */
@@ -529,6 +552,15 @@ function styleAttribute(style: SpreadsheetCellStyle) {
   return declarations.length ? ` style="${declarations.join(';')}"` : '';
 }
 
+/** 公式、超链接单元格靠类名与 title 提示表达，不能生成点了没反应的链接。 */
+function cellAttributes(cell: SpreadsheetCell) {
+  const classes = [cell.numeric ? 'num' : '', cell.formula ? 'formula' : '', cell.link ? 'link-cell' : ''].filter(Boolean).join(' ');
+  const attributes = [classes ? ` class="${classes}"` : ''];
+  if (cell.formula) attributes.push(` title="公式 ${escapeHtml(cell.text)}：预览按公式显示，Excel 打开后自动计算"`);
+  if (cell.link) attributes.push(` title="链接：${escapeHtml(cell.link)}"`);
+  return attributes.join('');
+}
+
 /** Excel 预览还原显示文本（公式取计算结果）、底纹、字体与条件格式。 */
 async function spreadsheetPreview(data: Buffer) {
   const workbook = new ExcelJS.Workbook();
@@ -555,9 +587,12 @@ async function spreadsheetPreview(data: Buffer) {
       const cells: SpreadsheetCell[] = [];
       for (let columnIndex = 1; columnIndex <= columnCount; columnIndex += 1) {
         const cell = row.getCell(columnIndex);
+        const formula = cellFormulaText(cell);
         cells.push({
-          text: cellDisplayText(cell),
+          text: formula || cellDisplayText(cell),
           numeric: cellIsNumeric(cell),
+          formula,
+          link: cellLinkUrl(cell),
           style: cellStyle(cell, conditional, rowIndex, columnIndex),
         });
       }
@@ -589,7 +624,14 @@ async function spreadsheetPreview(data: Buffer) {
     blocks.push('<tbody>');
     for (const row of body) {
       blocks.push('<tr>');
-      for (const cell of row) blocks.push(`<td${cell.numeric ? ' class="num"' : ''}${styleAttribute(cell.style)}>${escapeHtml(cell.text)}</td>`);
+      for (const cell of row) {
+        const content = cell.formula
+          ? `<span class="fx">${escapeHtml(cell.text)}</span>`
+          : cell.link
+            ? `<span class="ln">${escapeHtml(cell.text)}</span>`
+            : escapeHtml(cell.text);
+        blocks.push(`<td${cellAttributes(cell)}${styleAttribute(cell.style)}>${content}</td>`);
+      }
       blocks.push('</tr>');
     }
     blocks.push('</tbody></table>');
@@ -1105,6 +1147,33 @@ function chartHtml(data: ChartData) {
   return `${title}${svg ? `<figure class="chart-figure">${svg}</figure>` : ''}<table class="chart-table">${head}${rows}</table>`;
 }
 
+/** 演讲者备注存在 notesSlides 部件里，只有这一页自己的 rels 才知道对应哪一份。 */
+function notesSlidePath(entries: Record<string, Uint8Array>, slidePath: string) {
+  const split = slidePath.lastIndexOf('/');
+  const dir = split >= 0 ? slidePath.slice(0, split + 1) : '';
+  const xml = readPart(entries, `${dir}_rels/${slidePath.slice(split + 1)}.rels`);
+  if (!xml) return '';
+  for (const tag of xml.match(/<Relationship\b[^>]*>/g) || []) {
+    if (!/Type="[^"]*\/notesSlide"/i.test(tag)) continue;
+    const target = /\bTarget="([^"]+)"/.exec(tag)?.[1];
+    const resolved = target ? resolvePartTarget(dir, decodeXml(target)) : null;
+    if (resolved) return resolved;
+  }
+  return '';
+}
+
+/** 备注页里除了正文还有个幻灯片编号域，只取 body 占位符里的段落。 */
+function slideNotesText(xml: string) {
+  const shape = (xml.match(/<p:sp>[\s\S]*?<\/p:sp>/g) || []).find((part) => /<p:ph\b[^>]*type="body"/.test(part));
+  if (!shape) return '';
+  return shape
+    .replace(/<a:fld\b[\s\S]*?<\/a:fld>/g, '')
+    .split(/<\/a:p>/)
+    .map((paragraph) => decodeXml(paragraph.replace(/<a:br\b[^>]*\/>/g, '\n').replace(/<[^>]+>/g, '')).replace(/\r\n?/g, '\n').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 function presentationPreview(data: Buffer) {
   const entries = unzipSync(new Uint8Array(data));
   const slideNames = Object.keys(entries)
@@ -1150,6 +1219,9 @@ function presentationPreview(data: Buffer) {
     if (images.length) {
       blocks.push(`<div class="slide-media">${images.map((src) => `<img src="${src}" alt="幻灯片插图" />`).join('')}</div>`);
     }
+    const notesPart = notesSlidePath(entries, name);
+    const notes = notesPart ? slideNotesText(readPart(entries, notesPart) || '') : '';
+    if (notes) blocks.push(`<div class="slide-notes"><span class="slide-notes-label">备注</span>${escapeHtml(notes)}</div>`);
     blocks.push('</section>');
   });
   if (budget.skipped) blocks.push(noteBlock(`${budget.skipped} 张插图过大或过多，未在预览中显示。`));

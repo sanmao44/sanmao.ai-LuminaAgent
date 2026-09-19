@@ -129,3 +129,11 @@ test('历史里助手生成的文件回传 artifact 元数据，跨轮打包才�
   const payloadMatches = page.match(/\)\) : historyArtifactFiles\((m|item)\)/g) || [];
   assert.equal(payloadMatches.length, 2);
 });
+
+test('document_generate 的 sections 暴露生成器已支持的有序列表与代码块', () => {
+  const sectionStart = route.indexOf("description: '结构化章节；与 markdown 二选一或同时使用。'");
+  assert.notEqual(sectionStart, -1);
+  const schema = route.slice(sectionStart, route.indexOf('required: [],', sectionStart));
+  assert.match(schema, /orderedBullets: \{ type: 'array', items: \{ type: 'string' \}, description: '有序列表，按 1\. 2\. 3\. 编号排版。' \}/);
+  assert.match(schema, /code: \{ type: 'array', items: \{ type: 'string' \}, description: '代码块，每项一段，用等宽字体加底纹排版。' \}/);
+});
