@@ -136,6 +136,39 @@ test('取消与重试接进了服务层和任务接口', async () => {
   assert.match(videoRoute, /先取消任务再删除/);
   assert.match(upscaleRoute, /先取消任务再删除/);
 });
+
+test('高清放大的云端任务也写生成记录，成功/取消/失败都收尾', async () => {
+  const service = await readFile(new URL('../lib/upscale-service.ts', import.meta.url), 'utf8');
+  const store = await readFile(new URL('../lib/upscale-task-store.ts', import.meta.url), 'utf8');
+  const route = await readFile(new URL('../app/api/upscale/route.ts', import.meta.url), 'utf8');
+
+  assert.match(service, /import \{ finishGenerationLog, startGenerationLog, type GenerationLog \} from '\.\/generation-log';/);
+  assert.match(service, /const logId = await startGenerationLog\(\{/, '云端任务要有开始记录');
+  assert.match(service, /existing = await updateUpscaleTask\(existing\.id, \{ logId \}\) \|\| existing;/, '记录 id 要落在任务上');
+  assert.match(service, /if \(!task\?\.logId\) return;/, '升级前遗留的旧任务不该补出只有结尾的孤儿记录');
+  assert.match(service, /\{ status: 'success', imageCount: 1, imageUrls: \[saved\.url\]/, '成功要写回图片地址');
+  assert.match(service, /errorCode: 'CANCELLED'/);
+  assert.match(service, /errorCode: 'TASK_TIMEOUT'/);
+  assert.match(store, /logId\?: string;/);
+  assert.match(route, /logId: String\(body\.taskId \|\| ''\)\.trim\(\) \|\| undefined,/, '界面任务 id 要作为记录 id 传下去');
+  assert.match(route, /prompt: promptForLog,/);
+});
+
+test('生成记录按 id 收尾：取消后只剩下一条已取消的记录', async () => {
+  const { main: logs } = await buildLibModules(['lib/image-storage', 'lib/generation-log'], 'generation-log');
+  const task = (await upscaleStore.createUpscaleTask({ provider: 'aliyun-viapi', model: 'aliyun-generative-super-resolution', scale: 2, sourceImageId: 'image-1', reference: '/tmp/source.png', status: 'processing', idempotencyKey: 'cancel-log-key' })).task;
+  const logId = await logs.startGenerationLog({ mode: 'upscale', source: 'workspace', prompt: 'Upscale this image', modelName: '测试超分模型' }, task.id);
+  const updated = await upscaleStore.updateUpscaleTask(task.id, { logId });
+  assert.equal(updated.logId, task.id, '记录 id 要落在任务上，取消时才对得上');
+
+  await logs.finishGenerationLog(logId, { status: 'error', durationMs: 12, error: '用户已取消', errorCode: 'CANCELLED' });
+  const entries = (await logs.listGenerationLogs(50)).filter((entry) => entry.id === logId);
+  assert.equal(entries.length, 1, '开始与收尾要合并成一条记录');
+  assert.equal(entries[0].status, 'error');
+  assert.equal(entries[0].errorCode, 'CANCELLED');
+  assert.equal(entries[0].prompt, 'Upscale this image', '收尾不该丢掉开始时的提示词');
+  assert.ok(entries[0].createdAt, '开始时间要保留');
+});
 test('视频卡片给出停止跟踪与重试入口，取消状态也有对应文案', async () => {
   const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const card = await readFile(new URL('../components/VideoRecordCard.tsx', import.meta.url), 'utf8');

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { GenerationSource } from './generation-source';
 import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 import { createTaskStore } from './task-store';
 
@@ -15,6 +16,11 @@ export type UpscaleTask = {
   sourceImageId: string;
   /** 原图引用，重试时要用它重新提交。 */
   reference?: string;
+  /** 生成记录 id：取消、成功、失败都靠它给记录收尾。 */
+  logId?: string;
+  /** 发起这条任务时的提示词与来源，重试时沿用同一套记录描述。 */
+  prompt?: string;
+  source?: GenerationSource;
   status: UpscaleTaskStatus;
   localImageUrl?: string;
   errorCode?: string;

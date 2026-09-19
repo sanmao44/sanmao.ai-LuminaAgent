@@ -46,6 +46,10 @@ export async function POST(request: Request) {
         outputFormat: body.outputFormat,
         outputQuality: body.outputQuality,
         idempotencyKey: String(body.idempotencyKey || body.taskId || '').trim() || undefined,
+        logId: String(body.taskId || '').trim() || undefined,
+        prompt: promptForLog,
+        source: sourceForLog,
+        references: referenceRecords.length ? referenceRecords : undefined,
       });
       const task = cloud.task;
       return Response.json({
