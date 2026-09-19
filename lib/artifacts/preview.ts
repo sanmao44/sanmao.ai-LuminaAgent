@@ -180,7 +180,8 @@ function emptyBlock() {
   return `<p class="empty">${escapeHtml(EMPTY_NOTE)}</p>`;
 }
 
-type SpreadsheetCell = { text: string; numeric: boolean };
+type SpreadsheetCellStyle = { background: string; bold: boolean; color: string; barColor: string; barRatio: number };
+type SpreadsheetCell = { text: string; numeric: boolean; style: SpreadsheetCellStyle };
 
 function cellIsNumeric(cell: ExcelJS.Cell) {
   const value = cell.value;
@@ -189,7 +190,246 @@ function cellIsNumeric(cell: ExcelJS.Cell) {
   return false;
 }
 
-/** Excel 预览只读取单元格显示文本（公式取计算结果），不还原条件格式与图表。 */
+function numericCellValue(cell: ExcelJS.Cell) {
+  const value = cell.value;
+  if (typeof value === 'number') return value;
+  if (value && typeof value === 'object' && typeof (value as { result?: unknown }).result === 'number') {
+    return (value as { result: number }).result;
+  }
+  return null;
+}
+
+/** Excel 的颜色一律是 ARGB，预览只认 6 位十六进制（其余如主题色直接放弃）。 */
+function argbToCss(value: unknown) {
+  const argb = String((value as { argb?: string } | null | undefined)?.argb || '').replace(/^#/, '').toUpperCase();
+  const hex = argb.length === 8 ? argb.slice(2) : argb.length === 6 ? argb : '';
+  return hex && /^[0-9A-F]{6}$/.test(hex) ? `#${hex.toLowerCase()}` : '';
+}
+
+/** 静态底纹与条件格式底纹一个读 fgColor、一个读 bgColor，这里统一取第一个有值的。 */
+function fillBackground(fill: unknown) {
+  const pattern = fill as { type?: string; pattern?: string; fgColor?: unknown; bgColor?: unknown } | null | undefined;
+  if (!pattern || pattern.type !== 'pattern' || pattern.pattern === 'none') return '';
+  return argbToCss(pattern.fgColor) || argbToCss(pattern.bgColor);
+}
+
+function columnIndex(letters: string) {
+  let value = 0;
+  for (const char of letters.toUpperCase()) value = value * 26 + (char.charCodeAt(0) - 64);
+  return value;
+}
+
+/** 条件格式的 ref 可能是 A1:B5、E2:E11，也可能是单个单元格。 */
+function parseCellRange(ref: string) {
+  const match = /^\$?([A-Z]+)\$?(\d+)(?::\$?([A-Z]+)\$?(\d+))?$/i.exec(String(ref || '').trim());
+  if (!match) return null;
+  return {
+    firstColumn: columnIndex(match[1]),
+    firstRow: Number(match[2]),
+    lastColumn: columnIndex(match[3] || match[1]),
+    lastRow: Number(match[4] || match[2]),
+  };
+}
+
+type ConditionalRule = {
+  type?: string;
+  operator?: string;
+  formulae?: unknown[];
+  rank?: number;
+  percent?: boolean;
+  bottom?: boolean;
+  aboveAverage?: boolean;
+  cfvo?: Array<{ type?: string; value?: number }>;
+  color?: unknown;
+  style?: { fill?: unknown; font?: { bold?: boolean; color?: { argb?: string } } };
+};
+
+type ConditionalBlock = {
+  firstRow: number;
+  lastRow: number;
+  firstColumn: number;
+  lastColumn: number;
+  rules: ConditionalRule[];
+  values: number[];
+  min: number;
+  max: number;
+  average: number;
+};
+
+/**
+ * 条件格式本身不带缓存值（Excel 打开时才算），所以数值范围只能自己从区间里取，
+ * 百分位、平均线这些规则才排得出阈值。
+ */
+function conditionalBlocks(sheet: ExcelJS.Worksheet) {
+  const formattings = (sheet as unknown as { conditionalFormattings?: Array<{ ref?: string; rules?: ConditionalRule[] }> }).conditionalFormattings || [];
+  const blocks: ConditionalBlock[] = [];
+  for (const formatting of formattings) {
+    const range = parseCellRange(formatting.ref || '');
+    const rules = Array.isArray(formatting.rules) ? formatting.rules : [];
+    if (!range || !rules.length) continue;
+    const values: number[] = [];
+    for (let rowIndex = range.firstRow; rowIndex <= range.lastRow; rowIndex += 1) {
+      for (let index = range.firstColumn; index <= range.lastColumn; index += 1) {
+        const value = numericCellValue(sheet.getRow(rowIndex).getCell(index));
+        if (value !== null) values.push(value);
+      }
+    }
+    if (!values.length) continue;
+    const sorted = [...values].sort((left, right) => left - right);
+    blocks.push({
+      ...range,
+      rules,
+      values: sorted,
+      min: sorted[0],
+      max: sorted[sorted.length - 1],
+      average: values.reduce((sum, value) => sum + value, 0) / values.length,
+    });
+  }
+  return blocks;
+}
+
+function quantile(sorted: number[], percent: number) {
+  if (!sorted.length) return 0;
+  const position = (percent / 100) * (sorted.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.min(sorted.length - 1, lower + 1);
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+}
+
+function mixHex(from: string, to: string, ratio: number) {
+  const channels = (color: string) => [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
+  const [red, green, blue] = channels(from);
+  const [toRed, toGreen, toBlue] = channels(to);
+  const mix = (left: number, right: number) => Math.round(left + (right - left) * ratio).toString(16).padStart(2, '0');
+  return `#${mix(red, toRed)}${mix(green, toGreen)}${mix(blue, toBlue)}`;
+}
+
+function ruleApplies(rule: ConditionalRule, value: number | null, block: ConditionalBlock) {
+  const type = String(rule.type || '');
+  if (type === 'cellIs') {
+    if (value === null) return false;
+    const target = Number(rule.formulae?.[0]);
+    if (!Number.isFinite(target)) return false;
+    const upper = Number(rule.formulae?.[1]);
+    switch (String(rule.operator || '')) {
+      case 'lessThan': return value < target;
+      case 'lessThanOrEqual': return value <= target;
+      case 'greaterThan': return value > target;
+      case 'greaterThanOrEqual': return value >= target;
+      case 'equal': return value === target;
+      case 'notEqual': return value !== target;
+      case 'between': return value >= target && value <= upper;
+      case 'notBetween': return value < target || value > upper;
+      default: return false;
+    }
+  }
+  if (type === 'top10') {
+    if (value === null) return false;
+    const rank = Number(rule.rank) || 10;
+    const bottom = Boolean(rule.bottom);
+    const count = Math.min(block.values.length, Math.max(1, rule.percent ? Math.round((block.values.length * rank) / 100) : rank));
+    const threshold = bottom ? block.values[count - 1] : block.values[block.values.length - count];
+    return bottom ? value <= threshold : value >= threshold;
+  }
+  if (type === 'aboveAverage') {
+    if (value === null) return false;
+    return rule.aboveAverage === false ? value <= block.average : value > block.average;
+  }
+  return false;
+}
+
+/** 色阶：按 cfvo 给出的位置把颜色插值到单元格数值上。 */
+function scaleColor(rule: ConditionalRule, value: number | null, block: ConditionalBlock) {
+  const colors = (Array.isArray(rule.color) ? rule.color : []).map((entry) => argbToCss(entry)).filter(Boolean);
+  const stops = Array.isArray(rule.cfvo) ? rule.cfvo : [];
+  if (value === null || colors.length < 2 || stops.length !== colors.length) return '';
+  const points = stops.map((stop) => {
+    if (stop?.type === 'percentile') return quantile(block.values, Number(stop.value) || 0);
+    if (stop?.type === 'number') return Number(stop.value) || 0;
+    return stop?.type === 'max' ? block.max : block.min;
+  });
+  if (value <= points[0]) return colors[0];
+  if (value >= points[points.length - 1]) return colors[colors.length - 1];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (value <= points[index + 1]) {
+      const span = points[index + 1] - points[index];
+      return mixHex(colors[index], colors[index + 1], span > 0 ? (value - points[index]) / span : 0);
+    }
+  }
+  return colors[colors.length - 1];
+}
+
+function conditionalCellStyle(blocks: ConditionalBlock[], rowIndex: number, index: number, value: number | null) {
+  const style: Partial<SpreadsheetCellStyle> = {};
+  for (const block of blocks) {
+    if (rowIndex < block.firstRow || rowIndex > block.lastRow || index < block.firstColumn || index > block.lastColumn) continue;
+    for (const rule of block.rules) {
+      const type = String(rule.type || '');
+      if (type === 'colorScale') {
+        const color = scaleColor(rule, value, block);
+        if (color) style.background = color;
+        continue;
+      }
+      if (type === 'dataBar') {
+        if (value === null) continue;
+        style.barColor = argbToCss(rule.color) || '#2563eb';
+        style.barRatio = block.max > block.min ? (value - block.min) / (block.max - block.min) : 0;
+        continue;
+      }
+      if (!ruleApplies(rule, value, block)) continue;
+      const background = fillBackground(rule.style?.fill);
+      if (background) style.background = background;
+      if (rule.style?.font?.bold) style.bold = true;
+      const color = argbToCss(rule.style?.font?.color);
+      if (color) style.color = color;
+      // 命中第一条规则就停，和 Excel 按优先级取一条的行为一致。
+      return style;
+    }
+  }
+  return style;
+}
+
+/** 相对亮度：底纹由文件决定（多为浅底），深色主题下必须换成深色字才看得清。 */
+function relativeLuminance(color: string) {
+  const channels = [1, 3, 5]
+    .map((index) => Number.parseInt(color.slice(index, index + 2), 16) / 255)
+    .map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function readableTextOn(background: string) {
+  return relativeLuminance(background) > 0.45 ? '#1f2937' : '#f8fafc';
+}
+
+function cellStyle(cell: ExcelJS.Cell, conditional: ConditionalBlock[], rowIndex: number, index: number): SpreadsheetCellStyle {
+  const font = cell.font || {};
+  const style: SpreadsheetCellStyle = {
+    background: fillBackground(cell.fill),
+    bold: Boolean(font.bold),
+    color: '',
+    barColor: '',
+    barRatio: 0,
+    ...conditionalCellStyle(conditional, rowIndex, index, numericCellValue(cell)),
+  };
+  // 没有底纹的单元格不能套用文件里的字体色：深色主题下会变成深色背景配深色文字。
+  style.color = style.background ? style.color || argbToCss(font.color) || readableTextOn(style.background) : '';
+  return style;
+}
+
+function styleAttribute(style: SpreadsheetCellStyle) {
+  const declarations: string[] = [];
+  if (style.background) declarations.push(`background-color:${style.background}`);
+  if (style.bold) declarations.push('font-weight:600');
+  if (style.color) declarations.push(`color:${style.color}`);
+  if (style.barColor) {
+    // 数据条用背景渐变画，不必往单元格里再塞一层元素。
+    const percent = Math.round(Math.min(1, Math.max(0, style.barRatio)) * 100);
+    declarations.push(`background-image:linear-gradient(to right, ${style.barColor} ${percent}%, transparent ${percent}%)`);
+  }
+  return declarations.length ? ` style="${declarations.join(';')}"` : '';
+}
+
+/** Excel 预览还原显示文本（公式取计算结果）、底纹、字体与条件格式。 */
 async function spreadsheetPreview(data: Buffer) {
   const workbook = new ExcelJS.Workbook();
   // exceljs 的 load 用的是它自带的 Buffer 类型，与 Node 的 Buffer 泛型不兼容，按运行时真实类型传入。
@@ -204,13 +444,18 @@ async function spreadsheetPreview(data: Buffer) {
     const rowCount = Math.min(totalRows, PREVIEW_MAX_ROWS);
     const columnCount = Math.min(Math.max(totalColumns, 1), PREVIEW_MAX_COLUMNS);
     if (totalRows > rowCount || totalColumns > columnCount) truncated = true;
+    const conditional = conditionalBlocks(sheet);
     const rows: SpreadsheetCell[][] = [];
     for (let rowIndex = 1; rowIndex <= rowCount; rowIndex += 1) {
       const row = sheet.getRow(rowIndex);
       const cells: SpreadsheetCell[] = [];
       for (let columnIndex = 1; columnIndex <= columnCount; columnIndex += 1) {
         const cell = row.getCell(columnIndex);
-        cells.push({ text: String(cell.text ?? '').replace(/\s+$/, ''), numeric: cellIsNumeric(cell) });
+        cells.push({
+          text: String(cell.text ?? '').replace(/\s+$/, ''),
+          numeric: cellIsNumeric(cell),
+          style: cellStyle(cell, conditional, rowIndex, columnIndex),
+        });
       }
       rows.push(cells);
     }
@@ -220,13 +465,13 @@ async function spreadsheetPreview(data: Buffer) {
     blocks.push('<table>');
     if (head.length) {
       blocks.push('<thead><tr>');
-      for (const cell of head) blocks.push(`<th>${escapeHtml(cell.text)}</th>`);
+      for (const cell of head) blocks.push(`<th${styleAttribute(cell.style)}>${escapeHtml(cell.text)}</th>`);
       blocks.push('</tr></thead>');
     }
     blocks.push('<tbody>');
     for (const row of body) {
       blocks.push('<tr>');
-      for (const cell of row) blocks.push(`<td${cell.numeric ? ' class="num"' : ''}>${escapeHtml(cell.text)}</td>`);
+      for (const cell of row) blocks.push(`<td${cell.numeric ? ' class="num"' : ''}${styleAttribute(cell.style)}>${escapeHtml(cell.text)}</td>`);
       blocks.push('</tr>');
     }
     blocks.push('</tbody></table>');
@@ -235,26 +480,68 @@ async function spreadsheetPreview(data: Buffer) {
   return blocks.join('');
 }
 
-type WordBlock = { kind: 'heading' | 'paragraph' | 'table' | 'image'; level?: number; text?: string; rows?: string[][]; src?: string };
+/** 段落保留粗体这类 run 级信息（同类项目 docx-preview 的目标也是保住 HTML 语义，而非还原像素）。 */
+function wordRunsHtml(paragraph: string) {
+  const parts: string[] = [];
+  for (const run of paragraph.match(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/g) || []) {
+    const text = wordRunText(run);
+    if (!text) continue;
+    const bold = /<w:b\b([^>]*)\/?>/.exec(run);
+    parts.push(bold && !/w:val="(?:0|false|off)"/.test(bold[1] || '') ? `<strong>${escapeHtml(text)}</strong>` : escapeHtml(text));
+  }
+  return parts.join('');
+}
 
-function wordBlocks(xml: string, resolveImage: (relationshipId: string) => string | null) {
+function paragraphHtml(paragraph: string) {
+  return wordRunsHtml(paragraph).trim();
+}
+
+type WordTableCell = { html: string; background: string; align: string };
+
+function wordTableCell(cellXml: string): WordTableCell {
+  const paragraphs = (cellXml.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g) || []).map(paragraphHtml).filter(Boolean);
+  const fill = /<w:shd\b[^>]*w:fill="([0-9A-Fa-f]{6})"/.exec(cellXml)?.[1];
+  return {
+    html: paragraphs.join('<br />'),
+    background: fill ? `#${fill.toLowerCase()}` : '',
+    align: /<w:jc\b[^>]*w:val="(center|right)"/.exec(cellXml)?.[1] || '',
+  };
+}
+
+/** 有序还是无序写在 numbering.xml 里：num → abstractNum → lvl 0 的 numFmt。 */
+function orderedListNumbers(entries: Record<string, Uint8Array>) {
+  const xml = readPart(entries, 'word/numbering.xml') || '';
+  const formatOf = new Map<string, string>();
+  for (const abstract of xml.match(/<w:abstractNum\b[\s\S]*?<\/w:abstractNum>/g) || []) {
+    const id = /\bw:abstractNumId="(\d+)"/.exec(abstract)?.[1];
+    const format = /<w:lvl\b[^>]*w:ilvl="0"[\s\S]*?<w:numFmt\b[^>]*w:val="([^"]+)"/.exec(abstract)?.[1];
+    if (id && format) formatOf.set(id, format);
+  }
+  const ordered = new Set<number>();
+  for (const num of xml.match(/<w:num\b[\s\S]*?<\/w:num>/g) || []) {
+    const numId = /\bw:numId="(\d+)"/.exec(num)?.[1];
+    const format = formatOf.get(/<w:abstractNumId\b[^>]*w:val="(\d+)"/.exec(num)?.[1] || '');
+    if (numId && format && format !== 'bullet' && format !== 'none') ordered.add(Number(numId));
+  }
+  return ordered;
+}
+
+type WordBlock =
+  | { kind: 'heading'; level: number; text: string }
+  | { kind: 'paragraph'; html: string }
+  | { kind: 'list'; ordered: boolean; items: string[] }
+  | { kind: 'table'; rows: WordTableCell[][] }
+  | { kind: 'image'; src: string };
+
+function wordBlocks(xml: string, resolveImage: (relationshipId: string) => string | null, orderedNumbers: Set<number>) {
   const source = xml.replace(/<w:p\b[^>]*\/>/g, '');
   const tokens = source.match(/<w:tbl\b[\s\S]*?<\/w:tbl>|<w:p\b[^>]*>[\s\S]*?<\/w:p>/g) || [];
   const blocks: WordBlock[] = [];
   for (const token of tokens) {
     if (blocks.length >= PREVIEW_MAX_BLOCKS) break;
     if (token.startsWith('<w:tbl')) {
-      const rows: string[][] = [];
-      for (const rowXml of token.match(/<w:tr\b[\s\S]*?<\/w:tr>/g) || []) {
-        const cells: string[] = [];
-        for (const cellXml of rowXml.match(/<w:tc\b[\s\S]*?<\/w:tc>/g) || []) {
-          const paragraphs = (cellXml.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g) || [])
-            .map((paragraph) => wordRunText(paragraph).trim())
-            .filter(Boolean);
-          cells.push(paragraphs.join('\n'));
-        }
-        rows.push(cells);
-      }
+      const rows = (token.match(/<w:tr\b[\s\S]*?<\/w:tr>/g) || [])
+        .map((rowXml) => (rowXml.match(/<w:tc\b[\s\S]*?<\/w:tc>/g) || []).map(wordTableCell));
       if (rows.length) blocks.push({ kind: 'table', rows });
       continue;
     }
@@ -263,26 +550,24 @@ function wordBlocks(xml: string, resolveImage: (relationshipId: string) => strin
       const src = resolveImage(relationshipId);
       if (src) blocks.push({ kind: 'image', src });
     }
-    const text = wordRunText(token).trim();
-    if (!text) continue;
+    const html = paragraphHtml(token);
+    if (!html) continue;
     const style = /<w:pStyle\b[^>]*w:val="([^"]+)"/.exec(token)?.[1] || '';
     const heading = /^Heading([1-6])$/i.exec(style) || /^Title$/i.exec(style);
     if (heading) {
       const level = heading[1] && /^\d$/.test(heading[1]) ? Number(heading[1]) : 1;
-      blocks.push({ kind: 'heading', level, text });
+      blocks.push({ kind: 'heading', level, text: wordRunText(token).trim() });
       continue;
     }
-    if (/<w:numPr\b/.test(token)) {
-      const item = `<li>${escapeHtml(text)}</li>`;
+    const numId = /<w:numPr\b[\s\S]*?<w:numId\b[^>]*w:val="(\d+)"/.exec(token)?.[1];
+    if (numId) {
+      const ordered = orderedNumbers.has(Number(numId));
       const previous = blocks[blocks.length - 1];
-      if (previous && previous.kind === 'paragraph' && previous.text?.startsWith('<ul>') && previous.text.endsWith('</ul>')) {
-        previous.text = `${previous.text.slice(0, -'</ul>'.length)}${item}</ul>`;
-      } else {
-        blocks.push({ kind: 'paragraph', text: `<ul>${item}</ul>` });
-      }
+      if (previous && previous.kind === 'list' && previous.ordered === ordered) previous.items.push(html);
+      else blocks.push({ kind: 'list', ordered, items: [html] });
       continue;
     }
-    blocks.push({ kind: 'paragraph', text: `<p>${escapeHtml(text)}</p>` });
+    blocks.push({ kind: 'paragraph', html: `<p>${html}</p>` });
   }
   return blocks;
 }
@@ -296,16 +581,27 @@ function wordPreview(data: Buffer) {
   const blocks = wordBlocks(xml, (relationshipId) => {
     const target = rels.get(relationshipId);
     return target ? imageDataUri(entries, target, budget) : null;
-  });
+  }, orderedListNumbers(entries));
   if (!blocks.length) return emptyBlock();
   const html = blocks.map((block) => {
     if (block.kind === 'heading') return `<h${block.level}>${escapeHtml(block.text)}</h${block.level}>`;
     if (block.kind === 'image') return `<figure class="doc-figure"><img src="${block.src}" alt="文档插图" /></figure>`;
+    if (block.kind === 'list') {
+      const tag = block.ordered ? 'ol' : 'ul';
+      return `<${tag}>${block.items.map((item) => `<li>${item}</li>`).join('')}</${tag}>`;
+    }
     if (block.kind === 'table') {
-      const rows = (block.rows || []).map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('');
+      const rows = block.rows.map((row) => `<tr>${row.map((cell) => {
+        const declarations = [
+          cell.background ? `background-color:${cell.background}` : '',
+          cell.align ? `text-align:${cell.align}` : '',
+          cell.background ? `color:${readableTextOn(cell.background)}` : '',
+        ].filter(Boolean);
+        return `<td${declarations.length ? ` style="${declarations.join(';')}"` : ''}>${cell.html}</td>`;
+      }).join('')}</tr>`).join('');
       return `<table class="doc-table">${rows}</table>`;
     }
-    return block.text || '';
+    return block.html;
   }).join('');
   const truncated = blocks.length >= PREVIEW_MAX_BLOCKS;
   const mediaNote = budget.skipped ? noteBlock(`${budget.skipped} 张插图过大或过多，未在预览中显示。`) : '';

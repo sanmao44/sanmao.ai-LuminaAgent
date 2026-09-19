@@ -178,3 +178,64 @@ test('pptx 预览显示幻灯片插图与图表数据', async () => {
     });
   });
 });
+
+test('xlsx 预览还原底纹与四类条件格式', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateSpreadsheetArtifact({
+      filename: '格式.xlsx',
+      sheets: [{
+        name: '销售',
+        columns: [
+          { key: 'month', header: '月份' },
+          { key: 'amount', header: '金额', total: 'sum', highlight: 'dataBar' },
+          { key: 'growth', header: '增长', highlight: 'colorScale' },
+          { key: 'delta', header: '差额', highlight: 'negative' },
+          { key: 'score', header: '评分', highlight: 'top10' },
+        ],
+        rows: [
+          { month: '1月', amount: 120, growth: 3, delta: 5, score: 90 },
+          { month: '2月', amount: 80, growth: 9, delta: -4, score: 60 },
+          { month: '3月', amount: 200, growth: 6, delta: 2, score: 75 },
+        ],
+      }],
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'spreadsheet',
+      name: '格式.xlsx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    // 生成器写的静态底纹：表头蓝底白字、斑马纹、合计行。
+    assert.match(html, /<th style="background-color:#2563eb;font-weight:600;color:#ffffff">月份<\/th>/);
+    assert.match(html, /background-color:#f4f7fb/);
+    assert.match(html, /background-color:#eaf1fb;font-weight:600/);
+    // dataBar：80 是区间最小值，120 落在 33% 处。
+    assert.match(html, /background-image:linear-gradient\(to right, #2563eb 33%, transparent 33%\)/);
+    // colorScale：最小值红、中间值黄、最大值绿。
+    assert.match(html, /background-color:#f8696b/);
+    assert.match(html, /background-color:#ffeb84/);
+    assert.match(html, /background-color:#63be7b/);
+    // cellIs lessThan 0 与 top10 的绿底红字规则。
+    assert.match(html, /style="background-color:#fee2e2;font-weight:600;color:#b91c1c">-4</);
+    assert.match(html, /style="background-color:#dcfce7;font-weight:600;color:#15803d">90</);
+    // 没有底纹的单元格不能带文件里的深色字体，否则深色主题下变成深底深字。
+    assert.match(html, /<td>1月<\/td>/);
+  });
+});
+
+test('docx 预览还原粗体、有序列表与表头底纹的可读配色', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '样式.docx',
+      markdown: '# 标题\n\n正文含**加粗**字样。\n\n- 无序一\n\n1. 第一步\n2. 第二步\n\n| 指标 | 目标 |\n| --- | --- |\n| 交付 | 3 类 |\n',
+    }, store);
+    const html = await artifacts.buildArtifactPreviewHtml({
+      kind: 'document',
+      name: '样式.docx',
+      data: await bufferOf(store, result.artifact.id),
+    });
+    assert.match(html, /<p>正文含<strong>加粗<\/strong>字样。<\/p>/);
+    assert.match(html, /<ul><li>无序一<\/li><\/ul>/);
+    assert.match(html, /<ol><li>第一步<\/li><li>第二步<\/li><\/ol>/, '有序列表必须用 ol，不能退化成 ul');
+    assert.match(html, /<td style="background-color:#dce6f5;text-align:center;color:#1f2937"><strong>指标<\/strong><\/td>/);
+  });
+});
