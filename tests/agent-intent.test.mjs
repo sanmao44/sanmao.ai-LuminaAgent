@@ -100,3 +100,15 @@ test('文档交付请求不会因为“做一个…”被误判成生图', () =>
   assert.equal(intent.classifyAgentDeliverable('做一个简历模板的封面图').deliverable, 'IMAGE');
   assert.equal(intent.classifyAgentDeliverable('把这份word文档做成一张封面图').deliverable, 'IMAGE');
 });
+
+test('泛化的“做一个…”不再被当成生图，真正的视觉目标仍然算图片', () => {
+  for (const input of ['做一个自我介绍', '做一个网页', '做一个落地页']) {
+    assert.notEqual(intent.classifyAgentDeliverable(input).deliverable, 'IMAGE', input);
+  }
+  for (const input of ['给我们产品设计一个吉祥物', '写一份产品介绍，配一张封面图', '做一个网站首页设计稿', '做一张图']) {
+    assert.equal(intent.classifyAgentDeliverable(input).deliverable, 'IMAGE', input);
+  }
+  for (const input of ['帮我做一份报价单', '给我一个项目排期表', '写一份演讲稿']) {
+    assert.equal(intent.classifyAgentDeliverable(input).deliverable, 'TEXT', input);
+  }
+});

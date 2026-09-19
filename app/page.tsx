@@ -1223,7 +1223,21 @@ async function downloadChatFile(file) {
 function isPreviewableChatFile(file) {
     const mimeType = String(file?.mimeType || '').split(';', 1)[0].trim().toLowerCase();
     const name = String(file?.name || '').trim().toLowerCase();
-    return mimeType === 'text/html' || mimeType === 'application/xhtml+xml' || name.endsWith('.html') || name.endsWith('.htm');
+    if (mimeType === 'text/html' || mimeType === 'application/xhtml+xml' || name.endsWith('.html') || name.endsWith('.htm')) return true;
+    // Office / ZIP 产物由服务端解析成预览页；文本类文件仍然在本地直接渲染 HTML。
+    return typeof file?.artifactId === 'string' && file.artifactId.trim().length > 0 && /\.(docx|xlsx|pptx|zip)$/.test(name);
+}
+function chatFilePreviewKindLabel(file) {
+    const name = String(file?.name || '').trim().toLowerCase();
+    if (name.endsWith('.docx')) return 'Word 预览';
+    if (name.endsWith('.xlsx')) return 'Excel 预览';
+    if (name.endsWith('.pptx')) return 'PPT 预览';
+    if (name.endsWith('.zip')) return '压缩包预览';
+    return 'HTML 预览';
+}
+function isOfficeArtifactChatFile(file) {
+    const name = String(file?.name || '').trim().toLowerCase();
+    return typeof file?.artifactId === 'string' && file.artifactId.trim().length > 0 && /\.(docx|xlsx|pptx|zip)$/.test(name);
 }
 function getChatFilePreviewContent(file) {
     if (file?.encoding !== 'base64') return String(file?.content || '');
@@ -4456,7 +4470,7 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
                                 type: "button",
                                 className: "message-file-preview",
                                 onClick: ()=>onPreview(file),
-                                title: "预览 HTML",
+                                title: "预览文件",
                                 children: [
                                     /*#__PURE__*/ _jsx(Icon, {
                                         name: "preview",
@@ -4530,7 +4544,7 @@ function ChatFilePreviewDialog({ file, onClose }) {
                             /*#__PURE__*/ _jsxs("div", {
                                 children: [
                                     /*#__PURE__*/ _jsx("small", {
-                                        children: "HTML 预览"
+                                        children: file.label || 'HTML 预览'
                                     }),
                                     /*#__PURE__*/ _jsx("h2", {
                                         id: "chat-file-preview-title",
@@ -4543,7 +4557,7 @@ function ChatFilePreviewDialog({ file, onClose }) {
                                 type: "button",
                                 className: "chat-file-preview-close",
                                 onClick: onClose,
-                                "aria-label": "关闭 HTML 预览",
+                                "aria-label": "关闭预览",
                                 title: "关闭预览",
                                 children: /*#__PURE__*/ _jsx(Icon, {
                                     name: "close",
@@ -4554,15 +4568,25 @@ function ChatFilePreviewDialog({ file, onClose }) {
                     }),
                     /*#__PURE__*/ _jsx("div", {
                         className: "chat-file-preview-stage",
-                        children: /*#__PURE__*/ _jsx("iframe", {
+                        children: file.content ? /*#__PURE__*/ _jsx("iframe", {
                             className: "chat-file-preview-frame",
-                            title: `${file.name} HTML 预览`,
+                            title: `${file.name} 预览`,
                             srcDoc: file.content,
                             src: previewUrl || undefined,
                             sandbox: "allow-scripts",
                             allow: "autoplay; fullscreen",
                             loading: "eager",
                             referrerPolicy: "no-referrer"
+                        }) : /*#__PURE__*/ _jsx("p", {
+                            style: {
+                                display: "grid",
+                                placeItems: "center",
+                                height: "100%",
+                                margin: 0,
+                                color: "var(--muted)",
+                                fontSize: 13
+                            },
+                            children: "正在生成预览…"
                         })
                     }),
                     /*#__PURE__*/ _jsx("footer", {
@@ -6433,11 +6457,40 @@ export default function Page() {
     }
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
+        if (isOfficeArtifactChatFile(file)) {
+            const name = file.name || '文件';
+            const label = chatFilePreviewKindLabel(file);
+            setChatFilePreview({
+                name,
+                label,
+                content: ''
+            });
+            void (async ()=>{
+                try {
+                    const query = `?preview=1&theme=${theme === 'dark' ? 'dark' : 'light'}`;
+                    const response = await fetch(`/api/artifacts/${encodeURIComponent(file.artifactId)}${query}`, {
+                        cache: 'no-store'
+                    });
+                    if (!response.ok) throw new Error(response.status === 404 ? '文件已过期或被清理，请重新生成' : '文件预览失败');
+                    const content = buildChatFilePreviewContent(await response.text());
+                    setChatFilePreview((current)=>current && current.name === name ? {
+                            name,
+                            label,
+                            content
+                        } : current);
+                } catch (error) {
+                    setChatFilePreview((current)=>current && current.name === name ? null : current);
+                    notify(error instanceof Error ? error.message : '文件预览失败');
+                }
+            })();
+            return;
+        }
         try {
             const content = buildChatFilePreviewContent(getChatFilePreviewContent(file));
             if (!content.trim()) throw new Error('HTML 文件内容为空');
             setChatFilePreview({
                 name: file.name || 'HTML 文件',
+                label: chatFilePreviewKindLabel(file),
                 content
             });
         } catch  {

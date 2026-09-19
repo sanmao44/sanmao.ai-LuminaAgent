@@ -20,6 +20,7 @@ const MODULES = [
   'lib/artifacts/archive',
   'lib/artifacts/index',
   'lib/artifacts/download',
+  'lib/artifacts/preview',
 ];
 
 const BUILD_ROOT = path.join(process.cwd(), '.data', 'artifacts-test-build');
@@ -57,7 +58,8 @@ export async function buildArtifactsModule() {
     // 排版测量与列宽分配是排版测试的直接断言目标，单独导出。
     const typography = await import(pathToFileURL(path.join(outDir, 'lib/artifacts/typography.mjs')).href);
     const word = await import(pathToFileURL(path.join(outDir, 'lib/artifacts/word.mjs')).href);
-    return { ...artifacts, ...download, ...typography, ...word };
+    const preview = await import(pathToFileURL(path.join(outDir, 'lib/artifacts/preview.mjs')).href);
+    return { ...artifacts, ...download, ...typography, ...word, ...preview };
   } catch (error) {
     await rm(outDir, { recursive: true, force: true }).catch(() => undefined);
     throw error;

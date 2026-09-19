@@ -6,6 +6,18 @@ export const ARCHIVE_MAX_ENTRIES = 64;
 export const ARTIFACT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const ARTIFACT_ROOT_MAX_BYTES = 512 * 1024 * 1024;
 
+/** 在线预览只解析有限内容，避免超大文件把服务拖住。 */
+export const PREVIEW_MAX_BYTES = 40 * 1024 * 1024;
+export const PREVIEW_MAX_SHEETS = 8;
+export const PREVIEW_MAX_ROWS = 400;
+export const PREVIEW_MAX_COLUMNS = 30;
+export const PREVIEW_MAX_BLOCKS = 1200;
+/** 预览内联的插图/图表上限：base64 会放大体积，媒体必须单独设限。 */
+export const PREVIEW_MAX_IMAGES = 12;
+export const PREVIEW_MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+export const PREVIEW_MAX_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
+export const PREVIEW_MAX_CHARTS = 8;
+
 export const DOCUMENT_MAX_SECTIONS = 200;
 export const DOCUMENT_MAX_PARAGRAPHS_PER_SECTION = 300;
 export const DOCUMENT_MAX_BULLETS_PER_SECTION = 200;

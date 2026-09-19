@@ -158,6 +158,9 @@ test('recognizes Office and ZIP delivery requests without firing on ordinary cha
     '生成一份季度总结报告',
     '导出成 .docx 发我',
     '把刚才生成的文件打包成 zip',
+    '帮我做一份报价单',
+    '整理一份项目排期表',
+    '写一份演讲稿',
     '做一个项目周报模板',
     '帮我写一个会议纪要',
     '把这些文件压缩一下',
@@ -168,6 +171,7 @@ test('recognizes Office and ZIP delivery requests without firing on ordinary cha
     '总结一下这篇文章讲了什么',
     '这个表格怎么看',
     '帮我压缩一下这张图片',
+    '做一个自我介绍',
     '今天天气怎么样',
     '',
   ]) {
