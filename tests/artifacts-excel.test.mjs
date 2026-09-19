@@ -97,3 +97,94 @@ test('xlsx 扩展名由服务端强制，空 sheets 直接报错', async () => {
   assert.equal(artifacts.resolveSpreadsheetFileName('数据表格.csv'), '数据表格.xlsx');
   await assert.rejects(() => artifacts.buildSpreadsheet({ sheets: [] }), /内容为空/);
 });
+
+test('totals 生成合计行：数值列求和、率列取平均、排名列跳过', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateSpreadsheetArtifact({
+      filename: '报表.xlsx',
+      sheets: [{
+        name: '销售',
+        totals: true,
+        columns: [
+          { key: 'month', header: '月份' },
+          { key: 'sales', header: '销售额' },
+          { key: 'growth', header: '增长率' },
+          { key: 'rank', header: '排名' },
+          { key: 'note', header: '备注', total: 'count' },
+        ],
+        rows: [
+          { month: '1月', sales: 120000, growth: 0.12, rank: 1, note: 'a' },
+          { month: '2月', sales: 98000, growth: -0.08, rank: 2, note: 'b' },
+        ],
+      }],
+    }, store);
+
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const sheet = artifacts.readArchiveText(buffer, 'xl/worksheets/sheet1.xml');
+    assert.ok(sheet.includes('SUM(B2:B3)'), '销售额应求和');
+    assert.ok(sheet.includes('<v>218000</v>'), '合计缓存值应写入，未重算也能看到数字');
+    assert.ok(sheet.includes('AVERAGE(C2:C3)'), '率列表头应取平均而不是求和');
+    assert.ok(sheet.includes('COUNT(E2:E3)'), '显式 count 应生效');
+    assert.equal((sheet.match(/<f>/g) || []).length, 3, '排名列不应参与合计');
+    const shared = artifacts.readArchiveText(buffer, 'xl/sharedStrings.xml');
+    assert.ok(shared.includes('合计'), '合计行应带标签');
+  });
+});
+
+test('total 为 none/false 时该列不合计，取值无效时回落默认并给出 warning', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateSpreadsheetArtifact({
+      sheets: [{
+        name: 'Sheet',
+        totals: true,
+        columns: [
+          { key: 'name', header: '项目' },
+          { key: 'amount', header: '金额', total: 'none' },
+          { key: 'qty', header: '数量', total: false },
+          { key: 'score', header: '得分', total: '中位数' },
+        ],
+        rows: [{ name: '甲', amount: 10, qty: 2, score: 8 }],
+      }],
+    }, store);
+
+    const sheet = artifacts.readArchiveText(await readFile((await store.read(result.artifact.id)).filePath), 'xl/worksheets/sheet1.xml');
+    assert.ok(!sheet.includes('SUM(B2:B2)'), 'none 列不应合计');
+    assert.ok(!sheet.includes('SUM(C2:C2)'), 'false 列不应合计');
+    assert.ok(sheet.includes('SUM(D2:D2)'), '取值无效时按默认规则求和');
+    const shared = artifacts.readArchiveText(await readFile((await store.read(result.artifact.id)).filePath), 'xl/sharedStrings.xml');
+    assert.ok(shared.includes('合计'), '合计行仍保留标签');
+    assert.equal(result.warnings.filter((warning) => warning.includes('total 取值无效')).length, 1);
+  });
+});
+
+test('options 写下拉验证，highlight 写条件格式并跳过无数值列', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateSpreadsheetArtifact({
+      sheets: [{
+        name: '状态表',
+        columns: [
+          { key: 'name', header: '项目', options: ['完成', '进行中', '完成', '含,逗号'], highlight: 'top10' },
+          { key: 'amount', header: '金额', highlight: 'dataBar' },
+          { key: 'growth', header: '增长率', highlight: 'negative' },
+        ],
+        rows: [{ name: '甲', amount: 10, growth: 0.2 }, { name: '乙', amount: -5, growth: -0.1 }],
+      }],
+    }, store);
+
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const sheet = artifacts.readArchiveText(buffer, 'xl/worksheets/sheet1.xml');
+    const styles = artifacts.readArchiveText(buffer, 'xl/styles.xml');
+
+    assert.ok(sheet.includes('sqref="A2:A203"'), '下拉应覆盖数据区并预留下行');
+    assert.ok(sheet.includes('&quot;完成,进行中&quot;'), '重复候选应去重后写入');
+    assert.ok(!sheet.includes('含,逗号'), '含逗号的候选值必须丢弃');
+    assert.equal(result.warnings.filter((warning) => warning.includes('含引号、逗号或换行')).length, 1);
+
+    assert.ok(sheet.includes('<conditionalFormatting sqref="B2:B3">'), '条件格式只覆盖数据行');
+    assert.ok(sheet.includes('type="dataBar"'));
+    assert.ok(sheet.includes('type="cellIs"') && sheet.includes('operator="lessThan"'), '负数规则应写入');
+    assert.ok(styles.includes('FFB91C1C'), 'dxf 样式应写入负数颜色');
+    assert.ok(!sheet.includes('conditionalFormatting sqref="A2:A3"'), '无数值列不应写条件格式');
+    assert.equal(result.warnings.filter((warning) => warning.includes('没有数值，已跳过条件格式')).length, 1);
+  });
+});

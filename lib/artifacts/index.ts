@@ -9,7 +9,7 @@ import type { ArtifactGenerateOptions, ArtifactImageInput } from './images';
 
 export type * from './types';
 export type { DocumentInput, DocumentSectionInput, DocumentTableInput } from './word';
-export type { SpreadsheetInput, SpreadsheetSheetInput, SpreadsheetColumnInput } from './excel';
+export type { SpreadsheetInput, SpreadsheetSheetInput, SpreadsheetColumnInput, SpreadsheetColumnTotal, SpreadsheetColumnHighlight } from './excel';
 export type { PresentationInput, PresentationSlideInput, PresentationChartInput } from './powerpoint';
 export type { ArchiveEntryInput } from './archive';
 export type { ArtifactImageInput, ArtifactImage, ArtifactGenerateOptions } from './images';

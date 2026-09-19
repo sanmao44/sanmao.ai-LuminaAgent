@@ -167,3 +167,55 @@ test('markdown 链接会变成可点击超链接，不安全协议按纯文本�
     assert.ok(!rels.includes('javascript'), '不安全协议不得进入关系表');
   });
 });
+
+test('toc=true 在标题后插入目录：缓存条目、书签与自动刷新开关齐备', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '报告.docx',
+      title: '季度报告',
+      toc: true,
+      markdown: '## 第一章 概述\n正文一。\n### 明细\n正文二。\n## 第二章 数据\n正文三。\n',
+    }, store);
+
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const xml = artifacts.readArchiveText(buffer, 'word/document.xml');
+    const settings = artifacts.readArchiveText(buffer, 'word/settings.xml');
+
+    assert.ok(settings.includes('updateFields'), '应开启打开时刷新域');
+    assert.match(xml, /<w:instrText[^>]*>TOC \\h \\o &quot;1-3&quot;<\/w:instrText>/, '应写入 TOC 域');
+    assert.ok(xml.includes('w:anchor="sanmao-h-1"'), '目录条目应指向书签');
+    assert.ok(xml.includes('w:name="sanmao-h-2"'), '正文标题应写入书签');
+    assert.ok(xml.includes('第一章 概述') && xml.includes('明细'), '缓存条目应包含各级标题');
+    assert.ok(xml.indexOf('<w:sdt>') > xml.indexOf('季度报告'), '目录必须排在标题之后');
+    assert.ok(xml.indexOf('<w:sdt>') < xml.indexOf('正文一。'), '目录必须排在正文之前');
+    assert.deepEqual(result.warnings, []);
+  });
+});
+
+test('默认不写目录，也不改 settings', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '普通.docx',
+      markdown: '## 第一章\n正文。\n',
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const xml = artifacts.readArchiveText(buffer, 'word/document.xml');
+    const settings = artifacts.readArchiveText(buffer, 'word/settings.xml');
+    assert.ok(!xml.includes('<w:sdt>'), '不应出现目录控件');
+    assert.ok(!xml.includes('TOC \\h'), '不应出现 TOC 域');
+    assert.ok(!settings.includes('updateFields'), '不应开启域刷新');
+  });
+});
+
+test('标题不足两个时跳过目录并给出 warning', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '单节.docx',
+      toc: true,
+      markdown: '## 唯一章节\n正文。\n',
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    assert.ok(!artifacts.readArchiveText(buffer, 'word/document.xml').includes('<w:sdt>'));
+    assert.equal(result.warnings.filter((warning) => warning.includes('目录至少需要')).length, 1);
+  });
+});

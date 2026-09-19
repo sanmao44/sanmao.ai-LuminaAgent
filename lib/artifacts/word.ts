@@ -1,5 +1,6 @@
 import {
   AlignmentType,
+  Bookmark,
   BorderStyle,
   Document,
   ExternalHyperlink,
@@ -14,6 +15,7 @@ import {
   Table,
   TableCell,
   TableLayoutType,
+  TableOfContents,
   TableRow,
   TextRun,
   VerticalAlign,
@@ -116,6 +118,8 @@ export type DocumentInput = {
   author?: string;
   markdown?: string;
   sections?: DocumentSectionInput[];
+  /** 在正文前插入目录；条目用缓存写出，Word/WPS 打开时会自动刷新真实页码。 */
+  toc?: boolean;
 };
 
 export type MarkdownBlock =
@@ -406,14 +410,16 @@ function headingLevel(level: number) {
   return HeadingLevel.HEADING_3;
 }
 
-function headingParagraph(level: 1 | 2 | 3, text: string, warnings: string[]) {
+function headingParagraph(level: 1 | 2 | 3, text: string, warnings: string[], bookmarkId?: string) {
+  const runs = textRuns(text, warnings, '小标题');
   return new Paragraph({
     heading: headingLevel(level),
     spacing: { before: level === 1 ? 320 : 260, after: level === 1 ? 160 : 120 },
     border: level === 1
       ? { bottom: { style: BorderStyle.SINGLE, size: 6, color: HEADER_FILL, space: 4 } }
       : undefined,
-    children: textRuns(text, warnings, '小标题'),
+    // 目录的缓存条目靠书签才能在域刷新前跳转。
+    children: bookmarkId ? [new Bookmark({ id: bookmarkId, children: runs })] : runs,
   });
 }
 
@@ -483,17 +489,46 @@ function titleBlock(input: DocumentInput, warnings: string[]) {
   return children;
 }
 
+type TocEntry = { title: string; level: number; href: string };
+
+/**
+ * 目录用缓存条目把条目直接写进文件，任何阅读器都能看到；
+ * 同时把域标成 dirty 并开启 updateFields，Word/WPS 打开时按真实页码刷新。
+ */
+function buildToc(entries: TocEntry[], warnings: string[]): Array<Paragraph | TableOfContents> {
+  if (entries.length < 2) {
+    warnings.push('目录至少需要 2 个标题，已跳过目录');
+    return [];
+  }
+  return [
+    new Paragraph({
+      children: [new TextRun({ text: '目录', bold: true, size: 32, color: COLOR_HEADING })],
+      spacing: { after: 200 },
+    }),
+    new TableOfContents('目录', {
+      hyperlink: true,
+      headingStyleRange: '1-3',
+      cachedEntries: entries,
+    }),
+    // 目录单独占一页，正文从下一页开始。
+    new Paragraph({ pageBreakBefore: true, children: [] }),
+  ];
+}
+
 export async function buildWordDocument(input: DocumentInput, options: ArtifactGenerateOptions = {}): Promise<ArtifactBuild> {
   const warnings: string[] = [];
   const sections = normalizeSections(input.sections);
   if (typeof input.markdown === 'string' && input.markdown.trim()) sections.push(...markdownToSections(input.markdown));
   const sectionCount = sections.length;
   const titleChildren = titleBlock(input, warnings);
-  const children: Array<Paragraph | Table> = [...titleChildren];
-  for (const section of sections.slice(0, DOCUMENT_MAX_SECTIONS)) {
+  const children: Array<Paragraph | Table> = [];
+  const tocEntries: TocEntry[] = [];
+  for (const [sectionIndex, section] of sections.slice(0, DOCUMENT_MAX_SECTIONS).entries()) {
     if (section.heading?.trim()) {
       const level = section.level === 1 || section.level === 2 || section.level === 3 ? section.level : 1;
-      children.push(headingParagraph(level, section.heading, warnings));
+      const bookmarkId = `sanmao-h-${sectionIndex + 1}`;
+      children.push(headingParagraph(level, section.heading, warnings, input.toc ? bookmarkId : undefined));
+      if (input.toc) tocEntries.push({ title: section.heading.trim().slice(0, 120), level, href: bookmarkId });
     }
     for (const paragraph of (section.paragraphs || []).slice(0, DOCUMENT_MAX_PARAGRAPHS_PER_SECTION)) {
       const lines = String(paragraph).split('\n');
@@ -537,14 +572,18 @@ export async function buildWordDocument(input: DocumentInput, options: ArtifactG
   }
   if (sections.length > DOCUMENT_MAX_SECTIONS) warnings.push(`章节超过 ${DOCUMENT_MAX_SECTIONS} 个，已截断`);
   if (!sections.length) throw new Error('Word 文档内容为空：请在 markdown 或 sections 里提供正文内容');
-  if (children.length === titleChildren.length) {
+  if (!children.length) {
     throw new Error('Word 文档内容为空：每个 section 至少要有 heading / paragraphs / bullets / tables 之一');
   }
+
+  const tocChildren = input.toc ? buildToc(tocEntries, warnings) : [];
 
   const document = new Document({
     creator: input.author?.trim() || 'SANMAO.AI',
     title: input.title?.trim() || undefined,
     description: `由 SANMAO.AI 生成（${sectionCount} 个章节）`,
+    // 目录域需要打开时刷新，否则只显示写进文件的缓存条目。
+    features: input.toc ? { updateFields: true } : undefined,
     numbering: {
       config: [{
         reference: ORDERED_LIST_REFERENCE,
@@ -590,7 +629,7 @@ export async function buildWordDocument(input: DocumentInput, options: ArtifactG
           })],
         }),
       },
-      children,
+      children: [...titleChildren, ...tocChildren, ...children],
     }],
   });
   const buffer = await Packer.toBuffer(document);
