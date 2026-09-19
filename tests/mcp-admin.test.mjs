@@ -123,12 +123,13 @@ test('被拒绝的调用与管理动作都会记进审计标签，动作名用�
 test('管理工具能把某个服务改成按需下发，也能改回来', async () => {
   const dir = tempDir();
   try {
-    const added = await mcp.runMcpManageAction({ action: 'add', name: 'GitHub', url: 'https://example.com/mcp' }, { dataDir: dir });
+    // 名称不用 GitHub：那个 id 是内置连接器保留的，管理工具不允许占用（见 tests/mcp-github.test.mjs）。
+    const added = await mcp.runMcpManageAction({ action: 'add', name: 'GitLab', url: 'https://example.com/mcp' }, { dataDir: dir });
     assert.equal(added.result.server.lazy, false, '默认每轮都下发');
-    const updated = await mcp.runMcpManageAction({ action: 'update', id: 'github', lazy: true }, { dataDir: dir });
+    const updated = await mcp.runMcpManageAction({ action: 'update', id: 'gitlab', lazy: true }, { dataDir: dir });
     assert.equal(updated.result.server.lazy, true);
     assert.equal(mcp.listMcpServers({ dataDir: dir })[0].lazy, true);
-    const restored = await mcp.runMcpManageAction({ action: 'update', id: 'github', lazy: false }, { dataDir: dir });
+    const restored = await mcp.runMcpManageAction({ action: 'update', id: 'gitlab', lazy: false }, { dataDir: dir });
     assert.equal(restored.result.server.lazy, false);
     assert.equal(mcp.listMcpServers({ dataDir: dir })[0].lazy, undefined);
   } finally {

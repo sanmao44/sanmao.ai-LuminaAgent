@@ -14,6 +14,7 @@ import {
   removeMcpServer,
   upsertMcpServer,
 } from './store';
+import { findCatalogEntry } from './catalog';
 import { clearMcpToolCache, isMcpToolSchemaTooLarge } from './tools';
 import type { McpRemoteTool, McpServerConfig } from './types';
 
@@ -117,6 +118,10 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
 
   if (action === 'add') {
     if (listMcpServers({ dataDir }).length >= MCP_MAX_SERVERS) throw new Error(`最多添加 ${MCP_MAX_SERVERS} 个 MCP 服务`);
+    // 内置连接器（GitHub / Context7）的配置只能由面板的连接流程写：那个 id 被这个工具占掉的话，
+    // 用户手里的连接器会被换成一个由模型决定的地址和请求头。
+    const wanted = normalizeMcpServerId(input.id || input.name || '');
+    if (findCatalogEntry(wanted)) throw new Error(`「${wanted}」是内置连接器的 id，不能通过这个工具添加或覆盖；需要连接请让用户在 MCP 面板里操作。`);
     const writeDenied = input.allowWrite === true && !writeGranted;
     const saved = upsertMcpServer({
       id: input.id,
@@ -137,6 +142,14 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
 
   if (action === 'update') {
     const server = findServer(input.id || input.name, dataDir);
+    // 连接器的权限、白名单和凭据都在面板里管：这里改会出现「本机放行、服务端仍旧只读」
+    // 这类对不上的状态，写权限分项也只在面板里存在，模型自己打开等于绕过用户。
+    if (server.catalogId) {
+      if (typeof input.allowWrite === 'boolean' && input.allowWrite !== server.allowWrite) {
+        throw new Error(`「${server.name}」是内置连接器，写入权限要在 MCP 面板里改（连接器 → 允许写入 → 写权限分项）。`);
+      }
+      if (input.enabledTools !== undefined) throw new Error(`「${server.name}」的工具清单由内置目录维护，不能通过这个工具改。`);
+    }
     const writeDenied = input.allowWrite === true && !writeGranted;
     const patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown; lazy?: boolean } = {};
     if (typeof input.enabled === 'boolean') patch.enabled = input.enabled;
@@ -154,6 +167,8 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
   }
 
   const server = findServer(input.id || input.name, dataDir);
+  // 断开连接器会连带删掉本机保存的凭据，只能由用户在面板里点。
+  if (server.catalogId) throw new Error(`「${server.name}」是内置连接器，需要断开请让用户在 MCP 面板里点「断开」。`);
   if (!REMOVE_GRANT_PATTERN.test(instruction)) {
     throw new Error(`用户这一轮没有明确要求移除「${server.name}」，先向用户确认再执行。`);
   }

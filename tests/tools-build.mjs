@@ -26,6 +26,14 @@ const MODULES = [
   'lib/mcp/protocol',
   'lib/mcp/store',
   'lib/mcp/catalog',
+  'lib/mcp/catalog-remote',
+  'lib/mcp/filesystem-roots',
+  'lib/mcp/filesystem-policy',
+  'lib/mcp/browser-downloads',
+  'lib/artifacts/limits',
+  'lib/artifacts/types',
+  'lib/artifacts/sanitize',
+  'lib/artifacts/storage',
   'lib/mcp/client',
   'lib/mcp/stdio',
   'lib/mcp/catalog-runtime',
@@ -121,6 +129,11 @@ export async function buildAgentProgressModule() {
 /** 前端轮询助手：停轮询的条件和秒表都要跑真实实现。 */
 export async function buildAgentClientModule() {
   return load('lib/agent-client.mjs');
+}
+
+/** 产物仓库：浏览器下载导入要跑真实的落盘与元数据，不能只测假对象。 */
+export async function buildArtifactStoreModule() {
+  return load('lib/artifacts/storage.mjs');
 }
 
 /** 审批记录：存储、认领与风险判定都要跑真实实现，不能用假对象糊过去。 */

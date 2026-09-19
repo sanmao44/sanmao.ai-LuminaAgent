@@ -1258,6 +1258,8 @@ export async function buildArtifactPreviewHtml(input: { kind: ArtifactKind; name
     else if (input.kind === 'document') body = wordPreview(input.data);
     else if (input.kind === 'presentation') body = presentationPreview(input.data);
     else if (input.kind === 'archive') body = archivePreview(input.data);
+    // 原样收下的文件不猜内容：说清「这是什么、多大、怎么打开」就够了。
+    else if (input.kind === 'file') body = `<p class="empty">${escapeHtml(input.name)} · ${escapeHtml(formatBytes(input.data.length))}<br />浏览器下载的文件原样保存在这里，下载后用本地应用打开。</p>`;
     else body = emptyBlock();
   } catch {
     body = `<p class="empty">这个文件暂时无法解析，请下载后用本地应用打开。</p>`;

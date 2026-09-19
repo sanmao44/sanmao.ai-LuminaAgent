@@ -1,7 +1,8 @@
+import { listFilesystemRoots } from './filesystem-roots';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
-import { listCatalogServers } from './catalog';
+import { findCatalogEntry, listCatalogServers } from './catalog';
 import type { McpServerConfig } from './types';
 
 export const MCP_MAX_SERVERS = 20;
@@ -9,7 +10,13 @@ export const MCP_MAX_HEADERS = 12;
 export const MCP_MAX_HEADER_CHARS = 2000;
 export const MCP_MAX_TOOLS_PER_SERVER = 60;
 
-type McpStoreOptions = { dataDir?: string };
+type McpStoreOptions = { dataDir?: string; /** 只有目录条目自己的连接流程能写 catalogId，接口层不接受用户传这个字段。 */ allowCatalogId?: boolean; /** Filesystem 条目的授权目录；不传就用本地存的授权清单。 */ roots?: readonly string[] };
+
+/** 服务 id 命不命中目录条目：面板据此认出「这条是官方连接器」。 */
+function catalogIdOf(value: unknown, options: { allowCatalogId?: boolean } = {}) {
+  if (!options.allowCatalogId) return '';
+  return findCatalogEntry(value)?.id || '';
+}
 
 /** 服务配置存本地数据目录，和技能目录同级；不写进仓库，也不进前端状态。 */
 export function resolveMcpStoreFile(options: McpStoreOptions = {}) {
@@ -101,7 +108,7 @@ export function normalizeMcpServerUrl(value: unknown) {
 }
 
 /** 校验并归一化一条服务配置；非法输入抛错，避免半截配置写进文件。 */
-export function normalizeMcpServerInput(raw: unknown, options: { existingId?: string; usedIds?: Set<string> } = {}): McpServerConfig {
+export function normalizeMcpServerInput(raw: unknown, options: { existingId?: string; usedIds?: Set<string>; allowCatalogId?: boolean } = {}): McpServerConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('MCP 服务配置必须是对象');
   const input = raw as Record<string, unknown>;
   const name = String(input.name ?? '').trim().slice(0, 60);
@@ -112,6 +119,7 @@ export function normalizeMcpServerInput(raw: unknown, options: { existingId?: st
   const id = used.has(requestedId) ? uniqueId(requestedId, used) : requestedId;
   const headers = normalizeHeaders(input.headers);
   const enabledTools = normalizeEnabledTools(input.enabledTools);
+  const catalogId = catalogIdOf(input.catalogId, options);
   return {
     id,
     name,
@@ -121,6 +129,7 @@ export function normalizeMcpServerInput(raw: unknown, options: { existingId?: st
     ...(headers ? { headers } : {}),
     ...(enabledTools ? { enabledTools } : {}),
     ...(input.lazy === true ? { lazy: true } : {}),
+    ...(catalogId ? { catalogId } : {}),
   };
 }
 
@@ -136,11 +145,16 @@ export function redactMcpServer(config: McpServerConfig) {
     hasHeaders: Boolean(Object.keys(config.headers || {}).length),
     enabledTools: config.enabledTools || [],
     lazy: config.lazy === true,
+    /** 官方连接器 id：面板用它把条目和普通服务区分开（不是凭据，可以外传）。 */
+    catalogId: config.catalogId || '',
   };
 }
 
 export function listMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
-  return [...readUserMcpServers(options), ...listCatalogServers(options)].slice(0, MCP_MAX_SERVERS);
+  // 授权目录只有一份（lib/mcp/filesystem-roots.ts）：这里补默认值，调用方不必各自记得传，
+  // 否则漏传一次就等于「Filesystem 服务静默消失」，很难查。
+  const roots = options.roots ?? listFilesystemRoots({ dataDir: options.dataDir });
+  return [...readUserMcpServers(options), ...listCatalogServers({ ...options, roots })].slice(0, MCP_MAX_SERVERS);
 }
 
 /**
@@ -156,7 +170,9 @@ function readUserMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
     return servers
       .map((item: unknown) => {
         try {
-          return normalizeMcpServerInput(item, { existingId: (item as { id?: string })?.id });
+          // 读自己的配置文件时可以带回 catalogId：写入侧（app/api/mcp）不接受这个字段，
+          // 所以只有目录条目自己的连接流程（lib/mcp/catalog-remote.ts）能写进来。
+          return normalizeMcpServerInput(item, { existingId: (item as { id?: string })?.id, allowCatalogId: true });
         } catch {
           return null;
         }
@@ -186,7 +202,7 @@ export function upsertMcpServer(input: unknown, options: McpStoreOptions = {}) {
   const index = id ? servers.findIndex((server) => server.id === normalizeMcpServerId(id)) : -1;
   const usedIds = new Set(servers.filter((_server, position) => position !== index).map((server) => server.id));
   if (index < 0 && servers.length >= MCP_MAX_SERVERS) throw new Error(`最多添加 ${MCP_MAX_SERVERS} 个 MCP 服务`);
-  const next = normalizeMcpServerInput(input, { existingId: index >= 0 ? servers[index].id : '', usedIds });
+  const next = normalizeMcpServerInput(input, { existingId: index >= 0 ? servers[index].id : '', usedIds, allowCatalogId: options.allowCatalogId === true });
   const merged: McpServerConfig = index >= 0 ? { ...servers[index], ...next, id: servers[index].id } : next;
   const updated = index >= 0 ? servers.map((server, position) => (position === index ? merged : server)) : [...servers, merged];
   saveMcpServers(updated, options);

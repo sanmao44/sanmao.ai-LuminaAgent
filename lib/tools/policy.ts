@@ -40,7 +40,9 @@ export function resolveToolPolicy(
     return {
       ...base,
       allowed: false,
-      reason: `MCP 工具 ${tool.name} 会改动外部数据，需要先在 MCP 面板为「${tool.mcp.serverName}」打开「允许写入」才能调用。`,
+      // 目录条目（GitHub）会给出更具体的理由，例如要打开哪一项写权限；其余服务沿用这句话。
+      reason: tool.mcp.blockedReason
+        || `MCP 工具 ${tool.name} 会改动外部数据，需要先在 MCP 面板为「${tool.mcp.serverName}」打开「允许写入」才能调用。`,
     };
   }
   if (!tool.acceptUnlisted && !tool.gating(context)) {

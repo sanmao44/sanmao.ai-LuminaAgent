@@ -26,12 +26,30 @@ async function fakeInstall(dataDir, id = 'playwright') {
 
 test('目录里只有写死的条目，版本固定不用 latest', () => {
   const ids = mcp.MCP_CATALOG_ENTRIES.map((entry) => entry.id);
-  assert.deepEqual(ids, ['playwright']);
+  assert.deepEqual(ids, ['playwright', 'filesystem', 'github', 'context7']);
   for (const entry of mcp.MCP_CATALOG_ENTRIES) {
-    assert.match(entry.pkg, /^@?[a-z0-9-]+(\/[a-z0-9-]+)?$/);
-    assert.match(entry.version, /^\d+\.\d+\.\d+$/, '版本必须写死，不能是 latest 或 ^ 范围');
-    assert.ok(entry.installNote.length > 4, '要提前告诉用户安装要等多久');
+    assert.ok(entry.name.length > 0, '面板要有中文名');
+    assert.ok(entry.publisher.length > 0, '要写清楚是谁维护的');
+    assert.match(entry.homepage, /^https:\/\//, '要能点回上游项目');
+    assert.ok(entry.permissions.length > 0, '每个条目都要声明权限');
+    assert.ok(entry.capabilities.length > 0, '面板要有一句话能力摘要');
+    if (entry.transport === 'stdio') {
+      assert.match(entry.pkg, /^@?[a-z0-9-]+(\/[a-z0-9-]+)?$/);
+      assert.match(entry.version, /^\d+\.\d+\.\d+(\.\d+)?$/, '版本必须写死，不能是 latest 或 ^ 范围');
+      assert.ok(entry.installNote.length > 4, '要提前告诉用户安装要等多久');
+    } else {
+      assert.match(entry.url, /^https:\/\//, '远端条目必须是 https');
+      assert.equal(entry.pkg, undefined, '远端条目不下载任何东西');
+      assert.equal(entry.installMode, 'remote');
+    }
   }
+  // 远端凭据只描述写法，值永远不写进代码。
+  const github = mcp.findCatalogEntry('github');
+  assert.equal(github.auth.headerName, 'Authorization');
+  assert.equal(github.auth.headerPrefix, 'Bearer ');
+  assert.equal(github.setup.requiresAuth, true);
+  assert.equal(github.defaultReadOnly, true, 'GitHub 第一版默认只读');
+  assert.ok(mcp.findCatalogEntry('context7').auth.optional, 'Context7 允许匿名连接');
 });
 
 test('启动参数是固定形态：独立 profile、受控输出目录、不开高权限 caps', async () => {

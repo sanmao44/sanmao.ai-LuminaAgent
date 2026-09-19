@@ -64,4 +64,6 @@ export type McpToolMeta = {
   readOnly: boolean;
   /** 有副作用、但服务没打开「允许写入」，调用前应直接拒绝。 */
   blocked: boolean;
+  /** 拒绝时给用户看的理由（比默认那句话更具体，例如「需要先打开写权限里的创建 Issue」）。 */
+  blockedReason?: string;
 };

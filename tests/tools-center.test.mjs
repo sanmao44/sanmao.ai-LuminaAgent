@@ -13,26 +13,35 @@ const panel = await readFile(new URL('../components/McpManager.tsx', import.meta
 test('工具中心面板接口要求管理员，并只接受白名单动作', () => {
   assert.match(toolsRoute, /if \(!isAdminRequest\(request\)\) return Response\.json\(\{ error: '需要管理员登录。' \}, \{ status: 401 \}\);/);
   assert.equal((toolsRoute.match(/isAdminRequest\(request\)/g) || []).length, 2, 'GET 和 POST 都要挡');
-  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel'\] as const;/);
+  assert.match(toolsRoute, /const TOOL_ACTIONS = \['install', 'start', 'stop', 'cancel', 'connect', 'disconnect', 'configure', 'allow-write', 'toolset', 'write-gate', 'roots-add', 'roots-remove'\] as const;/);
   assert.match(toolsRoute, /if \(!\(TOOL_ACTIONS as readonly string\[\]\)\.includes\(action\)\) \{/);
 });
 
 test('命令、参数和安装路径都来自代码内置条目，请求体只能给 id', () => {
   // 路由只读取 action 和 id：没有任何字段能影响跑什么命令或装到哪里。
-  assert.match(toolsRoute, /const data = \(await request\.json\(\)\.catch\(\(\) => \(\{\}\)\)\) as \{ action\?: unknown; id\?: unknown \};/);
+  assert.match(toolsRoute, /const data = \(await request\.json\(\)\.catch\(\(\) => \(\{\}\)\)\) as \{/);
   assert.doesNotMatch(toolsRoute, /data\?\.(command|args|cwd|url|env)/);
   assert.match(toolsRoute, /for \(const entry of MCP_CATALOG_ENTRIES\) \{/);
 });
 
 test('装完/停掉之后要丢掉工具缓存，否则模型还会拿着旧工具表', () => {
-  assert.equal((toolsRoute.match(/clearMcpToolCache\(\);/g) || []).length, 2);
+  // 五个入口：装/启停、开关写入权限、改能力组、改写权限分项、增删授权目录。
+  assert.equal((toolsRoute.match(/clearMcpToolCache\(\);/g) || []).length, 5);
 });
 
 test('面板状态只回脱敏配置', () => {
-  assert.match(toolsRoute, /servers: listMcpServers\(\)\.map\(redactMcpServer\)/);
+  assert.match(toolsRoute, /const servers = listMcpServers\(\)\.map\(redactMcpServer\);/);
   assert.doesNotMatch(toolsRoute, /headers:/);
 });
 
+test('面板把能力组和写权限分项摆出来，并且逐项提交', () => {
+  assert.match(panel, /能力组：关掉的组不会交给助手/);
+  assert.match(panel, /写权限：全部关闭（先打开上面的「允许写入」，再逐项放开）/);
+  assert.match(panel, /action: 'toolset', id: item\.id, toolset: toolset\.id/);
+  assert.match(panel, /action: 'write-gate', id: item\.id, gate: gate\.id/);
+  assert.match(panel, /没有开关，Catalog 里不会执行/);
+  assert.match(panel, /item\.auth\.note/);
+});
 test('面板给出安装/启动/停止/取消，并说明空闲回收与浏览器来源', () => {
   assert.match(panel, /本地工具运行时/);
   for (const label of ['安装', '启动', '停止', '取消安装']) {

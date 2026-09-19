@@ -49,8 +49,11 @@ function metaFileName() {
 
 function kindFromExtension(fileName: string): ArtifactKind | null {
   const lower = fileName.toLowerCase();
-  const entry = (Object.keys(ARTIFACT_EXTENSIONS) as ArtifactKind[]).find((kind) => lower.endsWith(ARTIFACT_EXTENSIONS[kind]));
-  return entry || null;
+  const entry = (Object.keys(ARTIFACT_EXTENSIONS) as ArtifactKind[]).find(
+    (kind) => ARTIFACT_EXTENSIONS[kind] !== '' && lower.endsWith(ARTIFACT_EXTENSIONS[kind]),
+  );
+  // 认不出扩展名的按「原样收下的文件」兜底：浏览器下载的 pdf、png 都归这一类。
+  return entry || (path.extname(lower) ? 'file' : null);
 }
 
 async function writeAtomic(file: string, data: Buffer) {

@@ -194,11 +194,20 @@ export function assessToolApproval(input: {
   args: unknown;
   /** 最近看到的页面内容（浏览器动作按内容判风险）。 */
   pageText?: string;
+  /**
+   * 本机一侧（lib/mcp/filesystem-policy.ts）判出来的敏感文件理由，例如「要读取敏感配置文件 .env」。
+   * 只读工具平时不需要确认，但读凭据类配置会把秘密带进对话上下文，所以要停下来问一次。
+   */
+  sensitiveHint?: string;
 }): ApprovalAssessment {
   const definition = input.definition;
   if (!definition || definition.source !== 'mcp') return { required: false, risk: definition?.risk || 'read', reason: '' };
   const risk = definition.risk;
-  if (risk === 'read') return { required: false, risk, reason: '' };
+  const sensitive = String(input.sensitiveHint || '').trim();
+  if (risk === 'read') {
+    if (sensitive) return { required: true, risk, reason: sensitive };
+    return { required: false, risk, reason: '' };
+  }
   const toolName = String(definition.name || '').split('__').pop() || '';
   if (BROWSER_ACTION_TOOLS.has(toolName)) {
     let argsText = '';
@@ -221,7 +230,13 @@ export function assessToolApproval(input: {
  */
 export function approvalMessageFor(pending: readonly PendingToolCall[]) {
   if (!pending.length) return '这一步需要你确认。';
-  if (pending.length === 1) return `这一步会改动外部数据，确认后我再继续：${pending[0].serverName} · ${pending[0].toolName}（${pending[0].reason}）。`;
+  // 只读调用进审批只有一种原因：它要读本机上的敏感文件。措辞不能写成「改动外部数据」，
+  // 否则用户会以为点下去是在做一件有副作用的事。
+  if (pending.length === 1) {
+    const lead = pending[0].readOnly ? '这一步要读取本机文件，确认后我再继续' : '这一步会改动外部数据，确认后我再继续';
+    return `${lead}：${pending[0].serverName} · ${pending[0].toolName}（${pending[0].reason}）。`;
+  }
+  if (pending.every((call) => call.readOnly)) return `有 ${pending.length} 个调用要读取本机文件，确认后我再继续。`;
   return `有 ${pending.length} 个调用会改动外部数据，确认后我再继续。`;
 }/** 面板上给用户看的一句话摘要：谁、要做什么、参数长什么样。 */
 export function describePendingCall(call: PendingToolCall) {

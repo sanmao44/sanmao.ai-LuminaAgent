@@ -20,6 +20,9 @@ import { toModelToolSchema } from '@/lib/tools/registry';
 import { selectToolsForTurn } from '@/lib/tools/selector';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { claimApproval, type PendingToolCall } from '@/lib/agent/approval';
+import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
+import { listFilesystemRoots } from '@/lib/mcp/filesystem-roots';
+import { resolveLocalDataDir } from '@/lib/data-paths';
 import { stripToolCallMarkup } from '@/lib/skills';
 
 /** 续跑的整体上限：比一轮 MCP 预算再多一点拿来整理回答。 */
@@ -63,6 +66,9 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   const servers = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
   const mcpTools = mcpRuntime.tools;
 
+  // 续跑同样要过一遍路径策略：用户点了「允许」只代表他同意这一次操作，
+  // 不代表授权目录在这中间被改过——所以按现在的授权清单重新判。
+  const guardOptions = { roots: listFilesystemRoots(), dataDir: resolveLocalDataDir() };
   const executed: ChatMessage[] = Array.isArray(record.executed) ? (record.executed as ChatMessage[]) : [];
   const usedMcpTools: AgentResumeMcpToolUse[] = [];
   let budget = MCP_TURN_TIME_BUDGET_MS;
@@ -83,6 +89,12 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     callCount += 1;
     const startedAt = Date.now();
     const args = pending.args && typeof pending.args === 'object' ? (pending.args as Record<string, unknown>) : {};
+    const guard = guardMcpServerCall(server, meta.toolName, args, guardOptions);
+    if (!guard.ok) {
+      executed.push(toolFailure(pending, guard.error));
+      usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
+      continue;
+    }
     try {
       const result = await callMcpTool(server, meta.toolName, args, {
         signal: input.signal,
@@ -154,6 +166,8 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     try {
       args = JSON.parse(call?.function?.arguments || '{}');
     } catch {}
+    const guard = guardMcpServerCall(server, meta.toolName, args, guardOptions);
+    if (!guard.ok) return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: guard.error }) };
     try {
       const result = await callMcpTool(server, meta.toolName, args && typeof args === 'object' ? (args as Record<string, unknown>) : {}, {
         signal: input.signal,

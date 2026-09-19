@@ -36,20 +36,67 @@ export {
 export type { McpStdioStatus } from './stdio';
 export {
   MCP_CATALOG_ENTRIES,
+  catalogEntryAccount,
+  catalogEntryAllowWrite,
+  catalogEntryAuthRequired,
   catalogEntryBinPath,
   catalogEntryEnabled,
+  catalogEntryError,
+  catalogEntryReady,
+  catalogEntryToolsets,
+  catalogEntryWriteGates,
   catalogServerConfig,
+  catalogWritePolicy,
+  catalogWriteToolProblem,
+  clearCatalogEntryWriteGates,
   detectSystemBrowser,
   findCatalogEntry,
   isCatalogInstalled,
+  isRemoteCatalogEntry,
+  isStdioCatalogEntry,
   listCatalogServers,
   readCatalogState,
+  recordCatalogEntryError,
+  remoteCatalogEntries,
+  requireStdioCatalogEntry,
   resolveCatalogInstallRoot,
   resolveCatalogStateFile,
   resolveCatalogWorkspace,
+  setCatalogEntryAccount,
+  setCatalogEntryAllowWrite,
+  setCatalogEntryAuthRequired,
   setCatalogEntryEnabled,
+  setCatalogEntryToolset,
+  setCatalogEntryWriteGate,
+  stdioCatalogEntries,
 } from './catalog';
-export type { McpCatalogBrowser, McpCatalogEntry } from './catalog';
+export type {
+  McpCatalogAuth,
+  McpCatalogBrowser,
+  McpCatalogEntry,
+  McpCatalogToolset,
+  McpCatalogWriteGate,
+  McpCatalogWritePolicy,
+  McpCatalogInstallMode,
+  McpCatalogState,
+  McpCatalogStateEntry,
+  McpCatalogTransport,
+  McpCatalogTrust,
+  McpRemoteCatalogEntry,
+  McpStdioCatalogEntry,
+} from './catalog';
+export {
+  catalogEntryState,
+  configureRemoteCatalogEntry,
+  connectRemoteCatalogEntry,
+  disconnectRemoteCatalogEntry,
+  findRemoteCatalogServer,
+  isCatalogEntryConnecting,
+  remoteCatalogConnectionState,
+  remoteCatalogDefaultHeaders,
+  setRemoteCatalogToolset,
+} from './catalog-remote';
+export type { McpCatalogConnectionState, McpCatalogRemoteOptions } from './catalog-remote';
 export {
   MCP_CATALOG_INSTALL_TIMEOUT_MS,
   cancelCatalogInstall,
@@ -77,6 +124,33 @@ export {
   mcpToolDefinitions,
   mcpToolId,
 } from './tools';
+export {
+  MCP_MAX_FILESYSTEM_ROOTS,
+  addFilesystemRoot,
+  filesystemRootsDataDir,
+  isPathInside,
+  listFilesystemRoots,
+  normalizeFilesystemRoot,
+  removeFilesystemRoot,
+  resolveFilesystemRootsFile,
+  samePath,
+} from './filesystem-roots';
+export {
+  MCP_FILESYSTEM_PATH_KEYS,
+  filesystemApprovalReason,
+  filesystemPathProblem,
+  guardFilesystemCall,
+  guardMcpServerCall,
+  guardUploadCall,
+  uploadSourceDirs,
+} from './filesystem-policy';
+export {
+  BROWSER_DOWNLOAD_MAX_BYTES,
+  importBrowserArtifacts,
+  resetBrowserArtifactImports,
+  resolveBrowserDownloadDir,
+} from './browser-downloads';
+export type { BrowserArtifactFile, ImportBrowserArtifactsOptions } from './browser-downloads';
 export { MCP_ADMIN_ACTIONS, runMcpManageAction } from './admin';
 export { MCP_RUNTIME_ACTIONS, isMcpRuntimeAction, runMcpRuntimeAction } from './runtime-admin';
 export type { McpRuntimeAction, McpRuntimeOutcome } from './runtime-admin';

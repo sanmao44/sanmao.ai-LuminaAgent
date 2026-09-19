@@ -11,7 +11,9 @@ const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8')
 
 test('风险调用不当场执行，而是整批延后等确认', () => {
   assert.match(route, /import \{ appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, type PendingToolCall \} from '@\/lib\/agent\/approval';/);
-  assert.match(route, /const assessment = assessToolApproval\(\{ definition: policy\.tool, args, pageText: recentPageText \}\);/);
+  // MCP 调用先过本机一侧的路径检查（Filesystem、上传来源），再进审批判定。
+  assert.match(route, /const guard = guardMcpCall\(mcpGuardMeta, args\);/);
+  assert.match(route, /const assessment = assessToolApproval\(\{ definition: policy\.tool, args, pageText: recentPageText, sensitiveHint: mcpGuardApproval \}\);/);
   assert.match(route, /if \(assessment\.required && policy\.tool\?\.mcp\) \{/);
   assert.match(route, /deferredCalls = executionCalls\.slice\(callIndex\);/);
   // 页面文本只在同一次执行循环里顺手累积，结果失败时不作数。

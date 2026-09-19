@@ -41,6 +41,81 @@ type RuntimeView = {
   idleTimeoutMs: number;
 };
 
+/** 官方连接器在面板上的状态（任务书 §4 的九态，中文说法按用户视角写）。 */
+type CatalogState = 'unavailable' | 'not_installed' | 'installing' | 'installed' | 'connecting' | 'connected' | 'auth_required' | 'error' | 'disabled';
+
+type CatalogWriteGateView = { id: string; label: string };
+type CatalogToolsetView = { id: string; label: string; summary: string; writes: CatalogWriteGateView[] };
+
+type CatalogEntryView = {
+  id: string;
+  name: string;
+  summary: string;
+  publisher: string;
+  homepage: string;
+  transport: 'stdio' | 'http';
+  installMode: string;
+  trust: string;
+  capabilities: string[];
+  permissions: string[];
+  defaultReadOnly: boolean;
+  setup: { requiresAuth: boolean; requiresLocalRuntime: boolean };
+  version: string;
+  installNote: string;
+  needsBrowser: boolean;
+  allowedTools: number;
+  needsRoots: boolean;
+  allowWrite: boolean;
+  enabled: boolean;
+  state: CatalogState;
+  blockedReason: string;
+  connecting: boolean;
+  error: string | null;
+  /** 远端连接器连上之后问到的账号名（例如 GitHub 的登录名）。 */
+  account: string;
+  auth: { required: boolean; optional: boolean; label: string; helpUrl: string; note: string; configured: boolean };
+  /** 远端条目才有：能力组（GitHub toolsets）与写权限分项。 */
+  toolsets: CatalogToolsetView[];
+  enabledToolsets: string[];
+  writeGates: CatalogWriteGateView[];
+  enabledWriteGates: string[];
+};
+
+const CATALOG_STATE_LABELS: Record<string, string> = {
+  unavailable: '还差一步',
+  not_installed: '未安装',
+  installing: '安装中',
+  installed: '已安装',
+  connecting: '连接中',
+  connected: '已连接',
+  auth_required: '需要重新连接',
+  error: '出错',
+  disabled: '已停用',
+};
+
+/** 状态颜色：能用的用强调色，出错的用警告色，其余是中性徽标。 */
+const CATALOG_STATE_TONE: Record<string, 'on' | 'warn' | 'muted'> = {
+  connected: 'on',
+  installed: 'on',
+  running: 'on',
+  installing: 'muted',
+  connecting: 'muted',
+  disabled: 'muted',
+  not_installed: 'muted',
+  unavailable: 'warn',
+  auth_required: 'warn',
+  error: 'warn',
+};
+
+const PERMISSION_LABELS: Record<string, string> = {
+  network: '联网',
+  'fs:read': '读本机文件',
+  'fs:write': '写本机文件',
+  'artifact:read': '读生成的文件',
+  'artifact:write': '生成文件',
+  'external:write': '改动外部数据',
+};
+
 const RUNTIME_STATE_LABELS: Record<string, string> = {
   not_installed: '未安装',
   installing: '安装中',
@@ -81,6 +156,11 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [open, setOpen] = useState(false);
   const [servers, setServers] = useState<McpServerView[]>([]);
   const [runtimes, setRuntimes] = useState<RuntimeView[]>([]);
+  const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
+  const [roots, setRoots] = useState<string[]>([]);
+  // 凭据只在内存里放一会儿：提交后立刻清掉，绝不回显已保存的值。
+  const [tokens, setTokens] = useState<Record<string, string>>({});
+  const [rootDraft, setRootDraft] = useState('');
   const [limit, setLimit] = useState(0);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [probes, setProbes] = useState<Record<string, ProbeState>>({});
@@ -107,6 +187,8 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const applyPayload = useCallback((data: Record<string, unknown>) => {
     if (Array.isArray(data.servers)) setServers(data.servers as McpServerView[]);
     if (Array.isArray(data.runtimes)) setRuntimes(data.runtimes as RuntimeView[]);
+    if (Array.isArray(data.catalog)) setCatalog(data.catalog as CatalogEntryView[]);
+    if (Array.isArray(data.roots)) setRoots(data.roots as string[]);
     if (typeof data.limit === 'number' && data.limit > 0) setLimit(data.limit);
   }, []);
 
@@ -131,15 +213,17 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     });
   }, [open, run, applyPayload]);
 
-  /* 安装依赖是分钟级的动作：装的过程中每两秒取一次状态和日志，装完自动停。 */
+  /* 安装依赖是分钟级的动作：装的过程中每两秒取一次状态和日志，装完自动停。
+     远端条目的「连接」也要轮询：探测要几百毫秒到几秒，面板得能显示「连接中」。 */
   const installingRuntime = runtimes.some((runtime) => runtime.installing);
+  const connectingEntry = catalog.some((item) => item.connecting);
   useEffect(() => {
-    if (!open || !installingRuntime) return;
+    if (!open || (!installingRuntime && !connectingEntry)) return;
     const timer = setInterval(() => {
       void requestJson('/api/tools').then(applyPayload).catch(() => undefined);
     }, 2000);
     return () => clearInterval(timer);
-  }, [open, installingRuntime, applyPayload]);
+  }, [open, installingRuntime, connectingEntry, applyPayload]);
 
   const enabledCount = servers.filter((server) => server.enabled).length;
   /* 已经有服务时，"添加服务"表单默认收起：那个表单要占掉四百多像素，展开着会把工具清单挤到只剩一两行。 */
@@ -277,6 +361,120 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     });
   }
 
+  /** 官方连接器的动作：本机条目走安装/启动/停止，远端条目走连接/断开/配置。 */
+  async function runCatalog(action: 'install' | 'start' | 'stop' | 'cancel' | 'connect' | 'disconnect', item: CatalogEntryView, runtime?: RuntimeView) {
+    await run(async () => {
+      const data = await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, id: item.id, ...(action === 'connect' ? { token: (tokens[item.id] || '').trim() } : {}) }),
+      });
+      applyPayload(data);
+      if (action === 'connect') setTokens((current) => ({ ...current, [item.id]: '' }));
+      if (action === 'connect') {
+        // 探测结果由服务端给：连上、401、超时都要说清，不能只说「失败了」。
+        const connection = data.connection as { state?: string; error?: string | null } | undefined;
+        setNotice(connection?.state === 'connected'
+          ? `${item.name} 已连接，工具在下一轮对话生效。`
+          : `${item.name} 连接失败：${connection?.error || '原因未知'}。配置已经留着，改好再点一次「连接」。`);
+        return;
+      }
+      setNotice(action === 'disconnect'
+        ? `已断开 ${item.name}，本机保存的那份凭据也一起删掉了。`
+        : action === 'install'
+          ? `开始安装 ${item.name}；装完后点「启动」。`
+          : action === 'start'
+            ? `${item.name} 已启动，工具在下一轮对话生效。`
+            : action === 'stop'
+              ? `${item.name} 已停止，工具已从下一轮对话里移除。`
+              : '已取消安装。');
+    });
+  }
+
+  /** 写入权限：本机条目写条目状态，远端条目还要顺手改服务端请求头里的只读开关（服务端一起改才算数）。 */
+  async function toggleCatalogWrite(item: CatalogEntryView) {
+    await run(async () => {
+      const allowWrite = !item.allowWrite;
+      const data = await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'allow-write', id: item.id, allowWrite }),
+      });
+      applyPayload(data);
+      // 远端连接器的写入权限写在请求头上：这一步会顺带重连，重连失败要说清楚，不能只报「已改好」。
+      const connection = data.connection as { state?: string; error?: string | null } | undefined;
+      if (connection && connection.state !== 'connected') {
+        setNotice(`已改「${item.name}」的写入权限，但重新连接没成功：${connection.error || '原因未知'}。改好凭据后点一次「重新连接」。`);
+        return;
+      }
+      setNotice(allowWrite
+        ? `已允许「${item.name}」执行有副作用的操作${item.writeGates.length ? '；还要在写权限里逐项打开具体操作' : ''}，每一次写操作仍然要你确认。`
+        : `已把「${item.name}」改回只读，写工具不会下发给助手。`);
+    });
+  }
+
+  /** 能力组（GitHub 的 toolsets）：关掉的组服务端就不再公布，所以要重连一次才算数。 */
+  async function toggleCatalogToolset(item: CatalogEntryView, toolset: CatalogToolsetView) {
+    await run(async () => {
+      const enabled = !item.enabledToolsets.includes(toolset.id);
+      const data = await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'toolset', id: item.id, toolset: toolset.id, enabled }),
+      });
+      applyPayload(data);
+      const connection = data.connection as { state?: string; error?: string | null } | undefined;
+      if (item.state === 'connected' && connection && connection.state !== 'connected') {
+        setNotice(`已${enabled ? '打开' : '关掉'}「${toolset.label}」，但重新连接没成功：${connection.error || '原因未知'}。改好后再点一次「重新连接」。`);
+        return;
+      }
+      setNotice(enabled
+        ? `已打开「${toolset.label}」：助手在下一轮对话里能看到这组工具。`
+        : `已关掉「${toolset.label}」：这组工具不会交给助手。`);
+    });
+  }
+
+  /** 写权限分项：只决定本机下发哪些写工具，每一项调用仍然要单独确认。 */
+  async function toggleCatalogWriteGate(item: CatalogEntryView, gate: CatalogWriteGateView) {
+    await run(async () => {
+      const enabled = !item.enabledWriteGates.includes(gate.id);
+      applyPayload(await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'write-gate', id: item.id, gate: gate.id, enabled }),
+      }));
+      setNotice(enabled
+        ? `已放开「${gate.label}」：助手可以做这件事，但每一次仍然要你确认。`
+        : `已收回「${gate.label}」：助手不会执行这类操作。`);
+    });
+  }
+
+  /** 授权文件夹：只能由用户在这里加，助手侧的 MCP 管理工具不碰这份清单。 */
+  async function addRoot() {
+    const value = rootDraft.trim();
+    if (!value) return;
+    await run(async () => {
+      applyPayload(await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'roots-add', path: value }),
+      }));
+      setRootDraft('');
+      setNotice(`已授权 ${value}：本地文件服务重启后能在里面读写。`);
+    });
+  }
+
+  async function removeRoot(path: string) {
+    await run(async () => {
+      applyPayload(await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'roots-remove', path }),
+      }));
+      setNotice(`已取消授权 ${path}：它的文件不会再交给助手。`);
+    });
+  }
+
   /** 安装 / 启动 / 停止 / 取消：请求体只有白名单里的动作名 + 条目 id。 */
   async function runRuntime(action: 'install' | 'start' | 'stop' | 'cancel', runtime: RuntimeView) {
     await run(async () => {
@@ -373,8 +571,96 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
 
         <section className={styles.form}>
           <div className={styles.formHead}>
-            <h3>本地工具运行时</h3>
+            <h3>官方连接器</h3>
             <button type="button" disabled={busy} onClick={() => void refreshRuntimes()}>{busy ? '处理中…' : '刷新状态'}</button>
+          </div>
+          <p className={styles.hint}>这些连接器来自内置清单：命令、参数和安装位置都写在代码里，面板和对话都改不了。远端连接器不下载任何东西，「连接」只是把一份带凭据的配置交给助手用；凭据只存在本机，页面上只看得到名字。</p>
+          {!catalog.length && <p className={styles.hint}>正在读取连接器状态…</p>}
+          {catalog.map((item) => {
+            const runtime = runtimes.find((entry) => entry.id === item.id);
+            const remote = item.transport === 'http';
+            const token = tokens[item.id] || '';
+            const tone = CATALOG_STATE_TONE[item.state] || 'muted';
+            return <article key={item.id} className={styles.row}>
+              <div className={styles.rowMain}>
+                <div className={styles.rowTitle}>
+                  <strong>{item.name}</strong>
+                  <span className={tone === 'on' ? styles.badgeOn : tone === 'warn' ? styles.warnBadge : styles.badgeMuted}>{CATALOG_STATE_LABELS[item.state] || item.state}</span>
+                  {item.defaultReadOnly && (item.allowWrite ? <span className={styles.warnBadge}>允许写入</span> : <span className={styles.badge}>只读</span>)}
+                  <span className={styles.badgeMuted}>{item.publisher}</span>
+                  <span className={styles.badgeMuted}>{remote ? '远端' : '本机'}</span>
+                  {item.version && <span className={styles.badgeMuted}>{item.version}</span>}
+                </div>
+                <p className={styles.description}>{item.summary}</p>
+                <p className={styles.meta}>权限：{item.permissions.map((permission) => PERMISSION_LABELS[permission] || permission).join('、') || '—'} · 能力：{item.capabilities.join('、')}{item.allowedTools ? ` · 放行 ${item.allowedTools} 个工具` : ''}</p>
+                {remote && item.account && <p className={styles.meta}>账号：@{item.account}（连接时确认过一次，换成别的凭据要重新连接）</p>}
+                {item.blockedReason && <p className={styles.meta}>{item.blockedReason}</p>}
+                {item.state === 'auth_required' && <p className={styles.meta}>上次连接被拒（凭据过期或权限不足）：填一份新的{item.auth.label}再点「连接」。</p>}
+                {(item.error || runtime?.error) && <p className={styles.meta}>上次失败：{item.error || runtime?.error}</p>}
+                {runtime?.installing && <p className={styles.meta}>正在下载依赖，日志会实时刷新；关掉面板不会中断安装。</p>}
+                {runtime?.installing && runtime.logTail && <pre className={styles.logTail}>{runtime.logTail}</pre>}
+                {runtime?.needsBrowser && <p className={styles.meta}>{runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个'}</p>}
+                {runtime?.running && <p className={styles.meta}>空闲 {Math.max(1, Math.round(runtime.idleTimeoutMs / 60000))} 分钟后自动关闭{runtime.pid ? ` · 进程 ${runtime.pid}` : ''}</p>}
+                {remote && <div className={styles.inline}>
+                  <input type="password" aria-label={item.auth.label || '凭据'} value={token} disabled={busy} placeholder={item.auth.configured ? '已保存（留空表示不改）' : item.auth.label || '凭据'} onChange={(event) => setTokens((current) => ({ ...current, [item.id]: event.target.value }))} />
+                  {item.auth.helpUrl && <a className={styles.link} href={item.auth.helpUrl} target="_blank" rel="noreferrer">去哪儿拿 {item.auth.label}</a>}
+                </div>}
+                {remote && item.auth.note && <p className={styles.hint}>{item.auth.note}</p>}
+                {item.toolsets.length > 0 && <div className={styles.policy}>
+                  <p className={styles.meta}>能力组：关掉的组不会交给助手（改动会自动重连一次）</p>
+                  <div className={styles.policyGrid}>
+                    {item.toolsets.map((toolset) => <label key={toolset.id} className={styles.check} title={toolset.summary}>
+                      <input type="checkbox" checked={item.enabledToolsets.includes(toolset.id)} disabled={busy} onChange={() => void toggleCatalogToolset(item, toolset)} />{toolset.label}
+                    </label>)}
+                  </div>
+                </div>}
+                {item.writeGates.length > 0 && <div className={styles.policy}>
+                  <p className={styles.meta}>{item.allowWrite
+                    ? `写权限：已放开 ${item.enabledWriteGates.length} / ${item.writeGates.length} 项，每一次写操作仍然要你确认`
+                    : '写权限：全部关闭（先打开上面的「允许写入」，再逐项放开）'}</p>
+                  <div className={styles.policyGrid}>
+                    {item.writeGates.map((gate) => <label key={gate.id} className={styles.check}>
+                      <input type="checkbox" checked={item.enabledWriteGates.includes(gate.id)} disabled={busy || !item.allowWrite} onChange={() => void toggleCatalogWriteGate(item, gate)} />{gate.label}
+                    </label>)}
+                  </div>
+                  <p className={styles.hint}>删除仓库、改密钥、force push、分支保护这类操作没有开关，Catalog 里不会执行。</p>
+                </div>}
+                {item.needsRoots && <div className={styles.rootEditor}>
+                  <p className={styles.meta}>已授权：{roots.length ? roots.join('、') : '还没有；本地文件服务需要至少一个文件夹才能启动'}</p>
+                  <div className={styles.inline}>
+                    <input type="text" aria-label="授权文件夹路径" value={rootDraft} disabled={busy} placeholder="例如 D:\文档（绝对路径，只能填文件夹）" onChange={(event) => setRootDraft(event.target.value)} />
+                    <button type="button" disabled={busy || !rootDraft.trim()} onClick={() => void addRoot()}>添加授权文件夹</button>
+                  </div>
+                  {roots.map((root) => <div key={root} className={styles.rootRow}>
+                    <code>{root}</code>
+                    <button type="button" disabled={busy} onClick={() => void removeRoot(root)}>移除</button>
+                  </div>)}
+                  <p className={styles.hint}>助手只能在这个范围里读写；.env、私钥、浏览器 profile 这类文件即使就在里面也不会读。</p>
+                </div>}
+              </div>
+              <div className={styles.rowActions}>
+                {!remote && (runtime?.installing
+                  ? <button type="button" disabled={busy} onClick={() => void runRuntime('cancel', runtime)}>取消安装</button>
+                  : <>
+                    {!runtime?.installed && <button type="button" className={styles.primary} disabled={busy || !runtime} onClick={() => runtime && void runRuntime('install', runtime)}>安装</button>}
+                    {runtime?.installed && !runtime.running && <button type="button" className={styles.primary} disabled={busy || item.state === 'unavailable'} onClick={() => void runCatalog('start', item, runtime)}>启动</button>}
+                    {runtime?.running && <button type="button" disabled={busy} onClick={() => void runCatalog('stop', item, runtime)}>停止</button>}
+                  </>)}
+                {remote && (item.connecting
+                  ? <button type="button" disabled>连接中…</button>
+                  : <>
+                    <button type="button" className={styles.primary} disabled={busy} onClick={() => void runCatalog('connect', item)}>{item.state === 'connected' ? '重新连接' : '连接'}</button>
+                    {item.state === 'connected' && <button type="button" disabled={busy} onClick={() => void runCatalog('disconnect', item)}>断开</button>}
+                  </>)}
+                {item.defaultReadOnly && <label className={styles.check}><input type="checkbox" checked={item.allowWrite} disabled={busy} onChange={() => void toggleCatalogWrite(item)} />允许写入</label>}
+              </div>
+            </article>;
+          })}
+        </section>
+
+        <section className={styles.form}>
+          <div className={styles.formHead}>
+            <h3>本地工具运行时详情</h3>
           </div>
           {!runtimes.length && <p className={styles.hint}>正在读取本地运行时的安装与运行状态…</p>}
           {runtimes.map((runtime) => <article key={runtime.id} className={styles.row}>
@@ -384,23 +670,13 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 <span className={runtime.running ? styles.badgeOn : runtime.state === 'error' ? styles.warnBadge : runtime.installed ? styles.badge : styles.badgeMuted}>{RUNTIME_STATE_LABELS[runtime.state] || runtime.state}</span>
                 {runtime.version && <span className={styles.badgeMuted}>{runtime.version}</span>}
               </div>
-              <p className={styles.description}>{runtime.summary}</p>
+              <p className={styles.meta}>{runtime.installRoot}</p>
               <p className={styles.meta}>
                 {runtime.needsBrowser ? (runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个') : ''}
                 {runtime.needsBrowser ? ' · ' : ''}空闲 {Math.max(1, Math.round(runtime.idleTimeoutMs / 60000))} 分钟后自动关闭{runtime.pid ? ` · 进程 ${runtime.pid}` : ''}
               </p>
-              {runtime.error && <p className={styles.meta}>上次失败：{runtime.error}</p>}
-              {runtime.state === 'installing' && <p className={styles.meta}>正在下载依赖，日志会实时刷新；关掉面板不会中断安装。</p>}
               {runtime.installing && runtime.logTail && <pre className={styles.logTail}>{runtime.logTail}</pre>}
-            </div>
-            <div className={styles.rowActions}>
-              {runtime.installing
-                ? <button type="button" disabled={busy} onClick={() => void runRuntime('cancel', runtime)}>取消安装</button>
-                : <>
-                  {!runtime.installed && <button type="button" disabled={busy} onClick={() => void runRuntime('install', runtime)}>安装</button>}
-                  {runtime.installed && !runtime.running && <button type="button" disabled={busy} onClick={() => void runRuntime('start', runtime)}>启动</button>}
-                  {runtime.running && <button type="button" disabled={busy} onClick={() => void runRuntime('stop', runtime)}>停止</button>}
-                </>}
+              {runtime.installNote && <p className={styles.hint}>{runtime.installNote}</p>}
             </div>
           </article>)}
           <p className={styles.hint}>依赖装在本机工作目录里，不写进应用自身依赖。运行时会用自己的浏览器 profile，不碰你日常浏览器里的登录状态；会改动外部数据的操作仍然要你逐次确认。</p>

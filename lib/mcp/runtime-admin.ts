@@ -10,6 +10,7 @@
  */
 import { MCP_CATALOG_ENTRIES, findCatalogEntry } from './catalog';
 import { catalogRuntimeStatus, startCatalogServer, stopCatalogServer } from './catalog-runtime';
+import { listFilesystemRoots } from './filesystem-roots';
 import type { McpCatalogRuntimeStatus } from './catalog-runtime';
 
 export const MCP_RUNTIME_ACTIONS = ['runtime_status', 'runtime_start', 'runtime_stop'] as const;
@@ -41,7 +42,7 @@ function snapshot(statuses: readonly McpCatalogRuntimeStatus[]) {
   }));
 }
 
-function statuses(options: { dataDir?: string } = {}) {
+function statuses(options: { dataDir?: string; roots?: readonly string[] } = {}) {
   const list: McpCatalogRuntimeStatus[] = [];
   for (const entry of MCP_CATALOG_ENTRIES) {
     try {
@@ -57,11 +58,13 @@ const INSTALL_HINT = '安装只能由用户在 MCP 面板的「本地工具运�
 
 export async function runMcpRuntimeAction(
   action: unknown,
-  options: { id?: unknown; instruction?: string; dataDir?: string } = {},
+  options: { id?: unknown; instruction?: string; dataDir?: string; roots?: readonly string[] } = {},
 ): Promise<McpRuntimeOutcome> {
   const name = String(action || '').trim().toLowerCase() as McpRuntimeAction;
   if (!isMcpRuntimeAction(name)) throw new Error(`不支持的运行时动作「${String(action || '')}」。`);
   const instruction = String(options.instruction || '');
+  // 授权目录只有一份：这里补默认值，让助手看到的运行时状态和面板完全一致。
+  const runtimeOptions = { ...options, roots: options.roots ?? listFilesystemRoots({ dataDir: options.dataDir }) };
 
   if (name === 'runtime_status') {
     return {
@@ -69,7 +72,7 @@ export async function runMcpRuntimeAction(
       result: {
         ok: true,
         action: name,
-        runtimes: snapshot(statuses(options)),
+        runtimes: snapshot(statuses(runtimeOptions)),
         note: `${INSTALL_HINT} 状态里的 running 表示进程已经起来、工具可以调用。`,
       },
     };
@@ -82,9 +85,9 @@ export async function runMcpRuntimeAction(
     if (!START_GRANT_PATTERN.test(instruction)) {
       throw new Error('用户这一轮没有明确要求启动本地运行时，先向用户确认再执行。');
     }
-    const before = catalogRuntimeStatus(entry.id, options);
+    const before = catalogRuntimeStatus(entry.id, runtimeOptions);
     if (!before.installed) throw new Error(`「${entry.name}」还没安装。${INSTALL_HINT}`);
-    const status = await startCatalogServer(entry.id, options);
+    const status = await startCatalogServer(entry.id, runtimeOptions);
     return {
       readOnly: false,
       result: {

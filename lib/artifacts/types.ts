@@ -1,4 +1,4 @@
-export type ArtifactKind = 'document' | 'spreadsheet' | 'presentation' | 'archive';
+export type ArtifactKind = 'document' | 'spreadsheet' | 'presentation' | 'archive' | /** 原样收下的文件：浏览器下载、截图这类不归 Office 管的产物。 */ 'file';
 
 export type ArtifactDescriptor = {
   id: string;
@@ -21,6 +21,8 @@ export type ArtifactGeneration = {
 };
 
 export const ARTIFACT_MIME_TYPES: Record<ArtifactKind, string> = {
+  // 只是兜底：导入时按真实扩展名给 mimeType，认不出来才用它。
+  file: 'application/octet-stream',
   document: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   spreadsheet: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   presentation: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -28,6 +30,8 @@ export const ARTIFACT_MIME_TYPES: Record<ArtifactKind, string> = {
 };
 
 export const ARTIFACT_EXTENSIONS: Record<ArtifactKind, string> = {
+  /** 空串表示「不强制扩展名」：下载下来的文件名是什么就存什么。 */
+  file: '',
   document: '.docx',
   spreadsheet: '.xlsx',
   presentation: '.pptx',

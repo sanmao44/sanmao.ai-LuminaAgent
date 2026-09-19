@@ -14,12 +14,12 @@ import {
   catalogServerConfig,
   catalogDataDir,
   detectSystemBrowser,
-  findCatalogEntry,
+  requireStdioCatalogEntry,
   isCatalogInstalled,
   resolveCatalogInstallRoot,
   setCatalogEntryEnabled,
   type McpCatalogBrowser,
-  type McpCatalogEntry,
+  type McpStdioCatalogEntry,
 } from './catalog';
 
 export const MCP_CATALOG_INSTALL_TIMEOUT_MS = 10 * 60_000;
@@ -45,6 +45,8 @@ export type McpCatalogRuntimeStatus = {
   installRoot: string;
   logTail: string;
   error: string | null;
+  /** 已经授权的目录（Filesystem 用），面板要靠它说明「还差一个文件夹」。 */
+  roots: string[];
   /** 进程空闲多久会被回收，面板用它解释「为什么一会儿自己关了」。 */
   idleTimeoutMs: number;
 };
@@ -53,7 +55,7 @@ type InstallJob = { child: ChildProcess | null; log: string; error: string | nul
 
 const installs = new Map<string, InstallJob>();
 
-function appendLog(entry: McpCatalogEntry, chunk: string, options: { dataDir?: string }) {
+function appendLog(entry: McpStdioCatalogEntry, chunk: string, options: { dataDir?: string }) {
   const job = installs.get(entry.id);
   if (job) job.log = (job.log + chunk).slice(-LOG_TAIL_CHARS);
   try {
@@ -80,7 +82,7 @@ function looksLikeNetworkFailure(log: string) {
   return /ETIMEDOUT|ENOTFOUND|ECONNRESET|ECONNREFUSED|EAI_AGAIN|network|socket hang up|timed out/i.test(log);
 }
 
-function npmInstallArgs(entry: McpCatalogEntry, installRoot: string, registry?: string) {
+function npmInstallArgs(entry: McpStdioCatalogEntry, installRoot: string, registry?: string) {
   return [
     'install',
     '--prefix',
@@ -94,7 +96,7 @@ function npmInstallArgs(entry: McpCatalogEntry, installRoot: string, registry?: 
 }
 
 function runNpmInstall(
-  entry: McpCatalogEntry,
+  entry: McpStdioCatalogEntry,
   options: { dataDir?: string },
   registry?: string,
 ): Promise<void> {
@@ -142,8 +144,7 @@ function runNpmInstall(
  * 首次失败且看起来是网络问题时，用国内镜像再试一次——项目启动器也是这个策略。
  */
 export async function installCatalogServer(id: unknown, options: { dataDir?: string } = {}): Promise<McpCatalogRuntimeStatus> {
-  const entry = findCatalogEntry(id);
-  if (!entry) throw new Error(`未知的本地服务：${String(id || '')}`);
+  const entry = requireStdioCatalogEntry(id);
   if (isCatalogInstalled(entry, options)) return catalogRuntimeStatus(entry.id, options);
   const current = installs.get(entry.id);
   if (current && !current.finished) throw new Error('这个服务正在安装中，请稍候');
@@ -177,7 +178,7 @@ export async function installCatalogServer(id: unknown, options: { dataDir?: str
 
 /** 取消进行中的安装；已经下完的部分留在目录里，下次安装会接着覆盖。 */
 export function cancelCatalogInstall(id: unknown) {
-  const entry = findCatalogEntry(id);
+  const entry = requireStdioCatalogEntry(id);
   if (!entry) return false;
   const job = installs.get(entry.id);
   if (!job || job.finished) return false;
@@ -189,9 +190,8 @@ export function cancelCatalogInstall(id: unknown) {
   return true;
 }
 
-export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string } = {}): McpCatalogRuntimeStatus {
-  const entry = findCatalogEntry(id);
-  if (!entry) throw new Error(`未知的本地服务：${String(id || '')}`);
+export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; roots?: readonly string[] } = {}): McpCatalogRuntimeStatus {
+  const entry = requireStdioCatalogEntry(id);
   const job = installs.get(entry.id);
   const installed = isCatalogInstalled(entry, options);
   const enabled = catalogEntryEnabled(entry.id, options);
@@ -225,6 +225,7 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string } 
     installRoot: resolveCatalogInstallRoot(entry.id, options),
     logTail: (job?.log || '').slice(-LOG_TAIL_CHARS),
     error,
+    roots: [...(options.roots ?? [])],
     idleTimeoutMs: MCP_STDIO_IDLE_TIMEOUT_MS,
   };
 }
@@ -233,16 +234,20 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string } 
  * 打开服务：先落开关，再把进程拉起来并列出工具。
  * 列工具失败不影响开关状态，但会把原因带回去（比如系统里没有可用的浏览器）。
  */
-export async function startCatalogServer(id: unknown, options: { dataDir?: string } = {}): Promise<McpCatalogRuntimeStatus> {
-  const entry = findCatalogEntry(id);
-  if (!entry) throw new Error(`未知的本地服务：${String(id || '')}`);
+export async function startCatalogServer(id: unknown, options: { dataDir?: string; roots?: readonly string[] } = {}): Promise<McpCatalogRuntimeStatus> {
+  const entry = requireStdioCatalogEntry(id);
   if (!isCatalogInstalled(entry, options)) throw new Error('这个服务还没安装完成');
   const browser = detectSystemBrowser();
   if (entry.needsBrowser && !browser.channel) {
     throw new Error('没有找到可用的浏览器：请先安装 Google Chrome 或 Microsoft Edge，再回来打开这个服务');
   }
+  // 没有授权目录时服务会打印用法后直接退出：与其让用户看到一段 stderr，不如在这里说清楚缺什么。
+  const roots = [...(options.roots ?? [])];
+  if (entry.requiresRoots && !roots.length) {
+    throw new Error('这个服务需要至少一个授权文件夹：先在面板里添加要开放的目录，再回来打开');
+  }
   setCatalogEntryEnabled(entry.id, true, options);
-  const config = catalogServerConfig(entry, { ...options, enabled: true, browser });
+  const config = catalogServerConfig(entry, { ...options, enabled: true, browser, roots });
   try {
     await listMcpServerTools(config, { timeouts: { list: 20_000 } });
   } catch (error) {
@@ -250,15 +255,14 @@ export async function startCatalogServer(id: unknown, options: { dataDir?: strin
     const message = error instanceof Error ? error.message : '启动失败';
     const job = installs.get(entry.id);
     if (job) job.error = message;
-    throw new Error(`浏览器服务启动失败：${message}`);
+    throw new Error(`${entry.name}启动失败：${message}`);
   }
   return catalogRuntimeStatus(entry.id, options);
 }
 
 /** 关掉服务：先落开关，再收进程，避免「开关说关了、进程还在跑」。 */
 export function stopCatalogServer(id: unknown, options: { dataDir?: string } = {}) {
-  const entry = findCatalogEntry(id);
-  if (!entry) throw new Error(`未知的本地服务：${String(id || '')}`);
+  const entry = requireStdioCatalogEntry(id);
   setCatalogEntryEnabled(entry.id, false, options);
   closeStdioServer(entry.id);
   return catalogRuntimeStatus(entry.id, options);
