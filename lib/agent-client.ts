@@ -40,6 +40,8 @@ export type AgentRequestPayload = {
   intentReason?: string;
   /** 用户原话。画布等调用方会把系统上下文拼进 messages，意图判断只认这段文字。 */
   intentText?: string;
+  /** 长任务进度 id：服务端按它记录阶段快照，前端轮询 /api/agent/progress 读取。 */
+  runId?: string;
 };
 
 export type AgentGeneratedFile = {
@@ -207,6 +209,96 @@ export async function resumeAgentRun(
   return data;
 }
 
+import type { AgentProgressSnapshot, AgentProgressStage } from "@/lib/agent/progress";
+export type { AgentProgressSnapshot, AgentProgressStage };
+
+/**
+ * 读一条长任务进度快照：主管线在真正耗时的节点写，前端在这里读。
+ *
+ * 读不到（没开始、已过期、id 不合法）就回 null；任何失败都不该让这一轮对话出错。
+ */
+export async function readAgentProgress(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AgentProgressSnapshot | null> {
+  try {
+    const response = await fetch(`/api/agent/progress?runId=${encodeURIComponent(runId)}`, { cache: "no-store", signal });
+    if (!response.ok) return null;
+    const data = (await response.json().catch(() => null)) as { progress?: AgentProgressSnapshot | null } | null;
+    return data?.progress || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 按 runId 轮询长任务进度：主管线在工具轮里写快照（app/api/agent/progress），前端在这里读。
+ *
+ * - 正文开始流式返回（isSettled）、用户停止、主管线收尾，轮询都会自己停；
+ * - 同一步骤超过 3 秒没变就带上秒表：模型单次思考可能很久，秒表让用户看到确实在往前走。
+ *
+ * 返回手动停止的函数；读进度失败只是没有进度，不会影响这一轮对话。
+ */
+export function pollAgentProgress(
+  runId: string,
+  options: {
+    signal?: AbortSignal;
+    /** 已经拿到正文（或已收尾）时返回 true，轮询停止。 */
+    isSettled?: () => boolean;
+    onProgress: (progress: { stage: AgentProgressStage; message: string }) => void;
+    intervalMs?: number;
+    maxPolls?: number;
+  },
+): () => void {
+  const intervalMs = options.intervalMs ?? 900;
+  const maxPolls = options.maxPolls ?? 400;
+  const settled = () => options.isSettled?.() === true;
+  let stopped = false;
+  let polls = 0;
+  let updatedAt = 0;
+  let startedAt = 0;
+  let stage: AgentProgressStage = "thinking";
+  let message = "";
+  let elapsed = 0;
+  const stop = () => {
+    stopped = true;
+  };
+  if (options.signal?.aborted) stop();
+  else options.signal?.addEventListener("abort", stop, { once: true });
+  const tick = async () => {
+    if (stopped || settled()) {
+      stopped = true;
+      return;
+    }
+    polls += 1;
+    const snapshot = await readAgentProgress(runId, options.signal);
+    if (stopped || settled()) return;
+    if (snapshot) {
+      if (snapshot.updatedAt !== updatedAt) {
+        updatedAt = snapshot.updatedAt;
+        startedAt = snapshot.startedAt;
+        stage = snapshot.stage;
+        message = snapshot.message;
+        elapsed = 0;
+        options.onProgress({ stage, message });
+      } else {
+        /* 秒表只在整秒变化时刷新：同一步骤里也要看得出还在走。 */
+        const seconds = Math.floor((Date.now() - startedAt) / 1000);
+        if (seconds >= 3 && seconds !== elapsed) {
+          elapsed = seconds;
+          options.onProgress({ stage, message: `${message}（已 ${seconds}s）` });
+        }
+      }
+    }
+    if (snapshot?.done || polls >= maxPolls) {
+      stopped = true;
+      return;
+    }
+    window.setTimeout(() => void tick(), intervalMs);
+  };
+  void tick();
+  return stop;
+}
 export async function requestAgent(
   payload: AgentRequestPayload,
   options: AgentRequestOptions = {},

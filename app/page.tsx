@@ -28,7 +28,7 @@ import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
-import { requestAgent } from '@/lib/agent-client';
+import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
 import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
@@ -8728,7 +8728,8 @@ export default function Page() {
                     } : version);
                 return applyMessageVersion({
                     ...message,
-                    retrying: false
+                    retrying: false,
+                    activity: undefined
                 }, versions, versions.findIndex((version)=>version.id === request.retryVersionId));
             }
             const { pending: _pending, activity: _activity, ...rest } = message;
@@ -9066,6 +9067,7 @@ export default function Page() {
         setMessages(workingMessages);
         setChatBusy(sessionId, true);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
+        let stopRetryProgress = ()=>{};
         try {
             const latestUserMessage = [
                 ...contextMessages
@@ -9099,6 +9101,26 @@ export default function Page() {
                 files: []
             });
             let streamedText = '';
+            /* 重新生成也可能是长任务：阶段文案挂在被重试的那条消息上（消息操作栏里显示）。 */
+            const retryRunId = uid('run');
+            const updateRetryActivity = (activity)=>{
+                if (!isCurrentRequest()) return;
+                const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
+                const updated = current.map((item)=>item.id === message.id ? {
+                        ...item,
+                        activity
+                    } : item);
+                pendingChatMessagesRef.current.set(sessionId, updated);
+                if (activeChatIdRef.current === sessionId) setMessages(updated);
+            };
+            stopRetryProgress = pollAgentProgress(retryRunId, {
+                signal: requestController.signal,
+                isSettled: ()=>Boolean(streamedText),
+                onProgress: (progress)=>updateRetryActivity({
+                        stage: progress.stage,
+                        message: progress.message
+                    })
+            });
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
@@ -9109,7 +9131,8 @@ export default function Page() {
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     deliverable: message.deliverable,
-                    intentReason: '按原问题和原交付形式重新生成完整答复'
+                    intentReason: '按原问题和原交付形式重新生成完整答复',
+                    runId: retryRunId
                 }, {
                 signal: requestController.signal,
                 onEvent: (event)=>{
@@ -9170,7 +9193,7 @@ export default function Page() {
                         deliverable: data.deliverable || 'TEXT',
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
-                return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
+                return applyMessageVersion({ ...item, activity: undefined }, versions, versions.findIndex((version)=>version.id === retryVersionId));
             });
             if (!isCurrentRequest()) return;
             pendingChatMessagesRef.current.delete(sessionId);
@@ -9201,6 +9224,7 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '重新生成失败');
             void refreshGenerationLogs();
         } finally{
+            stopRetryProgress();
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
@@ -9299,6 +9323,7 @@ export default function Page() {
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
         await persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
         if (requestController.signal.aborted || !isCurrentRequest()) return;
+        let stopAgentProgress = ()=>{};
         try {
             const updatePendingMessage = (patch)=>{
                 if (!isCurrentRequest()) return;
@@ -9350,6 +9375,20 @@ export default function Page() {
                 }));
             updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
             let streamedText = '';
+            /*
+             * 长任务进度：主管线在工具轮里写快照（app/api/agent/progress），这里按 runId 轮询。
+             * 正文一开始流式返回就停：那时候用户看的是字，不该再被阶段文案顶掉。
+             * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
+             */
+            const progressRunId = uid('run');
+            stopAgentProgress = pollAgentProgress(progressRunId, {
+                signal: requestController.signal,
+                isSettled: ()=>Boolean(streamedText),
+                onProgress: (progress)=>updatePendingActivity({
+                        stage: progress.stage,
+                        message: progress.message
+                    })
+            });
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
@@ -9361,7 +9400,8 @@ export default function Page() {
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     deliverable: selectedDeliverable,
-                    intentReason: requestIntent.reason
+                    intentReason: requestIntent.reason,
+                    runId: progressRunId
                 }, {
                 signal: requestController.signal,
                 onEvent: (event)=>{
@@ -9467,6 +9507,7 @@ export default function Page() {
             await persistAgentSession(sessionId, failed).catch(()=>undefined);
             void refreshGenerationLogs();
         } finally{
+            stopAgentProgress();
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
@@ -11484,6 +11525,10 @@ export default function Page() {
                                                                                         message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本'
                                                                                     ]
                                                                                 }),
+                                                                                message.retrying && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
+                                                                                    className: "message-retry-activity",
+                                                                                    children: message.activity.message
+                                                                                }) : null,
                                                                                 /*#__PURE__*/ _jsxs("button", {
                                                                                     type: "button",
                                                                                     onClick: ()=>pushTextToGenerate(message.content),

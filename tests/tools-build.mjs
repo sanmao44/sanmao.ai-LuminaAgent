@@ -7,6 +7,9 @@ import ts from 'typescript';
 const MODULES = [
   'lib/data-paths',
   'lib/agent/tool-loop',
+  'lib/agent/progress',
+  'lib/agent-client',
+  'lib/task-store',
   'lib/agent/approval',
   'lib/tools/registry',
   'lib/tools/artifacts',
@@ -108,6 +111,16 @@ export async function buildMcpModule() {
 /** 通用工具循环：纯逻辑、无依赖，单独跑真实实现。 */
 export async function buildToolLoopModule() {
   return load('lib/agent/tool-loop.mjs');
+}
+
+/** 长任务进度账本：落盘、TTL 与淘汰规则都要跑真实实现。 */
+export async function buildAgentProgressModule() {
+  return load('lib/agent/progress.mjs');
+}
+
+/** 前端轮询助手：停轮询的条件和秒表都要跑真实实现。 */
+export async function buildAgentClientModule() {
+  return load('lib/agent-client.mjs');
 }
 
 /** 审批记录：存储、认领与风险判定都要跑真实实现，不能用假对象糊过去。 */

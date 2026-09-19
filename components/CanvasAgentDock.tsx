@@ -14,6 +14,7 @@ import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import type { AgentWebMode } from "@/lib/creation/settings";
 import type { AgentApproval, AgentApprovalCall, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
+import { pollAgentProgress } from "@/lib/agent-client";
 import { generateCanvasAgent } from "@/lib/canvas/api";
 import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
@@ -454,6 +455,8 @@ export default function CanvasAgentDock({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState("");
+  /* 长任务阶段文案：主管线写快照，面板按 runId 轮询，正文开始流式返回就让位。 */
+  const [progressDetail, setProgressDetail] = useState("");
   const [model, setModel] = useState("auto");
   const [webMode, setWebMode] = useState<AgentWebMode>("off");
   const [autoApply, setAutoApply] = useState(true);
@@ -797,6 +800,7 @@ export default function CanvasAgentDock({
       setMessages(history);
       setInput("");
       setEditingMessageId(null);
+      setProgressDetail("");
       setStreamText("");
       const previousImageMessage = [...base]
         .reverse()
@@ -867,6 +871,17 @@ export default function CanvasAgentDock({
       setBusy(true);
       const controller = new AbortController();
       abortRef.current = controller;
+      /*
+       * 长任务进度：主管线在工具轮里写快照（app/api/agent/progress），这里按 runId 轮询。
+       * 正文一开始流式返回就停：用户已经在看字，阶段文案不该再顶掉它。
+       * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
+       */
+      const progressRunId = createId();
+      const stopAgentProgress = pollAgentProgress(progressRunId, {
+        signal: controller.signal,
+        isSettled: () => Boolean(streamTextRef.current),
+        onProgress: (progress) => setProgressDetail(progress.message),
+      });
       const outbound = history.map((message, index) => ({
         role: message.role,
         content:
@@ -882,6 +897,7 @@ export default function CanvasAgentDock({
             webMode,
             // 画布上下文只给模型看，意图判断必须用用户自己那句话。
             intentText: text,
+            runId: progressRunId,
             references: orderedReferences.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
             signal: controller.signal,
           },
@@ -985,6 +1001,8 @@ export default function CanvasAgentDock({
         if (streamFrameRef.current !== null) window.cancelAnimationFrame(streamFrameRef.current);
         streamFrameRef.current = null;
         setStreamText("");
+        stopAgentProgress();
+        setProgressDetail("");
       }
     },
     [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
@@ -1591,7 +1609,7 @@ export default function CanvasAgentDock({
         ))}
         {busy ? (
           <div className="canvas-agent-dock-message assistant is-streaming">
-            <p>{streamText || "正在思考…"}</p>
+            <p>{streamText || progressDetail || "正在思考…"}</p>
           </div>
         ) : null}
         {!atBottom ? (

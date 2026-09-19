@@ -20,6 +20,7 @@ import { runMcpManageAction } from '@/lib/mcp/admin';
 import { isMcpRuntimeAction, runMcpRuntimeAction } from '@/lib/mcp/runtime-admin';
 
 import { runToolLoop, type ToolLoopTraceStep } from '@/lib/agent/tool-loop';
+import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, type AgentProgressStage } from '@/lib/agent/progress';
 import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, type PendingToolCall } from '@/lib/agent/approval';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
@@ -393,9 +394,25 @@ export async function POST(request: Request) {
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
   if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
   else request.signal.addEventListener('abort', abortFromClient, { once: true });
+  /*
+   * 长任务进度：前端给一个 runId，主管线在真正耗时的节点写一条快照，前端按 runId 轮询读取
+   * （app/api/agent/progress）。只写固定阶段文案，不带用户内容；没有 runId 就整个不生效。
+   */
+  let agentRunId: string | null = null;
+  let progressToolCalls = 0;
+  const reportProgress = (patch: { stage: AgentProgressStage; message: string }) => {
+    if (!agentRunId) return;
+    void reportAgentProgress(agentRunId, { ...patch, toolCalls: progressToolCalls });
+  };
+  const reportToolProgress = (patch: { stage: AgentProgressStage; message: string } | null) => {
+    if (!patch) return;
+    progressToolCalls += 1;
+    reportProgress(patch);
+  };
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('agent');
     const body = await request.json();
+    agentRunId = (await beginAgentRun((body as { runId?: unknown }).runId))?.runId || null;
     const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
     const isCanvasSource = sourceForLog === 'canvas';
     wantsStream = body.stream === true;
@@ -637,6 +654,7 @@ export async function POST(request: Request) {
     }
     if (needsWebSearch && !nativeSearchData) {
       llmWebSearchStatus = 'searched';
+      reportProgress({ stage: 'web_search', message: '正在联网搜索…' });
       try { webSearchData = await searchWeb(query, requestController.signal); }
       catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
@@ -701,6 +719,8 @@ export async function POST(request: Request) {
     };
     // MCP 工具是运行时按已配置服务拉取的远程工具：best-effort，没配置或连不上就当没有，
     // 绝不能让外部服务的可用性影响到普通对话。
+    /* 拉取外部工具表可能是这一轮最慢的一步，先给用户一个交代。 */
+    reportProgress({ stage: 'tool', message: '正在准备可用工具…' });
     const mcpRuntime = await loadMcpToolRuntime({ signal: requestController.signal }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = mcpRuntime.tools;
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
@@ -804,6 +824,9 @@ export async function POST(request: Request) {
       }
     }
     const useTools = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !identityQuestion;
+    reportProgress({ stage: 'thinking', message: needsWebSearch ? '正在判断是否需要联网…' : '正在理解你的需求…' });
+    /* 首轮模型调用之前的说明：工具轮里每一步都会再刷新（见下方 reportToolProgress）。 */
+    progressToolCalls = 0;
     const shouldUseTools = useTools && !isCinematicDirectorTask;
     let first: any;
     try {
@@ -1067,6 +1090,7 @@ export async function POST(request: Request) {
         break;
       }
       const kind = toolExecutionKind(call?.function?.name, mcpTools);
+      reportToolProgress(agentToolProgress(kind, String(call?.function?.name || '')));
       if (kind === 'web') {
         const query = webDecision.query || String(args.query || latest?.content || '').trim().slice(0, 320);
         if (!query) {
@@ -1342,7 +1366,10 @@ export async function POST(request: Request) {
         },
         runCalls: async (calls) => {
           const results: ChatMessage[] = [];
-          for (const call of calls) results.push(await runSkillToolCall(call));
+          for (const call of calls) {
+            reportToolProgress(agentToolProgress('skill', String(call?.function?.name || '')));
+            results.push(await runSkillToolCall(call));
+          }
           return results;
         },
         shouldContinue: () => skillToolCalls < SKILL_TOOL_MAX_CALLS,
@@ -1375,14 +1402,19 @@ export async function POST(request: Request) {
         orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
         runCalls: async (calls) => {
           const results: ChatMessage[] = [];
-          for (const call of calls) results.push(await runArtifactToolCall(call));
+          for (const call of calls) {
+            reportToolProgress(agentToolProgress('artifact', String(call?.function?.name || '')));
+            results.push(await runArtifactToolCall(call));
+          }
           return results;
         },
         finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
       });
       artifactFollowupText = artifactLoop.text;
       toolTrace.push(...artifactLoop.trace);
-    }    let finalText = generated.length || generatedFiles.length
+    }
+    reportProgress({ stage: 'answering', message: '正在整理回复…' });
+    let finalText = generated.length || generatedFiles.length
       ? `已完成${generated.length ? ` ${generated.length} 张图片` : ''}${generated.length && generatedFiles.length ? '，' : ''}${generatedFiles.length ? ` ${generatedFiles.length} 个文件` : ''}。`
       : webSearchData
         ? '已完成联网检索。'
@@ -1428,6 +1460,8 @@ export async function POST(request: Request) {
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'AGENT_CANCELLED');
     return Response.json({ error: cancelled ? '本轮 Agent 已停止。' : error instanceof Error ? error.message : '智能助手请求失败。', cancelled }, { status: cancelled ? 499 : 502 });
   } finally {
+    /* 主管线已经交出响应：正文开始流式返回，进度轮询到此为止。 */
+    await finishAgentRun(agentRunId);
     if (!streamOwnsRuntimeRequest) {
       if (!llmFailure) await settleLlmLog?.({ status: 'success', responseChars: llmResponseChars });
       await releaseRuntimeRequest();
