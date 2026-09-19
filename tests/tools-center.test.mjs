@@ -8,6 +8,8 @@ import { buildMcpModule } from './tools-build.mjs';
 
 const mcp = await buildMcpModule();
 const toolsRoute = await readFile(new URL('../app/api/tools/route.ts', import.meta.url), 'utf8');
+const probeRoute = await readFile(new URL('../app/api/mcp/[id]/probe/route.ts', import.meta.url), 'utf8');
+const approvalSource = await readFile(new URL('../lib/agent/approval.ts', import.meta.url), 'utf8');
 const panel = await readFile(new URL('../components/McpManager.tsx', import.meta.url), 'utf8');
 const panelCss = await readFile(new URL('../components/McpManager.module.css', import.meta.url), 'utf8');
 
@@ -28,6 +30,14 @@ test('命令、参数和安装路径都来自代码内置条目，请求体只�
 test('装完/停掉之后要丢掉工具缓存，否则模型还会拿着旧工具表', () => {
   // 六个入口：装/启停、开关写入权限、改能力组、改写权限分项、增删授权目录、切换浏览器接入方式。
   assert.equal((toolsRoute.match(/clearMcpToolCache\(\);/g) || []).length, 6);
+});
+
+test('执行代码的工具不能被「以后直接允许」记住，接口和面板都拦一道', () => {
+  // 判定层不认这条记忆（见 agent-approval.test.mjs），这里管的是「别让用户勾一个不生效的状态」。
+  assert.match(approvalSource, /if \(next === 'always_allow' && isUnbypassableApprovalTool\(key\)\) \{/);
+  assert.match(probeRoute, /unbypassable: isUnbypassableApprovalTool\(tool\.name\)/);
+  assert.match(panel, /\{tool\.unbypassable/);
+  assert.match(panel, /每次都问（不可记住）/);
 });
 
 test('面板状态只回脱敏配置', () => {

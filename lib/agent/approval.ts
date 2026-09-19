@@ -77,6 +77,8 @@ const BROWSER_SILENT_TOOLS = new Set([
 /**
  * 在页面里执行代码的浏览器工具：等于把整台浏览器（含登录态）交给模型。
  * 这一条不跟着档位走——标准信任档也要停下来问一句，免得「导航不问」被顺手扩成「跑代码也不问」。
+ * 它同样不能被「以后直接允许」这种按工具的记忆免掉（见 isUnbypassableApprovalTool）：
+ * 记忆记的是「这个工具平时能不能用」，跑代码是「这一次要拿整台浏览器做什么」。
  */
 const BROWSER_CODE_TOOLS = new Set(['browser_evaluate', 'browser_run_code_unsafe']);
 
@@ -114,8 +116,12 @@ export type ToolApprovalRecord = {
   gating: ToolGatingContext;
 };
 
-/** blocked 表示「不许执行、也不给确认入口」：只有用户设成「直接拒绝」的工具会走到这里。 */
-export type ApprovalAssessment = { required: boolean; risk: ToolRisk; reason: string; blocked?: boolean };
+/**
+ * blocked 表示「不许执行、也不给确认入口」：只有用户设成「直接拒绝」的工具会走到这里。
+ * unbypassable 表示「这次确认免不掉」：按工具记的「以后直接允许」不能把它跳过，
+ * 因为要不要确认取决于「这一次要做什么」（读敏感文件、在页面里跑代码），不是这个工具平不平庸。
+ */
+export type ApprovalAssessment = { required: boolean; risk: ToolRisk; reason: string; blocked?: boolean; unbypassable?: true };
 
 export function resolveApprovalDir(options: { dataDir?: string } = {}) {
   return path.join(options.dataDir || resolveLocalDataDir(), 'agent', 'approvals');
@@ -139,6 +145,21 @@ export function normalizeToolApprovalPolicy(value: unknown): ToolApprovalPolicy 
   return raw === 'always_allow' || raw === 'block' || raw === 'ask' ? (raw as ToolApprovalPolicy) : DEFAULT_TOOL_APPROVAL_POLICY;
 }
 
+/**
+ * 这个工具的确认能不能被「以后直接允许」免掉。入参接受注册表 id（mcp:服务:工具）、
+ * 模型看到的名字（服务__工具）或裸工具名。
+ *
+ * 现在只有一类：在页面里执行代码的浏览器工具。放行它等于把整台浏览器连同登录态交出去，
+ * 所以面板不给它记「以后直接允许」，判定和落盘也各挡一道，旧记忆不会因为存在就生效。
+ */
+export function isUnbypassableApprovalTool(value: unknown): boolean {
+  const raw = String(value ?? '').trim();
+  if (!raw) return false;
+  if (raw.includes(':')) return BROWSER_CODE_TOOLS.has(raw.split(':').pop() || '');
+  if (raw.includes('__')) return BROWSER_CODE_TOOLS.has(raw.split('__').pop() || '');
+  return BROWSER_CODE_TOOLS.has(raw);
+}
+
 export function resolveToolApprovalsFile(options: { dataDir?: string } = {}) {
   return path.join(options.dataDir || resolveLocalDataDir(), 'agent', 'tool-approvals.json');
 }
@@ -153,7 +174,10 @@ export function readToolApprovalPolicies(options: { dataDir?: string } = {}): Re
     for (const [toolId, value] of Object.entries(parsed as Record<string, unknown>)) {
       const policy = normalizeToolApprovalPolicy(value);
       // 'ask' 就是「没记忆」，落盘时不再保留这一条。
-      if (policy !== 'ask' && toolId.trim()) policies[toolId] = policy;
+      if (policy === 'ask' || !toolId.trim()) continue;
+      // 免不掉确认的工具也不留记忆：留着只会让面板显示一个其实不生效的状态。
+      if (policy === 'always_allow' && isUnbypassableApprovalTool(toolId)) continue;
+      policies[toolId] = policy;
     }
     return policies;
   } catch {
@@ -173,6 +197,10 @@ export function setToolApprovalPolicy(toolId: unknown, policy: unknown, options:
   const key = String(toolId ?? '').trim();
   if (!key) throw new Error('缺少工具 id');
   const next = normalizeToolApprovalPolicy(policy);
+  // 免不掉确认的工具不留 always_allow：存下来也不生效，只会让状态对不上。
+  if (next === 'always_allow' && isUnbypassableApprovalTool(key)) {
+    throw new Error('这个工具每次都要问：它会在页面里执行代码，不能记成「以后直接允许」');
+  }
   const policies = readToolApprovalPolicies(options);
   if (next === 'ask') delete policies[key];
   else if (policies[key] !== next) {
@@ -326,9 +354,9 @@ export function assessToolApproval(input: {
     return { blocked: true, required: false, risk, reason: '你已经把这一步设成「直接拒绝」，它不会再被调用。' };
   }
   const assessment = assessMcpToolCall(definition, risk, input);
-  // 「以后直接允许」只跳过按风险要的确认：读敏感文件那一次仍然要问，
-  // 因为那是「这一次读什么」，和「这个工具平时能不能用」是两件事。
-  if (remembered === 'always_allow' && assessment.required && !String(input.sensitiveHint || '').trim()) {
+  // 「以后直接允许」只跳过按风险要的确认：读敏感文件那一次、在页面里执行代码那一次仍然要问，
+  // 因为那是「这一次要做什么」，和「这个工具平时能不能用」是两件事。
+  if (remembered === 'always_allow' && assessment.required && !assessment.unbypassable && !String(input.sensitiveHint || '').trim()) {
     return { ...assessment, required: false };
   }
   return assessment;
@@ -345,13 +373,14 @@ function assessMcpToolCall(
   if (policy === 'full') return { required: false, risk, reason: '' };
   const sensitive = String(input.sensitiveHint || '').trim();
   if (risk === 'read') {
-    if (sensitive) return { required: true, risk, reason: sensitive };
+    if (sensitive) return { required: true, risk, reason: sensitive, unbypassable: true };
     return { required: false, risk, reason: '' };
   }
   const toolName = String(definition.name || '').split('__').pop() || '';
-  // 在页面里执行代码等于把那台浏览器（含登录态）交给模型：不跟着档位走，任何档位都要问。
+  // 在页面里执行代码等于把那台浏览器（含登录态）交给模型：标准信任档也要停下来问。
+  // 只有用户明确切到「完全访问」才不问；按工具记的「以后直接允许」不顶用（unbypassable）。
   if (BROWSER_CODE_TOOLS.has(toolName)) {
-    return { required: true, risk, reason: '这一步会在页面里执行代码，风险等同改动外部数据' };
+    return { required: true, risk, reason: '这一步会在页面里执行代码，风险等同改动外部数据', unbypassable: true };
   }
   if (BROWSER_ACTION_TOOLS.has(toolName)) {
     let argsText = '';

@@ -31,7 +31,7 @@ function protocolNote(protocol: ProtocolView | null | undefined) {
   return `协议版本不一致：服务端报 ${protocol.negotiated}，本机请求 ${protocol.requested}；已按服务端的版本继续，不影响使用。`;
 }
 
-type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean; oversized?: boolean };
+type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean; oversized?: boolean; unbypassable?: boolean };
 type ProbeState = { status: 'busy' | 'done' | 'error'; message: string; tools: ProbeTool[]; toolCount: number; readOnly: number };
 type Draft = { paste: string; name: string; url: string; headers: string; allowWrite: boolean };
 
@@ -831,9 +831,12 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                           {(tool.description || tool.title) && <span className={styles.toolDescription}>{tool.description || tool.title}</span>}
                         </span>
                       </label>
-                      <button type="button" className={styles.miniButton} disabled={busy} title="点一下依次切换：每次都要问 → 以后直接允许 → 以后直接拒绝" onClick={() => void cycleToolMemory(server, tool.name)}>
-                        {TOOL_MEMORY_LABELS[toolPolicies[`mcp:${server.id}:${tool.name}`]] || '每次都要问'}
-                      </button>
+                      {tool.unbypassable
+                        // 执行代码类的工具不能记「以后直接允许」：放行一次等于把浏览器连同登录态交出去。
+                        ? <button type="button" className={styles.miniButton} disabled title="这一步会在页面里执行代码，等于把浏览器连同登录态交给助手，所以每次都问，不能记成「以后直接允许」">{'每次都问（不可记住）'}</button>
+                        : <button type="button" className={styles.miniButton} disabled={busy} title="点一下依次切换：每次都要问 → 以后直接允许 → 以后直接拒绝" onClick={() => void cycleToolMemory(server, tool.name)}>
+                          {TOOL_MEMORY_LABELS[toolPolicies[`mcp:${server.id}:${tool.name}`]] || '每次都要问'}
+                        </button>}
                     </div>)}
                   </div>}
                 </div>}

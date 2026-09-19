@@ -335,6 +335,57 @@ test('工具授权记忆：block 直接拒绝，always_allow 也不越过敏感�
   assert.equal(approval.assessToolApproval({ definition: null, args: {}, toolPolicy: 'block' }).blocked, undefined);
 });
 
+test('工具授权记忆：执行代码类的工具不能记成「以后直接允许」', () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-tool-memory-code-'));
+  try {
+    for (const name of ['browser_evaluate', 'browser_run_code_unsafe']) {
+      assert.equal(approval.isUnbypassableApprovalTool(name), true);
+      assert.equal(approval.isUnbypassableApprovalTool(`mcp:playwright:${name}`), true, '注册表 id 也要认出来');
+      assert.equal(approval.isUnbypassableApprovalTool(`playwright__${name}`), true, '模型看到的名字也要认出来');
+      const verdict = approval.assessToolApproval({
+        definition: mcpTool(name, 'external_side_effect'),
+        args: { code: 'await page.click("提交")' },
+        toolPolicy: 'always_allow',
+      });
+      assert.equal(verdict.required, true, '在页面里执行代码这一步不能被「以后直接允许」免掉');
+      assert.equal(verdict.unbypassable, true);
+    }
+    assert.equal(approval.isUnbypassableApprovalTool('browser_click'), false, '普通写入类工具照旧可以记');
+    assert.equal(approval.isUnbypassableApprovalTool('mcp:playwright:browser_click'), false);
+    assert.equal(approval.isUnbypassableApprovalTool(''), false);
+    assert.equal(approval.isUnbypassableApprovalTool(null), false);
+
+    // 旧记忆留在盘上也不生效：读侧当它没记过，下一次写盘顺手清掉。
+    approval.setToolApprovalPolicy('mcp:playwright:browser_click', 'always_allow', { dataDir });
+    const file = approval.resolveToolApprovalsFile({ dataDir });
+    writeFileSync(file, JSON.stringify({
+      'mcp:playwright:browser_evaluate': 'always_allow',
+      'mcp:playwright:browser_click': 'always_allow',
+    }));
+    assert.deepEqual(approval.readToolApprovalPolicies({ dataDir }), { 'mcp:playwright:browser_click': 'always_allow' });
+    assert.equal(approval.toolApprovalPolicy('mcp:playwright:browser_evaluate', { dataDir }), 'ask');
+    approval.setToolApprovalPolicy('mcp:playwright:browser_click', 'block', { dataDir });
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { 'mcp:playwright:browser_click': 'block' }, '下一次写盘顺手清掉不生效的那条');
+
+    assert.throws(
+      () => approval.setToolApprovalPolicy('mcp:playwright:browser_evaluate', 'always_allow', { dataDir }),
+      /不能记成「以后直接允许」/,
+      '存储层也不接受这条记忆，别的调用方同样绕不过去',
+    );
+
+    // 「直接拒绝」不受影响：拒绝对谁都留得住。
+    approval.setToolApprovalPolicy('mcp:playwright:browser_evaluate', 'block', { dataDir });
+    assert.equal(approval.toolApprovalPolicy('mcp:playwright:browser_evaluate', { dataDir }), 'block');
+    assert.equal(approval.assessToolApproval({
+      definition: mcpTool('browser_evaluate', 'external_side_effect'),
+      args: {},
+      toolPolicy: 'block',
+    }).blocked, true);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('工具授权记忆有上限：记满了只挡新增，改旧的照旧放行', () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-tool-memory-cap-'));
   try {

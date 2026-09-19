@@ -214,6 +214,7 @@ export async function POST(request: Request) {
         return Response.json({ error: '未知的工具授权记忆，只支持 ask / always_allow / block。' }, { status: 400 });
       }
       // 只记「这个工具以后怎么处理」，不记参数：同一个工具换个参数风险可能完全不同。
+      // 在页面里执行代码这类工具的确认免不掉，setToolApprovalPolicy 会直接拒绝并说明原因。
       setToolApprovalPolicy(data?.toolId, policy);
       return Response.json({ ok: true, ...snapshot() });
     }
