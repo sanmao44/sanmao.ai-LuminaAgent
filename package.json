@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit --incremental false",
     "validate:update": "node scripts/validate-update-manifest.mjs --strict",
     "check": "npm run typecheck && npm run validate:update && npm test && npm run build",
+    "smoke:github": "node scripts/smoke-github.mjs",
     "generate:launcher-icons": "node scripts/generate-launcher-icons.mjs"
   },
   "dependencies": {

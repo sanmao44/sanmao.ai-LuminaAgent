@@ -25,7 +25,27 @@ async function withTemp(run) {
   }
 }
 
-/** 造一个「授权目录 + 数据目录」的完整场景。 */
+test('常用位置只建议桌面/文档/下载，且不重复已授权的目录', async () => {
+  await withTemp(async (home) => {
+    await mkdir(path.join(home, 'Desktop'), { recursive: true });
+    await mkdir(path.join(home, 'Documents'), { recursive: true });
+    await mkdir(path.join(home, 'Downloads'), { recursive: true });
+    // 主目录本身、以及同名文件都不该被建议：一键把整个用户目录交出去比用户想给的大。
+    await mkdir(path.join(home, 'Pictures'), { recursive: true });
+    await writeFile(path.join(home, 'Videos'), 'not a folder');
+
+    const suggestions = mcp.suggestFilesystemRoots({ home });
+    assert.deepEqual(suggestions.map((item) => path.basename(item)).sort(), ['Desktop', 'Documents', 'Downloads']);
+    assert.equal(suggestions.some((item) => item === home), false, '不要建议整个主目录');
+
+    const filtered = mcp.suggestFilesystemRoots({ home, excluded: [path.join(home, 'Downloads')] });
+    assert.equal(filtered.some((item) => path.basename(item) === 'Downloads'), false);
+
+    assert.deepEqual(mcp.suggestFilesystemRoots({ home: path.join(home, '不存在的目录') }), []);
+  });
+});
+
+/** 造一个「授权目录 + 数据目录」的完整场景。 *//** 造一个「授权目录 + 数据目录」的完整场景。 */
 async function withScene(run) {
   await withTemp(async (base) => {
     const dataDir = path.join(base, 'data');

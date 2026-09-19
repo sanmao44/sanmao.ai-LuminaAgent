@@ -34,6 +34,22 @@ test('面板状态只回脱敏配置', () => {
   assert.doesNotMatch(toolsRoute, /headers:/);
 });
 
+test('授权文件夹有常用位置可选，不用用户自己拼绝对路径', () => {
+  assert.match(panel, /rootSuggestions\.map\(/);
+  assert.match(panel, /常用位置：/);
+  assert.match(panel, /onClick=\{\(\) => void addRootPath\(suggestion\)\}/);
+  // 建议只做建议：真正落盘还是走同一个 roots-add 动作，服务端照旧做完整校验。
+  assert.match(panel, /action: 'roots-add', path \}/);
+  assert.match(toolsRoute, /suggestFilesystemRoots\(\{ excluded: roots \}\)/);
+  assert.doesNotMatch(toolsRoute, /data\?\.rootSuggestions/);
+});
+test('帮助说明跟上连接器：官方清单、凭据、逐项写权限都说清楚', () => {
+  assert.match(panel, /官方连接器：<\/strong>浏览器控制、本地文件、GitHub、开发文档/);
+  assert.match(panel, /点「断开」会把本机保存的那份凭据一起删掉/);
+  assert.match(panel, /GitHub 建议用 fine-grained token/);
+  assert.match(panel, /GitHub 还要逐项打开（创建 Issue、评论、创建 PR、改文件、Merge 等）/);
+  assert.match(panel, /助手改不了它们的地址和权限，也断不开/);
+});
 test('面板把能力组和写权限分项摆出来，并且逐项提交', () => {
   assert.match(panel, /能力组：关掉的组不会交给助手/);
   assert.match(panel, /写权限：全部关闭（先打开上面的「允许写入」，再逐项放开）/);

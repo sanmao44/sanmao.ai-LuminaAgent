@@ -32,7 +32,7 @@ import {
   stopCatalogServer,
   type McpCatalogRuntimeStatus,
 } from '@/lib/mcp/catalog-runtime';
-import { addFilesystemRoot, listFilesystemRoots, removeFilesystemRoot } from '@/lib/mcp/filesystem-roots';
+import { addFilesystemRoot, listFilesystemRoots, removeFilesystemRoot, suggestFilesystemRoots } from '@/lib/mcp/filesystem-roots';
 import { listMcpServers, redactMcpServer } from '@/lib/mcp/store';
 import { closeStdioServer } from '@/lib/mcp/stdio';
 import { clearMcpToolCache } from '@/lib/mcp/tools';
@@ -110,7 +110,9 @@ function snapshot() {
       enabledWriteGates: catalogEntryWriteGates(entry.id),
     };
   });
-  return { runtimes, catalog, servers, roots, installTimeoutMs: MCP_CATALOG_INSTALL_TIMEOUT_MS };
+  // 常用位置：主目录下的桌面 / 文档 / 下载。只做建议，加不加仍然由用户点。
+  const rootSuggestions = suggestFilesystemRoots({ excluded: roots });
+  return { runtimes, catalog, servers, roots, rootSuggestions, installTimeoutMs: MCP_CATALOG_INSTALL_TIMEOUT_MS };
 }
 
 /** 面板状态：本地工具运行时的安装/运行情况 + 官方连接器状态 + 用户自己配的远程服务（凭据只回键名）。 */

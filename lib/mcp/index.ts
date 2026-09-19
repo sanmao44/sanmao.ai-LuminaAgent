@@ -133,6 +133,7 @@ export {
   normalizeFilesystemRoot,
   removeFilesystemRoot,
   resolveFilesystemRootsFile,
+  suggestFilesystemRoots,
   samePath,
 } from './filesystem-roots';
 export {

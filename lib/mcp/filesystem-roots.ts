@@ -8,7 +8,7 @@
  * 存 `.data/mcp/filesystem-roots.json`（0600）。读盘时会丢掉已经不存在/已不是目录的条目：
  * 宁可让服务起不来，也不要拿一个失效的路径做包含判断（外接盘拔掉后 D:\ 可能指向别的东西）。
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 
@@ -101,6 +101,39 @@ export function listFilesystemRoots(options: { dataDir?: string } = {}): string[
   } catch {
     return [];
   }
+}
+
+/**
+ * 面板上的「常用位置」：用户要授权一个文件夹，不该先自己想清楚绝对路径怎么写。
+ * 只列主目录下的桌面 / 文档 / 下载（真实存在的那些），不列主目录本身——
+ * 一键把整个用户目录交给助手，权限比用户想给的大得多。
+ */
+const SUGGESTED_ROOT_NAMES = ['desktop', 'documents', 'downloads', '桌面', '文档', '下载'];
+
+export function suggestFilesystemRoots(options: { home?: string; excluded?: readonly string[] } = {}) {
+  const home = options.home || process.env.USERPROFILE || process.env.HOME || '';
+  if (!home || !existsSync(home)) return [];
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(home);
+  } catch {
+    return [];
+  }
+  const excluded = options.excluded || [];
+  const suggestions: string[] = [];
+  for (const name of entries) {
+    if (!SUGGESTED_ROOT_NAMES.includes(name.toLowerCase())) continue;
+    const candidate = path.join(home, name);
+    try {
+      if (!statSync(candidate).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    // 已经授权过的不再重复出现；只给路径，加不加还是用户点一下才算。
+    if (excluded.some((item) => samePath(item, candidate))) continue;
+    suggestions.push(candidate);
+  }
+  return suggestions.sort();
 }
 
 function writeFilesystemRoots(roots: readonly string[], options: { dataDir?: string } = {}) {

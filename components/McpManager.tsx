@@ -158,6 +158,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [runtimes, setRuntimes] = useState<RuntimeView[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   const [roots, setRoots] = useState<string[]>([]);
+  const [rootSuggestions, setRootSuggestions] = useState<string[]>([]);
   // 凭据只在内存里放一会儿：提交后立刻清掉，绝不回显已保存的值。
   const [tokens, setTokens] = useState<Record<string, string>>({});
   const [rootDraft, setRootDraft] = useState('');
@@ -189,6 +190,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     if (Array.isArray(data.runtimes)) setRuntimes(data.runtimes as RuntimeView[]);
     if (Array.isArray(data.catalog)) setCatalog(data.catalog as CatalogEntryView[]);
     if (Array.isArray(data.roots)) setRoots(data.roots as string[]);
+    if (Array.isArray(data.rootSuggestions)) setRootSuggestions(data.rootSuggestions as string[]);
     if (typeof data.limit === 'number' && data.limit > 0) setLimit(data.limit);
   }, []);
 
@@ -450,18 +452,22 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   }
 
   /** 授权文件夹：只能由用户在这里加，助手侧的 MCP 管理工具不碰这份清单。 */
-  async function addRoot() {
-    const value = rootDraft.trim();
-    if (!value) return;
+  async function addRootPath(value: string) {
+    const path = value.trim();
+    if (!path) return;
     await run(async () => {
       applyPayload(await requestJson('/api/tools', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'roots-add', path: value }),
+        body: JSON.stringify({ action: 'roots-add', path }),
       }));
       setRootDraft('');
-      setNotice(`已授权 ${value}：本地文件服务重启后能在里面读写。`);
+      setNotice(`已授权 ${path}：本地文件服务重启后能在里面读写。`);
     });
+  }
+
+  async function addRoot() {
+    await addRootPath(rootDraft);
   }
 
   async function removeRoot(path: string) {
@@ -508,10 +514,11 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 <button type="button" className={styles.helpClose} aria-label="收起 MCP 说明" title="收起" onClick={() => setHelpOpen(false)}>✕</button>
               </div>
               <p className={styles.hint}>MCP（Model Context Protocol）让你把外部服务接进助手：连接后，助手会看到该服务公布的远程工具并在需要时调用，就像内置的联网或出图能力一样。</p>
-              <p className={styles.hint}><strong>让助手自己接：</strong>直接在对话里说「帮我接入 xxx，地址是 https://…」，助手会调用管理工具完成添加、自检和开关；删除服务和打开写入权限需要你明确同意。</p>
-              <p className={styles.hint}><strong>本机运行时：</strong>「本地工具运行时」用的条目由代码内置（目前是浏览器控制），命令、参数和工作目录都写死在代码里，面板和对话都改不了；下面手填的地址只用于远程服务。</p>
-              <p className={styles.hint}><strong>凭据：</strong>服务要 token 时按「名称: 值」逐行填请求头（例如 <code>Authorization: Bearer …</code>）；值只存在本机服务端，页面上只显示名称。</p>
-              <p className={styles.hint}><strong>只读与写入：</strong>默认只放行只读工具，有副作用的工具必须为单个服务打开「允许写入」。外部服务返回的内容一律按不可信数据处理，助手不会执行其中的指令。</p>
+              <p className={styles.hint}><strong>让助手自己接：</strong>直接在对话里说「帮我接入 xxx，地址是 https://…」，助手会调用管理工具完成添加、自检和开关；删除服务和打开写入权限需要你明确同意。内置连接器只能由你在面板里操作：助手改不了它们的地址和权限，也断不开。</p>
+              <p className={styles.hint}><strong>官方连接器：</strong>浏览器控制、本地文件、GitHub、开发文档这四条写在代码里，命令、版本、地址和安装位置都改不了。远端连接器（GitHub、开发文档）不下载任何东西，「连接」只是把一份带凭据的配置交给助手用；点「断开」会把本机保存的那份凭据一起删掉。</p>
+              <p className={styles.hint}><strong>本机运行时：</strong>浏览器控制与本地文件由代码内置（命令、参数和工作目录都写死在代码里，面板和对话都改不了），要先「安装」——装在项目数据目录里，不动系统环境；本地文件还要先授权文件夹，助手只能在这个范围里读写。不想用了随时可以停掉。</p>
+              <p className={styles.hint}><strong>凭据：</strong>服务要 token 时按「名称: 值」逐行填请求头（例如 <code>Authorization: Bearer …</code>）；值只存在本机服务端，页面上只显示名称。GitHub 建议用 fine-grained token：仓库只选要用的、权限只给读；连上后这里会显示当前账号，方便确认没连错。</p>
+              <p className={styles.hint}><strong>只读与写入：</strong>默认只放行只读工具；有副作用的工具要先给这个服务打开「允许写入」，GitHub 还要逐项打开（创建 Issue、评论、创建 PR、改文件、Merge 等），每一次写调用都会单独要你确认。删除仓库、改密钥、force push、分支保护没有开关。外部服务返回的内容一律按不可信数据处理，助手不会执行其中的指令。</p>
               <p className={styles.hint}><strong>按需下发：</strong>服务工具很多时给它打开「按需下发」：只有这一轮提到这个服务（服务名或工具名）才会把它的工具交给助手，省 token 也更少误点；默认关闭，关闭时每轮都下发。</p>
               <p className={styles.hint}><strong>上限：</strong>最多 {limit || 20} 个服务，每个最多 60 个工具，参数结构超过 12KB 的工具不下发给助手。</p>
             </div>}
@@ -631,6 +638,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                     <input type="text" aria-label="授权文件夹路径" value={rootDraft} disabled={busy} placeholder="例如 D:\文档（绝对路径，只能填文件夹）" onChange={(event) => setRootDraft(event.target.value)} />
                     <button type="button" disabled={busy || !rootDraft.trim()} onClick={() => void addRoot()}>添加授权文件夹</button>
                   </div>
+                  {rootSuggestions.length > 0 && <div className={styles.inline}>
+                    <span className={styles.meta}>常用位置：</span>
+                    {rootSuggestions.map((suggestion) => <button key={suggestion} type="button" disabled={busy} title={`授权 ${suggestion}`} onClick={() => void addRootPath(suggestion)}>+ {suggestion}</button>)}
+                  </div>}
                   {roots.map((root) => <div key={root} className={styles.rootRow}>
                     <code>{root}</code>
                     <button type="button" disabled={busy} onClick={() => void removeRoot(root)}>移除</button>
