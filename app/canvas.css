@@ -1706,21 +1706,21 @@ html[data-motion="off"] .canvas-processing-progress.indeterminate>i{transform:no
 .canvas-prompt-preview,.canvas-node-editor-body,.canvas-node-editor-popover textarea,.canvas-parameter-drawer,.canvas-generator-output-gallery,.canvas-editor-reference-items,.canvas-node-quick-actions,.canvas-workbench-content,.canvas-side-panel-body,.canvas-text-lightbox-body,.canvas-text-edit-wrap textarea,.canvas-task-log-list,.canvas-activity-list{overscroll-behavior:contain}
 
 /* Multi-select alignment and distribution controls stay in a compact bottom
-   palette, while the two groups use separate colors to remain scannable. */
+   palette. The divider alone separates the two groups: an extra tinted box
+   behind each group reads as a lit/selected state on the dark canvas and as
+   two color patches in the light theme. */
 .canvas-selection-layout-toolbar{position:absolute;z-index:var(--canvas-z-selection);left:50%;bottom:calc(var(--canvas-deck-height,0px) + 18px);display:flex;align-items:center;gap:7px;max-width:calc(100% - 24px);overflow-x:auto;padding:5px;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb,var(--panel) 95%,transparent);box-shadow:var(--shadow-soft);backdrop-filter:blur(14px);transform:translateX(-50%);scrollbar-width:none}
 /* 工具条内容本来就装得下（隐藏的 tooltip 会虚增一段可滚动距离），不要露出滚动条。 */
 .canvas-selection-layout-toolbar::-webkit-scrollbar{display:none}
-.canvas-selection-layout-group{display:flex;align-items:center;gap:2px;flex:none;padding:3px;border:1px solid;border-radius:11px}
-.canvas-selection-layout-group.alignment{border-color:color-mix(in srgb,var(--accent) 44%,var(--line));background:color-mix(in srgb,var(--accent-soft) 38%,var(--panel-2))}
-.canvas-selection-layout-group.distribution{border-color:color-mix(in srgb,var(--success) 44%,var(--line));background:color-mix(in srgb,var(--success-soft) 30%,var(--panel-2))}
+.canvas-selection-layout-group{display:flex;align-items:center;gap:2px;flex:none;padding:3px}
+.canvas-selection-layout-group.alignment,.canvas-selection-layout-group.distribution{border:0;background:transparent}
 .canvas-selection-layout-tooltip{position:relative;display:inline-flex;flex:none}
 .canvas-selection-layout-tooltip::after{content:attr(data-tooltip);position:absolute;z-index:var(--canvas-z-local-tooltip);left:50%;bottom:calc(100% + 8px);width:max-content;max-width:220px;padding:6px 8px;border:1px solid var(--line-strong);border-radius:8px;background:color-mix(in srgb,var(--panel) 98%,#111827);color:var(--text);box-shadow:var(--shadow-soft);font-size:8px;line-height:1.35;white-space:nowrap;opacity:0;visibility:hidden;pointer-events:none;transform:translate(-50%,4px);transition:opacity .14s ease,visibility .14s ease,transform .14s ease}
 .canvas-selection-layout-tooltip::before{content:"";position:absolute;z-index:var(--canvas-z-local-tooltip-arrow);left:50%;bottom:calc(100% + 3px);width:7px;height:7px;border-right:1px solid var(--line-strong);border-bottom:1px solid var(--line-strong);background:color-mix(in srgb,var(--panel) 98%,#111827);opacity:0;visibility:hidden;pointer-events:none;transform:translate(-50%,4px) rotate(45deg);transition:opacity .14s ease,visibility .14s ease,transform .14s ease}
 .canvas-selection-layout-tooltip:hover::after,.canvas-selection-layout-tooltip:focus-within::after,.canvas-selection-layout-tooltip:hover::before,.canvas-selection-layout-tooltip:focus-within::before{opacity:1;visibility:visible;transform:translate(-50%,0)}
 .canvas-selection-layout-group button{width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:var(--text-2);cursor:pointer}
 .canvas-selection-layout-group button:hover,.canvas-selection-layout-group button:focus-visible{outline:none}
-.canvas-selection-layout-group.alignment button:hover,.canvas-selection-layout-group.alignment button:focus-visible{background:var(--accent-soft);color:var(--accent-text)}
-.canvas-selection-layout-group.distribution button:hover:not(:disabled),.canvas-selection-layout-group.distribution button:focus-visible:not(:disabled){background:var(--success-soft);color:var(--success)}
+.canvas-selection-layout-group button:hover:not(:disabled),.canvas-selection-layout-group button:focus-visible:not(:disabled){background:var(--accent-soft);color:var(--accent-text)}
 .canvas-selection-layout-group button:disabled{cursor:not-allowed;opacity:.38}
 .canvas-selection-layout-group button svg{width:18px;height:18px;display:block}
 .canvas-selection-layout-divider{width:1px;height:28px;flex:none;background:var(--line-strong)}
