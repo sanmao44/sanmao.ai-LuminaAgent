@@ -203,8 +203,8 @@ test('每一道判定和执行点都留痕：请求侧与续跑侧都要接上',
   assert.match(agentRoute, /trackMcpRepeat\(mcpRepeatTracker, mcpCallSignature\(meta\.serverId, meta\.toolName, args\), result\.text\)/);
   assert.match(agentRoute, /if \(repeats >= TOOL_LOOP_MCP_REPEAT_LIMIT\)/);
   // 停下来那一轮必须把没执行的 tool_call_id 也补上结果，否则服务商侧会报缺少工具结果。
-  assert.match(agentRoute, /for \(const rest of executionCalls\.slice\(callIndex \+ 1\)\)/);
-  assert.match(agentRoute, /toolResults\.push\(\{ role: 'tool', tool_call_id: rest\.id,/);
+  assert.match(agentRoute, /for \(const rest of stepCalls\.slice\(callIndex \+ 1\)\)/);
+  assert.match(agentRoute, /results\.push\(\{ role: 'tool', tool_call_id: rest\.id,/);
 
   assert.match(resume, /function auditResumeCall\(/);
   for (const decision of ['guard', 'block', 'rejected', 'approval']) {

@@ -99,6 +99,7 @@ export {
   parseExecutableFromCommand,
   profileHasPlaywrightExtension,
   resolveUserDataDir,
+  sameProfileTree,
 } from './browser-extension';
 export type { McpBrowserExecutable, McpBrowserExtensionBridge, McpBrowserSource } from './browser-extension';
 export type {
@@ -133,11 +134,13 @@ export {
 export type { McpCatalogConnectionState, McpCatalogRemoteOptions } from './catalog-remote';
 export {
   MCP_CATALOG_INSTALL_TIMEOUT_MS,
+  argValue,
   cancelCatalogInstall,
   catalogRuntimeStatus,
   installCatalogServer,
   resolveCatalogInstallLogFile,
   resolveNpmCliPath,
+  sameArgs,
   startCatalogServer,
   stopCatalogServer,
 } from './catalog-runtime';
@@ -168,6 +171,8 @@ export {
   resolveBrowserExtensionFolder,
 } from './open-folder';
 export type { FolderOpenOptions } from './open-folder';
+export { folderPickerCommand, pickFolder } from './pick-folder';
+export type { FolderPickOptions, FolderPickResult } from './pick-folder';
 export {
   MCP_MAX_FILESYSTEM_ROOTS,
   addFilesystemRoot,

@@ -128,3 +128,43 @@ test('上游那句「未检测到扩展」要翻成能照着做的中文', () =>
   // 代码里只该有一份官方扩展 id：面板的商店链接、profile 目录名、提示文案都对得上。
   assert.equal(mcp.findCatalogEntry('playwright').browserExtension.storeId, mcp.PLAYWRIGHT_EXTENSION_ID);
 });
+
+test('报错里的 profile 和「认定要接的浏览器」不是同一棵：说接错了浏览器，别叫用户重装', () => {
+  const context = {
+    browserName: 'Tabbit Browser',
+    executablePath: 'C:\\Users\\me\\AppData\\Local\\Tabbit Browser\\Application\\Tabbit Browser.exe',
+    userDataDir: 'C:\\Users\\me\\AppData\\Local\\Tabbit Browser\\User Data',
+    extensionInstalled: true,
+  };
+  // 本机真实踩到的样子：扩展装在 Tabbit 里，Playwright 却去 Chrome 的 profile 里找。
+  const wrongBrowser = mcp.browserExtensionHint(
+    'Error: Playwright Extension not found in "C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data". Install it from https://chromewebstore.google.com/detail/playwright-extension/mmlmfjh',
+    context,
+  );
+  assert.ok(wrongBrowser.includes('扩展确实装在 Tabbit Browser 里'), '查过装了就直说装了');
+  assert.ok(wrongBrowser.includes('停掉'), '要给出「停掉再启动」这一步');
+  assert.ok(!wrongBrowser.includes('npm run build:playwright-extension'), '扩展装着呢，不能再劝人装一遍');
+
+  // 同一棵 profile 树（大小写、斜杠、子目录不同）不算接错：还是走「确认装没装」那条。
+  const sameTree = mcp.browserExtensionHint(
+    'Error: Playwright Extension not found in "C:/Users/me/AppData/Local/Tabbit Browser/User Data/Default/"',
+    context,
+  );
+  assert.ok(sameTree.includes('npm run build:playwright-extension'));
+
+  assert.equal(mcp.sameProfileTree('C:\\x\\User Data', 'c:/x/user data/'), true);
+  assert.equal(mcp.sameProfileTree('C:\\x\\User Data', 'C:\\x\\User Data\\Default'), true, '子目录还是同一棵树');
+  assert.equal(mcp.sameProfileTree('C:\\x\\User Data', 'C:\\y\\User Data'), false);
+  assert.equal(mcp.sameProfileTree('', 'C:\\x'), false);
+});
+
+test('「运行时参数过期」的判定：一模一样才算没变，浏览器路径要取出来给人看', () => {
+  const args = ['cli.js', '--extension', '--executable-path', 'C:\\Tabbit Browser.exe', '--output-dir', 'C:\\out'];
+  assert.equal(mcp.sameArgs(args, [...args]), true);
+  assert.equal(mcp.sameArgs(args, [...args, '--allowed-origins', 'https://a.com']), false, '多一条参数就是另一套启动参数');
+  assert.equal(mcp.sameArgs(['--extension'], []), false);
+  assert.equal(mcp.sameArgs([], []), true);
+  assert.equal(mcp.argValue(args, '--executable-path'), 'C:\\Tabbit Browser.exe');
+  assert.equal(mcp.argValue(args, '--user-data-dir'), null);
+  assert.equal(mcp.argValue(['--executable-path'], '--executable-path'), null, '开关后面没值就当没有');
+});

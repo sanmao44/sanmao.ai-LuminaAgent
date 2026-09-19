@@ -110,7 +110,11 @@ test('装好并开启后，服务配置由代码生成：Node + 固定脚本 + �
     assert.equal(server.args[0], bin);
     assert.equal(server.cwd, mcp.resolveCatalogWorkspace('playwright', { dataDir }));
     assert.equal(server.enabled, true);
-    assert.equal(mcp.catalogRuntimeStatus('playwright', { dataDir }).state, 'installed');
+    const idle = mcp.catalogRuntimeStatus('playwright', { dataDir });
+    assert.equal(idle.state, 'installed');
+    // 没在跑就谈不上「参数过期」：面板不能凭这个给一个不存在的进程挂警告。
+    assert.equal(idle.argsStale, false);
+    assert.equal(idle.startedBrowserPath, null);
   });
 });
 

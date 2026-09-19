@@ -44,6 +44,9 @@ type StdioSession = {
   key: string;
   serverId: string;
   serverName: string;
+  /** 这个进程是拿哪条命令、哪套参数起来的：面板要拿它和当前设置核对，看是不是过期的进程。 */
+  command: string;
+  args: string[];
   child: ChildProcessWithoutNullStreams;
   pending: Map<number, Pending>;
   nextId: number;
@@ -63,6 +66,8 @@ export type McpStdioStatus = {
   stderrTail: string;
   /** 协商出来的协议版本（面板上标注用）；没握过手就是 null。 */
   protocol: McpProtocolNegotiation | null;
+  /** 这个进程实际用的启动参数；没在跑就是空数组。 */
+  args: string[];
 };
 
 /**
@@ -198,7 +203,9 @@ function ensureCleanupHook() {
 function spawnSession(server: McpServerConfig): StdioSession {
   const problem = stdioCommandProblem(server);
   if (problem) throw new McpError(server.name, problem);
-  const child = spawn(String(server.command), (server.args || []).map(String), {
+  const command = String(server.command);
+  const args = (server.args || []).map(String);
+  const child = spawn(command, args, {
     shell: false,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -209,6 +216,8 @@ function spawnSession(server: McpServerConfig): StdioSession {
     key: sessionKey(server),
     serverId: server.id,
     serverName: server.name,
+    command,
+    args,
     child,
     pending: new Map(),
     nextId: 1,
@@ -401,9 +410,10 @@ export function stdioServerStatus(serverId: string): McpStdioStatus {
       exit: session.exit,
       stderrTail: session.stderr.slice(-2000),
       protocol: session.protocol,
+      args: [...session.args],
     };
   }
-  return { running: false, pid: null, exit: null, stderrTail: '', protocol: null };
+  return { running: false, pid: null, exit: null, stderrTail: '', protocol: null, args: [] };
 }
 
 /** 关掉指定服务的进程；不传 serverId 表示全部关掉（应用退出、测试清理用）。 */

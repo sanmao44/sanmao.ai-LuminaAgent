@@ -27,8 +27,13 @@ import { callStdioTool, listStdioServerTools, stdioServerStatus } from './stdio'
  * 两种都要认（规范允许服务端自行选择）。
  */
 
-/** 一轮对话里最多调用几次外部服务，以及这些调用加起来最多花多久。 */
-export const MCP_TOOL_MAX_CALLS_PER_TURN = 4;
+/**
+ * 一轮对话里最多调用几次外部服务，以及这些调用加起来最多花多久。
+ *
+ * 次数要够走完一串连贯操作（打开网页 → 看页面 → 点击 → 输入 → 再看结果），
+ * 否则助手会在半路撞上限额；真正兜底的是下面的总时长。
+ */
+export const MCP_TOOL_MAX_CALLS_PER_TURN = 10;
 export const MCP_TURN_TIME_BUDGET_MS = 150_000;
 
 type JsonRpcMessage = { jsonrpc?: string; id?: unknown; result?: any; error?: { code?: number; message?: string }; method?: string };
@@ -308,6 +313,10 @@ function browserHintFor(server: McpServerConfig, text: string): string | null {
     return browserExtensionHint(text, {
       browserName: bridge?.browserName,
       executablePath: bridge?.executablePath ?? null,
+      // 报错里的目录和这两个值一比，就能分出「接错浏览器」和「真的没装」：
+      // 用户在 Tabbit 里装了扩展，却被指去 Chrome 重装，就是这么来的。
+      userDataDir: bridge?.userDataDir ?? null,
+      extensionInstalled: bridge?.extensionInstalled ?? null,
     });
   } catch {
     // 翻译失败绝不能盖掉原始报错。

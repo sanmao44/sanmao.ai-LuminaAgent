@@ -194,6 +194,24 @@ function profileRank(profile: string) {
   return profile === 'Default' ? -1 : Number.parseInt(profile.slice('Profile '.length), 10);
 }
 
+/**
+ * 两个目录是不是同一棵 profile 树。
+ * 报错里的那段目录是 Playwright 自己拼的，写法可能和我们的不一样（长路径前缀、大小写、
+ * 结尾斜杠），所以按规范化之后的前缀关系比：同一条路径、或一个是另一个的上级都算同一棵。
+ */
+export function sameProfileTree(a: unknown, b: unknown): boolean {
+  const norm = (value: unknown) => {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    const resolved = path.resolve(text).replace(/[\\/]+$/, '');
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const left = norm(a);
+  const right = norm(b);
+  if (!left || !right) return false;
+  return left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
+}
+
 /** 某个 profile 里装没装扩展：认 Extensions 目录，也认 Preferences 里的记录。 */
 export function profileHasPlaywrightExtension(profileDir: string): boolean {
   if (existsSync(path.join(profileDir, 'Extensions', PLAYWRIGHT_EXTENSION_ID))) return true;
@@ -234,16 +252,41 @@ const CALL_TIMED_OUT = /tools\/call 超时/;
  */
 export function browserExtensionHint(
   text: unknown,
-  context: { browserName?: string; executablePath?: string | null } = {},
+  context: {
+    browserName?: string;
+    executablePath?: string | null;
+    /** 面板认定该找的那个 profile 根目录（browserBridge.userDataDir）。 */
+    userDataDir?: string | null;
+    /** 我们自己查过的结论：true 说明扩展确实装在这个浏览器里，就别再让人装一遍。 */
+    extensionInstalled?: boolean | null;
+  } = {},
 ): string | null {
   const raw = String(text ?? '');
   if (!raw) return null;
   const name = context.browserName || '你日常用的浏览器';
   const where = context.executablePath ? `${name}（${context.executablePath}）` : name;
   if (EXTENSION_NOT_FOUND.test(raw)) {
+    const searched = EXTENSION_NOT_FOUND.exec(raw)?.[1] || '';
+    // 报错里的目录和面板认定的浏览器 profile 不是同一棵树：这是**接错了浏览器**，
+    // 不是「没装扩展」。用户明明装了却被叫去再装一遍，就是这么来的。
+    if (searched && context.userDataDir && !sameProfileTree(searched, context.userDataDir)) {
+      return [
+        'SANMAO：这句是 Playwright 的原话，但它翻的是另一个浏览器的 profile：',
+        `它找的是：${searched}`,
+        `你现在接的是：${name}${context.userDataDir ? `（${context.userDataDir}）` : ''}`,
+        context.extensionInstalled === true
+          ? `扩展确实装在 ${name} 里，所以这不是「没装」，是运行时用错了浏览器。`
+          : '扩展装在哪一个浏览器里，就得接哪一个。',
+        '到 MCP 面板把「浏览器控制」停掉，确认「接我日常的浏览器」下面写的就是你要用的那个浏览器，再点「启动」；浏览器路径是启动时定下来的，改完不重启运行时不会生效。',
+      ].join('\n');
+    }
     return [
       'SANMAO：这条报错来自 Playwright 本身，它默认只在 Chrome 的 profile 里找扩展。',
-      `现在接的是 ${where}，扩展必须装在这个浏览器里：打开它的扩展页确认「Playwright Extension」在列表里并且是启用状态，装好后保持这个浏览器开着再试一次。`,
+      `现在接的是 ${where}：打开它的扩展页，确认「Playwright Extension」在列表里并且是启用状态，装好后保持这个浏览器开着再试一次。`,
+      context.extensionInstalled === true
+        ? `我们查过 ${name} 的 profile，扩展确实装在里面，所以别重装。`
+        : '扩展必须装在你现在接的这个浏览器里，装在别的浏览器里不算。',
+      '要是那边明明装着还报这句：多半是运行时还在用旧的启动参数（比如中途换过默认浏览器）。到 MCP 面板把「浏览器控制」停掉再点一次「启动」，让新参数生效。',
       '商店打不开时（国内常见）：在项目里运行 npm run build:playwright-extension，再到扩展页用「加载已解压的扩展程序」选中 MCP 面板里那个自建扩展目录。',
     ].join('\n');
   }

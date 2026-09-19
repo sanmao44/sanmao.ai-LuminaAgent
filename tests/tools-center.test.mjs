@@ -74,8 +74,9 @@ test('面板把能力组和写权限分项摆出来，并且逐项提交', () =>
 });
 test('面板给出安装/启动/停止/取消，并说明空闲回收与浏览器来源', () => {
   assert.match(panel, /本地工具运行时/);
+  // 动作按钮在跑的时候会换成「启动中…」这类说法，两种写法都算这个动作在。
   for (const label of ['安装', '启动', '停止', '取消安装']) {
-    assert.ok(panel.includes(`>${label}</button>`), `missing ${label}`);
+    assert.ok(panel.includes(`>${label}</button>`) || panel.includes(`: '${label}'}`), `missing ${label}`);
   }
   assert.ok(panel.includes("'刷新状态'"));
   assert.match(panel, /未检测到 Chrome 或 Edge，需要先装一个/);

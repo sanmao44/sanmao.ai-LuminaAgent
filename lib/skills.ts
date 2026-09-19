@@ -1241,9 +1241,14 @@ export function readLocalSkillDocument(dir: string) {
   try { return readFileSync(path.join(dir, 'SKILL.md'), 'utf8'); } catch { return ''; }
 }
 
-const MODEL_TOOL_MARKUP_PATTERN = /(?:\|\s*)?<[|｜]{0,4}DSML[|｜]{0,4}>|｜｜\s*DSML|<\s*DSML\s*\|/i;
+// 模型把工具调用写成文本标记的几种形态：DSML 那套自家格式，以及工具调用被当成普通
+// XML 吐出来的 <tool_call> / <function=name>。命中就把标记之后的部分截掉，别把原文露给用户。
+const MODEL_TOOL_MARKUP_PATTERN = /(?:\|\s*)?<[|｜]{0,4}DSML[|｜]{0,4}>|｜｜\s*DSML|<\s*DSML\s*\||<\s*\/?\s*tool_calls?\b|<\s*function\s*=/i;
 
-/** 模型把工具调用写成文本标记时（例如 DSML），截掉标记之后的调用块，避免露出乱码。 */
+/**
+ * 模型把工具调用写成文本标记时（DSML、`<tool_call><function=…>` 这类），截掉标记之后的部分。
+ * 只截不猜：真要有下一步，应该让它下一轮发起原生调用（见 route.ts 的 MCP 补轮）。
+ */
 export function stripToolCallMarkup(text: string) {
   const match = MODEL_TOOL_MARKUP_PATTERN.exec(text);
   if (!match) return text;

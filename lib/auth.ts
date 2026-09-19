@@ -4,7 +4,7 @@ const COOKIE = 'sanmao_admin';
 
 export type SanmaoNetworkMode = 'local' | 'lan';
 
-function isLoopbackRequest(request: Request) {
+export function isLoopbackRequest(request: Request) {
   try {
     const url = new URL(request.url);
     const hostname = url.hostname.toLowerCase();

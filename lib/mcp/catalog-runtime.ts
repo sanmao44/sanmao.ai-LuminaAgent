@@ -60,11 +60,31 @@ export type McpCatalogRuntimeStatus = {
   idleTimeoutMs: number;
   /** 和这个服务谈成的协议版本：两边不一致时面板标注一句，但不影响使用。 */
   protocol: McpProtocolNegotiation | null;
+  /**
+   * 正在跑的进程是不是拿旧参数起来的。
+   * 启动参数里带着「接哪个浏览器」这类设置，而进程只会按启动那一刻的参数走：
+   * 中途换了默认浏览器，面板会显示新浏览器，助手却在操作旧的那个，
+   * 用户看到的就是「扩展明明装着，却说没装」。面板据此提示重启。
+   */
+  argsStale: boolean;
+  /** 进程启动时接的浏览器可执行文件；没有或不是扩展模式就是 null。 */
+  startedBrowserPath: string | null;
 };
 
 type InstallJob = { child: ChildProcess | null; log: string; error: string | null; finished: boolean };
 
 const installs = new Map<string, InstallJob>();
+
+/** 两套启动参数是不是一模一样：用来判断跑着的进程是不是过期的。 */
+export function sameArgs(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/** 从启动参数里取某个开关后面的值（`--executable-path X`）。 */
+export function argValue(args: readonly string[], flag: string): string | null {
+  const index = args.indexOf(flag);
+  return index >= 0 && index + 1 < args.length ? args[index + 1] : null;
+}
 
 function appendLog(entry: McpStdioCatalogEntry, chunk: string, options: { dataDir?: string }) {
   const job = installs.get(entry.id);
@@ -211,6 +231,14 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; r
   const browserMode = catalogEntryBrowserMode(entry.id, options);
   const installing = Boolean(job && !job.finished);
   const error = job?.error ?? null;
+  // 进程只按启动那一刻的参数走：拿现在的设置再算一遍，就能看出它是不是过期的。
+  // 取现在的参数失败（比如手填的浏览器路径刚被删掉）不该让状态整个拿不到，退化成「不过期」。
+  let currentArgs: string[] = [];
+  try {
+    currentArgs = catalogServerConfig(entry, { ...options, enabled, browser, browserMode }).args || [];
+  } catch {
+    currentArgs = [];
+  }
   const state: McpCatalogRuntimeState = installing
     ? 'installing'
     : error && !installed
@@ -242,6 +270,8 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; r
     roots: [...(options.roots ?? [])],
     idleTimeoutMs: MCP_STDIO_IDLE_TIMEOUT_MS,
     protocol: process.protocol,
+    argsStale: process.running && currentArgs.length > 0 && !sameArgs(process.args, currentArgs),
+    startedBrowserPath: argValue(process.args, '--executable-path'),
   };
 }
 

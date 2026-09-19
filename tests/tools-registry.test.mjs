@@ -96,7 +96,7 @@ test('每个能力标签都有执行入口，且入口由注册表标签推导',
     if (MAPPED_TAGS.has(tag)) {
       assert.match(executorSource, new RegExp(`\\['${tag}', '${kind}'\\]`), `${tag} 在 executor 里没有类别映射`);
     }
-    assert.ok(route.includes(`if (kind === '${kind}')`) || route.includes(`if (kind !== '${kind}') continue;`), `${tag} 对应的 ${kind} 分支不在 route 里`);
+    assert.ok(route.includes(`if (kind === '${kind}')`) || route.includes(`if (kind !== '${kind}') return { results };`), `${tag} 对应的 ${kind} 分支不在 route 里`);
     const owner = tools.TOOL_REGISTRY.find((tool) => tool.tags.includes(tag));
     assert.equal(tools.toolExecutionKind(owner.name), kind, `${owner.name} 的执行类别推导错了`);
   }

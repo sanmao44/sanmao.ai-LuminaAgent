@@ -28,7 +28,7 @@ test('route.ts 每个类别都有分支，且分派不看工具名', () => {
   for (const kind of ['web', 'file', 'artifact', 'skill', 'mcp']) {
     assert.ok(route.includes(`if (kind === '${kind}') {`), `${kind} 缺少执行分支`);
   }
-  assert.ok(route.includes(`if (kind !== 'image') continue;`), 'image 分支也由类别决定');
+  assert.ok(route.includes(`if (kind !== 'image') return { results };`), 'image 分支也由类别决定');
   assert.ok(route.includes('const kind = toolExecutionKind(call?.function?.name, mcpTools);'), '类别要从注册表推导');
   assert.ok(route.indexOf('const policy = resolveToolPolicy(') < route.indexOf('const kind = toolExecutionKind('), '先过权限再分派');
 });
@@ -52,20 +52,25 @@ test('取消时 abort 原样抛出，不被降级成工具错误', () => {
     }
     catches.push(body.join('\n'));
   }
-  const degrading = catches.filter((body) => body.includes('toolResults.push('));
-  assert.ok(degrading.length >= 5, `工具执行的降级兜底应有多个，当前 ${degrading.length} 处`);
+  // executeToolCall 把结果先攒在本地 results 里，再由调用方写回历史；存盘失败改成把原因交回调用方。
+  const pushIndex = (body) => {
+    const indexes = [body.indexOf('toolResults.push('), body.indexOf('results.push(')].filter((index) => index >= 0);
+    return indexes.length ? Math.min(...indexes) : -1;
+  };
+  const degrading = catches.filter((body) => pushIndex(body) >= 0);
+  assert.ok(degrading.length >= 4, `工具执行的降级兜底应有多个，当前 ${degrading.length} 处`);
   const rethrowMarker = 'signal.aborted) throw requestController.signal.reason';
-  const skipped = degrading.filter((body) => !body.includes(rethrowMarker));
-  // 唯一例外：待确认操作的存盘失败。它不执行任何工具，只把失败结果回给模型；
-  // 取消会由下一轮上游请求的 abort 接管，所以这里不额外抛。
-  assert.equal(skipped.length, 1, '除存盘失败外，每个降级 catch 都要先原样抛出取消');
-  assert.ok(skipped[0].includes('待确认的操作没能保存下来'), '例外必须仍是那处存盘失败');
   for (const body of degrading) {
-    if (body === skipped[0]) continue;
     const rethrow = body.indexOf(rethrowMarker);
-    const push = body.indexOf('toolResults.push(');
+    const push = pushIndex(body);
     assert.ok(rethrow >= 0 && rethrow < push, '取消要原样抛出，不能降级成 tool 错误后继续跑');
   }
+  // 存盘失败是唯一不进上面的失败路径：它不执行任何工具，只把原因交回调用方，
+  // 由调用方写回「没有执行」再继续收尾。
+  const saveFailures = catches.filter((body) => body.includes('待确认的操作没能保存下来'));
+  assert.equal(saveFailures.length, 1, '存盘失败的兜底只有一处');
+  assert.ok(pushIndex(saveFailures[0]) < 0, '存盘失败不写任何工具结果，只把原因交回调用方');
+  assert.ok(route.includes('if (saved.response) return saved.response;'), '存盘失败后仍要回一条「没有执行」并继续收尾');
 });
 
 test('参数不是合法 JSON 时按空对象兜底，不打断整轮请求', () => {
@@ -85,7 +90,21 @@ test('未注册的工具名不会落到任何执行分支', () => {
   assert.equal(tools.toolExecutionKind('not_a_tool'), null);
   assert.equal(tools.toolExecutionKind('gh__search'), null, 'MCP 工具不在本轮列表里也不执行');
   // 分派只按类别相等判断，null 一个分支都不命中，最后靠这条兜底直接跳过。
-  assert.ok(route.includes("if (kind !== 'image') continue;"), '缺兜底 continue：未知工具会掉进 image 分支');
+  assert.ok(route.includes("if (kind !== 'image') return { results };"), '缺兜底：未知工具会掉进 image 分支');
   const branches = route.match(/if \(kind === '[a-z-]+'\) \{/g) || [];
   assert.ok(branches.length >= 5, '执行分支都是类别相等判断');
+});
+
+test('MCP 工具调用要再补一轮，且和首轮走同一个执行点', () => {
+  // 只交一轮工具，模型拿到 browser_navigate 的结果后就没有工具可用了，只能把下一步写成 <tool_call> 文本。
+  assert.ok(route.includes('MCP_TOOL_FOLLOWUP_MAX_ROUNDS = 4'), 'MCP 补轮要有独立轮数上限');
+  assert.ok(route.includes('tools: mcpFollowupTools'), '补轮必须把 MCP 工具重新交给模型');
+  const loopStart = route.indexOf('tools: mcpFollowupTools');
+  assert.ok(route.indexOf("tool_choice: 'auto'", loopStart) > loopStart, '补轮要允许模型再要工具');
+  assert.ok(route.includes('const run = await executeToolCall(calls[index], calls, index);'), '补轮复用同一个执行点，权限/审批/停滞检测才不会被绕开');
+  const shouldContinue = route.indexOf('shouldContinue: () => !deferredCalls.length && mcpToolCallCount < MCP_TOOL_MAX_CALLS_PER_TURN');
+  const finalText = route.indexOf('finalText: (reply) => stripToolCallMarkup', shouldContinue);
+  const approval = route.indexOf('requestApproval({', shouldContinue);
+  assert.ok(shouldContinue >= 0 && shouldContinue < finalText && finalText < approval, '补轮结构：先判上限，再截文本，最后才是确认卡片');
+  assert.ok(approval < route.indexOf("reportProgress({ stage: 'answering'", shouldContinue), '补轮的确认卡片要在收尾之前挡下来');
 });
