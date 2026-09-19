@@ -241,7 +241,10 @@ function resultText(result: any) {
       parts.push(JSON.stringify(result.structuredContent));
     } catch {}
   }
-  return parts.join('\n').trim().slice(0, MCP_MAX_TOOL_RESULT_CHARS);
+  const text = parts.join('\n').trim();
+  if (text.length <= MCP_MAX_TOOL_RESULT_CHARS) return text;
+  // 截断必须说出来：否则模型会以为拿到的是完整内容，基于残缺数据下结论。
+  return `${text.slice(0, MCP_MAX_TOOL_RESULT_CHARS)}\n…（结果过长已截断，以上只是前 ${MCP_MAX_TOOL_RESULT_CHARS} 个字符；如需完整内容请让用户在服务端分页或缩小查询范围。）`;
 }
 
 export async function callMcpTool(

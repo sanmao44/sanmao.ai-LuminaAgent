@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -109,4 +110,12 @@ test('动作名不合法或服务不存在时抛出可读错误', async () => {
   await assert.rejects(() => mcp.runMcpManageAction({ action: 'drop' }, { dataDir }), /不支持的动作/);
   await assert.rejects(() => mcp.runMcpManageAction({ action: 'probe' }, { dataDir }), /id 或名称/);
   await assert.rejects(() => mcp.runMcpManageAction({ action: 'probe', id: 'nope' }, { dataDir }), /没有找到/);
+});
+
+test('被拒绝的调用与管理动作都会记进审计标签，动作名用中文', async () => {
+  const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /const MCP_MANAGE_LABELS: Record<string, string> = \{ list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务' \};/);
+  assert.match(route, /usedMcpTools\.push\(\{ server: '本机配置', name: actionLabel/);
+  assert.match(route, /const deniedMcp = policy\.tool\?\.mcp;/);
+  assert.match(route, /if \(deniedMcp\) usedMcpTools\.push\(\{ server: deniedMcp\.serverName, name: deniedMcp\.toolName, readOnly: deniedMcp\.readOnly, ok: false \}\);/);
 });

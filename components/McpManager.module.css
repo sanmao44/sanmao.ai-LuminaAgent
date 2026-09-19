@@ -143,6 +143,7 @@
 .empty { margin: 0; padding: 26px 14px; text-align: center; color: var(--text-2); font-size: 12.5px; line-height: 1.7; border: 1px dashed var(--line); border-radius: 14px; background: color-mix(in srgb, var(--panel-2) 52%, transparent); }
 
 .form { display: grid; gap: 8px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--panel-2) 52%, transparent); }
+.formHead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
 .form label { font-size: 12px; color: var(--text-2); }
 .formFooter { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 4px; }
 .inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -150,9 +151,12 @@
 
 .probe { display: grid; gap: 8px; margin: 4px 0 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .probeHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.toolList { display: grid; gap: 4px; max-height: min(30dvh, 240px); overflow: auto; overscroll-behavior: contain; }
+.toolList { display: grid; gap: 4px; max-height: min(40dvh, 320px); overflow: auto; overscroll-behavior: contain; }
 .toolRow { display: flex; align-items: flex-start; gap: 8px; padding: 5px 6px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
 .toolRow:hover { background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.toolBody { display: grid; gap: 2px; min-width: 0; }
+.toolHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.toolDescription { color: var(--muted); font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere; }
 .toolRow code { font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; }
 .toolRow span { color: var(--muted); overflow-wrap: anywhere; }
 

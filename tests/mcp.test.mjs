@@ -145,6 +145,24 @@ test('客户端完成握手、翻页列工具，并在调用后带回会话 id',
   assert.equal(probe.readOnly, 1);
 });
 
+test('超长工具结果截断后必须说明，模型才不会当成完整内容', async () => {
+  mcp.resetMcpSessions();
+  const longText = 'x'.repeat(9000);
+  const fetchImpl = async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    const reply = (result) => new Response(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 's' } });
+    if (payload.method === 'initialize') return reply({ protocolVersion: '2025-06-18' });
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (payload.method === 'tools/call') return reply({ content: [{ type: 'text', text: longText }] });
+    throw new Error(`unexpected ${payload.method}`);
+  };
+  const call = await mcp.callMcpTool(serverConfig({ id: 'long' }), 'search', {}, { fetchImpl });
+  const [body, ...rest] = call.text.split('\n…（结果过长已截断');
+  assert.equal(body.length, 8000, '正文按上限截断');
+  assert.equal(rest.length, 1, '截断提示只出现一次');
+  assert.match(call.text, /只是前 8000 个字符/);
+});
+
 test('客户端把鉴权失败、协议不匹配、超时翻译成明确错误', async () => {
   mcp.resetMcpSessions();
   const unauthorized = fakeMcpServer({ onInitialize: () => new Response('nope', { status: 401 }) });
@@ -318,6 +336,12 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(manager, /识别并填入/);
   assert.match(manager, /让助手自己接/, '帮助说明要写清助手能代劳');
   assert.match(manager, /本地命令型服务暂时接不了/);
+  assert.match(manager, /全部放行/);
+  assert.match(manager, /只放行只读/);
+  assert.match(manager, /styles\.toolDescription/);
+  assert.match(manager, /const showForm = formOpen \?\? servers\.length === 0/, '已有服务时“添加服务”表单默认收起，把高度让给工具清单');
+  assert.match(manager, /aria-controls="mcp-add-body"/);
+  assert.match(manager, /if \(!\(data\.servers as unknown\[\] \| undefined\)\?\.length\) setFormOpen\(null\)/, '删光服务后表单要重新展开');
   assert.match(client, /mcpTools\?: AgentMcpToolUse\[\];/);
   assert.match(page, /mcpTools: Array\.isArray\(data\.mcpTools\)/, '把 MCP 调用记进消息');
   assert.match(page, /className: "message-mcp-badge"/);

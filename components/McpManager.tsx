@@ -57,6 +57,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState<boolean | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   useBodyScrollLock(open);
 
@@ -96,6 +97,8 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   }, [open, run, applyPayload]);
 
   const enabledCount = servers.filter((server) => server.enabled).length;
+  /* 已经有服务时，"添加服务"表单默认收起：那个表单要占掉四百多像素，展开着会把工具清单挤到只剩一两行。 */
+  const showForm = formOpen ?? servers.length === 0;
 
   /** 把别处复制来的配置填进表单：只做识别，仍然要用户确认后才提交。 */
   function importConfig() {
@@ -119,6 +122,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
       });
       applyPayload(data);
       setDraft(EMPTY_DRAFT);
+      setFormOpen(false);
       const created = data.server as McpServerView | undefined;
       setNotice(`已添加 ${created?.name || 'MCP 服务'}：连上后助手才能看到它的工具。`);
       if (created?.id) await probeServer(created);
@@ -142,7 +146,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     if (confirming !== server.id) { setConfirming(server.id); return; }
     setConfirming('');
     await run(async () => {
-      applyPayload(await requestJson(`/api/mcp/${encodeURIComponent(server.id)}`, { method: 'DELETE' }));
+      const data = await requestJson(`/api/mcp/${encodeURIComponent(server.id)}`, { method: 'DELETE' });
+      applyPayload(data);
+      // 删光了就把表单放出来，否则空列表会提示"可以在下面粘贴配置"而下面什么都没有。
+      if (!(data.servers as unknown[] | undefined)?.length) setFormOpen(null);
       setProbes((current) => {
         const next = { ...current };
         delete next[server.id];
@@ -201,6 +208,24 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     });
   }
 
+  /** 批量放行：工具多的服务挨个点太费劲，一次把范围设好。 */
+  async function selectTools(server: McpServerView, names: string[], emptyMessage: string) {
+    if (!names.length) { setNotice(emptyMessage); return; }
+    await run(async () => {
+      applyPayload(await requestJson(`/api/mcp/${encodeURIComponent(server.id)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabledTools: names }),
+      }));
+      setProbes((current) => {
+        const probe = current[server.id];
+        if (!probe) return current;
+        return { ...current, [server.id]: { ...probe, tools: probe.tools.map((tool) => ({ ...tool, enabled: names.includes(tool.name) })) } };
+      });
+      setNotice(`已把「${server.name}」的放行范围改成 ${names.length} 个工具。`);
+    });
+  }
+
   return (
     <>
       <button type="button" className={styles.trigger} data-tooltip={enabledCount ? `MCP · ${enabledCount} 个服务已启用` : 'MCP 服务'} aria-label={enabledCount ? `MCP 服务（${enabledCount} 个已启用）` : 'MCP 服务'} aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConfirming(''); setHelpOpen(false); setOpen(true); }}>{icon}{enabledCount > 0 && <span className={styles.activeBadge} aria-hidden="true">{enabledCount > 9 ? '9+' : enabledCount}</span>}</button>
@@ -251,12 +276,16 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   <div className={styles.probeHead}>
                     <p className={probe.status === 'error' ? styles.meta : styles.description} role="status">{probe.status === 'busy' ? '正在连接…' : probe.message}</p>
                     {probe.status === 'done' && probe.tools.length > 0 && <span className={styles.badgeMuted}>勾选要放行的工具，未勾选的不下发给助手</span>}
+                    {probe.status === 'done' && probe.tools.length > 1 && <button type="button" disabled={busy} onClick={() => void selectTools(server, probe.tools.filter((tool) => !tool.oversized).map((tool) => tool.name), '这个服务没有可以放行的工具。')}>全部放行</button>}
+                    {probe.status === 'done' && probe.tools.some((tool) => tool.readOnly && !tool.oversized) && <button type="button" disabled={busy} onClick={() => void selectTools(server, probe.tools.filter((tool) => tool.readOnly && !tool.oversized).map((tool) => tool.name), '这个服务没有只读工具，只能逐个勾选。')}>只放行只读</button>}
                   </div>
                   {probe.tools.length > 0 && <div className={styles.toolList}>
                     {probe.tools.map((tool) => <label key={tool.name} className={styles.toolRow} title={tool.description || tool.title || tool.name}>
                       <input type="checkbox" checked={tool.enabled} disabled={busy || Boolean(tool.oversized)} onChange={() => void toggleTool(server, tool.name)} />
-                      <code>{tool.name}</code>
-                      {tool.oversized ? <span>参数结构过大，不会下发给助手</span> : tool.readOnly ? <span>只读</span> : <span>可能写入</span>}
+                      <span className={styles.toolBody}>
+                        <span className={styles.toolHead}><code>{tool.name}</code>{tool.oversized ? <span>参数结构过大，不会下发给助手</span> : tool.readOnly ? <span>只读</span> : <span>可能写入</span>}</span>
+                        {(tool.description || tool.title) && <span className={styles.toolDescription}>{tool.description || tool.title}</span>}
+                      </span>
                     </label>)}
                   </div>}
                 </div>}
@@ -272,7 +301,12 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         </div>
 
         <section className={styles.form}>
-          <h3>添加 MCP 服务</h3>
+          <div className={styles.formHead}>
+            <h3>添加 MCP 服务</h3>
+            <button type="button" aria-expanded={showForm} aria-controls="mcp-add-body" disabled={busy} onClick={() => setFormOpen(!showForm)}>{showForm ? '收起' : '展开'}</button>
+          </div>
+          {!showForm && <p className={styles.hint}>接入新服务时展开这里：粘贴一份配置或直接填地址，添加后会自动自检。</p>}
+          {showForm && <>
           <label htmlFor="mcp-paste">快速接入：粘贴配置或地址（可选）</label>
           <textarea id="mcp-paste" value={draft.paste} disabled={busy} spellCheck={false} placeholder={'{"mcpServers":{"notion":{"url":"https://mcp.notion.com/mcp","headers":{"Authorization":"Bearer …"}}}}\n或直接粘贴 https://example.com/mcp'} onChange={(event) => setDraft((current) => ({ ...current, paste: event.target.value }))} />
           <div className={styles.inline}>
@@ -289,6 +323,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             <label className={styles.check}><input type="checkbox" checked={draft.allowWrite} disabled={busy} onChange={() => setDraft((current) => ({ ...current, allowWrite: !current.allowWrite }))} />添加后立即允许写入（有副作用的工具会被放行）</label>
             <button type="button" className={styles.primary} disabled={busy || !draft.url.trim()} onClick={() => void addServer()}>{busy ? '处理中…' : '添加并自检'}</button>
           </div>
+          </>}
         </section>
 
         <footer className={styles.footer}>

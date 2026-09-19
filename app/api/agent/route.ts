@@ -17,6 +17,7 @@ import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
 import { loadMcpToolRuntime } from '@/lib/mcp/tools';
 import { runMcpManageAction } from '@/lib/mcp/admin';
+
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
@@ -370,6 +371,9 @@ function toChatContent(message: ClientMessage, allowVideo = false): string | Cha
     ...mediaParts,
   ];
 }
+
+/** MCP 管理动作在界面徽标上的中文名。 */
+const MCP_MANAGE_LABELS: Record<string, string> = { list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务' };
 
 export async function POST(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
@@ -1029,6 +1033,9 @@ export async function POST(request: Request) {
       // 模型（而不是静默跳过），这样它下一轮能改用正确做法，也不会把调用写成文本标记。
       const policy = resolveToolPolicy(call?.function?.name, gatingContext, mcpTools);
       if (!policy.allowed) {
+        // MCP 工具被拦下时也记一笔：界面上要能看到「助手想调用，但被拒绝」。
+        const deniedMcp = policy.tool?.mcp;
+        if (deniedMcp) usedMcpTools.push({ server: deniedMcp.serverName, name: deniedMcp.toolName, readOnly: deniedMcp.readOnly, ok: false });
         toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: policy.reason }) });
         continue;
       }
@@ -1074,10 +1081,12 @@ export async function POST(request: Request) {
       if (kind === 'mcp-manage') {
         // 管理动作只改本机配置；删除服务、打开写入权限的授权依据在 lib/mcp/admin.ts 里按用户原话校验。
         const action = String(args?.action || 'list');
+        // 徽标上显示中文动作名，界面不用再去翻译英文动作。
+        const actionLabel = MCP_MANAGE_LABELS[action] || action;
         const manageReadOnly = action === 'list' || action === 'probe';
         try {
           const outcome = await runMcpManageAction(args, { instruction: latestInstruction });
-          usedMcpTools.push({ server: '本机 MCP 配置', name: action, readOnly: manageReadOnly, ok: true });
+          usedMcpTools.push({ server: '本机配置', name: actionLabel, readOnly: manageReadOnly, ok: true });
           toolResults.push({
             role: 'tool',
             tool_call_id: call.id,
@@ -1085,7 +1094,7 @@ export async function POST(request: Request) {
           });
         } catch (error) {
           if (requestController.signal.aborted) throw requestController.signal.reason || error;
-          usedMcpTools.push({ server: '本机 MCP 配置', name: action, readOnly: manageReadOnly, ok: false });
+          usedMcpTools.push({ server: '本机配置', name: actionLabel, readOnly: manageReadOnly, ok: false });
           toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: error instanceof Error ? error.message : 'MCP 管理动作失败' }) });
         }
         continue;
