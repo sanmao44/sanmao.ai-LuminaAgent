@@ -2290,6 +2290,7 @@ html[data-theme="dark"] .super-canvas-entry-badge{
 .message-version-switch button:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent-text)}
 .message.assistant .message-label .message-web-badge{margin-left:2px;padding:3px 7px;background:color-mix(in srgb,var(--success) 9%,var(--message-assistant-bg));border-color:color-mix(in srgb,var(--success) 28%,var(--message-assistant-border));color:var(--message-assistant-label);font-size:8px}
 .message.assistant .message-label .message-skill-badge{margin-left:2px;padding:3px 7px;background:color-mix(in srgb,var(--accent) 10%,var(--message-assistant-bg));border-color:color-mix(in srgb,var(--accent) 34%,var(--message-assistant-border));color:var(--message-assistant-label);font-size:8px}
+.message.assistant .message-label .message-mcp-badge{margin-left:2px;padding:3px 7px;background:color-mix(in srgb,var(--accent-2) 14%,var(--message-assistant-bg));border-color:color-mix(in srgb,var(--accent-2) 38%,var(--message-assistant-border));color:var(--message-assistant-label);font-size:8px}
 .message.assistant .message-tools{margin-top:13px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--message-assistant-border) 74%,transparent)}
 .message-tools{gap:5px}
 .message-tools button{height:30px;padding:0 8px;border-color:transparent;background:transparent;color:var(--message-tool);font-size:9px}

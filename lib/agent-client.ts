@@ -54,6 +54,14 @@ export type AgentGeneratedFile = {
   downloadUrl?: string;
 };
 
+/** 这一轮真正落到外部 MCP 服务上的调用，用于给用户看"助手用了哪个外部工具"。 */
+export type AgentMcpToolUse = {
+  server: string;
+  name: string;
+  readOnly: boolean;
+  ok: boolean;
+};
+
 export type AgentResponse = {
   ok?: boolean;
   message: string;
@@ -65,6 +73,7 @@ export type AgentResponse = {
   webSearch?: Record<string, unknown> | null;
   webSearchDecision?: Record<string, unknown>;
   skills?: Array<{ id: string; name: string }>;
+  mcpTools?: AgentMcpToolUse[];
   durationSeconds?: number;
   error?: string;
   cancelled?: boolean;

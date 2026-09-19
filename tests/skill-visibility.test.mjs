@@ -22,7 +22,7 @@ test("a reply reports back which skills the agent actually read", () => {
   assert.match(route, /const usedSkills: Array<\{ id: string; name: string \}> = \[\];/);
   assert.match(route, /if \(!usedSkills\.some\(\(item\) => item\.id === skill\.id\)\) usedSkills\.push\(\{ id: skill\.id, name: skill\.name \}\);/);
   assert.match(route, /skills: metadata\.skills \|\| \[\]/);
-  assert.match(route, /skills: usedSkills \}/);
+  assert.match(route, /skills: usedSkills, mcpTools: usedMcpTools \}/);
   assert.match(client, /skills\?: Array<\{ id: string; name: string \}>;/);
 });
 

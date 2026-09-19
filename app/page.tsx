@@ -9100,6 +9100,7 @@ export default function Page() {
                         webSearch: data.webSearch || undefined,
                         webSearchDecision: data.webSearchDecision || undefined,
                         skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                        mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
                         deliverable: data.deliverable || 'TEXT',
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
@@ -9362,6 +9363,7 @@ export default function Page() {
                     webSearch: data.webSearch || undefined,
                     webSearchDecision: data.webSearchDecision || undefined,
                     skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                    mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
                     deliverable: data.deliverable || selectedDeliverable,
                     ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
                 }
@@ -11177,10 +11179,14 @@ export default function Page() {
                                                                                  message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
                                                                              ]
                                                                          }),
-                                                                         message.role === 'assistant' && !message.pending && message.skills?.length && /*#__PURE__*/ _jsx("small", {
-                                                                             className: "message-skill-badge",
-                                                                             children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
-                                                                         }),
+                                                                        message.role === 'assistant' && !message.pending && message.skills?.length && /*#__PURE__*/ _jsx("small", {
+                                                                            className: "message-skill-badge",
+                                                                            children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
+                                                                        }),
+                                                                        message.role === 'assistant' && !message.pending && message.mcpTools?.length && /*#__PURE__*/ _jsx("small", {
+                                                                            className: "message-mcp-badge",
+                                                                            children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}${tool.ok ? '' : '（失败）'}`).join('、')}`
+                                                                        }),
                                                                          message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
                                                                              className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,
                                                                              children: `交付：${agentDeliverableLabel(message.deliverable)}`

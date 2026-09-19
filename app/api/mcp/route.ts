@@ -1,4 +1,5 @@
 import { isAdminRequest } from '@/lib/auth';
+import { resetMcpSessions } from '@/lib/mcp/client';
 import { MCP_MAX_SERVERS, listMcpServers, redactMcpServer, upsertMcpServer } from '@/lib/mcp/store';
 import { clearMcpToolCache } from '@/lib/mcp/tools';
 
@@ -19,8 +20,10 @@ export async function POST(request: Request) {
   try {
     const data = await request.json().catch(() => ({}));
     const server = upsertMcpServer(data);
-    // 新增或改过配置后必须丢掉工具缓存，否则这一分钟内模型看到的还是旧工具表。
+    // 新增或改过配置后必须丢掉工具缓存与会话，否则这一分钟内模型看到的还是旧工具表，
+    // 而且会拿着旧地址/旧凭据握手出来的会话继续用。
     clearMcpToolCache(server.id);
+    resetMcpSessions(server.url);
     return Response.json({ ok: true, server: redactMcpServer(server), ...snapshot() });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '保存 MCP 服务失败。' }, { status: 400 });

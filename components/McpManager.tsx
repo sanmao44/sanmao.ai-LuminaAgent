@@ -15,7 +15,7 @@ type McpServerView = {
   enabledTools: string[];
 };
 
-type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean };
+type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean; oversized?: boolean };
 type ProbeState = { status: 'busy' | 'done' | 'error'; message: string; tools: ProbeTool[]; toolCount: number; readOnly: number };
 type Draft = { name: string; url: string; headers: string; allowWrite: boolean };
 
@@ -166,6 +166,8 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   async function toggleTool(server: McpServerView, toolName: string) {
     const probe = probes[server.id];
     if (!probe?.tools.length) return;
+    // 参数结构超限的工具本来就不会下发，别让勾选动作假装生效。
+    if (probe.tools.find((tool) => tool.name === toolName)?.oversized) return;
     const selected = probe.tools.filter((tool) => tool.enabled).map((tool) => tool.name);
     const next = selected.includes(toolName) ? selected.filter((name) => name !== toolName) : [...selected, toolName];
     if (!next.length) {
@@ -235,9 +237,9 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   </div>
                   {probe.tools.length > 0 && <div className={styles.toolList}>
                     {probe.tools.map((tool) => <label key={tool.name} className={styles.toolRow} title={tool.description || tool.title || tool.name}>
-                      <input type="checkbox" checked={tool.enabled} disabled={busy} onChange={() => void toggleTool(server, tool.name)} />
+                      <input type="checkbox" checked={tool.enabled} disabled={busy || Boolean(tool.oversized)} onChange={() => void toggleTool(server, tool.name)} />
                       <code>{tool.name}</code>
-                      {tool.readOnly ? <span>只读</span> : <span>可能写入</span>}
+                      {tool.oversized ? <span>参数结构过大，不会下发给助手</span> : tool.readOnly ? <span>只读</span> : <span>可能写入</span>}
                     </label>)}
                   </div>}
                 </div>}

@@ -7,6 +7,8 @@ import type { ToolDefinition } from '@/lib/tools/registry';
 /** 模型看到的 MCP 工具名是 <serverId>__<toolName>，避免不同服务的同名工具互相覆盖。 */
 export const MCP_TOOL_SEPARATOR = '__';
 export const MCP_TOOL_CACHE_TTL_MS = 60_000;
+export const MCP_MAX_TOOL_DESCRIPTION_CHARS = 600;
+export const MCP_MAX_TOOL_SCHEMA_CHARS = 12_000;
 
 export function mcpToolId(serverId: string, toolName: string) {
   return `${serverId}${MCP_TOOL_SEPARATOR}${toolName}`;
@@ -22,15 +24,29 @@ function inputSchemaOf(tool: McpRemoteTool) {
   return { type: 'object', properties: {} };
 }
 
+/**
+ * 服务的 schema 是原样透传给模型的，啰嗦或恶意的服务可以靠它把上下文撑爆。
+ * 超限的工具直接不下发；面板自检里会把它标出来，不会让用户以为它可用。
+ */
+export function isMcpToolSchemaTooLarge(tool: McpRemoteTool) {
+  try {
+    return JSON.stringify(inputSchemaOf(tool)).length > MCP_MAX_TOOL_SCHEMA_CHARS;
+  } catch {
+    return true;
+  }
+}
+
 /** 把 MCP 服务公布的工具翻译成注册表条目；权限由 annotations 推导，写入类默认拒绝。 */
 export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpRemoteTool[]): ToolDefinition[] {
   const allowed = new Set(server.enabledTools || []);
-  const selected = tools.filter((tool) => !allowed.size || allowed.has(tool.name)).slice(0, MCP_MAX_TOOLS_PER_SERVER);
+  const selected = tools
+    .filter((tool) => (!allowed.size || allowed.has(tool.name)) && !isMcpToolSchemaTooLarge(tool))
+    .slice(0, MCP_MAX_TOOLS_PER_SERVER);
   return selected.map((tool) => {
     const readOnly = isMcpReadOnlyTool(tool);
     return {
       name: mcpToolId(server.id, tool.name),
-      description: `[MCP · ${server.name}] ${String(tool.description || tool.title || tool.name)}`,
+      description: `[MCP · ${server.name}] ${String(tool.description || tool.title || tool.name).trim().slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS)}`,
       schema: inputSchemaOf(tool),
       permissions: readOnly ? ['network'] : ['network', 'external:write'],
       tags: ['mcp'],
@@ -45,6 +61,18 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
 type McpToolCacheEntry = { at: number; tools: ToolDefinition[] };
 const toolCache = new Map<string, McpToolCacheEntry>();
 
+type McpLoadOptions = {
+  servers?: readonly McpServerConfig[];
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  timeouts?: McpTimeouts;
+  signal?: AbortSignal;
+  cache?: boolean;
+  dataDir?: string;
+};
+
+export type McpToolRuntime = { servers: McpServerConfig[]; tools: ToolDefinition[] };
+
 export function clearMcpToolCache(serverId?: string) {
   if (serverId) toolCache.delete(serverId);
   else toolCache.clear();
@@ -54,16 +82,7 @@ export function clearMcpToolCache(serverId?: string) {
  * 拉取已启用服务的工具，best-effort：单个服务连不上或超时只跳过它，
  * 不能让 MCP 的可用性影响到普通对话。
  */
-export async function loadMcpToolDefinitions(options: {
-  servers?: readonly McpServerConfig[];
-  fetchImpl?: typeof fetch;
-  now?: () => number;
-  timeouts?: McpTimeouts;
-  signal?: AbortSignal;
-  cache?: boolean;
-  dataDir?: string;
-} = {}): Promise<ToolDefinition[]> {
-  const servers = (options.servers || listMcpServers({ dataDir: options.dataDir })).filter((server) => server.enabled);
+async function loadForServers(servers: readonly McpServerConfig[], options: McpLoadOptions): Promise<ToolDefinition[]> {
   if (!servers.length) return [];
   const now = options.now || Date.now;
   const cacheable = options.cache !== false;
@@ -82,4 +101,17 @@ export async function loadMcpToolDefinitions(options: {
   }));
   for (const items of settled) definitions.push(...items);
   return definitions;
+}
+
+/**
+ * 一次把「这轮要用的服务」和「它们的工具」取回来：Agent 路由不用再读一遍配置文件，
+ * 服务表和工具表也一定来自同一份快照，不会出现工具能列出、服务却找不到的错位。
+ */
+export async function loadMcpToolRuntime(options: McpLoadOptions = {}): Promise<McpToolRuntime> {
+  const servers = (options.servers || listMcpServers({ dataDir: options.dataDir })).filter((server) => server.enabled);
+  return { servers: [...servers], tools: await loadForServers(servers, options) };
+}
+
+export async function loadMcpToolDefinitions(options: McpLoadOptions = {}): Promise<ToolDefinition[]> {
+  return loadForServers((options.servers || listMcpServers({ dataDir: options.dataDir })).filter((server) => server.enabled), options);
 }

@@ -1,6 +1,7 @@
 import { isAdminRequest } from '@/lib/auth';
 import { probeMcpServer } from '@/lib/mcp/client';
 import { MCP_MAX_TOOLS_PER_SERVER, listMcpServers, normalizeMcpServerId } from '@/lib/mcp/store';
+import { isMcpToolSchemaTooLarge } from '@/lib/mcp/tools';
 
 export const runtime = 'nodejs';
 
@@ -19,7 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const server = listMcpServers().find((item) => item.id === target);
   if (!server) return Response.json({ error: 'MCP 服务不存在。' }, { status: 404 });
   try {
-    const result = await probeMcpServer(server, { signal: AbortSignal.timeout(20_000) });
+    const result = await probeMcpServer(server, { signal: AbortSignal.timeout(20_000), retry: true });
     const enabledTools = new Set(server.enabledTools || []);
     return Response.json({
       ok: true,
@@ -32,7 +33,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         title: String(tool.title || ''),
         description: String(tool.description || '').slice(0, 240),
         readOnly: tool.annotations?.readOnlyHint === true,
-        enabled: !enabledTools.size || enabledTools.has(tool.name),
+        // 参数结构超限的工具不会下发给模型，这里如实标出来，别让用户以为勾了就生效。
+        oversized: isMcpToolSchemaTooLarge(tool),
+        enabled: (!enabledTools.size || enabledTools.has(tool.name)) && !isMcpToolSchemaTooLarge(tool),
       })),
     });
   } catch (error) {

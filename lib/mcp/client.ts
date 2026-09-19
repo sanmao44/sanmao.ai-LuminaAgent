@@ -16,6 +16,9 @@ export const MCP_LIST_TIMEOUT_MS = 15_000;
 export const MCP_CALL_TIMEOUT_MS = 120_000;
 export const MCP_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 export const MCP_MAX_TOOL_RESULT_CHARS = 8000;
+/** 一轮对话里最多调用几次外部服务，以及这些调用加起来最多花多久。 */
+export const MCP_TOOL_MAX_CALLS_PER_TURN = 4;
+export const MCP_TURN_TIME_BUDGET_MS = 150_000;
 
 export class McpError extends Error {
   readonly server: string;
@@ -31,13 +34,20 @@ type JsonRpcMessage = { jsonrpc?: string; id?: unknown; result?: any; error?: { 
 /** 各阶段超时；默认值见下面三个常量，调用方（含测试）可以单独覆盖。 */
 export type McpTimeouts = { init?: number; list?: number; call?: number };
 type McpClientOptions = { fetchImpl?: typeof fetch; now?: () => number; timeouts?: McpTimeouts };
+type McpCallOptions = McpClientOptions & {
+  signal?: AbortSignal;
+  /** 失败后是否允许换一个会话重放一次；默认允许，写类工具必须显式传 false。 */
+  retry?: boolean;
+};
 
 /** 已建立的会话（initialize 拿到的 mcp-session-id），按服务 URL 缓存。 */
 const sessions = new Map<string, string>();
 let sequence = 1;
 
-export function resetMcpSessions() {
-  sessions.clear();
+/** 丢弃缓存的会话；配置改了（地址或请求头）必须让旧会话失效，否则会拿着旧凭据继续用。 */
+export function resetMcpSessions(url?: string) {
+  if (url) sessions.delete(url);
+  else sessions.clear();
 }
 
 function nextId() {
@@ -76,7 +86,9 @@ async function readCapped(response: Response, limit = MCP_MAX_RESPONSE_BYTES) {
       chunks.push(value);
     }
   } finally {
-    reader.releaseLock?.();
+    // 超限时要把底层连接也停掉，只解绑 reader 会留下一条还在推数据的响应流。
+    if (size > limit) await reader.cancel().catch(() => undefined);
+    else reader.releaseLock?.();
   }
   const merged = new Uint8Array(size);
   let offset = 0;
@@ -95,7 +107,7 @@ function parseSseMessages(text: string) {
       .split(/\r?\n/)
       .filter((line) => line.startsWith('data:'))
       .map((line) => line.slice(5).trim())
-      .join('');
+      .join('\n');
     if (!data || data === '[DONE]') continue;
     try {
       messages.push(JSON.parse(data));
@@ -122,10 +134,11 @@ async function post(server: McpServerConfig, payload: Record<string, unknown>, o
   const { signal, release } = timeoutSignal(options.signal, options.timeoutMs);
   try {
     const headers: Record<string, string> = {
+      ...(server.headers || {}),
+      // 协议头放在用户请求头之后：用户能加自己的凭据，但不能把协议头改成别的值。
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
       'mcp-protocol-version': MCP_PROTOCOL_VERSION,
-      ...(server.headers || {}),
     };
     const session = sessions.get(server.url);
     if (session) headers['mcp-session-id'] = session;
@@ -170,20 +183,26 @@ async function ensureSession(server: McpServerConfig, options: McpClientOptions 
   await post(server, { jsonrpc: '2.0', method: 'notifications/initialized' }, { ...options, timeoutMs: options.timeouts?.init ?? MCP_INIT_TIMEOUT_MS, expectReply: false }).catch(() => null);
 }
 
-/** 会话可能被服务端回收：第一次失败就丢掉缓存重来一次。 */
-async function withSession<T>(server: McpServerConfig, options: McpClientOptions & { signal?: AbortSignal }, run: () => Promise<T>): Promise<T> {
+/**
+ * 会话可能被服务端回收：第一次失败就丢掉缓存重来一次。
+ *
+ * 重放必须是安全的。读工具重放最多多读一次；写工具重放可能是第二次创建、
+ * 第二次发送——服务端其实已经执行成功、只是响应没回来的情况并不少见。
+ * 所以只有调用方明确说 retry !== false 时才重放。
+ */
+async function withSession<T>(server: McpServerConfig, options: McpCallOptions, run: () => Promise<T>): Promise<T> {
   await ensureSession(server, options);
   try {
     return await run();
   } catch (error) {
-    if (!(error instanceof McpError) || options.signal?.aborted) throw error;
+    if (options.retry === false || !(error instanceof McpError) || options.signal?.aborted) throw error;
     sessions.delete(server.url);
     await ensureSession(server, options);
     return await run();
   }
 }
 
-export async function listMcpServerTools(server: McpServerConfig, options: McpClientOptions & { signal?: AbortSignal } = {}): Promise<McpRemoteTool[]> {
+export async function listMcpServerTools(server: McpServerConfig, options: McpCallOptions = {}): Promise<McpRemoteTool[]> {
   return withSession(server, options, async () => {
     const tools: McpRemoteTool[] = [];
     let cursor: string | undefined;
@@ -229,9 +248,10 @@ export async function callMcpTool(
   server: McpServerConfig,
   toolName: string,
   args: Record<string, unknown>,
-  options: McpClientOptions & { signal?: AbortSignal } = {},
+  options: McpCallOptions = {},
 ): Promise<{ text: string; isError: boolean }> {
-  return withSession(server, options, async () => {
+  // 默认不重放：写工具重复执行的代价远高于一次失败。只读工具由调用方显式打开重试。
+  return withSession(server, { ...options, retry: options.retry === true }, async () => {
     const result = await post(server, {
       jsonrpc: '2.0',
       id: nextId(),
@@ -243,7 +263,7 @@ export async function callMcpTool(
 }
 
 /** 连接自检：能列工具就算连通，顺便把工具名带回去给面板展示。 */
-export async function probeMcpServer(server: McpServerConfig, options: McpClientOptions & { signal?: AbortSignal } = {}) {
+export async function probeMcpServer(server: McpServerConfig, options: McpCallOptions = {}) {
   const tools = await listMcpServerTools(server, options);
   return { tools, readOnly: tools.filter((tool) => tool.annotations?.readOnlyHint === true).length };
 }
