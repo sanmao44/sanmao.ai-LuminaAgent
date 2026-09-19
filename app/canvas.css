@@ -990,8 +990,20 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-role{display:flex;align-items:baseline;gap:6px}
 .canvas-agent-dock-role b{color:var(--accent-text);font-size:9px;letter-spacing:.04em}
 .canvas-agent-dock-role small{color:var(--muted);font-size:8px}
+.canvas-agent-dock-mcp{display:flex;flex-wrap:wrap;gap:4px}
+.canvas-agent-dock-mcp span{padding:2px 7px;border:1px solid color-mix(in srgb,var(--accent-2) 30%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent-2) 9%,var(--panel));color:var(--text-2);font-size:8px;line-height:1.5}
 .canvas-agent-dock-skills{display:flex;flex-wrap:wrap;gap:4px}
 .canvas-agent-dock-skills span{padding:2px 7px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--accent-text);font-size:8px;line-height:1.5}
+/* 产物卡片：助手生成的 Word / Excel / PPT / ZIP 也要能在这里下载和预览，不能只活在服务端。 */
+.canvas-agent-dock-files{display:grid;gap:5px}
+.canvas-agent-dock-file{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid color-mix(in srgb,var(--accent) 26%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent) 6%,var(--panel))}
+.canvas-agent-dock-file-info{min-width:0;flex:1;display:grid;gap:2px}
+.canvas-agent-dock-file-info strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:9px;font-weight:850}
+.canvas-agent-dock-file-info small{color:var(--muted);font-size:8px;line-height:1.4}
+.canvas-agent-dock-file-actions{display:flex;align-items:center;gap:4px;flex:none}
+.canvas-agent-dock-file-actions button{height:22px;padding:0 7px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);color:var(--text-2);font-size:8px;font-weight:800;cursor:pointer}
+.canvas-agent-dock-file-actions button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.canvas-agent-dock-file-actions button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:1px}
 .canvas-agent-dock-message.is-streaming p::after{content:"▍";margin-left:2px;color:var(--accent-text);animation:canvas-agent-dock-caret 1.05s steps(2,end) infinite}
 @keyframes canvas-agent-dock-caret{0%,100%{opacity:1}50%{opacity:0}}
 .canvas-agent-dock-message p{margin:0;white-space:pre-wrap;word-break:break-word;color:var(--text-2);font-size:10px;line-height:1.55}

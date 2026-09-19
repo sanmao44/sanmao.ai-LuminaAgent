@@ -76,7 +76,7 @@ test('能力标签支撑 route.ts 的分支判断', () => {
 
 test('route.ts 只做编排：工具定义与门控链都搬到 lib/tools', () => {
   assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor \} from '@\/lib\/tools';/);
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText\);/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
   assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
   assert.doesNotMatch(route, /const tools = \[/, '工具定义不能留在 route.ts');
   assert.doesNotMatch(route, /name: 'document_generate'/, '工具 schema 不能留在 route.ts');

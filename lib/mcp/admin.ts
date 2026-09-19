@@ -138,8 +138,9 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
   if (action === 'update') {
     const server = findServer(input.id || input.name, dataDir);
     const writeDenied = input.allowWrite === true && !writeGranted;
-    const patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown } = {};
+    const patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown; lazy?: boolean } = {};
     if (typeof input.enabled === 'boolean') patch.enabled = input.enabled;
+    if (typeof input.lazy === 'boolean') patch.lazy = input.lazy;
     if (typeof input.allowWrite === 'boolean') patch.allowWrite = input.allowWrite && writeGranted;
     if (input.enabledTools !== undefined) patch.enabledTools = input.enabledTools;
     const saved = patchMcpServer(server.id, patch, { dataDir });

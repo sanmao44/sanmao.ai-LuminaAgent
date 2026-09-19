@@ -62,6 +62,7 @@ export {
 } from './catalog-runtime';
 export type { McpCatalogRuntimeState, McpCatalogRuntimeStatus } from './catalog-runtime';
 export {
+  MCP_LAZY_KEYWORD_LIMIT,
   MCP_MAX_SCHEMA_CHARS_PER_TURN,
   MCP_MAX_TOOL_DEFINITIONS_PER_TURN,
   MCP_TOOL_CACHE_TTL_MS,
@@ -70,11 +71,14 @@ export {
   clearMcpToolCache,
   isMcpReadOnlyTool,
   isMcpToolSchemaTooLarge,
+  lazyMcpGroupKeywords,
   loadMcpToolDefinitions,
   loadMcpToolRuntime,
   mcpToolDefinitions,
   mcpToolId,
 } from './tools';
 export { MCP_ADMIN_ACTIONS, runMcpManageAction } from './admin';
+export { MCP_RUNTIME_ACTIONS, isMcpRuntimeAction, runMcpRuntimeAction } from './runtime-admin';
+export type { McpRuntimeAction, McpRuntimeOutcome } from './runtime-admin';
 export type { McpAdminAction, McpManageOptions, McpManageOutcome } from './admin';
 export type { McpRemoteTool, McpServerConfig, McpToolMeta } from './types';

@@ -94,6 +94,39 @@ export function boundMcpToolPayload(definitions: readonly ToolDefinition[]) {
   return bounded;
 }
 
+/** 按需下发的服务最多带多少个关键词：够用就好，太多等于没过滤。 */
+export const MCP_LAZY_KEYWORD_LIMIT = 24;
+
+/**
+ * 「按需下发」服务的关键词表（面板里给单个服务勾选）。
+ *
+ * 打开后，只有这一轮的文字里提到这个服务（服务名或它公布的工具名）才会整组挂上；
+ * 没打开的服务保持原样加载——用户主动接进来的服务突然不给他用才是 bug。
+ * 关键词只决定「这一轮要不要加载」，不参与权限校验：多命中一个词最多多花点 token。
+ */
+export function lazyMcpGroupKeywords(
+  servers: readonly McpServerConfig[],
+  tools: readonly ToolDefinition[],
+): Record<string, readonly string[]> {
+  const keywords: Record<string, readonly string[]> = {};
+  for (const server of servers) {
+    if (server.lazy !== true) continue;
+    const words = new Set<string>([server.id]);
+    const collect = (value: string, minimum: number) => {
+      for (const token of String(value || '').toLowerCase().split(/[^a-z0-9\u4e00-\u9fa5]+/)) {
+        if (token.length >= minimum) words.add(token);
+      }
+    };
+    collect(server.name, 2);
+    for (const tool of tools) {
+      if (tool.mcp?.serverId !== server.id) continue;
+      collect(tool.mcp.toolName, 3);
+    }
+    keywords[`mcp:${server.id}`] = [...words].slice(0, MCP_LAZY_KEYWORD_LIMIT);
+  }
+  return keywords;
+}
+
 type McpToolCacheEntry = { at: number; tools: ToolDefinition[] };
 const toolCache = new Map<string, McpToolCacheEntry>();
 

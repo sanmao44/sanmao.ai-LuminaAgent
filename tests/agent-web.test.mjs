@@ -21,6 +21,16 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
   assert.equal(web.likelyMcpManagementRequest(''), false);
 });
 
+test('本地运行时的问法也会放出 MCP 管理工具，但普通提问不会', () => {
+  // 助手要能查状态、能在用户明确要求时启停浏览器运行时，所以这几句必须命中。
+  for (const input of ['浏览器控制组件装了吗', '启动浏览器运行时', '帮我把浏览器工具关掉', '为什么浏览器控制没反应']) {
+    assert.equal(web.likelyMcpManagementRequest(input), true, input);
+  }
+  for (const input of ['帮我写一首关于秋天的诗', '浏览器里这个页面怎么改', '解释一下 playwright 是什么']) {
+    assert.equal(web.likelyMcpManagementRequest(input), false, input);
+  }
+});
+
 test('migrates legacy web preference and accepts explicit modes', () => {
   assert.equal(typeof web.likelyArtifactGenerationRequest, 'function');
   assert.equal(web.resolveAgentWebMode('always'), 'always');

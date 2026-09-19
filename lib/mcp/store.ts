@@ -120,6 +120,7 @@ export function normalizeMcpServerInput(raw: unknown, options: { existingId?: st
     allowWrite: Boolean(input.allowWrite),
     ...(headers ? { headers } : {}),
     ...(enabledTools ? { enabledTools } : {}),
+    ...(input.lazy === true ? { lazy: true } : {}),
   };
 }
 
@@ -134,6 +135,7 @@ export function redactMcpServer(config: McpServerConfig) {
     headerNames: Object.keys(config.headers || {}),
     hasHeaders: Boolean(Object.keys(config.headers || {}).length),
     enabledTools: config.enabledTools || [],
+    lazy: config.lazy === true,
   };
 }
 
@@ -200,7 +202,7 @@ export function removeMcpServer(id: unknown, options: McpStoreOptions = {}) {
   return true;
 }
 
-export function patchMcpServer(id: unknown, patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown }, options: McpStoreOptions = {}) {
+export function patchMcpServer(id: unknown, patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown; lazy?: boolean }, options: McpStoreOptions = {}) {
   const target = normalizeMcpServerId(id);
   const servers = listMcpServers(options);
   const index = servers.findIndex((server) => server.id === target);
@@ -213,6 +215,10 @@ export function patchMcpServer(id: unknown, patch: { enabled?: boolean; allowWri
     const enabledTools = normalizeEnabledTools(patch.enabledTools);
     if (enabledTools) next.enabledTools = enabledTools;
     else delete next.enabledTools;
+  }
+  if (typeof patch.lazy === 'boolean') {
+    if (patch.lazy) next.lazy = true;
+    else delete next.lazy;
   }
   const updated = next;
   saveMcpServers(servers.map((server, position) => (position === index ? updated : server)), options);

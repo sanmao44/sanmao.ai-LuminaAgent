@@ -14,6 +14,7 @@ type McpServerView = {
   headerNames: string[];
   hasHeaders: boolean;
   enabledTools: string[];
+  lazy: boolean;
 };
 
 type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean; oversized?: boolean };
@@ -313,6 +314,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               <p className={styles.hint}><strong>本机运行时：</strong>「本地工具运行时」用的条目由代码内置（目前是浏览器控制），命令、参数和工作目录都写死在代码里，面板和对话都改不了；下面手填的地址只用于远程服务。</p>
               <p className={styles.hint}><strong>凭据：</strong>服务要 token 时按「名称: 值」逐行填请求头（例如 <code>Authorization: Bearer …</code>）；值只存在本机服务端，页面上只显示名称。</p>
               <p className={styles.hint}><strong>只读与写入：</strong>默认只放行只读工具，有副作用的工具必须为单个服务打开「允许写入」。外部服务返回的内容一律按不可信数据处理，助手不会执行其中的指令。</p>
+              <p className={styles.hint}><strong>按需下发：</strong>服务工具很多时给它打开「按需下发」：只有这一轮提到这个服务（服务名或工具名）才会把它的工具交给助手，省 token 也更少误点；默认关闭，关闭时每轮都下发。</p>
               <p className={styles.hint}><strong>上限：</strong>最多 {limit || 20} 个服务，每个最多 60 个工具，参数结构超过 12KB 的工具不下发给助手。</p>
             </div>}
             <p className={styles.hint}>新增或改动的服务在下一轮对话生效；连不上只会跳过这个服务，不影响其他对话。</p>
@@ -335,6 +337,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   <strong>{server.name}</strong>
                   {server.enabled ? <span className={styles.badgeOn}>已启用</span> : <span className={styles.badgeMuted}>已停用</span>}
                   {server.allowWrite ? <span className={styles.warnBadge}>允许写入</span> : <span className={styles.badge}>只读</span>}
+                  {server.lazy && <span className={styles.badgeMuted}>按需下发</span>}
                   {server.hasHeaders && <span className={styles.badge}>请求头 {server.headerNames.length} 个</span>}
                   {server.enabledTools.length > 0 && <span className={styles.badge}>已选 {server.enabledTools.length} 个工具</span>}
                 </div>
@@ -361,6 +364,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 <button type="button" disabled={busy} onClick={() => void probeServer(server)}>{probe?.status === 'busy' ? '连接中…' : '连接自检'}</button>
                 <label className={styles.check}><input type="checkbox" checked={server.enabled} disabled={busy} onChange={() => void updateServer(server, { enabled: !server.enabled })} />启用</label>
                 <label className={styles.check}><input type="checkbox" checked={server.allowWrite} disabled={busy} onChange={() => void updateServer(server, { allowWrite: !server.allowWrite })} />允许写入</label>
+                <label className={styles.check} title="工具很多的服务建议打开：只有这一轮提到它时才会把它的工具交给助手"><input type="checkbox" checked={server.lazy} disabled={busy} onChange={() => void updateServer(server, { lazy: !server.lazy })} />按需下发</label>
                 <button type="button" disabled={busy} onClick={() => void removeServer(server)}>{confirming === server.id ? '再点一次删除' : '删除'}</button>
               </div>
             </article>;
@@ -400,6 +404,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             </div>
           </article>)}
           <p className={styles.hint}>依赖装在本机工作目录里，不写进应用自身依赖。运行时会用自己的浏览器 profile，不碰你日常浏览器里的登录状态；会改动外部数据的操作仍然要你逐次确认。</p>
+          <p className={styles.hint}>安装始终由你在这里点；助手只能查看状态，并在你明确说「启动 / 关闭浏览器运行时」时启停它。</p>
         </section>
 
         <section className={styles.form}>

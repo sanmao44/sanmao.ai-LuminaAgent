@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import AgentApprovalCard, { type AgentApprovalOutcome } from "@/components/AgentApprovalCard";
 import ModelPicker from "@/components/ModelPicker";
 import SkillManager from "@/components/SkillManager";
 import SkillIcon from "@/components/SkillIcon";
@@ -12,6 +13,7 @@ import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import type { AgentWebMode } from "@/lib/creation/settings";
+import type { AgentApproval, AgentApprovalCall, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
 import { generateCanvasAgent } from "@/lib/canvas/api";
 import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
@@ -50,6 +52,14 @@ export type CanvasAgentDockMessage = {
   imageNodeIds?: string[];
   textNodeId?: string;
   plan?: CanvasAgentDockPlan;
+  /** 待确认的外部操作：确认卡挂在提出它的那条回答上；审批记录本身在服务端。 */
+  approval?: AgentApproval;
+  /** 用户处理过确认之后的结果文案：刷新后继续显示结果，而不是又冒出按钮。 */
+  approvalResult?: string;
+  /** 这一轮真正落到外部服务上的调用：让用户看得见助手用了哪个外部工具。 */
+  mcpTools?: AgentMcpToolUse[];
+  /** 这一轮生成的文件产物：只存元数据与取件地址，二进制不进本地会话。 */
+  files?: AgentGeneratedFile[];
 };
 
 type CanvasAgentDockSession = {
@@ -262,6 +272,119 @@ function chipIdUnderPoint(container: HTMLElement | null, draggedId: string, clie
   return null;
 }
 
+/* 本地存下来的确认卡与工具徽标只用于显示：字段对不上就整段丢掉，别把坏数据渲染进面板。 */
+function readStoredApproval(value: unknown): AgentApproval | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const approval = value as Partial<AgentApproval>;
+  const id = typeof approval.id === "string" ? approval.id.trim() : "";
+  if (!id) return undefined;
+  const calls: AgentApprovalCall[] = (Array.isArray(approval.calls) ? approval.calls : [])
+    .filter((call): call is AgentApprovalCall => Boolean(call) && typeof call === "object")
+    .map((call) => ({
+      id: String(call.id || ""),
+      server: String(call.server || ""),
+      tool: String(call.tool || ""),
+      risk: String(call.risk || ""),
+      reason: String(call.reason || ""),
+      ...(call.argsPreview ? { argsPreview: String(call.argsPreview) } : {}),
+    }));
+  return { id, expiresAt: Number(approval.expiresAt || 0) || 0, message: String(approval.message || ""), calls };
+}
+
+function readStoredMcpTools(value: unknown): AgentMcpToolUse[] {
+  if (!Array.isArray(value)) return [];
+  return (value as AgentMcpToolUse[])
+    .filter((tool) => Boolean(tool) && typeof tool === "object")
+    .map((tool) => ({
+      server: String(tool.server || ""),
+      name: String(tool.name || ""),
+      readOnly: tool.readOnly === true,
+      ok: tool.ok !== false,
+    }))
+    .filter((tool) => Boolean(tool.server || tool.name));
+}
+
+/* 文件产物只保留元数据与取件地址：本地会话存不下二进制，刷新后按 id 重新取。 */
+function readStoredFiles(value: unknown): AgentGeneratedFile[] {
+  if (!Array.isArray(value)) return [];
+  return (value as AgentGeneratedFile[])
+    .filter((file) => Boolean(file) && typeof file === "object" && String(file.name || "").trim())
+    .map((file) => ({
+      name: String(file.name || "").trim(),
+      mimeType: String(file.mimeType || "application/octet-stream"),
+      size: Number.isFinite(Number(file.size)) && Number(file.size) > 0 ? Math.round(Number(file.size)) : 0,
+      ...(typeof file.content === "string" ? { content: file.content } : {}),
+      ...(file.encoding === "base64" ? { encoding: "base64" as const } : {}),
+      ...(String(file.artifactId || "").trim() ? { artifactId: String(file.artifactId).trim() } : {}),
+      ...(String(file.downloadUrl || "").trim() ? { downloadUrl: String(file.downloadUrl).trim() } : {}),
+    }))
+    .slice(0, 8);
+}
+
+/* 产物卡片只说人话：字节数按 KB / MB 显示，类型从扩展名取。 */
+function formatAgentFileSize(size: number) {
+  const value = Number(size);
+  if (!Number.isFinite(value) || value <= 0) return "大小未知";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function canvasAgentDockFileKind(file: AgentGeneratedFile) {
+  const match = String(file?.name || "").trim().toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match ? match[1].toUpperCase() : "文件";
+}
+
+/* 预览交给服务端解析页：Word / Excel / PPT / ZIP 都是同一种只读预览。 */
+function openCanvasAgentDockFile(file: AgentGeneratedFile, notify: (message: string, kind?: "ok" | "error") => void) {
+  const id = String(file?.artifactId || "").trim();
+  if (!id) return;
+  const theme = typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  const opened = window.open(`/api/artifacts/${encodeURIComponent(id)}?preview=1&theme=${theme}`, "_blank", "noopener,noreferrer");
+  if (!opened) notify("浏览器拦截了新标签页，请允许后重试", "error");
+}
+
+function saveCanvasAgentDockFile(objectUrl: string, name: string) {
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = name;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+}
+
+/* 有 artifactId 的产物按 id 取件；只有内联文本的老产物仍然在本地拼 Blob 下载。 */
+async function downloadCanvasAgentDockFile(file: AgentGeneratedFile) {
+  const name = String(file?.name || "").trim() || "SANMAO-file";
+  const downloadUrl = String(file?.downloadUrl || (file?.artifactId ? `/api/artifacts/${encodeURIComponent(file.artifactId)}` : "")).trim();
+  if (downloadUrl) {
+    const response = await fetch(downloadUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(response.status === 404 ? "文件已过期或被清理，请重新生成" : "文件下载失败");
+    saveCanvasAgentDockFile(URL.createObjectURL(await response.blob()), name);
+    return;
+  }
+  if (typeof file?.content !== "string" || !file.content) throw new Error("这个文件没有可下载的内容，请重新生成");
+  const blob = file.encoding === "base64"
+    ? new Blob([Uint8Array.from(atob(file.content.replace(/\s/g, "")), (char) => char.charCodeAt(0))], { type: file.mimeType || "application/octet-stream" })
+    : new Blob([file.content], { type: file.mimeType || "text/plain;charset=utf-8" });
+  saveCanvasAgentDockFile(URL.createObjectURL(blob), name);
+}
+
+/* 恢复历史消息时把确认卡和工具徽标一起带回来，刷新后不会只剩正文。 */
+function readStoredMessageExtras(message: unknown): Partial<CanvasAgentDockMessage> {
+  const source = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
+  const approval = readStoredApproval(source.approval);
+  const mcpTools = readStoredMcpTools(source.mcpTools);
+  const files = readStoredFiles(source.files);
+  return {
+    ...(approval ? { approval } : {}),
+    ...(mcpTools.length ? { mcpTools } : {}),
+    ...(files.length ? { files } : {}),
+    ...(source.approvalResult ? { approvalResult: String(source.approvalResult) } : {}),
+  };
+}
+
 function readSession(): CanvasAgentDockSession | null {
   if (typeof window === "undefined") return null;
   try {
@@ -290,6 +413,7 @@ function readSession(): CanvasAgentDockSession | null {
               : {}),
             ...(message.textNodeId ? { textNodeId: String(message.textNodeId) } : {}),
             ...(message.plan && typeof message.plan === "object" ? { plan: message.plan } : {}),
+            ...readStoredMessageExtras(message),
           }))
           .filter((message) => message.content || message.images?.length)
       : [];
@@ -787,6 +911,11 @@ export default function CanvasAgentDock({
           selectedTotal,
         });
         const assistantMessageId = createId();
+        /* 需要确认的外部操作：确认卡挂在这条回答上；面板收起时说一声，别让这次确认悄悄过期。 */
+        const approval = readStoredApproval(response.approval);
+        const mcpTools = readStoredMcpTools(response.mcpTools);
+        const files = readStoredFiles(response.files);
+        if (approval && !openRef.current) notify("助手有个操作等你确认，展开面板处理。");
         const shouldAutoApply = images.length > 0 && autoApply && (!plan || !plan.requiresConfirmation);
         let appliedImageIds: string[] = [];
         if (shouldAutoApply) {
@@ -810,6 +939,9 @@ export default function CanvasAgentDock({
               : {}),
             ...(plan ? { plan: { ...plan, ...(appliedImageIds.length ? { applied: true } : {}) } } : {}),
             ...(appliedImageIds.length ? { imageNodeIds: appliedImageIds } : {}),
+            ...(approval ? { approval } : {}),
+            ...(mcpTools.length ? { mcpTools } : {}),
+            ...(files.length ? { files } : {}),
           },
         ]);
         if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
@@ -872,6 +1004,20 @@ export default function CanvasAgentDock({
         }
       : item));
   }, [onApplyPlan]);
+
+  const resolveMessageApproval = useCallback((messageId: string, outcome: AgentApprovalOutcome) => {
+    setMessages((value) => value.map((item) => {
+      if (item.id !== messageId) return item;
+      /* 处理过的确认卡不再显示按钮：结果存到消息上，刷新后还在。 */
+      const next: CanvasAgentDockMessage = {
+        ...item,
+        approvalResult: String(outcome.message || (outcome.rejected ? "已取消这一步操作，没有执行。" : "已执行完成。")),
+      };
+      delete next.approval;
+      if (outcome.mcpTools?.length) next.mcpTools = [...(item.mcpTools || []), ...outcome.mcpTools];
+      return next;
+    }));
+  }, []);
 
   const dismissMessagePlan = useCallback((message: CanvasAgentDockMessage) => {
     if (!message.plan || message.plan.applied) return;
@@ -1272,6 +1418,15 @@ export default function CanvasAgentDock({
                 {message.model ? <small>{message.model}</small> : null}
               </div>
             ) : null}
+            {message.mcpTools?.length ? (
+              <div className="canvas-agent-dock-mcp">
+                {message.mcpTools.map((tool, index) => (
+                  <span key={`${message.id}-mcp-${index}`}>
+                    {`外部工具 · ${tool.server} · ${tool.name}${tool.ok ? "" : "（失败）"}`}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             {message.skills?.length ? (
               <div className="canvas-agent-dock-skills">
                 {message.skills.map((skill) => (
@@ -1287,6 +1442,35 @@ export default function CanvasAgentDock({
             ) : (
               <p>{message.content}</p>
             )}
+            {message.files?.length ? (
+              <div className="canvas-agent-dock-files">
+                {message.files.map((file, index) => (
+                  <article key={`${message.id}-file-${index}`} className="canvas-agent-dock-file">
+                    <div className="canvas-agent-dock-file-info">
+                      <strong title={file.name}>{file.name}</strong>
+                      <small>{`${canvasAgentDockFileKind(file)} · ${formatAgentFileSize(file.size)}`}</small>
+                    </div>
+                    <div className="canvas-agent-dock-file-actions">
+                      {file.artifactId ? (
+                        <button type="button" onClick={() => openCanvasAgentDockFile(file, notify)}>
+                          预览
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void downloadCanvasAgentDockFile(file).catch((error) =>
+                            notify(error instanceof Error ? error.message : "文件下载失败", "error"),
+                          )
+                        }
+                      >
+                        下载
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
             {message.interrupted ? <span className="canvas-agent-dock-stopped">（已停止）</span> : null}
             {message.content.length > MESSAGE_COLLAPSE_CHARS ? (
               <button
@@ -1297,6 +1481,13 @@ export default function CanvasAgentDock({
                 {collapsedMessages.has(message.id) ? `展开全文（${message.content.length.toLocaleString()} 字）` : "收起"}
               </button>
             ) : null}
+            {message.approval ? (
+              <AgentApprovalCard
+                approval={message.approval}
+                onResolved={(outcome) => resolveMessageApproval(message.id, outcome)}
+              />
+            ) : null}
+            {message.approvalResult ? <div className="message-approval-result">{message.approvalResult}</div> : null}
             {message.images?.length ? (
               <div className="canvas-agent-dock-media">
                 {message.images.map((image, index) => (

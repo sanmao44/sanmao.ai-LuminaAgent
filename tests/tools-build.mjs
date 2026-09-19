@@ -28,6 +28,7 @@ const MODULES = [
   'lib/mcp/catalog-runtime',
   'lib/mcp/tools',
   'lib/mcp/admin',
+  'lib/mcp/runtime-admin',
   'lib/mcp/index',
 ];
 

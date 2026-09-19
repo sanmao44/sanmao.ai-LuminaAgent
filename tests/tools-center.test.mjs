@@ -79,3 +79,8 @@ test('受控条目的工具白名单挡住任意代码执行', () => {
   assert.ok(entry.allowedTools.includes('browser_snapshot'));
   assert.ok(!entry.allowedTools.includes('browser_run_code_unsafe'));
 });
+test('面板能给单个服务打开「按需下发」，并说清它的作用', () => {
+  assert.match(panel, /updateServer\(server, \{ lazy: !server\.lazy \}\)/);
+  assert.match(panel, /只有这一轮提到这个服务（服务名或工具名）才会把它的工具交给助手/);
+  assert.match(panel, /\{server\.lazy && <span className=\{styles\.badgeMuted\}>按需下发<\/span>\}/);
+});

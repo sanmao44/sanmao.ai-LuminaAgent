@@ -25,3 +25,28 @@
 .agent-approval-note{margin:0;font-size:8px;line-height:1.45;color:var(--muted)}.agent-approval-error{margin:0;font-size:8px;line-height:1.45;color:var(--danger)}
 .message-approval-result{display:flex;align-items:center;gap:6px;margin:10px 0 2px;padding:7px 9px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--text-2);font-size:9px;line-height:1.5}
 @media(max-width:560px){.agent-approval-actions{display:grid;grid-template-columns:1fr 1fr}}
+
+/* MCP 徽标可展开：默认仍是原来那一行徽标，点开后用浮层列出这一轮每次外部调用的服务、工具、读写与结果。
+   浮层走绝对定位，展开不会把消息排版顶开；配色用主题变量，暗色下也读得清。 */
+.message-skill-badge,.message-mcp-badge{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px}
+.message-skill-badge{border-color:color-mix(in srgb,var(--accent) 34%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
+.message-mcp-badge{border-color:color-mix(in srgb,var(--accent-2) 38%,var(--line));background:color-mix(in srgb,var(--accent-2) 14%,var(--panel))}
+.message-label .message-mcp-detail{position:relative;display:inline-flex;align-items:center;max-width:100%}
+.message-label .message-mcp-detail>summary{display:inline-flex;align-items:center;gap:5px;max-width:100%;border-radius:999px;cursor:pointer;list-style:none}
+.message-label .message-mcp-detail>summary::-webkit-details-marker{display:none}
+.message-label .message-mcp-detail>summary::after{content:'▾';color:var(--message-assistant-label);font-size:8px;font-weight:900;line-height:1}
+.message-label .message-mcp-detail[open]>summary::after{content:'▴'}
+.message-label .message-mcp-detail>summary:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.message-label .message-mcp-detail .message-mcp-badge{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.message-mcp-detail-panel{position:absolute;z-index:60;top:calc(100% + 7px);left:0;display:grid;gap:8px;width:max-content;max-width:min(360px,80vw);padding:11px 12px;border:1px solid color-mix(in srgb,var(--accent-2) 34%,var(--line));border-radius:12px;background:var(--panel);box-shadow:0 18px 44px color-mix(in srgb,#0b1020 26%,transparent)}
+.message-mcp-detail-head{color:var(--muted);font-size:8px;font-weight:850;letter-spacing:.02em}
+.message-mcp-detail-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.message-mcp-detail-list li{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--text-2);font-size:9px;font-weight:650}
+.message-mcp-detail-list li b{color:var(--text);font-weight:900}
+.message-mcp-detail-list li code{padding:1px 5px;border:1px solid var(--line);border-radius:5px;background:var(--panel-2);color:var(--accent-text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:9px}
+.message-mcp-detail-tag{padding:1px 6px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 9%,var(--panel));color:var(--accent-text);font-size:7px;font-weight:850}
+.message-mcp-detail-state{padding:1px 6px;border:1px solid color-mix(in srgb,var(--success) 34%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--success) 10%,var(--panel));color:var(--success);font-size:7px;font-weight:850}
+.message-mcp-detail-list li.is-failed .message-mcp-detail-tag{border-color:color-mix(in srgb,var(--danger) 34%,var(--line));background:var(--danger-soft);color:var(--danger)}
+.message-mcp-detail-list li.is-failed .message-mcp-detail-state{border-color:color-mix(in srgb,var(--danger) 40%,var(--line));background:var(--danger-soft);color:var(--danger)}
+.message-mcp-detail-note{color:var(--muted);font-size:8px;font-weight:650;line-height:1.5}
+@media(max-width:780px){.message-label .message-mcp-detail{display:none}}

@@ -154,3 +154,22 @@ test('MCP 写工具的风险等级是本机之外有副作用', () => {
   assert.equal(definition.risk, 'external_side_effect');
   assert.ok(definition.permissions.includes('external:write'));
 });
+
+test('按需下发的服务用自己的关键词表，没打开的服务照旧全量下发', () => {
+  const server = { id: 'gh', name: 'GitHub', url: 'https://example.com/mcp', enabled: true, allowWrite: false, lazy: true };
+  const ghSearch = fakeTool({ name: 'gh__search', id: 'mcp:gh:search', source: 'mcp', tags: ['mcp'], mcp: { serverId: 'gh', serverName: 'GitHub', toolName: 'search', readOnly: true, blocked: false } });
+  const availableTools = [...tools.TOOL_REGISTRY, ghSearch];
+  const keywords = mcp.lazyMcpGroupKeywords([server], [ghSearch]);
+  assert.deepEqual(keywords['mcp:gh'], ['gh', 'github', 'search']);
+
+  const unrelated = tools.selectToolsForTurn({ context: NONE, availableTools, userText: '帮我写一首诗', groupKeywords: keywords });
+  assert.deepEqual(unrelated, [], '这一轮没提到这个服务，就不挂它的工具');
+  const mentioned = tools.selectToolsForTurn({ context: NONE, availableTools, userText: '看看我 github 上的仓库', groupKeywords: keywords });
+  assert.deepEqual(mentioned.map((tool) => tool.name), ['gh__search']);
+
+  // 没勾选按需下发的服务不受影响：不会因为多传了一张词表就被藏起来。
+  const offKeywords = mcp.lazyMcpGroupKeywords([{ ...server, lazy: false }], [ghSearch]);
+  assert.deepEqual(offKeywords, {});
+  const always = tools.selectToolsForTurn({ context: NONE, availableTools, userText: '帮我写一首诗', groupKeywords: offKeywords });
+  assert.deepEqual(always.map((tool) => tool.name), ['gh__search']);
+});

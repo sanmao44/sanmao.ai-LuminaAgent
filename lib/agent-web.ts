@@ -175,6 +175,9 @@ const stableConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释�
 const MCP_MANAGE_VERB = '(?:接入|接个|连上|连接|添加|新增|删除|移除|删掉|断开|停用|启用|自检|查看|列出|配置|检测)';
 const MCP_MANAGE_NOUN = '(?:外部服务|远程服务|工具服务|服务|server)';
 const mcpManagementPattern = new RegExp(`mcp|model\\s+context\\s+protocol|(?:${MCP_MANAGE_VERB}[^，。！？]{0,10}${MCP_MANAGE_NOUN})|(?:${MCP_MANAGE_NOUN}[^，。！？]{0,8}${MCP_MANAGE_VERB})`, 'i');
+// 本地工具运行时（受控条目）单独认：「浏览器控制组件装了吗 / 启动浏览器运行时」也要下发管理工具，
+// 否则助手明明能查状态、能启停，却看不到入口。
+const mcpRuntimePattern = /(?:浏览器|browser|playwright|chromium)[^，。！？]{0,12}(?:运行时|组件|控制|工具|服务)|(?:运行时|浏览器控制)[^，。！？]{0,10}(?:状态|没反应|用不了|不能用|安装|启动|开启|停止|关闭)/i;
 
 function normalizeWebText(value: unknown, limit = 320) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
@@ -339,5 +342,5 @@ export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
 export function likelyMcpManagementRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
-  return mcpManagementPattern.test(text);
+  return mcpManagementPattern.test(text) || mcpRuntimePattern.test(text);
 }

@@ -66,8 +66,8 @@ export function toolRisk(name: unknown, extraTools: readonly ToolDefinition[] = 
  * 本轮要下发给模型的工具。门控全部来自注册表：没登录的工具不会因为新增代码而
  * 意外暴露给模型，这是之前 route.ts 里那段 if 链最容易出错的地方。
  */
-export function toolSchemasFor(context: ToolGatingContext, extraTools: readonly ToolDefinition[] = [], userText?: string): ModelToolSchema[] {
-  return selectToolsForTurn({ context, availableTools: [...TOOL_REGISTRY, ...extraTools], userText }).map(toModelToolSchema);
+export function toolSchemasFor(context: ToolGatingContext, extraTools: readonly ToolDefinition[] = [], userText?: string, groupKeywords?: Record<string, readonly string[]>): ModelToolSchema[] {
+  return selectToolsForTurn({ context, availableTools: [...TOOL_REGISTRY, ...extraTools], userText, groupKeywords }).map(toModelToolSchema);
 }
 
 function callToolName(call: any) {

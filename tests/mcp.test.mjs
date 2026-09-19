@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -279,7 +279,8 @@ test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信
   assert.match(route, /const gatingContext = \{/);
   assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{ signal: requestController\.signal \}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText\);/);
+  assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/, '按需下发的分组关键词由服务配置决定');
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
   assert.match(route, /const policy = resolveToolPolicy\(call\?\.function\?\.name, gatingContext, mcpTools\);/);
   assert.match(route, /if \(!policy\.allowed\) \{/);
   assert.match(route, /const result = await callMcpTool\(server, meta\.toolName, args && typeof args === 'object' \? args : \{\}, \{/);
@@ -320,6 +321,7 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   const manager = await read('components/McpManager.tsx');
   const globals = await read('app/globals.css');
   const client = await read('lib/agent-client.ts');
+  const upgrades = await read('app/agent-upgrades.css');
   assert.match(page, /import McpManager from '@\/components\/McpManager';/);
   assert.match(page, /import McpIcon from '@\/components\/McpIcon';/);
   assert.match(page, /_jsx\(McpManager, \{/);
@@ -347,7 +349,17 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(client, /mcpTools\?: AgentMcpToolUse\[\];/);
   assert.match(page, /mcpTools: Array\.isArray\(data\.mcpTools\)/, '把 MCP 调用记进消息');
   assert.match(page, /className: "message-mcp-badge"/);
+  // 徽标可展开：默认还是那一行，点开后能看到每次外部调用的服务/工具/读写与结果。
   assert.match(globals, /\.message\.assistant \.message-label \.message-mcp-badge\{/);
+  assert.match(page, /className: "message-mcp-detail"/);
+  assert.match(page, /className: "message-mcp-detail-panel"/);
+  assert.match(page, /title: "点开看这一轮用到的外部工具"/);
+  assert.match(page, /children: tool\.readOnly \? '只读' : '写入'/);
+  assert.match(page, /children: tool\.ok \? '已完成' : '失败'/);
+  assert.match(upgrades, /\.message-label \.message-mcp-detail\{/);
+  assert.match(upgrades, /\.message-mcp-detail-panel\{/, '展开内容要单独有浮层样式');
+  assert.match(upgrades, /\.message-mcp-detail-list li\.is-failed \.message-mcp-detail-state\{/, '失败调用要有区别于成功的颜色');
+  assert.match(upgrades, /@media\(max-width:780px\)\{\.message-label \.message-mcp-detail\{display:none\}\}/, '窄屏和其它徽标一样收起');
 });
 
 test('写工具失败后绝不重放，只读工具才换会话重试一次', async () => {
@@ -511,4 +523,20 @@ test('MCP 工具表在一轮对话里有总量上限，超出的不下发', asyn
   const used = budgeted.reduce((sum, tool) => sum + JSON.stringify(tool.schema).length, 0);
   assert.ok(budgeted.length > 0 && budgeted.length < 20, '结构过大的工具不会无限下发');
   assert.ok(used <= mcp.MCP_MAX_SCHEMA_CHARS_PER_TURN, '合计参数结构不超过每轮预算');
+});
+
+test('按需下发的开关能存下来、改回去，并出现在对外快照里', () => {
+  const dir = tempDir();
+  try {
+    const saved = mcp.upsertMcpServer({ name: 'GitHub', url: 'https://example.com/mcp', lazy: true }, { dataDir: dir });
+    assert.equal(saved.lazy, true);
+    assert.equal(mcp.redactMcpServer(saved).lazy, true);
+    assert.equal(mcp.listMcpServers({ dataDir: dir })[0].lazy, true, '重启后仍然记得这个开关');
+    // 关掉要真的去掉这个字段，而不是在配置里留一个 false。
+    assert.equal(mcp.patchMcpServer(saved.id, { lazy: false }, { dataDir: dir }).lazy, undefined);
+    assert.equal(mcp.listMcpServers({ dataDir: dir })[0].lazy, undefined);
+    assert.equal(mcp.redactMcpServer(mcp.patchMcpServer(saved.id, { lazy: true }, { dataDir: dir })).lazy, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

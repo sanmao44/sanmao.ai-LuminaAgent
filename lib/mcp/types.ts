@@ -23,6 +23,11 @@ export type McpServerConfig = {
   headers?: Record<string, string>;
   /** 只放行这些工具名；空数组表示放行该服务公布的全部工具。 */
   enabledTools?: string[];
+  /**
+   * 按需下发：打开后只有这一轮提到这个服务（服务名或工具名）才把它的工具挂给模型。
+   * 默认关闭——用户主动接进来的服务突然不给他用才是 bug。
+   */
+  lazy?: boolean;
   /** stdio 专用：可执行文件的绝对路径（禁止靠 PATH 解析）。 */
   command?: string;
   /** stdio 专用：启动参数，与 command 分开传，永远不拼接成一条命令串。 */

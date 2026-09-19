@@ -21,8 +21,13 @@ export type ToolSelectionInput = {
    * 给「用户主动打开某个连接」这类入口用，也是以后浏览器工具组按需加载的开关。
    */
   explicitGroups?: readonly ToolGroupId[];
-  /** 用户原话，预留给以后的关键词选组；v1 不参与判断。 */
+  /** 用户原话，用来判断按需下发的分组这一轮要不要挂上。 */
   userText?: string;
+  /**
+   * 分组关键词覆盖：按需下发的服务在这里带上自己的关键词表，
+   * 没写的分组回落到 MCP_GROUP_KEYWORDS。
+   */
+  groupKeywords?: Record<string, readonly string[]>;
 };
 
 export function toolGroupOf(tool: Pick<ToolDefinition, 'source' | 'mcp'>): ToolGroupId {
@@ -36,7 +41,8 @@ export function toolGroupOf(tool: Pick<ToolDefinition, 'source' | 'mcp'>): ToolG
  *
  * 为什么只写浏览器：浏览器服务一开就是二十多个工具、上万字符的 schema，普通聊天带上它
  * 既费钱又容易让模型乱点（任务书 §3.3、§54.12）。用户自己配的远程服务保持原样加载——
- * 那些是用户主动接的，突然不给他用才是 bug。
+ * 那些是用户主动接的，突然不给他用才是 bug。面板里给某个服务打开「按需下发」后，
+ * 该服务改用自己的关键词表（服务名 + 工具名），没打开的服务仍然原样加载。
  */
 export const MCP_GROUP_KEYWORDS: Record<string, readonly string[]> = {
   'mcp:playwright': [
@@ -46,8 +52,13 @@ export const MCP_GROUP_KEYWORDS: Record<string, readonly string[]> = {
   ],
 };
 
-function groupActivatedByText(group: ToolGroupId, userText: string | undefined) {
-  const keywords = MCP_GROUP_KEYWORDS[group];
+function groupActivatedByText(
+  group: ToolGroupId,
+  userText: string | undefined,
+  overrides?: Record<string, readonly string[]>,
+) {
+  // 面板给某个服务打开「按需下发」后，它自己的关键词表优先于内置默认（见 lib/mcp/tools.ts）。
+  const keywords = overrides?.[group] ?? MCP_GROUP_KEYWORDS[group];
   if (!keywords) return true;
   if (!userText) return false;
   const text = userText.toLowerCase();
@@ -76,7 +87,7 @@ export function selectToolsForTurn(input: ToolSelectionInput): ToolDefinition[] 
     // 显式指定分组时以调用方为准；否则需要关键词的分组得先被提到。
     if (groups) {
       if (!groups.has(group)) continue;
-    } else if (!groupActivatedByText(group, input.userText)) {
+    } else if (!groupActivatedByText(group, input.userText, input.groupKeywords)) {
       continue;
     }
     if (tool.source === 'mcp' && reservedNames.has(tool.name)) continue;

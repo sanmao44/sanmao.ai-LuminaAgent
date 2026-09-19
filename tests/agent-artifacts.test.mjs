@@ -30,7 +30,8 @@ test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本',
 test('Office 工具按需下发，避免每次对话都带上工具 schema', () => {
   assert.match(route, /likelyArtifactGenerationRequest/);
   assert.match(route, /const artifactGenerationRequest = fileGenerationRequest/);
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText\);/);
+  assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
   assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
 });

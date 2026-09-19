@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -114,8 +114,24 @@ test('动作名不合法或服务不存在时抛出可读错误', async () => {
 
 test('被拒绝的调用与管理动作都会记进审计标签，动作名用中文', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-  assert.match(route, /const MCP_MANAGE_LABELS: Record<string, string> = \{ list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务' \};/);
+  assert.match(route, /const MCP_MANAGE_LABELS: Record<string, string> = \{ list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' \};/);
   assert.match(route, /usedMcpTools\.push\(\{ server: '本机配置', name: actionLabel/);
   assert.match(route, /const deniedMcp = policy\.tool\?\.mcp;/);
   assert.match(route, /if \(deniedMcp\) usedMcpTools\.push\(\{ server: deniedMcp\.serverName, name: deniedMcp\.toolName, readOnly: deniedMcp\.readOnly, ok: false \}\);/);
+});
+
+test('管理工具能把某个服务改成按需下发，也能改回来', async () => {
+  const dir = tempDir();
+  try {
+    const added = await mcp.runMcpManageAction({ action: 'add', name: 'GitHub', url: 'https://example.com/mcp' }, { dataDir: dir });
+    assert.equal(added.result.server.lazy, false, '默认每轮都下发');
+    const updated = await mcp.runMcpManageAction({ action: 'update', id: 'github', lazy: true }, { dataDir: dir });
+    assert.equal(updated.result.server.lazy, true);
+    assert.equal(mcp.listMcpServers({ dataDir: dir })[0].lazy, true);
+    const restored = await mcp.runMcpManageAction({ action: 'update', id: 'github', lazy: false }, { dataDir: dir });
+    assert.equal(restored.result.server.lazy, false);
+    assert.equal(mcp.listMcpServers({ dataDir: dir })[0].lazy, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
