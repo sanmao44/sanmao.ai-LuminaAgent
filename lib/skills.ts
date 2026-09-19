@@ -1255,11 +1255,22 @@ function dropPartialMarkupTail(text: string) {
 }
 
 /**
- * 模型把工具调用写成文本标记时（DSML、`<tool_call><function=…>` 这类），截掉标记之后的部分。
- * 只截不猜：真要有下一步，应该让它下一轮发起原生调用（见 route.ts 的 MCP 补轮）。
+ * 我们自己注入到上下文里的标记（见 route.ts 的 toChatContent）。模型偶尔把它们当正文续写出来，
+ * 那是提示词、不是回答，同样不能给用户看。
+ */
+const INTERNAL_CONTEXT_MARKER = /\[(?:上一条回复已生成文件|用户上传文件|引用文本|联网检索结果)[：:]/;
+
+/**
+ * 模型把工具调用写成文本标记时（DSML、`<tool_call><function=…>` 这类），截掉标记之后的部分；
+ * 我们自己注入的上下文标记同理。只截不猜：真要有下一步，应该让它下一轮发起原生调用
+ * （见 route.ts 的 MCP 补轮）。
+ *
+ * 截完只剩标记碎片（实测出现过整条回复就是一个 `<`）时返回空串，由调用方给兜底文案。
  */
 export function stripToolCallMarkup(text: string) {
-  const match = MODEL_TOOL_MARKUP_PATTERN.exec(text);
-  if (!match) return dropPartialMarkupTail(text);
-  return dropPartialMarkupTail(text.slice(0, match.index)).trimEnd();
+  const cuts = [MODEL_TOOL_MARKUP_PATTERN.exec(text)?.index, INTERNAL_CONTEXT_MARKER.exec(text)?.index]
+    .filter((index): index is number => typeof index === 'number');
+  const head = cuts.length ? text.slice(0, Math.min(...cuts)) : text;
+  const cleaned = dropPartialMarkupTail(head);
+  return /^[\s<>/｜|]*$/.test(cleaned) ? '' : cleaned.trimEnd();
 }

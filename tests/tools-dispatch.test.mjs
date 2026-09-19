@@ -120,3 +120,12 @@ test(`浏览器下载不算交付物，不能掐掉 MCP 补轮`, () => {
   assert.ok(!/!generatedFiles\.length/.test(guard[0]), "守卫不能再直接看 generatedFiles.length");
   assert.match(guard[0], /!generatedDeliveryCount/, "要看的是生成工具产出的文件数");
 });
+
+test(`正文被截成空时，再给模型一次带工具的原生调用机会`, () => {
+  // 回归：实测模型把工具调用写成文本标记后整条回复只剩一个 "<"，直接返回用户什么也看不到。
+  assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
+  assert.match(route, /if \(!cleanedMessage && callableTools\.length\) \{/);
+  assert.match(route, /tools: callableTools,/);
+  assert.match(route, /不要把工具调用写成文本标记/);
+  assert.match(route, /if \(!toolCalls\.length\) \{\s+plainMessage = cleanedMessage \|\| '当前对话模型没有返回内容。';/, '补不到工具才走原来的兜底文案');
+});

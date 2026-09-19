@@ -418,6 +418,10 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(upgrades, /\.message-mcp-detail-panel\{/, '展开内容要单独有浮层样式');
   assert.match(upgrades, /\.message-mcp-detail-list li\.is-failed \.message-mcp-detail-state\{/, '失败调用要有区别于成功的颜色');
   assert.match(upgrades, /@media\(max-width:780px\)\{\.message-label \.message-mcp-detail\{display:none\}\}/, '窄屏和其它徽标一样收起');
+  // 一轮里调用多次外部工具时徽标会很长：整行要能换行，左边那行说明不能被压成竖排。
+  assert.match(upgrades, /\.message-label\{flex-wrap:wrap\}/, '徽标长了要换行，不能把说明挤扁');
+  assert.match(upgrades, /\.message-label>small\{flex:none;white-space:nowrap/, '说明永远保持一整行');
+  assert.match(upgrades, /\.message-label \.message-mcp-detail\{[^}]*min-width:0/, '徽标要能收缩才能省略号截断');
 });
 
 test('写工具失败后绝不重放，只读工具才换会话重试一次', async () => {

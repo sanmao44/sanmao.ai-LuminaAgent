@@ -497,6 +497,9 @@ test('模型把工具调用写成 <tool_call> 文本时同样截断', () => {
   assert.equal(skills.stripToolCallMarkup('<function=browser_click>'), '', '标记在最前面时不该留下空壳');
   assert.equal(skills.stripToolCallMarkup('先看一眼 <tool_calls>再决定'), '先看一眼');
   assert.equal(skills.stripToolCallMarkup('这里提到 tool_call 但没写成标记。'), '这里提到 tool_call 但没写成标记。');
+  // 我们自己注入到上下文里的标记，被模型当正文续写出来时同样要截掉（实测整条回复就是 "<" 加这句）。
+  assert.equal(skills.stripToolCallMarkup('<\n\n[上一条回复已生成文件：page-x.yml（application/octet-stream, 1 KB, artifactId=a）]'), '');
+  assert.equal(skills.stripToolCallMarkup('已经打开了。\n\n[用户上传文件：a.pdf]'), '已经打开了。');
 });
 
 test('GitHub 技能抓取带目录候选与接口通道', async () => {

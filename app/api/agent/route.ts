@@ -953,9 +953,32 @@ const auditMcpCall = (
         }
       }
       plainMessage = await rewriteSearchRefusal(plainMessage);
-      plainMessage = stripToolCallMarkup(plainMessage).trim() || '当前对话模型没有返回内容。';
-      llmResponseChars = plainMessage.length;
-      return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+      const cleanedMessage = stripToolCallMarkup(plainMessage).trim();
+      // 模型把工具调用写成了文本标记时，这一轮其实一件事都没做成（实测整条回复就是一个 "<"）。
+      // 交付物请求早就有这条补轮（见上面 archive/document 那段），这里对全部工具补一次；
+      // 只有正文被截成空才补，普通聊天不受影响。
+      if (!cleanedMessage && callableTools.length) {
+        try {
+          const retry = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
+            messages: [...llmMessages, { role: 'user', content: '请直接回答，或直接调用工具完成这一步；不要把工具调用写成文本标记。' }],
+            tools: callableTools,
+            tool_choice: 'auto',
+          }, requestController.signal);
+          const retryMessage = retry?.choices?.[0]?.message;
+          const retryCalls = Array.isArray(retryMessage?.tool_calls) ? retryMessage.tool_calls : [];
+          if (retryCalls.length) {
+            toolCalls = retryCalls;
+            toolCallMessage = retryMessage;
+          }
+        } catch (error) {
+          if (requestController.signal.aborted) throw requestController.signal.reason || error;
+        }
+      }
+      if (!toolCalls.length) {
+        plainMessage = cleanedMessage || '当前对话模型没有返回内容。';
+        llmResponseChars = plainMessage.length;
+        return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+      }
     }
 
     const generated: Array<{ url: string; revisedPrompt?: string }> = [];

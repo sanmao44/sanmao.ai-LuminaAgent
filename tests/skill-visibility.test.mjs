@@ -95,7 +95,9 @@ test("删除与丢弃的二次确认会自动复位，技能菜单滚动跟随�
 test("an enabled skill keeps the request on the tool round so the model can really read it", () => {
   assert.match(route, /const directStream = wantsStream && !skillContext\.skills\.length && !isTextPolishTask/);
   assert.match(route, /const cleanedFinal = stripToolCallMarkup\(finalized\)\.trim\(\);/);
-  assert.match(route, /plainMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\) \|\| '当前对话模型没有返回内容。';/);
+  // 截完先攒成 cleanedMessage：正文被截成空时要再给模型一次带工具的机会，最后才走兜底文案。
+  assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
+  assert.match(route, /plainMessage = cleanedMessage \|\| '当前对话模型没有返回内容。';/);
 });
 test("the tool round hands the assistant turn back so thinking models accept the follow-up", () => {
   // deepseek 之类的思维链模型在带 tool_calls 的助手消息上要求回传 reasoning_content，
