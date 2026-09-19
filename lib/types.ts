@@ -5,7 +5,7 @@ export type UpscaleProviderId = 'tencent-ci' | 'aliyun-viapi';
 export type UpscaleModelId = 'tencent-super-resolution' | 'aliyun-standard-super-resolution' | 'aliyun-generative-super-resolution';
 export type UpscaleOutputFormat = 'png' | 'jpg' | 'bmp';
 export type UpscaleConnectionStatus = 'healthy' | 'idle' | 'error' | 'needs-bucket' | 'needs-authorization';
-export type ModelKind = 'chat' | 'image' | 'video' | 'unknown';
+export type ModelKind = 'chat' | 'image' | 'video' | 'audio' | 'unknown';
 export type MediaKind = 'image' | 'video' | 'audio';
 export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos';
 export type ProviderTextProtocol = 'chat-completions' | 'responses' | 'messages';
@@ -90,6 +90,7 @@ export type ModelCapability =
   | 'transparent'
   | 'upscale'
   | 'fast'
+  | 'speech'
   | 'web-search'
   | 'video-generate'
   | 'video-edit'

@@ -67,7 +67,8 @@ async function resolveFfmpegUncached() {
   throw new Error(`找不到可运行的 FFmpeg；已检查：${checked.join('、')}。请重新运行启动器修复依赖。`);
 }
 
-function resolveFfmpeg() {
+/** 供其它需要 ffmpeg 的模块复用同一份二进制解析（例如克隆出片的抽帧与测时长）。 */
+export function resolveFfmpeg() {
   if (!resolvedFfmpegPromise) {
     resolvedFfmpegPromise = resolveFfmpegUncached();
     resolvedFfmpegPromise.catch(() => { resolvedFfmpegPromise = null; });

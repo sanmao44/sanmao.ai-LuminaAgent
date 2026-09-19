@@ -24,6 +24,8 @@ export function buildManualModelRecord(input: {
     capabilities.add('generate');
   } else if (input.kind === 'video') {
     capabilities.add('video-generate');
+  } else if (input.kind === 'audio') {
+    capabilities.add('speech');
   }
   return {
     id: input.id,

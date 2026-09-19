@@ -70,3 +70,17 @@ test('infers image and chat for unclassified models from their capabilities', ()
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['chat', 'vision']), 'chat');
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', []), 'unknown');
 });
+
+test('classifies TTS families as audio without eating ASR or realtime chat audio', () => {
+  for (const rawId of ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts', 'cosyvoice-v2', 'elevenlabs-multilingual-v2', 'fish-speech-1.5', 'mimo-audio-7b']) {
+    assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
+  }
+  for (const rawId of ['whisper-1', 'gpt-4o-audio-preview', 'gpt-4o-realtime-preview', 'speech-to-text-v1']) {
+    assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
+  }
+});
+
+test('keeps an explicit category and the speech capability authoritative', () => {
+  assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['speech']), 'audio');
+  assert.equal(modelKind.resolveModelKind('chat', 'audio', ['speech']), 'chat');
+});

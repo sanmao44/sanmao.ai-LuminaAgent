@@ -26,7 +26,7 @@ type ModelPickerProps = {
 
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
   chat: '对话', generate: '生图', edit: '改图', upscale: '超分', reference: '参考图', vision: '视觉', typography: '文字', 'web-search': '联网',
-  'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频',
+  'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频', speech: '配音',
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = {
@@ -40,6 +40,7 @@ const capabilityClasses: Partial<Record<ModelCapability, string>> = {
   'video-first-frame': 'video-first-frame',
   'video-reference': 'video-reference',
   'video-audio': 'video-audio',
+  speech: 'speech',
 };
 export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];

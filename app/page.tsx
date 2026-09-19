@@ -207,7 +207,7 @@ function uid(prefix = 'id') {
     return `${prefix}-${crypto.randomUUID()}`;
 }
 function kindLabel(kind) {
-    return kind === 'chat' ? '对话模型' : kind === 'image' ? '图片模型' : kind === 'video' ? '视频模型' : '未分类';
+    return kind === 'chat' ? '对话模型' : kind === 'image' ? '图片模型' : kind === 'video' ? '视频模型' : kind === 'audio' ? '配音模型' : '未分类';
 }
 function typeLabel(type) {
     return type === 'google-gemini' ? '谷歌 Gemini' : '通用兼容接口';
@@ -5585,6 +5585,7 @@ export default function Page() {
             chat: quickFilteredModels.filter((model)=>model.kind === 'chat').length,
             image: quickFilteredModels.filter((model)=>model.kind === 'image').length,
             video: quickFilteredModels.filter((model)=>model.kind === 'video').length,
+            audio: quickFilteredModels.filter((model)=>model.kind === 'audio').length,
             unknown: quickFilteredModels.filter((model)=>model.kind === 'unknown').length
         }), [
         quickFilteredModels
@@ -7832,7 +7833,7 @@ export default function Page() {
         }
     }
     async function toggleModelUse(model) {
-        if (model.kind === 'unknown') return notify('先把这个模型标记为“对话、图片或视频模型”');
+        if (model.kind === 'unknown') return notify('先把这个模型标记为“对话、图片、视频或配音模型”');
         const nextUse = !(model.enabled && model.published);
         const data = await patchModel(model, {
             enabled: nextUse,
@@ -10432,7 +10433,7 @@ export default function Page() {
     function renderModelCard(model) {
         const inUse = model.enabled && model.published;
         const favorite = modelFavorites.includes(model.id);
-        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap;
+        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap;
         return /*#__PURE__*/ _jsxs("article", {
             className: `model-card surface ${inUse ? 'in-use' : ''}`,
             children: [
@@ -10537,6 +10538,13 @@ export default function Page() {
                                     disabled: modelKindBusy.has(model.id),
                                     onClick: ()=>void setModelKind(model, 'video'),
                                     children: "视频"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: `model-kind-option audio ${model.kind === 'audio' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
+                                    onClick: ()=>void setModelKind(model, 'audio'),
+                                    children: "配音"
                                 })
                             ]
                         })
@@ -15592,6 +15600,10 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                     [
                                                         'video',
                                                         '视频模型'
+                                                    ],
+                                                    [
+                                                        'audio',
+                                                        '配音模型'
                                                     ],
                                                     [
                                                         'unknown',

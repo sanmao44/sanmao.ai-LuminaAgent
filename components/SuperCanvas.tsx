@@ -242,6 +242,9 @@ import PanoramaWorkbench, { type PanoramaSnapshot } from "@/components/canvas/Pa
 import OneClickCinematicPanel, {
   type OneClickCinematicVideoSelection,
 } from "@/components/canvas/OneClickCinematicPanel";
+import CanvasCloneDialog, {
+  type CanvasCloneReferenceOption,
+} from "@/components/canvas/CanvasCloneDialog";
 import CanvasGroupComposeDialog, {
   type CanvasGroupComposeSettings,
   type CanvasGroupComposeSource,
@@ -266,9 +269,11 @@ import type {
   CanvasVariantState,
   CanvasUpscaleParams,
   CanvasVideoClipState,
+  CanvasVideoEditorClip,
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
 import type { AngleGenerationInput } from "@/lib/angle-control";
+import type { CloneJob } from "@/lib/clone/types";
 import {
   normalizeVideoEditorState,
   syncVideoEditorInputs,
@@ -2875,6 +2880,7 @@ export default function SuperCanvas() {
   const spaceHeldRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [runtime, setRuntime] = useState<CanvasRuntimeState | null>(null);
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [runtimeError, setRuntimeError] = useState("");
   const [projects, setProjects] = useState<CanvasProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
@@ -14251,6 +14257,124 @@ export default function SuperCanvas() {
     </>
   ) : null;
 
+  const cloneReferences = useMemo<CanvasCloneReferenceOption[]>(
+    () =>
+      document.nodes
+        .filter((node) => node.type === "media" && node.data.kind === "video" && Boolean(node.data.url))
+        .map((node) => ({
+          nodeId: node.id,
+          name: String(node.data.name || "参考视频"),
+          url: String(node.data.url),
+          seconds: Number(node.data.durationMs || node.data.sourceDurationMs || 0) / 1000,
+        })),
+    [document.nodes],
+  );
+
+  const preselectedCloneReferenceId = useMemo(() => {
+    const selectedVideos = [...selectedIds].filter((id) => {
+      const node = nodeById(document, id);
+      return Boolean(node && node.type === "media" && node.data.kind === "video" && node.data.url);
+    });
+    if (selectedVideos.length === 1) return selectedVideos[0];
+    return cloneReferences.length === 1 ? cloneReferences[0].nodeId : null;
+  }, [cloneReferences, document, selectedIds]);
+
+  /** 把克隆结果落到画布：镜头素材 + 一个带完整时间轴的视频编辑节点。 */
+  const applyCloneJob = useCallback(
+    (job: CloneJob) => {
+      const referenceNode = job.reference.nodeId ? nodeById(docRef.current, job.reference.nodeId) : undefined;
+      const center = screenToWorld(stageSize.width / 2, stageSize.height / 2);
+      const originX = referenceNode ? referenceNode.x + nodeSize(referenceNode).w + 120 : center.x;
+      const originY = referenceNode ? referenceNode.y : center.y;
+      const created: CanvasNode[] = [];
+      const primaryIds = new Map<number, string>();
+      const audioIds = new Map<number, string>();
+      const edges: { source: string; role: CanvasInputRole; order: number }[] = [];
+      let order = 0;
+      for (const shot of job.shots) {
+        const videoUrl = String(shot.videoUrl || "");
+        const imageUrl = String(shot.imageUrl || "");
+        if (videoUrl || imageUrl) {
+          const isVideo = Boolean(videoUrl);
+          const node = createMedia(
+            isVideo ? "video" : "image",
+            isVideo ? videoUrl : imageUrl,
+            `镜头 ${shot.index + 1}${isVideo ? "" : " · 首帧"}`,
+            { x: originX, y: originY + shot.index * 420 },
+            {
+              role: "克隆镜头",
+              status: "completed",
+              statusLabel: `克隆镜头 ${shot.index + 1}`,
+              autoFit: true,
+              ...(isVideo ? { videoInputModeAuto: false } : {}),
+            },
+          );
+          created.push(node);
+          primaryIds.set(shot.index, node.id);
+          edges.push({ source: node.id, role: isVideo ? "video" : "reference-image", order: order++ });
+        }
+        if (shot.audioUrl) {
+          const audioNode = createMedia(
+            "audio",
+            String(shot.audioUrl),
+            `配音 ${shot.index + 1}`,
+            { x: originX + 560, y: originY + shot.index * 200 },
+            { role: "克隆配音", status: "completed", statusLabel: `配音 ${shot.index + 1}` },
+          );
+          created.push(audioNode);
+          audioIds.set(shot.index, audioNode.id);
+          edges.push({ source: audioNode.id, role: "audio", order: order++ });
+        }
+      }
+      const editorDraft = createVideoEditorNode({ x: originX + 1180, y: originY });
+      const clips: CanvasVideoEditorClip[] = [];
+      for (const clip of job.timeline.clips) {
+        const match = /^clone-(video|audio|caption)-(\d+)$/.exec(clip.id);
+        if (!match) continue;
+        const track = match[1];
+        const index = Number(match[2]);
+        const sourceNodeId = track === "audio" ? audioIds.get(index) : track === "video" ? primaryIds.get(index) : undefined;
+        if (track !== "caption" && !sourceNodeId) continue;
+        clips.push({
+          ...clip,
+          id: `${editorDraft.id}-${track}-${index}`,
+          ...(sourceNodeId ? { sourceNodeId } : {}),
+        });
+      }
+      const editorNode: CanvasNode = {
+        ...editorDraft,
+        data: {
+          ...editorDraft.data,
+          name: `克隆成片 · ${job.options.brief || job.reference.name}`,
+          status: "idle",
+          statusLabel: `${clips.filter((clip) => clip.track === "video").length} 个镜头 · ${Math.round(job.timeline.duration)} 秒`,
+          videoEditor: normalizeVideoEditorState({
+            version: 1,
+            projectDuration: job.timeline.duration,
+            fps: job.timeline.fps || 30,
+            aspect: job.timeline.aspect,
+            resolution: "1080p",
+            clips,
+            mutedTracks: [],
+            disabledTracks: [],
+          }),
+        },
+      };
+      commit((value) => {
+        let next: CanvasDocument = { ...value, nodes: [...value.nodes, ...created, editorNode] };
+        for (const edge of edges) {
+          next = addEdge(next, edge.source, editorNode.id, "right", "left", "reference", edge.role, edge.order);
+        }
+        return syncCanvasVideoEditorReferences(next);
+      });
+      setSelectedIds(new Set([editorNode.id]));
+      setSelectedGroupId(null);
+      setContextMenu(null);
+      notify(`已放入 ${clips.filter((clip) => clip.track === "video").length} 个镜头与成片节点`, "ok");
+    },
+    [commit, notify, screenToWorld, stageSize.height, stageSize.width],
+  );
+
   if (!ready)
     return (
       <section className="canvas-workspace canvas-loading">
@@ -14354,6 +14478,15 @@ export default function SuperCanvas() {
             onClick={() => openFilePicker()}
           >
             ＋ 导入素材
+          </button>
+          <button
+            type="button"
+            className="canvas-soft-button canvas-clone-button"
+            aria-haspopup="dialog"
+            title="克隆出片：拆解一条参考视频的节奏，用平台已配模型重写成你自己的片子"
+            onClick={() => setCloneDialogOpen(true)}
+          >
+            ✦ 克隆出片
           </button>
           {!topbarCollapsed && <button
             type="button"
@@ -15798,6 +15931,19 @@ export default function SuperCanvas() {
           onBusyChange={setAgentDockBusy}
           onPreviewImages={(images, index) => setAgentDockPreview({ images, index })}
         />
+        {cloneDialogOpen && createPortal(
+          <CanvasCloneDialog
+            references={cloneReferences}
+            models={runtime?.models || []}
+            defaultProviderId={runtime?.settings.defaultProviderId || null}
+            defaultProviderName={runtime?.providers.find((provider) => provider.id === runtime?.settings.defaultProviderId)?.name}
+            preselectedReferenceId={preselectedCloneReferenceId}
+            notify={notify}
+            onClose={() => setCloneDialogOpen(false)}
+            onApply={(job) => applyCloneJob(job)}
+          />,
+          window.document.body,
+        )}
         {contextGroup && contextMenu?.menu === "group" && contextMenu.groupId ? (
           <CanvasGroupContextMenu
             group={contextGroup}
@@ -15871,6 +16017,21 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-copy">
                   <b>视频编辑节点</b>
                   <small>多轨剪辑、裁剪、分割和字幕</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-clone"
+                onClick={() => {
+                  setContextMenu(null);
+                  setCloneDialogOpen(true);
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">✦</span>
+                <span className="canvas-menu-copy">
+                  <b>克隆出片</b>
+                  <small>拆解参考视频节奏，重新生成整片</small>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>

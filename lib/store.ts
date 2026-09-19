@@ -161,6 +161,8 @@ function maskKey(secret: string) {
 export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSearchProtocol?: NativeSearchProtocol, hints: { displayName?: string; capabilities?: ModelCapability[] } = {}): { kind: ModelKind; capabilities: ModelCapability[]; nativeSearchProtocol?: NativeSearchProtocol; nativeSearchDetection?: NativeSearchDetection } {
   const id = rawId.toLowerCase();
   const inferredKind = inferModelKind({ rawId, displayName: hints.displayName, capabilities: hints.capabilities });
+  const speechish = /(?:^|[-_.])(?:tts|text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synth|synthesis|model)|speech|cosyvoice|elevenlabs|fish[-_ ]?speech|mimo[-_ ]?(?:tts|audio)|audio[-_ ]?speech)/.test(id) && !/(whisper|transcri|\basr\b|\bstt\b|realtime|audio[-_ ]?preview|speech[-_ ]?to[-_ ]?text)/.test(id);
+  if (speechish || inferredKind === 'audio') return { kind: 'audio', capabilities: ['speech'] };
   if (platform === 'agnes' || id.startsWith('agnes-')) {
     if (id.startsWith('agnes-video-')) return { kind: 'video', capabilities: ['video-generate', 'video-first-frame', 'video-reference', ...(id.includes('2.5') ? ['video-audio' as const] : [])] };
     if (id.startsWith('agnes-image-')) return { kind: 'image', capabilities: ['generate', 'edit', 'reference'] };
@@ -577,7 +579,7 @@ export async function addManualProviderModel(providerId: string, input: ManualMo
     if (state.models.some((model) => model.providerId === providerId && model.rawId === rawId)) throw new Error('该服务商已存在相同模型 ID');
     const displayName = typeof input.displayName === 'string' ? input.displayName.trim() || rawId : rawId;
     const selectedKind = input.kind === undefined || input.kind === 'auto' ? undefined : input.kind;
-    if (selectedKind && !['chat', 'image', 'video'].includes(selectedKind)) throw new Error('模型类型无效');
+    if (selectedKind && !['chat', 'image', 'video', 'audio'].includes(selectedKind)) throw new Error('模型类型无效');
     const inferred = inferModel(rawId, provider.platform, undefined, { displayName });
     const model = normalizeModel(buildManualModelRecord({
       id: randomUUID(),
