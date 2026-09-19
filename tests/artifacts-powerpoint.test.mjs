@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import sharp from 'sharp';
 import { buildArtifactsModule } from './artifacts-build.mjs';
 
 const artifacts = await buildArtifactsModule();
@@ -12,6 +13,19 @@ async function withStore(run) {
   const store = artifacts.createArtifactStore({ root, cleanup: false });
   try {
     return await run(store);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+/** 造一个真实的本地图片目录，模拟应用已保存的图片存储位置。 */
+async function withImageRoot(run) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-artifacts-ppt-images-'));
+  await writeFile(path.join(root, 'photo.png'), await sharp({
+    create: { width: 480, height: 300, channels: 3, background: { r: 15, g: 23, b: 42 } },
+  }).png().toBuffer());
+  try {
+    return await run({ root, ref: `/api/storage/file?name=${encodeURIComponent('photo.png')}` });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -84,6 +98,46 @@ test('markdown 简写与 table / two-column 版面都可用', async () => {
 test('pptx 扩展名由服务端强制，空内容直接报错', async () => {
   assert.equal(artifacts.resolvePresentationFileName('汇报.pdf'), '汇报.pptx');
   await assert.rejects(() => artifacts.buildPresentation({}), /内容为空/);
+});
+
+test('layout=image 把本地图片放进幻灯片，subtitle 作为图注', async () => {
+  await withImageRoot(async (images) => {
+    await withStore(async (store) => {
+      const result = await artifacts.generatePresentationArtifact({
+        filename: '配图',
+        slides: [
+          { layout: 'image', title: '效果图', subtitle: 'AI 生成效果', image: { ref: images.ref } },
+          { layout: 'bullets', title: '说明', bullets: ['要点一'] },
+        ],
+      }, store, { imageRoots: [images.root] });
+
+      const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+      const entries = artifacts.readArchiveEntries(buffer);
+      const media = Object.keys(entries).filter((name) => /^ppt\/media\/.+\.(png|jpe?g)$/.test(name));
+      assert.equal(media.length, 1, '应嵌入一张图片');
+
+      const slide = artifacts.readArchiveText(buffer, 'ppt/slides/slide1.xml');
+      assert.match(slide, /<p:pic>/, '应生成图片节点');
+      assert.ok(slide.includes('AI 生成效果'), '图注应写入幻灯片');
+      assert.deepEqual(result.warnings, []);
+    });
+  });
+});
+
+test('插图 ref 无效时降级提示，不阻断整份 PPT', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '缺图',
+      slides: [{ layout: 'image', title: '缺图页', image: { ref: 'https://example.com/a.png' } }],
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const entries = artifacts.readArchiveEntries(buffer);
+    assert.equal(Object.keys(entries).filter((name) => /^ppt\/media\/.+\.(png|jpe?g)$/.test(name)).length, 0);
+    assert.ok(result.warnings.some((warning) => warning.includes('引用无效')));
+    assert.ok(result.warnings.some((warning) => warning.includes('没有可用的插图')));
+    const slide = artifacts.readArchiveText(buffer, 'ppt/slides/slide1.xml');
+    assert.ok(slide.includes('图片不可用'));
+  });
 });
 
 test('markdown 的 # 标题页与 ## 内容页会被识别', () => {

@@ -5,6 +5,7 @@ import {
   ExternalHyperlink,
   Footer,
   HeadingLevel,
+  ImageRun,
   LevelFormat,
   Packer,
   PageNumber,
@@ -29,6 +30,7 @@ import {
 import { forceArtifactExtension } from './sanitize';
 import { textWidthEm } from './typography';
 import { assertArchiveParts } from './validate';
+import { loadArtifactImages, type ArtifactGenerateOptions, type ArtifactImage, type ArtifactImageInput } from './images';
 import type { ArtifactBuild } from './types';
 
 const A4_CONTENT_WIDTH_DXA = 9026;
@@ -49,6 +51,9 @@ const ORDERED_LIST_REFERENCE = 'sanmao-ordered-list';
 const LINK_COLOR = '1D4ED8';
 /** 只放行常见安全协议，避免模型输出的 `javascript:` / `data:` 变成可点击链接。 */
 const SAFE_LINK_PATTERN = /^(https?:\/\/|mailto:|tel:)/i;
+/** A4 正文宽度 6.27in ≈ 602px、可用高度 9.69in ≈ 930px（96dpi）。 */
+const DOCUMENT_IMAGE_MAX_WIDTH_PX = 600;
+const DOCUMENT_IMAGE_MAX_HEIGHT_PX = 900;
 
 export type DocumentTableInput = {
   columns?: string[];
@@ -61,6 +66,7 @@ export type DocumentSectionInput = {
   paragraphs?: string[];
   bullets?: string[];
   orderedBullets?: string[];
+  images?: ArtifactImageInput[];
   tables?: DocumentTableInput[];
 };
 
@@ -88,6 +94,7 @@ export function normalizeSections(raw: unknown): DocumentSectionInput[] {
       paragraphs: Array.isArray(section.paragraphs) ? section.paragraphs.map(String) : undefined,
       bullets: Array.isArray(section.bullets) ? section.bullets.map(String) : undefined,
       orderedBullets: Array.isArray(section.orderedBullets) ? section.orderedBullets.map(String) : undefined,
+      images: Array.isArray(section.images) ? section.images : undefined,
       tables: Array.isArray(section.tables) ? section.tables : undefined,
     };
     const text = typeof section.text === 'string' ? section.text : '';
@@ -116,6 +123,7 @@ export type MarkdownBlock =
   | { type: 'paragraph'; text: string }
   | { type: 'bullets'; items: string[] }
   | { type: 'ordered'; items: string[] }
+  | { type: 'image'; alt: string; ref: string }
   | { type: 'code'; text: string }
   | { type: 'table'; columns: string[]; rows: string[][] };
 
@@ -141,6 +149,12 @@ export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
     const line = lines[index];
     const trimmed = line.trim();
     if (!trimmed) {
+      index += 1;
+      continue;
+    }
+    const standaloneImage = trimmed.match(/^!\[([^\]]*)\]\(([^\s)]+)\)$/);
+    if (standaloneImage) {
+      blocks.push({ type: 'image', alt: standaloneImage[1].trim(), ref: standaloneImage[2].trim() });
       index += 1;
       continue;
     }
@@ -193,7 +207,7 @@ export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
     const paragraph: string[] = [];
     while (index < lines.length) {
       const current = lines[index].trim();
-      if (!current || current.startsWith('#') || current.startsWith('```') || /^[-*+]\s+/.test(current) || /^\d+[.)]\s+/.test(current) || current.startsWith('|')) break;
+      if (!current || current.startsWith('#') || current.startsWith('```') || current.startsWith('![') || /^[-*+]\s+/.test(current) || /^\d+[.)]\s+/.test(current) || current.startsWith('|')) break;
       paragraph.push(current);
       index += 1;
     }
@@ -217,6 +231,8 @@ export function markdownToSections(markdown: string): DocumentSectionInput[] {
       current.bullets = [...(current.bullets || []), ...block.items];
     } else if (block.type === 'ordered') {
       current.orderedBullets = [...(current.orderedBullets || []), ...block.items];
+    } else if (block.type === 'image') {
+      current.images = [...(current.images || []), { ref: block.ref, caption: block.alt }];
     } else if (block.type === 'table') {
       current.tables = [...(current.tables || []), { columns: block.columns, rows: block.rows }];
     }
@@ -414,6 +430,32 @@ function codeParagraph(text: string, warnings: string[]) {
   });
 }
 
+/** 图片按 A4 正文区等比缩放，绝不超出页宽或页高。 */
+function fitDocumentImage(image: ArtifactImage) {
+  const scale = Math.min(1, DOCUMENT_IMAGE_MAX_WIDTH_PX / image.width, DOCUMENT_IMAGE_MAX_HEIGHT_PX / image.height);
+  return { width: Math.max(1, Math.round(image.width * scale)), height: Math.max(1, Math.round(image.height * scale)) };
+}
+
+/** 图片必须是 ImageRun，纯文本占位在 Word 里不会显示任何图形。 */
+function imageParagraphs(images: ArtifactImage[]): Paragraph[] {
+  const paragraphs: Paragraph[] = [];
+  for (const image of images) {
+    paragraphs.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 120, after: image.caption ? 60 : 160 },
+      children: [new ImageRun({ type: image.type, data: image.data, transformation: fitDocumentImage(image) })],
+    }));
+    if (image.caption) {
+      paragraphs.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 160 },
+        children: [new TextRun({ text: image.caption, size: 18, color: COLOR_MUTED })],
+      }));
+    }
+  }
+  return paragraphs;
+}
+
 function titleBlock(input: DocumentInput, warnings: string[]) {
   const children: Paragraph[] = [];
   if (input.title?.trim()) {
@@ -441,7 +483,7 @@ function titleBlock(input: DocumentInput, warnings: string[]) {
   return children;
 }
 
-export async function buildWordDocument(input: DocumentInput): Promise<ArtifactBuild> {
+export async function buildWordDocument(input: DocumentInput, options: ArtifactGenerateOptions = {}): Promise<ArtifactBuild> {
   const warnings: string[] = [];
   const sections = normalizeSections(input.sections);
   if (typeof input.markdown === 'string' && input.markdown.trim()) sections.push(...markdownToSections(input.markdown));
@@ -483,6 +525,14 @@ export async function buildWordDocument(input: DocumentInput): Promise<ArtifactB
     for (const table of section.tables || []) {
       children.push(buildTable(table, warnings));
       children.push(new Paragraph({ spacing: { after: 120 }, children: [] }));
+    }
+    if (section.images?.length) {
+      const images = await loadArtifactImages(section.images, {
+        warnings,
+        context: section.heading?.trim() ? `章节「${section.heading.trim().slice(0, 20)}」` : '正文',
+        roots: options.imageRoots,
+      });
+      children.push(...imageParagraphs(images));
     }
   }
   if (sections.length > DOCUMENT_MAX_SECTIONS) warnings.push(`章节超过 ${DOCUMENT_MAX_SECTIONS} 个，已截断`);

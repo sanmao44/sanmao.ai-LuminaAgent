@@ -11,6 +11,7 @@ import {
 import { forceArtifactExtension } from './sanitize';
 import { emWidthFor, textWidthEm, wrapText } from './typography';
 import { assertArchiveParts } from './validate';
+import { loadArtifactImages, type ArtifactGenerateOptions, type ArtifactImage, type ArtifactImageInput } from './images';
 import type { ArtifactBuild } from './types';
 
 export type PresentationTableInput = {
@@ -25,7 +26,7 @@ export type PresentationChartInput = {
   series?: Array<{ name?: string; values?: Array<number | null> }>;
 };
 
-export type PresentationSlideLayout = 'title' | 'section' | 'bullets' | 'two-column' | 'table' | 'chart';
+export type PresentationSlideLayout = 'title' | 'section' | 'bullets' | 'two-column' | 'table' | 'chart' | 'image';
 
 export type PresentationSlideInput = {
   layout?: PresentationSlideLayout;
@@ -39,6 +40,7 @@ export type PresentationSlideInput = {
   columns?: string[];
   rows?: Array<Array<string | number | null>>;
   chart?: PresentationChartInput;
+  image?: ArtifactImageInput;
   notes?: string;
 };
 
@@ -95,6 +97,14 @@ const BULLET_FONT_LADDER = [16, 15, 14, 13, 12, 11];
 const COLUMN_FONT_LADDER = [15, 14, 13, 12, 11];
 const TABLE_FONT_LADDER = [14, 13, 12, 11, 10];
 const TITLE_FONT_LADDER = [30, 28, 26, 24, 22, 20];
+/** 插图按 96dpi 折算成英寸，再等比放进正文区；图注预留固定高度。 */
+const IMAGE_DPI = 96;
+const IMAGE_CAPTION_HEIGHT = 0.46;
+const IMAGE_MAX_UPSCALE = 2;
+
+const IMAGE_MIME: Record<ArtifactImage['type'], string> = {
+  jpg: 'image/jpeg', png: 'image/png', gif: 'image/gif', bmp: 'image/bmp',
+};
 
 function themeFor(name: unknown) {
   const key = String(name || 'sanmao-dark').trim().toLowerCase();
@@ -434,6 +444,32 @@ function drawChart(slide: PptxGenJS.Slide, theme: DeckTheme, chart: NormalizedCh
   );
 }
 
+/**
+ * 插图页：等比缩放到正文区居中，最多放大 2 倍，避免小图被拉成马赛克。
+ */
+function drawImageSlide(slide: PptxGenJS.Slide, theme: DeckTheme, image: ArtifactImage, caption: string, bodyTop: number) {
+  const available = Math.max(1.2, BODY_BOTTOM - bodyTop - (caption ? IMAGE_CAPTION_HEIGHT : 0));
+  const naturalWidth = image.width / IMAGE_DPI;
+  const naturalHeight = image.height / IMAGE_DPI;
+  const scale = Math.min(CONTENT_WIDTH / naturalWidth, available / naturalHeight, IMAGE_MAX_UPSCALE);
+  const width = Math.max(0.6, naturalWidth * scale);
+  const height = Math.max(0.6, naturalHeight * scale);
+  slide.addImage({
+    data: `${IMAGE_MIME[image.type]};base64,${image.data.toString('base64')}`,
+    x: MARGIN + Math.max(0, (CONTENT_WIDTH - width) / 2),
+    y: bodyTop + Math.max(0, (available - height) / 2),
+    w: width,
+    h: height,
+    ...(image.caption ? { altText: image.caption } : {}),
+  });
+  if (caption) {
+    slide.addText(caption, {
+      x: MARGIN, y: BODY_BOTTOM - IMAGE_CAPTION_HEIGHT, w: CONTENT_WIDTH, h: IMAGE_CAPTION_HEIGHT,
+      fontSize: 12, color: theme.body, fontFace: theme.font, align: 'center', valign: 'middle',
+    });
+  }
+}
+
 /** Markdown 简写：`#` 作为标题页，`##` 作为内容页，列表项作为要点。 */
 export function markdownToSlides(markdown: string): PresentationSlideInput[] {
   const slides: PresentationSlideInput[] = [];
@@ -553,7 +589,7 @@ function drawSectionSlide(slide: PptxGenJS.Slide, theme: DeckTheme, title: strin
   }
 }
 
-export async function buildPresentation(input: PresentationInput): Promise<ArtifactBuild> {
+export async function buildPresentation(input: PresentationInput, options: ArtifactGenerateOptions = {}): Promise<ArtifactBuild> {
   const warnings: string[] = [];
   const theme = themeFor(input.theme);
   const slides = [...(Array.isArray(input.slides) ? input.slides : [])];
@@ -604,7 +640,7 @@ export async function buildPresentation(input: PresentationInput): Promise<Artif
   pptx.company = 'SANMAO.AI';
   if (input.title?.trim()) pptx.title = input.title.trim();
 
-  finalSlides.forEach((slideInput, index) => {
+  for (const [index, slideInput] of finalSlides.entries()) {
     const layout = slideInput.layout || 'bullets';
     const slide = pptx.addSlide();
     slide.background = { color: theme.background };
@@ -636,6 +672,23 @@ export async function buildPresentation(input: PresentationInput): Promise<Artif
           fontSize: 14, color: theme.body, fontFace: theme.font, align: 'center',
         });
       }
+    } else if (layout === 'image') {
+      const bodyTop = drawHeader(slide, theme, clip(slideInput.title, warnings, context, 80));
+      const images = await loadArtifactImages(slideInput.image ? [slideInput.image] : [], {
+        warnings,
+        context,
+        roots: options.imageRoots,
+      });
+      const image = images[0];
+      if (image) {
+        drawImageSlide(slide, theme, image, clip(slideInput.subtitle, warnings, context, 80), bodyTop);
+      } else {
+        warnings.push(`${context}没有可用的插图，已跳过绘图`);
+        slide.addText('（图片不可用）', {
+          x: MARGIN, y: bodyTop + 0.4, w: CONTENT_WIDTH, h: 0.6,
+          fontSize: 14, color: theme.body, fontFace: theme.font, align: 'center',
+        });
+      }
     } else if (layout === 'two-column') {
       const bodyTop = drawHeader(slide, theme, clip(slideInput.title, warnings, context, 80));
       const available = BODY_BOTTOM - bodyTop;
@@ -657,7 +710,7 @@ export async function buildPresentation(input: PresentationInput): Promise<Artif
     }
     if (slideInput.notes?.trim()) slide.addNotes(String(slideInput.notes).slice(0, 4000));
     if (layout !== 'title') addFooter(slide, theme, index + 1, finalSlides.length);
-  });
+  }
 
   const output = await pptx.write({ outputType: 'nodebuffer' });
   const buffer = Buffer.isBuffer(output) ? output : Buffer.from(output as ArrayBuffer);

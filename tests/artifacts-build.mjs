@@ -6,11 +6,13 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'lib/image-storage',
   'lib/artifacts/limits',
   'lib/artifacts/types',
   'lib/artifacts/typography',
   'lib/artifacts/sanitize',
   'lib/artifacts/validate',
+  'lib/artifacts/images',
   'lib/artifacts/storage',
   'lib/artifacts/word',
   'lib/artifacts/excel',

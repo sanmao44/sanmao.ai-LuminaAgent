@@ -5,12 +5,14 @@ import { buildSpreadsheet, resolveSpreadsheetFileName, type SpreadsheetInput } f
 import { buildPresentation, resolvePresentationFileName, type PresentationInput } from './powerpoint';
 import { buildWordDocument, resolveDocumentFileName, type DocumentInput } from './word';
 import { buildZipArchive, resolveArchiveFileName, type ArchiveEntryInput } from './archive';
+import type { ArtifactGenerateOptions, ArtifactImageInput } from './images';
 
 export type * from './types';
 export type { DocumentInput, DocumentSectionInput, DocumentTableInput } from './word';
 export type { SpreadsheetInput, SpreadsheetSheetInput, SpreadsheetColumnInput } from './excel';
-export type { PresentationInput, PresentationSlideInput } from './powerpoint';
+export type { PresentationInput, PresentationSlideInput, PresentationChartInput } from './powerpoint';
 export type { ArchiveEntryInput } from './archive';
+export type { ArtifactImageInput, ArtifactImage, ArtifactGenerateOptions } from './images';
 export { artifactStore, createArtifactStore } from './storage';
 export { buildZipArchive, resolveArchiveFileName } from './archive';
 export { buildWordDocument, markdownToSections, parseMarkdownBlocks, resolveDocumentFileName } from './word';
@@ -25,16 +27,16 @@ async function persist(store: ArtifactStore, kind: keyof typeof ARTIFACT_MIME_TY
   return { artifact, warnings: build.warnings };
 }
 
-export async function generateDocumentArtifact(input: DocumentInput, store: ArtifactStore = artifactStore) {
-  return persist(store, 'document', resolveDocumentFileName(input.filename), await buildWordDocument(input));
+export async function generateDocumentArtifact(input: DocumentInput, store: ArtifactStore = artifactStore, options: ArtifactGenerateOptions = {}) {
+  return persist(store, 'document', resolveDocumentFileName(input.filename), await buildWordDocument(input, options));
 }
 
 export async function generateSpreadsheetArtifact(input: SpreadsheetInput, store: ArtifactStore = artifactStore) {
   return persist(store, 'spreadsheet', resolveSpreadsheetFileName(input.filename), await buildSpreadsheet(input));
 }
 
-export async function generatePresentationArtifact(input: PresentationInput, store: ArtifactStore = artifactStore) {
-  return persist(store, 'presentation', resolvePresentationFileName(input.filename), await buildPresentation(input));
+export async function generatePresentationArtifact(input: PresentationInput, store: ArtifactStore = artifactStore, options: ArtifactGenerateOptions = {}) {
+  return persist(store, 'presentation', resolvePresentationFileName(input.filename), await buildPresentation(input, options));
 }
 
 export async function generateArchiveArtifact(

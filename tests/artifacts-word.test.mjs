@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import sharp from 'sharp';
 import { buildArtifactsModule } from './artifacts-build.mjs';
 
 const artifacts = await buildArtifactsModule();
@@ -12,6 +13,19 @@ async function withStore(run) {
   const store = artifacts.createArtifactStore({ root, cleanup: false });
   try {
     return await run(store);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+/** 造一个真实的本地图片目录，模拟应用已保存的图片存储位置。 */
+async function withImageRoot(run) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-artifacts-images-'));
+  await writeFile(path.join(root, 'sample.png'), await sharp({
+    create: { width: 320, height: 200, channels: 3, background: { r: 37, g: 99, b: 235 } },
+  }).png().toBuffer());
+  try {
+    return await run({ root, ref: `/api/storage/file?name=${encodeURIComponent('sample.png')}` });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -93,6 +107,44 @@ test('有序列表写入真正的编号，而不是降级成圆点', async () =>
 
     const numbering = artifacts.readArchiveText(buffer, 'word/numbering.xml');
     assert.match(numbering, /w:numFmt w:val="decimal"/);
+  });
+});
+
+test('markdown 图片语法把本地图片嵌进 docx，图注一起写入', async () => {
+  await withImageRoot(async (images) => {
+    await withStore(async (store) => {
+      const result = await artifacts.generateDocumentArtifact({
+        filename: '带图文档',
+        markdown: `# 方案\n\n正文说明\n\n![架构示意](${images.ref})\n`,
+      }, store, { imageRoots: [images.root] });
+
+      const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+      const entries = artifacts.readArchiveEntries(buffer);
+      const media = Object.keys(entries).filter((name) => /^word\/media\/.+\.png$/.test(name));
+      assert.equal(media.length, 1, '应嵌入一张图片');
+
+      const xml = artifacts.readArchiveText(buffer, 'word/document.xml');
+      assert.match(xml, /<w:drawing>/, '应生成图片节点');
+      assert.ok(xml.includes('架构示意'), '图注应写入正文');
+      const rels = artifacts.readArchiveText(buffer, 'word/_rels/document.xml.rels');
+      assert.ok(rels.includes('media/'), '应写入图片关系');
+      assert.deepEqual(result.warnings, []);
+    });
+  });
+});
+
+test('插图 ref 无效时只记 warning 并跳过，正文照常生成', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '无效插图',
+      markdown: '正文照常\n\n![外部图](https://example.com/a.png)\n\n![越界图](/api/storage/file?name=..%2Fsecret.png)\n',
+    }, store);
+
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const entries = artifacts.readArchiveEntries(buffer);
+    assert.equal(Object.keys(entries).filter((name) => /^word\/media\/.+\.(png|jpe?g)$/.test(name)).length, 0, '不应嵌入任何图片');
+    assert.equal(result.warnings.filter((warning) => warning.includes('引用无效')).length, 2);
+    assert.ok(artifacts.readArchiveText(buffer, 'word/document.xml').includes('正文照常'));
   });
 });
 
