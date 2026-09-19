@@ -7,6 +7,7 @@ export const webSearchTool = defineTool({
   tags: ['web'],
   source: 'native',
   gating: TOOL_GATE.never,
+  acceptUnlisted: true,
   schema: {
     type: 'object', properties: {
       query: { type: 'string', description: '适合搜索引擎的简洁中文检索式，包含主题、时间范围和必要限定。' },

@@ -6,6 +6,8 @@
  * （description / inputSchema / execute / contextSchema），以后接 MCP 或插件工具时不用再转一层结构。
  */
 
+import type { McpToolMeta } from '@/lib/mcp/types';
+
 /** 工具会碰到的外部资源；v1 只做声明与审计，真正的拦截放在统一执行点。 */
 export type ToolPermissions =
   | 'network'
@@ -13,13 +15,15 @@ export type ToolPermissions =
   | 'artifact:write'
   | 'fs:read'
   | 'fs:write'
+  /** 会改动本机以外的数据（MCP 远程工具、以后的插件）。 */
+  | 'external:write'
   | 'process';
 
 /** 工具来源：native 内置、mcp 远程服务、plugin 插件清单。 */
 export type ToolSource = 'native' | 'mcp' | 'plugin';
 
 /** 能力标签：供 Agent 侧做行为分支，不参与下发判断。 */
-export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill';
+export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill' | 'mcp';
 
 /** 本轮上下文：决定哪些工具能下发给模型。 */
 export type ToolGatingContext = {
@@ -43,6 +47,14 @@ export type ToolDefinition = {
   source: ToolSource;
   /** 本轮是否下发；默认拒绝，每个工具都必须显式声明。 */
   gating: (context: ToolGatingContext) => boolean;
+  /**
+   * 模型看不到这个工具（gating 为假），但执行层仍然接受调用。
+   * 只有「调用时机由本地先决策」的工具才该打开，目前是 web_search：
+   * 联网与否在请求模型之前就判断完了，工具分支只是模型跑偏时的兜底。
+   */
+  acceptUnlisted?: boolean;
+  /** 远程 MCP 工具的溯源信息；native 工具没有这一项。 */
+  mcp?: McpToolMeta;
 };
 
 export const TOOL_GATE = {

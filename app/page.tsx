@@ -34,6 +34,8 @@ import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
 import SkillManager from '@/components/SkillManager';
 import SkillIcon from '@/components/SkillIcon';
+import McpManager from '@/components/McpManager';
+import McpIcon from '@/components/McpIcon';
 import AgentSkillMenu from '@/components/AgentSkillMenu';
 import SkillInlineText from '@/components/SkillInlineText';
 import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
@@ -11926,6 +11928,10 @@ export default function Page() {
                                         disabled: activeAgentBusy,
                                         icon: /*#__PURE__*/ _jsx(SkillIcon, { size: 16 })
                                     }, 'skills'),
+                                    /*#__PURE__*/ _jsx(McpManager, {
+                                        disabled: activeAgentBusy,
+                                        icon: /*#__PURE__*/ _jsx(McpIcon, { size: 16 })
+                                    }, 'mcp'),
                                     messages.length > 0 && !shareSelectionMode && /*#__PURE__*/ _jsxs("button", {
                                         type: "button",
                                         className: "conversation-share-entry",

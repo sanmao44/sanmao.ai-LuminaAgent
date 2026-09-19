@@ -44,16 +44,22 @@ export function toolTags(name: unknown): readonly ToolTag[] {
  * 本轮要下发给模型的工具。门控全部来自注册表：没登录的工具不会因为新增代码而
  * 意外暴露给模型，这是之前 route.ts 里那段 if 链最容易出错的地方。
  */
-export function toolSchemasFor(context: ToolGatingContext): ModelToolSchema[] {
-  return TOOL_REGISTRY.filter((tool) => tool.gating(context)).map(toModelToolSchema);
+export function toolSchemasFor(context: ToolGatingContext, extraTools: readonly ToolDefinition[] = []): ModelToolSchema[] {
+  return [...TOOL_REGISTRY, ...extraTools].filter((tool) => tool.gating(context)).map(toModelToolSchema);
 }
 
 function callToolName(call: any) {
   return String(call?.function?.name || '');
 }
 
-function hasTag(name: unknown, tag: ToolTag) {
-  return toolTags(name).includes(tag);
+/** 内置工具之外还有 MCP 这类运行时工具，查找要带上本轮附加上来的定义。 */
+export function findToolDefinition(name: unknown, extraTools: readonly ToolDefinition[] = []): ToolDefinition | null {
+  const toolName = String(name || '');
+  return getToolDefinition(toolName) || extraTools.find((tool) => tool.name === toolName) || null;
+}
+
+function hasTag(name: unknown, tag: ToolTag, extraTools: readonly ToolDefinition[] = []) {
+  return (findToolDefinition(name, extraTools)?.tags || []).includes(tag);
 }
 
 export function isArtifactToolCall(call: any) {
@@ -70,4 +76,8 @@ export function isImageToolCall(call: any) {
 
 export function isSkillToolCall(call: any) {
   return hasTag(callToolName(call), 'skill');
+}
+
+export function isMcpToolCall(call: any, extraTools: readonly ToolDefinition[] = []) {
+  return findToolDefinition(callToolName(call), extraTools)?.source === 'mcp';
 }

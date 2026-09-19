@@ -21,7 +21,7 @@ test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本',
   for (const tool of ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
     assert.match(artifactTools, new RegExp(`name: '${tool}'`));
   }
-  assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolSchemasFor \} from '@\/lib\/tools';/);
+  assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isMcpToolCall, isSkillToolCall, toolSchemasFor \} from '@\/lib\/tools';/);
   assert.match(fileTools, /Word\/Excel\/PPT\/ZIP 必须用专用工具，不允许把 Office 或 ZIP 内容编码成 base64 塞进来/);
   assert.match(route, /绝对不要把 \.docx\/\.xlsx\/\.pptx\/\.zip 的内容编码成 base64 交给 file_generate/);
   assert.match(route, /当前不支持解析用户上传的 Word\/Excel\/PPT 内容/);
@@ -30,7 +30,7 @@ test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本',
 test('Office 工具按需下发，避免每次对话都带上工具 schema', () => {
   assert.match(route, /likelyArtifactGenerationRequest/);
   assert.match(route, /const artifactGenerationRequest = fileGenerationRequest/);
-  assert.match(route, /const callableTools = toolSchemasFor\(\{/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools\);/);
   assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
 });

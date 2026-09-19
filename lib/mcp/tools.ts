@@ -1,0 +1,85 @@
+import { MCP_MAX_TOOLS_PER_SERVER, listMcpServers } from './store';
+import { listMcpServerTools } from './client';
+import type { McpTimeouts } from './client';
+import type { McpRemoteTool, McpServerConfig } from './types';
+import type { ToolDefinition } from '@/lib/tools/registry';
+
+/** 模型看到的 MCP 工具名是 <serverId>__<toolName>，避免不同服务的同名工具互相覆盖。 */
+export const MCP_TOOL_SEPARATOR = '__';
+export const MCP_TOOL_CACHE_TTL_MS = 60_000;
+
+export function mcpToolId(serverId: string, toolName: string) {
+  return `${serverId}${MCP_TOOL_SEPARATOR}${toolName}`;
+}
+
+export function isMcpReadOnlyTool(tool: McpRemoteTool) {
+  return tool.annotations?.readOnlyHint === true;
+}
+
+function inputSchemaOf(tool: McpRemoteTool) {
+  const schema = tool.inputSchema;
+  if (schema && typeof schema === 'object' && !Array.isArray(schema)) return schema as Record<string, unknown>;
+  return { type: 'object', properties: {} };
+}
+
+/** 把 MCP 服务公布的工具翻译成注册表条目；权限由 annotations 推导，写入类默认拒绝。 */
+export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpRemoteTool[]): ToolDefinition[] {
+  const allowed = new Set(server.enabledTools || []);
+  const selected = tools.filter((tool) => !allowed.size || allowed.has(tool.name)).slice(0, MCP_MAX_TOOLS_PER_SERVER);
+  return selected.map((tool) => {
+    const readOnly = isMcpReadOnlyTool(tool);
+    return {
+      name: mcpToolId(server.id, tool.name),
+      description: `[MCP · ${server.name}] ${String(tool.description || tool.title || tool.name)}`,
+      schema: inputSchemaOf(tool),
+      permissions: readOnly ? ['network'] : ['network', 'external:write'],
+      tags: ['mcp'],
+      source: 'mcp',
+      // 服务没启用时根本不会构建这些定义，所以门控恒真；真正的拦截在权限校验里。
+      gating: () => true,
+      mcp: { serverId: server.id, serverName: server.name, toolName: tool.name, readOnly, blocked: !readOnly && !server.allowWrite },
+    } satisfies ToolDefinition;
+  });
+}
+
+type McpToolCacheEntry = { at: number; tools: ToolDefinition[] };
+const toolCache = new Map<string, McpToolCacheEntry>();
+
+export function clearMcpToolCache(serverId?: string) {
+  if (serverId) toolCache.delete(serverId);
+  else toolCache.clear();
+}
+
+/**
+ * 拉取已启用服务的工具，best-effort：单个服务连不上或超时只跳过它，
+ * 不能让 MCP 的可用性影响到普通对话。
+ */
+export async function loadMcpToolDefinitions(options: {
+  servers?: readonly McpServerConfig[];
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  timeouts?: McpTimeouts;
+  signal?: AbortSignal;
+  cache?: boolean;
+  dataDir?: string;
+} = {}): Promise<ToolDefinition[]> {
+  const servers = (options.servers || listMcpServers({ dataDir: options.dataDir })).filter((server) => server.enabled);
+  if (!servers.length) return [];
+  const now = options.now || Date.now;
+  const cacheable = options.cache !== false;
+  const definitions: ToolDefinition[] = [];
+  const settled = await Promise.all(servers.map(async (server) => {
+    const cached = cacheable ? toolCache.get(server.id) : undefined;
+    if (cached && now() - cached.at < MCP_TOOL_CACHE_TTL_MS) return cached.tools;
+    try {
+      const tools = await listMcpServerTools(server, { fetchImpl: options.fetchImpl, now: options.now, timeouts: options.timeouts, signal: options.signal });
+      const built = mcpToolDefinitions(server, tools);
+      if (cacheable) toolCache.set(server.id, { at: now(), tools: built });
+      return built;
+    } catch {
+      return [] as ToolDefinition[];
+    }
+  }));
+  for (const items of settled) definitions.push(...items);
+  return definitions;
+}
