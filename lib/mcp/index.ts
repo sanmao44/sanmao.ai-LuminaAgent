@@ -14,7 +14,7 @@ export {
   resetMcpSessions,
   resolveMcpProtocolNegotiation,
 } from './client';
-export { MCP_INIT_TIMEOUT_MS, MCP_LIST_TIMEOUT_MS, MCP_MAX_TOOL_RESULT_CHARS, compareMcpProtocolVersion, negotiateMcpProtocolVersion } from './protocol';
+export { MCP_INIT_TIMEOUT_MS, MCP_LIST_TIMEOUT_MS, MCP_MAX_PAGE_RESULT_CHARS, MCP_MAX_REF_INDEX_CHARS, MCP_MAX_TOOL_RESULT_CHARS, MCP_PAGE_REF_MARKER, compareMcpProtocolVersion, negotiateMcpProtocolVersion } from './protocol';
 export type { McpProtocolNegotiation } from './protocol';
 export {
   MCP_MAX_SERVERS,
@@ -88,6 +88,7 @@ export {
   setCatalogEntryWriteGate,
   stdioCatalogEntries,
 } from './catalog';
+export { BROWSER_TOOL_GUIDE, browserTargetHint } from './browser-guidance';
 export {
   PLAYWRIGHT_EXTENSION_ID,
   PLAYWRIGHT_EXTENSION_TOKEN_ENV,

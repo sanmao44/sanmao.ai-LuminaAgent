@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { browserExtensionHint } from './browser-extension';
+import { browserTargetHint } from './browser-guidance';
 import { catalogBrowserBridge, findCatalogEntry, isStdioCatalogEntry } from './catalog';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
 import type { McpRemoteTool, McpServerConfig } from './types';
@@ -310,6 +311,9 @@ function browserHintFor(server: McpServerConfig, text: string): string | null {
     const entry = findCatalogEntry(server.catalogId);
     if (!entry || !isStdioCatalogEntry(entry) || !entry.browserExtension) return null;
     const bridge = catalogBrowserBridge(entry);
+    // 定位参数写错（照抄 ref=、自己编选择器）和「扩展没连上」是两码事：先给最具体的那条。
+    const misuse = browserTargetHint(text);
+    if (misuse) return misuse;
     return browserExtensionHint(text, {
       browserName: bridge?.browserName,
       executablePath: bridge?.executablePath ?? null,

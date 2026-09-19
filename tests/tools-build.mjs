@@ -27,6 +27,7 @@ const MODULES = [
   'lib/mcp/store',
   'lib/mcp/catalog',
   'lib/mcp/browser-extension',
+  'lib/mcp/browser-guidance',
   'lib/mcp/catalog-remote',
   'lib/mcp/filesystem-roots',
   'lib/mcp/open-folder',

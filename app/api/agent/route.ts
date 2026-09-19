@@ -15,7 +15,8 @@ import { isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGe
 import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
-import { lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
+import { MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
+import { BROWSER_TOOL_GUIDE } from '@/lib/mcp/browser-guidance';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
 import { importBrowserArtifacts } from '@/lib/mcp/browser-downloads';
 import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
@@ -711,6 +712,9 @@ export async function POST(request: Request) {
     if (artifactFollowUpRequest) {
       system += '\n\n本轮是上文交付选项的确认：上一轮你已经提出可以生成文件，用户本轮只是选择了其中之一。请直接调用对应工具生成该文件，把完整内容写进工具参数，不要再次询问，也不要只说明文件包含什么。';
     }
+    // 这段系统提示是不是真的当系统提示用：反向提示、一镜到底、提示词优化、影视导演那几条
+    // 路径各有自己的提示词；下面挂浏览器工具用法时要用同一个判断，别把约定塞进别人的提示词里。
+    const agentSystemPromptInUse = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !isCinematicDirectorTask;
     if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask) llmMessages[0] = isCinematicDirectorTask ? llmMessages[0] : { role: 'system', content: system };
 
     // Search is selected locally before this point. Do not give ordinary
@@ -778,6 +782,19 @@ const auditMcpCall = (
     // 面板给某个服务打开「按需下发」后，它的工具只在提到这个服务时才挂上；没打开的仍然全量下发。
     const lazyGroupKeywords = lazyMcpGroupKeywords(mcpRuntime.servers, mcpTools);
     const callableTools = toolSchemasFor(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords);
+    /**
+     * 浏览器工具最容易翻车的是元素定位：模型会把快照里的 [ref=f5e14] 连前缀一起抄进 target，
+     * 或者自己编一个 CSS 选择器，于是每次都「找不到元素」——用户看到的就是「浏览器打开了，
+     * 然后就停住」。上游 schema 只有一句英文描述，这里把用法和后果直接讲清楚。
+     * 只在浏览器控制真的挂到模型手上时才加：普通对话不该被这段占上下文。
+     */
+    const browserToolPrefixes = mcpRuntime.servers
+      .filter((server) => server.catalogId === 'playwright')
+      .map((server) => `${server.id}${MCP_TOOL_SEPARATOR}`);
+    if (agentSystemPromptInUse && browserToolPrefixes.some((prefix) => callableTools.some((tool: any) => String(tool?.function?.name || '').startsWith(prefix)))) {
+      system += `\n\n${BROWSER_TOOL_GUIDE}`;
+      llmMessages[0] = { role: 'system', content: system };
+    }
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
     const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }));
     const searchMetadata = (): WebSearchMeta | null => {

@@ -221,6 +221,31 @@ test('超长工具结果截断后必须说明，模型才不会当成完整内�
   assert.match(call.text, /只是前 8000 个字符/);
 });
 
+test('页面快照截断要把 ref 索引留着，模型没 ref 只能瞎猜选择器', async () => {
+  mcp.resetMcpSessions();
+  // 真实快照就长这样：大量普通文案行，元素行散在里面，整份 20~40 KB。
+  const filler = Array.from({ length: 1200 }, (_, i) => `  - text "第 ${i} 条普通文案"`).join('\n');
+  const snapshot = `### Snapshot\n\`\`\`yaml\n${filler}\n- searchbox "搜索" [ref=f5e920]\n- link "下一页" [ref=f5e921]\n\`\`\``;
+  assert.ok(snapshot.length > mcp.MCP_MAX_PAGE_RESULT_CHARS, '样本要比快照上限长，才测得到截断');
+  const fetchImpl = async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    const reply = (result) => new Response(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 's' } });
+    if (payload.method === 'initialize') return reply({ protocolVersion: '2025-06-18' });
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (payload.method === 'tools/call') return reply({ content: [{ type: 'text', text: snapshot }] });
+    throw new Error(`unexpected ${payload.method}`);
+  };
+  const call = await mcp.callMcpTool(serverConfig({ id: 'snap' }), 'browser_snapshot', {}, { fetchImpl });
+  assert.ok(call.text.length > 8000, '页面快照不能按普通结果的 8000 截');
+  assert.ok(call.text.length < snapshot.length, '截完还是要比原文短');
+  assert.match(call.text, /页面快照过长已截断/);
+  assert.match(call.text, /被截断部分里带 ref 的元素/);
+  assert.match(call.text, /\[ref=f5e920\]/, '被截掉那段里的 ref 必须补回来');
+  assert.match(call.text, /\[ref=f5e921\]/);
+  // 补回来的只有 ref 行：普通文案不该被一起搬过来，否则等于没截。
+  assert.ok(call.text.split('第 1199 条普通文案').length === 1, '普通文案留在被截断的部分里');
+});
+
 test('客户端把鉴权失败、协议不匹配、超时翻译成明确错误', async () => {
   mcp.resetMcpSessions();
   const unauthorized = fakeMcpServer({ onInitialize: () => new Response('nope', { status: 401 }) });

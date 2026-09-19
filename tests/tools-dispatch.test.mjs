@@ -121,6 +121,17 @@ test(`浏览器下载不算交付物，不能掐掉 MCP 补轮`, () => {
   assert.match(guard[0], /!generatedDeliveryCount/, "要看的是生成工具产出的文件数");
 });
 
+test('挂了浏览器控制就把 ref 用法写进系统提示', () => {
+  // 回归：模型拿到快照后把 [ref=f5e14] 连前缀抄进 target、或自己编 CSS 选择器，
+  // 于是每次点击都「找不到元素」，用户看到的是「浏览器打开了就停住」。
+  assert.match(route, /import \{ BROWSER_TOOL_GUIDE \} from '@\/lib\/mcp\/browser-guidance';/);
+  assert.match(route, /const agentSystemPromptInUse = /, '要有一个「这段系统提示真的在用」的判断');
+  const guard = route.match(/if \(agentSystemPromptInUse && browserToolPrefixes\.some\(/);
+  assert.ok(guard, '浏览器工具用法只在浏览器服务挂上这一轮时附加');
+  assert.match(route, /system \+= `\\n\\n\$\{BROWSER_TOOL_GUIDE\}`;/, '要真的拼进系统提示');
+  assert.match(route, /llmMessages\[0\] = \{ role: 'system', content: system \};/, '拼完要换掉真正下发的那条系统提示');
+});
+
 test(`正文被截成空时，再给模型一次带工具的原生调用机会`, () => {
   // 回归：实测模型把工具调用写成文本标记后整条回复只剩一个 "<"，直接返回用户什么也看不到。
   assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
