@@ -158,6 +158,8 @@ test('recognizes Office and ZIP delivery requests without firing on ordinary cha
     '生成一份季度总结报告',
     '导出成 .docx 发我',
     '把刚才生成的文件打包成 zip',
+    '做一个项目周报模板',
+    '帮我写一个会议纪要',
     '把这些文件压缩一下',
   ]) {
     assert.equal(web.likelyArtifactGenerationRequest(input), true, input);

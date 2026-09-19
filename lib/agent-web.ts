@@ -292,7 +292,7 @@ export function likelyArtifactGenerationRequest(input: string) {
   if (/压缩/.test(text)
     && !/(?:图片|照片|图像|视频|音频|画质|图).{0,6}压缩/.test(text)
     && !/压缩.{0,6}(?:图片|照片|图像|视频|音频|画质)/.test(text)) return true;
-  return /(?:生成|制作|导出|下载|整理|输出|保存|创建|写|做|出一份|来一份).{0,40}(?:word|docx|文档|报告|方案|合同|简历|总结|汇报|论文|说明书|手册|excel|xlsx|表格|报表|台账|清单|数据表|ppt|pptx|幻灯片|演示文稿|演示|deck)/i.test(text);
+  return /(?:生成|制作|导出|下载|整理|输出|保存|创建|写|做|出一份|来一份).{0,40}(?:word|docx|文档|报告|方案|合同|简历|周报|日报|月报|纪要|会议记录|总结|汇报|论文|说明书|手册|excel|xlsx|表格|报表|台账|清单|数据表|ppt|pptx|幻灯片|演示文稿|演示|deck)/i.test(text);
 }
 
 /**
@@ -309,7 +309,7 @@ export function isArtifactFollowUpRequest(previousAssistantText: string, input: 
   if (!picksOption && !confirms) return false;
   const previous = String(previousAssistantText || '').replace(/\s+/g, ' ');
   if (!previous) return false;
-  const mentionsArtifact = /(?:word|docx|excel|xlsx|ppt|pptx|文档|简历|报告|方案|合同|总结|汇报|论文|说明书|手册|表格|报表|台账|清单|数据表|幻灯片|演示文稿|压缩包|打包|文件)/i.test(previous);
+  const mentionsArtifact = /(?:word|docx|excel|xlsx|ppt|pptx|文档|简历|周报|日报|月报|纪要|会议记录|报告|方案|合同|总结|汇报|论文|说明书|手册|表格|报表|台账|清单|数据表|幻灯片|演示文稿|压缩包|打包|文件)/i.test(previous);
   const offersArtifact = /(?:我可以|我也可以|我能|能帮你|要不要|需要我|要我|帮你|给你|生成|做一?份|做一?版|导成|导出|整理成|打包|压缩成|模板)/.test(previous);
   return mentionsArtifact && offersArtifact;
 }
