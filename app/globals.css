@@ -301,7 +301,7 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 .reference-thumb:hover{z-index:5;transform:translateY(-2px)}
 .reference-thumb img{transition:transform .15s;transform-origin:center}
 .reference-thumb:hover img{transform:scale(1.06)}
-.reference-index,.message-ref-thumb>span{
+.reference-index,.message-ref-index{
   position:absolute;
   left:5px;
   top:5px;
@@ -326,6 +326,45 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 }
 .reference-strip.empty .add-reference{flex:1 1 auto;width:100%}
 
+/* 文本/文档引用：缩略图只显示文件名，正文放在 title 提示与点击预览里，不再让文档看起来像参考图。 */
+.reference-text-thumb,.message-ref-text{
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-end;
+  box-sizing:border-box;
+  width:100%;
+  height:100%;
+  padding:16px 5px 5px;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 16%,var(--panel-3)),var(--panel-3));
+}
+.reference-text-thumb>small,.message-ref-text>small{
+  display:-webkit-box;
+  overflow:hidden;
+  color:var(--text-2);
+  font-size:8px;
+  line-height:1.25;
+  word-break:break-all;
+  overflow-wrap:anywhere;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+.message-ref-text>small{-webkit-line-clamp:3}
+.image-card-reference-thumb .reference-text-thumb{
+  padding:0;
+  justify-content:center;
+  border:0;
+  border-radius:0;
+  background:transparent;
+}
+.image-card-reference-thumb .reference-text-thumb>b{
+  color:var(--accent-text);
+  font-size:7px;
+  font-weight:900;
+  letter-spacing:.04em;
+}
 /* @1 / @2 reference picker for the assistant and image prompt inputs. */
 .reference-mention-menu{
   position:absolute;

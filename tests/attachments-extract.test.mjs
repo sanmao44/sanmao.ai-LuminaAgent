@@ -135,7 +135,8 @@ test('上传链路把 Office/PDF 交给服务端解析，文本文件仍走本�
   assert.match(page, /const binaryAttachmentMaxBytes = 20 \* 1024 \* 1024/);
   assert.match(page, /sourceSize: file\.size/);
   assert.match(page, /truncated: Boolean\(data\?\.truncated\)/);
-  assert.match(page, /accept: "[^"]*\.docx,\.xlsx,\.pptx,\.pdf"/);
+  assert.match(page, /const agentReferenceAccept = `\$\{referenceAccept\},\.docx,\.xlsx,\.pptx,\.pdf`/);
+  assert.match(page, /accept: agentReferenceAccept/);
   assert.match(route, /isTrustedAppRequest\(request\)/);
   assert.match(route, /file\.size > ATTACHMENT_MAX_BYTES/);
   assert.match(route, /text: parsed\.text/);

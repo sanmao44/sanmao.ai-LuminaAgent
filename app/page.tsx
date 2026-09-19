@@ -613,6 +613,13 @@ function chatFileToReference(file) {
         mimeType: file.mimeType || 'text/plain;charset=utf-8'
     };
 }
+// 文本/文档引用角标：优先用真实扩展名，避免 Word/Excel 文档显示成统一的文本标记。
+function referenceTextBadge(reference) {
+    const name = String(reference?.name || '');
+    const dot = name.lastIndexOf('.');
+    const extension = dot > 0 ? name.slice(dot + 1) : '';
+    return /^[a-z0-9]{1,5}$/i.test(extension) ? extension.toUpperCase() : 'TXT';
+}
 function creativeReferenceUrl(reference) {
     return typeof reference?.dataUrl === 'string' && reference.dataUrl ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : '';
 }
@@ -1353,6 +1360,16 @@ function Icon({ name, size = 18 }) {
                     cx: "8",
                     cy: "9",
                     r: "1.4"
+                })
+            ]
+        }),
+        file: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M6.5 3h7l4.5 4.5V21h-11.5V3Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M13.5 3v4.5H18"
                 })
             ]
         }),
@@ -2436,7 +2453,10 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
         })
     });
 }
-function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClick, onLocalUpscale, localUpscaleActive = false, label = '参考图' }) {
+// 引用区可选的文件类型；助手输入框额外允许 Word/Excel/PPT/PDF。
+const referenceAccept = "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
+const agentReferenceAccept = `${referenceAccept},.docx,.xlsx,.pptx,.pdf`;
+function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClick, onLocalUpscale, localUpscaleActive = false, label = '参考图', hint = '支持 PNG/JPG/WEBP', accept = referenceAccept }) {
     const inputRef = useRef(null);
     const [dragIndex, setDragIndex] = useState(null);
     const [preview, setPreview] = useState(null);
@@ -2460,7 +2480,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                     /*#__PURE__*/ _jsxs("span", {
                         children: [
                             /*#__PURE__*/ _jsx(Icon, {
-                                name: "image",
+                                name: refs.length && refs.every((ref)=>ref.kind === 'text') ? 'file' : 'image',
                                 size: 14
                             }),
                             label,
@@ -2513,7 +2533,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                             /*#__PURE__*/ _jsxs("small", {
                                 children: [
                                     refs.length,
-                                    "/16 \xb7 支持 PNG/JPG/WEBP"
+                                    `/16 · ${hint}`
                                 ]
                             })
                         ]
@@ -2527,7 +2547,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                         className: "reference-items",
                         children: refs.map((ref, index)=>/*#__PURE__*/ _jsxs("div", {
                                 className: `reference-thumb ${ref.pending ? 'pending' : ''} ${dragIndex === index ? 'dragging' : ''}`,
-                                title: `${ref.pending ? '正在准备 · ' : '点击预览 · '}${ref.name}`,
+                                title: `${ref.pending ? '正在准备 · ' : '点击预览 · '}${ref.name}${ref.kind === 'text' ? `\n${referencePreviewText(ref, 160)}` : ''}`,
                                 draggable: !ref.pending,
                                 onClick: ()=>setPreview(ref),
                                 onDragStart: (event)=>{
@@ -2547,7 +2567,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                                 },
                                 onDragEnd: ()=>setDragIndex(null),
                                 children: [
-                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 42) })] }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: creativeReferenceUrl(ref), alt: ref.name }),
+                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "reference-text-thumb", children: /*#__PURE__*/ _jsx("small", { children: ref.name }) }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: creativeReferenceUrl(ref), alt: ref.name }),
                                     ref.pending && /*#__PURE__*/ _jsxs("span", {
                                         className: "reference-pending-overlay",
                                         children: [
@@ -2600,7 +2620,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                 hidden: true,
                 ref: inputRef,
                 type: "file",
-                 accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1",
+                 accept: accept,
                 multiple: true,
                 onChange: (e)=>{
                     if (e.target.files) onAdd(e.target.files);
@@ -2760,16 +2780,16 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                     }),
                     references.length ? /*#__PURE__*/ _jsxs("div", {
                         className: "image-card-references",
-                        title: references.map((reference, index) => `图 ${index + 1} · ${reference.name}`).join('\n'),
+                        title: references.map((reference, index) => `${reference.kind === 'text' ? '引用' : '图'} ${index + 1} · ${reference.name}`).join('\n'),
                         children: [
                             /*#__PURE__*/ _jsx("span", {
                                 className: "image-card-reference-label",
-                                children: "参考图"
+                                children: references.some((reference)=>reference.kind !== 'text') ? "参考图" : "引用"
                             }),
                             references.slice(0, 4).map((reference, index) => /*#__PURE__*/ _jsxs("span", {
                                 className: "image-card-reference-thumb",
                                 children: [
-                                    reference.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: reference.url, muted: true, playsInline: true }) : reference.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(reference, 24) })] }) : /*#__PURE__*/ _jsx("img", {
+                                    reference.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: reference.url, muted: true, playsInline: true }) : reference.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "reference-text-thumb", children: /*#__PURE__*/ _jsx("b", { children: referenceTextBadge(reference) }) }) : /*#__PURE__*/ _jsx("img", {
                                         src: reference.url,
                                         alt: `参考图 ${index + 1}`
                                     }),
@@ -11455,12 +11475,13 @@ export default function Page() {
                                                                     children: message.references.map((ref, index)=>/*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
                                                                             className: "message-ref-thumb",
-                                                                            title: `点击放大查看 · 参考图 ${index + 1} · ${ref.name}`,
-                                                                            "aria-label": `放大查看参考图 ${index + 1}`,
+                                                                            title: `点击放大查看 · ${ref.kind === 'text' ? '引用' : '参考图'} ${index + 1} · ${ref.name}`,
+                                                                            "aria-label": `放大查看${ref.kind === 'text' ? '引用' : '参考图'} ${index + 1}`,
                                                                             onClick: ()=>setMessageReferencePreview(ref),
                                                                             children: [
-                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "message-ref-text", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 28) })] }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: ref.name }),
+                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "message-ref-text", children: /*#__PURE__*/ _jsx("small", { children: ref.name }) }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: ref.name }),
                                                                                 /*#__PURE__*/ _jsx("span", {
+                                                                                    className: "message-ref-index",
                                                                                     children: index + 1
                                                                                 })
                                                                             ]
@@ -11795,7 +11816,9 @@ export default function Page() {
                                                         setAgentRefs([]);
                                                         setAgentFiles([]);
                                                     },
-                                                    label: "本轮参考图"
+                                                    label: agentRefs.some((ref)=>ref.kind === 'text') ? "本轮引用" : "本轮参考图",
+                                                    hint: "支持图片 / 视频 / 文档",
+                                                    accept: agentReferenceAccept
                                                 }),
                                                 agentFiles.length > 0 && /*#__PURE__*/ _jsx(ChatFileList, {
                                                     files: agentFiles,
@@ -11970,7 +11993,7 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("input", {
                                                                             type: "file",
                                                                             hidden: true,
-                                                                            accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1,.docx,.xlsx,.pptx,.pdf",
+                                                                            accept: agentReferenceAccept,
                                                                             multiple: true,
                                                                             onChange: (e)=>{
                                                                                 if (e.target.files) void addAgentAttachments(e.target.files);
