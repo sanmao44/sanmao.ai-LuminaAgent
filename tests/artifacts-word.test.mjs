@@ -72,3 +72,46 @@ test('markdown 会被解析成章节，而不是整段堆进一个段落', () =>
   assert.deepEqual(sections[0].bullets, ['一', '二']);
   assert.deepEqual(sections[1].paragraphs, ['结尾']);
 });
+
+test('有序列表写入真正的编号，而不是降级成圆点', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '步骤.docx',
+      markdown: '## 操作步骤\n\n1. 打开工作台\n2. 生成图片\n3. 导出文件\n',
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const entries = artifacts.readArchiveEntries(buffer);
+
+    const sections = artifacts.markdownToSections('1. 甲\n2. 乙\n');
+    assert.deepEqual(sections[0].orderedBullets, ['甲', '乙']);
+    assert.equal(sections[0].bullets, undefined);
+
+    const xml = artifacts.readArchiveText(buffer, 'word/document.xml');
+    assert.ok(xml.includes('打开工作台'));
+    assert.match(xml, /<w:numPr>/, '有序列表段落应带编号属性');
+    assert.ok(!xml.includes('1. 打开工作台'), '序号不应混进正文文本');
+
+    const numbering = artifacts.readArchiveText(buffer, 'word/numbering.xml');
+    assert.match(numbering, /w:numFmt w:val="decimal"/);
+  });
+});
+
+test('markdown 链接会变成可点击超链接，不安全协议按纯文本输出', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generateDocumentArtifact({
+      filename: '链接.docx',
+      markdown: '参考[官方文档](https://example.com/docs)查看。\n\n危险链接[点我](javascript:void)不要点。\n',
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const xml = artifacts.readArchiveText(buffer, 'word/document.xml');
+    const rels = artifacts.readArchiveText(buffer, 'word/_rels/document.xml.rels');
+
+    assert.ok(xml.includes('官方文档'));
+    assert.ok(!xml.includes('[官方文档]'), '链接语法不应原样输出');
+    assert.match(xml, /<w:hyperlink/, '应生成 hyperlink 元素');
+    assert.ok(rels.includes('https://example.com/docs'), '应写入外部关系');
+
+    assert.ok(xml.includes('点我'));
+    assert.ok(!rels.includes('javascript'), '不安全协议不得进入关系表');
+  });
+});

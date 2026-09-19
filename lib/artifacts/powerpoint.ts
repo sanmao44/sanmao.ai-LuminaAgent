@@ -1,6 +1,8 @@
 import PptxGenJS from 'pptxgenjs';
 import {
   PRESENTATION_MAX_BULLETS_PER_SLIDE,
+  PRESENTATION_MAX_CHART_CATEGORIES,
+  PRESENTATION_MAX_CHART_SERIES,
   PRESENTATION_MAX_SLIDES,
   PRESENTATION_MAX_TABLE_COLUMNS,
   PRESENTATION_MAX_TABLE_ROWS,
@@ -16,7 +18,14 @@ export type PresentationTableInput = {
   rows: Array<Array<string | number | null>>;
 };
 
-export type PresentationSlideLayout = 'title' | 'section' | 'bullets' | 'two-column' | 'table';
+/** 图表只吃结构化数据，不依赖外部图片，避免把网络下载带进交付链路。 */
+export type PresentationChartInput = {
+  type?: 'bar' | 'line' | 'pie' | 'doughnut' | 'area';
+  categories?: Array<string | number | null>;
+  series?: Array<{ name?: string; values?: Array<number | null> }>;
+};
+
+export type PresentationSlideLayout = 'title' | 'section' | 'bullets' | 'two-column' | 'table' | 'chart';
 
 export type PresentationSlideInput = {
   layout?: PresentationSlideLayout;
@@ -29,6 +38,7 @@ export type PresentationSlideInput = {
   rightBullets?: string[];
   columns?: string[];
   rows?: Array<Array<string | number | null>>;
+  chart?: PresentationChartInput;
   notes?: string;
 };
 
@@ -51,6 +61,7 @@ type DeckTheme = {
   onAccent: string;
   border: string;
   font: string;
+  chartPalette: readonly string[];
 };
 
 const THEMES: Record<string, DeckTheme> = {
@@ -58,11 +69,13 @@ const THEMES: Record<string, DeckTheme> = {
     background: '0B1220', surface: '131E31', surfaceAlt: '0F1A2A',
     title: 'F8FAFC', body: 'C7D2E0', accent: '3B82F6', onAccent: 'FFFFFF',
     border: '22304A', font: '微软雅黑',
+    chartPalette: ['3B82F6', '22D3EE', 'A855F7', 'F59E0B', '10B981', 'F43F5E'],
   },
   'sanmao-light': {
     background: 'FFFFFF', surface: 'F4F7FB', surfaceAlt: 'EAF0F8',
     title: '0F172A', body: '3A475C', accent: '2563EB', onAccent: 'FFFFFF',
     border: 'D7E0EC', font: '微软雅黑',
+    chartPalette: ['2563EB', '0891B2', '7C3AED', 'D97706', '059669', 'DC2626'],
   },
 };
 
@@ -330,6 +343,97 @@ function drawTable(slide: PptxGenJS.Slide, theme: DeckTheme, input: Presentation
   });
 }
 
+type NormalizedChart = {
+  type: PptxGenJS.CHART_NAME;
+  categories: string[];
+  series: Array<{ name: string; values: number[] }>;
+};
+
+const CHART_TYPES: Record<string, PptxGenJS.CHART_NAME> = {
+  bar: 'bar', line: 'line', pie: 'pie', doughnut: 'doughnut', area: 'area',
+};
+
+/**
+ * 图表数据先归一化：截断超限、补齐长度、剔除非法数值。
+ * 直接把模型给的原始数组交给 pptxgenjs 会写出坏 XML，打开时 PowerPoint 会报修复。
+ */
+export function normalizeChartInput(raw: unknown, warnings: string[], context: string): NormalizedChart | null {
+  const chart = (raw && typeof raw === 'object' ? raw : null) as PresentationChartInput | null;
+  if (!chart) return null;
+  const requested = String(chart.type || 'bar').trim().toLowerCase();
+  const type = CHART_TYPES[requested];
+  if (!type) warnings.push(`${context}不支持的图表类型「${chart.type}」，已改用柱状图`);
+
+  const rawSeries = Array.isArray(chart.series) ? chart.series : [];
+  if (rawSeries.length > PRESENTATION_MAX_CHART_SERIES) warnings.push(`${context}图表系列超过 ${PRESENTATION_MAX_CHART_SERIES} 组，已截断`);
+  let series = rawSeries.slice(0, PRESENTATION_MAX_CHART_SERIES).map((entry, index) => ({
+    name: clip(entry?.name, warnings, context, 40) || `系列 ${index + 1}`,
+    values: (Array.isArray(entry?.values) ? entry.values : []).map((value) => (Number.isFinite(Number(value)) ? Number(value) : 0)),
+  })).filter((entry) => entry.values.length);
+
+  const rawCategories = Array.isArray(chart.categories) ? chart.categories : [];
+  const width = Math.max(rawCategories.length, ...series.map((entry) => entry.values.length), 0);
+  if (!series.length || !width) return null;
+  if (width > PRESENTATION_MAX_CHART_CATEGORIES) warnings.push(`${context}图表分类超过 ${PRESENTATION_MAX_CHART_CATEGORIES} 个，已截断`);
+  if ((type === 'pie' || type === 'doughnut') && series.length > 1) {
+    warnings.push(`${context}饼图只能表达一组数据，已使用第一组系列`);
+    series = series.slice(0, 1);
+  }
+
+  const size = Math.min(width, PRESENTATION_MAX_CHART_CATEGORIES);
+  const categories = Array.from({ length: size }, (_, index) => {
+    const label = rawCategories[index];
+    const text = label === undefined || label === null ? '' : clip(label, warnings, context, 24);
+    return text.trim() || `第 ${index + 1} 项`;
+  });
+  return {
+    type: type || 'bar',
+    categories,
+    series: series.map((entry) => ({
+      name: entry.name,
+      values: Array.from({ length: size }, (_, index) => entry.values[index] ?? 0),
+    })),
+  };
+}
+
+function drawChart(slide: PptxGenJS.Slide, theme: DeckTheme, chart: NormalizedChart, bodyTop: number) {
+  const isPie = chart.type === 'pie' || chart.type === 'doughnut';
+  slide.addChart(
+    chart.type,
+    chart.series.map((entry) => ({ name: entry.name, labels: chart.categories, values: entry.values })),
+    {
+      x: MARGIN,
+      y: bodyTop,
+      w: CONTENT_WIDTH,
+      h: Math.max(1.6, BODY_BOTTOM - bodyTop),
+      chartColors: [...theme.chartPalette],
+      fill: theme.surface,
+      border: { pt: 1, color: theme.border },
+      fontFace: theme.font,
+      color: theme.body,
+      showTitle: false,
+      showLegend: isPie || chart.series.length > 1,
+      legendPos: 'b',
+      legendColor: theme.body,
+      legendFontFace: theme.font,
+      legendFontSize: 11,
+      showValue: isPie,
+      dataLabelColor: theme.title,
+      dataLabelFontFace: theme.font,
+      dataLabelFontSize: 11,
+      catAxisLabelColor: theme.body,
+      catAxisLabelFontFace: theme.font,
+      catAxisLabelFontSize: 11,
+      valAxisLabelColor: theme.body,
+      valAxisLabelFontFace: theme.font,
+      valAxisLabelFontSize: 11,
+      valGridLine: { color: theme.border, size: 0.5 },
+      catGridLine: { style: 'none' },
+      barGapWidthPct: 40,
+    },
+  );
+}
+
 /** Markdown 简写：`#` 作为标题页，`##` 作为内容页，列表项作为要点。 */
 export function markdownToSlides(markdown: string): PresentationSlideInput[] {
   const slides: PresentationSlideInput[] = [];
@@ -520,6 +624,18 @@ export async function buildPresentation(input: PresentationInput): Promise<Artif
     } else if (layout === 'table') {
       const bodyTop = drawHeader(slide, theme, clip(slideInput.title, warnings, context, 80));
       drawTable(slide, theme, { columns: slideInput.columns, rows: slideInput.rows || [] }, warnings, context, bodyTop);
+    } else if (layout === 'chart') {
+      const bodyTop = drawHeader(slide, theme, clip(slideInput.title, warnings, context, 80));
+      const chart = normalizeChartInput(slideInput.chart, warnings, context);
+      if (chart) {
+        drawChart(slide, theme, chart, bodyTop);
+      } else {
+        warnings.push(`${context}图表缺少有效数据，已跳过绘图`);
+        slide.addText('（图表数据为空）', {
+          x: MARGIN, y: bodyTop + 0.4, w: CONTENT_WIDTH, h: 0.6,
+          fontSize: 14, color: theme.body, fontFace: theme.font, align: 'center',
+        });
+      }
     } else if (layout === 'two-column') {
       const bodyTop = drawHeader(slide, theme, clip(slideInput.title, warnings, context, 80));
       const available = BODY_BOTTOM - bodyTop;

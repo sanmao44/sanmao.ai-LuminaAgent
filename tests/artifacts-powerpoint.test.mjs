@@ -92,3 +92,66 @@ test('markdown 的 # 标题页与 ## 内容页会被识别', () => {
   assert.equal(slides[1].layout, 'bullets');
   assert.deepEqual(slides[1].bullets, ['一', '二']);
 });
+
+test('chart 版面生成原生图表部件，数据与主题配色一起写入', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '季度汇报.pptx',
+      slides: [{
+        layout: 'chart',
+        title: '季度销售',
+        chart: {
+          type: 'bar',
+          categories: ['Q1', 'Q2', 'Q3'],
+          series: [{ name: '销售额', values: [120, 98, 143] }],
+        },
+      }],
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const entries = artifacts.readArchiveEntries(buffer);
+
+    const charts = Object.keys(entries).filter((name) => /^ppt\/charts\/chart\d+\.xml$/.test(name));
+    assert.equal(charts.length, 1, '应生成一个图表部件');
+    const chartXml = artifacts.readArchiveText(buffer, charts[0]);
+    assert.ok(chartXml.includes('销售额'), '系列名应写入图表');
+    assert.match(chartXml, /<c:v>\s*120\s*<\/c:v>/, '数值应写入图表');
+    assert.ok(chartXml.includes('3B82F6'), '应使用主题配色');
+
+    const rels = artifacts.readArchiveText(buffer, 'ppt/slides/_rels/slide1.xml.rels');
+    assert.ok(rels.includes('charts/chart1.xml'), '幻灯片应引用图表部件');
+    assert.ok(!result.warnings.some((warning) => warning.includes('图表缺少有效数据')));
+  });
+});
+
+test('图表数据不合法时降级提示而不是整份失败，饼图只用第一组', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '异常图表.pptx',
+      slides: [
+        { layout: 'chart', title: '空图表', chart: { type: 'pie', series: [] } },
+        {
+          layout: 'chart',
+          title: '饼图',
+          chart: {
+            type: 'pie',
+            categories: ['甲', '乙'],
+            series: [{ name: '第一组', values: [1, 2] }, { name: '第二组', values: [3, 4] }],
+          },
+        },
+      ],
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const entries = artifacts.readArchiveEntries(buffer);
+
+    assert.ok(result.warnings.some((warning) => warning.includes('图表缺少有效数据')), '空数据应给出提示');
+    assert.ok(result.warnings.some((warning) => warning.includes('饼图')), '多系列饼图应收敛为第一组');
+
+    const charts = Object.keys(entries).filter((name) => /^ppt\/charts\/chart\d+\.xml$/.test(name));
+    assert.equal(charts.length, 1, '空图表不应产出图表部件');
+    const chartXml = artifacts.readArchiveText(buffer, charts[0]);
+    assert.ok(chartXml.includes('第一组'));
+    assert.ok(!chartXml.includes('第二组'));
+    const emptySlide = artifacts.readArchiveText(buffer, 'ppt/slides/slide1.xml');
+    assert.ok(emptySlide.includes('图表数据为空'));
+  });
+});

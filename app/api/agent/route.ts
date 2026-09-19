@@ -228,7 +228,7 @@ const tools = [
     type: 'function',
     function: {
       name: 'presentation_generate',
-      description: '用户要生成、导出 PPT / 演示文稿 / 幻灯片（.pptx、PPT、deck）时调用。不要用 file_generate 生成 .pptx。',
+      description: '用户要生成、导出 PPT / 演示文稿 / 幻灯片（.pptx、PPT、deck）时调用。需要图表时用 layout=chart，在 chart 里给数值数据即可。不要用 file_generate 生成 .pptx。',
       parameters: {
         type: 'object',
         properties: {
@@ -242,7 +242,7 @@ const tools = [
             items: {
               type: 'object',
               properties: {
-                layout: { type: 'string', enum: ['title', 'section', 'bullets', 'two-column', 'table'] },
+                layout: { type: 'string', enum: ['title', 'section', 'bullets', 'two-column', 'table', 'chart'] },
                 title: { type: 'string' },
                 subtitle: { type: 'string' },
                 bullets: { type: 'array', items: { type: 'string' }, description: '每页建议不超过 6 条，超出会自动续页。' },
@@ -252,6 +252,27 @@ const tools = [
                 rightBullets: { type: 'array', items: { type: 'string' } },
                 columns: { type: 'array', items: { type: 'string' }, description: 'layout=table 时的表头。' },
                 rows: { type: 'array', items: { type: 'array', items: { type: ['string', 'number', 'null'] } } },
+                chart: {
+                  type: 'object',
+                  description: 'layout=chart 时的图表数据，只给数值，不需要图片。',
+                  properties: {
+                    type: { type: 'string', enum: ['bar', 'line', 'pie', 'doughnut', 'area'], description: '默认 bar。' },
+                    categories: { type: 'array', items: { type: ['string', 'number'] }, description: '横轴或分片标签，最多 24 个；不给则自动编号。' },
+                    series: {
+                      type: 'array',
+                      description: '数据系列，最多 6 组；饼图只用第一组。',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          name: { type: 'string', description: '系列名，用作图例。' },
+                          values: { type: 'array', items: { type: ['number', 'null'] } },
+                        },
+                        required: ['values'],
+                      },
+                    },
+                  },
+                  required: ['series'],
+                },
                 notes: { type: 'string', description: '演讲者备注，可选。' },
               },
             },

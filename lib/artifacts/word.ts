@@ -2,8 +2,10 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
+  ExternalHyperlink,
   Footer,
   HeadingLevel,
+  LevelFormat,
   Packer,
   PageNumber,
   Paragraph,
@@ -40,7 +42,13 @@ const COLOR_MUTED = '6B7280';
 const HEADER_FILL = 'DCE6F5';
 const ZEBRA_FILL = 'F4F7FB';
 const TABLE_BORDER = 'D7E0EC';
+const CODE_COLOR = 'B91C5C';
 const CELL_MARGIN = { top: 80, bottom: 80, left: 120, right: 120 };
+/** 有序列表的编号定义引用名，Document.numbering 里注册一次，段落按引用渲染。 */
+const ORDERED_LIST_REFERENCE = 'sanmao-ordered-list';
+const LINK_COLOR = '1D4ED8';
+/** 只放行常见安全协议，避免模型输出的 `javascript:` / `data:` 变成可点击链接。 */
+const SAFE_LINK_PATTERN = /^(https?:\/\/|mailto:|tel:)/i;
 
 export type DocumentTableInput = {
   columns?: string[];
@@ -52,6 +60,7 @@ export type DocumentSectionInput = {
   level?: 1 | 2 | 3;
   paragraphs?: string[];
   bullets?: string[];
+  orderedBullets?: string[];
   tables?: DocumentTableInput[];
 };
 
@@ -59,6 +68,7 @@ type LooseSectionInput = DocumentSectionInput & {
   type?: string;
   text?: string;
   items?: string[];
+  ordered?: string[];
   columns?: string[];
   rows?: Array<Array<string | number | null>>;
 };
@@ -77,6 +87,7 @@ export function normalizeSections(raw: unknown): DocumentSectionInput[] {
       level: section.level,
       paragraphs: Array.isArray(section.paragraphs) ? section.paragraphs.map(String) : undefined,
       bullets: Array.isArray(section.bullets) ? section.bullets.map(String) : undefined,
+      orderedBullets: Array.isArray(section.orderedBullets) ? section.orderedBullets.map(String) : undefined,
       tables: Array.isArray(section.tables) ? section.tables : undefined,
     };
     const text = typeof section.text === 'string' ? section.text : '';
@@ -85,6 +96,7 @@ export function normalizeSections(raw: unknown): DocumentSectionInput[] {
     }
     if (text && !normalized.paragraphs) normalized.paragraphs = [text];
     if (Array.isArray(section.items) && !normalized.bullets) normalized.bullets = section.items.map(String);
+    if (Array.isArray(section.ordered) && !normalized.orderedBullets) normalized.orderedBullets = section.ordered.map(String);
     if (Array.isArray(section.rows) && !normalized.tables) normalized.tables = [{ columns: section.columns, rows: section.rows }];
     return [normalized];
   });
@@ -103,6 +115,7 @@ export type MarkdownBlock =
   | { type: 'heading'; level: 1 | 2 | 3; text: string }
   | { type: 'paragraph'; text: string }
   | { type: 'bullets'; items: string[] }
+  | { type: 'ordered'; items: string[] }
   | { type: 'code'; text: string }
   | { type: 'table'; columns: string[]; rows: string[][] };
 
@@ -163,7 +176,7 @@ export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
         items.push(lines[index].trim().replace(/^\d+[.)]\s+/, ''));
         index += 1;
       }
-      blocks.push({ type: 'bullets', items });
+      blocks.push({ type: 'ordered', items });
       continue;
     }
     if (trimmed.startsWith('|') && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
@@ -202,6 +215,8 @@ export function markdownToSections(markdown: string): DocumentSectionInput[] {
       current.paragraphs = [...(current.paragraphs || []), block.text];
     } else if (block.type === 'bullets') {
       current.bullets = [...(current.bullets || []), ...block.items];
+    } else if (block.type === 'ordered') {
+      current.orderedBullets = [...(current.orderedBullets || []), ...block.items];
     } else if (block.type === 'table') {
       current.tables = [...(current.tables || []), { columns: block.columns, rows: block.rows }];
     }
@@ -209,18 +224,31 @@ export function markdownToSections(markdown: string): DocumentSectionInput[] {
   return sections;
 }
 
-type InlineRun = { text: string; bold?: boolean; code?: boolean };
+type InlineRun = { text: string; bold?: boolean; code?: boolean; link?: string };
+
+/** 链接只放行白名单协议；不合规时返回空串，调用方按纯文本输出。 */
+function safeLink(raw: string) {
+  const value = String(raw ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  return SAFE_LINK_PATTERN.test(value) ? value : '';
+}
 
 function parseInline(text: string): InlineRun[] {
   const runs: InlineRun[] = [];
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]\n]+\]\([^\s)]+\))/g;
   let lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0;
     if (start > lastIndex) runs.push({ text: text.slice(lastIndex, start) });
     const token = match[0];
-    if (token.startsWith('**')) runs.push({ text: token.slice(2, -2), bold: true });
-    else runs.push({ text: token.slice(1, -1), code: true });
+    if (token.startsWith('**')) {
+      runs.push({ text: token.slice(2, -2), bold: true });
+    } else if (token.startsWith('`')) {
+      runs.push({ text: token.slice(1, -1), code: true });
+    } else {
+      const labelEnd = token.indexOf(']');
+      const url = safeLink(token.slice(labelEnd + 2, -1));
+      runs.push(url ? { text: token.slice(1, labelEnd), link: url } : { text: token });
+    }
     lastIndex = start + token.length;
   }
   if (lastIndex < text.length) runs.push({ text: text.slice(lastIndex) });
@@ -234,24 +262,34 @@ function clipText(text: string, warnings: string[], context: string) {
   return value.slice(0, DOCUMENT_MAX_TEXT_CHARS);
 }
 
+/**
+ * 把内联片段转成 Word 子节点。链接必须是 ExternalHyperlink，否则只会得到一段普通文字。
+ * `styleCode` 只在正文里给代码片段上色，表格里保持与单元格一致的朴素样式。
+ */
+function inlineChildren(runs: InlineRun[], bold: boolean, styleCode: boolean): Array<TextRun | ExternalHyperlink> {
+  return runs.map((run) => {
+    if (run.link) {
+      return new ExternalHyperlink({
+        link: run.link,
+        children: [new TextRun({ text: run.text, bold: bold || run.bold, color: LINK_COLOR, underline: {} })],
+      });
+    }
+    return new TextRun({
+      text: run.text,
+      bold: bold || run.bold,
+      font: run.code ? MONO_FONT : undefined,
+      size: run.code && styleCode ? 19 : undefined,
+      color: run.code && styleCode ? CODE_COLOR : undefined,
+    });
+  });
+}
+
 function textRuns(text: string, warnings: string[], context: string) {
-  const clipped = clipText(text, warnings, context);
-  return parseInline(clipped).map((run) => new TextRun({
-    text: run.text,
-    bold: run.bold,
-    font: run.code ? MONO_FONT : undefined,
-    size: run.code ? 19 : undefined,
-    color: run.code ? 'B91C5C' : undefined,
-  }));
+  return inlineChildren(parseInline(clipText(text, warnings, context)), false, true);
 }
 
 function cellRuns(text: string, warnings: string[], context: string, bold = false) {
-  const clipped = clipText(text, warnings, context);
-  return parseInline(clipped).map((run) => new TextRun({
-    text: run.text,
-    bold: bold || run.bold,
-    font: run.code ? MONO_FONT : undefined,
-  }));
+  return inlineChildren(parseInline(clipText(text, warnings, context)), bold, false);
 }
 
 /** 单元格左右内边距合计（dxa）；测量列宽时必须算进去，否则长表头会被迫折行。 */
@@ -434,6 +472,14 @@ export async function buildWordDocument(input: DocumentInput): Promise<ArtifactB
         children: textRuns(bullet, warnings, '列表'),
       }));
     }
+    for (const item of (section.orderedBullets || []).slice(0, DOCUMENT_MAX_BULLETS_PER_SECTION)) {
+      children.push(new Paragraph({
+        numbering: { reference: ORDERED_LIST_REFERENCE, level: 0 },
+        alignment: AlignmentType.LEFT,
+        spacing: { after: 80 },
+        children: textRuns(item, warnings, '编号列表'),
+      }));
+    }
     for (const table of section.tables || []) {
       children.push(buildTable(table, warnings));
       children.push(new Paragraph({ spacing: { after: 120 }, children: [] }));
@@ -449,6 +495,18 @@ export async function buildWordDocument(input: DocumentInput): Promise<ArtifactB
     creator: input.author?.trim() || 'SANMAO.AI',
     title: input.title?.trim() || undefined,
     description: `由 SANMAO.AI 生成（${sectionCount} 个章节）`,
+    numbering: {
+      config: [{
+        reference: ORDERED_LIST_REFERENCE,
+        levels: [{
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: '%1.',
+          alignment: AlignmentType.START,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        }],
+      }],
+    },
     styles: {
       default: {
         document: {
