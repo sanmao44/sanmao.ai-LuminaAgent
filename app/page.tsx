@@ -6108,7 +6108,16 @@ export default function Page() {
                 setResultItems((old)=>[...items, ...old]);
                 patchGenerateTask(task.id, { status: 'success', completedAt: Date.now(), items, itemIds: items.map((item)=>item.id), info: `${data.model?.name || '高清放大'} · 已恢复完成` });
                 notify('已恢复完成的高清放大任务。');
-            }).catch((error)=>patchGenerateTask(task.id, { status: 'error', completedAt: Date.now(), error: error instanceof Error ? error.message : '高清任务恢复失败' })).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
+            }).catch((error)=>{
+                const message = error instanceof Error ? error.message : '高清任务恢复失败';
+                const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+                patchGenerateTask(task.id, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    error: message,
+                    ...(cancelled ? { cancelled: true } : {})
+                });
+            }).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
         }
     }, [generateTasksReady, generateTasks, gallery]);
     useEffect(()=>{
@@ -6814,9 +6823,33 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '删除视频任务失败');
         }
     }
+    async function patchVideoTask(task, action) {
+        try {
+            const res = await fetch(`/api/video/tasks/${encodeURIComponent(task.id)}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    action
+                })
+            });
+            const data = await res.json().catch(()=>({}));
+            if (!res.ok) throw new Error(data.error || (action === 'cancel' ? '停止跟踪失败' : '重试失败'));
+            if (action === 'cancel') {
+                setVideoTasks((old)=>old.map((item)=>item.id === task.id ? data.task : item));
+                notify('已停止跟踪这条视频任务，服务商可能仍在生成');
+            } else {
+                void refreshVideoTasks(videoPage);
+                notify('已按原参数重新提交一条视频任务');
+            }
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '视频任务操作失败');
+        }
+    }
     function askDeleteVideoTask(task) {
         if (task.status === 'pending' || task.status === 'running') {
-            notify('视频正在生成，完成或失败后才能删除');
+            notify('视频正在生成，先取消任务再删除');
             return;
         }
         setConfirmState({
@@ -8057,6 +8090,34 @@ export default function Page() {
             request: retryRequest
         });
     }
+    const UPSCALE_CANCELLED_MESSAGE = '高清任务已取消。';
+    async function cancelGenerateTask(task) {
+        if (task.status !== 'pending') return notify('这条任务已经结束，无法停止跟踪');
+        if (task.mode !== 'upscale' || !task.upscaleTaskId) return notify('当前只有后台高清放大任务支持停止跟踪');
+        try {
+            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(task.upscaleTaskId)}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    action: 'cancel'
+                })
+            });
+            const data = await response.json().catch(()=>({}));
+            if (!response.ok) throw new Error(data.error || '停止跟踪失败');
+            patchGenerateTask(task.id, {
+                status: 'error',
+                cancelled: true,
+                completedAt: Date.now(),
+                error: UPSCALE_CANCELLED_MESSAGE,
+                info: `${task.info || '高清放大'} · 已停止跟踪`
+            });
+            notify('已停止跟踪这条高清任务；服务商可能仍在生成，可在创作记录里重试。');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '停止跟踪失败');
+        }
+    }
     async function submitGenerate(e, overrides) {
         e?.preventDefault();
         const savedRequest = overrides?.request;
@@ -8516,15 +8577,17 @@ export default function Page() {
             void refreshGenerationLogs();
         } catch (error) {
             const message = error instanceof Error ? error.message : '生成失败';
+            const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
                 error: message,
-                info: `${taskModel?.displayName || '图片模型'} · 生成失败`
+                ...(cancelled ? { cancelled: true } : {}),
+                info: `${taskModel?.displayName || '图片模型'} · ${cancelled ? '已停止跟踪' : '生成失败'}`
             });
-            registerGenerationFailure();
+            if (!cancelled) registerGenerationFailure();
             void refreshGenerationLogs();
-            notify(message);
+            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : message);
         }
     }
     async function submitAngleGeneration(input) {
@@ -9897,6 +9960,7 @@ export default function Page() {
             if (!response.ok) throw new Error(data.error || '读取高清任务状态失败');
             lastData = { ...lastData, ...data, taskId, status: data.task?.status || data.status, images: data.images || lastData.images };
             if (lastData.status === 'succeeded') return lastData;
+            if (lastData.status === 'cancelled') throw new Error(UPSCALE_CANCELLED_MESSAGE);
             if (lastData.status === 'failed') throw new Error(data.task?.error || '高清处理失败');
         }
         throw new Error('高清处理时间较长，请稍后重试。');
@@ -10039,14 +10103,16 @@ export default function Page() {
             notify(currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。');
         } catch (error) {
             const message = error instanceof Error ? error.message : '处理失败';
+            const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
                 error: message,
-                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · 处理失败`
+                ...(cancelled ? { cancelled: true } : {}),
+                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${cancelled ? '已停止跟踪' : '处理失败'}`
             });
             void refreshGenerationLogs();
-            notify(`后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
+            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : `后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
         }
     }
     function askDeleteItems(ids) {
@@ -12985,6 +13051,13 @@ export default function Page() {
                                                                                 onClick: ()=>restoreGenerateTask(task),
                                                                                 children: "恢复参数"
                                                                             }),
+                                                                            task.status === 'pending' && task.mode === 'upscale' && task.upscaleTaskId && /*#__PURE__*/ _jsx("button", {
+                                                                                type: "button",
+                                                                                className: "task-cancel-button",
+                                                                                title: "停止跟踪这条任务",
+                                                                                onClick: ()=>void cancelGenerateTask(task),
+                                                                                children: "停止跟踪"
+                                                                            }),
                                                                             task.request && task.status === 'error' && /*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
                                                                                 className: "task-retry-button",
@@ -13320,7 +13393,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${pageSize} 项` })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task) }, task.id)) }),
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task), onCancel: ()=>patchVideoTask(task, 'cancel'), onRetry: ()=>patchVideoTask(task, 'retry') }, task.id)) }),
                                             /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
                                                 /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
                                                 /*#__PURE__*/ _jsxs("div", { children: [

@@ -96,7 +96,7 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
   const connection = await credentialsFor(model.provider);
   const provider = createUpscaleProvider(model.provider, connection);
   const key = input.idempotencyKey || idempotencyKey(sourceImageId, reference, modelId, scale, outputFormat, outputQuality);
-  const existing = (await createUpscaleTask({ provider: model.provider, model: modelId, scale, outputFormat, outputQuality, sourceImageId, status: 'processing', idempotencyKey: key })).task;
+  const existing = (await createUpscaleTask({ provider: model.provider, model: modelId, scale, outputFormat, outputQuality, sourceImageId, reference, status: 'processing', idempotencyKey: key })).task;
   if (existing.status === 'succeeded' || existing.status === 'queued' || existing.status === 'processing' && existing.providerTaskId) return { task: existing, model };
   try {
     const imageUrl = await publicImageUrl(reference, model.provider, state.settings.imageStoragePath, connection, modelId);
@@ -117,7 +117,7 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
 
 export async function refreshUpscaleTask(id: string) {
   const task = await findUpscaleTask(id);
-  if (!task || task.status === 'succeeded' || task.status === 'failed') return task;
+  if (!task || task.status === 'succeeded' || task.status === 'failed' || task.status === 'cancelled') return task;
   if (!task.providerTaskId) return task;
   if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
   if (Date.parse(task.createdAt) + TASK_TIMEOUT_MS < Date.now()) {
@@ -159,6 +159,35 @@ export function publicUpscaleTask(task: UpscaleTask | null) {
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     completedAt: task.completedAt,
+    cancelledAt: task.cancelledAt,
+    retryOf: task.retryOf,
     pollCount: task.pollCount,
   };
+}
+
+/** 用户主动取消：本地标记为已取消并停止轮询；云端任务不会因此被撤销。 */
+export async function cancelUpscaleTask(id: string) {
+  const task = await findUpscaleTask(id);
+  if (!task) return null;
+  if (task.status === 'cancelled' || task.status === 'succeeded' || task.status === 'failed') return task;
+  const now = new Date().toISOString();
+  return updateUpscaleTask(id, { status: 'cancelled', cancelledAt: now, completedAt: now, nextPollAt: undefined });
+}
+
+/** 重试：用保存下来的原图引用重新提交一次；幂等键带时间戳，避免命中上一条任务。 */
+export async function retryUpscaleTask(id: string) {
+  const task = await findUpscaleTask(id);
+  if (!task) return null;
+  if (task.status === 'queued' || task.status === 'processing') throw new Error('高清任务还在处理中，先取消才能重试。');
+  if (!task.reference) throw new Error('这条任务没有留下原图引用，无法重试，请重新发起超分。');
+  const retried = await startCloudUpscale({
+    reference: task.reference,
+    sourceImageId: task.sourceImageId,
+    requestedModel: task.model,
+    scale: task.scale,
+    outputFormat: task.outputFormat,
+    outputQuality: task.outputQuality,
+    idempotencyKey: `${task.idempotencyKey}-retry-${Date.now()}`,
+  });
+  return updateUpscaleTask(retried.task.id, { retryOf: task.id });
 }

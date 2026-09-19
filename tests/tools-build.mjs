@@ -12,6 +12,7 @@ const MODULES = [
   'lib/tools/image',
   'lib/tools/skills',
   'lib/tools/web',
+  'lib/tools/executor',
   'lib/tools/policy',
   'lib/tools/index',
   'lib/mcp/types',

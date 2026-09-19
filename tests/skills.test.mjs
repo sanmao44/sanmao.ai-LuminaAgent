@@ -442,7 +442,7 @@ test('Agent 路由接入技能工具与渐进披露', async () => {
   assert.match(route, /tags: args\.tags/);
   assert.match(route, /recordSkillUsage\(skill\.id, \{ pending: false \}\)/);
   assert.match(route, /skillsEnabled: skillContext\.settings\.enabled,/);
-  assert.match(route, /if \(isSkillToolCall\(call\)\) \{/);
+  assert.match(route, /if \(kind === 'skill'\) \{/);
   assert.match(route, /const skillContext = buildAgentSkillContext\(\{ settings: state\.settings, dataDir: resolveLocalDataDir\(\) \}\);/);
   assert.ok(route.match(/system \+= skillPromptSection;/g).length === 2);
   assert.match(route, /skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST/);

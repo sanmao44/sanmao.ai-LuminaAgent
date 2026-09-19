@@ -12,7 +12,7 @@ import { isTrustedAppRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyFileGenerationRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
-import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isMcpToolCall, isSkillToolCall, toolSchemasFor } from '@/lib/tools';
+import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
 import { loadMcpToolRuntime } from '@/lib/mcp/tools';
@@ -1030,7 +1030,9 @@ export async function POST(request: Request) {
       }
       let args: any = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
-      if (call?.function?.name === 'web_search') {
+      // 执行分支由注册表标签推导（lib/tools/executor.ts）：不按工具名硬编码，新工具声明标签就会自动落到对应分支。
+      const kind = toolExecutionKind(call?.function?.name, mcpTools);
+      if (kind === 'web') {
         const query = webDecision.query || String(args.query || latest?.content || '').trim().slice(0, 320);
         if (!query) {
           toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '搜索问题不能为空' }) });
@@ -1046,7 +1048,7 @@ export async function POST(request: Request) {
         }
         continue;
       }
-      if (call?.function?.name === 'file_generate') {
+      if (kind === 'file') {
         const entries = Array.isArray(args.files) ? args.files : [args];
         const files: GeneratedFile[] = entries.map((entry: any, index: number): GeneratedFile | null => normalizeGeneratedFile(entry, index)).filter((file: GeneratedFile | null): file is GeneratedFile => Boolean(file)).slice(0, 8);
         if (!files.length) {
@@ -1057,15 +1059,15 @@ export async function POST(request: Request) {
         }
         continue;
       }
-      if (isArtifactToolCall(call)) {
+      if (kind === 'artifact') {
         toolResults.push(await runArtifactToolCall(call));
         continue;
       }
-      if (isSkillToolCall(call)) {
+      if (kind === 'skill') {
         toolResults.push(await runSkillToolCall(call));
         continue;
       }
-      if (isMcpToolCall(call, mcpTools)) {
+      if (kind === 'mcp') {
         const meta = policy.tool?.mcp;
         const server = meta ? mcpServerById.get(meta.serverId) : undefined;
         if (!meta || !server) {
@@ -1117,7 +1119,7 @@ export async function POST(request: Request) {
         }
         continue;
       }
-      if (!isImageToolCall(call)) continue;
+      if (kind !== 'image') continue;
       if (!imageToolsAllowed) continue;
       const startedAt = Date.now();
       const prompt = String(args.prompt || latest?.content || '');

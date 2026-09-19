@@ -21,7 +21,7 @@ test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本',
   for (const tool of ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
     assert.match(artifactTools, new RegExp(`name: '${tool}'`));
   }
-  assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isMcpToolCall, isSkillToolCall, toolSchemasFor \} from '@\/lib\/tools';/);
+  assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor \} from '@\/lib\/tools';/);
   assert.match(fileTools, /Word\/Excel\/PPT\/ZIP 必须用专用工具，不允许把 Office 或 ZIP 内容编码成 base64 塞进来/);
   assert.match(route, /绝对不要把 \.docx\/\.xlsx\/\.pptx\/\.zip 的内容编码成 base64 交给 file_generate/);
   assert.match(route, /当前不支持解析用户上传的 Word\/Excel\/PPT 内容/);
@@ -112,7 +112,7 @@ test('同轮“先生成再打包”会补一轮交付物工具，而不是把�
   assert.match(route, /const ARTIFACT_TOOL_MAX_ROUNDS = 2;/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
   assert.match(route, /const runArtifactToolCall = async \(call: any\): Promise<ChatMessage> => \{/);
-  assert.match(route, /toolResults\.push\(await runArtifactToolCall\(call\)\);/);
+  assert.match(route, /if \(kind === 'artifact'\) \{/);
   assert.match(route, /toolResults\.push\(await runArtifactToolCall\(call\)\);/);
   assert.match(route, /if \(artifactGenerationRequest && artifactToolsOnly\.length && toolCalls\.some\(isArtifactToolCall\)/);
   assert.match(route, /followupResults\.push\(await runArtifactToolCall\(followupCall\)\);/);

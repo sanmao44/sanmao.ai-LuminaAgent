@@ -273,7 +273,7 @@ test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信
   assert.match(route, /mcpTools: usedMcpTools/, 'MCP 调用要回给前端做审计');
   assert.match(route, /mcpTools: metadata\.mcpTools \|\| \[\]/, '流式最终事件要带上 MCP 调用');
   assert.doesNotMatch(route, /startsWith\('skill_'\)/, '技能工具按标签判断，避免被 MCP 工具名误伤');
-  assert.ok(route.indexOf('resolveToolPolicy(call?.function?.name') < route.indexOf("name === 'web_search'"), '权限判断必须在执行分支之前');
+  assert.ok(route.indexOf('resolveToolPolicy(call?.function?.name') < route.indexOf('const kind = toolExecutionKind'), '权限判断必须排在执行分支之前');
 });
 
 test('MCP 接口全部要求管理员身份，且只回传脱敏配置', async () => {

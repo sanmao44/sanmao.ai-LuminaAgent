@@ -1524,6 +1524,7 @@ async function waitForCanvasUpscaleTask(taskId: string) {
     const latest = await getCanvasUpscaleTask(taskId);
     if (latest.task?.status === "succeeded") return latest;
     if (latest.task?.status === "failed") throw new Error(latest.task.error || "高清处理失败");
+    if (latest.task?.status === "cancelled") throw new Error("高清任务已取消。");
   }
   throw new Error("高清处理时间较长，请稍后重试。");
 }

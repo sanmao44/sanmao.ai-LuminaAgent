@@ -70,7 +70,7 @@ test('能力标签支撑 route.ts 的分支判断', () => {
 });
 
 test('route.ts 只做编排：工具定义与门控链都搬到 lib/tools', () => {
-  assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isMcpToolCall, isSkillToolCall, toolSchemasFor \} from '@\/lib\/tools';/);
+  assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor \} from '@\/lib\/tools';/);
   assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools\);/);
   assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
   assert.doesNotMatch(route, /const tools = \[/, '工具定义不能留在 route.ts');
@@ -79,18 +79,31 @@ test('route.ts 只做编排：工具定义与门控链都搬到 lib/tools', () =
   assert.match(registrySource, /delivery: \(context: ToolGatingContext\) => context\.deliveryRequest,/);
 });
 
-test('每个能力标签在 route.ts 里都有执行入口', () => {
-  const dispatch = {
-    artifact: /isArtifactToolCall\(/,
-    archive: /isArchiveToolCall\(/,
-    image: /isImageToolCall\(/,
-    skill: /isSkillToolCall\(/,
-    file: /'file_generate'/,
-    web: /'web_search'/,
-  };
+test('每个能力标签都有执行入口，且入口由注册表标签推导', async () => {
+  const executorSource = await readFile(new URL('../lib/tools/executor.ts', import.meta.url), 'utf8');
+  // archive_generate 带 artifact + archive 两个标签，归入 artifact 分支；archive 不单独出现。
+  const KIND_ENTRY = { artifact: 'artifact', archive: 'artifact', image: 'image', skill: 'skill', file: 'file', web: 'web' };
+  const MAPPED_TAGS = new Set(['artifact', 'image', 'skill', 'file', 'web']);
   const tags = new Set(tools.TOOL_REGISTRY.flatMap((tool) => [...tool.tags]));
   for (const tag of tags) {
-    assert.ok(dispatch[tag], `${tag} 需要补一条执行入口检查`);
-    assert.match(route, dispatch[tag], `${tag} 在执行层没有对应分支`);
+    const kind = KIND_ENTRY[tag];
+    assert.ok(kind, `${tag} 需要补一条类别映射`);
+    if (MAPPED_TAGS.has(tag)) {
+      assert.match(executorSource, new RegExp(`\\['${tag}', '${kind}'\\]`), `${tag} 在 executor 里没有类别映射`);
+    }
+    assert.ok(route.includes(`if (kind === '${kind}')`) || route.includes(`if (kind !== '${kind}') continue;`), `${tag} 对应的 ${kind} 分支不在 route 里`);
+    const owner = tools.TOOL_REGISTRY.find((tool) => tool.tags.includes(tag));
+    assert.equal(tools.toolExecutionKind(owner.name), kind, `${owner.name} 的执行类别推导错了`);
   }
+  assert.equal(tools.toolExecutionKind('not_a_tool'), null);
+});
+
+test('执行分派不再按工具名判断', () => {
+  // 联网/文本文件/交付物/技能/MCP 以前各有一条按工具名或零散标签判断的分派，现在统一由注册表标签推导。
+  assert.match(route, /const kind = toolExecutionKind\(call\?\.function\?\.name, mcpTools\);/);
+  assert.doesNotMatch(route, /call\?\.function\?\.name === 'web_search'/);
+  assert.doesNotMatch(route, /call\?\.function\?\.name === 'file_generate'/);
+  assert.doesNotMatch(route, /if \(isArtifactToolCall\(call\)\) \{/, '类别判断不该再写在执行段里');
+  assert.doesNotMatch(route, /if \(isSkillToolCall\(call\)\) \{/, '类别判断不该再写在执行段里');
+  assert.doesNotMatch(route, /if \(isMcpToolCall\(call/, 'MCP 由来源推导，不再单独按名字判断');
 });

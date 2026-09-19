@@ -3,17 +3,12 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import ts from 'typescript';
+import { buildLibModules } from './lib-build.mjs';
 
-const storeUrl = new URL('../lib/video-task-store.ts', import.meta.url);
-const storeSource = await readFile(storeUrl, 'utf8');
-const storeCompiled = ts.transpileModule(storeSource, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: storeUrl.pathname,
-}).outputText;
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-pagination-'));
 process.env.SANMAO_DATA_DIR = dataDir;
-const store = await import(`data:text/javascript;base64,${Buffer.from(storeCompiled).toString('base64')}`);
+// 任务存储在 lib/task-store.ts 里，两个模块要一起转译后才能跑真实的读—改—写。
+const { main: store } = await buildLibModules(['lib/task-store', 'lib/video-task-store'], 'video-task-store');
 const styles = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
 
 function task(prompt, source, id) {

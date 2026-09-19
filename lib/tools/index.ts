@@ -4,8 +4,10 @@ import { imageEditTool, imageGenerateTool } from './image';
 import { skillInstallTool, skillReadTool, skillSearchTool } from './skills';
 import { toModelToolSchema, type ModelToolSchema, type ToolDefinition, type ToolGatingContext, type ToolPermissions, type ToolSource, type ToolTag } from './registry';
 import { webSearchTool } from './web';
+import { kindForTool, type ToolExecutionKind } from './executor';
 
 export * from './registry';
+export * from './executor';
 
 /** 顺序即下发顺序，与原 route.ts 里的工具数组保持一致。 */
 export const TOOL_REGISTRY: readonly ToolDefinition[] = [
@@ -26,6 +28,12 @@ const TOOL_BY_NAME = new Map(TOOL_REGISTRY.map((tool) => [tool.name, tool]));
 
 export function getToolDefinition(name: unknown): ToolDefinition | null {
   return TOOL_BY_NAME.get(String(name || '')) || null;
+}
+
+/** 工具的执行类别（由注册表标签推导）；未登记或没有类别时返回 null。 */
+export function toolExecutionKind(name: unknown, extraTools: readonly ToolDefinition[] = []): ToolExecutionKind | null {
+  const definition = findToolDefinition(name, extraTools);
+  return definition ? kindForTool(definition) : null;
 }
 
 export function toolSource(name: unknown): ToolSource | null {

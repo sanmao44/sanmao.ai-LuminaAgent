@@ -301,7 +301,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
 export async function refreshVideoTask(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
-  if (task.status === 'done' || task.status === 'failed') return task;
+  if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') return task;
   if (!task.providerTaskId) return task;
   if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
   const quickProvider = await getProviderWithKey(task.providerId);
@@ -330,4 +330,28 @@ export async function refreshVideoTask(id: string) {
     if (isAgnesProvider(provider) && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(provider.id).catch(() => undefined);
     return failTask(task, error, error instanceof VideoProviderError ? error.code : typeof (error as any)?.code === 'string' ? (error as any).code : undefined);
   }
+}
+
+/**
+ * 用户主动取消：本地标记为已取消并停止轮询。
+ * 多数视频服务商没有撤销接口，远端任务可能仍在生成并计费，所以界面要如实说明“已停止跟踪”。
+ */
+export async function cancelVideoTask(id: string) {
+  const task = await findVideoTask(id);
+  if (!task) return null;
+  if (task.status === 'cancelled' || task.status === 'done' || task.status === 'failed') return task;
+  const cancelledAt = new Date().toISOString();
+  const updated = await updateVideoTask(id, { status: 'cancelled', cancelledAt, completedAt: cancelledAt, nextPollAt: undefined });
+  await finishGenerationLog(id, { status: 'error', durationMs: Date.now() - new Date(task.createdAt).getTime(), error: '用户已取消', errorCode: 'CANCELLED' }).catch(() => undefined);
+  return updated;
+}
+
+/** 重试：按原参数重新提交一条新任务，原任务保留在历史记录里（新任务用新的幂等键，不会被去重）。 */
+export async function retryVideoTask(id: string) {
+  const task = await findVideoTask(id);
+  if (!task) return null;
+  if (task.status === 'pending' || task.status === 'running') throw new Error('视频还在生成中，先取消才能重试。');
+  const created = await createVideoGeneration({ modelId: task.modelId, input: task.input, source: task.source });
+  if (!created || created.id === task.id) return created;
+  return updateVideoTask(created.id, { retryOf: task.id });
 }
