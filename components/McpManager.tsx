@@ -20,6 +20,36 @@ type ProbeTool = { name: string; title: string; description: string; readOnly: b
 type ProbeState = { status: 'busy' | 'done' | 'error'; message: string; tools: ProbeTool[]; toolCount: number; readOnly: number };
 type Draft = { paste: string; name: string; url: string; headers: string; allowWrite: boolean };
 
+type RuntimeView = {
+  id: string;
+  name: string;
+  summary: string;
+  version: string;
+  installNote: string;
+  state: 'not_installed' | 'installing' | 'installed' | 'running' | 'error';
+  installed: boolean;
+  installing: boolean;
+  running: boolean;
+  pid: number | null;
+  enabled: boolean;
+  needsBrowser: boolean;
+  browser: { channel: string | null; path: string | null };
+  installRoot: string;
+  logTail: string;
+  error: string | null;
+  idleTimeoutMs: number;
+};
+
+const RUNTIME_STATE_LABELS: Record<string, string> = {
+  not_installed: '未安装',
+  installing: '安装中',
+  installed: '已安装',
+  running: '运行中',
+  error: '出错',
+};
+
+const BROWSER_LABELS: Record<string, string> = { chrome: 'Chrome', msedge: 'Edge' };
+
 const EMPTY_DRAFT: Draft = { paste: '', name: '', url: '', headers: '', allowWrite: false };
 
 async function requestJson(url: string, init?: RequestInit) {
@@ -49,6 +79,7 @@ function hostOf(url: string) {
 export default function McpManager({ disabled, icon }: { disabled: boolean; icon: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [servers, setServers] = useState<McpServerView[]>([]);
+  const [runtimes, setRuntimes] = useState<RuntimeView[]>([]);
   const [limit, setLimit] = useState(0);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [probes, setProbes] = useState<Record<string, ProbeState>>({});
@@ -74,6 +105,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
 
   const applyPayload = useCallback((data: Record<string, unknown>) => {
     if (Array.isArray(data.servers)) setServers(data.servers as McpServerView[]);
+    if (Array.isArray(data.runtimes)) setRuntimes(data.runtimes as RuntimeView[]);
     if (typeof data.limit === 'number' && data.limit > 0) setLimit(data.limit);
   }, []);
 
@@ -93,8 +125,20 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     if (!open) return;
     void run(async () => {
       applyPayload(await requestJson('/api/mcp'));
+      // 本地运行时的安装/运行状态单独取：远程地址和本机进程是两件事。
+      applyPayload(await requestJson('/api/tools'));
     });
   }, [open, run, applyPayload]);
+
+  /* 安装依赖是分钟级的动作：装的过程中每两秒取一次状态和日志，装完自动停。 */
+  const installingRuntime = runtimes.some((runtime) => runtime.installing);
+  useEffect(() => {
+    if (!open || !installingRuntime) return;
+    const timer = setInterval(() => {
+      void requestJson('/api/tools').then(applyPayload).catch(() => undefined);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [open, installingRuntime, applyPayload]);
 
   const enabledCount = servers.filter((server) => server.enabled).length;
   /* 已经有服务时，"添加服务"表单默认收起：那个表单要占掉四百多像素，展开着会把工具清单挤到只剩一两行。 */
@@ -226,7 +270,30 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     });
   }
 
-  return (
+  async function refreshRuntimes() {
+    await run(async () => {
+      applyPayload(await requestJson('/api/tools'));
+    });
+  }
+
+  /** 安装 / 启动 / 停止 / 取消：请求体只有白名单里的动作名 + 条目 id。 */
+  async function runRuntime(action: 'install' | 'start' | 'stop' | 'cancel', runtime: RuntimeView) {
+    await run(async () => {
+      const data = await requestJson('/api/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, id: runtime.id }),
+      });
+      applyPayload(data);
+      setNotice(action === 'install'
+        ? `开始安装 ${runtime.name}；装完后点「启动」。`
+        : action === 'start'
+          ? `${runtime.name} 已启动，工具在下一轮对话生效。`
+          : action === 'stop'
+            ? `${runtime.name} 已停止，工具已从下一轮对话里移除。`
+            : '已取消安装。');
+    });
+  }  return (
     <>
       <button type="button" className={styles.trigger} data-tooltip={enabledCount ? `MCP · ${enabledCount} 个服务已启用` : 'MCP 服务'} aria-label={enabledCount ? `MCP 服务（${enabledCount} 个已启用）` : 'MCP 服务'} aria-haspopup="dialog" disabled={disabled} onClick={() => { setError(''); setNotice(''); setConfirming(''); setHelpOpen(false); setOpen(true); }}>{icon}{enabledCount > 0 && <span className={styles.activeBadge} aria-hidden="true">{enabledCount > 9 ? '9+' : enabledCount}</span>}</button>
       {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby="mcp-manager-title" onClose={() => setOpen(false)} onCancel={(event) => { if (busy) { event.preventDefault(); return; } if (helpOpen) { event.preventDefault(); setHelpOpen(false); } }}>
@@ -243,7 +310,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               </div>
               <p className={styles.hint}>MCP（Model Context Protocol）让你把外部服务接进助手：连接后，助手会看到该服务公布的远程工具并在需要时调用，就像内置的联网或出图能力一样。</p>
               <p className={styles.hint}><strong>让助手自己接：</strong>直接在对话里说「帮我接入 xxx，地址是 https://…」，助手会调用管理工具完成添加、自检和开关；删除服务和打开写入权限需要你明确同意。</p>
-              <p className={styles.hint}><strong>只支持远程服务：</strong>这里填 <code>https://…</code> 的 Streamable HTTP 地址（常见形如 <code>https://host/mcp</code>），不会在本机拉起任何进程；<code>npx</code> / <code>uvx</code> 这类本地命令型服务暂时接不了。</p>
+              <p className={styles.hint}><strong>本机运行时：</strong>「本地工具运行时」用的条目由代码内置（目前是浏览器控制），命令、参数和工作目录都写死在代码里，面板和对话都改不了；下面手填的地址只用于远程服务。</p>
               <p className={styles.hint}><strong>凭据：</strong>服务要 token 时按「名称: 值」逐行填请求头（例如 <code>Authorization: Bearer …</code>）；值只存在本机服务端，页面上只显示名称。</p>
               <p className={styles.hint}><strong>只读与写入：</strong>默认只放行只读工具，有副作用的工具必须为单个服务打开「允许写入」。外部服务返回的内容一律按不可信数据处理，助手不会执行其中的指令。</p>
               <p className={styles.hint}><strong>上限：</strong>最多 {limit || 20} 个服务，每个最多 60 个工具，参数结构超过 12KB 的工具不下发给助手。</p>
@@ -299,6 +366,41 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             </article>;
           })}
         </div>
+
+        <section className={styles.form}>
+          <div className={styles.formHead}>
+            <h3>本地工具运行时</h3>
+            <button type="button" disabled={busy} onClick={() => void refreshRuntimes()}>{busy ? '处理中…' : '刷新状态'}</button>
+          </div>
+          {!runtimes.length && <p className={styles.hint}>正在读取本地运行时的安装与运行状态…</p>}
+          {runtimes.map((runtime) => <article key={runtime.id} className={styles.row}>
+            <div className={styles.rowMain}>
+              <div className={styles.rowTitle}>
+                <strong>{runtime.name}</strong>
+                <span className={runtime.running ? styles.badgeOn : runtime.state === 'error' ? styles.warnBadge : runtime.installed ? styles.badge : styles.badgeMuted}>{RUNTIME_STATE_LABELS[runtime.state] || runtime.state}</span>
+                {runtime.version && <span className={styles.badgeMuted}>{runtime.version}</span>}
+              </div>
+              <p className={styles.description}>{runtime.summary}</p>
+              <p className={styles.meta}>
+                {runtime.needsBrowser ? (runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个') : ''}
+                {runtime.needsBrowser ? ' · ' : ''}空闲 {Math.max(1, Math.round(runtime.idleTimeoutMs / 60000))} 分钟后自动关闭{runtime.pid ? ` · 进程 ${runtime.pid}` : ''}
+              </p>
+              {runtime.error && <p className={styles.meta}>上次失败：{runtime.error}</p>}
+              {runtime.state === 'installing' && <p className={styles.meta}>正在下载依赖，日志会实时刷新；关掉面板不会中断安装。</p>}
+              {runtime.installing && runtime.logTail && <pre className={styles.logTail}>{runtime.logTail}</pre>}
+            </div>
+            <div className={styles.rowActions}>
+              {runtime.installing
+                ? <button type="button" disabled={busy} onClick={() => void runRuntime('cancel', runtime)}>取消安装</button>
+                : <>
+                  {!runtime.installed && <button type="button" disabled={busy} onClick={() => void runRuntime('install', runtime)}>安装</button>}
+                  {runtime.installed && !runtime.running && <button type="button" disabled={busy} onClick={() => void runRuntime('start', runtime)}>启动</button>}
+                  {runtime.running && <button type="button" disabled={busy} onClick={() => void runRuntime('stop', runtime)}>停止</button>}
+                </>}
+            </div>
+          </article>)}
+          <p className={styles.hint}>依赖装在本机工作目录里，不写进应用自身依赖。运行时会用自己的浏览器 profile，不碰你日常浏览器里的登录状态；会改动外部数据的操作仍然要你逐次确认。</p>
+        </section>
 
         <section className={styles.form}>
           <div className={styles.formHead}>

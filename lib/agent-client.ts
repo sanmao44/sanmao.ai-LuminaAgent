@@ -62,6 +62,32 @@ export type AgentMcpToolUse = {
   ok: boolean;
 };
 
+/** 待确认的一次外部操作：面板要说清「在哪、做什么、可能有什么影响」。 */
+export type AgentApprovalCall = {
+  id: string;
+  server: string;
+  tool: string;
+  risk: string;
+  reason: string;
+  argsPreview?: string;
+};
+
+export type AgentApproval = {
+  id: string;
+  expiresAt: number;
+  message: string;
+  calls: AgentApprovalCall[];
+};
+
+/** 用户点过「允许 / 取消」之后，续跑接口回传的结果。 */
+export type AgentResumeResult = {
+  ok?: boolean;
+  rejected?: boolean;
+  message?: string;
+  mcpTools?: AgentMcpToolUse[];
+  error?: string;
+};
+
 export type AgentResponse = {
   ok?: boolean;
   message: string;
@@ -74,6 +100,9 @@ export type AgentResponse = {
   webSearchDecision?: Record<string, unknown>;
   skills?: Array<{ id: string; name: string }>;
   mcpTools?: AgentMcpToolUse[];
+  /** 这一轮有操作在等服务端批准：没有它就不算正常回答。 */
+  approval?: AgentApproval;
+  needsApproval?: boolean;
   durationSeconds?: number;
   error?: string;
   cancelled?: boolean;
@@ -81,7 +110,7 @@ export type AgentResponse = {
 };
 
 export type AgentStreamEvent = AgentResponse & {
-  type?: "status" | "delta" | "final" | "error";
+  type?: "status" | "delta" | "final" | "error" | "approval_required";
   stage?: string;
   text?: string;
 };
@@ -153,6 +182,29 @@ export async function readAgentEventStream(
   const final = finalRef.current;
   if (!final) throw new Error("Agent 流式响应不完整，请重试。");
   return { ...final, message: String(final.message || streamedText || "") };
+}
+
+/**
+ * 回复一条待确认操作。
+ *
+ * 只把 action 发回服务端：执行哪个调用由服务端记录的 pending 决定，
+ * 这里（以及任何前端）都没有办法拼一个新调用出来执行。
+ */
+export async function resumeAgentRun(
+  id: string,
+  action: "approve" | "reject",
+  options: { signal?: AbortSignal } = {},
+): Promise<AgentResumeResult> {
+  const response = await fetch(`/api/agent/runs/${encodeURIComponent(id)}`, {
+    cache: "no-store",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: options.signal,
+    body: JSON.stringify({ action }),
+  });
+  const data = (await response.json().catch(() => ({}))) as AgentResumeResult;
+  if (!response.ok) throw new Error(String(data?.error || `这一步没有执行：${response.status}`));
+  return data;
 }
 
 export async function requestAgent(

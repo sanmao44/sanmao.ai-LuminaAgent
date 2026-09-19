@@ -335,7 +335,9 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(manager, /import \{ deriveMcpServerName, headersToText, parseMcpConfigText \} from '@\/lib\/mcp\/config-import';/, '面板复用配置识别模块');
   assert.match(manager, /识别并填入/);
   assert.match(manager, /让助手自己接/, '帮助说明要写清助手能代劳');
-  assert.match(manager, /本地命令型服务暂时接不了/);
+  // 帮助说明改成「本机运行时来自代码内置目录」：现在有受控的本地浏览器运行时，不能再写「接不了」。
+  assert.match(manager, /本地工具运行时/);
+  assert.match(manager, /命令、参数和工作目录都写死在代码里/);
   assert.match(manager, /全部放行/);
   assert.match(manager, /只放行只读/);
   assert.match(manager, /styles\.toolDescription/);

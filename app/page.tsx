@@ -51,6 +51,7 @@ import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
 import { appendTextReferenceContext, normalizeCreativeReference, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
+import AgentApprovalCard from '@/components/AgentApprovalCard';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -9164,6 +9165,7 @@ export default function Page() {
                         webSearchDecision: data.webSearchDecision || undefined,
                         skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
                         mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
+                        approval: data.approval || undefined,
                         deliverable: data.deliverable || 'TEXT',
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
@@ -9427,6 +9429,7 @@ export default function Page() {
                     webSearchDecision: data.webSearchDecision || undefined,
                     skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
                     mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
+                    approval: data.approval || undefined,
                     deliverable: data.deliverable || selectedDeliverable,
                     ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
                 }
@@ -9468,6 +9471,21 @@ export default function Page() {
                 setChatBusy(sessionId, false);
             }
         }
+    }
+    async function resolveAgentApprovalMessage(messageId, outcome) {
+        const activeId = activeChatIdRef.current;
+        const source = pendingChatMessagesRef.current.get(activeId) || messages;
+        const next = source.map((item)=>item.id === messageId ? {
+                ...item,
+                approval: undefined,
+                approvalResult: String(outcome && outcome.message ? outcome.message : (outcome && outcome.rejected ? '已取消这一步操作，没有执行。' : '已执行完成。')),
+                mcpTools: Array.isArray(outcome && outcome.mcpTools) && outcome.mcpTools.length ? [
+                    ...(item.mcpTools || []),
+                    ...outcome.mcpTools
+                ] : item.mcpTools
+            } : item);
+        if (activeChatIdRef.current === activeId) setMessages(next);
+        await persistAgentSession(activeId, next).catch(()=>undefined);
     }
     async function toggleFavorite(item) {
         await patchGalleryItem(item.id, {
@@ -11290,6 +11308,14 @@ export default function Page() {
                                                                             ]
                                                                         })
                                                                     ]
+                                                                }),
+                                                                message.role === 'assistant' && !message.pending && message.approval && /*#__PURE__*/ _jsx(AgentApprovalCard, {
+                                                                    approval: message.approval,
+                                                                    onResolved: (outcome)=>resolveAgentApprovalMessage(message.id, outcome)
+                                                                }),
+                                                                message.role === 'assistant' && !message.pending && message.approvalResult && /*#__PURE__*/ _jsx("div", {
+                                                                    className: "message-approval-result",
+                                                                    children: message.approvalResult
                                                                 }),
                                                                 message.references?.length ? /*#__PURE__*/ _jsx("div", {
                                                                     className: "message-refs",

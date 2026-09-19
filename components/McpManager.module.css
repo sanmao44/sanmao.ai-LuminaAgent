@@ -162,3 +162,5 @@
 
 .footer { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding-top: 12px; border-top: 1px solid var(--line); }
 .count { color: var(--text-2); font-size: 12px; }
+
+.logTail { margin: 4px 0 0; max-height: 132px; overflow: auto; padding: 9px 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-3); color: var(--text-2); font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

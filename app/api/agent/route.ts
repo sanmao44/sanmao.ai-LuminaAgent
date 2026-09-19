@@ -19,6 +19,7 @@ import { loadMcpToolRuntime } from '@/lib/mcp/tools';
 import { runMcpManageAction } from '@/lib/mcp/admin';
 
 import { runToolLoop, type ToolLoopTraceStep } from '@/lib/agent/tool-loop';
+import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, type PendingToolCall } from '@/lib/agent/approval';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
@@ -240,7 +241,7 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; h
   };
 }
 
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; finalize?: (text: string) => Promise<string> | string; };
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; finalize?: (text: string) => Promise<string> | string; approval?: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> }; };
 
 type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string };
 
@@ -324,7 +325,8 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response |
         }
         const cleanedFinal = stripToolCallMarkup(finalized).trim();
         const finalText = cleanedFinal || (streamedFinal.trim() ? '这轮助手只输出了工具调用标记，没有给出回答。请再问一次，或把需求说得更具体。' : '当前对话模型没有返回内容。');
-        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [] });
+        if (metadata.approval) send(controller, { type: 'approval_required', approvalId: metadata.approval.id, runId: metadata.approval.id, summary: metadata.approval.message, approval: metadata.approval });
+        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [], ...(metadata.approval ? { approval: metadata.approval, needsApproval: true } : {}) });
         settlement = { status: 'success', responseChars: finalText.length };
         controller.close();
       } catch (error) {
@@ -1038,7 +1040,10 @@ export async function POST(request: Request) {
     // archive_generate 必须最后跑，才能把本轮刚生成的文件一起打包。
     const executionCalls = [...toolCalls].sort((left: any, right: any) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right)));
 
-    for (const call of executionCalls) {
+    let recentPageText = '';
+    let deferredCalls: any[] = [];
+    for (let callIndex = 0; callIndex < executionCalls.length; callIndex += 1) {
+      const call = executionCalls[callIndex];
       // 唯一一道执行权限判断：native 与 MCP 走同一条路。被拒绝时把原因作为工具结果回给
       // 模型（而不是静默跳过），这样它下一轮能改用正确做法，也不会把调用写成文本标记。
       const policy = resolveToolPolicy(call?.function?.name, gatingContext, mcpTools);
@@ -1052,6 +1057,12 @@ export async function POST(request: Request) {
       let args: any = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
       // 执行分支由注册表标签推导（lib/tools/executor.ts）：不按工具名硬编码，新工具声明标签就会自动落到对应分支。
+      // 会改动本机以外数据的调用不当场执行：先存成待确认，等用户在界面上点一次「允许」。
+      const assessment = assessToolApproval({ definition: policy.tool, args, pageText: recentPageText });
+      if (assessment.required && policy.tool?.mcp) {
+        deferredCalls = executionCalls.slice(callIndex);
+        break;
+      }
       const kind = toolExecutionKind(call?.function?.name, mcpTools);
       if (kind === 'web') {
         const query = webDecision.query || String(args.query || latest?.content || '').trim().slice(0, 320);
@@ -1137,6 +1148,7 @@ export async function POST(request: Request) {
           });
           mcpTurnBudget -= Date.now() - mcpStartedAt;
           usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
+          if (!result.isError) recentPageText = appendPageContext(recentPageText, meta.toolName, result.text);
           toolResults.push({
             role: 'tool',
             tool_call_id: call.id,
@@ -1238,6 +1250,66 @@ export async function POST(request: Request) {
 
     // 思维链模型（deepseek 思维模式）要求把带 tool_calls 的这轮助手消息原样带回：
     // 丢了 reasoning_content 会被服务商直接 400 拒绝，用户只看得到一句占位提示。
+    if (deferredCalls.length) {
+      const pendingCalls: PendingToolCall[] = [];
+      const settledCallIds = new Set<string>();
+      for (const call of deferredCalls) {
+        // 服务可能在等待期间被改过，批准前必须重新走一次同一道权限判断。
+        const deferredPolicy = resolveToolPolicy(call?.function?.name, gatingContext, mcpTools);
+        const deferredMeta = deferredPolicy.tool?.mcp;
+        if (!deferredPolicy.allowed || !deferredMeta || !deferredPolicy.tool) {
+          toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: deferredPolicy.reason || '这一步不能执行。' }) });
+          settledCallIds.add(call.id);
+          continue;
+        }
+        let deferredArgs: any = {};
+        try { deferredArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
+        const deferredAssessment = assessToolApproval({ definition: deferredPolicy.tool, args: deferredArgs, pageText: recentPageText });
+        pendingCalls.push({
+          callId: call.id,
+          name: deferredPolicy.tool.name,
+          toolId: deferredPolicy.tool.id,
+          serverId: deferredMeta.serverId,
+          serverName: deferredMeta.serverName,
+          toolName: deferredMeta.toolName,
+          readOnly: deferredMeta.readOnly,
+          risk: deferredAssessment.risk,
+          reason: deferredAssessment.reason || '这一步需要你确认',
+          args: deferredArgs,
+        });
+      }
+      if (pendingCalls.length) {
+        const approvalMessage = approvalMessageFor(pendingCalls);
+        let approvalPayload: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> } | null = null;
+        try {
+          const approvalRecord = createApproval({
+            provider: agentRuntime.provider.name,
+            model: agentRuntime.model.id,
+            messages: llmMessages,
+            assistant: { content: toolCallMessage?.content ?? null, tool_calls: toolCalls, ...(typeof toolCallMessage?.reasoning_content === 'string' && toolCallMessage.reasoning_content ? { reasoning_content: toolCallMessage.reasoning_content } : {}) },
+            executed: toolResults,
+            pending: pendingCalls,
+            gating: gatingContext,
+          });
+          approvalPayload = { id: approvalRecord.id, expiresAt: approvalRecord.expiresAt, message: approvalMessage, calls: pendingCalls.map(describePendingCall) };
+        } catch (error) {
+          // 存不下就当场取消这一步：绝不执行一个自己都记不住的操作。
+          const reason = error instanceof Error ? error.message : '待确认的操作没能保存下来';
+          for (const call of deferredCalls) {
+            if (settledCallIds.has(call.id)) continue;
+            toolResults.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: `${reason}；这一步没有执行，请重新发起。` }) });
+          }
+        }
+        if (approvalPayload) {
+          // 待确认的调用绝不能写进 secondMessages：历史里出现没有结果的 tool_calls，
+          // 服务商下一次请求就会直接 400。这里必须整轮返回，等用户决定后再续。
+          if (wantsStream) {
+            return streamResult(null, { fallback: approvalMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), mcpTools: usedMcpTools, statuses: [{ type: 'status', stage: 'approval', message: '等你确认这一步操作…' }], approval: approvalPayload });
+          }
+          return Response.json({ ok: true, message: approvalMessage, needsApproval: true, approval: approvalPayload, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), mcpTools: usedMcpTools });
+        }
+      }
+    }
     const carriedAssistantFields = typeof toolCallMessage?.reasoning_content === 'string' && toolCallMessage.reasoning_content ? { reasoning_content: toolCallMessage.reasoning_content } : {};
     const secondMessages: ChatMessage[] = [...llmMessages, { role: 'assistant', content: toolCallMessage?.content || null, tool_calls: toolCalls, ...carriedAssistantFields }, ...toolResults];
     // 技能工具经常需要链式调用（先检索再读取、安装后再核对）。如果后续轮次完全

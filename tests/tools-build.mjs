@@ -7,6 +7,7 @@ import ts from 'typescript';
 const MODULES = [
   'lib/data-paths',
   'lib/agent/tool-loop',
+  'lib/agent/approval',
   'lib/tools/registry',
   'lib/tools/artifacts',
   'lib/tools/file',
@@ -106,4 +107,9 @@ export async function buildMcpModule() {
 /** 通用工具循环：纯逻辑、无依赖，单独跑真实实现。 */
 export async function buildToolLoopModule() {
   return load('lib/agent/tool-loop.mjs');
+}
+
+/** 审批记录：存储、认领与风险判定都要跑真实实现，不能用假对象糊过去。 */
+export async function buildApprovalModule() {
+  return load('lib/agent/approval.mjs');
 }

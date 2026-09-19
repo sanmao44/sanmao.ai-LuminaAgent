@@ -40,7 +40,8 @@ test('archive_generate 排在最后执行，并能带上本轮生成的文件', 
   assert.notEqual(sortIndex, -1);
   const sortLine = route.slice(sortIndex, route.indexOf('\n', sortIndex));
   assert.match(sortLine, /Number\(isArchiveToolCall\(left\)\) - Number\(isArchiveToolCall\(right\)\)/);
-  assert.match(route, /for \(const call of executionCalls\)/);
+  // 执行顺序仍按上面排好的 executionCalls；改成带下标是为了能从「需要确认」的那一步起整批延后。
+  assert.match(route, /for \(let callIndex = 0; callIndex < executionCalls\.length; callIndex \+= 1\) \{/);
   assert.match(route, /args\.includeGeneratedThisTurn === false/);
   assert.match(route, /const collected = await collectArchiveEntries\(ids\);/);
 });
