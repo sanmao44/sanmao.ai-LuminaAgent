@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'lib/agent/tool-loop',
   'lib/tools/registry',
   'lib/tools/artifacts',
   'lib/tools/file',
@@ -13,12 +14,17 @@ const MODULES = [
   'lib/tools/skills',
   'lib/tools/web',
   'lib/tools/executor',
+  'lib/tools/selector',
   'lib/tools/policy',
   'lib/tools/mcp-admin',
   'lib/tools/index',
   'lib/mcp/types',
+  'lib/mcp/protocol',
   'lib/mcp/store',
+  'lib/mcp/catalog',
   'lib/mcp/client',
+  'lib/mcp/stdio',
+  'lib/mcp/catalog-runtime',
   'lib/mcp/tools',
   'lib/mcp/admin',
   'lib/mcp/index',
@@ -95,4 +101,9 @@ export async function buildToolPolicyModule() {
 /** 同一套转译结果里的 MCP 模块，测试要用真实的 store / client / 工具翻译逻辑。 */
 export async function buildMcpModule() {
   return load('lib/mcp/index.mjs');
+}
+
+/** 通用工具循环：纯逻辑、无依赖，单独跑真实实现。 */
+export async function buildToolLoopModule() {
+  return load('lib/agent/tool-loop.mjs');
 }

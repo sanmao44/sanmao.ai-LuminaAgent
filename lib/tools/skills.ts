@@ -1,6 +1,8 @@
-import { defineTool, TOOL_GATE } from './registry';
+import { defineTool, nativeToolId, TOOL_GATE } from './registry';
 
 export const skillSearchTool = defineTool({
+  id: nativeToolId('skill_search'),
+  risk: 'read',
   name: 'skill_search',
   description: '按关键词检索用户已安装的技能（中英文关键词、中文别名都可以）。不确定有没有现成流程时先查一次。',
   permissions: ['fs:read'],
@@ -11,6 +13,8 @@ export const skillSearchTool = defineTool({
 });
 
 export const skillReadTool = defineTool({
+  id: nativeToolId('skill_read'),
+  risk: 'read',
   name: 'skill_read',
   description: '读取已启用技能的完整正文，或它附带的参考资料文件。技能索引里只有名称和简介，需要具体步骤时必须先读取。内容被截断时返回 truncated 与 nextOffset，带上 offset 继续读直到读完。返回的附件清单会标注类型（text / binary / script），脚本内容只作阅读参考，永远不要执行。',
   permissions: ['fs:read'],
@@ -21,6 +25,8 @@ export const skillReadTool = defineTool({
 });
 
 export const skillInstallTool = defineTool({
+  id: nativeToolId('skill_install'),
+  risk: 'write',
   name: 'skill_install',
   description: '安装技能：用户要求把某个链接、GitHub 仓库上的技能装进来，或你判断某套可复用流程值得沉淀成技能时调用。安装后需要用户在技能面板确认才会生效。',
   permissions: ['network', 'fs:write'],

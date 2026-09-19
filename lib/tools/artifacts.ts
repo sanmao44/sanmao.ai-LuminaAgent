@@ -1,6 +1,8 @@
-import { defineTool, TOOL_GATE } from './registry';
+import { defineTool, nativeToolId, TOOL_GATE } from './registry';
 
 export const documentGenerateTool = defineTool({
+  id: nativeToolId('document_generate'),
+  risk: 'write',
   name: 'document_generate',
   description: '用户要生成、导出 Word 文档（.docx、Word、文档、报告、方案、合同、简历、说明书）时调用。内容要么用 markdown 直接写（推荐），要么用 sections 结构化提供；多章节的长文档需要目录时传 toc=true。不要用 file_generate 生成 .docx。',
   permissions: ['artifact:write'],
@@ -60,6 +62,8 @@ export const documentGenerateTool = defineTool({
 });
 
 export const spreadsheetGenerateTool = defineTool({
+  id: nativeToolId('spreadsheet_generate'),
+  risk: 'write',
   name: 'spreadsheet_generate',
   description: '用户要生成、导出 Excel 表格（.xlsx、Excel、表格、销售数据、报表、台账）时调用。报表类需求建议打开 totals 自动合计，并给状态列加 options 下拉、给关键数值列加 highlight 条件格式。不要用 file_generate 生成 .xlsx。',
   permissions: ['artifact:write'],
@@ -109,6 +113,8 @@ export const spreadsheetGenerateTool = defineTool({
 });
 
 export const presentationGenerateTool = defineTool({
+  id: nativeToolId('presentation_generate'),
+  risk: 'write',
   name: 'presentation_generate',
   description: '用户要生成、导出 PPT / 演示文稿 / 幻灯片（.pptx、PPT、deck）时调用。需要图表时用 layout=chart，在 chart 里给数值数据；需要配图时用 layout=image 并传 image.ref（来自图片工具返回的 ref），subtitle 作为图注。不要用 file_generate 生成 .pptx。',
   permissions: ['artifact:write'],
@@ -177,6 +183,8 @@ export const presentationGenerateTool = defineTool({
 });
 
 export const archiveGenerateTool = defineTool({
+  id: nativeToolId('archive_generate'),
+  risk: 'write',
   name: 'archive_generate',
   description: '用户要把多个文件打成 ZIP 压缩包（.zip、打包、压缩、资料包）时调用。必须最后调用：先生成 Word/Excel/PPT/文本文件，再用本工具打包。',
   permissions: ['artifact:write', 'artifact:read'],

@@ -25,6 +25,24 @@ export type ToolSource = 'native' | 'mcp' | 'plugin';
 /** 能力标签：供 Agent 侧做行为分支，不参与下发判断。 */
 export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill' | 'mcp' | 'mcp-admin';
 
+/**
+ * 工具风险等级，口径按任务书 §9：
+ * - read：只读，没有任何副作用。
+ * - write：只在本机产生数据（写产物、写配置），不碰外部系统。
+ * - external_side_effect：会改变本机以外的东西（提交表单、发消息、调用付费生成接口）。
+ * - dangerous：可能造成不可逆损失（执行命令、删除数据、发布、付款）。
+ *
+ * v1 只做声明与审计，真正的「危险操作要用户确认」由 Milestone E 的审批链路落地。
+ */
+export type ToolRisk = 'read' | 'write' | 'external_side_effect' | 'dangerous';
+
+export const TOOL_RISK_ORDER: readonly ToolRisk[] = ['read', 'write', 'external_side_effect', 'dangerous'];
+
+/** 需要用户确认才执行的风险等级。 */
+export function isRiskyTool(risk: ToolRisk) {
+  return risk === 'external_side_effect' || risk === 'dangerous';
+}
+
 /** 本轮上下文：决定哪些工具能下发给模型。 */
 export type ToolGatingContext = {
   /** 用户本轮要求生成文件（file_generate）。 */
@@ -40,6 +58,13 @@ export type ToolGatingContext = {
 };
 
 export type ToolDefinition = {
+  /**
+   * 运行时唯一 id，与「模型看到的名字」解耦：
+   * native 工具是 native:<name>，MCP 工具是 mcp:<serverId>:<toolName>。
+   * 名字以后可能会为了防冲突而改写，id 不会变，审计和日志都认它。
+   */
+  id: string;
+  /** 下发给模型的 function name，必须唯一且只含 [A-Za-z0-9_-]。 */
   name: string;
   description: string;
   /** JSON Schema，与 MCP 的 inputSchema 同形；下发时直接当 function.parameters。 */
@@ -47,8 +72,12 @@ export type ToolDefinition = {
   permissions: readonly ToolPermissions[];
   tags: readonly ToolTag[];
   source: ToolSource;
+  /** 风险等级；决定以后要不要走用户确认。 */
+  risk: ToolRisk;
   /** 本轮是否下发；默认拒绝，每个工具都必须显式声明。 */
   gating: (context: ToolGatingContext) => boolean;
+  /** 默认 true；置 false 表示运行时禁用：不下发，也拒绝执行。 */
+  enabled?: boolean;
   /**
    * 模型看不到这个工具（gating 为假），但执行层仍然接受调用。
    * 只有「调用时机由本地先决策」的工具才该打开，目前是 web_search：
@@ -76,6 +105,16 @@ export const TOOL_GATE = {
 
 export function defineTool<const T extends ToolDefinition>(definition: T) {
   return definition;
+}
+
+/** native 工具 id 的统一写法，避免手写字符串各写各的。 */
+export function nativeToolId(name: string) {
+  return `native:${name}`;
+}
+
+/** 模型调用工具时可能带上非 ASCII 字符或超长名字，这里统一挡掉。 */
+export function isValidToolName(name: string) {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(name);
 }
 
 /** OpenAI 兼容的 function 工具结构，服务商侧只认这个形状。 */

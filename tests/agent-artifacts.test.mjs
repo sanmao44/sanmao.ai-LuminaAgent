@@ -30,7 +30,7 @@ test('Agent 暴露四个 Office/ZIP 工具并保持 file_generate 只做文本',
 test('Office 工具按需下发，避免每次对话都带上工具 schema', () => {
   assert.match(route, /likelyArtifactGenerationRequest/);
   assert.match(route, /const artifactGenerationRequest = fileGenerationRequest/);
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools\);/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText\);/);
   assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
 });
@@ -115,7 +115,10 @@ test('同轮“先生成再打包”会补一轮交付物工具，而不是把�
   assert.match(route, /if \(kind === 'artifact'\) \{/);
   assert.match(route, /toolResults\.push\(await runArtifactToolCall\(call\)\);/);
   assert.match(route, /if \(artifactGenerationRequest && artifactToolsOnly\.length && toolCalls\.some\(isArtifactToolCall\)/);
-  assert.match(route, /followupResults\.push\(await runArtifactToolCall\(followupCall\)\);/);
+  // 补轮循环收进 lib/agent/tool-loop.ts：这里只校验它还挂在原来的条件下、用原来的工具集和顺序。
+  assert.match(route, /maxSteps: ARTIFACT_TOOL_MAX_ROUNDS/);
+  assert.match(route, /orderCalls: \(calls\) => \[\.\.\.calls\]\.sort\(\(left, right\) => Number\(isArchiveToolCall\(left\)\) - Number\(isArchiveToolCall\(right\)\)\)/);
+  assert.match(route, /results\.push\(await runArtifactToolCall\(call\)\);/);
   assert.match(route, /if \(followupText \|\| artifactFollowupText\) finalText = followupText \|\| artifactFollowupText;/);
   assert.match(route, /必须真的调用 archive_generate 打包/);
 });

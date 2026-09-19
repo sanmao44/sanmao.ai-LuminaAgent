@@ -27,6 +27,41 @@ export {
   upsertMcpServer,
 } from './store';
 export {
+  MCP_STDIO_IDLE_TIMEOUT_MS,
+  MCP_STDIO_MAX_STDERR_CHARS,
+  closeStdioServer,
+  stdioCommandProblem,
+  stdioServerStatus,
+} from './stdio';
+export type { McpStdioStatus } from './stdio';
+export {
+  MCP_CATALOG_ENTRIES,
+  catalogEntryBinPath,
+  catalogEntryEnabled,
+  catalogServerConfig,
+  detectSystemBrowser,
+  findCatalogEntry,
+  isCatalogInstalled,
+  listCatalogServers,
+  readCatalogState,
+  resolveCatalogInstallRoot,
+  resolveCatalogStateFile,
+  resolveCatalogWorkspace,
+  setCatalogEntryEnabled,
+} from './catalog';
+export type { McpCatalogBrowser, McpCatalogEntry } from './catalog';
+export {
+  MCP_CATALOG_INSTALL_TIMEOUT_MS,
+  cancelCatalogInstall,
+  catalogRuntimeStatus,
+  installCatalogServer,
+  resolveCatalogInstallLogFile,
+  resolveNpmCliPath,
+  startCatalogServer,
+  stopCatalogServer,
+} from './catalog-runtime';
+export type { McpCatalogRuntimeState, McpCatalogRuntimeStatus } from './catalog-runtime';
+export {
   MCP_MAX_SCHEMA_CHARS_PER_TURN,
   MCP_MAX_TOOL_DEFINITIONS_PER_TURN,
   MCP_TOOL_CACHE_TTL_MS,

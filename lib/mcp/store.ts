@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
+import { listCatalogServers } from './catalog';
 import type { McpServerConfig } from './types';
 
 export const MCP_MAX_SERVERS = 20;
@@ -137,6 +138,14 @@ export function redactMcpServer(config: McpServerConfig) {
 }
 
 export function listMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
+  return [...readUserMcpServers(options), ...listCatalogServers(options)].slice(0, MCP_MAX_SERVERS);
+}
+
+/**
+ * 用户自己配的服务（remote http）。
+ * 目录服务（stdio）不在这份文件里，见 lib/mcp/catalog.ts：命令来自代码，不来自用户输入。
+ */
+function readUserMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
   const file = resolveMcpStoreFile(options);
   if (!existsSync(file)) return [];
   try {

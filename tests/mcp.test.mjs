@@ -279,7 +279,7 @@ test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信
   assert.match(route, /const gatingContext = \{/);
   assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{ signal: requestController\.signal \}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools\);/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText\);/);
   assert.match(route, /const policy = resolveToolPolicy\(call\?\.function\?\.name, gatingContext, mcpTools\);/);
   assert.match(route, /if \(!policy\.allowed\) \{/);
   assert.match(route, /const result = await callMcpTool\(server, meta\.toolName, args && typeof args === 'object' \? args : \{\}, \{/);

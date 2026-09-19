@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline] = await Promise.all([
+const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline, toolLoop] = await Promise.all([
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -16,13 +16,14 @@ const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, e
   readFile(new URL("../components/AgentSkillMenu.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/ReferenceMentionEditor.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SkillInlineText.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../lib/agent/tool-loop.ts", import.meta.url), "utf8"),
 ]);
 
 test("a reply reports back which skills the agent actually read", () => {
   assert.match(route, /const usedSkills: Array<\{ id: string; name: string \}> = \[\];/);
   assert.match(route, /if \(!usedSkills\.some\(\(item\) => item\.id === skill\.id\)\) usedSkills\.push\(\{ id: skill\.id, name: skill\.name \}\);/);
   assert.match(route, /skills: metadata\.skills \|\| \[\]/);
-  assert.match(route, /skills: usedSkills, mcpTools: usedMcpTools \}/);
+  assert.match(route, /skills: usedSkills, mcpTools: usedMcpTools, toolTrace \}/);
   assert.match(client, /skills\?: Array<\{ id: string; name: string \}>;/);
 });
 
@@ -101,8 +102,10 @@ test("the tool round hands the assistant turn back so thinking models accept the
   // 否则后续请求会被服务商以 400 拒绝，用户只能看到一句占位答案。
   assert.match(route, /const carriedAssistantFields = typeof toolCallMessage\?\.reasoning_content === 'string'/);
   assert.match(route, /tool_calls: toolCalls, \.\.\.carriedAssistantFields \}, \.\.\.toolResults\]/);
-  assert.match(route, /const carriedFollowupFields = typeof followupMessage\?\.reasoning_content === 'string'/);
-  assert.match(route, /tool_calls: followupCalls, \.\.\.carriedFollowupFields \}/);
+  // 补轮的助手消息现在由通用循环统一拼接，回传字段跟着搬到了 lib/agent/tool-loop.ts。
+  assert.match(toolLoop, /reasoning_content: reply\.reasoning_content \}/);
+  assert.match(toolLoop, /options\.messages\.push\(\{ role: 'assistant', content: reply\?\.content \?\? null, tool_calls: rawCalls/);
+  assert.match(route, /maxSteps: SKILL_TOOL_FOLLOWUP_MAX_ROUNDS/);
   // 工具轮之后的失败不再静默降级成占位答案。
   assert.match(route, /console\.error\('\[Agent\] 工具轮之后的流式回答失败：', llmFailure\);/);
   assert.match(route, /fallback: `\$\{finalText\}（整理回答失败：\$\{llmFailure\.slice\(0, 200\)\}）`/);

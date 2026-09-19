@@ -34,6 +34,9 @@ test('注册表登记全部内置工具，且每个工具都声明了 schema / �
     assert.ok(tool.permissions.length, `${tool.name} 必须声明权限`);
     assert.ok(tool.tags.length, `${tool.name} 必须声明能力标签`);
     assert.equal(tool.source, 'native');
+    assert.ok(tool.id.startsWith('native:'), `${tool.name} 的运行时 id 要用 native: 前缀`);
+    assert.ok(tool.id.endsWith(tool.name), `${tool.name} 的 id 要和名字对应`);
+    assert.ok(tool.risk, `${tool.name} 必须声明风险等级`);
   }
 });
 
@@ -73,7 +76,7 @@ test('能力标签支撑 route.ts 的分支判断', () => {
 
 test('route.ts 只做编排：工具定义与门控链都搬到 lib/tools', () => {
   assert.match(route, /import \{ isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor \} from '@\/lib\/tools';/);
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools\);/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText\);/);
   assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
   assert.doesNotMatch(route, /const tools = \[/, '工具定义不能留在 route.ts');
   assert.doesNotMatch(route, /name: 'document_generate'/, '工具 schema 不能留在 route.ts');

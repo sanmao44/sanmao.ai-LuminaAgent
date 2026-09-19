@@ -1,6 +1,18 @@
 import { createHash } from 'node:crypto';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
 import type { McpRemoteTool, McpServerConfig } from './types';
+import {
+  MCP_CALL_TIMEOUT_MS,
+  MCP_INIT_TIMEOUT_MS,
+  MCP_LIST_TIMEOUT_MS,
+  MCP_MAX_RESPONSE_BYTES,
+  MCP_PROTOCOL_VERSION,
+  McpError,
+  resultText,
+  type McpRequestOptions,
+  type McpTimeouts,
+} from './protocol';
+import { callStdioTool, listStdioServerTools } from './stdio';
 
 /**
  * 最小 MCP 客户端：只实现 tools/list 与 tools/call 需要的部分
@@ -11,35 +23,13 @@ import type { McpRemoteTool, McpServerConfig } from './types';
  * 两种都要认（规范允许服务端自行选择）。
  */
 
-export const MCP_PROTOCOL_VERSION = '2025-06-18';
-export const MCP_INIT_TIMEOUT_MS = 10_000;
-export const MCP_LIST_TIMEOUT_MS = 15_000;
-export const MCP_CALL_TIMEOUT_MS = 120_000;
-export const MCP_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-export const MCP_MAX_TOOL_RESULT_CHARS = 8000;
 /** 一轮对话里最多调用几次外部服务，以及这些调用加起来最多花多久。 */
 export const MCP_TOOL_MAX_CALLS_PER_TURN = 4;
 export const MCP_TURN_TIME_BUDGET_MS = 150_000;
 
-export class McpError extends Error {
-  readonly server: string;
-
-  constructor(server: string, message: string) {
-    super(message);
-    this.name = 'McpError';
-    this.server = server;
-  }
-}
-
 type JsonRpcMessage = { jsonrpc?: string; id?: unknown; result?: any; error?: { code?: number; message?: string }; method?: string };
-/** 各阶段超时；默认值见下面三个常量，调用方（含测试）可以单独覆盖。 */
-export type McpTimeouts = { init?: number; list?: number; call?: number };
 type McpClientOptions = { fetchImpl?: typeof fetch; now?: () => number; timeouts?: McpTimeouts };
-type McpCallOptions = McpClientOptions & {
-  signal?: AbortSignal;
-  /** 失败后是否允许换一个会话重放一次；默认允许，写类工具必须显式传 false。 */
-  retry?: boolean;
-};
+type McpCallOptions = McpClientOptions & McpRequestOptions;
 
 /** 已建立的会话（initialize 拿到的 mcp-session-id），按「地址 + 凭据」缓存。 */
 const sessions = new Map<string, string>();
@@ -224,6 +214,8 @@ async function withSession<T>(server: McpServerConfig, options: McpCallOptions, 
 }
 
 export async function listMcpServerTools(server: McpServerConfig, options: McpCallOptions = {}): Promise<McpRemoteTool[]> {
+  // 本地 stdio 服务和远程服务走同一套协议，只是传输不同：由这里统一分流。
+  if (server.transport === 'stdio') return listStdioServerTools(server, options);
   return withSession(server, options, async () => {
     const tools: McpRemoteTool[] = [];
     let cursor: string | undefined;
@@ -248,32 +240,13 @@ export async function listMcpServerTools(server: McpServerConfig, options: McpCa
   });
 }
 
-function resultText(result: any) {
-  const parts: string[] = [];
-  const content = Array.isArray(result?.content) ? result.content : [];
-  for (const item of content) {
-    if (item?.type === 'text' && typeof item.text === 'string') parts.push(item.text);
-    else if (typeof item?.resource?.text === 'string') parts.push(item.resource.text);
-    // 图片/音频这类二进制内容不进上下文，只标注一下类型。
-    else if (typeof item?.type === 'string') parts.push(`[${item.type}]`);
-  }
-  if (result?.structuredContent !== undefined) {
-    try {
-      parts.push(JSON.stringify(result.structuredContent));
-    } catch {}
-  }
-  const text = parts.join('\n').trim();
-  if (text.length <= MCP_MAX_TOOL_RESULT_CHARS) return text;
-  // 截断必须说出来：否则模型会以为拿到的是完整内容，基于残缺数据下结论。
-  return `${text.slice(0, MCP_MAX_TOOL_RESULT_CHARS)}\n…（结果过长已截断，以上只是前 ${MCP_MAX_TOOL_RESULT_CHARS} 个字符；如需完整内容请让用户在服务端分页或缩小查询范围。）`;
-}
-
 export async function callMcpTool(
   server: McpServerConfig,
   toolName: string,
   args: Record<string, unknown>,
   options: McpCallOptions = {},
 ): Promise<{ text: string; isError: boolean }> {
+  if (server.transport === 'stdio') return callStdioTool(server, toolName, args, options);
   // 默认不重放：写工具重复执行的代价远高于一次失败。只读工具由调用方显式打开重试。
   return withSession(server, { ...options, retry: options.retry === true }, async () => {
     const result = await post(server, {
@@ -293,3 +266,7 @@ export async function probeMcpServer(server: McpServerConfig, options: McpCallOp
 }
 
 export type { McpRemoteTool };
+
+// 协议层的东西从这里再导出一次，历史代码和测试按 '@/lib/mcp/client' 导入不用改。
+export { MCP_CALL_TIMEOUT_MS, MCP_INIT_TIMEOUT_MS, MCP_LIST_TIMEOUT_MS, MCP_MAX_RESPONSE_BYTES, MCP_MAX_TOOL_RESULT_CHARS, MCP_PROTOCOL_VERSION, McpError } from './protocol';
+export type { McpRequestOptions, McpTimeouts } from './protocol';

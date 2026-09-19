@@ -2,7 +2,7 @@ import { MCP_MAX_TOOLS_PER_SERVER, listMcpServers } from './store';
 import { listMcpServerTools } from './client';
 import type { McpTimeouts } from './client';
 import type { McpRemoteTool, McpServerConfig } from './types';
-import type { ToolDefinition } from '@/lib/tools/registry';
+import { isValidToolName, type ToolDefinition } from '@/lib/tools/registry';
 
 /** 模型看到的 MCP 工具名是 <serverId>__<toolName>，避免不同服务的同名工具互相覆盖。 */
 export const MCP_TOOL_SEPARATOR = '__';
@@ -15,6 +15,11 @@ export const MCP_MAX_SCHEMA_CHARS_PER_TURN = 60_000;
 
 export function mcpToolId(serverId: string, toolName: string) {
   return `${serverId}${MCP_TOOL_SEPARATOR}${toolName}`;
+}
+
+/** 注册表里的运行时 id，和模型看到的名字分开记：名字是给人看的，id 给审计用。 */
+export function mcpRuntimeToolId(serverId: string, toolName: string) {
+  return `mcp:${serverId}:${toolName}`;
 }
 
 export function isMcpReadOnlyTool(tool: McpRemoteTool) {
@@ -43,17 +48,22 @@ export function isMcpToolSchemaTooLarge(tool: McpRemoteTool) {
 export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpRemoteTool[]): ToolDefinition[] {
   const allowed = new Set(server.enabledTools || []);
   const selected = tools
-    .filter((tool) => (!allowed.size || allowed.has(tool.name)) && !isMcpToolSchemaTooLarge(tool))
+    // 名字要能直接当 function name 下发：上游只接受 [A-Za-z0-9_-]，服务公布怪名字就直接跳过，
+    // 否则这一轮整个工具表都会被服务商判成非法请求。
+    .filter((tool) => (!allowed.size || allowed.has(tool.name)) && !isMcpToolSchemaTooLarge(tool) && isValidToolName(mcpToolId(server.id, tool.name)))
     .slice(0, MCP_MAX_TOOLS_PER_SERVER);
   return selected.map((tool) => {
     const readOnly = isMcpReadOnlyTool(tool);
     return {
+      id: mcpRuntimeToolId(server.id, tool.name),
       name: mcpToolId(server.id, tool.name),
       description: `[MCP · ${server.name}] ${String(tool.description || tool.title || tool.name).trim().slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS)}`,
       schema: inputSchemaOf(tool),
       permissions: readOnly ? ['network'] : ['network', 'external:write'],
       tags: ['mcp'],
       source: 'mcp',
+      // 只读工具动不了外部数据；写工具即使被放行，也是改动本机以外的东西。
+      risk: readOnly ? 'read' : 'external_side_effect',
       // 服务没启用时根本不会构建这些定义，所以门控恒真；真正的拦截在权限校验里。
       gating: () => true,
       mcp: { serverId: server.id, serverName: server.name, toolName: tool.name, readOnly, blocked: !readOnly && !server.allowWrite },

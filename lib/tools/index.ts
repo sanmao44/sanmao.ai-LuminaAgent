@@ -6,9 +6,11 @@ import { mcpManageTool } from './mcp-admin';
 import { toModelToolSchema, type ModelToolSchema, type ToolDefinition, type ToolGatingContext, type ToolPermissions, type ToolSource, type ToolTag } from './registry';
 import { webSearchTool } from './web';
 import { kindForTool, type ToolExecutionKind } from './executor';
+import { selectToolsForTurn } from './selector';
 
 export * from './registry';
 export * from './executor';
+export * from './selector';
 
 /** 顺序即下发顺序，与原 route.ts 里的工具数组保持一致。 */
 export const TOOL_REGISTRY: readonly ToolDefinition[] = [
@@ -27,9 +29,15 @@ export const TOOL_REGISTRY: readonly ToolDefinition[] = [
 ];
 
 const TOOL_BY_NAME = new Map(TOOL_REGISTRY.map((tool) => [tool.name, tool]));
+const TOOL_BY_ID = new Map(TOOL_REGISTRY.map((tool) => [tool.id, tool]));
 
 export function getToolDefinition(name: unknown): ToolDefinition | null {
   return TOOL_BY_NAME.get(String(name || '')) || null;
+}
+
+/** 按运行时 id 找工具；审计和日志认 id，不认会变的名字。 */
+export function findToolById(id: unknown): ToolDefinition | null {
+  return TOOL_BY_ID.get(String(id || '')) || null;
 }
 
 /** 工具的执行类别（由注册表标签推导）；未登记或没有类别时返回 null。 */
@@ -50,12 +58,16 @@ export function toolTags(name: unknown): readonly ToolTag[] {
   return getToolDefinition(name)?.tags || [];
 }
 
+export function toolRisk(name: unknown, extraTools: readonly ToolDefinition[] = []) {
+  return findToolDefinition(name, extraTools)?.risk || null;
+}
+
 /**
  * 本轮要下发给模型的工具。门控全部来自注册表：没登录的工具不会因为新增代码而
  * 意外暴露给模型，这是之前 route.ts 里那段 if 链最容易出错的地方。
  */
-export function toolSchemasFor(context: ToolGatingContext, extraTools: readonly ToolDefinition[] = []): ModelToolSchema[] {
-  return [...TOOL_REGISTRY, ...extraTools].filter((tool) => tool.gating(context)).map(toModelToolSchema);
+export function toolSchemasFor(context: ToolGatingContext, extraTools: readonly ToolDefinition[] = [], userText?: string): ModelToolSchema[] {
+  return selectToolsForTurn({ context, availableTools: [...TOOL_REGISTRY, ...extraTools], userText }).map(toModelToolSchema);
 }
 
 function callToolName(call: any) {

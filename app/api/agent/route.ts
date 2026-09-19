@@ -18,6 +18,7 @@ import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_
 import { loadMcpToolRuntime } from '@/lib/mcp/tools';
 import { runMcpManageAction } from '@/lib/mcp/admin';
 
+import { runToolLoop, type ToolLoopTraceStep } from '@/lib/agent/tool-loop';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
@@ -103,6 +104,8 @@ function generatedFileFromArtifact(artifact: ArtifactDescriptor): GeneratedFile 
 }
 
 const ARTIFACT_TOOL_MAX_ROUNDS = 2;
+/** 技能工具一样需要链式调用，补轮上限和交付物保持一致。 */
+const SKILL_TOOL_FOLLOWUP_MAX_ROUNDS = 2;
 
 
 function artifactToolError(call: any, error: unknown): ChatMessage {
@@ -237,7 +240,7 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; h
   };
 }
 
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; finalize?: (text: string) => Promise<string> | string; };
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; finalize?: (text: string) => Promise<string> | string; };
 
 type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string };
 
@@ -321,7 +324,7 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response |
         }
         const cleanedFinal = stripToolCallMarkup(finalized).trim();
         const finalText = cleanedFinal || (streamedFinal.trim() ? '这轮助手只输出了工具调用标记，没有给出回答。请再问一次，或把需求说得更具体。' : '当前对话模型没有返回内容。');
-        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [] });
+        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [] });
         settlement = { status: 'success', responseChars: finalText.length };
         controller.close();
       } catch (error) {
@@ -698,7 +701,14 @@ export async function POST(request: Request) {
     const mcpRuntime = await loadMcpToolRuntime({ signal: requestController.signal }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = mcpRuntime.tools;
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
-    const callableTools = toolSchemasFor(gatingContext, mcpTools);
+    // 浏览器这类大工具表只在「这一轮像要用浏览器」时才下发。关键词要往前多看几条消息：
+    // 用户第一轮说「打开 example.com」、第二轮只说「继续」时，工具不能凭空消失。
+    const recentTurnText = messages
+      .slice(-4)
+      .map((message) => (typeof message.content === 'string' ? message.content : ''))
+      .join('\n')
+      .slice(0, 2000);
+    const callableTools = toolSchemasFor(gatingContext, mcpTools, recentTurnText);
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
     const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }));
     const searchMetadata = (): WebSearchMeta | null => {
@@ -1233,29 +1243,35 @@ export async function POST(request: Request) {
     // 技能工具经常需要链式调用（先检索再读取、安装后再核对）。如果后续轮次完全
     // 不给工具，模型会把调用写成文本标记（如 DSML），既不执行也会显示成乱码。
     // 这里只为技能工具补最多两轮原生调用，其余工具仍保持单轮，控制成本与副作用。
+    // 轮数、总次数、中止和 Trace 统一由 lib/agent/tool-loop.ts 管，两份重复的循环收成一份。
+    const toolTrace: ToolLoopTraceStep[] = [];
     let followupText = '';
     if (skillToolCalls > 0 && skillToolsOnly.length && !generated.length && !generatedFiles.length && !webSearchData) {
-      for (let round = 0; round < 2; round += 1) {
-        const followup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-          messages: secondMessages,
-          tools: skillToolsOnly,
-          tool_choice: 'auto',
-        }, requestController.signal).catch((error) => {
-          if (requestController.signal.aborted) throw requestController.signal.reason || error;
-          return null;
-        });
-        const followupMessage = followup?.choices?.[0]?.message;
-        const followupCalls = Array.isArray(followupMessage?.tool_calls) ? followupMessage.tool_calls : [];
-        if (!followupCalls.length) {
-          followupText = stripToolCallMarkup(String(followupMessage?.content || '')).trim();
-          break;
-        }
-        const followupResults: ChatMessage[] = [];
-        for (const followupCall of followupCalls) followupResults.push(await runSkillToolCall(followupCall));
-        const carriedFollowupFields = typeof followupMessage?.reasoning_content === 'string' && followupMessage.reasoning_content ? { reasoning_content: followupMessage.reasoning_content } : {};
-        secondMessages.push({ role: 'assistant', content: followupMessage?.content || null, tool_calls: followupCalls, ...carriedFollowupFields }, ...followupResults);
-        if (skillToolCalls >= SKILL_TOOL_MAX_CALLS) break;
-      }
+      const skillLoop = await runToolLoop({
+        messages: secondMessages,
+        maxSteps: SKILL_TOOL_FOLLOWUP_MAX_ROUNDS,
+        signal: requestController.signal,
+        callModel: async () => {
+          const followup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
+            messages: secondMessages,
+            tools: skillToolsOnly,
+            tool_choice: 'auto',
+          }, requestController.signal).catch((error) => {
+            if (requestController.signal.aborted) throw requestController.signal.reason || error;
+            return null;
+          });
+          return followup?.choices?.[0]?.message || null;
+        },
+        runCalls: async (calls) => {
+          const results: ChatMessage[] = [];
+          for (const call of calls) results.push(await runSkillToolCall(call));
+          return results;
+        },
+        shouldContinue: () => skillToolCalls < SKILL_TOOL_MAX_CALLS,
+        finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
+      });
+      followupText = skillLoop.text;
+      toolTrace.push(...skillLoop.trace);
     }
     // 交付物工具和技能工具一样需要链式调用：模型经常先调用 document_generate /
     // spreadsheet_generate，拿到结果后才决定调用 archive_generate 打包。如果这一轮
@@ -1263,29 +1279,32 @@ export async function POST(request: Request) {
     // 也会显示成乱码。这里只为交付物工具补最多两轮原生调用。
     let artifactFollowupText = '';
     if (artifactGenerationRequest && artifactToolsOnly.length && toolCalls.some(isArtifactToolCall) && !generated.length && !webSearchData) {
-      for (let round = 0; round < ARTIFACT_TOOL_MAX_ROUNDS; round += 1) {
-        const artifactFollowup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-          messages: secondMessages,
-          tools: artifactToolsOnly,
-          tool_choice: 'auto',
-        }, requestController.signal).catch((error) => {
-          if (requestController.signal.aborted) throw requestController.signal.reason || error;
-          return null;
-        });
-        const artifactFollowupMessage = artifactFollowup?.choices?.[0]?.message;
-        const artifactFollowupCalls = Array.isArray(artifactFollowupMessage?.tool_calls) ? artifactFollowupMessage.tool_calls : [];
-        if (!artifactFollowupCalls.length) {
-          artifactFollowupText = stripToolCallMarkup(String(artifactFollowupMessage?.content || '')).trim();
-          break;
-        }
-        const orderedFollowupCalls = [...artifactFollowupCalls].sort((left: any, right: any) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right)));
-        const followupResults: ChatMessage[] = [];
-        for (const followupCall of orderedFollowupCalls) followupResults.push(await runArtifactToolCall(followupCall));
-        const carriedFollowupFields = typeof artifactFollowupMessage?.reasoning_content === 'string' && artifactFollowupMessage.reasoning_content ? { reasoning_content: artifactFollowupMessage.reasoning_content } : {};
-        secondMessages.push({ role: 'assistant', content: artifactFollowupMessage?.content || null, tool_calls: artifactFollowupCalls, ...carriedFollowupFields }, ...followupResults);
-      }
-    }
-    let finalText = generated.length || generatedFiles.length
+      const artifactLoop = await runToolLoop({
+        messages: secondMessages,
+        maxSteps: ARTIFACT_TOOL_MAX_ROUNDS,
+        signal: requestController.signal,
+        callModel: async () => {
+          const artifactFollowup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
+            messages: secondMessages,
+            tools: artifactToolsOnly,
+            tool_choice: 'auto',
+          }, requestController.signal).catch((error) => {
+            if (requestController.signal.aborted) throw requestController.signal.reason || error;
+            return null;
+          });
+          return artifactFollowup?.choices?.[0]?.message || null;
+        },
+        orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
+        runCalls: async (calls) => {
+          const results: ChatMessage[] = [];
+          for (const call of calls) results.push(await runArtifactToolCall(call));
+          return results;
+        },
+        finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
+      });
+      artifactFollowupText = artifactLoop.text;
+      toolTrace.push(...artifactLoop.trace);
+    }    let finalText = generated.length || generatedFiles.length
       ? `已完成${generated.length ? ` ${generated.length} 张图片` : ''}${generated.length && generatedFiles.length ? '，' : ''}${generatedFiles.length ? ` ${generatedFiles.length} 个文件` : ''}。`
       : webSearchData
         ? '已完成联网检索。'
@@ -1294,18 +1313,18 @@ export async function POST(request: Request) {
       : '工具调用失败，请检查已启用的模型或服务商接口。';
     if (generated.length && preparedCaption) finalText = await preparedCaption;
     if (wantsStream) {
-      if (followupText || artifactFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
+      if (followupText || artifactFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
       try {
-        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
+        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
-        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
         // 这一轮以前是静默降级，用户只会看到“已完成联网检索”这类占位答案，也查不到原因。
         // 记下真实错误，并把它一起返回给用户。
         llmFailure = error instanceof Error ? error.message : String(error);
         console.error('[Agent] 工具轮之后的流式回答失败：', llmFailure);
-        return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
     if (followupText || artifactFollowupText) finalText = followupText || artifactFollowupText;
@@ -1323,7 +1342,7 @@ export async function POST(request: Request) {
       await settleLlmLog?.({ status: 'error', responseChars: 0, error: llmFailure });
     }
     llmResponseChars = String(finalText || '').length;
-    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools });
+    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
   } catch (error) {
     llmFailure = error instanceof Error ? error.message : '智能助手请求失败。';
     if (!streamOwnsRuntimeRequest) await settleLlmLog?.({ status: 'error', responseChars: llmResponseChars, error: llmFailure });

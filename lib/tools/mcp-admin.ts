@@ -1,4 +1,4 @@
-import { defineTool, TOOL_GATE } from './registry';
+import { defineTool, nativeToolId, TOOL_GATE } from './registry';
 
 /**
  * 让助手能自己接入 MCP 服务，而不是只能让用户去面板手填地址和凭据。
@@ -7,6 +7,9 @@ import { defineTool, TOOL_GATE } from './registry';
  * 「打开写入权限」「删除服务」必须能在用户原话里找到依据，模型自己说了不算。
  */
 export const mcpManageTool = defineTool({
+  id: nativeToolId('mcp_manage'),
+  // 能删服务、能放开第三方写入权限，交给审批链路兜底最稳。
+  risk: 'dangerous',
   name: 'mcp_manage',
   description: '管理本机已配置的 MCP 服务：列出服务（list）、连接自检（probe）、添加（add）、修改开关或工具范围（update）、删除（remove）。只在用户明确要求接入、查看、修改或移除 MCP 服务时调用；这不是查询外部数据的工具，接入后的服务会以下一轮的 <serverId>__<toolName> 工具出现。删除服务和开启写入权限需要用户明确同意，被拒绝时如实转告，不要绕过。',
   permissions: ['network', 'fs:write'],
