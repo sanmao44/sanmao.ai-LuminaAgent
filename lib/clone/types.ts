@@ -71,6 +71,9 @@ export type CloneModels = {
   speech?: string;
 };
 
+/** 高级设置里显式选择的模型 id：为「自动」的轨道不写，执行时按 id 精确取模型。 */
+export type CloneModelIds = Partial<CloneModels>;
+
 /** 成片时间轴：直接落进画布的视频编辑节点。 */
 export type CloneTimeline = {
   duration: number;
@@ -93,6 +96,7 @@ export type CloneJob = {
   capabilities: CloneCapabilities;
   warnings: string[];
   models: CloneModels;
+  modelIds?: CloneModelIds;
   shots: CloneShot[];
   timeline: CloneTimeline;
   error?: string;

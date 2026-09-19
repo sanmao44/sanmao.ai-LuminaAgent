@@ -57,7 +57,8 @@ export async function extractFrameFiles(input: string, times: number[], outDir: 
       '-ss', String(Math.max(0, Number(time) || 0)),
       '-i', input,
       '-frames:v', '1',
-      '-vf', 'scale=min(720,iw):-2',
+      // 过滤图里的逗号必须转义：否则 ffmpeg 会把 min(720,iw) 拆成两个过滤器，抽帧全部失败。
+      '-vf', 'scale=min(720\\,iw):-2',
       '-q:v', '4',
       out,
     ], 60_000);

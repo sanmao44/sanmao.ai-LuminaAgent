@@ -10,6 +10,12 @@ import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operati
 export const runtime = 'nodejs';
 export const maxDuration = 3600;
 
+/** 取用户显式选择的模型 id；「自动」和空值都不写，交给执行层按默认挑。 */
+function readModelId(value: unknown) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text && text !== 'auto' ? text : undefined;
+}
+
 function readReference(raw: unknown): CloneReference {
   const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const url = String(source.url || '').trim();
@@ -65,6 +71,13 @@ export async function POST(request: Request) {
         image: imageRuntime.model.displayName,
         video: videoRuntime?.model.displayName,
         speech: speechRuntime?.model.displayName,
+      },
+      // 只存展示名不够：管线要按用户选的模型执行，否则高级设置形同虚设。
+      modelIds: {
+        chat: readModelId(body.chatModel),
+        image: readModelId(body.imageModel),
+        video: readModelId(body.videoModel),
+        speech: readModelId(body.speechModel),
       },
       idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim().slice(0, 80) : undefined,
     });

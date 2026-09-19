@@ -60,6 +60,16 @@ function formatSeconds(value: number) {
   return seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒` : `${Math.round(seconds)} 秒`;
 }
 
+/**
+ * 把这次提交的参数压成一个短键：同样的参数重复点「开始」仍会命中同一个任务（防连点），
+ * 但只要改了要求 / 镜头数 / 模型，就是一条新任务，不会静默拿回上一次的旧成片。
+ */
+function requestKey(value: string) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) + hash + value.charCodeAt(index)) | 0;
+  return (hash >>> 0).toString(36);
+}
+
 export default function CanvasCloneDialog({
   references,
   models,
@@ -157,7 +167,10 @@ export default function CanvasCloneDialog({
           imageModel: selectedModels.image,
           videoModel: selectedModels.video,
           speechModel: selectedModels.speech,
-          idempotencyKey: `canvas-clone-${reference.nodeId}`,
+          idempotencyKey: `canvas-clone-${reference.nodeId}-${requestKey([
+            brief.trim(), maxShots, maxSeconds, aspect, voice.trim(),
+            selectedModels.chat, selectedModels.image, selectedModels.video, selectedModels.speech,
+          ].join("|"))}`,
         }),
       });
       const data = await response.json().catch(() => ({}));

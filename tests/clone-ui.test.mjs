@@ -109,6 +109,27 @@ test("模型库把 TTS 归类为配音模型并给出配音能力", () => {
   assert.match(match_types, /\| 'speech'/);
 });
 
+test("高级设置里选的模型真的生效，降级都不静默，幂等键不复用旧成片", () => {
+  // 用户选的模型要带进任务并被执行层使用，否则高级设置只是摆设。
+  assert.match(route, /modelIds: \{/);
+  assert.match(pipeline, /resolveSelectedModel\(started\.modelIds\?\.chat/);
+  assert.match(pipeline, /当前不可用（可能已停用或删除）/);
+  // 视觉拆解失败 / 文案占位 / 配音失败都要留痕，不能静默。
+  assert.match(pipeline, /视觉拆解失败（/);
+  assert.match(pipeline, /const items = Array\.isArray\(payload\)/);
+  assert.match(pipeline, /拆解降级要立刻落库/);
+  assert.match(pipeline, /口播暂时用画面拆解描述代替/);
+  assert.match(pipeline, /shots = replaceShot\(shots, index, \{ error: message \}\)/);
+  assert.match(pipeline, /mergeWarnings\(job\?\.warnings \|\| started\.warnings, failures\)/);
+  // 幂等键只挡正在跑的任务：已完成/已取消的旧任务不再占着键，避免第二次点「开始」拿回旧成片。
+  assert.match(store, /const CLONE_FINISHED_STAGES: CloneStage\[\] = \['done', 'cancelled'\];/);
+  assert.match(store, /delete existing\.idempotencyKey;/);
+  assert.match(store, /return store\.mutate\(\(tasks\) => \{/);
+  // 弹窗的幂等键带上本次参数：同参数防连点，改了要求就是新任务。
+  assert.match(dialog, /function requestKey\(value: string\)/);
+  assert.match(dialog, /idempotencyKey: `canvas-clone-\$\{reference\.nodeId\}-\$\{requestKey\(\[/);
+});
+
 test("克隆弹窗样式跟随画布主题并且窄屏可用", () => {
   for (const selector of [".clone-backdrop{", ".clone-dialog{", ".clone-reference-card", ".clone-cost", ".clone-shots", ".clone-button.primary", ".clone-progress-track i{"]) {
     assert.ok(styles.includes(selector), selector);
