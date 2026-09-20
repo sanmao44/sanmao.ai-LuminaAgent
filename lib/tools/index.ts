@@ -7,6 +7,7 @@ import { toModelToolSchema, type ModelToolSchema, type ToolDefinition, type Tool
 import { webSearchTool } from './web';
 import { kindForTool, type ToolExecutionKind } from './executor';
 import { selectToolsForTurn } from './selector';
+import { canvasPatchTool } from './canvas';
 
 export * from './registry';
 export * from './executor';
@@ -26,6 +27,7 @@ export const TOOL_REGISTRY: readonly ToolDefinition[] = [
   skillReadTool,
   skillInstallTool,
   mcpManageTool,
+  canvasPatchTool,
 ];
 
 const TOOL_BY_NAME = new Map(TOOL_REGISTRY.map((tool) => [tool.name, tool]));

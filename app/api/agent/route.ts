@@ -15,7 +15,8 @@ import { isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGe
 import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
-import { MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
+import { MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn } from '@/lib/mcp/tools';
+import { listMcpServers } from '@/lib/mcp/store';
 import { BROWSER_TOOL_GUIDE } from '@/lib/mcp/browser-guidance';
 import { BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, type BrowserToolUse } from '@/lib/mcp/browser-guidance';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
@@ -45,6 +46,8 @@ import { resolveLocalDataDir } from '@/lib/data-paths';
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { getStorageRoots } from '@/lib/image-storage';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
+import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
+import { normalizeDocument } from '@/lib/canvas/model';
 import {
   collectArchiveEntries,
   generateArchiveArtifact,
@@ -269,7 +272,7 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; h
   };
 }
 
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; finalize?: (text: string) => Promise<string> | string; approval?: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> }; };
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; canvasPatch?: CanvasPatch; finalize?: (text: string) => Promise<string> | string; approval?: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> }; };
 
 type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string };
 
@@ -354,7 +357,7 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response |
         const cleanedFinal = stripToolCallMarkup(finalized).trim();
         const finalText = cleanedFinal || (streamedFinal.trim() ? '这轮助手只输出了工具调用标记，没有给出回答。请再问一次，或把需求说得更具体。' : '当前对话模型没有返回内容。');
         if (metadata.approval) send(controller, { type: 'approval_required', approvalId: metadata.approval.id, runId: metadata.approval.id, summary: metadata.approval.message, approval: metadata.approval });
-        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [], ...(metadata.approval ? { approval: metadata.approval, needsApproval: true } : {}) });
+        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), ...(metadata.canvasPatch ? { canvasPatch: metadata.canvasPatch } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [], ...(metadata.approval ? { approval: metadata.approval, needsApproval: true } : {}) });
         settlement = { status: 'success', responseChars: finalText.length };
         controller.close();
       } catch (error) {
@@ -441,6 +444,9 @@ export async function POST(request: Request) {
     agentRunId = (await beginAgentRun((body as { runId?: unknown }).runId))?.runId || null;
     const workspaceContext = body.context && typeof body.context === 'object'
       ? normalizeWorkspaceContext(body.context)
+      : null;
+    const canvasDocument = body.canvasDocument && typeof body.canvasDocument === 'object'
+      ? normalizeDocument(body.canvasDocument)
       : null;
     const taskContext = workspaceContext ? {
       projectId: workspaceContext.creativeProjectId,
@@ -659,6 +665,9 @@ export async function POST(request: Request) {
     const skillContext = buildAgentSkillContext({ settings: state.settings, dataDir: resolveLocalDataDir() });
     const skillPromptSection = skillContext.indexSection + skillContext.toolHint;
     let system = appendPersonaToSystem(buildSystem(initialWebInstructions, ''), body.persona);
+    if (isCanvasSource && canvasDocument) {
+      system += '\n\n超级画布操作：当用户明确要求新增、修改、连接或删除画布节点时，必须调用 canvas_patch 提出结构化操作；不要声称已经修改画布。Patch 会由客户端校验并一次性应用。每个新增节点必须提供完整的合法 CanvasNode，连接必须引用当前节点或同一 Patch 中先前新增的节点。若用户只是分析或提问，不要调用 canvas_patch。';
+    }
     system += skillPromptSection;
     system += artifactGenerationRequest
       ? '\n\n交付物路由上下文：本轮用户要交付文件。必须调用对应的生成工具把文件真正生成出来（Word 用 document_generate、Excel 用 spreadsheet_generate、PPT 用 presentation_generate、ZIP 用 archive_generate、文本类文件用 file_generate），把完整内容写进工具参数；不要只说明文件包含什么，也不要在工具没有成功前说文件已经生成。'
@@ -760,17 +769,25 @@ export async function POST(request: Request) {
       skillsEnabled: skillContext.settings.enabled,
       imageAllowed: imageToolsAllowed,
       mcpAdmin: mcpAdminRequest,
+      canvas: isCanvasSource && Boolean(canvasDocument),
     };
     // MCP 工具是运行时按已配置服务拉取的远程工具：best-effort，没配置或连不上就当没有，
     // 绝不能让外部服务的可用性影响到普通对话。
     /* 拉取外部工具表可能是这一轮最慢的一步，先给用户一个交代。 */
     reportProgress({ stage: 'tool', message: '正在准备可用工具…' });
+    const recentTurnText = messages
+      .slice(-4)
+      .map((message) => (typeof message.content === 'string' ? message.content : ''))
+      .join('\n')
+      .slice(0, 2000);
     const priorityServerIds = [
       ...(browserAutomationRequest ? ['playwright'] : []),
       ...(filesystemRequest ? ['filesystem'] : []),
     ];
+    const selectedMcpServers = mcpServersForTurn(listMcpServers(), recentTurnText, priorityServerIds);
     const mcpRuntime = await loadMcpToolRuntime({
       signal: requestController.signal,
+      servers: selectedMcpServers,
       ...(priorityServerIds.length ? { priorityServerIds } : {}),
     }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = mcpRuntime.tools;
@@ -809,11 +826,6 @@ const auditMcpCall = (
   });
     // 浏览器这类大工具表只在「这一轮像要用浏览器」时才下发。关键词要往前多看几条消息：
     // 用户第一轮说「打开 example.com」、第二轮只说「继续」时，工具不能凭空消失。
-    const recentTurnText = messages
-      .slice(-4)
-      .map((message) => (typeof message.content === 'string' ? message.content : ''))
-      .join('\n')
-      .slice(0, 2000);
     // 面板给某个服务打开「按需下发」后，它的工具只在提到这个服务时才挂上；没打开的仍然全量下发。
     const lazyGroupKeywords = lazyMcpGroupKeywords(mcpRuntime.servers, mcpTools);
     const callableTools = toolSchemasFor(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords);
@@ -905,9 +917,9 @@ const auditMcpCall = (
         : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
     // 直连流式不提供工具。启用中的技能会把索引写进系统提示，模型在这里只能把调用写成文本标记，所以有技能时改走工具轮。
-    const directStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch && !browserAutomationRequest && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;
+    const directStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch && !browserAutomationRequest && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;
     // 检索结果已经写进系统提示，联网路径的最终答案同样可以直接流式输出，不必再多做一轮工具判断。
-    const searchedStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;
+    const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
     if (directStream || searchedStream) {
       // 联网路径把“检索成功却回答找不到来源”的兜底移到收尾阶段，正文照常逐字输出。
@@ -1042,6 +1054,7 @@ const auditMcpCall = (
     }
 
     const generated: Array<{ url: string; revisedPrompt?: string }> = [];
+    let canvasPatch: CanvasPatch | undefined;
     const generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }> = [];
     const generatedFiles: GeneratedFile[] = [];
     /** 其中来自浏览器下载的份数：下载是 MCP 调用的正常结果，不算「这一轮已经产出交付物」。 */
@@ -1312,6 +1325,23 @@ const auditMcpCall = (
       }
       if (kind === 'skill') {
         results.push(await runSkillToolCall(call));
+        return { results };
+      }
+      if (kind === 'canvas') {
+        if (!canvasDocument) {
+          results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '当前请求没有可用的画布上下文' }) });
+          return { results };
+        }
+        let patch: unknown;
+        try { patch = JSON.parse(call.function.arguments || '{}'); } catch { patch = null; }
+        const validation = validateCanvasPatch(canvasDocument, patch as CanvasPatch);
+        if (!validation.ok) {
+          results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: validation.error, operationIndex: validation.operationIndex }) });
+          return { results };
+        }
+        const accepted = { ...(patch as CanvasPatch), runId: agentRunId || (patch as CanvasPatch).runId } satisfies CanvasPatch;
+        canvasPatch = accepted;
+        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, patch: accepted, summary: `已生成 ${accepted.operations.length} 个画布操作，等待客户端应用` }) });
         return { results };
       }
       if (kind === 'mcp-manage') {
@@ -1859,18 +1889,18 @@ const auditMcpCall = (
       : '工具调用失败，请检查已启用的模型或服务商接口。';
     if (generated.length && preparedCaption) finalText = await preparedCaption;
     if (wantsStream) {
-      if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
+      if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
       try {
-        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
+        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
-        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
         // 这一轮以前是静默降级，用户只会看到“已完成联网检索”这类占位答案，也查不到原因。
         // 记下真实错误，并把它一起返回给用户。
         llmFailure = error instanceof Error ? error.message : String(error);
         console.error('[Agent] 工具轮之后的流式回答失败：', llmFailure);
-        return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
     if (followupText || artifactFollowupText || mcpFollowupText) finalText = followupText || artifactFollowupText || mcpFollowupText;
@@ -1888,7 +1918,7 @@ const auditMcpCall = (
       await settleLlmLog?.({ status: 'error', responseChars: 0, error: llmFailure });
     }
     llmResponseChars = String(finalText || '').length;
-    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
+    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, ...(canvasPatch ? { canvasPatch } : {}), toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
   } catch (error) {
     llmFailure = error instanceof Error ? error.message : '智能助手请求失败。';
     if (!streamOwnsRuntimeRequest) await settleLlmLog?.({ status: 'error', responseChars: llmResponseChars, error: llmFailure });

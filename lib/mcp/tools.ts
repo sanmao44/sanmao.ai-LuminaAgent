@@ -133,6 +133,10 @@ export function boundMcpToolPayload(definitions: readonly ToolDefinition[]) {
 
 /** 按需下发的服务最多带多少个关键词：够用就好，太多等于没过滤。 */
 export const MCP_LAZY_KEYWORD_LIMIT = 24;
+const MCP_BROWSER_ACTION_KEYWORDS = new Set([
+  '\u6253\u5f00', '\u8bbf\u95ee', '\u8fdb\u5165', '\u641c\u7d22', '\u67e5\u627e', '\u70b9\u51fb', '\u70b9\u8d5e', '\u8df3\u8f6c',
+  '\u586b\u5199', '\u767b\u5f55', '\u6ce8\u518c', '\u63d0\u4ea4', '\u64ad\u653e', '\u6eda\u52a8', '\u5207\u6362', '\u9009\u4e2d', '\u53d1\u5e03', '\u8d2d\u4e70',
+]);
 
 /**
  * 「按需下发」服务的关键词表（面板里给单个服务勾选）。
@@ -167,6 +171,31 @@ export function lazyMcpGroupKeywords(
     keywords[`mcp:${server.id}`] = [...words].slice(0, MCP_LAZY_KEYWORD_LIMIT);
   }
   return keywords;
+}
+
+/** Select lazy connectors before initiating their potentially slow tool discovery. */
+export function mcpServersForTurn(
+  servers: readonly McpServerConfig[],
+  userText: string | undefined,
+  priorityServerIds: readonly string[] = [],
+): McpServerConfig[] {
+  const text = String(userText || '').toLowerCase();
+  const priority = new Set(priorityServerIds.map((id) => String(id || '').trim()).filter(Boolean));
+  return servers.filter((server) => {
+    if (!server.enabled) return false;
+    if (server.lazy !== true || priority.has(server.id)) return true;
+    if (!text) return false;
+    const catalog = server.catalogId ? findCatalogEntry(server.catalogId) : null;
+    // Browser actions are too generic to route by themselves. The route-level
+    // browser classifier supplies Playwright through priorityServerIds instead.
+    const catalogKeywords = server.catalogId === 'playwright'
+      ? (catalog?.intentKeywords || []).filter((keyword) => !MCP_BROWSER_ACTION_KEYWORDS.has(String(keyword || '').trim()))
+      : (catalog?.intentKeywords || []);
+    const keywords = [server.id, server.name, ...catalogKeywords, ...(server.enabledTools || [])]
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter((value) => value.length >= 2);
+    return keywords.some((keyword) => text.includes(keyword));
+  });
 }
 
 type McpToolCacheEntry = { at: number; tools: ToolDefinition[] };

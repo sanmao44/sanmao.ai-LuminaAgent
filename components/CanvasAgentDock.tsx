@@ -39,6 +39,8 @@ import {
 } from "@/lib/canvas/run-context";
 import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
+import type { CanvasDocument } from "@/lib/canvas/types";
+import type { CanvasPatch } from "@/lib/canvas/patch";
 
 export const CANVAS_AGENT_DOCK_OPEN_KEY = "sanmao.canvas.agentdock.open.v1";
 export const CANVAS_AGENT_DOCK_SESSION_KEY = "sanmao.canvas.agentdock.session.v1";
@@ -68,6 +70,8 @@ export type CanvasAgentDockMessage = {
   mcpTools?: AgentMcpToolUse[];
   /** 这一轮生成的文件产物：只存元数据与取件地址，二进制不进本地会话。 */
   files?: AgentGeneratedFile[];
+  canvasPatch?: CanvasPatch;
+  canvasPatchApplied?: boolean;
 };
 
 type CanvasAgentDockSession = {
@@ -85,6 +89,8 @@ type Props = {
   references: CanvasAgentDockReference[];
   selectedNodeIds?: string[];
   context: WorkspaceContext;
+  canvasDocument: CanvasDocument;
+  onApplyCanvasPatch: (patch: CanvasPatch) => CanvasAgentDockPlanResult;
   /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
   selectedTotal?: number;
   contextBlock: string;
@@ -330,6 +336,13 @@ function readStoredFiles(value: unknown): AgentGeneratedFile[] {
     .slice(0, 8);
 }
 
+function readStoredCanvasPatch(value: unknown): CanvasPatch | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const patch = value as Partial<CanvasPatch>;
+  if (patch.version !== 1 || !Array.isArray(patch.operations)) return undefined;
+  return patch as CanvasPatch;
+}
+
 /* 产物卡片只说人话：字节数按 KB / MB 显示，类型从扩展名取。 */
 function formatAgentFileSize(size: number) {
   const value = Number(size);
@@ -386,10 +399,12 @@ function readStoredMessageExtras(message: unknown): Partial<CanvasAgentDockMessa
   const approval = readStoredApproval(source.approval);
   const mcpTools = readStoredMcpTools(source.mcpTools);
   const files = readStoredFiles(source.files);
+  const canvasPatch = readStoredCanvasPatch(source.canvasPatch);
   return {
     ...(approval ? { approval } : {}),
     ...(mcpTools.length ? { mcpTools } : {}),
     ...(files.length ? { files } : {}),
+    ...(canvasPatch ? { canvasPatch } : {}),
     ...(source.approvalResult ? { approvalResult: String(source.approvalResult) } : {}),
   };
 }
@@ -446,6 +461,7 @@ export default function CanvasAgentDock({
   references,
   selectedNodeIds = [],
   context,
+  canvasDocument,
   selectedTotal,
   contextBlock,
   runtime,
@@ -453,6 +469,7 @@ export default function CanvasAgentDock({
   onApplyImages,
   onApplyText,
   onApplyPlan,
+  onApplyCanvasPatch,
   onCreateAgentNode,
   onUseAsImagePrompt,
   onUseAsVideoPrompt,
@@ -914,6 +931,7 @@ export default function CanvasAgentDock({
             intentText: text,
             runId: progressRunId,
             context,
+            canvasDocument,
             references: orderedReferences.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
             signal: controller.signal,
           },
@@ -947,6 +965,7 @@ export default function CanvasAgentDock({
         const approval = readStoredApproval(response.approval);
         const mcpTools = readStoredMcpTools(response.mcpTools);
         const files = readStoredFiles(response.files);
+        const canvasPatch = readStoredCanvasPatch(response.canvasPatch);
         if (approval && !openRef.current) notify("助手有个操作等你确认，展开面板处理。");
         const shouldAutoApply = images.length > 0 && autoApply && (!plan || !plan.requiresConfirmation);
         let appliedImageIds: string[] = [];
@@ -975,8 +994,19 @@ export default function CanvasAgentDock({
             ...(approval ? { approval } : {}),
             ...(mcpTools.length ? { mcpTools } : {}),
             ...(files.length ? { files } : {}),
+            ...(canvasPatch ? { canvasPatch } : {}),
           },
         ]);
+        if (canvasPatch && autoApply) {
+          const applied = onApplyCanvasPatch(canvasPatch);
+          if (applied.error) {
+            notify(`画布 Patch 未应用：${applied.error}`, "error");
+          } else {
+            setMessages((value) => value.map((message) => message.id === assistantMessageId
+              ? { ...message, canvasPatchApplied: true }
+              : message));
+          }
+        }
         if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
           const appliedIds = onApplyText(content, { prompt: mentionText });
           if (appliedIds.length) {
@@ -1022,7 +1052,7 @@ export default function CanvasAgentDock({
         setProgressDetail("");
       }
     },
-    [autoApply, busy, closeSkillMenu, context, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
+    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, editingMessageId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
   );
 
   const applyMessagePlan = useCallback((message: CanvasAgentDockMessage) => {
@@ -1556,6 +1586,24 @@ export default function CanvasAgentDock({
                   <div className="canvas-agent-dock-plan-actions">
                     <button type="button" className="primary" onClick={() => applyMessagePlan(message)}>确认并应用</button>
                     <button type="button" onClick={() => dismissMessagePlan(message)}>取消</button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {message.canvasPatch ? (
+              <div className={`canvas-agent-dock-plan${message.canvasPatchApplied ? " is-applied" : ""}`}>
+                <div className="canvas-agent-dock-plan-head"><strong>画布 Patch</strong><span>{message.canvasPatchApplied ? "已应用" : "待应用"}</span></div>
+                <b>Agent 提出了 {message.canvasPatch.operations.length} 个画布操作</b>
+                {!message.canvasPatchApplied ? (
+                  <div className="canvas-agent-dock-plan-actions">
+                    <button type="button" className="primary" onClick={() => {
+                      const result = onApplyCanvasPatch(message.canvasPatch!);
+                      setMessages((value) => value.map((item) => item.id === message.id
+                        ? result.error
+                          ? { ...item, error: result.error }
+                          : { ...item, canvasPatchApplied: true }
+                        : item));
+                    }}>应用到画布</button>
                   </div>
                 ) : null}
               </div>

@@ -361,7 +361,8 @@ test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信
   const route = await read('app/api/agent/route.ts');
   assert.match(route, /const gatingContext = \{/);
   assert.match(route, /const priorityServerIds = \[\s*\.\.\.\(browserAutomationRequest \? \['playwright'\] : \[\]\),\s*\.\.\.\(filesystemRequest \? \['filesystem'\] : \[\]\),\s*\];/s);
-  assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{\s*signal: requestController\.signal,\s*\.\.\.\(priorityServerIds\.length \? \{ priorityServerIds \} : \{\}\),\s*\}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/s);
+  assert.match(route, /const selectedMcpServers = mcpServersForTurn\(listMcpServers\(\), recentTurnText, priorityServerIds\);/);
+  assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{\s*signal: requestController\.signal,\s*servers: selectedMcpServers,\s*\.\.\.\(priorityServerIds\.length \? \{ priorityServerIds \} : \{\}\),\s*\}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/s);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
   assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/, '按需下发的分组关键词由服务配置决定');
   assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
@@ -620,6 +621,36 @@ test('MCP 工具表在一轮对话里有总量上限，超出的不下发', asyn
   const used = budgeted.reduce((sum, tool) => sum + JSON.stringify(tool.schema).length, 0);
   assert.ok(budgeted.length > 0 && budgeted.length < 20, '结构过大的工具不会无限下发');
   assert.ok(used <= mcp.MCP_MAX_SCHEMA_CHARS_PER_TURN, '合计参数结构不超过每轮预算');
+});
+
+test('按需连接器在工具发现前按本轮意图筛选，普通聊天不触达它们', () => {
+  const servers = [
+    serverConfig({ id: 'github', name: 'GitHub', lazy: true }),
+    serverConfig({ id: 'context7', name: 'Context7', lazy: true }),
+    serverConfig({ id: 'custom', name: 'Always available', lazy: false }),
+  ];
+
+  assert.deepEqual(
+    mcp.mcpServersForTurn(servers, '你好').map((server) => server.id),
+    ['custom'],
+    '普通聊天不应初始化任何按需 MCP',
+  );
+  assert.deepEqual(
+    mcp.mcpServersForTurn(servers, '看看 GitHub 的仓库').map((server) => server.id),
+    ['github', 'custom'],
+  );
+  assert.deepEqual(
+    mcp.mcpServersForTurn(servers, '继续', ['context7']).map((server) => server.id),
+    ['context7', 'custom'],
+    '高置信度路由可以强制保留对应连接器',
+  );
+  const browser = serverConfig({ id: 'playwright', name: 'Browser', catalogId: 'playwright', lazy: true });
+  assert.deepEqual(mcp.mcpServersForTurn([browser], '打开文件').map((server) => server.id), []);
+  assert.deepEqual(
+    mcp.mcpServersForTurn([browser], '帮我打开 https://example.com 后继续').map((server) => server.id),
+    ['playwright'],
+    '连续网页任务的站点线索仍应保留浏览器连接器',
+  );
 });
 
 test('浏览器自动化请求优先加载浏览器工具，避免被其他服务占满预算', async () => {

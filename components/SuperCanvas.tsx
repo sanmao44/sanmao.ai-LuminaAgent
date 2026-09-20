@@ -77,6 +77,7 @@ import {
   type CanvasAlignment,
   type CanvasDistribution,
 } from "@/lib/canvas/model";
+import { applyCanvasPatch, validateCanvasPatch, type CanvasPatch } from "@/lib/canvas/patch";
 import {
   CANVAS_Z_INDEX,
   canvasGroupPaintZIndex,
@@ -10410,6 +10411,22 @@ export default function SuperCanvas() {
     },
     [agentDockReferences, commit, fitView, notify, openNodePosition, runtime, screenToWorld, selectedNodes, selectedSingle, stageSize.height, stageSize.width],
   );
+  const applyAgentCanvasPatch = useCallback((patch: CanvasPatch): CanvasAgentDockPlanResult => {
+    const validation = validateCanvasPatch(docRef.current, patch);
+    if (!validation.ok) return { ids: [], error: validation.error };
+    commit(() => applyCanvasPatch(docRef.current, patch));
+    const addedIds = patch.operations
+      .filter((operation): operation is Extract<CanvasPatch["operations"][number], { op: "add_node" }> => operation.op === "add_node")
+      .map((operation) => operation.node.id);
+    if (addedIds.length) {
+      setSelectedIds(new Set(addedIds));
+      setSelectedGroupId(null);
+      fitView(addedIds);
+    }
+    notify(`已应用 ${patch.operations.length} 个画布操作，可直接撤销`, "ok");
+    return { ids: addedIds };
+  }, [commit, fitView, notify]);
+
   const applyAgentDockText = useCallback(
     (text: string, meta: { prompt: string }) => {
       const content = String(text || "").trim();
@@ -16134,6 +16151,7 @@ export default function SuperCanvas() {
           chips={agentDockChips}
           references={agentDockReferences}
           context={agentWorkspaceContext}
+          canvasDocument={document}
           selectedNodeIds={agentDockContext.nodeIds}
           selectedTotal={agentDockContext.nodeIds.length}
           contextBlock={agentDockContext.text}
@@ -16143,6 +16161,7 @@ export default function SuperCanvas() {
           onApplyImages={applyAgentDockImages}
           onApplyText={applyAgentDockText}
           onApplyPlan={applyAgentDockPlan}
+          onApplyCanvasPatch={applyAgentCanvasPatch}
           onCreateAgentNode={applyAgentDockAgentNode}
           onUseAsImagePrompt={applyAgentDockImageBranch}
           onUseAsVideoPrompt={applyAgentDockVideoBranch}
