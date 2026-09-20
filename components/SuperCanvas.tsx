@@ -327,6 +327,7 @@ import {
   creativeProjectVersion,
   creativeProjectIdForCanvas,
   readCreativeProjects,
+  removeCreativeProjectVersion,
   saveCreativeProjects,
   type CreativeProjectVersion,
 } from "@/lib/creative-projects";
@@ -5984,6 +5985,21 @@ export default function SuperCanvas() {
     setProjectMenuOpen(false);
     notify(`已恢复到 ${version.label}`);
   }, [clearSelection, commit, currentProject?.projectId, notify]);
+  const deleteProjectVersion = useCallback((versionId: string) => {
+    if (!currentProject?.projectId) return;
+    const version = projectVersions.find((item) => item.id === versionId);
+    if (!version) return notify("找不到这个项目版本", "error");
+    if (!window.confirm(`删除“${version.label}”？删除后不能恢复。`)) return;
+    const next = removeCreativeProjectVersion(
+      readCreativeProjects(),
+      currentProject.projectId,
+      versionId,
+    );
+    if (!next) return notify("项目版本删除失败，请重试", "error");
+    if (!saveCreativeProjects(next)) return notify("项目版本删除失败，请重试", "error");
+    setProjectVersions(next.find((project) => project.id === currentProject.projectId)?.versions || []);
+    notify(`已删除 ${version.label}`);
+  }, [currentProject?.projectId, notify, projectVersions]);
   const deleteProject = useCallback(
     (id: string) => {
       if (projects.length <= 1) return notify("至少保留一个画布。", "error");
@@ -14796,17 +14812,31 @@ export default function SuperCanvas() {
                 <span>项目版本</span>
                 <button type="button" onClick={saveProjectVersion} disabled={!currentProject}>保存当前版本</button>
               </div>
-              {projectVersions.length ? projectVersions.slice().reverse().map((version) => (
-                <button
-                  type="button"
-                  className="canvas-project-version-row"
-                  key={version.id}
-                  onClick={() => restoreProjectVersion(version.id)}
-                >
-                  <b>{version.label}</b>
-                  <small>{new Date(version.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" })}</small>
-                </button>
-              )) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
+              {projectVersions.length ? (
+                <div className="canvas-project-version-list">
+                  {projectVersions.slice().reverse().map((version) => (
+                    <div className="canvas-project-version-row" key={version.id}>
+                      <button
+                        type="button"
+                        className="canvas-project-version-restore"
+                        onClick={() => restoreProjectVersion(version.id)}
+                      >
+                        <b>{version.label}</b>
+                        <small>{new Date(version.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" })}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className="canvas-project-version-delete"
+                        aria-label={`删除 ${version.label}`}
+                        title={`删除 ${version.label}`}
+                        onClick={() => deleteProjectVersion(version.id)}
+                      >
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
             </div>
             <div className="canvas-popover-actions">
               <button type="button" onClick={newProject}>＋ 新建画布</button>

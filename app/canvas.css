@@ -4712,8 +4712,13 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
 .canvas-project-versions-head button{padding:4px 7px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);color:var(--accent-text);font:inherit;font-size:8px;cursor:pointer}
 .canvas-project-versions-head button:hover,.canvas-project-versions-head button:focus-visible{border-color:var(--accent);outline:none}
 .canvas-project-versions-head button:disabled{opacity:.5;cursor:not-allowed}
-.canvas-project-version-row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text);text-align:left;cursor:pointer}
-.canvas-project-version-row:hover,.canvas-project-version-row:focus-visible{border-color:color-mix(in srgb,var(--accent) 46%,var(--line));background:var(--accent-soft);outline:none}
-.canvas-project-version-row b{font-size:9px}
-.canvas-project-version-row small,.canvas-project-versions-empty{color:var(--muted);font-size:8px}
+.canvas-project-version-list{display:grid;gap:6px;max-height:min(320px,40vh);overflow-y:auto;padding-right:3px;overscroll-behavior:contain;scrollbar-width:thin}
+.canvas-project-version-row{display:flex;align-items:center;gap:6px;width:100%;min-width:0;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}
+.canvas-project-version-row:focus-within,.canvas-project-version-row:has(.canvas-project-version-restore:hover){border-color:color-mix(in srgb,var(--accent) 46%,var(--line));background:var(--accent-soft)}
+.canvas-project-version-restore{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;flex:1;padding:7px 2px 7px 8px;border:0;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.canvas-project-version-restore:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:7px}
+.canvas-project-version-restore b{font-size:9px}
+.canvas-project-version-restore small,.canvas-project-versions-empty{color:var(--muted);font-size:8px}
+.canvas-project-version-delete{display:grid;place-items:center;width:28px;height:28px;flex:none;margin-right:3px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer}
+.canvas-project-version-delete:hover,.canvas-project-version-delete:focus-visible{background:var(--danger-soft);color:var(--danger);outline:none}
 .canvas-project-versions-empty{padding:4px 2px}

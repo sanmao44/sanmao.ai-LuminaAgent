@@ -66,3 +66,26 @@ test('version records form a bounded parent chain and remain queryable', () => {
   assert.equal(projects.creativeProjectVersion(current, project.id, 'version-55').label, 'V55');
   assert.equal(projects.creativeProjectVersion(current, project.id, 'version-55').parentVersionId, 'version-54');
 });
+
+test('a selected version can be removed without changing the project canvas identity', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const withVersions = projects.appendCreativeProjectVersion(base.creativeProjects, base.canvasProjects[0].projectId, {
+    id: 'version-1',
+    canvasId: 'canvas-a',
+    label: 'V1',
+    createdAt: 30,
+    snapshot: snapshot('first'),
+  });
+  const next = projects.appendCreativeProjectVersion(withVersions, base.canvasProjects[0].projectId, {
+    id: 'version-2',
+    canvasId: 'canvas-a',
+    label: 'V2',
+    createdAt: 40,
+    parentVersionId: 'version-1',
+    snapshot: snapshot('second'),
+  });
+  const removed = projects.removeCreativeProjectVersion(next, base.canvasProjects[0].projectId, 'version-1');
+  assert.equal(removed[0].canvasIds[0], 'canvas-a');
+  assert.deepEqual(removed[0].versions.map((version) => version.id), ['version-2']);
+  assert.equal(projects.removeCreativeProjectVersion(removed, base.canvasProjects[0].projectId, 'missing'), null);
+});
