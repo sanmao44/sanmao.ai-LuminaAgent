@@ -1,17 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.50",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.50",
+  "latestVersion": "0.7.51",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.51",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.50/SANMAO.AI-0.7.50.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.50/SANMAO.AI-0.7.50.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.50/SANMAO.AI-0.7.50.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.50/SANMAO.AI-0.7.50.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip"
   ],
   "sha256": "4a38a420a7b64fbb18e385c2564557c4beefcb663b4ca0c4a18d7a466ff05885",
-  "publishedAt": "2026-09-20T01:26:32+08:00",
+  "publishedAt": "2026-09-20T21:26:32+08:00",
   "notes": [
+    "Agent 工具调用兼容性修复：兼容部分 DeepSeek 兼容服务返回的 DSML/XML 工具调用格式，避免图片生成请求被错误回退；画布请求与 MCP/技能上下文隔离，减少历史画布内容导致的误触发。",
+    "超级画布 Patch 校验收紧：限制合法节点类型与数值字段，拒绝空 Patch，并保留已应用 Patch 状态，降低 Agent 误修改和无效画布操作风险。",
     "对话里可直接生成真实的 Word / Excel / PPT 与 ZIP 压缩包，产物以附件形式下载并支持在线预览（尽量还原 Excel 公式与条件格式、Word 目录样式、PPT 表格图表与演讲者备注）。",
     "上传的 Word / Excel / PPT / PDF 会解析成文本进入上下文；文档引用不再显示成参考图，缩略图直接显示文件名。",
     "MCP 连接器体系：新增官方连接器目录（Playwright / Filesystem / GitHub / Context7），面板支持粘贴配置一键识别、批量放行、授权记忆与调用审计，可管理站点名单与授权目录；助手也能自行接入或移除服务。",
