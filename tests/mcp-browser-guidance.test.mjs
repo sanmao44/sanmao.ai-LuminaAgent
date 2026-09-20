@@ -34,3 +34,26 @@ test('系统提示里的浏览器约定要写清 ref 的取法', () => {
   assert.match(guide, /CSS 选择器/, '把「自己编选择器」这个错法点名');
   assert.match(guide, /重新/, '每次操作后 ref 会换，要重新取快照');
 });
+
+test('浏览器循环不会把“现在继续提交评论”当成最终回复', () => {
+  assert.equal(mcp.browserTextNeedsContinuation('我已完成点赞，现在继续提交评论。'), true);
+  assert.equal(mcp.browserTextNeedsContinuation('评论区操作未能继续完成。'), true);
+  assert.equal(mcp.browserTextNeedsContinuation('已完成全部操作，评论已出现在列表中。'), false);
+});
+
+test('评论/回复必须按输入、发送、验证顺序完成', () => {
+  const instruction = '打开网站后回复“不错！不错！”';
+  const use = (name) => ({ name, ok: true });
+  assert.equal(mcp.browserTextSubmissionGap(instruction, []), 'input');
+  assert.equal(mcp.browserTextSubmissionGap(instruction, [use('browser_type')]), 'submit');
+  assert.equal(mcp.browserTextSubmissionGap(instruction, [use('browser_type'), use('browser_click')]), 'verify');
+  assert.equal(mcp.browserTextSubmissionGap(instruction, [use('browser_type'), use('browser_click'), use('browser_snapshot')]), '');
+  assert.equal(mcp.browserTextSubmissionGap('查看评论区有什么内容', []), '');
+});
+
+test('评论流程提示必须包含输入、发送和结果核验', () => {
+  const guide = mcp.BROWSER_TOOL_GUIDE;
+  assert.match(guide, /browser_type/, '要明确使用输入工具');
+  assert.match(guide, /browser_click/, '要明确点击发送');
+  assert.match(guide, /成功提示|评论出现在列表/, '要明确核验提交结果');
+});

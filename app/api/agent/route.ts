@@ -17,6 +17,7 @@ import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
 import { MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
 import { BROWSER_TOOL_GUIDE } from '@/lib/mcp/browser-guidance';
+import { browserTextNeedsContinuation, browserTextSubmissionGap } from '@/lib/mcp/browser-guidance';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
 import { importBrowserArtifacts } from '@/lib/mcp/browser-downloads';
 import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
@@ -131,6 +132,8 @@ const MCP_TOOL_FOLLOWUP_MAX_ROUNDS = 6;
 const MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS = 12;
 const MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN = 32;
 const MCP_BROWSER_TURN_TIME_BUDGET_MS = 300_000;
+/** 自然语言中途状态也要回到工具循环，最多允许几次恢复提示，避免过早停在半截。 */
+const MCP_BROWSER_RECOVERY_PROMPT_MAX = 8;
 
 
 function artifactToolError(call: any, error: unknown): ChatMessage {
@@ -1190,6 +1193,19 @@ const auditMcpCall = (
     let stalledMcpReason = '';
     type ToolCallRun = { results: ChatMessage[]; deferred?: true; stalled?: true };
 
+    const browserContinuationPrompt = (recovery: boolean) => {
+      const prefix = recovery
+        ? '浏览器自动化上一步出现了可恢复错误。先重新获取当前页面快照，确认动作是否已经生效；'
+        : '请重新获取当前页面快照，确认页面真实状态；';
+      const gap = browserTextSubmissionGap(latestInstruction, usedMcpTools);
+      if (gap === 'input') return `${prefix}用户明确要求评论或回复，但目前没有成功的 browser_type/browser_fill_form。请定位当前编辑框并输入用户要求的完整文字，不能只调用 browser_find，也不能提前回复完成。`;
+      if (gap === 'submit') return `${prefix}评论文字已经输入，但还没有成功点击发送/提交。请按最新快照定位发送按钮并调用 browser_click；先确认页面状态，避免重复发送。`;
+      if (gap === 'verify') return `${prefix}发送动作已经执行，但还没有发送后的验证快照。请重新调用 browser_snapshot，确认评论出现在列表或出现成功提示；如果没有成功，再按当前页面状态继续。`;
+      return recovery
+        ? `${prefix}继续执行用户原始命令；不要提前回复完成。`
+        : '浏览器自动化尚未完成。请对照用户原始命令逐项核对，继续执行尚未完成的动作；只有全部目标都已验证成功后才能回复完成。';
+    };
+
     /**
      * 执行一次工具调用。首轮和后续补轮共用这一份：权限、路径、审批、审计、停滞检测只写一遍，
      * 补轮才不会绕开首轮的任何一道判断。
@@ -1743,21 +1759,22 @@ const auditMcpCall = (
         },
         shouldContinue: () => !deferredCalls.length && mcpToolCallCount < mcpToolCallLimit && mcpTurnBudget > 0,
         continueOnEmpty: () => {
-          if (!browserAutomationRequest || browserCompletionPrompts >= 4 || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+          if (!browserAutomationRequest || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           browserCompletionPrompts += 1;
           const recovery = browserRecoveryNeeded;
           browserRecoveryNeeded = false;
-          return recovery
-            ? '浏览器自动化尚未完成：上一步页面或操作发生了可恢复错误。请重新获取当前页面快照，确认当前状态后继续执行用户原始命令；不要提前回复完成。'
-            : '浏览器自动化尚未完成。请重新检查当前页面快照，对照用户原始命令逐项核对，继续执行尚未完成的动作；只有全部目标都已验证成功后才能回复完成。';
+          return browserContinuationPrompt(recovery);
         },
         continueOnText: ({ text }) => {
-          if (!browserAutomationRequest || browserCompletionPrompts >= 4 || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+          if (!browserAutomationRequest || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           // 模型有时会在工具失败后用自然语言承认「还没做完」，这不是连续任务的完成信号。
           // 只匹配明确的未完成/等待/无法提交措辞，避免把普通说明误判成需要重试。
-          if (!/(?:未(?:完成|提交|执行|处理)|尚未|仍在|暂时(?:无法|不能)|无法(?:提交|完成|执行)|未能|待(?:加载|处理)|失败|not\s+(?:done|completed|submitted)|still\s+(?:loading|pending)|unable\s+to|could(?:n't| not))/i.test(text)) return false;
+          const submissionGap = browserTextSubmissionGap(latestInstruction, usedMcpTools);
+          if (!browserTextNeedsContinuation(text) && !submissionGap) return false;
           browserCompletionPrompts += 1;
-          return '你刚才的文字说明表明用户原始命令仍未全部完成。不要结束本轮；请重新获取当前页面快照，确认页面真实状态，并继续执行尚未完成的动作。若只是等待或元素暂时不可见，请换用合适的快照、滚动或等待方式重试；只有全部动作都已验证成功，或确认遇到登录、验证码等无法由助手解决的外部阻塞时，才能停止。';
+          const recovery = browserRecoveryNeeded;
+          browserRecoveryNeeded = false;
+          return `${browserContinuationPrompt(recovery)} 若只是等待或元素暂时不可见，请换用合适的快照、滚动或等待方式重试；只有全部动作都已验证成功，或确认遇到登录、验证码等无法由助手解决的外部阻塞时，才能停止。`;
         },
         finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
       });

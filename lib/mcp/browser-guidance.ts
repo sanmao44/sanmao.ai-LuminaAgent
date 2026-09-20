@@ -35,6 +35,39 @@ export function browserTargetHint(text: unknown): string | null {
 }
 
 /**
+ * 模型有时已经知道还有下一步，却先输出一句自然语言：
+ * “现在继续提交评论”。这不是完成信号，路由层需要把它送回浏览器工具循环。
+ */
+const BROWSER_INCOMPLETE_TEXT = /(?:未(?:完成|提交|执行|处理)|尚未|仍在|暂时(?:无法|不能)|无法(?:提交|完成|执行)|未能|待(?:加载|处理)|失败|not\s+(?:done|completed|submitted)|still\s+(?:loading|pending)|unable\s+to|could(?:n't| not))/i;
+const BROWSER_PENDING_ACTION_TEXT = /(?:现在|接下来|下一步|然后|继续).{0,32}(?:提交|发送|评论|回复|输入|点击|点赞|收藏|关注|登录|播放)/i;
+
+export function browserTextNeedsContinuation(text: unknown) {
+  const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return Boolean(value) && (BROWSER_INCOMPLETE_TEXT.test(value) || BROWSER_PENDING_ACTION_TEXT.test(value));
+}
+
+export type BrowserToolUse = { name?: unknown; ok?: unknown };
+
+/**
+ * 评论/回复是有明确副作用的连续动作，不能只相信模型的收尾文字。
+ * 返回第一个缺失的环节，调用方据此要求模型补齐输入、发送和验证。
+ */
+export function browserTextSubmissionGap(instruction: unknown, uses: readonly BrowserToolUse[]) {
+  const text = String(instruction ?? '').replace(/\s+/g, ' ').trim();
+  if (!/(?:评论|回复|留言|comment|reply).{0,60}(?:["“「『]|发表|提交|发送|输入)/i.test(text)) return '';
+  const successful = uses
+    .map((use, index) => ({ name: String(use?.name || ''), ok: use?.ok === true, index }))
+    .filter((use) => use.ok);
+  const input = successful.find((use) => use.name === 'browser_type' || use.name === 'browser_fill_form');
+  if (!input) return 'input';
+  const submit = successful.find((use) => use.index > input.index && use.name === 'browser_click');
+  if (!submit) return 'submit';
+  const verify = successful.find((use) => use.index > submit.index && use.name === 'browser_snapshot');
+  if (!verify) return 'verify';
+  return '';
+}
+
+/**
  * 这一轮接了浏览器控制时，追加到系统提示里的使用约定。
  * 上游 schema 只有一句 "Exact target element reference from the page snapshot"，
  * 很容易被理解成「把快照里那串 ref=… 抄进来」——实测就是这么错的。
@@ -46,7 +79,8 @@ export const BROWSER_TOOL_GUIDE = [
   '3. 绝对不要把 ref=f5e14 连前缀一起填，不要整行抄快照文字，也不要自己编 CSS 选择器（如 input#app-search-int）——这三种都会报「找不到元素」，白白浪费一次调用。',
   '4. 每次导航、点击、回车之后 ref 会整批重新分配：下一步操作之前必须重新 browser_snapshot，不要凭记忆用旧 ref。',
   '5. 页面特别大时快照会被截断（末尾会说明）：给 browser_snapshot 传 depth 或 target 收窄范围重取，不要靠猜。',
-  '6. 多步骤任务必须一直执行到用户列出的全部目标完成；不能只打开网站或只完成搜索就结束。每完成一步都重新 browser_snapshot，确认结果后再做下一步。',
-  '7. 一轮里外部工具的次数和总时长都有上限。快到上限时用已有信息回答，并说清还缺什么；不要用同一套参数反复重试。',
-  '8. 如果 browser_* 返回错误或操作被中断，先重新 browser_snapshot 判断动作是否已经生效；未生效就按当前快照修正参数后继续，不能因为一次失败直接结束整段命令。',
+  '6. 对输入、评论、回复或表单提交，不能只调用 browser_find：先 browser_snapshot 定位编辑框，再用 browser_type 或 browser_fill_form 写入完整文本；重新 browser_snapshot 确认文本确实出现后，定位并 browser_click 发送/提交；最后再次 browser_snapshot，确认评论出现在列表或页面给出成功提示。',
+  '7. 多步骤任务必须一直执行到用户列出的全部目标完成；不能只打开网站、只完成搜索或只完成点赞就结束。每完成一步都重新 browser_snapshot，确认结果后再做下一步。',
+  '8. 如果 browser_* 返回错误、空结果、操作被中断，或你说“现在继续/尚未/未能完成”，说明还有动作没做完：先重新 browser_snapshot 判断当前状态，未生效就按当前快照修正参数后继续，不能因为一次失败直接结束整段命令。',
+  '9. 一轮里外部工具的次数和总时长都有上限。接近上限时仍须先核对用户命令；只有遇到登录、验证码等无法由助手解决的外部阻塞，才能停止并明确说明。不要用同一套参数反复重试。',
 ].join('\n');
