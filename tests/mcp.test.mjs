@@ -361,11 +361,11 @@ test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信
   const route = await read('app/api/agent/route.ts');
   assert.match(route, /const gatingContext = \{/);
   assert.match(route, /const priorityServerIds = \[\s*\.\.\.\(browserAutomationRequest \? \['playwright'\] : \[\]\),\s*\.\.\.\(filesystemRequest \? \['filesystem'\] : \[\]\),\s*\];/s);
-  assert.match(route, /const selectedMcpServers = mcpServersForTurn\(listMcpServers\(\), recentTurnText, priorityServerIds\);/);
+  assert.match(route, /const selectedMcpServers = creativeToolIsolation\s+\? \[\]\s+: mcpServersForTurn\(listMcpServers\(\), mcpTurnText, priorityServerIds\);/);
   assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{\s*signal: requestController\.signal,\s*servers: selectedMcpServers,\s*\.\.\.\(priorityServerIds\.length \? \{ priorityServerIds \} : \{\}\),\s*\}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/s);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
   assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/, '按需下发的分组关键词由服务配置决定');
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords\);/);
   assert.match(route, /const policy = resolveToolPolicy\(call\?\.function\?\.name, gatingContext, mcpTools\);/);
   assert.match(route, /if \(!policy\.allowed\) \{/);
   assert.match(route, /const result = await callMcpTool\(server, meta\.toolName, args && typeof args === 'object' \? args : \{\}, \{/);

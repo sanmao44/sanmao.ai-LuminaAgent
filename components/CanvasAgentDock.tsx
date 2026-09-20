@@ -405,6 +405,7 @@ function readStoredMessageExtras(message: unknown): Partial<CanvasAgentDockMessa
     ...(mcpTools.length ? { mcpTools } : {}),
     ...(files.length ? { files } : {}),
     ...(canvasPatch ? { canvasPatch } : {}),
+    ...(source.canvasPatchApplied === true ? { canvasPatchApplied: true } : {}),
     ...(source.approvalResult ? { approvalResult: String(source.approvalResult) } : {}),
   };
 }

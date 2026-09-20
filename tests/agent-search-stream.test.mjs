@@ -7,7 +7,7 @@ const route = await readFile(new URL('app/api/agent/route.ts', root), 'utf8');
 const source = route.replace(/\r\n/g, '\n');
 
 test('a web-search answer streams instead of landing as one frame', () => {
-  assert.ok(source.includes("const searchedStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData"));
+  assert.ok(source.includes("const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData"));
   assert.ok(source.includes('if (directStream || searchedStream) {'));
   assert.ok(source.includes('...(finalize ? { finalize } : {})'));
   assert.ok(source.includes('const finalize = searchedStream ? rewriteSearchRefusal : undefined;'));
@@ -38,7 +38,14 @@ test('the stream can post-process the accumulated answer before the final event'
 });
 
 test('tool rounds for skills, images and files stay buffered', () => {
-  assert.ok(source.includes("const searchedStream = wantsStream && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;"));
+  assert.ok(source.includes("const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;"));
   assert.ok(source.includes("if (wantsStream && !skillContext.skills.length && !isTextPolishTask && !identityQuestion) {"));
   assert.ok(source.includes('const shouldUseTools = useTools && !isCinematicDirectorTask;'));
+});
+
+test('DSML image calls are recovered before the image fallback and creative turns isolate MCP', () => {
+  assert.ok(source.includes('const inlineToolCalls = rawToolCalls.length ? [] : parseInlineToolCalls(messageContent, callableTools);'));
+  assert.ok(source.indexOf('const inlineToolCalls = rawToolCalls.length ? [] : parseInlineToolCalls(messageContent, callableTools);') < source.indexOf('if (imageGenerationRequest && !toolCalls.some'));
+  assert.ok(source.includes('const creativeToolIsolation = imageGenerationRequest && !browserAutomationRequest && !filesystemRequest && !mcpAdminRequest;'));
+  assert.ok(source.includes('const selectedMcpServers = creativeToolIsolation\n      ? []'));
 });

@@ -663,7 +663,13 @@ export async function POST(request: Request) {
         ? '\n\n联网能力：当前为智能按需模式。本轮不需要联网，请直接回答，不要暗示或伪造网页搜索结果。'
         : '\n\n联网能力：当前已关闭联网搜索。不要调用、暗示或伪造网页搜索结果；对于最新、实时或需要来源的问题，请明确说明联网已关闭。';
     const skillContext = buildAgentSkillContext({ settings: state.settings, dataDir: resolveLocalDataDir() });
-    const skillPromptSection = skillContext.indexSection + skillContext.toolHint;
+    // Creative image turns must stay on the image path. A skill catalogue can
+    // contain GitHub-backed instructions, which is useful for coding tasks
+    // but is noise (and an accidental MCP trigger) for image/canvas work.
+    const skillsAvailableThisTurn = skillContext.settings.enabled && !isCanvasSource && !imageGenerationRequest;
+    const skillPromptSection = skillsAvailableThisTurn ? skillContext.indexSection + skillContext.toolHint : '';
+    const canvasPatchRequest = isCanvasSource && Boolean(canvasDocument) && !imageGenerationRequest &&
+      /(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组).{0,24}(?:画布|节点|选中)|(?:画布|节点|选中).{0,24}(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组)/.test(latestInstruction);
     let system = appendPersonaToSystem(buildSystem(initialWebInstructions, ''), body.persona);
     if (isCanvasSource && canvasDocument) {
       system += '\n\n超级画布操作：当用户明确要求新增、修改、连接或删除画布节点时，必须调用 canvas_patch 提出结构化操作；不要声称已经修改画布。Patch 会由客户端校验并一次性应用。每个新增节点必须提供完整的合法 CanvasNode，连接必须引用当前节点或同一 Patch 中先前新增的节点。若用户只是分析或提问，不要调用 canvas_patch。';
@@ -766,10 +772,10 @@ export async function POST(request: Request) {
     const gatingContext = {
       fileGeneration: fileGenerationRequest,
       deliveryRequest: artifactGenerationRequest,
-      skillsEnabled: skillContext.settings.enabled,
+      skillsEnabled: skillsAvailableThisTurn,
       imageAllowed: imageToolsAllowed,
       mcpAdmin: mcpAdminRequest,
-      canvas: isCanvasSource && Boolean(canvasDocument),
+      canvas: canvasPatchRequest,
     };
     // MCP 工具是运行时按已配置服务拉取的远程工具：best-effort，没配置或连不上就当没有，
     // 绝不能让外部服务的可用性影响到普通对话。
@@ -784,7 +790,14 @@ export async function POST(request: Request) {
       ...(browserAutomationRequest ? ['playwright'] : []),
       ...(filesystemRequest ? ['filesystem'] : []),
     ];
-    const selectedMcpServers = mcpServersForTurn(listMcpServers(), recentTurnText, priorityServerIds);
+    // Canvas context is an untrusted snapshot of old nodes. Do not use it to
+    // decide which remote connectors to load; otherwise a stale node saying
+    // “GitHub” can make GitHub tools appear in an unrelated image request.
+    const creativeToolIsolation = imageGenerationRequest && !browserAutomationRequest && !filesystemRequest && !mcpAdminRequest;
+    const mcpTurnText = creativeToolIsolation ? '' : isCanvasSource ? latestInstruction : recentTurnText;
+    const selectedMcpServers = creativeToolIsolation
+      ? []
+      : mcpServersForTurn(listMcpServers(), mcpTurnText, priorityServerIds);
     const mcpRuntime = await loadMcpToolRuntime({
       signal: requestController.signal,
       servers: selectedMcpServers,
@@ -828,7 +841,8 @@ const auditMcpCall = (
     // 用户第一轮说「打开 example.com」、第二轮只说「继续」时，工具不能凭空消失。
     // 面板给某个服务打开「按需下发」后，它的工具只在提到这个服务时才挂上；没打开的仍然全量下发。
     const lazyGroupKeywords = lazyMcpGroupKeywords(mcpRuntime.servers, mcpTools);
-    const callableTools = toolSchemasFor(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords);
+    const toolSelectionText = creativeToolIsolation ? '' : mcpTurnText;
+    const callableTools = toolSchemasFor(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords);
     /**
      * 浏览器工具最容易翻车的是元素定位：模型会把快照里的 [ref=f5e14] 连前缀一起抄进 target，
      * 或者自己编一个 CSS 选择器，于是每次都「找不到元素」——用户看到的就是「浏览器打开了，
@@ -969,11 +983,21 @@ const auditMcpCall = (
 
     const message = first?.choices?.[0]?.message;
     const rawToolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    const messageContent = typeof message?.content === 'string' ? message.content : '';
+    // Some providers (notably DeepSeek-compatible endpoints) put the call in
+    // DSML/XML text instead of `tool_calls`. Recover it before installing the
+    // image fallback, otherwise the fallback hides the model's real prompt,
+    // aspect ratio, and model selection.
+    const inlineToolCalls = rawToolCalls.length ? [] : parseInlineToolCalls(messageContent, callableTools);
     let toolCallMessage = message;
     const blockedImageToolCall = !imageToolsAllowed && rawToolCalls.some(isImageToolCall);
     // Some upstream models still emit a tool call that was not offered. Strip
     // image calls before any execution or follow-up request reaches the model.
     let toolCalls = imageToolsAllowed ? rawToolCalls : rawToolCalls.filter((call: any) => !isImageToolCall(call));
+    if (inlineToolCalls.length) {
+      toolCalls = inlineToolCalls.slice(0, 1);
+      toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
+    }
     if (imageGenerationRequest && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
       toolCalls = [...toolCalls, makeFallbackImageToolCall({ prompt: String(latest?.content || '').trim(), content: message?.content, hasReferences: latestRefs.length > 0 })];
     }
@@ -1021,10 +1045,10 @@ const auditMcpCall = (
       // 某些模型会把工具调用写成 content 中的 `to=functions.xxx { ... }`，
       // 前面带一句“点赞已完成”时正文并不为空，旧逻辑会直接把半截任务当成完成。
       // 先尝试把它恢复成结构化调用；恢复不了再让模型重新用原生工具调用。
-      const inlineToolCalls = parseInlineToolCalls(plainMessage, callableTools);
-      if (inlineToolCalls.length) {
+      const fallbackInlineToolCalls = parseInlineToolCalls(plainMessage, callableTools);
+      if (fallbackInlineToolCalls.length) {
         // 同一条文本里的后续浏览器调用都依赖旧 ref，不能批量执行。
-        toolCalls = inlineToolCalls.slice(0, 1);
+        toolCalls = fallbackInlineToolCalls.slice(0, 1);
         toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
       }
       if (!toolCalls.length && (hasInlineToolCallMarkup(plainMessage) || !cleanedMessage) && callableTools.length) {
@@ -1332,8 +1356,8 @@ const auditMcpCall = (
           results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '当前请求没有可用的画布上下文' }) });
           return { results };
         }
-        let patch: unknown;
-        try { patch = JSON.parse(call.function.arguments || '{}'); } catch { patch = null; }
+        let patch: unknown = {};
+        try { patch = JSON.parse(call.function.arguments || '{}'); } catch {}
         const validation = validateCanvasPatch(canvasDocument, patch as CanvasPatch);
         if (!validation.ok) {
           results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: validation.error, operationIndex: validation.operationIndex }) });

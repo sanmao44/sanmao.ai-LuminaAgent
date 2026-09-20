@@ -93,7 +93,7 @@ test("删除与丢弃的二次确认会自动复位，技能菜单滚动跟随�
   assert.match(skillMenu, /scrollIntoView\(\{ block: 'nearest' \}\)/);
 });
 test("an enabled skill keeps the request on the tool round so the model can really read it", () => {
-  assert.match(route, /const directStream = wantsStream && !skillContext\.skills\.length && !isTextPolishTask/);
+  assert.match(route, /const directStream = wantsStream && !isCanvasSource && !skillContext\.skills\.length && !isTextPolishTask/);
   assert.match(route, /const cleanedFinal = stripToolCallMarkup\(finalized\)\.trim\(\);/);
   // 截完先攒成 cleanedMessage：正文被截成空时要再给模型一次带工具的机会，最后才走兜底文案。
   assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);

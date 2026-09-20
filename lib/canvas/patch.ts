@@ -51,8 +51,10 @@ function hasOwn(value: object, key: string) {
 function validateNode(node: unknown) {
   if (!isRecord(node)) return "节点必须是对象";
   if (typeof node.id !== "string" || !node.id.trim() || node.id.length > 160) return "节点 id 无效";
-  if (typeof node.type !== "string") return "节点类型无效";
-  if (!Number.isFinite(Number(node.x)) || !Number.isFinite(Number(node.y))) return "节点位置无效";
+  if (!["media", "prompt", "generator", "upscale", "video-editor", "angle"].includes(String(node.type))) return "节点类型无效";
+  if (typeof node.x !== "number" || !Number.isFinite(node.x) || typeof node.y !== "number" || !Number.isFinite(node.y)) return "节点位置无效";
+  if (node.w !== undefined && (typeof node.w !== "number" || !Number.isFinite(node.w))) return "节点宽度无效";
+  if (node.h !== undefined && (typeof node.h !== "number" || !Number.isFinite(node.h))) return "节点高度无效";
   if (!isRecord(node.data)) return "节点 data 无效";
   if (Object.keys(node.data).length > MAX_NODE_DATA_KEYS) return "节点 data 过大";
   return null;
@@ -60,6 +62,7 @@ function validateNode(node: unknown) {
 
 function validatePatchShape(patch: CanvasPatch): string | null {
   if (!patch || patch.version !== 1 || !Array.isArray(patch.operations)) return "Canvas Patch 版本或 operations 无效";
+  if (patch.operations.length < 1) return "Canvas Patch 至少需要一个操作";
   if (patch.operations.length > MAX_OPERATIONS) return `Canvas Patch 最多支持 ${MAX_OPERATIONS} 个操作`;
   if (patch.runId !== undefined && (typeof patch.runId !== "string" || patch.runId.length > 160)) return "Canvas Patch runId 无效";
   for (const operation of patch.operations) {
@@ -93,10 +96,10 @@ function applyOperation(document: CanvasDocument, operation: CanvasPatchOperatio
       hasOwn(patch, "id") ||
       hasOwn(patch, "type") ||
       hasOwn(patch, "data") && !isRecord(patch.data) ||
-      hasOwn(patch, "x") && !Number.isFinite(Number(patch.x)) ||
-      hasOwn(patch, "y") && !Number.isFinite(Number(patch.y)) ||
-      hasOwn(patch, "w") && patch.w !== undefined && !Number.isFinite(Number(patch.w)) ||
-      hasOwn(patch, "h") && patch.h !== undefined && !Number.isFinite(Number(patch.h))
+      hasOwn(patch, "x") && (typeof patch.x !== "number" || !Number.isFinite(patch.x)) ||
+      hasOwn(patch, "y") && (typeof patch.y !== "number" || !Number.isFinite(patch.y)) ||
+      hasOwn(patch, "w") && patch.w !== undefined && (typeof patch.w !== "number" || !Number.isFinite(patch.w)) ||
+      hasOwn(patch, "h") && patch.h !== undefined && (typeof patch.h !== "number" || !Number.isFinite(patch.h))
     ) return null;
     if (isRecord(patch.data) && Object.keys(patch.data).length > MAX_NODE_DATA_KEYS) return null;
     const nextNode = { ...node, ...clone(patch), id: node.id, data: hasOwn(patch, "data")

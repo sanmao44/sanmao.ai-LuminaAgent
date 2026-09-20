@@ -31,7 +31,7 @@ test('Office 工具按需下发，避免每次对话都带上工具 schema', () 
   assert.match(route, /likelyArtifactGenerationRequest/);
   assert.match(route, /const artifactGenerationRequest = fileGenerationRequest/);
   assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/);
-  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
+  assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords\);/);
   assert.match(route, /deliveryRequest: artifactGenerationRequest,/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
 });

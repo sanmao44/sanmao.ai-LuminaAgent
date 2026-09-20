@@ -14,6 +14,11 @@ export type InlineToolCall = {
 };
 
 const INLINE_TOOL_MARKER = /(?:\bto\s*=\s*functions\.|<\s*function\s*=\s*)([A-Za-z0-9_-]+)/gi;
+// DeepSeek-compatible providers sometimes emit their tool call as DSML text
+// instead of populating `message.tool_calls`. Keep this matcher deliberately
+// narrow: the recovered name still has to exist in the tools offered this
+// turn, just like the legacy marker above.
+const DSML_INVOKE_MARKER = /<[^>]*DSML[^>]*\binvoke\s+name\s*=\s*["']([^"']+)["'][^>]*>/gi;
 
 function normalizedToolName(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -55,8 +60,50 @@ function offeredToolName(candidate: string, definitions: readonly InlineToolDefi
 }
 
 export function hasInlineToolCallMarkup(text: unknown) {
+  const source = String(text ?? '');
   INLINE_TOOL_MARKER.lastIndex = 0;
-  return INLINE_TOOL_MARKER.test(String(text ?? ''));
+  if (INLINE_TOOL_MARKER.test(source)) return true;
+  DSML_INVOKE_MARKER.lastIndex = 0;
+  return DSML_INVOKE_MARKER.test(source);
+}
+
+function parseParameterValue(value: string) {
+  const text = value.trim();
+  if (!text) return '';
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  if (text === 'null') return null;
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+function parseDsmlArguments(source: string, start: number, end: number) {
+  const body = source.slice(start, end);
+  const args: Record<string, unknown> = {};
+  const parameter = /<[^>]*DSML[^>]*\bparameter\s+name\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<[^>]*DSML[^>]*\bparameter\s*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = parameter.exec(body))) args[match[1]] = parseParameterValue(match[2]);
+  return Object.keys(args).length ? args : null;
+}
+
+function parseDsmlToolCalls(source: string, definitions: readonly InlineToolDefinition[], calls: InlineToolCall[]) {
+  const marker = new RegExp(DSML_INVOKE_MARKER.source, DSML_INVOKE_MARKER.flags);
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(source))) {
+    const name = offeredToolName(match[1], definitions);
+    if (!name) continue;
+    const remainder = source.slice(marker.lastIndex);
+    const close = remainder.search(/<\/[^>]*DSML[^>]*\binvoke\s*>/i);
+    const end = close >= 0 ? marker.lastIndex + close : source.length;
+    const args = parseDsmlArguments(source, marker.lastIndex, end);
+    if (!args) continue;
+    calls.push({
+      id: `inline_tool_${calls.length + 1}`,
+      type: 'function',
+      function: { name, arguments: JSON.stringify(args) },
+    });
+    marker.lastIndex = end;
+  }
 }
 
 /** Recover provider-emitted text calls such as `to=functions.playwright_browserclick { ... }`. */
@@ -83,5 +130,6 @@ export function parseInlineToolCalls(text: unknown, definitions: readonly Inline
     });
     marker.lastIndex = source.indexOf(argumentsText, marker.lastIndex) + argumentsText.length;
   }
+  parseDsmlToolCalls(source, definitions, calls);
   return calls;
 }

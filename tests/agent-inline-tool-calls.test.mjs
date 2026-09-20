@@ -10,6 +10,8 @@ const inline = await import(`data:text/javascript;base64,${Buffer.from(compiled)
 const tools = [
   { name: 'playwright__browser_click' },
   { name: 'playwright__browser_snapshot' },
+  { function: { name: 'image_generate' } },
+  { function: { name: 'image_edit' } },
 ];
 
 test('识别模型写进正文的浏览器工具调用', () => {
@@ -31,4 +33,24 @@ test('只恢复本轮实际提供且参数为合法对象的工具', () => {
   assert.deepEqual(inline.parseInlineToolCalls('to=functions.unknown {"x":1}', tools), []);
   assert.deepEqual(inline.parseInlineToolCalls('to=functions.playwright_browserclick not-json', tools), []);
   assert.deepEqual(inline.parseInlineToolCalls('普通文本，没有工具调用', tools), []);
+});
+
+test('恢复 DSML 图片调用时保留真实参数，不被 fallback 覆盖', () => {
+  const text = [
+    '<｜DSML｜function_calls>',
+    '<｜DSML｜invoke name="image_edit">',
+    '<｜DSML｜parameter name="prompt">保留人物和构图，只把背景改成深蓝色<｜DSML｜parameter>',
+    '<｜DSML｜parameter name="aspectRatio">16:9<｜DSML｜parameter>',
+    '<｜DSML｜parameter name="modelId">gpt-image-2<｜DSML｜parameter>',
+    '<｜DSML｜invoke>',
+    '<｜DSML｜function_calls>',
+  ].join('');
+  assert.equal(inline.hasInlineToolCallMarkup(text), true);
+  const [call] = inline.parseInlineToolCalls(text, tools);
+  assert.equal(call.function.name, 'image_edit');
+  assert.deepEqual(JSON.parse(call.function.arguments), {
+    prompt: '保留人物和构图，只把背景改成深蓝色',
+    aspectRatio: '16:9',
+    modelId: 'gpt-image-2',
+  });
 });

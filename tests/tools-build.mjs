@@ -21,6 +21,7 @@ const MODULES = [
   'lib/tools/selector',
   'lib/tools/policy',
   'lib/tools/mcp-admin',
+  'lib/tools/canvas',
   'lib/tools/index',
   'lib/mcp/types',
   'lib/mcp/protocol',

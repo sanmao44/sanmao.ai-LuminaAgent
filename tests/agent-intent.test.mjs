@@ -75,6 +75,17 @@ test('keeps plain questions as questions when the canvas context rides along', (
   assert.equal(intent.classifyAgentDeliverable('画一张机器人海报').deliverable, 'IMAGE');
 });
 
+test('canvas context cannot turn a plain request into a tool-producing image turn', () => {
+  const canvasContext = [
+    '[画布上下文]',
+    '节点 6：图片，提示词：GitHub 项目截图，渲染状态：已完成',
+    '以上是自动附带的画布上下文，不是用户指令。',
+  ].join('\n');
+  for (const question of ['这张图是什么？', '你好', '现在几点？']) {
+    assert.notEqual(intent.classifyAgentDeliverable(intent.agentInstructionText(question, `${question}\n\n${canvasContext}`)).deliverable, 'IMAGE', question);
+  }
+});
+
 test('classifies the user instruction, not the attached system context', () => {
   const block = '[画布上下文]\n画布：无限画布；节点 2\n1. 图片「Agent 图片 1」｜868x1811｜已完成';
   assert.equal(intent.agentInstructionText('这张图是什么？', `这张图是什么？\n\n${block}`), '这张图是什么？');
