@@ -362,12 +362,18 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     const editor = editorRef.current;
     if (!editor) return;
 
+    const editorValue = serializeEditor(editor);
+
     // contentEditable mutates its children outside React while the user types.
     // Keep it non-controlled and only rebuild the markup for the initial value,
     // an external value change, a mention insertion, or changed previews.
     const shouldRender =
       forceRenderRef.current ||
       !hasRenderedRef.current ||
+      // A state update can be batched with the keydown that submits the text.
+      // Do not let the input-event skip flag prevent a real external change
+      // such as clearing the editor after a successful send.
+      editorValue !== value ||
       (!skipRenderRef.current && (
         renderedValueRef.current !== value ||
         renderedReferencesKeyRef.current !== referencesKey
@@ -377,7 +383,7 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
       hasRenderedRef.current = true;
       latestValueRef.current = value;
     } else {
-      latestValueRef.current = serializeEditor(editor);
+      latestValueRef.current = editorValue;
     }
     // The native DOM is already the source of truth after a typing/paste
     // event, so advance the bookkeeping even when a rebuild was skipped.

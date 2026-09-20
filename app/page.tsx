@@ -11962,6 +11962,8 @@ export default function Page() {
                                                             }
                                                         }
                                                         if (event.key === 'Enter' && !event.shiftKey) {
+                                                            // While an IME is composing, Enter confirms the candidate instead of sending.
+                                                            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                                                             event.preventDefault();
                                                             if (!activeAgentBusy) void sendAgent();
                                                         }
