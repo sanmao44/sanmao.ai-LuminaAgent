@@ -65,7 +65,7 @@ export function hasInlineToolCallMarkup(text: unknown) {
   INLINE_TOOL_MARKER.lastIndex = 0;
   if (INLINE_TOOL_MARKER.test(source)) return true;
   TOOL_CALL_MARKER.lastIndex = 0;
-  if (TOOL_CALL_MARKER.test(source)) return true;
+  if (TOOL_CALL_MARKER.test(source) || /<\s*tool_call\b/i.test(source)) return true;
   DSML_INVOKE_MARKER.lastIndex = 0;
   return DSML_INVOKE_MARKER.test(source);
 }

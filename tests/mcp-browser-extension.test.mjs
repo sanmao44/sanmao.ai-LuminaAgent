@@ -37,14 +37,20 @@ test('Windows reg.exe 的中文代码页输出不会把默认浏览器路径解�
   assert.equal(mcp.decodeWindowsCommandOutput(Uint8Array.from([0xc8, 0xed, 0xbc, 0xfe])), '软件');
 });
 
-test('Windows 默认浏览器注册表支持 reg query 的 (Default) 前缀', () => {
-  const browser = 'E:\\软件\\Tabbit Browser\\Application\\Tabbit Browser.exe';
-  const detected = mcp.detectDefaultBrowserExecutable('win32', (file, args) => {
-    if (file !== 'reg.exe') return null;
-    if (args.includes('ProgId')) return '    ProgId    REG_SZ    TbBrHTM.TEST\r\n';
-    return `    (Default)    REG_SZ    "${browser}" --single-argument %1\r\n`;
+test('Windows 默认浏览器注册表支持 reg query 的 (Default) 前缀', async () => {
+  await withDataDir(async (dir) => {
+    const appDir = path.join(dir, '软件', 'Tabbit Browser', 'Application');
+    const browser = path.join(appDir, 'Tabbit Browser.exe');
+    await mkdir(appDir, { recursive: true });
+    await writeFile(browser, '');
+    const detect = (target) => mcp.detectDefaultBrowserExecutable('win32', (file, args) => {
+      if (file !== 'reg.exe') return null;
+      if (args.includes('ProgId')) return '    ProgId    REG_SZ    TbBrHTM.TEST\r\n';
+      return `    (Default)    REG_SZ    "${target}" --single-argument %1\r\n`;
+    });
+    assert.equal(detect(browser), browser);
+    assert.equal(detect(path.join(appDir, 'missing.exe')), null);
   });
-  assert.equal(detected, browser);
 });
 
 test('按安装位置认 profile，扩展装没装给的是确定结论', async () => {

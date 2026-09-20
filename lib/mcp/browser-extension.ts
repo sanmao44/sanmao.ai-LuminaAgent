@@ -177,9 +177,7 @@ export function detectDefaultBrowserExecutable(
         ? readLinuxDefaultBrowser(run)
         : null;
   const file = parseExecutableFromCommand(raw);
-  // Injected runners are used by callers/tests that resolve registry output
-  // without a real executable on this host; the real runner still verifies it.
-  return file && (run !== runCommand || existsSync(file)) ? file : null;
+  return file && existsSync(file) ? file : null;
 }
 
 /**
