@@ -32,6 +32,11 @@ import {
   type CanvasAgentDockStatus,
 } from "@/lib/canvas/agent-dock";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
+import {
+  createCanvasAgentRunContext,
+  normalizeCanvasAgentRunContext,
+  type CanvasAgentRunContext,
+} from "@/lib/canvas/run-context";
 import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
 
@@ -54,6 +59,7 @@ export type CanvasAgentDockMessage = {
   imageNodeIds?: string[];
   textNodeId?: string;
   plan?: CanvasAgentDockPlan;
+  runContext?: CanvasAgentRunContext;
   /** 待确认的外部操作：确认卡挂在提出它的那条回答上；审批记录本身在服务端。 */
   approval?: AgentApproval;
   /** 用户处理过确认之后的结果文案：刷新后继续显示结果，而不是又冒出按钮。 */
@@ -87,10 +93,10 @@ type Props = {
   /* 落画布后回传新节点 id：消息上的按钮要能变成「定位结果」。 */
   onApplyImages: (
     images: Array<{ url: string; revisedPrompt?: string }>,
-    meta: { prompt: string; model?: string },
+    meta: { prompt: string; model?: string; runContext?: CanvasAgentRunContext },
   ) => string[];
   onApplyText: (text: string, meta: { prompt: string }) => string[];
-  onApplyPlan: (plan: CanvasAgentDockPlan, images?: Array<{ url: string; revisedPrompt?: string }>) => CanvasAgentDockPlanResult;
+  onApplyPlan: (plan: CanvasAgentDockPlan, images?: Array<{ url: string; revisedPrompt?: string }>, runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
   onCreateAgentNode: (text: string) => void;
   onUseAsImagePrompt: (text: string) => void;
   onUseAsVideoPrompt: (text: string) => void;
@@ -416,6 +422,7 @@ function readSession(): CanvasAgentDockSession | null {
               : {}),
             ...(message.textNodeId ? { textNodeId: String(message.textNodeId) } : {}),
             ...(message.plan && typeof message.plan === "object" ? { plan: message.plan } : {}),
+            ...(normalizeCanvasAgentRunContext(message.runContext) ? { runContext: normalizeCanvasAgentRunContext(message.runContext)! } : {}),
             ...readStoredMessageExtras(message),
           }))
           .filter((message) => message.content || message.images?.length)
@@ -880,6 +887,11 @@ export default function CanvasAgentDock({
        * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
        */
       const progressRunId = createId();
+      const runContext = createCanvasAgentRunContext({
+        runId: progressRunId,
+        context,
+        references: orderedReferences,
+      });
       const stopAgentProgress = pollAgentProgress(progressRunId, {
         signal: controller.signal,
         isSettled: () => Boolean(streamTextRef.current),
@@ -940,9 +952,9 @@ export default function CanvasAgentDock({
         let appliedImageIds: string[] = [];
         if (shouldAutoApply) {
           if (plan) {
-            appliedImageIds = onApplyPlan(plan, images).ids;
+            appliedImageIds = onApplyPlan(plan, images, runContext).ids;
           } else {
-            const appliedIds = onApplyImages(images, { prompt: mentionText, model: response.model });
+            const appliedIds = onApplyImages(images, { prompt: mentionText, model: response.model, runContext });
             appliedImageIds = appliedIds;
           }
         }
@@ -959,6 +971,7 @@ export default function CanvasAgentDock({
               : {}),
             ...(plan ? { plan: { ...plan, ...(appliedImageIds.length ? { applied: true } : {}) } } : {}),
             ...(appliedImageIds.length ? { imageNodeIds: appliedImageIds } : {}),
+            ...(images.length || plan ? { runContext } : {}),
             ...(approval ? { approval } : {}),
             ...(mcpTools.length ? { mcpTools } : {}),
             ...(files.length ? { files } : {}),
@@ -1014,7 +1027,7 @@ export default function CanvasAgentDock({
 
   const applyMessagePlan = useCallback((message: CanvasAgentDockMessage) => {
     if (!message.plan || message.plan.applied || message.plan.dismissed) return;
-    const result = onApplyPlan(message.plan, message.images);
+    const result = onApplyPlan(message.plan, message.images, message.runContext);
     const ids = result.ids;
     setMessages((value) => value.map((item) => item.id === message.id
       ? {

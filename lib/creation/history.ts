@@ -22,6 +22,9 @@ export async function recordCanvasImages(
     parentId?: string;
     source?: GallerySource;
     sourceImageId?: string;
+    projectId?: string;
+    chatId?: string;
+    taskId?: string;
     upscaleProvider?: string;
     upscaleModel?: string;
     upscaleScale?: 1 | 2 | 3 | 4;
@@ -60,6 +63,9 @@ export async function recordCanvasImages(
     favorite: false,
     parentId: meta.parentId,
     sourceImageId: meta.sourceImageId,
+    projectId: meta.projectId,
+    chatId: meta.chatId,
+    taskId: meta.taskId,
     upscaleProvider: meta.upscaleProvider,
     upscaleModel: meta.upscaleModel,
     upscaleScale: meta.upscaleScale,

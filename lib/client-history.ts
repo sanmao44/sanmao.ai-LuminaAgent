@@ -33,6 +33,9 @@ export type GalleryItem = {
   favorite: boolean;
   parentId?: string;
   sourceImageId?: string;
+  projectId?: string;
+  chatId?: string;
+  taskId?: string;
   upscaleProvider?: string;
   upscaleModel?: string;
   upscaleScale?: 1 | 2 | 3 | 4;

@@ -107,6 +107,10 @@ export type McpCatalogEntry = {
   id: string;
   name: string;
   summary: string;
+  /** Natural-language phrases that should activate this connector when lazy delivery is enabled. */
+  intentKeywords?: readonly string[];
+  /** User-facing examples; these are guidance only and do not affect routing. */
+  examples?: readonly string[];
   publisher: string;
   homepage: string;
   transport: McpCatalogTransport;
@@ -300,6 +304,8 @@ const GITHUB_FORBIDDEN_TOOLS: readonly string[] = [
 export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
   {
     id: 'playwright',
+    intentKeywords: ['浏览器', '网页', '网站', '网址', '链接', '页面', '打开', '点击', '填写', '登录', '注册', '提交', '截图', '下载', '抓取', 'browser', 'playwright', 'chrome', 'http://', 'https://'],
+    examples: ['帮我打开 example.com 看看', '在网页上填写这张表单', '截一张当前页面的图'],
     name: '浏览器控制',
     summary: '让助手打开网页、点击、填表、下载，用你电脑上已有的浏览器（Microsoft Playwright MCP）。',
     publisher: 'Microsoft',
@@ -360,6 +366,8 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
   },
   {
     id: 'filesystem',
+    intentKeywords: ['本地文件', '文件夹', '目录', '项目目录', '项目文件', '本地项目', '代码库', '本地代码', '路径', '搜索代码', '读取代码', '修改代码', '重构项目', '打开文件夹', '桌面上的', '文件系统'],
+    examples: ['帮我看看这个项目为什么启动失败', '分析这个文件夹的目录结构', '搜索项目里所有 API Key 配置'],
     name: '本地文件',
     summary: '让助手读你指定的文件夹（默认只读），写入要你单独打开（MCP Filesystem）。',
     publisher: 'Model Context Protocol',
@@ -388,6 +396,8 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
   },
   {
     id: 'github',
+    intentKeywords: ['GitHub', '仓库', 'repo', 'repository', 'Issue', 'PR', 'pull request', 'commit', 'branch', '分支', '评论', '代码审查', '合并请求', '远程仓库'],
+    examples: ['看看这个仓库最近的 PR', '查一下 issue #128', '总结这个 GitHub 仓库最近的提交'],
     name: 'GitHub',
     summary: '查仓库、Issue、PR 和 Actions。默认只读，写操作要逐项打开并逐次确认。',
     publisher: 'GitHub',
@@ -416,6 +426,8 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
   },
   {
     id: 'context7',
+    intentKeywords: ['Context7', '开发文档', '官方文档', '库文档', 'API 文档', 'API 用法', '框架文档', '最新 API', '最新用法', '版本差异', '查文档', '查询文档', '官方用法', 'Next.js', 'React', 'Vue', 'TypeScript', 'Playwright API'],
+    examples: ['查一下 Next.js 最新路由文档', 'React 19 的 use() 怎么用', '对比这个库两个版本的 API 差异'],
     name: '开发文档',
     summary: '查库和 API 的最新官方文档（Context7）。基础模式可匿名使用，填 Key 额度更高。',
     publisher: 'Upstash',

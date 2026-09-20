@@ -116,6 +116,7 @@ test('浏览器连续任务拥有独立的恢复预算，空回复后会要求�
   assert.match(route, /const mcpTurnBudgetLimit = browserAutomationRequest \? MCP_BROWSER_TURN_TIME_BUDGET_MS/);
   assert.match(route, /const mcpToolCallLimit = browserAutomationRequest \? MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN/);
   assert.match(route, /continueOnEmpty: \(\) =>/);
+  assert.match(route, /continueOnText: \(\{ text \}\) =>/);
   assert.match(route, /浏览器自动化尚未完成/);
   assert.match(route, /重新获取当前页面快照/);
 });

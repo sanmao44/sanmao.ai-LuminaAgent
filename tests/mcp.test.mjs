@@ -360,7 +360,7 @@ test('MCP 工具随本轮一起下发给模型，并能被路由识别出来', (
 test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信输入', async () => {
   const route = await read('app/api/agent/route.ts');
   assert.match(route, /const gatingContext = \{/);
-  assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{ signal: requestController\.signal \}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/);
+  assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{\s*signal: requestController\.signal,\s*\.\.\.\(browserAutomationRequest \? \{ priorityServerIds: \['playwright'\] \} : \{\}\),\s*\}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/s);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
   assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/, '按需下发的分组关键词由服务配置决定');
   assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
@@ -619,6 +619,42 @@ test('MCP 工具表在一轮对话里有总量上限，超出的不下发', asyn
   const used = budgeted.reduce((sum, tool) => sum + JSON.stringify(tool.schema).length, 0);
   assert.ok(budgeted.length > 0 && budgeted.length < 20, '结构过大的工具不会无限下发');
   assert.ok(used <= mcp.MCP_MAX_SCHEMA_CHARS_PER_TURN, '合计参数结构不超过每轮预算');
+});
+
+test('浏览器自动化请求优先加载浏览器工具，避免被其他服务占满预算', async () => {
+  mcp.clearMcpToolCache();
+  mcp.resetMcpSessions();
+  const manyTools = (prefix, count) => Array.from({ length: count }, (_value, index) => ({
+    name: `${prefix}_${index}`,
+    inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+    annotations: { readOnlyHint: true },
+  }));
+  const fetchImpl = (tools) => async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    if (payload.method === 'initialize') return jsonRpc(payload.id, { protocolVersion: mcp.MCP_PROTOCOL_VERSION });
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    return jsonRpc(payload.id, { tools });
+  };
+  const servers = [
+    serverConfig({ id: 'github', name: 'GitHub', url: 'https://github.example.com/mcp' }),
+    serverConfig({ id: 'context7', name: 'Context7', url: 'https://context7.example.com/mcp' }),
+    serverConfig({ id: 'playwright', name: '浏览器', url: 'https://playwright.example.com/mcp' }),
+  ];
+  const tools = await mcp.loadMcpToolDefinitions({
+    servers,
+    priorityServerIds: ['playwright'],
+    fetchImpl: async (url, init) => {
+      const serverTools = url.includes('playwright')
+        ? [{ name: 'browser_navigate', inputSchema: { type: 'object', properties: { url: { type: 'string' } } }, annotations: { readOnlyHint: true } }, ...manyTools('browser', 30)]
+        : manyTools(url.includes('github') ? 'github' : 'context7', 30);
+      return fetchImpl(serverTools)(url, init);
+    },
+    cache: false,
+  });
+  assert.ok(tools.length <= mcp.MCP_MAX_TOOL_DEFINITIONS_PER_TURN);
+  assert.equal(tools[0].name, 'playwright__browser_navigate', '优先服务的关键工具应排在预算最前');
+  assert.ok(tools.some((tool) => tool.name === 'playwright__browser_0'), '浏览器工具不应被其他服务提前截断');
+  assert.ok(!tools.some((tool) => tool.name === 'context7__context7_29'), '预算仍然生效，不能无限扩大工具表');
 });
 
 test('按需下发的开关能存下来、改回去，并出现在对外快照里', () => {

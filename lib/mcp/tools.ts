@@ -149,6 +149,11 @@ export function lazyMcpGroupKeywords(
   for (const server of servers) {
     if (server.lazy !== true) continue;
     const words = new Set<string>([server.id]);
+    const catalog = server.catalogId ? findCatalogEntry(server.catalogId) : null;
+    for (const keyword of catalog?.intentKeywords || []) {
+      const normalized = String(keyword || '').trim().toLowerCase();
+      if (normalized.length >= 2) words.add(normalized);
+    }
     const collect = (value: string, minimum: number) => {
       for (const token of String(value || '').toLowerCase().split(/[^a-z0-9\u4e00-\u9fa5]+/)) {
         if (token.length >= minimum) words.add(token);
@@ -169,6 +174,8 @@ const toolCache = new Map<string, McpToolCacheEntry>();
 
 type McpLoadOptions = {
   servers?: readonly McpServerConfig[];
+  /** 本轮优先保留的服务 id；用于避免关键服务被全局工具预算截断。 */
+  priorityServerIds?: readonly string[];
   fetchImpl?: typeof fetch;
   now?: () => number;
   timeouts?: McpTimeouts;
@@ -180,6 +187,13 @@ type McpLoadOptions = {
 };
 
 export type McpToolRuntime = { servers: McpServerConfig[]; tools: ToolDefinition[] };
+
+function orderMcpServers(servers: readonly McpServerConfig[], priorityServerIds: readonly string[] = []) {
+  if (!priorityServerIds.length || servers.length < 2) return [...servers];
+  const priority = new Set(priorityServerIds.map((id) => String(id).trim()).filter(Boolean));
+  if (!priority.size) return [...servers];
+  return [...servers].sort((left, right) => Number(priority.has(right.id)) - Number(priority.has(left.id)));
+}
 
 export function clearMcpToolCache(serverId?: string) {
   if (serverId) toolCache.delete(serverId);
@@ -217,9 +231,10 @@ async function loadForServers(servers: readonly McpServerConfig[], options: McpL
  */
 export async function loadMcpToolRuntime(options: McpLoadOptions = {}): Promise<McpToolRuntime> {
   const servers = (options.servers || listMcpServers({ dataDir: options.dataDir, roots: options.roots })).filter((server) => server.enabled);
-  return { servers: [...servers], tools: await loadForServers(servers, options) };
+  return { servers: [...servers], tools: await loadForServers(orderMcpServers(servers, options.priorityServerIds), options) };
 }
 
 export async function loadMcpToolDefinitions(options: McpLoadOptions = {}): Promise<ToolDefinition[]> {
-  return loadForServers((options.servers || listMcpServers({ dataDir: options.dataDir, roots: options.roots })).filter((server) => server.enabled), options);
+  const servers = (options.servers || listMcpServers({ dataDir: options.dataDir, roots: options.roots })).filter((server) => server.enabled);
+  return loadForServers(orderMcpServers(servers, options.priorityServerIds), options);
 }

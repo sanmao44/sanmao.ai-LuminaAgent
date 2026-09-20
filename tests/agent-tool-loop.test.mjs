@@ -89,6 +89,32 @@ test('连续任务空回复后继续规划，直到工具执行并得到最终�
   assert.equal(messages[2].role, 'tool');
 });
 
+test('连续任务明确说尚未完成时继续规划，而不是把中间状态当成最终回答', async () => {
+  const messages = [];
+  const { executed, runCalls } = recorder();
+  let prompts = 0;
+  const outcome = await loop.runToolLoop({
+    messages,
+    callModel: modelReturning(
+      { content: '评论区仍在加载，暂时无法提交', tool_calls: [] },
+      { content: null, tool_calls: [toolCall('browser_snapshot', 'retry')] },
+      { content: '已完成全部操作', tool_calls: [] },
+    ),
+    runCalls,
+    continueOnText: ({ text }) => {
+      if (prompts >= 1 || !/暂时无法提交/.test(text)) return false;
+      prompts += 1;
+      return '请继续核对并完成剩余操作';
+    },
+  });
+  assert.equal(outcome.stopReason, 'no_tool_calls');
+  assert.equal(outcome.text, '已完成全部操作');
+  assert.equal(outcome.steps, 3);
+  assert.deepEqual(executed, ['1:browser_snapshot']);
+  assert.equal(messages[0].role, 'user');
+  assert.equal(messages[0].content, '请继续核对并完成剩余操作');
+});
+
 test('思维链模型要求的 reasoning_content 跟着助手消息一起带回去', async () => {
   const messages = [];
   const { runCalls } = recorder();

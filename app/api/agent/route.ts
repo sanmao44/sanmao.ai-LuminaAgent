@@ -760,7 +760,10 @@ export async function POST(request: Request) {
     // 绝不能让外部服务的可用性影响到普通对话。
     /* 拉取外部工具表可能是这一轮最慢的一步，先给用户一个交代。 */
     reportProgress({ stage: 'tool', message: '正在准备可用工具…' });
-    const mcpRuntime = await loadMcpToolRuntime({ signal: requestController.signal }).catch(() => ({ servers: [], tools: [] }));
+    const mcpRuntime = await loadMcpToolRuntime({
+      signal: requestController.signal,
+      ...(browserAutomationRequest ? { priorityServerIds: ['playwright'] } : {}),
+    }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = mcpRuntime.tools;
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
 // 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
@@ -1747,6 +1750,14 @@ const auditMcpCall = (
           return recovery
             ? '浏览器自动化尚未完成：上一步页面或操作发生了可恢复错误。请重新获取当前页面快照，确认当前状态后继续执行用户原始命令；不要提前回复完成。'
             : '浏览器自动化尚未完成。请重新检查当前页面快照，对照用户原始命令逐项核对，继续执行尚未完成的动作；只有全部目标都已验证成功后才能回复完成。';
+        },
+        continueOnText: ({ text }) => {
+          if (!browserAutomationRequest || browserCompletionPrompts >= 4 || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+          // 模型有时会在工具失败后用自然语言承认「还没做完」，这不是连续任务的完成信号。
+          // 只匹配明确的未完成/等待/无法提交措辞，避免把普通说明误判成需要重试。
+          if (!/(?:未(?:完成|提交|执行|处理)|尚未|仍在|暂时(?:无法|不能)|无法(?:提交|完成|执行)|未能|待(?:加载|处理)|失败|not\s+(?:done|completed|submitted)|still\s+(?:loading|pending)|unable\s+to|could(?:n't| not))/i.test(text)) return false;
+          browserCompletionPrompts += 1;
+          return '你刚才的文字说明表明用户原始命令仍未全部完成。不要结束本轮；请重新获取当前页面快照，确认页面真实状态，并继续执行尚未完成的动作。若只是等待或元素暂时不可见，请换用合适的快照、滚动或等待方式重试；只有全部动作都已验证成功，或确认遇到登录、验证码等无法由助手解决的外部阻塞时，才能停止。';
         },
         finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
       });

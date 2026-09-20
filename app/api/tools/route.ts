@@ -83,6 +83,7 @@ function snapshot() {
       id: entry.id,
       name: entry.name,
       summary: entry.summary,
+      examples: [...(entry.examples || [])],
       publisher: entry.publisher,
       homepage: entry.homepage,
       transport: entry.transport,

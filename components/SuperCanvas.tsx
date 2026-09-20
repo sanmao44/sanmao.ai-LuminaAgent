@@ -320,6 +320,7 @@ import { insertReferenceMention as insertCreativeMention, referenceMentionNumber
 import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import { readWorkspaceContext, updateWorkspaceContext, type WorkspaceContext } from "@/lib/workspace-context";
+import type { CanvasAgentRunContext } from "@/lib/canvas/run-context";
 import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
@@ -9972,19 +9973,34 @@ export default function SuperCanvas() {
   const applyAgentDockImages = useCallback(
     (
       images: Array<{ url: string; revisedPrompt?: string }>,
-      meta: { prompt: string; model?: string },
+      meta: { prompt: string; model?: string; runContext?: CanvasAgentRunContext },
     ) => {
       const incoming = images.filter((image) => Boolean(String(image.url || "").trim()));
       if (!incoming.length) return [];
-      const anchor = selectedSingle || selectedNodes[0] || null;
+      const runContext = meta.runContext;
+      const anchor = runContext
+        ? (runContext.anchorNodeId ? nodeById(docRef.current, runContext.anchorNodeId) || null : null)
+        : selectedSingle || selectedNodes[0] || null;
       const origin = anchor
         ? { x: anchor.x, y: anchor.y }
         : screenToWorld(stageSize.width / 2, stageSize.height / 2);
       const anchorWidth = anchor ? nodeSize(anchor).w : 320;
       const imageSettings = readSharedCreationSettings("image", runtime);
-      const referenceIds = agentDockReferences.map(
-        (reference) => reference.nodeId || reference.id,
-      );
+      const referenceIds = runContext
+        ? [...runContext.sourceNodeIds]
+        : agentDockReferences.map((reference) => reference.nodeId || reference.id);
+      const provenanceRelation = runContext?.operation === "edit" ? "edited_from" : "derived_from";
+      const provenanceContext = runContext
+        ? {
+            taskId: runContext.runId,
+            projectId: runContext.creativeProjectId,
+            chatId: runContext.chatId,
+            canvasId: runContext.canvasId,
+          }
+        : {
+            projectId: agentWorkspaceContext.creativeProjectId,
+            canvasId: agentWorkspaceContext.canvasId,
+          };
       /* 落点和画布其它创建入口一致：躲开已有节点，同一批的兄弟节点之间也不互相压住。 */
       const placed: CanvasNode[] = [];
       const nodes = incoming.map((image, index) => {
@@ -10005,6 +10021,7 @@ export default function SuperCanvas() {
               prompt: meta.prompt,
               params: clone(imageSettings),
               referenceIds,
+              ...(runContext ? { operation: runContext.operation, taskId: runContext.runId } : {}),
               ...(anchor ? { parentNodeId: anchor.id } : {}),
               createdAt: Date.now(),
             },
@@ -10018,9 +10035,8 @@ export default function SuperCanvas() {
             generation: draft.data.generation
               ? {
                   ...draft.data.generation,
-                  provenance: provenanceDraftsForSources(referenceIds, "derived_from", {
-                    projectId: agentWorkspaceContext.creativeProjectId,
-                    canvasId: agentWorkspaceContext.canvasId,
+                  provenance: provenanceDraftsForSources(referenceIds, provenanceRelation, {
+                    ...provenanceContext,
                     nodeId: draft.id,
                   }).map((edge) => createProvenanceEdge({ ...edge, toId: draft.id })),
                 }
@@ -10048,10 +10064,17 @@ export default function SuperCanvas() {
         modelId: imageSettings.model,
         ...(meta.model ? { modelName: meta.model } : {}),
         ...(anchor ? { parentId: anchor.id } : {}),
-        provenance: provenanceDraftsForSources(referenceIds, "derived_from", {
-          projectId: agentWorkspaceContext.creativeProjectId,
-          canvasId: agentWorkspaceContext.canvasId,
-        }),
+        ...(runContext ? { taskId: runContext.runId, chatId: runContext.chatId, projectId: runContext.creativeProjectId } : {}),
+        ...(runContext?.references?.length ? {
+          references: runContext.references.filter((reference) => Boolean(reference.url)).map((reference) => ({
+            id: reference.nodeId || reference.id,
+            name: reference.name,
+            url: reference.url!,
+            kind: reference.kind,
+            ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
+          })),
+        } : {}),
+        provenance: provenanceDraftsForSources(referenceIds, provenanceRelation, provenanceContext),
       });
       notify(`已把 ${nodes.length} 张 Agent 图片加入画布`);
       fitView(nodes.map((node) => node.id));
@@ -10078,6 +10101,7 @@ export default function SuperCanvas() {
     (
       plan: CanvasAgentDockPlan,
       images: Array<{ url: string; revisedPrompt?: string }> = [],
+      runContext?: CanvasAgentRunContext,
     ): CanvasAgentDockPlanResult => {
       const validImages = images.filter((image) => Boolean(String(image.url || "").trim()));
       const plannedTargetIds = [...new Set((plan.targetNodeIds || []).filter(Boolean))];
@@ -10087,9 +10111,27 @@ export default function SuperCanvas() {
         return { ids: [], error: "画布内容已经变化，请重新选择节点并生成操作计划" };
       }
       const targetSet = new Set(targetIds);
-      const anchor = targetIds.length ? nodeById(docRef.current, targetIds[0]) : selectedSingle || selectedNodes[0] || null;
+      const anchor = targetIds.length
+        ? nodeById(docRef.current, targetIds[0])
+        : runContext
+          ? (runContext.anchorNodeId ? nodeById(docRef.current, runContext.anchorNodeId) || null : null)
+          : selectedSingle || selectedNodes[0] || null;
       const imageSettings = readSharedCreationSettings("image", runtime);
-      const referenceIds = agentDockReferences.map((reference) => reference.nodeId || reference.id);
+      const referenceIds = runContext
+        ? [...runContext.sourceNodeIds]
+        : agentDockReferences.map((reference) => reference.nodeId || reference.id);
+      const provenanceRelation = runContext?.operation === "edit" ? "edited_from" : "derived_from";
+      const provenanceContext = runContext
+        ? {
+            taskId: runContext.runId,
+            projectId: runContext.creativeProjectId,
+            chatId: runContext.chatId,
+            canvasId: runContext.canvasId,
+          }
+        : {
+            projectId: agentWorkspaceContext.creativeProjectId,
+            canvasId: agentWorkspaceContext.canvasId,
+          };
       let next = docRef.current;
       const created: CanvasNode[] = [];
       let duplicatedIds: string[] = [];
@@ -10238,12 +10280,28 @@ export default function SuperCanvas() {
               prompt: plan.sourcePrompt || "Agent 批量生成",
               params: clone(imageSettings),
               referenceIds,
+              ...(runContext ? { operation: runContext.operation, taskId: runContext.runId } : {}),
               ...(anchor ? { parentNodeId: anchor.id } : {}),
               createdAt: Date.now(),
             },
             referenceOrder: referenceIds,
           });
-          const placed = { ...draft, ...openNodePosition(desired, draft, created) };
+          const withProvenance = referenceIds.length
+            ? {
+                ...draft,
+                data: {
+                  ...draft.data,
+                  generation: draft.data.generation
+                    ? {
+                        ...draft.data.generation,
+                        provenance: provenanceDraftsForSources(referenceIds, provenanceRelation, provenanceContext)
+                          .map((edge) => createProvenanceEdge({ ...edge, toId: draft.id })),
+                      }
+                    : draft.data.generation,
+                },
+              }
+            : draft;
+          const placed = { ...withProvenance, ...openNodePosition(desired, withProvenance, created) };
           created.push(placed);
         });
         next = { ...next, nodes: [...next.nodes, ...created] };
@@ -10290,6 +10348,17 @@ export default function SuperCanvas() {
           source: "canvas",
           modelId: imageSettings.model,
           ...(anchor ? { parentId: anchor.id } : {}),
+          ...(runContext ? { taskId: runContext.runId, chatId: runContext.chatId, projectId: runContext.creativeProjectId } : {}),
+          ...(runContext?.references?.length ? {
+            references: runContext.references.filter((reference) => Boolean(reference.url)).map((reference) => ({
+              id: reference.nodeId || reference.id,
+              name: reference.name,
+              url: reference.url!,
+              kind: reference.kind,
+              ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
+            })),
+          } : {}),
+          provenance: provenanceDraftsForSources(referenceIds, provenanceRelation, provenanceContext),
         });
         fitView(affectedIds.length ? affectedIds : targetIds);
       } else if (duplicatedIds.length) {

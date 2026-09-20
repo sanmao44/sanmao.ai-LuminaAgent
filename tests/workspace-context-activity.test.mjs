@@ -7,11 +7,13 @@ const { load } = await buildLibModules([
   'lib/workspace-context',
   'lib/task-activity/types',
   'lib/task-activity/adapters',
+  'lib/canvas/run-context',
   'lib/provenance/types',
   'lib/provenance/normalize',
 ], 'adapters');
 const context = await load('workspace-context');
 const activity = await load('adapters');
+const runContext = await load('run-context');
 const provenance = await load('normalize');
 
 test('workspace context keeps a stable local scope and normalizes persisted values', () => {
@@ -98,6 +100,33 @@ test('activity adapters expose one status vocabulary and preserve workspace IDs'
   assert.equal(video.progress, 100);
   assert.equal(video.canCancel, true);
   assert.equal(video.projectId, 'creative-1');
+});
+
+test('canvas Agent run context freezes the original selection and edit sources', () => {
+  const snapshot = runContext.createCanvasAgentRunContext({
+    runId: 'run-1',
+    startedAt: 123,
+    context: {
+      schemaVersion: 1,
+      creativeProjectId: 'creative-1',
+      chatId: 'chat-1',
+      canvasId: 'canvas-1',
+      selectedNodeIds: ['node-source'],
+      assetIds: ['asset-source'],
+      updatedAt: 123,
+    },
+    references: [
+      { id: 'node-ref:node-source', nodeId: 'node-source', kind: 'image', name: '原图', url: '/source.png' },
+      { id: 'node-ref:prompt', nodeId: 'prompt', kind: 'text', name: '提示词', text: '雨夜东京' },
+    ],
+  });
+  assert.equal(snapshot.operation, 'edit');
+  assert.equal(snapshot.anchorNodeId, 'node-source');
+  assert.deepEqual(snapshot.sourceNodeIds, ['node-source']);
+  assert.equal(snapshot.runId, 'run-1');
+  assert.equal(snapshot.references[0].url, '/source.png');
+  assert.ok(Object.isFrozen(snapshot));
+  assert.ok(Object.isFrozen(snapshot.sourceNodeIds));
 });
 
 test('provenance helpers deduplicate sources and create stable edge IDs', () => {

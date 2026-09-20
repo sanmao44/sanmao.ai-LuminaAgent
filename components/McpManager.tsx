@@ -100,6 +100,7 @@ type CatalogEntryView = {
   id: string;
   name: string;
   summary: string;
+  examples: string[];
   publisher: string;
   homepage: string;
   transport: 'stdio' | 'http';
@@ -1099,6 +1100,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   {item.version && <span className={styles.badgeMuted}>{item.version}</span>}
                 </div>
                 <p className={styles.description}>{item.summary}</p>
+                {item.examples.length > 0 && <p className={styles.hint}>可以直接说：{item.examples.join(' · ')}</p>}
                 <div className={styles.facts}>
                   <span className={styles.fact}>权限 <b>{item.permissions.map((permission) => PERMISSION_LABELS[permission] || permission).join('、') || '—'}</b></span>
                   <span className={styles.fact}>能力 <b>{item.capabilities.join('、')}</b></span>

@@ -95,6 +95,8 @@ export type RunToolLoopOptions = {
    * 返回提示文本时会把它作为内部用户消息追加，再给模型一次重新规划机会。
    */
   continueOnEmpty?: (context: { step: number; reply: ToolLoopReply | null; messages: ToolLoopMessage[] }) => string | false;
+  /** 文字回复明确表示任务仍未完成时，追加内部提示并继续规划。 */
+  continueOnText?: (context: { step: number; reply: ToolLoopReply | null; text: string; messages: ToolLoopMessage[] }) => string | false;
   maxSteps?: number;
   maxCalls?: number;
   deadlineMs?: number;
@@ -150,6 +152,12 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
         continue;
       }
       text = finalText(reply);
+      const textContinuation = options.continueOnText?.({ step, reply, text, messages: options.messages });
+      if (textContinuation && step + 1 < maxSteps && now() < deadline) {
+        options.messages.push({ role: 'user', content: textContinuation });
+        trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: true });
+        continue;
+      }
       trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: false });
       stopReason = 'no_tool_calls';
       break;

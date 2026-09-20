@@ -359,7 +359,7 @@ test("dock @ mentions resolve against the ordered references before sending", ()
   assert.match(component, /function resolveReferenceMentions\(text: string, references: readonly CanvasAgentDockReference\[\]\)/);
   assert.match(component, /invalidReferenceMentionNumbers\(text, orderedReferences\)/);
   assert.match(component, /const mentionText = resolveReferenceMentions\(text, orderedReferences\);/);
-  assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model \}\);/);
+  assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model, runContext \}\);/);
 });
 
 test("both sides of the conversation can copy their text", () => {
@@ -744,4 +744,14 @@ test("canvas artifacts keep download and preview entry points", () => {
   assert.match(component, /async function downloadCanvasAgentDockFile\(file: AgentGeneratedFile\) \{/);
   assert.match(styles, /\.canvas-agent-dock-files\{/);
   assert.match(styles, /\.canvas-agent-dock-file-actions button\{/);
+});
+
+test("each remote canvas run carries an immutable context snapshot into write-back", () => {
+  assert.match(component, /createCanvasAgentRunContext\(\{[\s\S]*runId: progressRunId/);
+  assert.match(component, /references: orderedReferences/);
+  assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model, runContext \}\)/);
+  assert.match(component, /\.\.\.\(images\.length \|\| plan \? \{ runContext \} : \{\}\)/);
+  assert.match(canvas, /runContext\.anchorNodeId/);
+  assert.match(canvas, /runContext\?\.operation === "edit" \? "edited_from" : "derived_from"/);
+  assert.match(canvas, /taskId: runContext\.runId/);
 });

@@ -173,3 +173,26 @@ test('按需下发的服务用自己的关键词表，没打开的服务照旧�
   const always = tools.selectToolsForTurn({ context: NONE, availableTools, userText: '帮我写一首诗', groupKeywords: offKeywords });
   assert.deepEqual(always.map((tool) => tool.name), ['gh__search']);
 });
+
+test('官方连接器按自然语言意图下发，而不要求用户说 MCP 或工具名', () => {
+  const cases = [
+    { id: 'playwright', name: '浏览器控制', toolName: 'browser_navigate', text: '帮我打开这个网页看看' },
+    { id: 'filesystem', name: '本地文件', toolName: 'directory_tree', text: '帮我分析这个项目目录结构' },
+    { id: 'github', name: 'GitHub', toolName: 'list_pull_requests', text: '看看这个仓库最近的 PR' },
+    { id: 'context7', name: '开发文档', toolName: 'query-docs', text: '查一下 Next.js 的官方用法' },
+  ];
+
+  for (const item of cases) {
+    const tool = fakeTool({
+      name: `${item.id}__${item.toolName}`,
+      id: `mcp:${item.id}:${item.toolName}`,
+      source: 'mcp',
+      tags: ['mcp'],
+      mcp: { serverId: item.id, serverName: item.name, toolName: item.toolName, readOnly: true, blocked: false },
+    });
+    const server = { id: item.id, name: item.name, catalogId: item.id, url: `https://${item.id}.example/mcp`, enabled: true, allowWrite: false, lazy: true };
+    const groupKeywords = mcp.lazyMcpGroupKeywords([server], [tool]);
+    const selected = tools.selectToolsForTurn({ context: NONE, availableTools: [tool], userText: item.text, groupKeywords });
+    assert.deepEqual(selected.map((value) => value.name), [tool.name], item.id);
+  }
+});
