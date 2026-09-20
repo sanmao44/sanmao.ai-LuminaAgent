@@ -19,6 +19,15 @@ test("task log detail button toggles the currently selected task", () => {
   );
 });
 
+test("task log exposes unified activity status and persisted canvas lineage entry points", () => {
+  assert.match(component, /activityTaskFromGenerationLog\(log\)/);
+  assert.match(component, /canvasLineageForTask\(canvasDocument, activityTask\.sourceId \|\| log\.id\)/);
+  assert.match(component, /className="canvas-task-log-detail canvas-task-log-lineage"/);
+  assert.match(component, /onFocusNode\(record\.resultNodeId/);
+  assert.match(component, /onFocusNode\(sourceId/);
+  assert.match(component, /log\.chatId/);
+});
+
 test("task log metadata keeps the important output details visually distinct", () => {
   assert.match(component, /className="canvas-task-log-meta-count"/);
   assert.match(component, /className="canvas-task-log-meta-duration"/);

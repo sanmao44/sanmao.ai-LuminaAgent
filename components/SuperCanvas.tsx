@@ -88,6 +88,7 @@ import {
 } from "@/lib/canvas/layers";
 import { createPortal } from "react-dom";
 import type { ClientReferenceImage } from "@/lib/types";
+import type { GenerationLog } from "@/lib/generation-log";
 import {
   getCanvasVideoTask,
   generateCanvasAgent,
@@ -321,7 +322,8 @@ import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import { readWorkspaceContext, updateWorkspaceContext, type WorkspaceContext } from "@/lib/workspace-context";
 import type { CanvasAgentRunContext } from "@/lib/canvas/run-context";
-import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
+import { activityTaskFromGenerationLog } from "@/lib/task-activity/adapters";
+import { canvasLineageForTask, createProvenanceEdge, provenanceDraftsForSources, type CanvasLineageRecord } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
 import AngleConsole, { type AngleConsoleDraft } from "@/components/AngleConsole";
@@ -392,36 +394,7 @@ function isCanvasTextReferenceFile(file: File) {
 }
 
 type Notice = { message: string; kind: "ok" | "error" };
-type CanvasGenerationLog = {
-  id: string;
-  createdAt: string;
-  status: "pending" | "success" | "error";
-  mode: "generate" | "edit" | "upscale" | "agent" | "llm" | "video" | "audio";
-  taskKind?: "media" | "llm";
-  task?: string;
-  llmCallCount?: number;
-  responseChars?: number;
-  webSearchStatus?: string;
-  mediaKind?: "image" | "video" | "audio";
-  source?: "workspace" | "agent" | "canvas";
-  prompt: string;
-  presetId?: string;
-  presetName?: string;
-  modelName?: string;
-  providerName?: string;
-  resolution?: string;
-  aspectRatio?: string;
-  outputSize?: string;
-  count?: number;
-  durationMs?: number;
-  imageCount?: number;
-  imageUrls?: string[];
-  videoUrls?: string[];
-  error?: string;
-  references?: Array<{ name?: string; dataUrl?: string; url?: string }>;
-  operation?: "generate" | "edit" | "extend";
-  providerTaskId?: string;
-};
+type CanvasGenerationLog = GenerationLog;
 type CanvasActivityLog = {
   id: string;
   message: string;
@@ -13039,6 +13012,21 @@ export default function SuperCanvas() {
       notify(error instanceof Error ? error.message : "复制图片失败，请检查浏览器的剪贴板权限。", "error");
     }
   }, [notify]);
+  const focusCanvasNode = useCallback(
+    (nodeId: string, openMedia = false) => {
+      const node = nodeById(docRef.current, nodeId);
+      if (!node) {
+        notify("当前画布中找不到这条血缘节点", "error");
+        return;
+      }
+      setSelectedIds(new Set([node.id]));
+      setSelectedGroupId(null);
+      setActivePanel(null);
+      if (openMedia && node.type === "media" && node.data.url) openCanvasMediaViewer(node.id);
+      else fitView([node.id]);
+    },
+    [fitView, notify, openCanvasMediaViewer],
+  );
   const focusGenerationLog = useCallback(
     (log: CanvasGenerationLog, openMedia = false) => {
       const outputUrls = new Set(generationLogOutputUrls(log));
@@ -13061,14 +13049,9 @@ export default function SuperCanvas() {
         notify("当前任务还没有对应的画布节点。", "error");
         return;
       }
-      setSelectedIds(new Set([node.id]));
-      setSelectedGroupId(null);
-      setActivePanel(null);
-      if (openMedia && node.type === "media" && node.data.url)
-        openCanvasMediaViewer(node.id);
-      else fitView([node.id]);
+      focusCanvasNode(node.id, openMedia);
     },
-    [fitView, notify, openCanvasMediaViewer],
+    [focusCanvasNode, notify],
   );
   const retryGenerationLog = useCallback(
     (log: CanvasGenerationLog) => {
@@ -16551,9 +16534,11 @@ export default function SuperCanvas() {
         <CanvasActivityDrawer
           taskLogs={generationLogs}
           activityLogs={logs}
+          canvasDocument={document}
           loading={generationLogsLoading}
           onRefresh={() => void refreshGenerationLogs()}
           onFocusTask={focusGenerationLog}
+          onFocusNode={focusCanvasNode}
           onRetryTask={retryGenerationLog}
           onClose={() => setActivePanel(null)}
           onNotify={notify}
@@ -21642,18 +21627,22 @@ function CanvasPanelShell({ title, subtitle, onClose, children, className = "" }
 function CanvasActivityDrawer({
   taskLogs,
   activityLogs,
+  canvasDocument,
   loading,
   onRefresh,
   onFocusTask,
+  onFocusNode,
   onRetryTask,
   onClose,
   onNotify,
 }: {
   taskLogs: CanvasGenerationLog[];
   activityLogs: CanvasActivityLog[];
+  canvasDocument: CanvasDocument;
   loading: boolean;
   onRefresh: () => void;
   onFocusTask: (log: CanvasGenerationLog, openMedia?: boolean) => void;
+  onFocusNode: (nodeId: string, openMedia?: boolean) => void;
   onRetryTask: (log: CanvasGenerationLog) => void;
   onClose: () => void;
   onNotify: (message: string, kind?: Notice["kind"]) => void;
@@ -21721,7 +21710,33 @@ function CanvasActivityDrawer({
             {filteredTasks.map((log) => {
               const urls = generationLogOutputUrls(log);
               const kind = generationLogKind(log);
+              const activityTask = activityTaskFromGenerationLog(log);
+              const lineage = canvasLineageForTask(canvasDocument, activityTask.sourceId || log.id);
+              const nodeLabel = (nodeId: string) => {
+                const node = canvasDocument.nodes.find((item) => item.id === nodeId);
+                return String(node?.data.name || node?.data.generation?.prompt || node?.data.prompt || nodeId).slice(0, 72);
+              };
+              const canOpenNode = (nodeId: string) => {
+                const node = canvasDocument.nodes.find((item) => item.id === nodeId);
+                return node?.type === "media" && Boolean(node.data.url);
+              };
+              const relationLabel = (relation: string) => ({
+                edited_from: "编辑自",
+                upscaled_from: "超分自",
+                converted_to_video: "转为视频",
+                generated_from: "生成自",
+                derived_from: "派生自",
+                referenced: "引用",
+              }[relation] || "来源");
               return <article className={`canvas-task-log-card ${log.status} ${selectedId === log.id ? "selected" : ""}`} key={log.id} onClick={() => setSelectedId((value) => value === log.id ? null : log.id)}>
+                {lineage.length > 0 && <div className="canvas-task-log-detail canvas-task-log-lineage" onClick={(event) => event.stopPropagation()}>
+                  <div><b>结果与来源</b><small>统一活动：{activityTask.kind} · {activityTask.status} · {activityTask.sourceId || log.id}{log.projectId ? ` · 项目 ${log.projectId}` : ""}{log.chatId ? ` · 对话 ${log.chatId}` : ""}</small></div>
+                  {lineage.map((record: CanvasLineageRecord) => <div key={record.resultNodeId} className="canvas-task-log-lineage-row canvas-task-log-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => onFocusNode(record.resultNodeId, canOpenNode(record.resultNodeId))}>结果：{nodeLabel(record.resultNodeId)}</button>
+                    <span>← {relationLabel(record.edges[0]?.relation || "derived_from")}</span>
+                    {record.sourceNodeIds.map((sourceId) => <button type="button" key={sourceId} onClick={() => onFocusNode(sourceId, canOpenNode(sourceId))}>来源：{nodeLabel(sourceId)}</button>)}
+                  </div>)}
+                </div>}
                 <div className="canvas-task-log-preview">
                   {kind === "video" && urls[0] ? <video src={urls[0]} muted playsInline preload="metadata" /> : urls.length ? <div className="canvas-task-log-images">{urls.slice(0, 3).map((url, index) => <img key={`${url}-${index}`} src={url} alt={`${generationLogKindLabel(log)}结果 ${index + 1}`} />)}</div> : <span className={log.status === "pending" ? "loading" : "placeholder"}>{log.status === "pending" ? "◌" : kind === "video" ? "▶" : "▣"}</span>}
                 </div>

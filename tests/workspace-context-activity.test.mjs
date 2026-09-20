@@ -146,6 +146,29 @@ test('provenance helpers deduplicate sources and create stable edge IDs', () => 
   assert.deepEqual(edges, [edge]);
 });
 
+test('canvas lineage resolves persisted edges and legacy source fields per task', () => {
+  const document = {
+    nodes: [
+      { id: 'source-a', data: { kind: 'image', name: '原图' } },
+      { id: 'source-b', data: { kind: 'image', name: '参考图' } },
+      { id: 'result', data: { generation: {
+        taskId: 'run-1',
+        operation: 'edit',
+        referenceIds: ['source-a', 'missing'],
+        provenance: [{ fromId: 'source-b', toId: 'result', relation: 'edited_from', taskId: 'run-1' }],
+      } } },
+    ],
+    edges: [],
+    groups: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+  const records = provenance.canvasLineageForTask(document, 'run-1');
+  assert.equal(records.length, 1);
+  assert.deepEqual(records[0].sourceNodeIds, ['source-b', 'source-a']);
+  assert.equal(records[0].edges.find((edge) => edge.fromId === 'source-a').relation, 'edited_from');
+  assert.equal(provenance.canvasLineageForTask(document, 'other').length, 0);
+});
+
 test('agent route consumes the context and writes it into task logs', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
   assert.match(route, /normalizeWorkspaceContext\(body\.context\)/);
