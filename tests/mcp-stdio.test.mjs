@@ -11,6 +11,18 @@ const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-stdio-server.mjs', import.
 
 after(() => mcp.closeStdioServer());
 
+test('浏览器快照通过真实 stdio 链路附加 Shadow DOM 编辑器索引，普通服务不附加', async () => {
+  const server = stdioServer({id:'browser-editors',catalogId:'playwright',env:{MCP_FIXTURE_BROWSER:'1'}});
+  const snapshot = await mcp.callMcpTool(server,'browser_snapshot',{});
+  assert.equal(snapshot.isError,false);
+  assert.match(snapshot.text,/generic \[ref=e1\]/);
+  assert.match(snapshot.text,/custom-editor div#editor/);
+  const plain = await mcp.callMcpTool({...server,id:'plain-editors',catalogId:undefined},'browser_snapshot',{});
+  assert.doesNotMatch(plain.text,/sanmaoEditors|custom-editor/);
+  mcp.closeStdioServer('browser-editors');
+  mcp.closeStdioServer('plain-editors');
+});
+
 function stdioServer(overrides = {}) {
   return {
     id: 'local',

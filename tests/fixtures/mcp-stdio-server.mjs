@@ -65,6 +65,10 @@ function handle(message) {
     return reply(id, { result: next ? { tools: page, nextCursor: next } : { tools: page } });
   }
   if (message?.method === 'tools/call') {
+    if (process.env.MCP_FIXTURE_BROWSER === '1') {
+      if (message.params.name === 'browser_snapshot') return reply(id, { result: { content: [{type:'text',text:'### Snapshot\n- generic [ref=e1]: 评论'}] } });
+      if (message.params.name === 'browser_evaluate') return reply(id, { result: { content: [{type:'text',text:'### Result '+JSON.stringify({sanmaoEditors:[{target:'custom-editor div#editor',tag:'div',contenteditable:true,label:'评论',shadowHost:'custom-editor'}]})}] } });
+    }
     return callTool(id, message?.params?.name, message?.params?.arguments);
   }
   return replyError(id, -32601, `未知方法 ${message?.method}`);

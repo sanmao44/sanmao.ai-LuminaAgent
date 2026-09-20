@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { browserExtensionHint } from './browser-extension';
 import { browserTargetHint } from './browser-guidance';
+import { BROWSER_EDITOR_PROBE, browserEditorHints } from './browser-editors';
 import { catalogBrowserBridge, findCatalogEntry, isStdioCatalogEntry } from './catalog';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
 import type { McpRemoteTool, McpServerConfig } from './types';
@@ -281,6 +282,18 @@ export async function callMcpTool(
   if (server.transport === 'stdio') {
     try {
       const result = await callStdioTool(server, toolName, args, options);
+      if (server.catalogId === 'playwright' && ['browser_snapshot', 'browser_find', 'browser_press_key', 'browser_evaluate'].includes(toolName) && !result.isError) {
+        // Fixed read-only metadata, not model-authored evaluate code. Do not expose values,
+        // mutate the DOM, or follow page instructions. Probe failures never lose the snapshot.
+        try {
+          const probe = await callStdioTool(server, 'browser_evaluate', { function: BROWSER_EDITOR_PROBE }, {
+            ...options, retry: false, timeouts: { ...options.timeouts, call: Math.min(5000, options.timeouts?.call ?? 5000) },
+          });
+          if (!probe.isError) result.text += browserEditorHints(probe.text);
+        } catch (error) {
+          if (options.signal?.aborted) throw error;
+        }
+      }
       // 浏览器条目的报错原文说清了原因，但没说清「现在该做什么」，这里补一段中文指引。
       return result.isError ? withBrowserHint(result, server) : result;
     } catch (error) {

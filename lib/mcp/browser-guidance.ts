@@ -29,7 +29,7 @@ export function browserTargetHint(text: unknown): string | null {
     'SANMAO：这次不是网页没打开，是元素定位参数写错了。按下面改一次就能继续：',
     '1. 先调用 browser_snapshot 取当前快照；每次导航、点击之后 ref 会整批换掉，上一步的 ref 一定失效。',
     '2. 快照里形如 [ref=f5e14] 的只是标记：把它的值 f5e14 填进该工具的 target 参数（旧版本叫 ref），例如 {"target":"f5e14","element":"搜索框"}。',
-    '3. 不要填 ref=f5e14，不要整行抄「- generic [ref=f5e14]」，也不要自己写 CSS 选择器（如 input#app-search-int i.search-input）：这三种都会被当成选择器解析，然后报「找不到元素」。',
+    '3. 不要填 ref=f5e14，不要整行抄「- generic [ref=f5e14]」，不要猜 CSS 选择器（如 input#app-search-int i.search-input）。快照附带的 SANMAO 当前页面可编辑控件 target 已经验证，可以直接用于输入。',
     '4. element 字段只写给人看的描述，不参与定位。目标元素确实不在快照里时，先看是否要滚动或展开，再重新快照，不要重复猜同一个选择器。',
   ].join('\n');
 }
@@ -133,4 +133,6 @@ export const BROWSER_TOOL_GUIDE = [
   '10. 评论区显示加载中时，先滚动到评论区触发懒加载，再等待并取快照；不要在页面顶部反复等待。可用 browser_press_key 的 PageDown，或已提供的 browser_evaluate 对已确认评论区域调用 scrollIntoView。',
   '11. 富文本编辑器可能是 contenteditable，在快照中只是 generic 而不是 textbox。占位提示可能被编辑器覆盖；点击超时提示 intercepts pointer events 时，检查实际编辑器，不要反复点占位文字。必要时用已提供的 browser_evaluate 只读检查 DOM（包括开放的 shadowRoot），确认可见编辑器，再用 browser_type 输入；不要用脚本直接调用网站发评论接口。',
   '12. 评论输入框里的文字不代表发表成功。提交后核验评论列表中的完整文字或明确成功提示；结果不确定时先核验，不能重复发送。点赞也要先确认是否已经点亮，避免再次点击取消点赞。',
+  '13. 快照附带 SANMAO 当前页面可编辑控件时，优先从中选与目标相符的编辑器，把完整 target 原样交给 browser_type。shadowHost 表明控件在 Shadow DOM 内，document.querySelector/getElementById 找不到它不代表不存在；不要反复使用只查询 document 的脚本。',
+  '14. 搜索词必须与用户原话逐字一致。优先在搜索框输入原文；使用搜索 URL 后必须检查页面搜索词，不能手写错误的百分号编码。发现搜索词不同应先更正，再选择结果及执行点赞评论。',
 ].join('\n');
