@@ -102,7 +102,7 @@ test('MCP 工具调用要再补一轮，且和首轮走同一个执行点', () =
   const loopStart = route.indexOf('tools: mcpFollowupTools');
   assert.ok(route.indexOf("tool_choice: 'auto'", loopStart) > loopStart, '补轮要允许模型再要工具');
   assert.ok(route.includes('const run = await executeToolCall(calls[index], calls, index);'), '补轮复用同一个执行点，权限/审批/停滞检测才不会被绕开');
-  const shouldContinue = route.indexOf('shouldContinue: () => !deferredCalls.length && mcpToolCallCount < mcpToolCallLimit');
+  const shouldContinue = route.indexOf('shouldContinue: () => !deferredCalls.length && !stalledMcpReason && mcpToolCallCount < mcpToolCallLimit');
   const finalText = route.indexOf('finalText: (reply) => stripToolCallMarkup', shouldContinue);
   const approval = route.indexOf('requestApproval({', shouldContinue);
   assert.ok(shouldContinue >= 0 && shouldContinue < finalText && finalText < approval, '补轮结构：先判上限，再截文本，最后才是确认卡片');
@@ -110,9 +110,10 @@ test('MCP 工具调用要再补一轮，且和首轮走同一个执行点', () =
 });
 
 test('浏览器连续任务拥有独立的恢复预算，空回复后会要求重新核对并继续', () => {
-  assert.match(route, /const MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS = 12/);
-  assert.match(route, /const MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN = 32/);
-  assert.match(route, /const MCP_BROWSER_TURN_TIME_BUDGET_MS = 300_000/);
+  assert.match(route, /const MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS = BROWSER_EXECUTION_LIMITS.maxSteps/);
+  assert.match(route, /const MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN = BROWSER_EXECUTION_LIMITS.maxCalls/);
+  assert.match(route, /const MCP_BROWSER_TURN_TIME_BUDGET_MS = BROWSER_EXECUTION_LIMITS.toolTimeMs/);
+  assert.match(route, /deadlineMs: browserAutomationRequest \? BROWSER_EXECUTION_LIMITS.deadlineMs : undefined/);
   assert.match(route, /const mcpTurnBudgetLimit = browserAutomationRequest \? MCP_BROWSER_TURN_TIME_BUDGET_MS/);
   assert.match(route, /const mcpToolCallLimit = browserAutomationRequest \? MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN/);
   assert.match(route, /continueOnEmpty: \(\) =>/);

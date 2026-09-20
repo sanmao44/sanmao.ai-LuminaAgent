@@ -189,7 +189,7 @@ test('超过总时长就不再开新一轮', async () => {
   });
   assert.equal(outcome.stopReason, 'deadline');
   assert.equal(outcome.steps, 1);
-  assert.equal(executed.length, 1, '已经跑完的那一轮不算白跑');
+  assert.equal(executed.length, 0, '模型返回时已超时，不再执行新的副作用');
 });
 
 test('已经中止就不再调用模型', async () => {

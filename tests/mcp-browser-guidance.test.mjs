@@ -43,7 +43,7 @@ test('浏览器循环不会把“现在继续提交评论”当成最终回复',
 
 test('评论/回复必须按输入、发送、验证顺序完成', () => {
   const instruction = '打开网站后回复“不错！不错！”';
-  const use = (name) => ({ name, ok: true });
+  const use = (name) => ({ name, ok: true, args: { text: '不错！不错！', element: '发送评论' }, result: '### Snapshot\n- paragraph: 不错！不错！' });
   assert.equal(mcp.browserTextSubmissionGap(instruction, []), 'input');
   assert.equal(mcp.browserTextSubmissionGap(instruction, [use('browser_type')]), 'submit');
   assert.equal(mcp.browserTextSubmissionGap(instruction, [use('browser_type'), use('browser_click')]), 'verify');

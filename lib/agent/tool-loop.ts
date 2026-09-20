@@ -144,20 +144,26 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
     // 名字都没有的调用执行不了，直接跳过；只剩这种调用时等同于「模型没要工具」。
     const calls = rawCalls.filter((call) => callName(call));
     steps = step + 1;
+    if (now() >= deadline) {
+      stopReason = 'deadline';
+      break;
+    }
     if (!calls.length) {
-      const continuation = options.continueOnEmpty?.({ step, reply, messages: options.messages });
-      if (continuation && step + 1 < maxSteps && now() < deadline) {
+      const candidate = finalText(reply);
+      const continuation = candidate
+        ? options.continueOnText?.({ step, reply, text: candidate, messages: options.messages })
+        : options.continueOnEmpty?.({ step, reply, messages: options.messages });
+      if (continuation) {
+        const canContinue = step + 1 < maxSteps && toolCallCount < maxCalls && now() < deadline;
+        trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: canContinue });
+        if (!canContinue) {
+          stopReason = now() >= deadline ? 'deadline' : toolCallCount >= maxCalls ? 'max_calls' : 'max_steps';
+          break;
+        }
         options.messages.push({ role: 'user', content: continuation });
-        trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: true });
         continue;
       }
-      text = finalText(reply);
-      const textContinuation = options.continueOnText?.({ step, reply, text, messages: options.messages });
-      if (textContinuation && step + 1 < maxSteps && now() < deadline) {
-        options.messages.push({ role: 'user', content: textContinuation });
-        trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: true });
-        continue;
-      }
+      text = candidate;
       trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: false });
       stopReason = 'no_tool_calls';
       break;
@@ -171,7 +177,7 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
     const results = await options.runCalls(ordered, { step });
     const reasoning = typeof reply?.reasoning_content === 'string' && reply.reasoning_content ? { reasoning_content: reply.reasoning_content } : {};
     // 思维链模型要求把带 tool_calls 的助手消息原样带回，丢了 reasoning_content 会被服务商 400 拒绝。
-    options.messages.push({ role: 'assistant', content: reply?.content ?? null, tool_calls: rawCalls, ...reasoning }, ...results);
+    options.messages.push({ role: 'assistant', content: reply?.content ?? null, tool_calls: calls, ...reasoning }, ...results);
     toolCallCount += calls.length;
     const elapsedMs = now() - startedAt;
     const continueLoop = options.shouldContinue ? options.shouldContinue({ step: step + 1, toolCallCount, elapsedMs }) : true;

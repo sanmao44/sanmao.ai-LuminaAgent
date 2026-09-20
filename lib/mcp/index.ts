@@ -88,7 +88,7 @@ export {
   setCatalogEntryWriteGate,
   stdioCatalogEntries,
 } from './catalog';
-export { BROWSER_TOOL_GUIDE, browserTargetHint, browserTextNeedsContinuation, browserTextSubmissionGap } from './browser-guidance';
+export { BROWSER_TOOL_GUIDE, BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTargetHint, browserTextNeedsContinuation, browserTextSubmissionGap } from './browser-guidance';
 export {
   PLAYWRIGHT_EXTENSION_ID,
   PLAYWRIGHT_EXTENSION_TOKEN_ENV,

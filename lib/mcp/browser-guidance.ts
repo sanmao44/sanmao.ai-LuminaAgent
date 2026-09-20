@@ -46,23 +46,70 @@ export function browserTextNeedsContinuation(text: unknown) {
   return Boolean(value) && (BROWSER_INCOMPLETE_TEXT.test(value) || BROWSER_PENDING_ACTION_TEXT.test(value));
 }
 
-export type BrowserToolUse = { name?: unknown; ok?: unknown };
+/** Only retained in this request; arguments and page text are not sent to the UI/audit log. */
+export type BrowserToolUse = { name?: unknown; ok?: unknown; args?: Record<string, unknown>; result?: string };
+
+export const BROWSER_EXECUTION_LIMITS = {
+  maxCalls: 32,
+  recoveryPrompts: 8,
+  // One tool per model turn, plus recovery turns and a final verification reply.
+  maxSteps: 41,
+  toolTimeMs: 300_000,
+  deadlineMs: 600_000,
+} as const;
+
+function requestedComment(instruction: unknown) {
+  return String(instruction ?? '').match(/(?:评论|回复|留言|comment|reply)[：:\s]*(?:["“「『‘'])([\s\S]+?)["”」』’']/i)?.[1] || '';
+}
+
+/** Use page evidence, not the model's assertion, to recognize a user-only blocker. */
+export function browserExternalBlocker(uses: readonly BrowserToolUse[]) {
+  const page = [...uses].reverse().find((use) => use.ok && use.name === 'browser_snapshot');
+  const text = page?.result || '';
+  if (/(?:请先登录|登录后(?:才能|才可|可)(?:评论|回复|点赞)|log in to (?:comment|reply|like))/i.test(text)) return '页面要求先登录';
+  if (/(?:请完成(?:安全|人机|滑块)验证|拖动滑块完成验证|verify you are human)/i.test(text)) return '页面要求完成人机验证';
+  return '';
+}
 
 /**
  * 评论/回复是有明确副作用的连续动作，不能只相信模型的收尾文字。
  * 返回第一个缺失的环节，调用方据此要求模型补齐输入、发送和验证。
  */
 export function browserTextSubmissionGap(instruction: unknown, uses: readonly BrowserToolUse[]) {
-  const text = String(instruction ?? '').replace(/\s+/g, ' ').trim();
-  if (!/(?:评论|回复|留言|comment|reply).{0,60}(?:["“「『]|发表|提交|发送|输入)/i.test(text)) return '';
-  const successful = uses
-    .map((use, index) => ({ name: String(use?.name || ''), ok: use?.ok === true, index }))
-    .filter((use) => use.ok);
-  const input = successful.find((use) => use.name === 'browser_type' || use.name === 'browser_fill_form');
-  if (!input) return 'input';
-  const submit = successful.find((use) => use.index > input.index && use.name === 'browser_click');
-  if (!submit) return 'submit';
-  const verify = successful.find((use) => use.index > submit.index && use.name === 'browser_snapshot');
+  const expected = requestedComment(instruction);
+  if (!expected) return '';
+  const inputIndex = uses.findIndex((use) => {
+    if (!use.ok) return false;
+    if (use.name === 'browser_type') return use.args?.text === expected;
+    return use.name === 'browser_fill_form' && Array.isArray(use.args?.fields)
+      && use.args.fields.some((field) => field?.value === expected);
+  });
+  if (inputIndex < 0) return 'input';
+  // A failed send may still have taken effect. Require verification before any replay.
+  const submitIndex = uses.findIndex((use, index) => index >= inputIndex && (
+    (index === inputIndex && use.args?.submit === true)
+    || (use.name === 'browser_click' && /发送|发表|提交|发布|send|submit|post/i.test(String(use.args?.element || '')))
+    || (use.name === 'browser_press_key' && /^(?:Control\+|Meta\+)?Enter$/.test(String(use.args?.key || '')))
+  ));
+  if (submitIndex < 0) return 'submit';
+  const evidence = (use: BrowserToolUse) => {
+    // Only inspect the rendered snapshot, excluding executed code and editable values.
+    const snapshot = (use.result || '').split('### Snapshot')[1] || '';
+    const lines = snapshot.split('\n');
+    let editableIndent = -1;
+    return lines.filter((line) => {
+      const indent = line.search(/\S/);
+      if (editableIndent >= 0 && indent > editableIndent) return false;
+      editableIndent = -1;
+      if (/\b(?:textbox|searchbox)\b/.test(line)) { editableIndent = indent; return false; }
+      return /(?:评论|回复|发表|发送)(?:已)?成功|successfully posted/i.test(line)
+        || (/^\s*- (?:paragraph|text|article|listitem)(?:\s|:)/.test(line) && line.includes(expected));
+    }).map((line) => line.replace(/\[ref=[^\]]+\]/g, '').trim());
+  };
+  const before = [...uses.slice(0, submitIndex)].reverse().find((use) => use.ok && use.name === 'browser_snapshot');
+  const previousEvidence = before ? evidence(before) : [];
+  const verify = uses.slice(submitIndex + 1).some((use) => use.ok && use.name === 'browser_snapshot'
+    && evidence(use).some((line) => !previousEvidence.includes(line)));
   if (!verify) return 'verify';
   return '';
 }
@@ -76,11 +123,14 @@ export const BROWSER_TOOL_GUIDE = [
   '浏览器操作约定（这一轮接了浏览器控制，请照做）：',
   '1. 定位元素只认快照里的 ref：先调用 browser_snapshot，结果里 [ref=f5e14] 这种标记，要用的值是 f5e14。',
   '2. 点击、输入、选择时把这个值填进 target 参数（旧版本叫 ref），例如 {"target":"f5e14","element":"搜索框"}；element 字段只写给人看的描述。',
-  '3. 绝对不要把 ref=f5e14 连前缀一起填，不要整行抄快照文字，也不要自己编 CSS 选择器（如 input#app-search-int）——这三种都会报「找不到元素」，白白浪费一次调用。',
+  '3. 不要把 ref=f5e14 连前缀或整行快照填进 target，也不要猜 CSS 选择器。优先使用最新 ref；只有该工具 schema 支持选择器、且已通过当前页面 DOM 检查确认唯一目标时，才可使用实际存在的选择器。',
   '4. 每次导航、点击、回车之后 ref 会整批重新分配：下一步操作之前必须重新 browser_snapshot，不要凭记忆用旧 ref。',
   '5. 页面特别大时快照会被截断（末尾会说明）：给 browser_snapshot 传 depth 或 target 收窄范围重取，不要靠猜。',
   '6. 对输入、评论、回复或表单提交，不能只调用 browser_find：先 browser_snapshot 定位编辑框，再用 browser_type 或 browser_fill_form 写入完整文本；重新 browser_snapshot 确认文本确实出现后，定位并 browser_click 发送/提交；最后再次 browser_snapshot，确认评论出现在列表或页面给出成功提示。',
   '7. 多步骤任务必须一直执行到用户列出的全部目标完成；不能只打开网站、只完成搜索或只完成点赞就结束。每完成一步都重新 browser_snapshot，确认结果后再做下一步。',
   '8. 如果 browser_* 返回错误、空结果、操作被中断，或你说“现在继续/尚未/未能完成”，说明还有动作没做完：先重新 browser_snapshot 判断当前状态，未生效就按当前快照修正参数后继续，不能因为一次失败直接结束整段命令。',
   '9. 一轮里外部工具的次数和总时长都有上限。接近上限时仍须先核对用户命令；只有遇到登录、验证码等无法由助手解决的外部阻塞，才能停止并明确说明。不要用同一套参数反复重试。',
+  '10. 评论区显示加载中时，先滚动到评论区触发懒加载，再等待并取快照；不要在页面顶部反复等待。可用 browser_press_key 的 PageDown，或已提供的 browser_evaluate 对已确认评论区域调用 scrollIntoView。',
+  '11. 富文本编辑器可能是 contenteditable，在快照中只是 generic 而不是 textbox。占位提示可能被编辑器覆盖；点击超时提示 intercepts pointer events 时，检查实际编辑器，不要反复点占位文字。必要时用已提供的 browser_evaluate 只读检查 DOM（包括开放的 shadowRoot），确认可见编辑器，再用 browser_type 输入；不要用脚本直接调用网站发评论接口。',
+  '12. 评论输入框里的文字不代表发表成功。提交后核验评论列表中的完整文字或明确成功提示；结果不确定时先核验，不能重复发送。点赞也要先确认是否已经点亮，避免再次点击取消点赞。',
 ].join('\n');

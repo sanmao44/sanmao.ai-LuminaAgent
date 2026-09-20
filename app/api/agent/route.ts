@@ -17,7 +17,7 @@ import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
 import { MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
 import { BROWSER_TOOL_GUIDE } from '@/lib/mcp/browser-guidance';
-import { browserTextNeedsContinuation, browserTextSubmissionGap } from '@/lib/mcp/browser-guidance';
+import { BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, type BrowserToolUse } from '@/lib/mcp/browser-guidance';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
 import { importBrowserArtifacts } from '@/lib/mcp/browser-downloads';
 import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
@@ -130,11 +130,11 @@ const MCP_TOOL_FOLLOWUP_MAX_ROUNDS = 6;
  * 比普通 MCP 查询更多的快照和恢复轮次。单独放宽浏览器上限，避免把「还没回复」
  * 当成已完成；取消信号、总时限和调用次数仍然是硬边界。
  */
-const MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS = 12;
-const MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN = 32;
-const MCP_BROWSER_TURN_TIME_BUDGET_MS = 300_000;
+const MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS = BROWSER_EXECUTION_LIMITS.maxSteps;
+const MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN = BROWSER_EXECUTION_LIMITS.maxCalls;
+const MCP_BROWSER_TURN_TIME_BUDGET_MS = BROWSER_EXECUTION_LIMITS.toolTimeMs;
 /** 自然语言中途状态也要回到工具循环，最多允许几次恢复提示，避免过早停在半截。 */
-const MCP_BROWSER_RECOVERY_PROMPT_MAX = 8;
+const MCP_BROWSER_RECOVERY_PROMPT_MAX = BROWSER_EXECUTION_LIMITS.recoveryPrompts;
 
 
 function artifactToolError(call: any, error: unknown): ChatMessage {
@@ -1197,6 +1197,7 @@ const auditMcpCall = (
     let deferredCalls: any[] = [];
     let browserRecoveryNeeded = false;
     let browserCompletionPrompts = 0;
+    const browserUses: BrowserToolUse[] = [];
     // 同一个调用原地打转的检测表：同 server + 工具 + 参数连续拿到同样的结果就该停了。
     const mcpRepeatTracker: McpRepeatTracker = new Map();
     let stalledMcpReason = '';
@@ -1206,10 +1207,10 @@ const auditMcpCall = (
       const prefix = recovery
         ? '浏览器自动化上一步出现了可恢复错误。先重新获取当前页面快照，确认动作是否已经生效；'
         : '请重新获取当前页面快照，确认页面真实状态；';
-      const gap = browserTextSubmissionGap(latestInstruction, usedMcpTools);
+      const gap = browserTextSubmissionGap(latestInstruction, browserUses);
       if (gap === 'input') return `${prefix}用户明确要求评论或回复，但目前没有成功的 browser_type/browser_fill_form。请定位当前编辑框并输入用户要求的完整文字，不能只调用 browser_find，也不能提前回复完成。`;
       if (gap === 'submit') return `${prefix}评论文字已经输入，但还没有成功点击发送/提交。请按最新快照定位发送按钮并调用 browser_click；先确认页面状态，避免重复发送。`;
-      if (gap === 'verify') return `${prefix}发送动作已经执行，但还没有发送后的验证快照。请重新调用 browser_snapshot，确认评论出现在列表或出现成功提示；如果没有成功，再按当前页面状态继续。`;
+      if (gap === 'verify') return `${prefix}已尝试发送，但尚未确认评论出现在列表或出现成功提示。请重新调用 browser_snapshot 核验用户指定文字；输入框里的文字不算发表成功。不要重复点击发送，先确认上次提交结果。`;
       return recovery
         ? `${prefix}继续执行用户原始命令；不要提前回复完成。`
         : '浏览器自动化尚未完成。请对照用户原始命令逐项核对，继续执行尚未完成的动作；只有全部目标都已验证成功后才能回复完成。';
@@ -1360,6 +1361,7 @@ const auditMcpCall = (
           });
           mcpTurnBudget -= Date.now() - mcpStartedAt;
           usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
+          if (server.catalogId === 'playwright') browserUses.push({ name: meta.toolName, ok: !result.isError, args, result: result.text });
           // 调用结果回写到连接器状态：面板上的「需要重新连接」不必等用户手动重连才发现。
           if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
           else noteRemoteCatalogCallSuccess(server);
@@ -1368,6 +1370,9 @@ const auditMcpCall = (
           auditMcpCall(meta, { risk: policy.tool?.risk, allowed: true, decision: 'call', ok: !result.isError, durationMs: Date.now() - mcpStartedAt, summary: result.text });
           // 停滞检测：同一个调用连着拿到同样的结果，说明再试也没有新信息。
           // 第三次就停下并说清楚，别把整轮预算耗在一个已经卡住的循环里。
+          // A successful action is progress; unchanged snapshots across different actions
+          // are not consecutive retries of one failed operation.
+          if (server.catalogId === 'playwright' && !meta.readOnly && !result.isError) mcpRepeatTracker.clear();
           const repeats = trackMcpRepeat(mcpRepeatTracker, mcpCallSignature(meta.serverId, meta.toolName, args), result.text);
           if (repeats >= TOOL_LOOP_MCP_REPEAT_LIMIT) {
             stalledMcpReason = `「${meta.serverName} · ${meta.toolName}」连续 ${repeats} 次返回同样的结果`;
@@ -1411,6 +1416,7 @@ const auditMcpCall = (
           mcpTurnBudget -= Date.now() - mcpStartedAt;
           usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
           const reason = error instanceof Error ? error.message : 'MCP 调用失败';
+          if (server.catalogId === 'playwright') browserUses.push({ name: meta.toolName, ok: false, args, result: reason });
           // 抛出来的失败是连接层的问题（网络、会话、凭据）：记进连接器状态，面板上能直接看到。
           noteRemoteCatalogCallFailure(server, reason);
           if (server.catalogId === 'playwright') browserRecoveryNeeded = true;
@@ -1739,6 +1745,7 @@ const auditMcpCall = (
         messages: secondMessages,
         maxSteps: mcpFollowupMaxRounds,
         maxCalls: Math.max(1, mcpToolCallLimit - mcpToolCallCount),
+        deadlineMs: browserAutomationRequest ? BROWSER_EXECUTION_LIMITS.deadlineMs : undefined,
         signal: requestController.signal,
         callModel: async ({ messages }) => {
           const reply = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
@@ -1751,7 +1758,7 @@ const auditMcpCall = (
           });
           stepMessages = [...(messages as ChatMessage[])];
           const rawReply = reply?.choices?.[0]?.message || null;
-          const inlineCalls = rawReply && !Array.isArray(rawReply.tool_calls)
+          const inlineCalls = rawReply && !(Array.isArray(rawReply.tool_calls) && rawReply.tool_calls.length)
             ? parseInlineToolCalls(rawReply.content, mcpFollowupTools)
             : [];
           // 文本格式通常把同一份快照上的多步动作一次吐出；浏览器 ref 会在第一步后失效，
@@ -1774,19 +1781,19 @@ const auditMcpCall = (
           }
           return stepResults;
         },
-        shouldContinue: () => !deferredCalls.length && mcpToolCallCount < mcpToolCallLimit && mcpTurnBudget > 0,
+        shouldContinue: () => !deferredCalls.length && !stalledMcpReason && mcpToolCallCount < mcpToolCallLimit && mcpTurnBudget > 0,
         continueOnEmpty: () => {
-          if (!browserAutomationRequest || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+          if (!browserAutomationRequest || browserExternalBlocker(browserUses) || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           browserCompletionPrompts += 1;
           const recovery = browserRecoveryNeeded;
           browserRecoveryNeeded = false;
           return browserContinuationPrompt(recovery);
         },
         continueOnText: ({ text }) => {
-          if (!browserAutomationRequest || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+          if (!browserAutomationRequest || browserExternalBlocker(browserUses) || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           // 模型有时会在工具失败后用自然语言承认「还没做完」，这不是连续任务的完成信号。
           // 只匹配明确的未完成/等待/无法提交措辞，避免把普通说明误判成需要重试。
-          const submissionGap = browserTextSubmissionGap(latestInstruction, usedMcpTools);
+          const submissionGap = browserTextSubmissionGap(latestInstruction, browserUses);
           if (!browserTextNeedsContinuation(text) && !submissionGap && !hasInlineToolCallMarkup(text)) return false;
           browserCompletionPrompts += 1;
           const recovery = browserRecoveryNeeded;
@@ -1797,8 +1804,23 @@ const auditMcpCall = (
       });
       mcpFollowupText = mcpLoop.text;
       toolTrace.push(...mcpLoop.trace);
-      if (browserAutomationRequest && mcpLoop.stopReason !== 'no_tool_calls' && !deferredCalls.length) {
-        stalledMcpReason = '浏览器连续操作达到本轮安全上限，暂未确认全部目标';
+      if (browserAutomationRequest && !deferredCalls.length) {
+        const blocker = browserExternalBlocker(browserUses);
+        const gap = browserTextSubmissionGap(latestInstruction, browserUses);
+        const stopReasons: Record<string, string> = {
+          deadline: '浏览器执行达到总时长上限（包含模型思考时间）',
+          max_steps: '浏览器执行达到规划轮数上限',
+          max_calls: '浏览器执行达到工具调用次数上限',
+          signal: '浏览器执行已被取消',
+          stopped: mcpTurnBudget <= 0 ? '浏览器工具执行耗时已达上限' : '浏览器执行达到调用次数上限',
+        };
+        const reason = blocker || stalledMcpReason || stopReasons[mcpLoop.stopReason]
+          || (gap || browserTextNeedsContinuation(mcpLoop.text) || !mcpLoop.text ? '模型未能继续执行剩余操作' : '');
+        if (reason) {
+          const remaining = gap === 'input' ? '评论尚未输入' : gap === 'submit' ? '评论尚未提交' : gap === 'verify' ? '评论提交结果尚未确认，请勿重复发送' : '尚未确认全部目标完成';
+          // Keep the executor's reason: a tool-free model summary must not hide it.
+          mcpFollowupText = `${reason}。任务未完成：${remaining}。${blocker ? '请处理后继续。' : ''}`;
+        }
       }
       if (deferredCalls.length) {
         // 补轮的确认卡片：消息从这一轮之前算起，待确认的调用按此刻的配置再校验一遍。

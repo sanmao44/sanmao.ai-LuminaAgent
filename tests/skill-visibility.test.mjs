@@ -106,7 +106,7 @@ test("the tool round hands the assistant turn back so thinking models accept the
   assert.match(route, /tool_calls: toolCalls, \.\.\.carriedAssistantFields \}, \.\.\.toolResults\]/);
   // 补轮的助手消息现在由通用循环统一拼接，回传字段跟着搬到了 lib/agent/tool-loop.ts。
   assert.match(toolLoop, /reasoning_content: reply\.reasoning_content \}/);
-  assert.match(toolLoop, /options\.messages\.push\(\{ role: 'assistant', content: reply\?\.content \?\? null, tool_calls: rawCalls/);
+  assert.match(toolLoop, /options\.messages\.push\(\{ role: 'assistant', content: reply\?\.content \?\? null, tool_calls: calls/);
   assert.match(route, /maxSteps: SKILL_TOOL_FOLLOWUP_MAX_ROUNDS/);
   // 工具轮之后的失败不再静默降级成占位答案。
   assert.match(route, /console\.error\('\[Agent\] 工具轮之后的流式回答失败：', llmFailure\);/);
