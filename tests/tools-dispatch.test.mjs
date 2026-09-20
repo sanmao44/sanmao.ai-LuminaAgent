@@ -166,5 +166,7 @@ test(`正文被截成空时，再给模型一次带工具的原生调用机会`,
   assert.match(route, /parseInlineToolCalls\(plainMessage, callableTools\)/, '正文夹带工具调用时也要恢复或重试');
   assert.match(route, /hasInlineToolCallMarkup\(plainMessage\)/, '要识别 to=functions.xxx 这类文本调用');
   assert.match(route, /parseInlineToolCalls\(rawReply\.content, mcpFollowupTools\)/, '补轮里的文本工具调用也要恢复');
+  assert.match(route, /inlineToolCalls\.slice\(0, 1\)/, '浏览器文本调用不能批量使用同一份旧快照');
+  assert.match(route, /inlineCalls\.slice\(0, 1\)/, '补轮也必须逐步刷新 ref');
   assert.match(route, /if \(!toolCalls\.length\) \{\s+plainMessage = hasInlineToolCallMarkup\(plainMessage\)/, '补不到工具时不能把原始工具文本直接显示给用户');
 });

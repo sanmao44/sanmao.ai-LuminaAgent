@@ -1006,8 +1006,9 @@ const auditMcpCall = (
       // 先尝试把它恢复成结构化调用；恢复不了再让模型重新用原生工具调用。
       const inlineToolCalls = parseInlineToolCalls(plainMessage, callableTools);
       if (inlineToolCalls.length) {
-        toolCalls = inlineToolCalls;
-        toolCallMessage = { ...message, content: null, tool_calls: inlineToolCalls };
+        // 同一条文本里的后续浏览器调用都依赖旧 ref，不能批量执行。
+        toolCalls = inlineToolCalls.slice(0, 1);
+        toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
       }
       if (!toolCalls.length && (hasInlineToolCallMarkup(plainMessage) || !cleanedMessage) && callableTools.length) {
         try {
@@ -1753,8 +1754,10 @@ const auditMcpCall = (
           const inlineCalls = rawReply && !Array.isArray(rawReply.tool_calls)
             ? parseInlineToolCalls(rawReply.content, mcpFollowupTools)
             : [];
+          // 文本格式通常把同一份快照上的多步动作一次吐出；浏览器 ref 会在第一步后失效，
+          // 只能先恢复第一步，执行后重新取快照，再让模型规划下一步。
           stepReply = inlineCalls.length
-            ? { ...rawReply, content: null, tool_calls: inlineCalls }
+            ? { ...rawReply, content: null, tool_calls: inlineCalls.slice(0, 1) }
             : rawReply;
           return stepReply;
         },
