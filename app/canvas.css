@@ -2268,23 +2268,31 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-task-log-meta time{color:var(--muted);font-size:8px}
 @media(max-width:720px){.canvas-task-log-meta{gap:5px;padding-top:6px}.canvas-task-log-meta span{min-height:21px;padding-inline:6px}.canvas-task-log-meta time{font-size:8px}}
 
-/* Keep each task compact: actions share the metadata row instead of taking a
-   separate full-width line, while narrow panels still collapse cleanly. */
+/* Keep each task compact: preview, copy, status pill, and actions share two
+   tight rows; lineage and detail follow as full-width blocks. Named grid areas
+   must stay the final placement declaration: a later `grid-column:auto` /
+   `grid-row:auto` reset cancels them, every child then falls back to auto
+   placement, and the lineage block collapses into the 62px preview column. */
 .canvas-task-log-card{grid-template-columns:62px minmax(0,1fr) auto;grid-template-rows:auto auto;grid-template-areas:"preview main status" "preview meta actions";align-items:center}
-.canvas-task-log-preview{grid-area:preview}
-.canvas-task-log-main{grid-area:main;grid-column:auto;grid-row:auto;align-self:center}
-.canvas-task-log-status{grid-area:status;grid-column:auto;grid-row:auto;align-self:start;justify-self:end}
-.canvas-task-log-meta{grid-area:meta;grid-column:auto;grid-row:auto;min-width:0;padding-top:6px;border-top:0;overflow:hidden;flex-wrap:nowrap}
-.canvas-task-log-meta-size{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.canvas-task-log-meta time{margin-left:auto;flex:none}
-.canvas-task-log-actions{grid-area:actions;grid-column:auto;grid-row:auto;align-self:end;justify-content:flex-end;white-space:nowrap}
-.canvas-task-log-actions button{height:24px;padding-inline:7px}
-.canvas-task-log-lineage{grid-column:1/-1;grid-row:auto;grid-area:auto}
+.canvas-task-log-card>.canvas-task-log-preview{grid-area:preview;align-self:center}
+.canvas-task-log-card>.canvas-task-log-main{grid-area:main;align-self:center}
+.canvas-task-log-card>.canvas-task-log-status{grid-area:status;align-self:start;justify-self:end}
+.canvas-task-log-card>.canvas-task-log-meta{grid-area:meta;min-width:0;padding-top:6px;border-top:0;overflow:visible;flex-wrap:wrap;row-gap:4px}
+.canvas-task-log-card>.canvas-task-log-meta span{flex:none}
+.canvas-task-log-card>.canvas-task-log-meta .canvas-task-log-meta-size{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.canvas-task-log-card>.canvas-task-log-meta time{margin-left:auto;flex:none}
+.canvas-task-log-card>.canvas-task-log-actions{grid-area:actions;align-self:end;justify-content:flex-end;flex-wrap:wrap;white-space:nowrap}
+.canvas-task-log-card>.canvas-task-log-actions button{height:24px;padding-inline:7px}
+.canvas-task-log-card>.canvas-task-log-detail{grid-column:1/-1}
+.canvas-task-log-main .error-note,.canvas-task-log-main .pending-note{overflow:hidden;white-space:normal;word-break:break-word;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.canvas-task-log-card>.canvas-task-log-lineage>div:first-child{display:grid;gap:3px;justify-content:start}
+.canvas-task-log-card>.canvas-task-log-lineage>div:first-child small{overflow:hidden;word-break:break-word;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.canvas-task-log-lineage-row{display:flex;gap:5px;min-width:0;align-items:center;justify-content:flex-start;flex-wrap:wrap;padding:5px 6px;border:1px solid color-mix(in srgb,var(--line-strong) 74%,var(--accent));border-radius:9px;background:color-mix(in srgb,var(--panel-2) 92%,var(--panel))}
+.canvas-task-log-lineage-row>span{flex:none;color:var(--muted);font-size:8px}
+.canvas-task-log-lineage-row button{max-width:100%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 @media(max-width:720px){
   .canvas-task-log-card{grid-template-columns:54px minmax(0,1fr) auto;grid-template-areas:"preview main status" "preview meta actions";gap:6px}
-  .canvas-task-log-meta{flex-wrap:wrap;overflow:visible}
-  .canvas-task-log-meta time{margin-left:0}
-  .canvas-task-log-actions{flex-wrap:wrap}
+  .canvas-task-log-card>.canvas-task-log-meta time{margin-left:0}
 }
 
 /* Generator cards: keep the prompt compact and make the execution queue the

@@ -46,3 +46,13 @@ test("task log keeps preview actions beside metadata instead of wasting a full r
   assert.match(styles, /\.canvas-task-log-actions\{[^}]*grid-area:actions/);
   assert.match(component, /if \(lightboxReturnPanel\) setActivePanel\(lightboxReturnPanel\);/);
 });
+
+test("task log result chips return to the task log panel after the media viewer closes", () => {
+  const start = component.indexOf("const focusLogNode = useCallback(");
+  assert.ok(start >= 0, "task log node focus handler should exist");
+  assert.match(
+    component.slice(start, start + 320),
+    /focusCanvasNode\(nodeId, openMedia, openMedia && activePanel === "activity" \? "activity" : null\)/,
+  );
+  assert.match(component, /onFocusNode=\{focusLogNode\}/);
+});

@@ -13162,6 +13162,14 @@ export default function SuperCanvas() {
     },
     [activePanel, focusCanvasNode, notify],
   );
+  /* Log-panel result chips open the media viewer too: closing it must land back
+     on the task log panel, exactly like the "打开结果" button does. */
+  const focusLogNode = useCallback(
+    (nodeId: string, openMedia = false) => {
+      focusCanvasNode(nodeId, openMedia, openMedia && activePanel === "activity" ? "activity" : null);
+    },
+    [activePanel, focusCanvasNode],
+  );
   const retryGenerationLog = useCallback(
     (log: CanvasGenerationLog) => {
       const kind = generationLogKind(log);
@@ -16684,7 +16692,7 @@ export default function SuperCanvas() {
           loading={generationLogsLoading}
           onRefresh={() => void refreshGenerationLogs()}
           onFocusTask={focusGenerationLog}
-          onFocusNode={focusCanvasNode}
+          onFocusNode={focusLogNode}
           onRetryTask={retryGenerationLog}
           onClose={() => setActivePanel(null)}
           onNotify={notify}
