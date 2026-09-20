@@ -15,6 +15,11 @@ type BackgroundGenerationLog = {
   outputSize?: string;
   count?: number;
   references?: ReferenceImageRecord[];
+  projectId?: string;
+  chatId?: string;
+  canvasId?: string;
+  nodeId?: string;
+  taskId?: string;
 };
 
 type BackgroundPersistenceOptions = {

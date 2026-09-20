@@ -319,6 +319,8 @@ import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from 
 import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
 import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
+import { readWorkspaceContext, updateWorkspaceContext, type WorkspaceContext } from "@/lib/workspace-context";
+import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
 import AngleConsole, { type AngleConsoleDraft } from "@/components/AngleConsole";
@@ -2887,6 +2889,7 @@ export default function SuperCanvas() {
   const [runtimeError, setRuntimeError] = useState("");
   const [projects, setProjects] = useState<CanvasProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
+  const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext>(() => readWorkspaceContext());
   const [document, setDocument] = useState<CanvasDocument>(docRef.current);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -3242,6 +3245,27 @@ export default function SuperCanvas() {
   const currentProject = projects.find(
     (project) => project.id === activeProjectId,
   );
+  const selectedAssetIds = useMemo(
+    () => document.nodes
+      .filter((node) => selectedIds.has(node.id))
+      .map((node) => String(node.data.assetId || node.id).trim())
+      .filter(Boolean),
+    [document.nodes, selectedIds],
+  );
+  const agentWorkspaceContext = useMemo<WorkspaceContext>(() => ({
+    ...workspaceContext,
+    canvasId: activeProjectId || undefined,
+    selectedNodeIds: [...selectedIds],
+    assetIds: selectedAssetIds,
+  }), [activeProjectId, selectedAssetIds, selectedIds, workspaceContext]);
+  useEffect(() => {
+    const next = updateWorkspaceContext({
+      canvasId: activeProjectId || undefined,
+      selectedNodeIds: [...selectedIds],
+      assetIds: selectedAssetIds,
+    });
+    setWorkspaceContext(next);
+  }, [activeProjectId, selectedAssetIds, selectedIds]);
   const selectedNodes = useMemo(
     () => document.nodes.filter((node) => selectedIds.has(node.id)),
     [document.nodes, selectedIds],
@@ -9987,7 +10011,23 @@ export default function SuperCanvas() {
             referenceOrder: referenceIds,
           },
         );
-        const node = { ...draft, ...openNodePosition(desired, draft, placed) };
+        const node = {
+          ...draft,
+          data: {
+            ...draft.data,
+            generation: draft.data.generation
+              ? {
+                  ...draft.data.generation,
+                  provenance: provenanceDraftsForSources(referenceIds, "derived_from", {
+                    projectId: agentWorkspaceContext.creativeProjectId,
+                    canvasId: agentWorkspaceContext.canvasId,
+                    nodeId: draft.id,
+                  }).map((edge) => createProvenanceEdge({ ...edge, toId: draft.id })),
+                }
+              : draft.data.generation,
+          },
+          ...openNodePosition(desired, draft, placed),
+        };
         placed.push(node);
         return node;
       });
@@ -10008,6 +10048,10 @@ export default function SuperCanvas() {
         modelId: imageSettings.model,
         ...(meta.model ? { modelName: meta.model } : {}),
         ...(anchor ? { parentId: anchor.id } : {}),
+        provenance: provenanceDraftsForSources(referenceIds, "derived_from", {
+          projectId: agentWorkspaceContext.creativeProjectId,
+          canvasId: agentWorkspaceContext.canvasId,
+        }),
       });
       notify(`已把 ${nodes.length} 张 Agent 图片加入画布`);
       fitView(nodes.map((node) => node.id));
@@ -10023,6 +10067,7 @@ export default function SuperCanvas() {
       screenToWorld,
       selectedNodes,
       selectedSingle,
+      agentWorkspaceContext,
       stageSize.height,
       stageSize.width,
     ],
@@ -15970,6 +16015,7 @@ export default function SuperCanvas() {
           status={agentDockStatus}
           chips={agentDockChips}
           references={agentDockReferences}
+          context={agentWorkspaceContext}
           selectedNodeIds={agentDockContext.nodeIds}
           selectedTotal={agentDockContext.nodeIds.length}
           contextBlock={agentDockContext.text}

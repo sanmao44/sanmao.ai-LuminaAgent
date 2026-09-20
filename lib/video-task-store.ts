@@ -35,6 +35,10 @@ export type VideoTask = {
   retryOf?: string;
   pollCount: number;
   nextPollAt?: number;
+  projectId?: string;
+  chatId?: string;
+  canvasId?: string;
+  nodeId?: string;
 };
 
 const store = createTaskStore<VideoTask>({ fileName: 'video-tasks.json' });

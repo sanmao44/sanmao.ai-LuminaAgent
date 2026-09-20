@@ -2,6 +2,7 @@
 
 import type { AgentDeliverable } from "./agent-intent";
 import type { CreativeReference } from "./creative-references";
+import type { WorkspaceContext } from "./workspace-context";
 
 export const AGENT_CONTEXT_MESSAGE_LIMIT = 12;
 
@@ -42,6 +43,7 @@ export type AgentRequestPayload = {
   intentText?: string;
   /** 长任务进度 id：服务端按它记录阶段快照，前端轮询 /api/agent/progress 读取。 */
   runId?: string;
+  context?: WorkspaceContext;
 };
 
 export type AgentGeneratedFile = {

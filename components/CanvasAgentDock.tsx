@@ -33,6 +33,7 @@ import {
 } from "@/lib/canvas/agent-dock";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import type { PublicState } from "@/lib/types";
+import type { WorkspaceContext } from "@/lib/workspace-context";
 
 export const CANVAS_AGENT_DOCK_OPEN_KEY = "sanmao.canvas.agentdock.open.v1";
 export const CANVAS_AGENT_DOCK_SESSION_KEY = "sanmao.canvas.agentdock.session.v1";
@@ -77,6 +78,7 @@ type Props = {
   chips: CanvasAgentDockChip[];
   references: CanvasAgentDockReference[];
   selectedNodeIds?: string[];
+  context: WorkspaceContext;
   /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
   selectedTotal?: number;
   contextBlock: string;
@@ -436,6 +438,7 @@ export default function CanvasAgentDock({
   chips,
   references,
   selectedNodeIds = [],
+  context,
   selectedTotal,
   contextBlock,
   runtime,
@@ -898,6 +901,7 @@ export default function CanvasAgentDock({
             // 画布上下文只给模型看，意图判断必须用用户自己那句话。
             intentText: text,
             runId: progressRunId,
+            context,
             references: orderedReferences.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
             signal: controller.signal,
           },
@@ -1005,7 +1009,7 @@ export default function CanvasAgentDock({
         setProgressDetail("");
       }
     },
-    [autoApply, busy, closeSkillMenu, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
+    [autoApply, busy, closeSkillMenu, context, contextBlock, editingMessageId, input, messages, model, notify, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
   );
 
   const applyMessagePlan = useCallback((message: CanvasAgentDockMessage) => {

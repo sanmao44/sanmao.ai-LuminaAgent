@@ -25,6 +25,7 @@ export type OfflineSpeechAudio = SpeechAudio & { voice?: string };
 
 /** 纯 ASCII 脚本：PS 5.1 会按 ANSI 读 .ps1，中文写进去会变成乱码。 */
 const POWERSHELL_SCRIPT = `param([string]$TextFile, [string]$OutFile, [string]$Voice)
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Speech
 $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
 $chosen = ''
@@ -36,7 +37,12 @@ if (-not $chosen) {
 if (-not $chosen) { $chosen = $s.Voice.Name }
 [Console]::Error.WriteLine('VOICE:' + $chosen)
 $s.SetOutputToWaveFile($OutFile)
-$s.Speak([IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8))
+try {
+  $s.Speak([IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8))
+} catch {
+  [Console]::Error.WriteLine('SYSTEM_SPEECH_UNAVAILABLE')
+  throw
+}
 $s.Dispose()
 `;
 

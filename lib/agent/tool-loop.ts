@@ -90,6 +90,11 @@ export type RunToolLoopOptions = {
   shouldContinue?: (context: { step: number; toolCallCount: number; elapsedMs: number }) => boolean;
   /** 模型不再要工具时的收尾文本，默认取它的 content。 */
   finalText?: (reply: ToolLoopReply | null) => string;
+  /**
+   * 某些连续任务在工具失败后不能把模型的一次空回复当成完成。
+   * 返回提示文本时会把它作为内部用户消息追加，再给模型一次重新规划机会。
+   */
+  continueOnEmpty?: (context: { step: number; reply: ToolLoopReply | null; messages: ToolLoopMessage[] }) => string | false;
   maxSteps?: number;
   maxCalls?: number;
   deadlineMs?: number;
@@ -138,6 +143,12 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
     const calls = rawCalls.filter((call) => callName(call));
     steps = step + 1;
     if (!calls.length) {
+      const continuation = options.continueOnEmpty?.({ step, reply, messages: options.messages });
+      if (continuation && step + 1 < maxSteps && now() < deadline) {
+        options.messages.push({ role: 'user', content: continuation });
+        trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: true });
+        continue;
+      }
       text = finalText(reply);
       trace.push({ step, calls: [], durationMs: now() - stepStartedAt, continued: false });
       stopReason = 'no_tool_calls';

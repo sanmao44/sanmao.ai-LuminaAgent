@@ -15,6 +15,22 @@ const offline = await import(`data:text/javascript;base64,${Buffer.from(compiled
 const ON_WINDOWS = process.platform === 'win32';
 const ON_MAC = process.platform === 'darwin';
 
+function isUnavailableWindowsSpeech(error) {
+  return /SYSTEM_SPEECH_UNAVAILABLE|系统上未安装语音|没有当前安全设置可用的语音|no voice|security settings/i.test(String(error));
+}
+
+async function synthesizeForWindowsTest(t, text, options) {
+  try {
+    return await offline.synthesizeOfflineSpeech(text, options);
+  } catch (error) {
+    if (ON_WINDOWS && isUnavailableWindowsSpeech(error)) {
+      t.skip(`当前 Windows 安全上下文不能实际使用 System.Speech：${String(error).replace(/\s+/g, ' ').slice(0, 160)}`);
+      return null;
+    }
+    throw error;
+  }
+}
+
 test('本机离线配音按平台开关，Windows / macOS 之外直接拒绝', async () => {
   // Windows 走 System.Speech、macOS 走 say + afconvert，两条路都不装依赖、不花钱。
   assert.equal(offline.offlineSpeechSupported(), ON_WINDOWS || ON_MAC);
@@ -40,16 +56,18 @@ test('空文本不会去启动系统语音合成', async () => {
   await assert.rejects(() => offline.synthesizeOfflineSpeech(undefined), /配音文本为空/);
 });
 
-test('Windows 上真的合成出能探测时长的 wav', { skip: !ON_WINDOWS }, async () => {
-  const audio = await offline.synthesizeOfflineSpeech('今天带你看一家超好吃的火锅店，毛肚和锅底必点。');
+test('Windows 上真的合成出能探测时长的 wav', { skip: !ON_WINDOWS }, async (t) => {
+  const audio = await synthesizeForWindowsTest(t, '今天带你看一家超好吃的火锅店，毛肚和锅底必点。');
+  if (!audio) return;
   assert.equal(audio.contentType, 'audio/wav');
   assert.equal(audio.buffer.subarray(0, 4).toString('latin1'), 'RIFF');
   assert.equal(audio.buffer.subarray(8, 12).toString('latin1'), 'WAVE');
   assert.ok(audio.buffer.length > 10_000, 'wav 太小：' + audio.buffer.length);
 });
 
-test('填了系统里没有的 OpenAI 风格音色名时不报错，自动退回中文音色', { skip: !ON_WINDOWS }, async () => {
-  const audio = await offline.synthesizeOfflineSpeech('回退测试', { voice: 'alloy' });
+test('填了系统里没有的 OpenAI 风格音色名时不报错，自动退回中文音色', { skip: !ON_WINDOWS }, async (t) => {
+  const audio = await synthesizeForWindowsTest(t, '回退测试', { voice: 'alloy' });
+  if (!audio) return;
   assert.equal(audio.contentType, 'audio/wav');
   assert.ok(audio.buffer.length > 1_000);
   // 关键：不能静默留在英文默认音色上，否则中文等于没念。要报出实际用的中文音色。

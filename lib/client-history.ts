@@ -4,6 +4,7 @@ import { emitWorkspaceChange } from './workspace-events';
 import type { UpscaleOutputFormat } from './types';
 import type { LocalEditAnnotation } from './local-edit';
 import type { ConversationMemory } from './agent-memory';
+import type { ProvenanceEdge } from './provenance/types';
 
 export type GallerySource = 'generate' | 'agent' | 'edit' | 'canvas' | 'upscale';
 
@@ -46,6 +47,7 @@ export type GalleryItem = {
   annotations?: LocalEditAnnotation[];
   /** Mask metadata used for the edit, kept so the history editor can reopen it. */
   mask?: string | GalleryLocalEditMask;
+  provenance?: ProvenanceEdge[];
 };
 
 export type ChatFile = {

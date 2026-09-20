@@ -23,10 +23,27 @@ export function resolveFilesystemRootsFile(options: { dataDir?: string } = {}) {
   return path.join(filesystemRootsDataDir(options), 'mcp', 'filesystem-roots.json');
 }
 
+function canonicalPath(value: string) {
+  let current = path.resolve(value);
+  const tail: string[] = [];
+  for (let depth = 0; depth < 64; depth += 1) {
+    try {
+      const resolved = realpathSync.native ? realpathSync.native(current) : realpathSync(current);
+      return tail.length ? path.join(resolved, ...tail.reverse()) : resolved;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      tail.push(path.basename(current));
+      current = parent;
+    }
+  }
+  return path.resolve(value);
+}
+
 /** Windows 上大小写不敏感，`C:\A` 与 `c:\a` 是同一个目录；包含判断必须跟着这个规则走。 */
 export function samePath(left: string, right: string, platform: string = process.platform) {
   const normalize = (value: string) => {
-    const resolved = path.resolve(value);
+    const resolved = canonicalPath(value);
     return platform === 'win32' ? resolved.toLowerCase() : resolved;
   };
   return normalize(left) === normalize(right);
@@ -38,7 +55,7 @@ export function samePath(left: string, right: string, platform: string = process
  */
 export function isPathInside(target: string, parent: string, platform: string = process.platform) {
   const normalize = (value: string) => {
-    const resolved = path.resolve(value);
+    const resolved = canonicalPath(value);
     return platform === 'win32' ? resolved.toLowerCase() : resolved;
   };
   const inner = normalize(target);
@@ -74,8 +91,12 @@ export function normalizeFilesystemRoot(value: unknown, platform: string = proce
   }
   if (!info.isDirectory()) throw new Error('只能授权文件夹，不能是单个文件');
   if (samePath(resolved, path.parse(resolved).root, platform)) throw new Error('不能把整个磁盘根目录交给助手，请选一个具体的文件夹');
-  const trimmed = platform === 'win32' ? resolved.replace(/[\\/]+$/, '') : resolved.replace(/\/+$/, '');
-  return trimmed || resolved;
+  // Keep the user's spelling (notably Windows 8.3 aliases) in the saved
+  // value. Security checks canonicalize both sides through `canonicalPath`,
+  // so retaining this form does not weaken symlink/junction protection.
+  const stable = path.resolve(raw);
+  const trimmed = platform === 'win32' ? stable.replace(/[\\/]+$/, '') : stable.replace(/\/+$/, '');
+  return trimmed || stable;
 }
 
 /**

@@ -226,6 +226,18 @@ function browserBridgeNote(bridge: BrowserBridgeView | null | undefined) {
   return `接的是：${bridge.browserName}${source} · ${bridge.executablePath} · 扩展：${installed}`;
 }
 
+/** 顶部状态必须显示实际会被连接器使用的浏览器，不能只看 managed 模式的 channel。 */
+function browserDisplayName(runtime: RuntimeView | null | undefined, bridge?: BrowserBridgeView | null) {
+  if (!runtime?.needsBrowser) return '';
+  if (runtime.browserMode === 'extension' && bridge?.browserName) {
+    return `浏览器：${bridge.browserName}`;
+  }
+  if (runtime.browser?.channel) {
+    return `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}`;
+  }
+  return '未检测到 Chrome 或 Edge，需要先装一个';
+}
+
 /**
  * 审批档位（与 lib/agent/approval.ts 的取值一一对应）。
  * 第一档是 v1 的老行为，第二档是默认值，第三档等价 Codex 的「完全访问」。
@@ -1100,7 +1112,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 {runtime?.installing && <p className={styles.meta}>正在下载依赖，日志会实时刷新；关掉面板不会中断安装。</p>}
                 {runtime?.installing && runtime.logTail && <pre className={styles.logTail}>{runtime.logTail}</pre>}
                 {runtime?.argsStale && <p className={styles.warnNote}>运行时还是拿上一套参数起来的{runtime.startedBrowserPath ? `（启动时接的是 ${runtime.startedBrowserPath}）` : ''}：助手现在走的是那一个，不是你这一页选的。点右边的「重启运行时」让它按当前设置重来——「扩展装了却说没装」多半就是这个原因。</p>}
-                {runtime?.needsBrowser && <p className={styles.meta}>{runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个'}</p>}
+                {runtime?.needsBrowser && <p className={styles.meta}>{browserDisplayName(runtime, item.browserBridge)}</p>}
                 {runtime?.needsBrowser && item.browserMode && <div className={styles.policy}>
                   <p className={styles.meta}>接入方式：{BROWSER_MODE_LABELS[item.browserMode]}{item.browserMode === 'managed' ? '（助手用它自己的窗口和登录状态）' : '（用你日常浏览器的登录状态和标签页）'}</p>
                   <div className={styles.segments}>
@@ -1281,7 +1293,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 {runtime.installed ? <div className={styles.folderActions}><button type="button" className={styles.miniButton} disabled={busy} title="用系统文件管理器打开安装目录" onClick={() => void openRuntimeFolder(runtime)}>打开目录</button></div> : null}
               </div>
               <p className={styles.meta}>
-                {runtime.needsBrowser ? (runtime.browser?.channel ? `浏览器：${BROWSER_LABELS[runtime.browser.channel] || runtime.browser.channel}` : '未检测到 Chrome 或 Edge，需要先装一个') : ''}
+                {runtime.needsBrowser ? browserDisplayName(runtime) : ''}
                 {runtime.needsBrowser ? ' · ' : ''}空闲 {Math.max(1, Math.round(runtime.idleTimeoutMs / 60000))} 分钟后自动关闭{runtime.pid ? ` · 进程 ${runtime.pid}` : ''}
               </p>
               {runtime.installing && runtime.logTail && <pre className={styles.logTail}>{runtime.logTail}</pre>}

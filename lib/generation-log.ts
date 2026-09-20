@@ -46,6 +46,11 @@ export type GenerationLog = {
   llmCallCount?: number;
   responseChars?: number;
   webSearchStatus?: string;
+  projectId?: string;
+  chatId?: string;
+  canvasId?: string;
+  nodeId?: string;
+  taskId?: string;
 };
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');

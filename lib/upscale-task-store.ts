@@ -35,6 +35,10 @@ export type UpscaleTask = {
   pollCount: number;
   nextPollAt?: number;
   idempotencyKey: string;
+  projectId?: string;
+  chatId?: string;
+  canvasId?: string;
+  nodeId?: string;
 };
 
 // 高清任务里带原图引用，沿用原有 0600 权限，避免局域网其它账号读到路径。

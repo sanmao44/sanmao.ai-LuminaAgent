@@ -40,6 +40,7 @@ import { buildAgentSkillContext, buildSkillToolContent, installSkill, installSki
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
 import { fetchSkillText, parseGithubSkillTarget, stripToolCallMarkup } from '@/lib/skills';
 import { resolveLocalDataDir } from '@/lib/data-paths';
+import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { getStorageRoots } from '@/lib/image-storage';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import {
@@ -122,6 +123,14 @@ const SKILL_TOOL_FOLLOWUP_MAX_ROUNDS = 2;
  * 次数与总时长仍由 MCP_TOOL_MAX_CALLS_PER_TURN 和 MCP_TURN_TIME_BUDGET_MS 卡住。
  */
 const MCP_TOOL_FOLLOWUP_MAX_ROUNDS = 6;
+/**
+ * 浏览器自动化是用户明确交代的一串动作：打开、搜索、验证、点赞、回复往往需要
+ * 比普通 MCP 查询更多的快照和恢复轮次。单独放宽浏览器上限，避免把「还没回复」
+ * 当成已完成；取消信号、总时限和调用次数仍然是硬边界。
+ */
+const MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS = 12;
+const MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN = 32;
+const MCP_BROWSER_TURN_TIME_BUDGET_MS = 300_000;
 
 
 function artifactToolError(call: any, error: unknown): ChatMessage {
@@ -426,6 +435,16 @@ export async function POST(request: Request) {
     releaseRuntimeRequest = await beginRuntimeRequest('agent');
     const body = await request.json();
     agentRunId = (await beginAgentRun((body as { runId?: unknown }).runId))?.runId || null;
+    const workspaceContext = body.context && typeof body.context === 'object'
+      ? normalizeWorkspaceContext(body.context)
+      : null;
+    const taskContext = workspaceContext ? {
+      projectId: workspaceContext.creativeProjectId,
+      chatId: workspaceContext.chatId,
+      canvasId: workspaceContext.canvasId,
+      ...(workspaceContext.selectedNodeIds[0] ? { nodeId: workspaceContext.selectedNodeIds[0] } : {}),
+      ...(agentRunId ? { taskId: agentRunId } : {}),
+    } : {};
     const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
     const isCanvasSource = sourceForLog === 'canvas';
     wantsStream = body.stream === true;
@@ -541,6 +560,7 @@ export async function POST(request: Request) {
       modelName: agentRuntime.model.displayName,
       providerName: agentRuntime.provider.name,
       task: body.task ? String(body.task).slice(0, 100) : undefined,
+      ...taskContext,
     }).catch(() => null);
     const trackedChatCompletion = (...args: Parameters<typeof chatCompletion>) => {
       llmCallCount += 1;
@@ -1015,7 +1035,10 @@ const auditMcpCall = (
     let skillInstalls = 0;
     let generatedArtifactCount = 0;
     let mcpToolCallCount = 0;
-    let mcpTurnBudget = MCP_TURN_TIME_BUDGET_MS;
+    const mcpTurnBudgetLimit = browserAutomationRequest ? MCP_BROWSER_TURN_TIME_BUDGET_MS : MCP_TURN_TIME_BUDGET_MS;
+    const mcpToolCallLimit = browserAutomationRequest ? MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN : MCP_TOOL_MAX_CALLS_PER_TURN;
+    const mcpFollowupMaxRounds = browserAutomationRequest ? MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS : MCP_TOOL_FOLLOWUP_MAX_ROUNDS;
+    let mcpTurnBudget = mcpTurnBudgetLimit;
 
     const runSkillToolCall = async (call: any): Promise<ChatMessage> => {
       let args: any = {};
@@ -1157,6 +1180,8 @@ const auditMcpCall = (
 
     let recentPageText = '';
     let deferredCalls: any[] = [];
+    let browserRecoveryNeeded = false;
+    let browserCompletionPrompts = 0;
     // 同一个调用原地打转的检测表：同 server + 工具 + 参数连续拿到同样的结果就该停了。
     const mcpRepeatTracker: McpRepeatTracker = new Map();
     let stalledMcpReason = '';
@@ -1288,11 +1313,11 @@ const auditMcpCall = (
         }
         // 外部服务的耗时不可控：一轮里给总次数和总时长都设上限，否则一个卡住的服务
         // 能把整轮对话挂到用户以为死机的程度。
-        if (mcpToolCallCount >= MCP_TOOL_MAX_CALLS_PER_TURN || mcpTurnBudget <= 0) {
+        if (mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) {
           results.push({
             role: 'tool',
             tool_call_id: call.id,
-            content: JSON.stringify({ ok: false, error: `本轮调用外部服务已达上限（最多 ${MCP_TOOL_MAX_CALLS_PER_TURN} 次、共 ${Math.round(MCP_TURN_TIME_BUDGET_MS / 1000)} 秒）。请用已有信息继续回答，并告诉用户还缺哪些信息。` }),
+            content: JSON.stringify({ ok: false, error: `本轮调用外部服务已达上限（最多 ${mcpToolCallLimit} 次、共 ${Math.round(mcpTurnBudgetLimit / 1000)} 秒）。请用已有信息继续回答，并告诉用户还缺哪些信息。` }),
           });
           return { results };
         }
@@ -1310,6 +1335,7 @@ const auditMcpCall = (
           // 调用结果回写到连接器状态：面板上的「需要重新连接」不必等用户手动重连才发现。
           if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
           else noteRemoteCatalogCallSuccess(server);
+          if (server.catalogId === 'playwright') browserRecoveryNeeded = result.isError;
           if (!result.isError) recentPageText = appendPageContext(recentPageText, meta.toolName, result.text);
           auditMcpCall(meta, { risk: policy.tool?.risk, allowed: true, decision: 'call', ok: !result.isError, durationMs: Date.now() - mcpStartedAt, summary: result.text });
           // 停滞检测：同一个调用连着拿到同样的结果，说明再试也没有新信息。
@@ -1359,6 +1385,7 @@ const auditMcpCall = (
           const reason = error instanceof Error ? error.message : 'MCP 调用失败';
           // 抛出来的失败是连接层的问题（网络、会话、凭据）：记进连接器状态，面板上能直接看到。
           noteRemoteCatalogCallFailure(server, reason);
+          if (server.catalogId === 'playwright') browserRecoveryNeeded = true;
           // 写工具出错时结果是不确定的：服务端可能已经执行成功，只是响应没回来。
           // 这里必须让模型知道，否则它会直接重试，变成重复写入。
           results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: meta.readOnly ? reason : `${reason}；这次调用是否已经在外部生效无法确认，请先核实结果，再决定是否重试。` }) });
@@ -1392,7 +1419,7 @@ const auditMcpCall = (
         ? await getRuntimeImageGenerationModel(args.modelId || null)
         : await getRuntimeModel(args.modelId || null, 'image');
       if (!imageRuntime) {
-        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型' }).catch(() => undefined);
+        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '没有可用图片模型' }) });
         return { results };
       }
@@ -1410,7 +1437,7 @@ const auditMcpCall = (
           startedAt,
           providerFinishedAt,
           downloadAuth: imageDownloadAuth(imageRuntime.provider),
-          log: { mode, source: sourceForLog, prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, references: mode === 'edit' && referenceRecords.length ? referenceRecords : undefined },
+          log: { mode, source: sourceForLog, prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, references: mode === 'edit' && referenceRecords.length ? referenceRecords : undefined, ...taskContext },
         });
         generated.push(...stored.images);
         generations.push({ prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, mode });
@@ -1435,7 +1462,7 @@ const auditMcpCall = (
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         const message = error instanceof Error ? error.message : '图片工具失败';
-        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: message }).catch(() => undefined);
+        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, modelId: imageRuntime.model.id, modelName: imageRuntime.model.displayName, providerName: imageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: message, ...taskContext }).catch(() => undefined);
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: message }) });
       }
       return { results };
@@ -1682,8 +1709,8 @@ const auditMcpCall = (
       let stepResults: ChatMessage[] = [];
       const mcpLoop = await runToolLoop({
         messages: secondMessages,
-        maxSteps: MCP_TOOL_FOLLOWUP_MAX_ROUNDS,
-        maxCalls: Math.max(1, MCP_TOOL_MAX_CALLS_PER_TURN - mcpToolCallCount),
+        maxSteps: mcpFollowupMaxRounds,
+        maxCalls: Math.max(1, mcpToolCallLimit - mcpToolCallCount),
         signal: requestController.signal,
         callModel: async ({ messages }) => {
           const reply = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
@@ -1711,11 +1738,23 @@ const auditMcpCall = (
           }
           return stepResults;
         },
-        shouldContinue: () => !deferredCalls.length && mcpToolCallCount < MCP_TOOL_MAX_CALLS_PER_TURN && mcpTurnBudget > 0,
+        shouldContinue: () => !deferredCalls.length && mcpToolCallCount < mcpToolCallLimit && mcpTurnBudget > 0,
+        continueOnEmpty: () => {
+          if (!browserAutomationRequest || browserCompletionPrompts >= 4 || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+          browserCompletionPrompts += 1;
+          const recovery = browserRecoveryNeeded;
+          browserRecoveryNeeded = false;
+          return recovery
+            ? '浏览器自动化尚未完成：上一步页面或操作发生了可恢复错误。请重新获取当前页面快照，确认当前状态后继续执行用户原始命令；不要提前回复完成。'
+            : '浏览器自动化尚未完成。请重新检查当前页面快照，对照用户原始命令逐项核对，继续执行尚未完成的动作；只有全部目标都已验证成功后才能回复完成。';
+        },
         finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
       });
       mcpFollowupText = mcpLoop.text;
       toolTrace.push(...mcpLoop.trace);
+      if (browserAutomationRequest && mcpLoop.stopReason !== 'no_tool_calls' && !deferredCalls.length) {
+        stalledMcpReason = '浏览器连续操作达到本轮安全上限，暂未确认全部目标';
+      }
       if (deferredCalls.length) {
         // 补轮的确认卡片：消息从这一轮之前算起，待确认的调用按此刻的配置再校验一遍。
         const { pending: pendingCalls, settled: settledCallIds } = collectPendingCalls(deferredCalls, (message) => secondMessages.push(message));

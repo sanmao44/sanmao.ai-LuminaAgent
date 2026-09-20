@@ -60,6 +60,35 @@ test('多轮：执行工具 → 把结果带回去 → 再问一次，消息顺�
   assert.equal(messages[1].tool_call_id, 'a');
 });
 
+test('连续任务空回复后继续规划，直到工具执行并得到最终回答', async () => {
+  const messages = [];
+  const { executed, runCalls } = recorder();
+  let continuationPrompts = 0;
+  const outcome = await loop.runToolLoop({
+    messages,
+    callModel: modelReturning(
+      { content: '', tool_calls: [] },
+      { content: null, tool_calls: [toolCall('browser_snapshot', 'snapshot')] },
+      { content: '已完成全部操作', tool_calls: [] },
+    ),
+    runCalls,
+    continueOnEmpty: () => {
+      if (continuationPrompts >= 1) return false;
+      continuationPrompts += 1;
+      return '请继续核对尚未完成的操作';
+    },
+  });
+  assert.equal(outcome.stopReason, 'no_tool_calls');
+  assert.equal(outcome.text, '已完成全部操作');
+  assert.equal(outcome.steps, 3);
+  assert.equal(outcome.toolCallCount, 1);
+  assert.deepEqual(executed, ['1:browser_snapshot']);
+  assert.equal(messages[0].role, 'user');
+  assert.equal(messages[0].content, '请继续核对尚未完成的操作');
+  assert.equal(messages[1].role, 'assistant');
+  assert.equal(messages[2].role, 'tool');
+});
+
 test('思维链模型要求的 reasoning_content 跟着助手消息一起带回去', async () => {
   const messages = [];
   const { runCalls } = recorder();

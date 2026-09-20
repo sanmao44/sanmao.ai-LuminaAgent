@@ -8,6 +8,7 @@ import type {
   SubjectType,
   ViewMode,
 } from '../angle-control';
+import type { ProvenanceEdge } from '../provenance/types';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor' | 'angle';
 export type CanvasMediaKind = 'image' | 'video' | 'audio';
@@ -203,6 +204,7 @@ export type CanvasGenerationMeta = {
   /** Elapsed time from request start until the provider returned the result. */
   durationMs?: number;
   updatedAt?: number;
+  provenance?: ProvenanceEdge[];
 };
 
 export type CanvasHistoryEntry = {

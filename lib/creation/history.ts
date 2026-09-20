@@ -3,6 +3,7 @@
 import { saveGalleryItems, type GalleryItem, type GalleryLocalEditMask, type GallerySource } from '../client-history';
 import type { ReferenceImageRecord, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
+import type { ProvenanceEdge, ProvenanceEdgeDraft } from '../provenance/types';
 
 export async function recordCanvasImages(
   images: Array<{ url: string; revisedPrompt?: string }>,
@@ -29,11 +30,19 @@ export async function recordCanvasImages(
     upscaleOutputQuality?: number;
     annotations?: LocalEditAnnotation[];
     mask?: GalleryLocalEditMask;
+    provenance?: ProvenanceEdgeDraft[];
   },
 ) {
   const createdAt = Date.now();
-  const items: GalleryItem[] = images.map((image, index) => ({
-    id: `canvas-image-${createdAt.toString(36)}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+  const items: GalleryItem[] = images.map((image, index) => {
+    const id = `canvas-image-${createdAt.toString(36)}-${index}-${Math.random().toString(36).slice(2, 8)}`;
+    const provenance: ProvenanceEdge[] | undefined = meta.provenance?.map((edge) => ({
+      ...edge,
+      id: `provenance:${edge.relation}:${edge.fromId}:${id}`,
+      toId: id,
+    }));
+    return {
+    id,
     url: image.url,
     revisedPrompt: image.revisedPrompt,
     prompt: meta.prompt,
@@ -60,7 +69,9 @@ export async function recordCanvasImages(
     references: meta.references,
     annotations: meta.annotations,
     mask: meta.mask,
-  }));
+    ...(provenance?.length ? { provenance } : {}),
+    };
+  });
   await saveGalleryItems(items);
   return items;
 }
