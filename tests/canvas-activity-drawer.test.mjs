@@ -39,3 +39,10 @@ test("task log metadata keeps the important output details visually distinct", (
   assert.match(styles, /\.canvas-task-log-meta-count\{[^}]*color:var\(--accent-text\)/);
   assert.match(styles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
 });
+
+test("task log keeps preview actions beside metadata instead of wasting a full row", () => {
+  assert.match(styles, /\.canvas-task-log-card\{[^}]*grid-template-areas:"preview main status" "preview meta actions"/);
+  assert.match(styles, /\.canvas-task-log-meta\{[^}]*grid-area:meta/);
+  assert.match(styles, /\.canvas-task-log-actions\{[^}]*grid-area:actions/);
+  assert.match(component, /if \(lightboxReturnPanel\) setActivePanel\(lightboxReturnPanel\);/);
+});

@@ -28,6 +28,7 @@ import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
+import { conversationImage, conversationMessageText } from '@/lib/agent-context';
 import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
 import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
@@ -2755,7 +2756,7 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                     }),
                     /*#__PURE__*/ _jsx("span", {
                         className: "image-source",
-                        children: sourceLabel(sourceOverride || item.source)
+                        children: item.localFileName ? '本地图片' : sourceLabel(sourceOverride || item.source)
                     })
                 ]
             }),
@@ -8032,7 +8033,8 @@ export default function Page() {
         const items = storedImages.map((image, index)=>({
                 id: uid('img'),
                 url: image.url,
-                prompt: meta.prompt,
+                localFileName: image.localFileName,
+                prompt: image.localFileName || meta.prompt,
                 revisedPrompt: image.revisedPrompt,
                 modelId: meta.modelId,
                 modelName: meta.modelName,
@@ -9141,17 +9143,19 @@ export default function Page() {
             ].reverse().find((item)=>item.role === 'user');
             const latestUserId = latestUserMessage?.id;
             const referenceSource = latestUserMessage;
-            const referencesForRequest = await prepareCreativeReferencesForAgent(referenceSource?.references || []);
+            const retryHistory = contextMessages.slice(0, contextMessages.indexOf(latestUserMessage));
+            const retryImage = !referenceSource?.references?.length ? conversationImage(latestUserMessage?.content || '', retryHistory) : null;
+            const retryReferences = retryImage ? [await galleryItemToReference(retryImage)] : referenceSource?.references || [];
+            const referencesForRequest = await prepareCreativeReferencesForAgent(retryReferences);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
+            const referenceRecords = await persistReferenceImages(retryReferences);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const retryInstruction = { id: 'retry-instruction', role: 'user', content: '请基于上面的对话重新生成一版完整答复。不要提及“重试”或“版本”，直接回答原问题。' };
-            const memory = await prepareAgentMemory(sessionId, [...contextMessages, retryInstruction], activeAgentModelId, requestController.signal);
+            const memory = await prepareAgentMemory(sessionId, contextMessages, activeAgentModelId, requestController.signal);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const selectedContextMessages = selectRelevantConversationMessages(contextMessages, latestUserMessage?.content || '', 8, 3, 11);
             const payloadMessages = selectedContextMessages.slice(-11).map((item)=>({
                     role: item.role,
-                    content: item.content,
+                    content: conversationMessageText(item),
                     references: item.id === latestUserId ? referencesForRequest : [],
                     files: item.id === latestUserId ? (item.files || []).map((file)=>({
                             name: file.name,
@@ -9161,12 +9165,6 @@ export default function Page() {
                             size: file.size
                         })) : historyArtifactFiles(item)
                 }));
-            payloadMessages.push({
-                role: 'user',
-                content: retryInstruction.content,
-                references: [],
-                files: []
-            });
             let streamedText = '';
             /* 重新生成也可能是长任务：阶段文案挂在被重试的那条消息上（消息操作栏里显示）。 */
             const retryRunId = uid('run');
@@ -9316,15 +9314,13 @@ export default function Page() {
         const selection = overrideRefs ? { references: availableReferences, invalidNumbers: [], hasMentions: false } : selectCreativeReferences(content, availableReferences);
         if (selection.invalidNumbers.length) return notify(`引用编号无效：${selection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
         let refs = selection.references;
-        let autoContinuation = false;
-        if (!overrideRefs && !refs.length && isImageContinuationRequest(content)) {
-            const previousImage = latestAssistantImage(currentSessionMessages);
+        if (!overrideRefs && !refs.length && !task) {
+            const previousImage = conversationImage(content, currentSessionMessages);
             if (previousImage) {
                 try {
                     refs = [
                         await galleryItemToReference(previousImage)
                     ];
-                    autoContinuation = true;
                 } catch (error) {
                     return notify(error instanceof Error ? error.message : '无法读取上一张生成图片，暂时不能续图');
                 }
@@ -9336,7 +9332,7 @@ export default function Page() {
             ? normalizeOneTakeDuration(durationSeconds)
             : undefined;
         const followUp = overrideRefs ? null : agentFollowUp;
-        const requestContent = autoContinuation ? buildContinuationPrompt(content) : content || '请分析我上传的文件和参考图';
+        const requestContent = content || '请分析我上传的文件和参考图';
         const requestIntent = classifyAgentDeliverable(requestContent, {
             messages: currentSessionMessages,
             hasReferences: refs.length > 0,
@@ -9430,7 +9426,7 @@ export default function Page() {
             const selectedContextMessages = selectRelevantConversationMessages(nextMessages, requestContent);
             const payloadMessages = selectedContextMessages.map((m)=>({
                     role: m.role,
-                    content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : m.content,
+                    content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : conversationMessageText(m),
                     references: m.id === latestUserId ? referencesForRequest : [],
                     files: m.id === latestUserId ? (m.files || []).map((file)=>({
                             name: file.name,
@@ -16174,7 +16170,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                         }),
                                         /*#__PURE__*/ _jsxs("small", {
                                             children: [
-                                                sourceLabel(viewerItem.source),
+                                                viewerItem.localFileName ? '本地图片' : sourceLabel(viewerItem.source),
                                                 " \xb7 ",
                                                 viewerItem.outputSize || viewerItem.aspectRatio || '自动',
                                                 " \xb7 ",

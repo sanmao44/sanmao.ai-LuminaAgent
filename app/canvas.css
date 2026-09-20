@@ -2268,6 +2268,25 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-task-log-meta time{color:var(--muted);font-size:8px}
 @media(max-width:720px){.canvas-task-log-meta{gap:5px;padding-top:6px}.canvas-task-log-meta span{min-height:21px;padding-inline:6px}.canvas-task-log-meta time{font-size:8px}}
 
+/* Keep each task compact: actions share the metadata row instead of taking a
+   separate full-width line, while narrow panels still collapse cleanly. */
+.canvas-task-log-card{grid-template-columns:62px minmax(0,1fr) auto;grid-template-rows:auto auto;grid-template-areas:"preview main status" "preview meta actions";align-items:center}
+.canvas-task-log-preview{grid-area:preview}
+.canvas-task-log-main{grid-area:main;grid-column:auto;grid-row:auto;align-self:center}
+.canvas-task-log-status{grid-area:status;grid-column:auto;grid-row:auto;align-self:start;justify-self:end}
+.canvas-task-log-meta{grid-area:meta;grid-column:auto;grid-row:auto;min-width:0;padding-top:6px;border-top:0;overflow:hidden;flex-wrap:nowrap}
+.canvas-task-log-meta-size{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.canvas-task-log-meta time{margin-left:auto;flex:none}
+.canvas-task-log-actions{grid-area:actions;grid-column:auto;grid-row:auto;align-self:end;justify-content:flex-end;white-space:nowrap}
+.canvas-task-log-actions button{height:24px;padding-inline:7px}
+.canvas-task-log-lineage{grid-column:1/-1;grid-row:auto;grid-area:auto}
+@media(max-width:720px){
+  .canvas-task-log-card{grid-template-columns:54px minmax(0,1fr) auto;grid-template-areas:"preview main status" "preview meta actions";gap:6px}
+  .canvas-task-log-meta{flex-wrap:wrap;overflow:visible}
+  .canvas-task-log-meta time{margin-left:0}
+  .canvas-task-log-actions{flex-wrap:wrap}
+}
+
 /* Generator cards: keep the prompt compact and make the execution queue the
    primary readable surface. Older cards can be very tall after a manual
    resize, so no section is allowed to consume the remaining height just to

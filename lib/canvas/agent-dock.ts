@@ -131,6 +131,11 @@ export function canvasAgentDockNodeSummary(node: CanvasNode, index: number) {
   }
   if (node.data.status === "failed" && node.data.statusLabel)
     parts.push(`失败原因：${clip(node.data.statusLabel, 80)}`);
+  if (node.type === "media") {
+    const model = String(node.data.model || node.data.generation?.modelName || "").trim();
+    const provider = String(node.data.providerName || node.data.generation?.providerName || "").trim();
+    if (model || provider) parts.push(`生成模型：${[model, provider].filter(Boolean).join(" · ")}`);
+  }
   return parts.join("｜");
 }
 
@@ -260,7 +265,7 @@ export function composeCanvasAgentDockMessage(text: string, context: string) {
  */
 export function canvasAgentDockAcceptsImages(deliverable?: string) {
   if (!deliverable) return true;
-  return deliverable !== "TEXT" && deliverable !== "CLARIFY";
+  return deliverable === "IMAGE" || deliverable === "BOTH";
 }
 
 /**

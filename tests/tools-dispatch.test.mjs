@@ -161,7 +161,7 @@ test('挂了浏览器控制就把 ref 用法写进系统提示', () => {
 test(`正文被截成空时，再给模型一次带工具的原生调用机会`, () => {
   // 回归：实测模型把工具调用写成文本标记后整条回复只剩一个 "<"，直接返回用户什么也看不到。
   assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
-  assert.match(route, /if \(!toolCalls\.length && \(hasInlineToolCallMarkup\(plainMessage\) \|\| !cleanedMessage\) && callableTools\.length\) \{/);
+  assert.match(route, /if \(!toolCalls\.length && \(filesystemActionRequest \|\| browserAutomationRequest \|\| hasInlineToolCallMarkup\(plainMessage\) \|\| !cleanedMessage\) && callableTools\.length\) \{/);
   assert.match(route, /tools: callableTools,/);
   assert.match(route, /不要把工具调用写成文本标记/);
   assert.match(route, /parseInlineToolCalls\(plainMessage, callableTools\)/, '正文夹带工具调用时也要恢复或重试');
@@ -169,5 +169,5 @@ test(`正文被截成空时，再给模型一次带工具的原生调用机会`,
   assert.match(route, /parseInlineToolCalls\(rawReply\.content, mcpFollowupTools\)/, '补轮里的文本工具调用也要恢复');
   assert.match(route, /inlineToolCalls\.slice\(0, 1\)/, '浏览器文本调用不能批量使用同一份旧快照');
   assert.match(route, /inlineCalls\.slice\(0, 1\)/, '补轮也必须逐步刷新 ref');
-  assert.match(route, /if \(!toolCalls\.length\) \{\s+plainMessage = hasInlineToolCallMarkup\(plainMessage\)/, '补不到工具时不能把原始工具文本直接显示给用户');
+  assert.match(route, /if \(!toolCalls\.length\) \{\s+plainMessage = filesystemActionRequest \|\| browserAutomationRequest \|\| artifactGenerationRequest \|\| hasInlineToolCallMarkup\(plainMessage\)/, '补不到工具时不能把原始工具文本直接显示给用户');
 });

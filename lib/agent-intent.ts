@@ -43,6 +43,7 @@ const promptOnlyPattern = /(?:提示词|prompt)/i;
 const separateCopyPattern = /(?:另外|再|同时|并且|并|以及|配套|附上|额外).{0,36}(?:给我|提供|写|输出|来).{0,20}(?:文案|标题|配文|广告语|宣传语|脚本|文字)/i;
 const embeddedTextPattern = /(?:图上|图片上|海报上|封面上|画面中|带(?:上|有)|加入|写着|写上).{0,28}(?:文字|标题|文案|字样|slogan|口号)/i;
 const questionOrAnalysisPattern = /(?:为什么|怎么做|如何做|教程|步骤|方法|技巧|解释|分析|比较|建议|了解|是什么|是否|能不能|可以吗|吗[？?]?$|[？?]$)/i;
+const imageMetadataQuestionPattern = /(?:这张|这幅|该图|这张图|这幅图|图片|图像|结果|刚才|上一张).{0,36}(?:用什么|哪个|哪种|什么模型|模型名称|模型型号|服务商|供应商|参数|尺寸|比例|来源|生成记录|生成时间|生成信息)/i;
 const vagueCreativePattern = /(?:帮我|给我|请|我要|我想要|麻烦|来|做|搞|弄|生成|制作|创建|设计).{0,16}(?:宣传|推广|营销|广告|活动|新品|内容|方案|套|东西)(?:吧|呢|呀|啊)?$/i;
 const vagueFollowUpPattern = /^(?:继续|再来一个|再来一版|再来几版|这个再|这张再|按刚才|按照刚才|基于这个|基于这张|把它|它再|再短一点|再详细一点|更高级一点|更年轻一点|更简洁一点|优化一下|改一下|换一下|调整一下)/i;
 
@@ -80,6 +81,12 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
   }
   if (!text) return result('OTHER', '还没有足够的文字目标。', 'low', []);
 
+  if (/(?:不要|别|不需要|暂不|先不)(?:再)?(?:出图|生图|画图|生成图片|生成图像)/.test(text)) {
+    return result('TEXT', '用户明确要求本轮不生成图片。', 'high', ['禁止生图']);
+  }
+  if (imageMetadataQuestionPattern.test(text) || /(?:用什么模型|哪个模型|什么服务商|生成参数|图片尺寸|生成尺寸|生成来源|生成记录).{0,24}(?:吗|？|\?|是什么|是哪个)/i.test(text)) {
+    return result('OTHER', '用户在询问已有图片的生成元数据，只需文字回答，不应再次生成图片。', 'high', ['图片元数据']);
+  }
   const asksForPrompt = promptOnlyPattern.test(text) && /(?:写|生成|优化|改写|润色|反推|提取|翻译|解释|给我|输出|提供|整理|怎么|如何|只要|仅需)/i.test(text);
   const asksForText = textActionPattern.test(text) || ((textArtifactPattern.test(text) || documentDeliverablePattern.test(text)) && !imageActionPattern.test(text));
   const asksForImage = (imageActionPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || /(?:出图|生图)/i.test(text));
@@ -97,8 +104,15 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
   if (asksForPrompt && !asksForSeparateCopy && !/(?:然后|之后|再|同时|并且).{0,24}(?:出图|生图|生成图片|画图)/i.test(text)) {
     return result('TEXT', '你要的是可复制的提示词，图片只是提示词描述的对象。', 'high', ['提示词交付']);
   }
+  if (/^(?:请|直接|现在|帮我|给我)?(?:出|生成)(?:个|一张|张)?(?:图片|图像|图)(?:看下|看看)?(?:[，,\s]*(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9))?[吧啊！!。.\s]*$/.test(text)) {
+    return result('IMAGE', '用户用口语明确要求实际出图。', 'high', ['口语生图指令']);
+  }
   if (vagueCreativePattern.test(text)) {
     return result('CLARIFY', '“宣传/新品/活动”没有说明要图片、文案，还是两者都要。', 'low', ['缺少交付形式']);
+  }
+  if (/^(?:请|帮我|给我)?(?:生成|画|绘制|制作).{1,100}(?:场景|场面|情景)(?:图)?[吧。！!]*$/.test(text)
+    && !/(?:视频|动画|脚本|代码|提示词|文案|文字|描述|怎么|如何)/i.test(text)) {
+    return result('IMAGE', '用户要求把场景生成成图片。', 'high', ['场景生成']);
   }
   if (asksToEditReference) {
     return result('IMAGE', '检测到参考图和明确的修改动作，会按图片编辑任务处理。', 'high', ['参考图', '编辑动作']);
@@ -113,11 +127,11 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
     return result('TEXT', '检测到文字创作或文字处理动作，不会因为出现“图片/海报”就切换到生图。', 'high', ['文字动作']);
   }
 
+  const previousAssistant = [...messages].reverse().find((message) => message?.role === 'assistant' && (clean(message.content) || message.images?.length));
   const previousImage = latestMessageWithImages(messages);
-  if (previousImage && (vagueFollowUpPattern.test(text) || imageEditPattern.test(text))) {
+  if (previousImage && (previousAssistant === previousImage || /(?:图|背景|构图|光线|色彩)/.test(text)) && !questionOrAnalysisPattern.test(text) && (vagueFollowUpPattern.test(text) || imageEditPattern.test(text))) {
     return result('IMAGE', '上一轮产物是图片，本轮表达更像是在继续修改它。', 'medium', ['上一轮图片', '延续修改']);
   }
-  const previousAssistant = [...messages].reverse().find((message) => message?.role === 'assistant' && clean(message.content));
   if (previousAssistant && (vagueFollowUpPattern.test(text) || /(?:短一点|长一点|口语一点|正式一点|换个说法|再写)/i.test(text))) {
     return result('TEXT', '本轮省略了对象，已沿用上一轮的文字回答。', 'medium', ['上一轮文字', '省略指代']);
   }
@@ -135,6 +149,22 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
 export function agentInstructionText(intentText: unknown, fallback: unknown) {
   const value = clean(intentText);
   return (value || clean(fallback)).slice(0, 4000);
+}
+
+/** Ambiguous commands get one semantic planning pass, not a paid tool guess. */
+export function needsSemanticIntent(input: string, decision: AgentIntentDecision) {
+  return decision.confidence !== 'high' && /(?:生成|制作|创建|设计|执行|开始|继续|按.{0,8}(?:做|来)|改成|换成|就这样|可以|好的|^\d+$)/.test(input)
+    && !/(?:不要|别|暂不|先不|怎么|如何|为什么|是什么|[?？]$)/.test(input);
+}
+
+export function parseSemanticIntent(content: unknown): AgentIntentDecision | null {
+  if (typeof content !== 'string') return null;
+  try {
+    const parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) as Record<string, unknown>;
+    if (!['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(String(parsed.deliverable))) return null;
+    if (parsed.confidence !== 'high') return null;
+    return result(parsed.deliverable as AgentDeliverable, String(parsed.reason || '结合当前对话理解用户要求。').slice(0, 240), 'high', ['上下文语义判断']);
+  } catch { return null; }
 }
 
 export function agentDeliverableLabel(value: unknown) {

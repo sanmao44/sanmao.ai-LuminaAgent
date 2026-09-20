@@ -120,6 +120,12 @@ export function selectRelevantConversationMessages(
   const recent = history.slice(recentStart);
   const older = history.slice(0, recentStart);
   const queryTerms = memoryTerms(query);
+  // Resolve short follow-ups using the adjacent turn, while keeping the same budget.
+  if (query.trim().length <= 12 || /(?:这张|那个|这份|按刚才|继续|出图)/.test(query)) {
+    for (const message of recent.slice(-4)) {
+      for (const term of memoryTerms(message.content)) queryTerms.add(term);
+    }
+  }
   if (!queryTerms.size) return recent;
   const turns: Array<{ messages: MemoryMessage[]; index: number; score: number }> = [];
   for (let index = 0; index < older.length;) {

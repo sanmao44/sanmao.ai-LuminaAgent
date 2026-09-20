@@ -158,6 +158,9 @@ export type CanvasGenerationMeta = {
   /** Prompt entered by the user, excluding opaque preset instructions. */
   userPrompt?: string;
   params: CanvasNodeParams;
+  modelId?: string;
+  modelName?: string;
+  providerName?: string;
   presetId?: string;
   presetName?: string;
   /** Identifies the automatic image-to-video workflow. */
@@ -256,6 +259,7 @@ export type CanvasNodeData = {
   name?: string;
   role?: string;
   model?: string;
+  providerName?: string;
   status?: CanvasGenerationStatus;
   statusLabel?: string;
   progress?: number;

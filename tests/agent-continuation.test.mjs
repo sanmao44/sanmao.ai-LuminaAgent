@@ -51,6 +51,13 @@ test('extracts clickable follow-ups from ordinary assistant replies', () => {
   assert.deepEqual(continuation.extractChatDirections('只有普通回答'), []);
 });
 
+test('suggestions never send assistant instructions as if the user said them', () => {
+  assert.deepEqual(continuation.extractChatDirections('### 你还可以继续\n1. 把图片拖入对话框，我帮你分析或描述画面内容\n2. 分析这张图片'), ['分析这张图片']);
+  assert.equal(continuation.likelyFilesystemRequest('到项目文件夹找到 INTJ.png 这张图发我'), true);
+  assert.equal(continuation.likelyFilesystemRequest('INTJ_极简风.png', '可以重命名，请告诉我新名字'), true);
+  assert.equal(continuation.likelyFilesystemRequest('INTJ_极简风.png'), false);
+});
+
 test('removes the rendered direction section without removing the caption', () => {
   const caption = [
     '本次精修保持主体和构图不变。',

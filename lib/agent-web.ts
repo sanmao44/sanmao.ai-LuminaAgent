@@ -31,12 +31,13 @@ export function likelyBrowserAutomationRequest(input: string) {
 }
 
 /** 识别本地文件/项目操作请求，供 MCP 工具预算排序使用。 */
-export function likelyFilesystemRequest(input: string) {
+export function likelyFilesystemRequest(input: string, previousAssistant = '') {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
-  const target = /(?:本地文件|文件夹|目录|项目(?:文件|目录)?|代码库|本地代码|文件系统|工作区|workspace|filesystem|file system)/i.test(text);
-  const action = /(?:读取|查看|列出|分析|搜索|打开|修改|编辑|创建|重构|运行|启动|检查|目录结构|文件内容|代码|工作|操作|处理)/i.test(text);
-  return target && action;
+  const target = /(?:本地文件|文件夹|目录|项目(?:文件|目录)?|代码库|本地代码|文件系统|工作区|workspace|filesystem|file system|[a-z]:[\\/]|[^\s]+\.(?:png|jpg|webp|pdf|txt|docx|xlsx|pptx))/i.test(text);
+  const action = /(?:读取|查看|列出|分析|搜索|找到|找出|发我|给我|打开|修改|编辑|创建|重命名|改名|移动|重构|运行|启动|检查|目录结构|文件内容|代码|工作|操作|处理)/i.test(text);
+  const renameReply = /(?:改名|重命名)/.test(previousAssistant) && /^(?:[^\\/\r\n]+\.[a-z0-9]{1,8}|可以|好的|就这个)[。!！]*$/i.test(text);
+  return (target && action) || renameReply || /^(?:改名|重命名)(?:可以吗|吧|一下|为|成|[?？])/.test(text);
 }
 
 const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
@@ -95,7 +96,7 @@ export function extractAgentDirections(content: string) {
       const match = line.match(directionItemPattern);
       if (!match) break;
       const value = match[1].replace(/^\*\*(.+)\*\*$/, '$1').trim();
-      if (value) directions.push(value);
+      if (value && !/(?:我(?:来|可以|会)?帮你|请(?:你)?(?:上传|拖入|发送)|等你(?:发|传))/.test(value)) directions.push(value);
     }
     if (directions.length) return directions;
   }
@@ -115,7 +116,7 @@ export function extractChatDirections(content: string) {
       const match = line.match(directionItemPattern);
       if (!match) break;
       const value = match[1].replace(/^\*\*(.+)\*\*$/, '$1').trim();
-      if (value) directions.push(value);
+      if (value && !/(?:我(?:来|可以|会)?帮你|请(?:你)?(?:上传|拖入|发送)|等你(?:发|传))/.test(value)) directions.push(value);
     }
     if (directions.length) return directions;
   }

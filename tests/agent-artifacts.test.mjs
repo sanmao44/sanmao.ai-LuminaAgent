@@ -99,7 +99,7 @@ test('文件交付意图在“1/好/可以”这种追问里也要保留，而�
   assert.match(route, /isArtifactFollowUpRequest\(previousAssistantText, latestInstruction\)/);
   assert.match(route, /const artifactFollowUpRequest = /);
   assert.match(route, /\|\| artifactFollowUpRequest/);
-  assert.match(route, /const nativeNeedsContinuation = imageGenerationRequest \|\| fileGenerationRequest \|\| artifactGenerationRequest;/);
+  assert.match(route, /const nativeNeedsContinuation = imageGenerationRequest \|\| fileGenerationRequest \|\| artifactGenerationRequest \|\| filesystemRequest/);
   const directIndex = route.indexOf('const directStream = ');
   assert.notEqual(directIndex, -1);
   assert.match(route.slice(directIndex, route.indexOf(';', directIndex)), /&& !artifactGenerationRequest$/);

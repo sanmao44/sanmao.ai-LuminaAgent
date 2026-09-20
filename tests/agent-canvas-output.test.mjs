@@ -11,7 +11,8 @@ test('canvas Agent requests suppress continuation directions without changing ma
     route,
     /const ordinaryChatDirectionsInstructions = isCanvasSource\s*\n\s*\? .*超级画布输出规则：只输出本轮任务所需的最终结果。/s,
   );
-  assert.ok(route.includes('普通文本回答结束时，追加一个标题为“你还可以继续”的小节'));
+  assert.ok(route.includes('只在任务完成且确有帮助时，追加“你还可以继续”小节'));
+  assert.ok(route.includes('每条必须是用户向助手下达的指令'));
 });
 
 test('canvas Agent commits only a non-empty final message and clears streamed drafts on failure', () => {

@@ -177,7 +177,7 @@ import {
   requestPromptOptimization,
   runReversePrompt,
 } from "@/lib/creation/agent";
-import { requestAgent } from "@/lib/agent-client";
+import { requestAgent, type AgentGeneratedImage } from "@/lib/agent-client";
 import CanvasAgentDock, {
   CANVAS_AGENT_DOCK_OPEN_KEY,
 } from "@/components/CanvasAgentDock";
@@ -2939,9 +2939,10 @@ export default function SuperCanvas() {
     nodeId: string;
     compare: boolean;
   } | null>(null);
+  const [lightboxReturnPanel, setLightboxReturnPanel] = useState<"activity" | null>(null);
   /* Agent 面板里还没落画布的图也要能看大图：复用同一个媒体预览器。 */
   const [agentDockPreview, setAgentDockPreview] = useState<{
-    images: Array<{ url: string; revisedPrompt?: string }>;
+    images: AgentGeneratedImage[];
     index: number;
   } | null>(null);
   const [panoramaNodeId, setPanoramaNodeId] = useState<string | null>(null);
@@ -3043,6 +3044,7 @@ export default function SuperCanvas() {
     setProjectMenuOpen(false);
     setReusePreview(null);
     setLightbox(null);
+    setLightboxReturnPanel(null);
     setPanoramaNodeId(null);
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
@@ -3064,8 +3066,9 @@ export default function SuperCanvas() {
     setVariantMentionState(null);
   }, []);
   const openCanvasMediaViewer = useCallback(
-    (nodeId: string, compare = false) => {
+    (nodeId: string, compare = false, returnPanel: "activity" | null = null) => {
       closeCanvasOverlayConflicts();
+      setLightboxReturnPanel(returnPanel);
       setLightbox({ nodeId, compare });
     },
     [closeCanvasOverlayConflicts],
@@ -9985,10 +9988,16 @@ export default function SuperCanvas() {
     (payload: string, point: Point) => {
       let url = "";
       let revisedPrompt = "";
+      let modelId = "";
+      let modelName = "";
+      let providerName = "";
       try {
-        const parsed = JSON.parse(payload) as { url?: string; revisedPrompt?: string };
+        const parsed = JSON.parse(payload) as { url?: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string };
         url = String(parsed?.url || "").trim();
         revisedPrompt = String(parsed?.revisedPrompt || "").trim();
+        modelId = String(parsed?.modelId || "").trim();
+        modelName = String(parsed?.modelName || "").trim();
+        providerName = String(parsed?.providerName || "").trim();
       } catch {
         url = "";
       }
@@ -9998,7 +10007,19 @@ export default function SuperCanvas() {
       }
       const draft = createMedia("image", url, "Agent 图片", point, {
         role: "Agent 生成结果",
+        ...(modelName ? { model: modelName } : {}),
+        ...(providerName ? { providerName } : {}),
         ...(revisedPrompt ? { prompt: revisedPrompt } : {}),
+        ...(modelId ? {
+          generation: {
+            kind: "image",
+            prompt: revisedPrompt || "Agent 图片",
+            params: clone({ ...readSharedCreationSettings("image", runtime), model: modelId }),
+            modelId,
+            modelName: modelName || undefined,
+            providerName: providerName || undefined,
+          },
+        } : {}),
       });
       const node = { ...draft, ...openNodePosition(point, draft) };
       commit((value) => ({ ...value, nodes: [...value.nodes, node] }));
@@ -10007,11 +10028,11 @@ export default function SuperCanvas() {
       setContextMenu(null);
       notify("已把这张图放到画布上");
     },
-    [commit, notify, openNodePosition],
+    [commit, notify, openNodePosition, runtime],
   );
   const applyAgentDockImages = useCallback(
     (
-      images: Array<{ url: string; revisedPrompt?: string }>,
+      images: AgentGeneratedImage[],
       meta: { prompt: string; model?: string; runContext?: CanvasAgentRunContext },
     ) => {
       const incoming = images.filter((image) => Boolean(String(image.url || "").trim()));
@@ -10054,11 +10075,15 @@ export default function SuperCanvas() {
           desired,
           {
             role: "Agent 生成结果",
-            ...(meta.model ? { model: meta.model } : {}),
+            ...(image.modelName ? { model: image.modelName } : {}),
+            ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
               prompt: meta.prompt,
-              params: clone(imageSettings),
+              params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
+              ...(image.modelId ? { modelId: image.modelId } : {}),
+              ...(image.modelName ? { modelName: image.modelName } : {}),
+              ...(image.providerName ? { providerName: image.providerName } : {}),
               referenceIds,
               ...(runContext ? { operation: runContext.operation, taskId: runContext.runId } : {}),
               ...(anchor ? { parentNodeId: anchor.id } : {}),
@@ -10100,8 +10125,6 @@ export default function SuperCanvas() {
       void recordCanvasImages(incoming, {
         prompt: meta.prompt,
         source: "canvas",
-        modelId: imageSettings.model,
-        ...(meta.model ? { modelName: meta.model } : {}),
         ...(anchor ? { parentId: anchor.id } : {}),
         ...(runContext ? { taskId: runContext.runId, chatId: runContext.chatId, projectId: runContext.creativeProjectId } : {}),
         ...(runContext?.references?.length ? {
@@ -10139,7 +10162,7 @@ export default function SuperCanvas() {
   const applyAgentDockPlan = useCallback(
     (
       plan: CanvasAgentDockPlan,
-      images: Array<{ url: string; revisedPrompt?: string }> = [],
+      images: AgentGeneratedImage[] = [],
       runContext?: CanvasAgentRunContext,
     ): CanvasAgentDockPlanResult => {
       const validImages = images.filter((image) => Boolean(String(image.url || "").trim()));
@@ -10314,10 +10337,15 @@ export default function SuperCanvas() {
           };
           const draft = createMedia("image", image.url, `Agent 图片 ${index + 1}`, desired, {
             role: "Agent 生成结果",
+            ...(image.modelName ? { model: image.modelName } : {}),
+            ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
               prompt: plan.sourcePrompt || "Agent 批量生成",
-              params: clone(imageSettings),
+              params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
+              ...(image.modelId ? { modelId: image.modelId } : {}),
+              ...(image.modelName ? { modelName: image.modelName } : {}),
+              ...(image.providerName ? { providerName: image.providerName } : {}),
               referenceIds,
               ...(runContext ? { operation: runContext.operation, taskId: runContext.runId } : {}),
               ...(anchor ? { parentNodeId: anchor.id } : {}),
@@ -10385,7 +10413,6 @@ export default function SuperCanvas() {
         void recordCanvasImages(validImages, {
           prompt: plan.sourcePrompt || "Agent 批量生成",
           source: "canvas",
-          modelId: imageSettings.model,
           ...(anchor ? { parentId: anchor.id } : {}),
           ...(runContext ? { taskId: runContext.runId, chatId: runContext.chatId, projectId: runContext.creativeProjectId } : {}),
           ...(runContext?.references?.length ? {
@@ -13095,7 +13122,7 @@ export default function SuperCanvas() {
     }
   }, [notify]);
   const focusCanvasNode = useCallback(
-    (nodeId: string, openMedia = false) => {
+    (nodeId: string, openMedia = false, returnPanel: "activity" | null = null) => {
       const node = nodeById(docRef.current, nodeId);
       if (!node) {
         notify("当前画布中找不到这条血缘节点", "error");
@@ -13104,7 +13131,7 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       setActivePanel(null);
-      if (openMedia && node.type === "media" && node.data.url) openCanvasMediaViewer(node.id);
+      if (openMedia && node.type === "media" && node.data.url) openCanvasMediaViewer(node.id, false, returnPanel);
       else fitView([node.id]);
     },
     [fitView, notify, openCanvasMediaViewer],
@@ -13131,9 +13158,9 @@ export default function SuperCanvas() {
         notify("当前任务还没有对应的画布节点。", "error");
         return;
       }
-      focusCanvasNode(node.id, openMedia);
+      focusCanvasNode(node.id, openMedia, openMedia && activePanel === "activity" ? "activity" : null);
     },
-    [focusCanvasNode, notify],
+    [activePanel, focusCanvasNode, notify],
   );
   const retryGenerationLog = useCallback(
     (log: CanvasGenerationLog) => {
@@ -16543,7 +16570,11 @@ export default function SuperCanvas() {
           item={viewerItem}
           references={viewerReferences}
           initialCompare={lightbox.compare}
-          onClose={() => setLightbox(null)}
+          onClose={() => {
+            setLightbox(null);
+            if (lightboxReturnPanel) setActivePanel(lightboxReturnPanel);
+            setLightboxReturnPanel(null);
+          }}
           onAngle={
             viewerNode.data.kind === "image" && isCanvasReadyImageSource(viewerNode)
               ? () => openImagePanorama(viewerNode.id)
