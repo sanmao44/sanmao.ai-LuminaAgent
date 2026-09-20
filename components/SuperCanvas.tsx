@@ -321,6 +321,14 @@ import { insertReferenceMention as insertCreativeMention, referenceMentionNumber
 import ReferenceMentionMenu, { type ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import { readWorkspaceContext, updateWorkspaceContext, type WorkspaceContext } from "@/lib/workspace-context";
+import {
+  appendCreativeProjectVersion,
+  creativeProjectVersion,
+  creativeProjectIdForCanvas,
+  readCreativeProjects,
+  saveCreativeProjects,
+  type CreativeProjectVersion,
+} from "@/lib/creative-projects";
 import type { CanvasAgentRunContext } from "@/lib/canvas/run-context";
 import { activityTaskFromGenerationLog } from "@/lib/task-activity/adapters";
 import { canvasLineageForTask, createProvenanceEdge, provenanceDraftsForSources, type CanvasLineageRecord } from "@/lib/provenance/normalize";
@@ -2952,6 +2960,7 @@ export default function SuperCanvas() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectRename, setProjectRename] = useState(false);
   const [projectRenameValue, setProjectRenameValue] = useState("");
+  const [projectVersions, setProjectVersions] = useState<CreativeProjectVersion[]>([]);
   const [marquee, setMarquee] = useState<{
     x: number;
     y: number;
@@ -3219,6 +3228,12 @@ export default function SuperCanvas() {
   const currentProject = projects.find(
     (project) => project.id === activeProjectId,
   );
+  useEffect(() => {
+    const projectId = currentProject?.projectId;
+    setProjectVersions(projectId
+      ? readCreativeProjects().find((project) => project.id === projectId)?.versions || []
+      : []);
+  }, [currentProject?.projectId]);
   const selectedAssetIds = useMemo(
     () => document.nodes
       .filter((node) => selectedIds.has(node.id))
@@ -3228,18 +3243,20 @@ export default function SuperCanvas() {
   );
   const agentWorkspaceContext = useMemo<WorkspaceContext>(() => ({
     ...workspaceContext,
+    creativeProjectId: currentProject?.projectId || workspaceContext.creativeProjectId,
     canvasId: activeProjectId || undefined,
     selectedNodeIds: [...selectedIds],
     assetIds: selectedAssetIds,
-  }), [activeProjectId, selectedAssetIds, selectedIds, workspaceContext]);
+  }), [activeProjectId, currentProject?.projectId, selectedAssetIds, selectedIds, workspaceContext]);
   useEffect(() => {
     const next = updateWorkspaceContext({
+      creativeProjectId: currentProject?.projectId || workspaceContext.creativeProjectId,
       canvasId: activeProjectId || undefined,
       selectedNodeIds: [...selectedIds],
       assetIds: selectedAssetIds,
     });
     setWorkspaceContext(next);
-  }, [activeProjectId, selectedAssetIds, selectedIds]);
+  }, [activeProjectId, currentProject?.projectId, selectedAssetIds, selectedIds, workspaceContext.creativeProjectId]);
   const selectedNodes = useMemo(
     () => document.nodes.filter((node) => selectedIds.has(node.id)),
     [document.nodes, selectedIds],
@@ -3414,11 +3431,11 @@ export default function SuperCanvas() {
             typeof node.data.model === "string" ? node.data.model : undefined,
           width: Number(node.data.nativeWidth) || undefined,
           height: Number(node.data.nativeHeight) || undefined,
-          projectIds: activeProjectId ? [activeProjectId] : [],
+          projectIds: currentProject?.projectId ? [currentProject.projectId] : [],
           collectionIds: [],
           tags: [],
         })),
-    [activeProjectId, document.nodes],
+    [activeProjectId, currentProject?.projectId, document.nodes],
   );
   const referenceOwnerId = selectedGroupId || selectedSingle?.id;
   const mentionCandidates = useMemo(
@@ -3981,7 +3998,7 @@ export default function SuperCanvas() {
             typeof node.data.model === "string" ? node.data.model : undefined,
           width: Number(node.data.nativeWidth) || undefined,
           height: Number(node.data.nativeHeight) || undefined,
-          projectIds: [activeProjectId],
+          projectIds: [currentProject?.projectId || activeProjectId],
         }),
       ),
     )
@@ -3993,7 +4010,7 @@ export default function SuperCanvas() {
           ),
         );
       });
-  }, [activeProjectId, document.nodes, ready]);
+  }, [activeProjectId, currentProject?.projectId, document.nodes, ready]);
 
   const stagePoint = useCallback((clientX: number, clientY: number) => {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -5903,8 +5920,10 @@ export default function SuperCanvas() {
     [activeProjectId, addLog, clearSelection, projects, replaceDoc],
   );
   const newProject = useCallback(() => {
+    const id = `canvas_${Date.now().toString(36)}`;
     const project: CanvasProject = {
-      id: `canvas_${Date.now().toString(36)}`,
+      id,
+      projectId: creativeProjectIdForCanvas(id),
       name: `新画布 ${projects.length + 1}`,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -5934,6 +5953,36 @@ export default function SuperCanvas() {
     setProjectRename(false);
     notify("项目名称已更新");
   }, [currentProject, notify, projectRenameValue]);
+  const saveProjectVersion = useCallback(() => {
+    if (!currentProject?.projectId || !activeProjectId) return;
+    const storedProjects = readCreativeProjects();
+    const project = storedProjects.find((item) => item.id === currentProject.projectId);
+    const nextIndex = (project?.versions?.length || 0) + 1;
+    const now = Date.now();
+    const next = appendCreativeProjectVersion(storedProjects, currentProject.projectId, {
+      id: `version_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      canvasId: activeProjectId,
+      label: `V${nextIndex}`,
+      createdAt: now,
+      ...(project?.versions?.at(-1)?.id ? { parentVersionId: project.versions.at(-1)!.id } : {}),
+      snapshot: snapshot(docRef.current),
+    });
+    if (!next) return notify("当前项目还没有可保存的版本", "error");
+    if (!saveCreativeProjects(next)) return notify("版本保存失败，请先导出工作流 JSON", "error");
+    saveCanvasProjects(projects, activeProjectId);
+    const savedProject = next.find((item) => item.id === currentProject.projectId);
+    setProjectVersions(savedProject?.versions || []);
+    notify(`已保存 ${currentProject.name} 的 ${savedProject?.versions?.at(-1)?.label || `V${nextIndex}`}`);
+  }, [activeProjectId, currentProject, notify, projects]);
+  const restoreProjectVersion = useCallback((versionId: string) => {
+    if (!currentProject?.projectId) return;
+    const version = creativeProjectVersion(readCreativeProjects(), currentProject.projectId, versionId);
+    if (!version) return notify("找不到这个项目版本", "error");
+    commit(() => normalizeDocument(version.snapshot));
+    clearSelection();
+    setProjectMenuOpen(false);
+    notify(`已恢复到 ${version.label}`);
+  }, [clearSelection, commit, currentProject?.projectId, notify]);
   const deleteProject = useCallback(
     (id: string) => {
       if (projects.length <= 1) return notify("至少保留一个画布。", "error");
@@ -12898,11 +12947,11 @@ export default function SuperCanvas() {
       modelName: typeof node.data.model === "string" ? node.data.model : undefined,
       width: Number(node.data.nativeWidth) || undefined,
       height: Number(node.data.nativeHeight) || undefined,
-      projectIds: activeProjectId ? [activeProjectId] : [],
+      projectIds: currentProject?.projectId ? [currentProject.projectId] : [],
       collectionIds: [],
       tags: [],
     };
-  }, [activeProjectId]);
+  }, [activeProjectId, currentProject?.projectId]);
   const addViewerAsset = useCallback(async (
     node: CanvasNode,
     collectionId: string,
@@ -14725,6 +14774,23 @@ export default function SuperCanvas() {
                 {project.id === activeProjectId && <i>✓</i>}
               </div>
             ))}
+            <div className="canvas-project-versions">
+              <div className="canvas-project-versions-head">
+                <span>项目版本</span>
+                <button type="button" onClick={saveProjectVersion} disabled={!currentProject}>保存当前版本</button>
+              </div>
+              {projectVersions.length ? projectVersions.slice().reverse().map((version) => (
+                <button
+                  type="button"
+                  className="canvas-project-version-row"
+                  key={version.id}
+                  onClick={() => restoreProjectVersion(version.id)}
+                >
+                  <b>{version.label}</b>
+                  <small>{new Date(version.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" })}</small>
+                </button>
+              )) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
+            </div>
             <div className="canvas-popover-actions">
               <button type="button" onClick={newProject}>＋ 新建画布</button>
               <button

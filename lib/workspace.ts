@@ -32,6 +32,7 @@ import {
   workspaceContentSignature,
   workspaceHasData,
 } from './workspace-format';
+import { readWorkspaceContext } from './workspace-context';
 
 const META_KEY = 'sanmao.workspace.sync.meta.v1';
 const CLIENT_ID_KEY = 'sanmao.workspace.client-id.v1';
@@ -130,13 +131,14 @@ export async function collectWorkspaceSnapshot(updatedAt = Date.now()): Promise<
     listAssetIndex().catch(() => [] as AssetIndexItem[]),
     listAssetCollections().catch(() => DEFAULT_ASSET_COLLECTIONS as AssetCollection[]),
   ]);
+  const legacyChatProjectId = readWorkspaceContext().creativeProjectId;
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     updatedAt,
     clientId: clientId(),
     canvas: readCanvasWorkspace(),
     gallery,
-    chatSessions,
+    chatSessions: chatSessions.map((session) => session.projectId ? session : { ...session, projectId: legacyChatProjectId }),
     assetIndex,
     assetCollections,
     preferences: readPreferences(),

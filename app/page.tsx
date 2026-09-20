@@ -45,6 +45,7 @@ import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
+import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
@@ -7389,8 +7390,12 @@ export default function Page() {
                 versions
             }, versions, activeVersion);
         });
+        const projectId = typeof session.projectId === 'string' && session.projectId.trim()
+            ? session.projectId.trim()
+            : readWorkspaceContext().creativeProjectId;
         return {
             ...session,
+            projectId,
             messages
         };
     }
@@ -8037,6 +8042,7 @@ export default function Page() {
                 outputFormat: meta.outputFormat,
                 generationMs: meta.generationMs,
                 source: meta.source,
+                projectId: meta.projectId || readWorkspaceContext().creativeProjectId,
                 createdAt: now + index,
                 favorite: false,
                 parentId: meta.parentId,
@@ -8742,6 +8748,7 @@ export default function Page() {
         const firstUser = storedMessages.find((message)=>message.role === 'user')?.content.trim() || '新对话';
         const session = {
             id,
+            projectId: existing?.projectId || readWorkspaceContext().creativeProjectId,
             title: existing?.title || firstUser.slice(0, 30),
             createdAt: existing?.createdAt || now,
             updatedAt: now,

@@ -389,6 +389,8 @@ export type CanvasDocument = {
 
 export type CanvasProject = {
   id: string;
+  /** Stable creative-project identity shared with chat, assets and tasks. */
+  projectId?: string;
   name: string;
   createdAt: number;
   updatedAt: number;

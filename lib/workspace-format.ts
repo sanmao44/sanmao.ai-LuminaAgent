@@ -4,7 +4,7 @@ type WorkspaceShape = {
   schemaVersion: number;
   updatedAt: number;
   clientId: string;
-  canvas: { projects: unknown[]; documents: Record<string, unknown>; ui: Record<string, unknown> };
+  canvas: { projects: unknown[]; documents: Record<string, unknown>; ui: Record<string, unknown>; creativeProjects?: unknown[] };
   gallery: unknown[];
   chatSessions: unknown[];
   assetIndex: unknown[];
@@ -22,12 +22,14 @@ export function validateWorkspaceShape(value: unknown) {
   if (!isObject(value.canvas) || !Array.isArray(value.canvas.projects) || !isObject(value.canvas.documents) || !isObject(value.canvas.ui)) throw new Error('工作区画布数据无效');
   if (!Array.isArray(value.gallery) || !Array.isArray(value.chatSessions) || !Array.isArray(value.assetIndex) || !Array.isArray(value.assetCollections) || !isObject(value.preferences)) throw new Error('工作区历史数据无效');
   for (const [key, item] of Object.entries(value.preferences)) if (typeof key !== 'string' || typeof item !== 'string') throw new Error('工作区偏好格式无效');
+  if (value.canvas.creativeProjects !== undefined && !Array.isArray(value.canvas.creativeProjects)) throw new Error('creative project data invalid');
   return value as WorkspaceShape;
 }
 
 export function workspaceContentSignature(snapshot: WorkspaceShape) {
   const content = JSON.stringify({
     canvas: snapshot.canvas,
+    creativeProjects: snapshot.canvas.creativeProjects || [],
     gallery: snapshot.gallery,
     chatSessions: snapshot.chatSessions,
     assetIndex: snapshot.assetIndex,

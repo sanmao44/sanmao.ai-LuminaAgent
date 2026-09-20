@@ -99,6 +99,8 @@ export type ChatHistoryMessage = {
 
 export type ChatSession = {
   id: string;
+  /** Creative project that owns this conversation. Legacy sessions may omit it. */
+  projectId?: string;
   title: string;
   createdAt: number;
   updatedAt: number;

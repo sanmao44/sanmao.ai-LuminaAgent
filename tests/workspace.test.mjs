@@ -54,3 +54,16 @@ test('recognizes custom asset collections as real first-run data', () => {
   assert.equal(format.workspaceHasData({ ...empty, assetCollections: [...empty.assetCollections, { id: 'ideas' }] }), true);
   assert.equal(format.workspaceHasData({ ...empty, gallery: [{ id: 'image-1' }] }), true);
 });
+
+test('accepts creative project metadata as part of the canvas workspace', () => {
+  const workspace = emptyWorkspace({
+    canvas: {
+      projects: [{ id: 'canvas-a', projectId: 'creative-canvas-a', name: '广告项目', createdAt: 1, updatedAt: 2 }],
+      documents: {},
+      ui: {},
+      creativeProjects: [{ id: 'creative-canvas-a', name: '广告项目', createdAt: 1, updatedAt: 2, canvasIds: ['canvas-a'] }],
+    },
+  });
+  assert.deepEqual(format.validateWorkspaceShape(workspace), workspace);
+  assert.throws(() => format.validateWorkspaceShape({ ...workspace, canvas: { ...workspace.canvas, creativeProjects: {} } }), /creative project/);
+});
