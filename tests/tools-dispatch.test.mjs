@@ -109,7 +109,9 @@ test('MCP 工具调用要再补一轮，且和首轮走同一个执行点', () =
   assert.ok(approval < route.indexOf("reportProgress({ stage: 'answering'", shouldContinue), '补轮的确认卡片要在收尾之前挡下来');
 });
 
-test('浏览器自动化请求不能走普通文本直出路径', () => {
+test('浏览器自动化请求不会走普通联网搜索或文本直出', () => {
+  assert.match(route, /likelyBrowserAutomationRequest/);
+  assert.match(route, /const needsWebSearch = webDecision\.shouldSearch && !browserAutomationRequest/);
   assert.match(route, /const directStream =[^;]*!browserAutomationRequest/);
 });
 

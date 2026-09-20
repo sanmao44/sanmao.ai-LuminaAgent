@@ -559,7 +559,7 @@ export type McpCatalogStateEntry = {
   enabled?: boolean;
   /** 写权限：Filesystem 用它放开写工具；GitHub 还额外受 writeGates 逐项限制。 */
   allowWrite?: boolean;
-  /** 浏览器接入方式：Playwright 没存过按 extension（系统默认浏览器）走，明确选择后保留用户选择。 */
+  /** 浏览器接入方式：没存过按 managed（内置独立浏览器）走，升级上来的用户行为不变。 */
   browserMode?: McpCatalogBrowserMode;
   /** 手填的浏览器可执行文件（接日常浏览器用）；不填就自动认系统默认浏览器。 */
   browserExecutablePath?: string;
@@ -639,7 +639,7 @@ export function setCatalogEntryAllowWrite(id: unknown, allowWrite: boolean, opti
   return patchCatalogState(id, { allowWrite }, options);
 }
 
-/** 浏览器接入方式：Playwright 默认接入用户的系统默认浏览器；明确选择 managed 时才使用独立浏览器。 */
+/** 浏览器接入方式：Playwright 默认接入用户的系统默认浏览器；明确选择 managed 后才使用独立浏览器。 */
 export function catalogEntryBrowserMode(id: unknown, options: { dataDir?: string } = {}): McpCatalogBrowserMode {
   const entry = findCatalogEntry(id);
   if (!entry) return 'managed';

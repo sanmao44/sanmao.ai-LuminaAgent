@@ -1675,7 +1675,7 @@ const auditMcpCall = (
     const mcpFollowupTools = callableTools.filter((tool: any) => toolExecutionKind(tool?.function?.name, mcpTools) === 'mcp');
     /** 只有生成工具产出的文件才算这一轮已经收尾；浏览器下载出来的文件不该挡住后面的操作。 */
     const generatedDeliveryCount = generatedFiles.length - browserDownloadCount;
-    if (!followupText && !artifactFollowupText && !generated.length && !generatedDeliveryCount && mcpToolCallCount > 0 && mcpFollowupTools.length) {
+    if (!followupText && !artifactFollowupText && !generated.length && !generatedDeliveryCount && !webSearchData && mcpToolCallCount > 0 && mcpFollowupTools.length) {
       /** 这一步（补轮的一轮）之前的历史、模型回复与已执行结果：撞上确认时要用它们存档。 */
       let stepMessages: ChatMessage[] = [];
       let stepReply: any = null;

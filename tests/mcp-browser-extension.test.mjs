@@ -34,9 +34,7 @@ test('从「打开方式」命令行里取出可执行文件：带引号和不�
 });
 
 test('Windows reg.exe 的中文代码页输出不会把默认浏览器路径解码成乱码', () => {
-  // reg.exe 在中文 Windows 上输出的「软件」是 GB18030 字节，不是 UTF-8。
-  const bytes = Uint8Array.from([0xc8, 0xed, 0xbc, 0xfe]);
-  assert.equal(mcp.decodeWindowsCommandOutput(bytes), '软件');
+  assert.equal(mcp.decodeWindowsCommandOutput(Uint8Array.from([0xc8, 0xed, 0xbc, 0xfe])), '软件');
 });
 
 test('Windows 默认浏览器注册表支持 reg query 的 (Default) 前缀', () => {

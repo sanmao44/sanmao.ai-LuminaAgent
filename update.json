@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.50/SANMAO.AI-0.7.50.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.50/SANMAO.AI-0.7.50.zip"
   ],
-  "sha256": "89744ac2d8b77361363f87aa69e692834ef033808650830b5ca9b097815621d1",
+  "sha256": "4a38a420a7b64fbb18e385c2564557c4beefcb663b4ca0c4a18d7a466ff05885",
   "publishedAt": "2026-09-20T01:26:32+08:00",
   "notes": [
     "对话里可直接生成真实的 Word / Excel / PPT 与 ZIP 压缩包，产物以附件形式下载并支持在线预览（尽量还原 Excel 公式与条件格式、Word 目录样式、PPT 表格图表与演讲者备注）。",

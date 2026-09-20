@@ -20,16 +20,13 @@ export type AgentWebDecision = {
   query: string;
 };
 
-/**
- * 识别“在网站上连续操作”的请求。这里的“搜索”是浏览器里的页面操作，
- * 不能被普通联网搜索抢先消费，否则首轮打开网页后就不会再进入 MCP 补轮。
- */
+/** 识别“在网站上连续操作”的请求，避免被普通联网搜索抢先消费。 */
 export function likelyBrowserAutomationRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
   const browserTarget = /(?:浏览器|网页|网站|页面|bilibili|哔哩哔哩|抖音|淘宝|京东|youtube|google|github|打开\s*(?:https?:\/\/|www\.)?\S+)/i.test(text);
   const browserAction = /(?:打开|访问|进入|搜索|查找|点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|下载|滚动|切换|选中|发帖|购买)/i.test(text);
-  const chainedAction = /(?:然后|接着|之后|再|并且|并|并在|最后|同时|给第|第一个|第一条|第一个视频)/i.test(text);
+  const chainedAction = /(?:然后|接着|之后|再|并且|并|并在|最后|给第|第一个|第一条|第一个视频)/i.test(text);
   return browserTarget && browserAction && (chainedAction || /(?:搜索|点击|点赞|评论|回复|填写|提交)/i.test(text) || /(?:打开|访问|进入)\s*(?:https?:\/\/|www\.)?\S+/i.test(text));
 }
 
@@ -230,9 +227,10 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   const text = normalizeWebText(input);
   const query = buildAgentWebQuery(text, context);
   if (mode === 'off') return { shouldSearch: false, reason: 'off', query };
-  if (!text) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  // “搜索某网站并继续点击/评论”是浏览器页面操作，不应被普通联网搜索抢先消费。
   if (likelyBrowserAutomationRequest(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
   if (mode === 'always') return { shouldSearch: Boolean(query), reason: 'always', query };
+  if (!text) return { shouldSearch: false, reason: 'ordinary-chat', query };
 
   const explicit = explicitSearchPattern.test(text);
   if (explicit) return { shouldSearch: true, reason: 'explicit-search', query };

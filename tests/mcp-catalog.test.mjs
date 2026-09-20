@@ -202,7 +202,7 @@ test('接日常浏览器：扩展模式与内置模式互斥，模式存得住�
     assert.ok(!extension.includes('--browser'), '--extension 会忽略 --browser，传了只会让人以为还能选浏览器');
     assert.ok(!extension.includes('--user-data-dir'), '接的是用户自己开着的浏览器，不能去动他的 profile');
     assert.deepEqual(extension.filter((arg) => arg === '--output-dir').length, 1, '两种模式都要把产物收进受控目录');
-    // Playwright 默认接入系统默认浏览器；用户明确选择 managed 后仍可使用独立浏览器。
+    // Playwright 默认接入系统默认浏览器；明确选择 managed 后仍可使用独立浏览器。
     assert.equal(mcp.catalogEntryBrowserMode('playwright', { dataDir }), 'extension');
     assert.equal(mcp.catalogEntryBrowserMode('filesystem', { dataDir }), 'managed', '非浏览器条目也有默认值，面板不用额外判断');
     mcp.setCatalogEntryBrowserMode('playwright', 'managed', { dataDir });

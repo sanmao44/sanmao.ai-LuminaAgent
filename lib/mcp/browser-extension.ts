@@ -48,11 +48,7 @@ export type McpBrowserExtensionBridge = {
 /** 执行外部命令：找不到命令、超时、非零退出都按「没有答案」处理，不抛。 */
 type CommandRunner = (file: string, args: readonly string[]) => string | null;
 
-/**
- * Windows 的 reg.exe 会按当前系统代码页输出，而不是稳定的 UTF-8。
- * 中文 Windows 常见的是 GBK/GB18030；如果这里强行用 UTF-8 解码，
- * 默认浏览器路径中的中文会变成乱码，随后 existsSync 失败并错误回退到 Chrome。
- */
+/** Windows 的 reg.exe 使用系统代码页输出；中文路径不能强制按 UTF-8 解码。 */
 export function decodeWindowsCommandOutput(value: Uint8Array | string): string {
   if (typeof value === 'string') return value;
   if (!value.length) return '';
@@ -116,9 +112,7 @@ function readWindowsDefaultBrowser(run: CommandRunner): string | null {
   const progId = /ProgId\s+REG_SZ\s+(.+)/.exec(choice || '')?.[1]?.trim();
   if (!progId) return null;
   const command = run('reg.exe', ['query', `HKCR\\${progId}\\shell\\open\\command`, '/ve']);
-  // `reg query ... /ve` prefixes the value with `(Default)    REG_SZ`.
-  // Match the type anywhere on the line so custom default browsers are not
-  // silently replaced by the hard-coded Chrome/Edge candidates.
+  // `/ve` 的值行会带 `(Default) REG_SZ` 前缀；类型匹配不能锚定行首。
   return parseExecutableFromCommand(/REG_(?:EXPAND_)?SZ\s+(.+)/.exec(command || '')?.[1]);
 }
 
