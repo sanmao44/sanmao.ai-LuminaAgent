@@ -5295,6 +5295,8 @@ export default function Page() {
     const [modelFavorites, setModelFavorites] = useState([]);
     const [modelRecent, setModelRecent] = useState([]);
     const [messages, setMessages] = useState([]);
+    const [activeMcpMessageId, setActiveMcpMessageId] = useState(null);
+    const activeMcpMessage = messages.find((message)=>message.id === activeMcpMessageId && message.role === 'assistant' && !message.pending && message.mcpTools?.length) || null;
     const [chatSessions, setChatSessions] = useState([]);
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renamingChatTitle, setRenamingChatTitle] = useState('');
@@ -11379,53 +11381,19 @@ export default function Page() {
                                                                             className: "message-skill-badge",
                                                                             children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
                                                                         }),
-                                                                        message.role === 'assistant' && !message.pending && message.mcpTools?.length && /*#__PURE__*/ _jsxs("details", {
+                                                                        message.role === 'assistant' && !message.pending && message.mcpTools?.length && /*#__PURE__*/ _jsx("button", {
+                                                                            type: "button",
                                                                             className: "message-mcp-detail",
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx("summary", {
-                                                                                    className: "message-mcp-detail-summary",
-                                                                                    title: "点开看这一轮用到的外部工具",
-                                                                                    children: /*#__PURE__*/ _jsx("small", {
-                                                                                        className: "message-mcp-badge",
-                                                                                        children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}${tool.ok ? '' : '（失败）'}`).join('、')}`
-                                                                                    })
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsxs("div", {
-                                                                                    className: "message-mcp-detail-panel",
-                                                                                    children: [
-                                                                                        /*#__PURE__*/ _jsx("div", {
-                                                                                            className: "message-mcp-detail-head",
-                                                                                            children: `本轮外部工具调用 ${message.mcpTools.length} 次`
-                                                                                        }),
-                                                                                        /*#__PURE__*/ _jsx("ul", {
-                                                                                            className: "message-mcp-detail-list",
-                                                                                            children: message.mcpTools.map((tool, index)=>/*#__PURE__*/ _jsxs("li", {
-                                                                                                className: tool.ok ? 'is-ok' : 'is-failed',
-                                                                                                children: [
-                                                                                                    /*#__PURE__*/ _jsx("b", {
-                                                                                                        children: tool.server
-                                                                                                    }),
-                                                                                                    /*#__PURE__*/ _jsx("code", {
-                                                                                                        children: tool.name
-                                                                                                    }),
-                                                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                                                        className: "message-mcp-detail-tag",
-                                                                                                        children: tool.readOnly ? '只读' : '写入'
-                                                                                                    }),
-                                                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                                                        className: "message-mcp-detail-state",
-                                                                                                        children: tool.ok ? '已完成' : '失败'
-                                                                                                    })
-                                                                                                ]
-                                                                                            }, `mcp-${index}`))
-                                                                                        }),
-                                                                                        /*#__PURE__*/ _jsx("small", {
-                                                                                            className: "message-mcp-detail-note",
-                                                                                            children: "写入类操作要先经你确认才会执行；被拒绝的调用不计入这里。"
-                                                                                        })
-                                                                                    ]
-                                                                                })
-                                                                            ]
+                                                                            title: "在输入框下方查看这一轮用到的外部工具",
+                                                                            "aria-expanded": activeMcpMessageId === message.id,
+                                                                            onClick: (event)=>{
+                                                                                event.stopPropagation();
+                                                                                setActiveMcpMessageId((current)=>current === message.id ? null : message.id);
+                                                                            },
+                                                                            children: /*#__PURE__*/ _jsx("small", {
+                                                                                className: "message-mcp-badge",
+                                                                                children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}${tool.ok ? '' : '（失败）'}`).join('、')}`
+                                                                            })
                                                                         }),
                                                                          message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
                                                                              className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,
@@ -12162,6 +12130,62 @@ export default function Page() {
                                                                         name: activeAgentBusy ? "stop" : "send",
                                                                         size: 18
                                                                     })
+                                                        })
+                                                    ]
+                                                }),
+                                                activeMcpMessage && /*#__PURE__*/ _jsxs("section", {
+                                                    className: "agent-mcp-detail-dock",
+                                                    "aria-label": "外部工具调用记录",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsxs("div", {
+                                                            className: "message-mcp-detail-panel",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                    className: "message-mcp-detail-head",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                            children: `本轮外部工具调用 ${activeMcpMessage.mcpTools.length} 次`
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("button", {
+                                                                            type: "button",
+                                                                            className: "message-mcp-detail-close",
+                                                                            title: "关闭调用记录",
+                                                                            "aria-label": "关闭调用记录",
+                                                                            onClick: ()=>setActiveMcpMessageId(null),
+                                                                            children: /*#__PURE__*/ _jsx(Icon, {
+                                                                                name: "close",
+                                                                                size: 13
+                                                                            })
+                                                                        })
+                                                                    ]
+                                                                }),
+                                                                /*#__PURE__*/ _jsx("ul", {
+                                                                    className: "message-mcp-detail-list",
+                                                                    children: activeMcpMessage.mcpTools.map((tool, index)=>/*#__PURE__*/ _jsxs("li", {
+                                                                        className: tool.ok ? 'is-ok' : 'is-failed',
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx("b", {
+                                                                                children: tool.server
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("code", {
+                                                                                children: tool.name
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("span", {
+                                                                                className: "message-mcp-detail-tag",
+                                                                                children: tool.readOnly ? '只读' : '写入'
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("span", {
+                                                                                className: "message-mcp-detail-state",
+                                                                                children: tool.ok ? '已完成' : '失败'
+                                                                            })
+                                                                        ]
+                                                                    }, `mcp-${index}`))
+                                                                }),
+                                                                /*#__PURE__*/ _jsx("small", {
+                                                                    className: "message-mcp-detail-note",
+                                                                    children: "写入类操作要先经你确认才会执行；被拒绝的调用不计入这里。"
+                                                                })
+                                                            ]
                                                         })
                                                     ]
                                                 })
