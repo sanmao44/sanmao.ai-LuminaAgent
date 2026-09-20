@@ -30,6 +30,15 @@ export function likelyBrowserAutomationRequest(input: string) {
   return browserTarget && browserAction && (chainedAction || /(?:搜索|点击|点赞|评论|回复|填写|提交)/i.test(text) || /(?:打开|访问|进入)\s*(?:https?:\/\/|www\.)?\S+/i.test(text));
 }
 
+/** 识别本地文件/项目操作请求，供 MCP 工具预算排序使用。 */
+export function likelyFilesystemRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  const target = /(?:本地文件|文件夹|目录|项目(?:文件|目录)?|代码库|本地代码|文件系统|工作区|workspace|filesystem|file system)/i.test(text);
+  const action = /(?:读取|查看|列出|分析|搜索|打开|修改|编辑|创建|重构|运行|启动|检查|目录结构|文件内容|代码|工作|操作|处理)/i.test(text);
+  return target && action;
+}
+
 const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
 const directionHeadingPattern = /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i;
 const chatDirectionHeadingPattern = /(?:你还可以继续|还可以继续|接下来(?:可以|还能)|继续聊什么|进一步(?:了解|讨论|展开))/i;

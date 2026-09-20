@@ -360,7 +360,8 @@ test('MCP 工具随本轮一起下发给模型，并能被路由识别出来', (
 test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信输入', async () => {
   const route = await read('app/api/agent/route.ts');
   assert.match(route, /const gatingContext = \{/);
-  assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{\s*signal: requestController\.signal,\s*\.\.\.\(browserAutomationRequest \? \{ priorityServerIds: \['playwright'\] \} : \{\}\),\s*\}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/s);
+  assert.match(route, /const priorityServerIds = \[\s*\.\.\.\(browserAutomationRequest \? \['playwright'\] : \[\]\),\s*\.\.\.\(filesystemRequest \? \['filesystem'\] : \[\]\),\s*\];/s);
+  assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{\s*signal: requestController\.signal,\s*\.\.\.\(priorityServerIds\.length \? \{ priorityServerIds \} : \{\}\),\s*\}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/s);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
   assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/, '按需下发的分组关键词由服务配置决定');
   assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, recentTurnText, lazyGroupKeywords\);/);
@@ -655,6 +656,35 @@ test('浏览器自动化请求优先加载浏览器工具，避免被其他服�
   assert.equal(tools[0].name, 'playwright__browser_navigate', '优先服务的关键工具应排在预算最前');
   assert.ok(tools.some((tool) => tool.name === 'playwright__browser_0'), '浏览器工具不应被其他服务提前截断');
   assert.ok(!tools.some((tool) => tool.name === 'context7__context7_29'), '预算仍然生效，不能无限扩大工具表');
+});
+
+test('本地文件请求优先加载 Filesystem，避免被 GitHub 工具占满预算', async () => {
+  mcp.clearMcpToolCache();
+  mcp.resetMcpSessions();
+  const manyTools = (prefix, count) => Array.from({ length: count }, (_value, index) => ({
+    name: `${prefix}_${index}`,
+    inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+    annotations: { readOnlyHint: true },
+  }));
+  const filesystemTools = [
+    { name: 'directory_tree', inputSchema: { type: 'object', properties: { path: { type: 'string' } } }, annotations: { readOnlyHint: true } },
+    { name: 'read_text_file', inputSchema: { type: 'object', properties: { path: { type: 'string' } } }, annotations: { readOnlyHint: true } },
+  ];
+  const fetchImpl = async (url, init) => {
+    const payload = JSON.parse(String(init.body));
+    if (payload.method === 'initialize') return jsonRpc(payload.id, { protocolVersion: mcp.MCP_PROTOCOL_VERSION });
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    const serviceTools = url.includes('filesystem') ? filesystemTools : manyTools('github', 60);
+    return jsonRpc(payload.id, { tools: serviceTools });
+  };
+  const servers = [
+    serverConfig({ id: 'github', name: 'GitHub', url: 'https://github.example.com/mcp' }),
+    serverConfig({ id: 'filesystem', name: '本地文件', catalogId: 'filesystem', url: 'https://filesystem.example.com/mcp' }),
+  ];
+  const runtime = await mcp.loadMcpToolRuntime({ servers, priorityServerIds: ['filesystem'], fetchImpl, cache: false });
+  assert.equal(runtime.tools[0].name, 'filesystem__directory_tree');
+  assert.ok(runtime.tools.some((tool) => tool.name === 'filesystem__read_text_file'));
+  assert.ok(runtime.tools.some((tool) => tool.name === 'github__github_0'));
 });
 
 test('按需下发的开关能存下来、改回去，并出现在对外快照里', () => {

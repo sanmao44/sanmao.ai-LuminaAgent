@@ -11,7 +11,7 @@ import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURA
 import { isTrustedAppRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFileGenerationRequest, likelyMcpManagementRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
+import { isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyMcpManagementRequest, resolveAgentWebMode, shouldUseAgentWebSearch, type AgentWebDecision } from '@/lib/agent-web';
 import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
@@ -629,6 +629,7 @@ export async function POST(request: Request) {
     const webSearchEnabled = webMode !== 'off';
     llmWebSearchStatus = webMode === 'off' ? 'disabled' : 'not-needed';
     const browserAutomationRequest = likelyBrowserAutomationRequest(latestInstruction);
+    const filesystemRequest = likelyFilesystemRequest(latestInstruction);
     const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isCinematicDirectorTask || isPromptOptimizationTask || identityQuestion || browserAutomationRequest;
     const rawWebDecision = shouldUseAgentWebSearch(webMode, latestInstruction, messages.slice(0, -1));
     const webDecision: AgentWebDecision = searchExcludedTask
@@ -764,9 +765,13 @@ export async function POST(request: Request) {
     // 绝不能让外部服务的可用性影响到普通对话。
     /* 拉取外部工具表可能是这一轮最慢的一步，先给用户一个交代。 */
     reportProgress({ stage: 'tool', message: '正在准备可用工具…' });
+    const priorityServerIds = [
+      ...(browserAutomationRequest ? ['playwright'] : []),
+      ...(filesystemRequest ? ['filesystem'] : []),
+    ];
     const mcpRuntime = await loadMcpToolRuntime({
       signal: requestController.signal,
-      ...(browserAutomationRequest ? { priorityServerIds: ['playwright'] } : {}),
+      ...(priorityServerIds.length ? { priorityServerIds } : {}),
     }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = mcpRuntime.tools;
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));

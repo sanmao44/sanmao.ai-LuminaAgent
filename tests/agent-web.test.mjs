@@ -128,6 +128,21 @@ test('识别浏览器连续操作请求，并排除普通联网搜索', () => {
   assert.equal(web.likelyBrowserAutomationRequest('搜索 OpenAI 最新 API 版本'), false);
 });
 
+test('识别本地文件和项目操作请求', () => {
+  for (const input of [
+    '请读取我授权的项目文件夹，列出目录结构',
+    '分析这个本地代码库为什么启动失败',
+    '搜索项目里的 API Key 配置',
+    '修改项目首页标题',
+    '查看工作区里的 package.json',
+  ]) {
+    assert.equal(web.likelyFilesystemRequest(input), true, input);
+  }
+  for (const input of ['今天天气怎么样', '帮我写一首诗', '打开 bilibili 看视频']) {
+    assert.equal(web.likelyFilesystemRequest(input), false, input);
+  }
+});
+
 test('covers common Chinese and English drawing expressions', () => {
   for (const input of [
     '请画一只戴墨镜的猫',
