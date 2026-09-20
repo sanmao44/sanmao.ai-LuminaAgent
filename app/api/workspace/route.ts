@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { ensureMediaLibrary } from '@/lib/media-library';
 import { type WorkspaceSnapshot } from '@/lib/workspace-types';
 import { validateWorkspaceShape } from '@/lib/workspace-format';
 import { WORKSPACE_TEMP_PATTERN, sweepStaleWorkspaceTemps } from '@/lib/workspace-temps';
@@ -86,6 +87,8 @@ async function renameWorkspaceSnapshot(temporary: string) {
 
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录后访问工作区。' }, { status: 401 });
+  // 客户端启动时会读工作区：借这个时机把历史目录里的素材并入固定媒体库。
+  void ensureMediaLibrary();
   try {
     const workspace = await readWorkspace();
     return Response.json({ ok: true, workspace, updatedAt: workspace?.updatedAt || null }, { headers: { 'Cache-Control': 'no-store' } });

@@ -6,7 +6,7 @@ SANMAO.AI 0.7.17 使用说明
 2. Windows 本机优先双击蓝色 Logo 的“启动 SANMAO.AI - Windows.lnk”；如果还没有快捷方式，先双击“启动 SANMAO.AI - Windows.cmd”。macOS 优先双击带橙色 Logo 的“SANMAO.AI.app”，也可以双击“启动 SANMAO.AI - macOS.command”。
    Windows 如果要让同一局域网的其他电脑使用同一个画布，请优先双击绿色 Logo 的“启动 SANMAO.AI - 局域网共享.lnk”；如果还没有快捷方式，请双击“启动 SANMAO.AI - 局域网共享.cmd”。
 3. macOS 首次使用如果提示没有执行权限，请在项目目录执行：chmod +x '启动 SANMAO.AI - macOS.command' 'SANMAO.AI.app/Contents/MacOS/SANMAO.AI'
-4. 第一次会自动安装依赖和构建；重复双击不会启动第二个服务，而是打开已有网页。
+4. 第一次会自动安装依赖和构建；重复双击不会启动第二个服务，而是打开已有网页。第一次要下载约 800 MB 依赖（含 GitHub 上的 FFmpeg），网速慢时可能要十几分钟以上，安装和构建期间窗口会持续显示进度。官方源较慢时启动器会自动改用国内镜像下载依赖；如需强制只用官方源，可在启动前设置环境变量 SANMAO_NO_MIRROR=1。
 5. 刷新网页、切换后台或暂时不操作不会停止本地服务；电脑从睡眠中恢复后也可以继续使用。自动媒体中转通道断开时，后台会自动探测并重建，不需要重启网页或主服务。请双击“停止 SANMAO.AI - Windows.cmd”或“停止 SANMAO.AI - macOS.command”主动停止服务，再次双击启动器会直接复用仍在运行的服务。
 6. 只有检测到已保存且有访问密钥的 Agnes 服务商时，现有启动器才会自动准备免费的临时 HTTPS 通道，让 Agnes 读取本地图片进行图生视频；首次使用可能自动下载通道组件，不需要服务器、域名或编辑 `.env`。没有 Agnes 配置时不会下载或启动中转，其他服务商保持原有启动行为。通道失败时文本和普通图片仍可使用，图生视频页面会提示重试。
 7. Windows 可双击“停止 SANMAO.AI - Windows.cmd”，macOS 可双击“停止 SANMAO.AI - macOS.command”停止本地服务和临时通道。

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline] = await Promise.all([
+const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline, toolLoop] = await Promise.all([
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -16,13 +16,14 @@ const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, e
   readFile(new URL("../components/AgentSkillMenu.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/ReferenceMentionEditor.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SkillInlineText.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../lib/agent/tool-loop.ts", import.meta.url), "utf8"),
 ]);
 
 test("a reply reports back which skills the agent actually read", () => {
   assert.match(route, /const usedSkills: Array<\{ id: string; name: string \}> = \[\];/);
   assert.match(route, /if \(!usedSkills\.some\(\(item\) => item\.id === skill\.id\)\) usedSkills\.push\(\{ id: skill\.id, name: skill\.name \}\);/);
   assert.match(route, /skills: metadata\.skills \|\| \[\]/);
-  assert.match(route, /skills: usedSkills \}/);
+  assert.match(route, /skills: usedSkills, mcpTools: usedMcpTools, toolTrace \}/);
   assert.match(client, /skills\?: Array<\{ id: string; name: string \}>;/);
 });
 
@@ -94,15 +95,19 @@ test("删除与丢弃的二次确认会自动复位，技能菜单滚动跟随�
 test("an enabled skill keeps the request on the tool round so the model can really read it", () => {
   assert.match(route, /const directStream = wantsStream && !skillContext\.skills\.length && !isTextPolishTask/);
   assert.match(route, /const cleanedFinal = stripToolCallMarkup\(finalized\)\.trim\(\);/);
-  assert.match(route, /plainMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\) \|\| '当前对话模型没有返回内容。';/);
+  // 截完先攒成 cleanedMessage：正文被截成空时要再给模型一次带工具的机会，最后才走兜底文案。
+  assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
+  assert.match(route, /plainMessage = cleanedMessage \|\| '当前对话模型没有返回内容。';/);
 });
 test("the tool round hands the assistant turn back so thinking models accept the follow-up", () => {
   // deepseek 之类的思维链模型在带 tool_calls 的助手消息上要求回传 reasoning_content，
   // 否则后续请求会被服务商以 400 拒绝，用户只能看到一句占位答案。
-  assert.match(route, /const carriedAssistantFields = typeof message\?\.reasoning_content === 'string'/);
+  assert.match(route, /const carriedAssistantFields = typeof toolCallMessage\?\.reasoning_content === 'string'/);
   assert.match(route, /tool_calls: toolCalls, \.\.\.carriedAssistantFields \}, \.\.\.toolResults\]/);
-  assert.match(route, /const carriedFollowupFields = typeof followupMessage\?\.reasoning_content === 'string'/);
-  assert.match(route, /tool_calls: followupCalls, \.\.\.carriedFollowupFields \}/);
+  // 补轮的助手消息现在由通用循环统一拼接，回传字段跟着搬到了 lib/agent/tool-loop.ts。
+  assert.match(toolLoop, /reasoning_content: reply\.reasoning_content \}/);
+  assert.match(toolLoop, /options\.messages\.push\(\{ role: 'assistant', content: reply\?\.content \?\? null, tool_calls: rawCalls/);
+  assert.match(route, /maxSteps: SKILL_TOOL_FOLLOWUP_MAX_ROUNDS/);
   // 工具轮之后的失败不再静默降级成占位答案。
   assert.match(route, /console\.error\('\[Agent\] 工具轮之后的流式回答失败：', llmFailure\);/);
   assert.match(route, /fallback: `\$\{finalText\}（整理回答失败：\$\{llmFailure\.slice\(0, 200\)\}）`/);

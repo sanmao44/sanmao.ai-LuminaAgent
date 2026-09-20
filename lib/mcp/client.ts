@@ -1,0 +1,361 @@
+import { createHash } from 'node:crypto';
+import { browserExtensionHint } from './browser-extension';
+import { browserTargetHint } from './browser-guidance';
+import { catalogBrowserBridge, findCatalogEntry, isStdioCatalogEntry } from './catalog';
+import { MCP_MAX_TOOLS_PER_SERVER } from './store';
+import type { McpRemoteTool, McpServerConfig } from './types';
+import {
+  MCP_CALL_TIMEOUT_MS,
+  MCP_INIT_TIMEOUT_MS,
+  MCP_LIST_TIMEOUT_MS,
+  MCP_MAX_RESPONSE_BYTES,
+  MCP_PROTOCOL_VERSION,
+  McpError,
+  negotiateMcpProtocolVersion,
+  resultText,
+  type McpProtocolNegotiation,
+  type McpRequestOptions,
+  type McpTimeouts,
+} from './protocol';
+import { callStdioTool, listStdioServerTools, stdioServerStatus } from './stdio';
+
+/**
+ * 最小 MCP 客户端：只实现 tools/list 与 tools/call 需要的部分
+ * （initialize → notifications/initialized → tools/list / tools/call），
+ * 不引入官方 SDK，也就不需要新增依赖。
+ *
+ * 传输只支持 Streamable HTTP：响应可能是 application/json，也可能是 text/event-stream，
+ * 两种都要认（规范允许服务端自行选择）。
+ */
+
+/**
+ * 一轮对话里最多调用几次外部服务，以及这些调用加起来最多花多久。
+ *
+ * 次数要够走完一串连贯操作（打开网页 → 看页面 → 点击 → 输入 → 再看结果），
+ * 否则助手会在半路撞上限额；真正兜底的是下面的总时长。
+ */
+export const MCP_TOOL_MAX_CALLS_PER_TURN = 18;
+export const MCP_TURN_TIME_BUDGET_MS = 180_000;
+
+type JsonRpcMessage = { jsonrpc?: string; id?: unknown; result?: any; error?: { code?: number; message?: string }; method?: string };
+type McpClientOptions = { fetchImpl?: typeof fetch; now?: () => number; timeouts?: McpTimeouts };
+type McpCallOptions = McpClientOptions & McpRequestOptions;
+
+/** 已建立的会话（initialize 拿到的 mcp-session-id），按「地址 + 凭据」缓存。 */
+const sessions = new Map<string, string>();
+/** 每个会话协商出来的协议版本：后续请求的协议头和面板标注都用它。 */
+const negotiations = new Map<string, McpProtocolNegotiation>();
+let sequence = 1;
+
+/** 丢弃缓存的会话；配置改了（地址或请求头）必须让旧会话失效，否则会拿着旧凭据继续用。 */
+export function resetMcpSessions(url?: string) {
+  if (!url) {
+    sessions.clear();
+    negotiations.clear();
+    return;
+  }
+  const prefix = `${url}\u0000`;
+  for (const key of [...sessions.keys()]) {
+    if (key === url || key.startsWith(prefix)) sessions.delete(key);
+  }
+  for (const key of [...negotiations.keys()]) {
+    if (key === url || key.startsWith(prefix)) negotiations.delete(key);
+  }
+}
+
+/**
+ * 同一地址配了两套 token 时必须各握手一次：只按 URL 缓存会让 B 服务拿着 A 的会话 ID
+ * 去调用，等于把两个账号的会话混在一起。凭据只参与哈希，不进 Map 的键。
+ */
+function sessionKey(server: McpServerConfig) {
+  const headers = Object.entries(server.headers || {})
+    .map(([name, value]) => `${name}:${value}`)
+    .sort()
+    .join('\n');
+  if (!headers) return server.url;
+  return `${server.url}\u0000${createHash('sha256').update(headers).digest('hex').slice(0, 16)}`;
+}
+
+function nextId() {
+  sequence += 1;
+  return sequence;
+}
+
+/** 面板与自检要显示「和这个服务谈成了哪个协议版本」；没握过手就是 null。 */
+export function resolveMcpProtocolNegotiation(server: McpServerConfig): McpProtocolNegotiation | null {
+  return negotiations.get(sessionKey(server)) || null;
+}
+
+function timeoutSignal(external: AbortSignal | undefined, ms: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('MCP_TIMEOUT')), ms);
+  const forward = () => controller.abort(external?.reason);
+  external?.addEventListener('abort', forward, { once: true });
+  return {
+    signal: controller.signal,
+    release: () => {
+      clearTimeout(timer);
+      external?.removeEventListener('abort', forward);
+    },
+  };
+}
+
+/** 读取响应体，超过上限直接中断，避免被一个超大响应拖垮这一轮。 */
+async function readCapped(response: Response, limit = MCP_MAX_RESPONSE_BYTES) {
+  const body = response.body;
+  if (!body) return '';
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.length) continue;
+      size += value.length;
+      if (size > limit) throw new Error('MCP_OVERSIZE');
+      chunks.push(value);
+    }
+  } finally {
+    // 超限时要把底层连接也停掉，只解绑 reader 会留下一条还在推数据的响应流。
+    if (size > limit) await reader.cancel().catch(() => undefined);
+    else reader.releaseLock?.();
+  }
+  const merged = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder('utf-8').decode(merged);
+}
+
+/** SSE 响应里每条 data: 是一个 JSON-RPC 报文，取最后一条有效消息。 */
+function parseSseMessages(text: string) {
+  const messages: JsonRpcMessage[] = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim())
+      .join('\n');
+    if (!data || data === '[DONE]') continue;
+    try {
+      messages.push(JSON.parse(data));
+    } catch {}
+  }
+  return messages;
+}
+
+async function parseMcpResponse(server: McpServerConfig, response: Response) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  const text = await readCapped(response);
+  if (contentType.includes('text/event-stream')) return parseSseMessages(text);
+  if (!text.trim()) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    throw new McpError(server.name, 'MCP 返回的内容不是合法 JSON-RPC 报文');
+  }
+}
+
+async function post(
+  server: McpServerConfig,
+  payload: Record<string, unknown>,
+  options: McpClientOptions & { timeoutMs: number; expectReply: boolean; signal?: AbortSignal; protocolVersion?: string },
+) {
+  const fetchImpl = options.fetchImpl || fetch;
+  const { signal, release } = timeoutSignal(options.signal, options.timeoutMs);
+  try {
+    const key = sessionKey(server);
+    const headers: Record<string, string> = {
+      ...(server.headers || {}),
+      // 协议头放在用户请求头之后：用户能加自己的凭据，但不能把协议头改成别的值。
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      // 协商过的版本优先：服务端报了哪个版本，后续请求就按哪个版本来。
+      'mcp-protocol-version': options.protocolVersion || negotiations.get(key)?.negotiated || MCP_PROTOCOL_VERSION,
+    };
+      const session = sessions.get(key);
+      if (session) headers['mcp-session-id'] = session;
+      const response = await fetchImpl(server.url, { method: 'POST', headers, body: JSON.stringify(payload), signal });
+      const issued = response.headers.get('mcp-session-id');
+      if (issued) sessions.set(key, issued);
+    if (response.status === 401 || response.status === 403) throw new McpError(server.name, `MCP 服务拒绝访问（${response.status}），请检查请求头里的凭据`);
+    if (response.status === 404 || response.status === 405) throw new McpError(server.name, `MCP 服务地址不支持 Streamable HTTP（${response.status}），换用支持 Streamable HTTP 的远程地址`);
+    if (response.status >= 400) throw new McpError(server.name, `MCP 服务返回 ${response.status}`);
+    if (!options.expectReply) return null;
+    const messages = await parseMcpResponse(server, response);
+    const message = messages.find((item) => item && item.id !== undefined && String(item.id) === String(payload.id)) || messages.find((item) => item?.result || item?.error) || null;
+    if (!message) throw new McpError(server.name, 'MCP 服务没有返回结果');
+    if (message.error) throw new McpError(server.name, String(message.error.message || 'MCP 调用失败'));
+    return message.result ?? null;
+  } catch (error) {
+    if (error instanceof McpError) throw error;
+    if (options.signal?.aborted) throw options.signal.reason || new Error('AGENT_CANCELLED');
+    const message = error instanceof Error ? error.message : 'MCP 请求失败';
+    if (message === 'MCP_TIMEOUT') throw new McpError(server.name, 'MCP 服务响应超时');
+    if (message === 'MCP_OVERSIZE') throw new McpError(server.name, 'MCP 返回内容过大，已中断');
+    throw new McpError(server.name, `无法连接 MCP 服务：${message}`);
+  } finally {
+    release();
+  }
+}
+
+async function ensureSession(server: McpServerConfig, options: McpClientOptions & { signal?: AbortSignal; protocolVersion?: string }) {
+  const key = sessionKey(server);
+  if (sessions.has(key)) return;
+  // 上一次握手发现服务端版本更新时，这一次直接按它来问；默认仍是本地常量。
+  const known = negotiations.get(key);
+  const requested = options.protocolVersion || (known?.newerServerVersion ? known.negotiated : MCP_PROTOCOL_VERSION);
+  const result = await post(server, {
+    jsonrpc: '2.0',
+    id: nextId(),
+    method: 'initialize',
+    params: {
+      protocolVersion: requested,
+      capabilities: {},
+      clientInfo: { name: 'SANMAO.AI', version: '1.0' },
+    },
+  }, { ...options, protocolVersion: requested, timeoutMs: options.timeouts?.init ?? MCP_INIT_TIMEOUT_MS, expectReply: true });
+  if (!result || typeof result !== 'object') throw new McpError(server.name, 'MCP 服务没有完成握手');
+  // 版本对不上只记下来（面板上标注），不当成错误：连得上比版本号一致更重要。
+  negotiations.set(key, negotiateMcpProtocolVersion(result?.protocolVersion, requested));
+  // 规范要求的确认通知；服务端不回内容，失败也不影响后续调用。
+  await post(server, { jsonrpc: '2.0', method: 'notifications/initialized' }, { ...options, timeoutMs: options.timeouts?.init ?? MCP_INIT_TIMEOUT_MS, expectReply: false }).catch(() => null);
+}
+
+/**
+ * 会话可能被服务端回收：第一次失败就丢掉缓存重来一次。
+ *
+ * 重放必须是安全的。读工具重放最多多读一次；写工具重放可能是第二次创建、
+ * 第二次发送——服务端其实已经执行成功、只是响应没回来的情况并不少见。
+ * 所以只有调用方明确说 retry !== false 时才重放。
+ */
+async function withSession<T>(server: McpServerConfig, options: McpCallOptions, run: () => Promise<T>): Promise<T> {
+  await ensureSession(server, options);
+  try {
+    return await run();
+  } catch (error) {
+    if (options.retry === false || !(error instanceof McpError) || options.signal?.aborted) throw error;
+    sessions.delete(sessionKey(server));
+    await ensureSession(server, options);
+    return await run();
+  }
+}
+
+export async function listMcpServerTools(server: McpServerConfig, options: McpCallOptions = {}): Promise<McpRemoteTool[]> {
+  // 本地 stdio 服务和远程服务走同一套协议，只是传输不同：由这里统一分流。
+  if (server.transport === 'stdio') return listStdioServerTools(server, options);
+  return withSession(server, options, async () => {
+    const tools: McpRemoteTool[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page += 1) {
+      const result = await post(server, {
+        jsonrpc: '2.0',
+        id: nextId(),
+        method: 'tools/list',
+        params: cursor ? { cursor } : {},
+      }, { ...options, timeoutMs: options.timeouts?.list ?? MCP_LIST_TIMEOUT_MS, expectReply: true });
+      const pageTools: McpRemoteTool[] = Array.isArray(result?.tools) ? result.tools : [];
+      for (const tool of pageTools) {
+        const name = String(tool?.name || '').trim();
+        if (!name || tools.some((item) => item.name === name)) continue;
+        tools.push({ ...tool, name });
+        if (tools.length >= MCP_MAX_TOOLS_PER_SERVER) return tools;
+      }
+      cursor = typeof result?.nextCursor === 'string' && result.nextCursor ? result.nextCursor : undefined;
+      if (!cursor) break;
+    }
+    return tools;
+  });
+}
+
+export async function callMcpTool(
+  server: McpServerConfig,
+  toolName: string,
+  args: Record<string, unknown>,
+  options: McpCallOptions = {},
+): Promise<{ text: string; isError: boolean }> {
+  if (server.transport === 'stdio') {
+    try {
+      const result = await callStdioTool(server, toolName, args, options);
+      // 浏览器条目的报错原文说清了原因，但没说清「现在该做什么」，这里补一段中文指引。
+      return result.isError ? withBrowserHint(result, server) : result;
+    } catch (error) {
+      // 等不到扩展连上来时是「超时异常」而不是错误结果：这种情况更需要那句话。
+      throw withBrowserHintError(error, server);
+    }
+  }
+  // 默认不重放：写工具重复执行的代价远高于一次失败。只读工具由调用方显式打开重试。
+  return withSession(server, { ...options, retry: options.retry === true }, async () => {
+    const result = await post(server, {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'tools/call',
+      params: { name: toolName, arguments: args },
+    }, { ...options, timeoutMs: options.timeouts?.call ?? MCP_CALL_TIMEOUT_MS, expectReply: true });
+    return { text: resultText(result), isError: Boolean(result?.isError) };
+  });
+}
+
+/**
+ * 浏览器条目（Playwright）调用失败时，在原文后面补一段能照着做的中文。
+ * 只在失败时读一次目录状态：正常调用不加任何额外开销。
+ */
+/** 浏览器条目的中文指引；其余条目（或翻译失败）返回 null。 */
+function browserHintFor(server: McpServerConfig, text: string): string | null {
+  if (!server.catalogId) return null;
+  try {
+    const entry = findCatalogEntry(server.catalogId);
+    if (!entry || !isStdioCatalogEntry(entry) || !entry.browserExtension) return null;
+    const bridge = catalogBrowserBridge(entry);
+    // 定位参数写错（照抄 ref=、自己编选择器）和「扩展没连上」是两码事：先给最具体的那条。
+    const misuse = browserTargetHint(text);
+    if (misuse) return misuse;
+    return browserExtensionHint(text, {
+      browserName: bridge?.browserName,
+      executablePath: bridge?.executablePath ?? null,
+      // 报错里的目录和这两个值一比，就能分出「接错浏览器」和「真的没装」：
+      // 用户在 Tabbit 里装了扩展，却被指去 Chrome 重装，就是这么来的。
+      userDataDir: bridge?.userDataDir ?? null,
+      extensionInstalled: bridge?.extensionInstalled ?? null,
+    });
+  } catch {
+    // 翻译失败绝不能盖掉原始报错。
+    return null;
+  }
+}
+
+function withBrowserHint(
+  result: { text: string; isError: boolean },
+  server: McpServerConfig,
+): { text: string; isError: boolean } {
+  const hint = browserHintFor(server, result.text);
+  return hint ? { ...result, text: `${result.text}\n\n${hint}` } : result;
+}
+
+function withBrowserHintError(error: unknown, server: McpServerConfig): unknown {
+  const original = error instanceof Error ? error.message : String(error ?? '');
+  const hint = browserHintFor(server, original);
+  return hint ? new Error(`${original}\n\n${hint}`) : error;
+}
+
+/** 连接自检：能列工具就算连通，顺便把工具名带回去给面板展示。 */
+export async function probeMcpServer(server: McpServerConfig, options: McpCallOptions = {}) {
+  const tools = await listMcpServerTools(server, options);
+  // 协商结果一并带回去：面板要能显示「服务端报的是哪个版本」，差异只提示不拦截。
+  // 两种传输各记一处：HTTP 在会话表里，stdio 在子进程状态里。
+  return {
+    tools,
+    readOnly: tools.filter((tool) => tool.annotations?.readOnlyHint === true).length,
+    protocol: server.transport === 'stdio' ? stdioServerStatus(server.id).protocol : resolveMcpProtocolNegotiation(server),
+  };
+}
+
+export type { McpRemoteTool };
+
+// 协议层的东西从这里再导出一次，历史代码和测试按 '@/lib/mcp/client' 导入不用改。
+export { MCP_CALL_TIMEOUT_MS, MCP_INIT_TIMEOUT_MS, MCP_LIST_TIMEOUT_MS, MCP_MAX_RESPONSE_BYTES, MCP_MAX_TOOL_RESULT_CHARS, MCP_PROTOCOL_VERSION, McpError } from './protocol';
+export type { McpProtocolNegotiation, McpRequestOptions, McpTimeouts } from './protocol';

@@ -33,12 +33,14 @@ export async function getStorageUsage(configuredPath = '') {
   const logs = await folderBytes(dataDir);
   const snapshots = await folderBytes(path.join(dataDir, 'backups', 'auto'));
   const trash = await folderBytes(path.join(dataDir, 'trash'));
+  const artifacts = await folderBytes(path.join(dataDir, 'artifacts'));
   return {
     images: { files: images.files, bytes: images.bytes, latestAt: images.latestMs ? new Date(images.latestMs).toISOString() : null },
     logs: { files: (await readdir(dataDir).catch(() => [])).filter((name) => /^generation-logs(?:-\d+)?\.jsonl$/.test(name)).length, bytes: (await Promise.all((await readdir(dataDir).catch(() => [])).filter((name) => /^generation-logs(?:-\d+)?\.jsonl$/.test(name)).map(async (name) => (await stat(path.join(dataDir, name)).catch(() => ({ size: 0 }))).size))).reduce((sum, value) => sum + value, 0) },
     snapshots: { files: snapshots.files, bytes: snapshots.bytes },
     trash: { files: trash.files, bytes: trash.bytes },
-    totalBytes: images.bytes + snapshots.bytes + trash.bytes,
+    artifacts: { files: artifacts.files, bytes: artifacts.bytes, latestAt: artifacts.latestMs ? new Date(artifacts.latestMs).toISOString() : null },
+    totalBytes: images.bytes + snapshots.bytes + trash.bytes + artifacts.bytes,
   };
 }
 

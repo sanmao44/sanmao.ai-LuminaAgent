@@ -429,18 +429,20 @@ test('常用技能排在技能索引与检索前面', () => {
 
 test('Agent 路由接入技能工具与渐进披露', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+  const skillTools = await readFile(new URL('../lib/tools/skills.ts', import.meta.url), 'utf8');
   assert.match(route, /import \{ buildAgentSkillContext,[^}]*\} from '@\/lib\/skills';/);
   assert.match(route, /import \{ fetchSkillFilesFromGithub \} from '@\/lib\/skill-archive';/);
-  assert.match(route, /name: 'skill_search'/);
-  assert.match(route, /name: 'skill_read'/);
-  assert.match(route, /name: 'skill_install'/);
-  assert.match(route, /offset: \{ type: 'number'/);
-  assert.match(route, /tags: \{ type: 'string'/);
+  assert.match(skillTools, /name: 'skill_search'/);
+  assert.match(skillTools, /name: 'skill_read'/);
+  assert.match(skillTools, /name: 'skill_install'/);
+  assert.match(skillTools, /offset: \{ type: 'number'/);
+  assert.match(skillTools, /tags: \{ type: 'string'/);
   assert.match(route, /readSkillFile\(skill\.id, filePath, \{ pending: false, offset \}\)/);
   assert.match(route, /buildSkillToolContent\(skill, file, offset\)/);
   assert.match(route, /tags: args\.tags/);
   assert.match(route, /recordSkillUsage\(skill\.id, \{ pending: false \}\)/);
-  assert.match(route, /if \(name === 'skill_search' \|\| name === 'skill_read' \|\| name === 'skill_install'\) return skillContext\.settings\.enabled;/);
+  assert.match(route, /skillsEnabled: skillContext\.settings\.enabled,/);
+  assert.match(route, /if \(kind === 'skill'\) \{/);
   assert.match(route, /const skillContext = buildAgentSkillContext\(\{ settings: state\.settings, dataDir: resolveLocalDataDir\(\) \}\);/);
   assert.ok(route.match(/system \+= skillPromptSection;/g).length === 2);
   assert.match(route, /skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST/);
@@ -486,6 +488,18 @@ test('模型写出的工具调用标记会被截断', () => {
   assert.equal(skills.stripToolCallMarkup('已完成安装，等待你确认。\n\n|<DSML|> calls>\n<|DSML|> invoke name="skill_search">'), '已完成安装，等待你确认。');
   assert.equal(skills.stripToolCallMarkup('先查一下。｜｜DSML｜｜ invoke name="x"'), '先查一下。');
   assert.equal(skills.stripToolCallMarkup('正常的技能说明文本。'), '正常的技能说明文本。');
+});
+
+test('模型把工具调用写成 <tool_call> 文本时同样截断', () => {
+  const markup = '<tool_call>\n<function=playwright_browsersnapshot>\n</function>\n</tool_call>';
+  assert.equal(skills.stripToolCallMarkup('已经打开页面了。\n\n' + markup), '已经打开页面了。');
+  assert.equal(skills.stripToolCallMarkup('页面已打开，接下来在搜索框里输入关键词。\n\n<'), '页面已打开，接下来在搜索框里输入关键词。');
+  assert.equal(skills.stripToolCallMarkup('<function=browser_click>'), '', '标记在最前面时不该留下空壳');
+  assert.equal(skills.stripToolCallMarkup('先看一眼 <tool_calls>再决定'), '先看一眼');
+  assert.equal(skills.stripToolCallMarkup('这里提到 tool_call 但没写成标记。'), '这里提到 tool_call 但没写成标记。');
+  // 我们自己注入到上下文里的标记，被模型当正文续写出来时同样要截掉（实测整条回复就是 "<" 加这句）。
+  assert.equal(skills.stripToolCallMarkup('<\n\n[上一条回复已生成文件：page-x.yml（application/octet-stream, 1 KB, artifactId=a）]'), '');
+  assert.equal(skills.stripToolCallMarkup('已经打开了。\n\n[用户上传文件：a.pdf]'), '已经打开了。');
 });
 
 test('GitHub 技能抓取带目录候选与接口通道', async () => {

@@ -1,9 +1,9 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import type { GenerationSource } from './generation-source';
 import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
+import { createTaskStore } from './task-store';
 
-export type UpscaleTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed';
+export type UpscaleTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'cancelled';
 
 export type UpscaleTask = {
   id: string;
@@ -14,6 +14,13 @@ export type UpscaleTask = {
   outputFormat?: UpscaleOutputFormat;
   outputQuality?: number;
   sourceImageId: string;
+  /** 原图引用，重试时要用它重新提交。 */
+  reference?: string;
+  /** 生成记录 id：取消、成功、失败都靠它给记录收尾。 */
+  logId?: string;
+  /** 发起这条任务时的提示词与来源，重试时沿用同一套记录描述。 */
+  prompt?: string;
+  source?: GenerationSource;
   status: UpscaleTaskStatus;
   localImageUrl?: string;
   errorCode?: string;
@@ -21,68 +28,28 @@ export type UpscaleTask = {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** 用户主动取消的时间；取消后不再轮询服务商。 */
+  cancelledAt?: string;
+  /** 由哪条任务重试而来。 */
+  retryOf?: string;
   pollCount: number;
   nextPollAt?: number;
   idempotencyKey: string;
 };
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
-const taskPath = path.join(dataDir, 'upscale-tasks.json');
-let mutationChain: Promise<unknown> = Promise.resolve();
-
-async function readTasks(): Promise<UpscaleTask[]> {
-  try {
-    const value = JSON.parse(await readFile(taskPath, 'utf8'));
-    return Array.isArray(value) ? value as UpscaleTask[] : [];
-  } catch { return []; }
-}
-
-async function writeTasks(tasks: UpscaleTask[]) {
-  await mkdir(dataDir, { recursive: true });
-  const temporary = `${taskPath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(tasks, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  await rename(temporary, taskPath);
-}
-
-async function mutate<T>(fn: (tasks: UpscaleTask[]) => Promise<T> | T) {
-  const operation = mutationChain.then(async () => {
-    const tasks = await readTasks();
-    const result = await fn(tasks);
-    await writeTasks(tasks);
-    return result;
-  });
-  mutationChain = operation.then(() => undefined, () => undefined);
-  return operation;
-}
+// 高清任务里带原图引用，沿用原有 0600 权限，避免局域网其它账号读到路径。
+const store = createTaskStore<UpscaleTask>({ fileName: 'upscale-tasks.json', fileMode: 0o600 });
 
 export async function createUpscaleTask(input: Omit<UpscaleTask, 'id' | 'createdAt' | 'updatedAt' | 'pollCount'>) {
-  return mutate((tasks) => {
-    const existing = tasks.find((task) => task.idempotencyKey === input.idempotencyKey);
-    if (existing) return { task: existing, created: false };
-    const now = new Date().toISOString();
-    const task: UpscaleTask = { ...input, id: randomUUID(), createdAt: now, updatedAt: now, pollCount: 0 };
-    tasks.unshift(task);
-    return { task, created: true };
-  });
+  const now = new Date().toISOString();
+  return store.insert({ ...input, id: randomUUID(), createdAt: now, updatedAt: now, pollCount: 0 });
 }
 
-export async function findUpscaleTask(id: string) { return (await readTasks()).find((task) => task.id === id) || null; }
-export async function listUpscaleTasks(limit = 100) { return (await readTasks()).slice(0, Math.min(500, Math.max(1, limit))); }
+export async function findUpscaleTask(id: string) { return store.find(id); }
+export async function listUpscaleTasks(limit = 100) { return store.list(limit); }
 
 export async function updateUpscaleTask(id: string, patch: Partial<UpscaleTask>) {
-  return mutate((tasks) => {
-    const index = tasks.findIndex((task) => task.id === id);
-    if (index < 0) return null;
-    tasks[index] = { ...tasks[index], ...patch, id, updatedAt: new Date().toISOString() };
-    return tasks[index];
-  });
+  return store.update(id, { ...patch, updatedAt: new Date().toISOString() });
 }
 
-export async function removeUpscaleTask(id: string) {
-  return mutate((tasks) => {
-    const index = tasks.findIndex((task) => task.id === id);
-    if (index < 0) return null;
-    const [removed] = tasks.splice(index, 1);
-    return removed;
-  });
-}
+export async function removeUpscaleTask(id: string) { return store.remove(id); }

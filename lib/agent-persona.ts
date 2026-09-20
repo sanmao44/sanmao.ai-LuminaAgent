@@ -1,8 +1,17 @@
 export const PERSONA_MAX_CHARS = 4000;
+export const PERSONA_LABEL_MAX_CHARS = 24;
 
 export function normalizeConversationPersona(value: unknown) {
   if (typeof value !== 'string') return '';
   return value.trim().slice(0, PERSONA_MAX_CHARS);
+}
+
+export function personaBadgeLabel(value: unknown, maxChars: number = PERSONA_LABEL_MAX_CHARS) {
+  const normalized = normalizeConversationPersona(value);
+  if (!normalized) return '';
+  const limit = Math.max(1, Math.floor(maxChars));
+  const firstLine = normalized.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || normalized;
+  return firstLine.length > limit ? `${firstLine.slice(0, limit)}…` : firstLine;
 }
 
 export function personaContextMessage(persona: unknown) {

@@ -28,16 +28,18 @@ import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
-import { requestAgent } from '@/lib/agent-client';
+import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
 import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
 import SkillManager from '@/components/SkillManager';
 import SkillIcon from '@/components/SkillIcon';
+import McpManager from '@/components/McpManager';
+import McpIcon from '@/components/McpIcon';
 import AgentSkillMenu from '@/components/AgentSkillMenu';
 import SkillInlineText from '@/components/SkillInlineText';
 import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
-import { normalizeConversationPersona } from '@/lib/agent-persona';
+import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
@@ -49,6 +51,7 @@ import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
 import { appendTextReferenceContext, normalizeCreativeReference, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
+import AgentApprovalCard from '@/components/AgentApprovalCard';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -204,7 +207,7 @@ function uid(prefix = 'id') {
     return `${prefix}-${crypto.randomUUID()}`;
 }
 function kindLabel(kind) {
-    return kind === 'chat' ? '对话模型' : kind === 'image' ? '图片模型' : kind === 'video' ? '视频模型' : '未分类';
+    return kind === 'chat' ? '对话模型' : kind === 'image' ? '图片模型' : kind === 'video' ? '视频模型' : kind === 'audio' ? '配音模型' : '未分类';
 }
 function typeLabel(type) {
     return type === 'google-gemini' ? '谷歌 Gemini' : '通用兼容接口';
@@ -544,13 +547,46 @@ const textAttachmentExtensions = new Set([
     'sh',
     'ps1'
 ]);
+const binaryAttachmentExtensions = new Set([
+    'docx',
+    'xlsx',
+    'pptx',
+    'pdf'
+]);
+// Office/PDF 原件比文本文件大得多：服务端解析成纯文字再回传，上下文里存的始终是文本。
+const binaryAttachmentMaxBytes = 20 * 1024 * 1024;
+async function binaryAttachmentToChatFile(file, extension) {
+    if (!file.size) throw new Error(`${file.name} 是空文件，没有可读取的内容`);
+    if (file.size > binaryAttachmentMaxBytes) throw new Error(`${file.name} 超过 20MB，请拆分后上传`);
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch('/api/attachments/extract', {
+        method: 'POST',
+        body: form
+    });
+    const data = await response.json().catch(()=>null);
+    const content = typeof data?.text === 'string' ? data.text : '';
+    if (!response.ok || !content.trim()) throw new Error(data?.error || `${file.name} 没有可读取的文字内容`);
+    return {
+        id: uid('file'),
+        name: file.name || `附件.${extension}`,
+        mimeType: 'text/plain;charset=utf-8',
+        content,
+        encoding: 'utf8',
+        // 上下文按解析出的文字长度算；卡片上仍然显示原件大小。
+        size: new TextEncoder().encode(content).length,
+        sourceSize: file.size,
+        truncated: Boolean(data?.truncated)
+    };
+}
 async function fileToChatFile(file) {
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
+    if (binaryAttachmentExtensions.has(extension)) return binaryAttachmentToChatFile(file, extension);
     if (!file.type.startsWith('text/') && !textAttachmentExtensions.has(extension) && ![
         'application/json',
         'application/xml',
         'image/svg+xml'
-    ].includes(file.type)) throw new Error(`${file.name} 暂不支持直接分析，请先转换为 TXT、Markdown、JSON 或 CSV`);
+    ].includes(file.type)) throw new Error(`${file.name} 暂不支持直接分析；Word/Excel/PPT/PDF 请上传 .docx、.xlsx、.pptx、.pdf，其他内容请转换为 TXT、Markdown、JSON 或 CSV`);
     if (file.size > 2 * 1024 * 1024) throw new Error(`${file.name} 超过 2MB，请先拆分文件`);
     const content = await file.text();
     if (!content.trim()) throw new Error(`${file.name} 没有可读取的文字内容`);
@@ -576,6 +612,13 @@ function chatFileToReference(file) {
         text: file.content,
         mimeType: file.mimeType || 'text/plain;charset=utf-8'
     };
+}
+// 文本/文档引用角标：优先用真实扩展名，避免 Word/Excel 文档显示成统一的文本标记。
+function referenceTextBadge(reference) {
+    const name = String(reference?.name || '');
+    const dot = name.lastIndexOf('.');
+    const extension = dot > 0 ? name.slice(dot + 1) : '';
+    return /^[a-z0-9]{1,5}$/i.test(extension) ? extension.toUpperCase() : 'TXT';
 }
 function creativeReferenceUrl(reference) {
     return typeof reference?.dataUrl === 'string' && reference.dataUrl ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : '';
@@ -1178,7 +1221,30 @@ async function renderShareConversationImage(messages) {
     const blob = await new Promise((resolve, reject)=>canvas.toBlob((value)=>value ? resolve(value) : reject(new Error('分享长图导出失败')), 'image/png'));
     return { blob, width: canvas.width, height: canvas.height };
 }
+/** 历史里助手生成过的 Office/ZIP 文件只回传元数据，服务端才能在下一轮继续引用或打包。 */
+function historyArtifactFiles(message) {
+    if (!message || message.role !== 'assistant' || !Array.isArray(message.files)) return [];
+    return message.files.filter((file)=>file && typeof file.artifactId === 'string' && !file.content).slice(0, 8).map((file)=>({
+            name: file.name,
+            mimeType: file.mimeType,
+            artifactId: file.artifactId,
+            size: file.size
+        }));
+}
 async function downloadChatFile(file) {
+    if (file.downloadUrl) {
+        const response = await fetch(file.downloadUrl, { cache: 'no-store' });
+        if (!response.ok) throw new Error(response.status === 404 ? '文件已过期或被清理，请重新生成' : '文件下载失败');
+        const remoteUrl = URL.createObjectURL(await response.blob());
+        const remoteAnchor = document.createElement('a');
+        remoteAnchor.href = remoteUrl;
+        remoteAnchor.download = file.name || 'SANMAO-file';
+        document.body.appendChild(remoteAnchor);
+        remoteAnchor.click();
+        remoteAnchor.remove();
+        window.setTimeout(()=>URL.revokeObjectURL(remoteUrl), 1500);
+        return;
+    }
     const blob = file.encoding === 'base64' ? new Blob([
         Uint8Array.from(atob(file.content.replace(/\s/g, '')), (char)=>char.charCodeAt(0))
     ], {
@@ -1200,7 +1266,21 @@ async function downloadChatFile(file) {
 function isPreviewableChatFile(file) {
     const mimeType = String(file?.mimeType || '').split(';', 1)[0].trim().toLowerCase();
     const name = String(file?.name || '').trim().toLowerCase();
-    return mimeType === 'text/html' || mimeType === 'application/xhtml+xml' || name.endsWith('.html') || name.endsWith('.htm');
+    if (mimeType === 'text/html' || mimeType === 'application/xhtml+xml' || name.endsWith('.html') || name.endsWith('.htm')) return true;
+    // Office / ZIP 产物由服务端解析成预览页；文本类文件仍然在本地直接渲染 HTML。
+    return typeof file?.artifactId === 'string' && file.artifactId.trim().length > 0 && /\.(docx|xlsx|pptx|zip)$/.test(name);
+}
+function chatFilePreviewKindLabel(file) {
+    const name = String(file?.name || '').trim().toLowerCase();
+    if (name.endsWith('.docx')) return 'Word 预览';
+    if (name.endsWith('.xlsx')) return 'Excel 预览';
+    if (name.endsWith('.pptx')) return 'PPT 预览';
+    if (name.endsWith('.zip')) return '压缩包预览';
+    return 'HTML 预览';
+}
+function isOfficeArtifactChatFile(file) {
+    const name = String(file?.name || '').trim().toLowerCase();
+    return typeof file?.artifactId === 'string' && file.artifactId.trim().length > 0 && /\.(docx|xlsx|pptx|zip)$/.test(name);
 }
 function getChatFilePreviewContent(file) {
     if (file?.encoding !== 'base64') return String(file?.content || '');
@@ -1280,6 +1360,16 @@ function Icon({ name, size = 18 }) {
                     cx: "8",
                     cy: "9",
                     r: "1.4"
+                })
+            ]
+        }),
+        file: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M6.5 3h7l4.5 4.5V21h-11.5V3Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M13.5 3v4.5H18"
                 })
             ]
         }),
@@ -2363,7 +2453,10 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
         })
     });
 }
-function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClick, onLocalUpscale, localUpscaleActive = false, label = '参考图' }) {
+// 引用区可选的文件类型；助手输入框额外允许 Word/Excel/PPT/PDF。
+const referenceAccept = "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
+const agentReferenceAccept = `${referenceAccept},.docx,.xlsx,.pptx,.pdf`;
+function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClick, onLocalUpscale, localUpscaleActive = false, label = '参考图', hint = '支持 PNG/JPG/WEBP', accept = referenceAccept }) {
     const inputRef = useRef(null);
     const [dragIndex, setDragIndex] = useState(null);
     const [preview, setPreview] = useState(null);
@@ -2387,7 +2480,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                     /*#__PURE__*/ _jsxs("span", {
                         children: [
                             /*#__PURE__*/ _jsx(Icon, {
-                                name: "image",
+                                name: refs.length && refs.every((ref)=>ref.kind === 'text') ? 'file' : 'image',
                                 size: 14
                             }),
                             label,
@@ -2440,7 +2533,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                             /*#__PURE__*/ _jsxs("small", {
                                 children: [
                                     refs.length,
-                                    "/16 \xb7 支持 PNG/JPG/WEBP"
+                                    `/16 · ${hint}`
                                 ]
                             })
                         ]
@@ -2454,7 +2547,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                         className: "reference-items",
                         children: refs.map((ref, index)=>/*#__PURE__*/ _jsxs("div", {
                                 className: `reference-thumb ${ref.pending ? 'pending' : ''} ${dragIndex === index ? 'dragging' : ''}`,
-                                title: `${ref.pending ? '正在准备 · ' : '点击预览 · '}${ref.name}`,
+                                title: `${ref.pending ? '正在准备 · ' : '点击预览 · '}${ref.name}${ref.kind === 'text' ? `\n${referencePreviewText(ref, 160)}` : ''}`,
                                 draggable: !ref.pending,
                                 onClick: ()=>setPreview(ref),
                                 onDragStart: (event)=>{
@@ -2474,7 +2567,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                                 },
                                 onDragEnd: ()=>setDragIndex(null),
                                 children: [
-                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 42) })] }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: creativeReferenceUrl(ref), alt: ref.name }),
+                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "reference-text-thumb", children: /*#__PURE__*/ _jsx("small", { children: ref.name }) }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: creativeReferenceUrl(ref), alt: ref.name }),
                                     ref.pending && /*#__PURE__*/ _jsxs("span", {
                                         className: "reference-pending-overlay",
                                         children: [
@@ -2527,7 +2620,7 @@ function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClic
                 hidden: true,
                 ref: inputRef,
                 type: "file",
-                 accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1",
+                 accept: accept,
                 multiple: true,
                 onChange: (e)=>{
                     if (e.target.files) onAdd(e.target.files);
@@ -2687,16 +2780,16 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                     }),
                     references.length ? /*#__PURE__*/ _jsxs("div", {
                         className: "image-card-references",
-                        title: references.map((reference, index) => `图 ${index + 1} · ${reference.name}`).join('\n'),
+                        title: references.map((reference, index) => `${reference.kind === 'text' ? '引用' : '图'} ${index + 1} · ${reference.name}`).join('\n'),
                         children: [
                             /*#__PURE__*/ _jsx("span", {
                                 className: "image-card-reference-label",
-                                children: "参考图"
+                                children: references.some((reference)=>reference.kind !== 'text') ? "参考图" : "引用"
                             }),
                             references.slice(0, 4).map((reference, index) => /*#__PURE__*/ _jsxs("span", {
                                 className: "image-card-reference-thumb",
                                 children: [
-                                    reference.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: reference.url, muted: true, playsInline: true }) : reference.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "reference-text-thumb", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(reference, 24) })] }) : /*#__PURE__*/ _jsx("img", {
+                                    reference.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: reference.url, muted: true, playsInline: true }) : reference.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "reference-text-thumb", children: /*#__PURE__*/ _jsx("b", { children: referenceTextBadge(reference) }) }) : /*#__PURE__*/ _jsx("img", {
                                         src: reference.url,
                                         alt: `参考图 ${index + 1}`
                                     }),
@@ -4391,6 +4484,10 @@ function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify 
         })
     });
 }
+function chatFileTypeLabel(file) {
+    const match = String(file?.name || '').toLowerCase().match(/\.(docx|xlsx|pptx|pdf|zip)$/);
+    return match ? `${match[1].toUpperCase()} · ` : '';
+}
 function ChatFileList({ files, onDownload, onPreview, onRemove }) {
     if (!files.length) return null;
     return /*#__PURE__*/ _jsx("div", {
@@ -4414,9 +4511,10 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
                             }),
                             /*#__PURE__*/ _jsxs("small", {
                                 children: [
+                                    chatFileTypeLabel(file),
                                     file.mimeType.replace(/;.*$/, ''),
                                     " \xb7 ",
-                                    formatFileSize(file.size)
+                                    formatFileSize(file.sourceSize || file.size)
                                 ]
                             })
                         ]
@@ -4428,7 +4526,7 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
                                 type: "button",
                                 className: "message-file-preview",
                                 onClick: ()=>onPreview(file),
-                                title: "预览 HTML",
+                                title: "预览文件",
                                 children: [
                                     /*#__PURE__*/ _jsx(Icon, {
                                         name: "preview",
@@ -4437,7 +4535,8 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
                                     "预览"
                                 ]
                             }),
-                            /*#__PURE__*/ _jsxs("button", {
+                            // 上传后解析成文本的附件（带 sourceSize）在会话里只存文字，原件已经不在手上，不提供下载。
+                            !file.sourceSize && /*#__PURE__*/ _jsxs("button", {
                                 type: "button",
                                 className: "message-file-download",
                                 onClick: ()=>onDownload(file),
@@ -4502,7 +4601,7 @@ function ChatFilePreviewDialog({ file, onClose }) {
                             /*#__PURE__*/ _jsxs("div", {
                                 children: [
                                     /*#__PURE__*/ _jsx("small", {
-                                        children: "HTML 预览"
+                                        children: file.label || 'HTML 预览'
                                     }),
                                     /*#__PURE__*/ _jsx("h2", {
                                         id: "chat-file-preview-title",
@@ -4515,7 +4614,7 @@ function ChatFilePreviewDialog({ file, onClose }) {
                                 type: "button",
                                 className: "chat-file-preview-close",
                                 onClick: onClose,
-                                "aria-label": "关闭 HTML 预览",
+                                "aria-label": "关闭预览",
                                 title: "关闭预览",
                                 children: /*#__PURE__*/ _jsx(Icon, {
                                     name: "close",
@@ -4526,15 +4625,25 @@ function ChatFilePreviewDialog({ file, onClose }) {
                     }),
                     /*#__PURE__*/ _jsx("div", {
                         className: "chat-file-preview-stage",
-                        children: /*#__PURE__*/ _jsx("iframe", {
+                        children: file.content ? /*#__PURE__*/ _jsx("iframe", {
                             className: "chat-file-preview-frame",
-                            title: `${file.name} HTML 预览`,
+                            title: `${file.name} 预览`,
                             srcDoc: file.content,
                             src: previewUrl || undefined,
                             sandbox: "allow-scripts",
                             allow: "autoplay; fullscreen",
                             loading: "eager",
                             referrerPolicy: "no-referrer"
+                        }) : /*#__PURE__*/ _jsx("p", {
+                            style: {
+                                display: "grid",
+                                placeItems: "center",
+                                height: "100%",
+                                margin: 0,
+                                color: "var(--muted)",
+                                fontSize: 13
+                            },
+                            children: "正在生成预览…"
                         })
                     }),
                     /*#__PURE__*/ _jsx("footer", {
@@ -4909,6 +5018,7 @@ function AgentImageLoadingCard({ activity }) {
     });
 }
 function AgentDirectionPicker({ directions, disabled, onSelect }) {
+    if (!directions.length) return null;
     return /*#__PURE__*/ _jsx("div", {
         className: "agent-direction-options",
         children: directions.map((direction, index)=>/*#__PURE__*/ _jsxs("button", {
@@ -4955,7 +5065,7 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
     let directionInserted = false;
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1){
         const line = lines[lineIndex];
-        const isDirectionHeading = directionPicker && (directionPicker.kind === 'chat' ? isChatDirectionHeading(line) : /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line));
+        const isDirectionHeading = directionPicker && directionPicker.directions.length > 0 && (directionPicker.kind === 'chat' ? isChatDirectionHeading(line) : /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line));
         if (isDirectionHeading && !directionInserted) {
             flushNormal();
             blocks.push(/*#__PURE__*/ _jsxs("section", {
@@ -5007,7 +5117,7 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
         onNotify: onNotify
     }, `code-${blocks.length}`));
     flushNormal();
-    if (directionPicker?.kind === 'chat' && !directionInserted) {
+    if (directionPicker?.kind === 'chat' && !directionInserted && directionPicker.directions.length > 0) {
         blocks.push(/*#__PURE__*/ _jsxs("section", {
             className: "agent-direction-section chat-direction-section",
             children: [
@@ -5224,6 +5334,7 @@ export default function Page() {
         return ()=>document.removeEventListener('pointerdown', closeMenu);
     }, [webSearchProviderMenuOpen]);
     const [chatHistorySearch, setChatHistorySearch] = useState('');
+    const [chatPersonaOnly, setChatPersonaOnly] = useState(false);
     const [agentFollowUp, setAgentFollowUp] = useState(null);
     const [agentMessageSelectionMode, setAgentMessageSelectionMode] = useState(false);
     const [selectedAgentMessages, setSelectedAgentMessages] = useState(new Set());
@@ -5528,6 +5639,7 @@ export default function Page() {
             chat: quickFilteredModels.filter((model)=>model.kind === 'chat').length,
             image: quickFilteredModels.filter((model)=>model.kind === 'image').length,
             video: quickFilteredModels.filter((model)=>model.kind === 'video').length,
+            audio: quickFilteredModels.filter((model)=>model.kind === 'audio').length,
             unknown: quickFilteredModels.filter((model)=>model.kind === 'unknown').length
         }), [
         quickFilteredModels
@@ -5693,13 +5805,21 @@ export default function Page() {
         selectedShareGroups
     ]);
     const allShareGroupsSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
+    const personaChatCount = useMemo(()=>chatSessions.filter((session)=>normalizeConversationPersona(session.persona)).length, [
+        chatSessions
+    ]);
     const filteredChatSessions = useMemo(()=>{
         const query = chatHistorySearch.trim().toLowerCase();
-        if (!query) return chatSessions;
-        return chatSessions.filter((session)=>`${session.title} ${session.messages.map((message)=>message.content).join(' ')}`.toLowerCase().includes(query));
+        return chatSessions.filter((session)=>{
+        const persona = normalizeConversationPersona(session.persona);
+        if (chatPersonaOnly && !persona) return false;
+        if (!query) return true;
+        return `${session.title} ${persona} ${session.messages.map((message)=>message.content).join(' ')}`.toLowerCase().includes(query);
+        });
     }, [
         chatSessions,
-        chatHistorySearch
+        chatHistorySearch,
+        chatPersonaOnly
     ]);
     const selectableChatSessionIds = useMemo(()=>chatSessions.filter((session)=>!busyChatIds.includes(session.id)).map((session)=>session.id), [
         chatSessions,
@@ -6044,7 +6164,16 @@ export default function Page() {
                 setResultItems((old)=>[...items, ...old]);
                 patchGenerateTask(task.id, { status: 'success', completedAt: Date.now(), items, itemIds: items.map((item)=>item.id), info: `${data.model?.name || '高清放大'} · 已恢复完成` });
                 notify('已恢复完成的高清放大任务。');
-            }).catch((error)=>patchGenerateTask(task.id, { status: 'error', completedAt: Date.now(), error: error instanceof Error ? error.message : '高清任务恢复失败' })).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
+            }).catch((error)=>{
+                const message = error instanceof Error ? error.message : '高清任务恢复失败';
+                const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+                patchGenerateTask(task.id, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    error: message,
+                    ...(cancelled ? { cancelled: true } : {})
+                });
+            }).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
         }
     }, [generateTasksReady, generateTasks, gallery]);
     useEffect(()=>{
@@ -6395,11 +6524,40 @@ export default function Page() {
     }
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
+        if (isOfficeArtifactChatFile(file)) {
+            const name = file.name || '文件';
+            const label = chatFilePreviewKindLabel(file);
+            setChatFilePreview({
+                name,
+                label,
+                content: ''
+            });
+            void (async ()=>{
+                try {
+                    const query = `?preview=1&theme=${theme === 'dark' ? 'dark' : 'light'}`;
+                    const response = await fetch(`/api/artifacts/${encodeURIComponent(file.artifactId)}${query}`, {
+                        cache: 'no-store'
+                    });
+                    if (!response.ok) throw new Error(response.status === 404 ? '文件已过期或被清理，请重新生成' : '文件预览失败');
+                    const content = buildChatFilePreviewContent(await response.text());
+                    setChatFilePreview((current)=>current && current.name === name ? {
+                            name,
+                            label,
+                            content
+                        } : current);
+                } catch (error) {
+                    setChatFilePreview((current)=>current && current.name === name ? null : current);
+                    notify(error instanceof Error ? error.message : '文件预览失败');
+                }
+            })();
+            return;
+        }
         try {
             const content = buildChatFilePreviewContent(getChatFilePreviewContent(file));
             if (!content.trim()) throw new Error('HTML 文件内容为空');
             setChatFilePreview({
                 name: file.name || 'HTML 文件',
+                label: chatFilePreviewKindLabel(file),
                 content
             });
         } catch  {
@@ -6721,9 +6879,33 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '删除视频任务失败');
         }
     }
+    async function patchVideoTask(task, action) {
+        try {
+            const res = await fetch(`/api/video/tasks/${encodeURIComponent(task.id)}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    action
+                })
+            });
+            const data = await res.json().catch(()=>({}));
+            if (!res.ok) throw new Error(data.error || (action === 'cancel' ? '停止跟踪失败' : '重试失败'));
+            if (action === 'cancel') {
+                setVideoTasks((old)=>old.map((item)=>item.id === task.id ? data.task : item));
+                notify('已停止跟踪这条视频任务，服务商可能仍在生成');
+            } else {
+                void refreshVideoTasks(videoPage);
+                notify('已按原参数重新提交一条视频任务');
+            }
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '视频任务操作失败');
+        }
+    }
     function askDeleteVideoTask(task) {
         if (task.status === 'pending' || task.status === 'running') {
-            notify('视频正在生成，完成或失败后才能删除');
+            notify('视频正在生成，先取消任务再删除');
             return;
         }
         setConfirmState({
@@ -7339,7 +7521,9 @@ export default function Page() {
         if (!documents.length) return;
         try {
             const room = Math.max(0, 8 - agentFiles.length);
-            const parsed = await Promise.all(documents.slice(0, room).map((file)=>fileToChatFile(file)));
+            // 逐个解析：Office/PDF 要走服务端，并发解析几个大文件容易把内存顶满。
+            const parsed = [];
+            for (const file of documents.slice(0, room)) parsed.push(await fileToChatFile(file));
             const totalBytes = [
                 ...agentFiles,
                 ...parsed
@@ -7353,9 +7537,13 @@ export default function Page() {
                     ...old,
                     ...parsed.map(chatFileToReference)
                 ].slice(0, 16));
-            if (documents.length > room) notify('最多同时分析 8 个文本文件');
+            const notices = documents.length > room ? ['最多同时分析 8 个文件'] : [];
+            const truncated = parsed.filter((file)=>file.truncated).map((file)=>file.name);
+            if (truncated.length === 1) notices.push(`${truncated[0]} 内容较长，只取得了前面的部分`);
+            else if (truncated.length > 1) notices.push(`${truncated.length} 个文件内容较长，只取得了前面的部分`);
+            if (notices.length) notify(notices.join('；'));
         } catch (error) {
-            notify(error instanceof Error ? error.message : '读取文本文件失败');
+            notify(error instanceof Error ? error.message : '读取附件失败');
         }
     }
     async function pasteClipboardImages(target) {
@@ -7705,7 +7893,7 @@ export default function Page() {
         }
     }
     async function toggleModelUse(model) {
-        if (model.kind === 'unknown') return notify('先把这个模型标记为“对话、图片或视频模型”');
+        if (model.kind === 'unknown') return notify('先把这个模型标记为“对话、图片、视频或配音模型”');
         const nextUse = !(model.enabled && model.published);
         const data = await patchModel(model, {
             enabled: nextUse,
@@ -7963,6 +8151,34 @@ export default function Page() {
             mode: task.mode,
             request: retryRequest
         });
+    }
+    const UPSCALE_CANCELLED_MESSAGE = '高清任务已取消。';
+    async function cancelGenerateTask(task) {
+        if (task.status !== 'pending') return notify('这条任务已经结束，无法停止跟踪');
+        if (task.mode !== 'upscale' || !task.upscaleTaskId) return notify('当前只有后台高清放大任务支持停止跟踪');
+        try {
+            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(task.upscaleTaskId)}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    action: 'cancel'
+                })
+            });
+            const data = await response.json().catch(()=>({}));
+            if (!response.ok) throw new Error(data.error || '停止跟踪失败');
+            patchGenerateTask(task.id, {
+                status: 'error',
+                cancelled: true,
+                completedAt: Date.now(),
+                error: UPSCALE_CANCELLED_MESSAGE,
+                info: `${task.info || '高清放大'} · 已停止跟踪`
+            });
+            notify('已停止跟踪这条高清任务；服务商可能仍在生成，可在创作记录里重试。');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '停止跟踪失败');
+        }
     }
     async function submitGenerate(e, overrides) {
         e?.preventDefault();
@@ -8423,15 +8639,17 @@ export default function Page() {
             void refreshGenerationLogs();
         } catch (error) {
             const message = error instanceof Error ? error.message : '生成失败';
+            const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
                 error: message,
-                info: `${taskModel?.displayName || '图片模型'} · 生成失败`
+                ...(cancelled ? { cancelled: true } : {}),
+                info: `${taskModel?.displayName || '图片模型'} · ${cancelled ? '已停止跟踪' : '生成失败'}`
             });
-            registerGenerationFailure();
+            if (!cancelled) registerGenerationFailure();
             void refreshGenerationLogs();
-            notify(message);
+            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : message);
         }
     }
     async function submitAngleGeneration(input) {
@@ -8570,7 +8788,8 @@ export default function Page() {
                     } : version);
                 return applyMessageVersion({
                     ...message,
-                    retrying: false
+                    retrying: false,
+                    activity: undefined
                 }, versions, versions.findIndex((version)=>version.id === request.retryVersionId));
             }
             const { pending: _pending, activity: _activity, ...rest } = message;
@@ -8908,6 +9127,7 @@ export default function Page() {
         setMessages(workingMessages);
         setChatBusy(sessionId, true);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
+        let stopRetryProgress = ()=>{};
         try {
             const latestUserMessage = [
                 ...contextMessages
@@ -8929,10 +9149,10 @@ export default function Page() {
                     files: item.id === latestUserId ? (item.files || []).map((file)=>({
                             name: file.name,
                             mimeType: file.mimeType,
-                            content: file.content,
-                            encoding: file.encoding,
+                            ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
+                            ...(file.artifactId ? { artifactId: file.artifactId } : {}),
                             size: file.size
-                        })) : []
+                        })) : historyArtifactFiles(item)
                 }));
             payloadMessages.push({
                 role: 'user',
@@ -8941,6 +9161,26 @@ export default function Page() {
                 files: []
             });
             let streamedText = '';
+            /* 重新生成也可能是长任务：阶段文案挂在被重试的那条消息上（消息操作栏里显示）。 */
+            const retryRunId = uid('run');
+            const updateRetryActivity = (activity)=>{
+                if (!isCurrentRequest()) return;
+                const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
+                const updated = current.map((item)=>item.id === message.id ? {
+                        ...item,
+                        activity
+                    } : item);
+                pendingChatMessagesRef.current.set(sessionId, updated);
+                if (activeChatIdRef.current === sessionId) setMessages(updated);
+            };
+            stopRetryProgress = pollAgentProgress(retryRunId, {
+                signal: requestController.signal,
+                isSettled: ()=>Boolean(streamedText),
+                onProgress: (progress)=>updateRetryActivity({
+                        stage: progress.stage,
+                        message: progress.message
+                    })
+            });
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
@@ -8951,7 +9191,8 @@ export default function Page() {
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     deliverable: message.deliverable,
-                    intentReason: '按原问题和原交付形式重新生成完整答复'
+                    intentReason: '按原问题和原交付形式重新生成完整答复',
+                    runId: retryRunId
                 }, {
                 signal: requestController.signal,
                 onEvent: (event)=>{
@@ -8989,12 +9230,12 @@ export default function Page() {
                 if (images.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && typeof file.content === 'string').map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
-                    content: file.content,
-                    encoding: file.encoding === 'base64' ? 'base64' : 'utf8',
+                    ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
+                    ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completedMessages = (pendingChatMessagesRef.current.get(sessionId) || workingMessages).map((item)=>{
@@ -9007,10 +9248,12 @@ export default function Page() {
                         webSearch: data.webSearch || undefined,
                         webSearchDecision: data.webSearchDecision || undefined,
                         skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                        mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
+                        approval: data.approval || undefined,
                         deliverable: data.deliverable || 'TEXT',
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
-                return applyMessageVersion(item, versions, versions.findIndex((version)=>version.id === retryVersionId));
+                return applyMessageVersion({ ...item, activity: undefined }, versions, versions.findIndex((version)=>version.id === retryVersionId));
             });
             if (!isCurrentRequest()) return;
             pendingChatMessagesRef.current.delete(sessionId);
@@ -9041,6 +9284,7 @@ export default function Page() {
             notify(error instanceof Error ? error.message : '重新生成失败');
             void refreshGenerationLogs();
         } finally{
+            stopRetryProgress();
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
@@ -9139,6 +9383,7 @@ export default function Page() {
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
         await persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
         if (requestController.signal.aborted || !isCurrentRequest()) return;
+        let stopAgentProgress = ()=>{};
         try {
             const updatePendingMessage = (patch)=>{
                 if (!isCurrentRequest()) return;
@@ -9183,13 +9428,27 @@ export default function Page() {
                     files: m.id === latestUserId ? (m.files || []).map((file)=>({
                             name: file.name,
                             mimeType: file.mimeType,
-                            content: file.content,
-                            encoding: file.encoding,
+                            ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
+                            ...(file.artifactId ? { artifactId: file.artifactId } : {}),
                             size: file.size
-                        })) : []
+                        })) : historyArtifactFiles(m)
                 }));
             updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
             let streamedText = '';
+            /*
+             * 长任务进度：主管线在工具轮里写快照（app/api/agent/progress），这里按 runId 轮询。
+             * 正文一开始流式返回就停：那时候用户看的是字，不该再被阶段文案顶掉。
+             * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
+             */
+            const progressRunId = uid('run');
+            stopAgentProgress = pollAgentProgress(progressRunId, {
+                signal: requestController.signal,
+                isSettled: ()=>Boolean(streamedText),
+                onProgress: (progress)=>updatePendingActivity({
+                        stage: progress.stage,
+                        message: progress.message
+                    })
+            });
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
@@ -9201,7 +9460,8 @@ export default function Page() {
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
                     deliverable: selectedDeliverable,
-                    intentReason: requestIntent.reason
+                    intentReason: requestIntent.reason,
+                    runId: progressRunId
                 }, {
                 signal: requestController.signal,
                 onEvent: (event)=>{
@@ -9250,12 +9510,12 @@ export default function Page() {
                 if (items.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && typeof file.content === 'string').map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
-                    content: file.content,
-                    encoding: file.encoding === 'base64' ? 'base64' : 'utf8',
+                    ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
+                    ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completed = [
@@ -9269,6 +9529,8 @@ export default function Page() {
                     webSearch: data.webSearch || undefined,
                     webSearchDecision: data.webSearchDecision || undefined,
                     skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                    mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
+                    approval: data.approval || undefined,
                     deliverable: data.deliverable || selectedDeliverable,
                     ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
                 }
@@ -9305,11 +9567,27 @@ export default function Page() {
             await persistAgentSession(sessionId, failed).catch(()=>undefined);
             void refreshGenerationLogs();
         } finally{
+            stopAgentProgress();
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
             }
         }
+    }
+    async function resolveAgentApprovalMessage(messageId, outcome) {
+        const activeId = activeChatIdRef.current;
+        const source = pendingChatMessagesRef.current.get(activeId) || messages;
+        const next = source.map((item)=>item.id === messageId ? {
+                ...item,
+                approval: undefined,
+                approvalResult: String(outcome && outcome.message ? outcome.message : (outcome && outcome.rejected ? '已取消这一步操作，没有执行。' : '已执行完成。')),
+                mcpTools: Array.isArray(outcome && outcome.mcpTools) && outcome.mcpTools.length ? [
+                    ...(item.mcpTools || []),
+                    ...outcome.mcpTools
+                ] : item.mcpTools
+            } : item);
+        if (activeChatIdRef.current === activeId) setMessages(next);
+        await persistAgentSession(activeId, next).catch(()=>undefined);
     }
     async function toggleFavorite(item) {
         await patchGalleryItem(item.id, {
@@ -9802,6 +10080,7 @@ export default function Page() {
             if (!response.ok) throw new Error(data.error || '读取高清任务状态失败');
             lastData = { ...lastData, ...data, taskId, status: data.task?.status || data.status, images: data.images || lastData.images };
             if (lastData.status === 'succeeded') return lastData;
+            if (lastData.status === 'cancelled') throw new Error(UPSCALE_CANCELLED_MESSAGE);
             if (lastData.status === 'failed') throw new Error(data.task?.error || '高清处理失败');
         }
         throw new Error('高清处理时间较长，请稍后重试。');
@@ -9944,14 +10223,16 @@ export default function Page() {
             notify(currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。');
         } catch (error) {
             const message = error instanceof Error ? error.message : '处理失败';
+            const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
                 error: message,
-                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · 处理失败`
+                ...(cancelled ? { cancelled: true } : {}),
+                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${cancelled ? '已停止跟踪' : '处理失败'}`
             });
             void refreshGenerationLogs();
-            notify(`后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
+            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : `后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
         }
     }
     function askDeleteItems(ids) {
@@ -10253,7 +10534,7 @@ export default function Page() {
     function renderModelCard(model) {
         const inUse = model.enabled && model.published;
         const favorite = modelFavorites.includes(model.id);
-        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap;
+        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap;
         return /*#__PURE__*/ _jsxs("article", {
             className: `model-card surface ${inUse ? 'in-use' : ''}`,
             children: [
@@ -10358,6 +10639,13 @@ export default function Page() {
                                     disabled: modelKindBusy.has(model.id),
                                     onClick: ()=>void setModelKind(model, 'video'),
                                     children: "视频"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: `model-kind-option audio ${model.kind === 'audio' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
+                                    onClick: ()=>void setModelKind(model, 'audio'),
+                                    children: "配音"
                                 })
                             ]
                         })
@@ -10444,6 +10732,14 @@ export default function Page() {
                                     }),
                                     /*#__PURE__*/ _jsxs("div", {
                                         children: [
+                                            personaChatCount > 0 && /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: `chat-history-persona-filter ${chatPersonaOnly ? 'active' : ''}`,
+                                                onClick: ()=>setChatPersonaOnly((prev)=>!prev),
+                                                title: chatPersonaOnly ? '显示全部历史对话' : `只看带角色设定的对话（${personaChatCount} 段）`,
+                                                "aria-pressed": chatPersonaOnly ? 'true' : 'false',
+                                                children: `角色 ${personaChatCount}`
+                                            }),
                                             /*#__PURE__*/ _jsx("b", {
                                                 children: chatSessions.length || ''
                                             }),
@@ -10485,6 +10781,7 @@ export default function Page() {
                                     const renaming = renamingChatId === session.id;
                                     const historyGroup = chatHistoryGroupLabel(session.updatedAt);
                                     const previousHistoryGroup = index > 0 ? chatHistoryGroupLabel(filteredChatSessions[index - 1].updatedAt) : '';
+                                    const personaLabel = personaBadgeLabel(session.persona);
                                     return /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
                                             historyGroup !== previousHistoryGroup && /*#__PURE__*/ _jsx("div", {
@@ -10515,7 +10812,7 @@ export default function Page() {
                                                         }
                                                     }) : /*#__PURE__*/ _jsxs("button", {
                                                         className: "chat-history-open",
-                                                        title: "单击打开，双击重命名",
+                                                        title: personaLabel ? `角色设定：${personaLabel}（单击打开，双击重命名）` : "单击打开，双击重命名",
                                                         onClick: ()=>chatSelectionMode ? toggleChatSessionSelection(session.id) : (openChatSession(session), closeSidebarOnMobile()),
                                                         onDoubleClick: (event)=>{
                                                             event.preventDefault();
@@ -10525,9 +10822,15 @@ export default function Page() {
                                                             /*#__PURE__*/ _jsx("span", {
                                                                 children: session.title
                                                             }),
-                                                            /*#__PURE__*/ _jsx("small", {
+                                                            /*#__PURE__*/ _jsxs("small", {
                                                                 className: busy ? 'busy' : '',
-                                                                children: busy ? '正在回答…' : formatTime(session.updatedAt)
+                                                                children: [
+                                                                personaLabel && /*#__PURE__*/ _jsx("em", {
+                                                                    className: "chat-history-persona-tag",
+                                                                    children: "角色"
+                                                                }),
+                                                                busy ? '正在回答…' : formatTime(session.updatedAt)
+                                                                ]
                                                             })
                                                         ]
                                                     }),
@@ -10560,7 +10863,7 @@ export default function Page() {
                                     }, session.id);
                                 }) : /*#__PURE__*/ _jsx("div", {
                                     className: "chat-history-empty",
-                                    children: chatSessions.length ? '没有找到匹配的历史对话' : '对话会自动保存在这里'
+                                    children: chatSessions.length ? chatPersonaOnly ? '没有找到带角色设定的对话' : '没有找到匹配的历史对话' : '对话会自动保存在这里'
                                 })
                             })
                         ]
@@ -11069,10 +11372,58 @@ export default function Page() {
                                                                                  message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
                                                                              ]
                                                                          }),
-                                                                         message.role === 'assistant' && !message.pending && message.skills?.length && /*#__PURE__*/ _jsx("small", {
-                                                                             className: "message-skill-badge",
-                                                                             children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
-                                                                         }),
+                                                                        message.role === 'assistant' && !message.pending && message.skills?.length && /*#__PURE__*/ _jsx("small", {
+                                                                            className: "message-skill-badge",
+                                                                            children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
+                                                                        }),
+                                                                        message.role === 'assistant' && !message.pending && message.mcpTools?.length && /*#__PURE__*/ _jsxs("details", {
+                                                                            className: "message-mcp-detail",
+                                                                            children: [
+                                                                                /*#__PURE__*/ _jsx("summary", {
+                                                                                    className: "message-mcp-detail-summary",
+                                                                                    title: "点开看这一轮用到的外部工具",
+                                                                                    children: /*#__PURE__*/ _jsx("small", {
+                                                                                        className: "message-mcp-badge",
+                                                                                        children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}${tool.ok ? '' : '（失败）'}`).join('、')}`
+                                                                                    })
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                                    className: "message-mcp-detail-panel",
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("div", {
+                                                                                            className: "message-mcp-detail-head",
+                                                                                            children: `本轮外部工具调用 ${message.mcpTools.length} 次`
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsx("ul", {
+                                                                                            className: "message-mcp-detail-list",
+                                                                                            children: message.mcpTools.map((tool, index)=>/*#__PURE__*/ _jsxs("li", {
+                                                                                                className: tool.ok ? 'is-ok' : 'is-failed',
+                                                                                                children: [
+                                                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                                                        children: tool.server
+                                                                                                    }),
+                                                                                                    /*#__PURE__*/ _jsx("code", {
+                                                                                                        children: tool.name
+                                                                                                    }),
+                                                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                                                        className: "message-mcp-detail-tag",
+                                                                                                        children: tool.readOnly ? '只读' : '写入'
+                                                                                                    }),
+                                                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                                                        className: "message-mcp-detail-state",
+                                                                                                        children: tool.ok ? '已完成' : '失败'
+                                                                                                    })
+                                                                                                ]
+                                                                                            }, `mcp-${index}`))
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsx("small", {
+                                                                                            className: "message-mcp-detail-note",
+                                                                                            children: "写入类操作要先经你确认才会执行；被拒绝的调用不计入这里。"
+                                                                                        })
+                                                                                    ]
+                                                                                })
+                                                                            ]
+                                                                        }),
                                                                          message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
                                                                              className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,
                                                                              children: `交付：${agentDeliverableLabel(message.deliverable)}`
@@ -11111,17 +11462,26 @@ export default function Page() {
                                                                         })
                                                                     ]
                                                                 }),
+                                                                message.role === 'assistant' && !message.pending && message.approval && /*#__PURE__*/ _jsx(AgentApprovalCard, {
+                                                                    approval: message.approval,
+                                                                    onResolved: (outcome)=>resolveAgentApprovalMessage(message.id, outcome)
+                                                                }),
+                                                                message.role === 'assistant' && !message.pending && message.approvalResult && /*#__PURE__*/ _jsx("div", {
+                                                                    className: "message-approval-result",
+                                                                    children: message.approvalResult
+                                                                }),
                                                                 message.references?.length ? /*#__PURE__*/ _jsx("div", {
                                                                     className: "message-refs",
                                                                     children: message.references.map((ref, index)=>/*#__PURE__*/ _jsxs("button", {
                                                                             type: "button",
                                                                             className: "message-ref-thumb",
-                                                                            title: `点击放大查看 · 参考图 ${index + 1} · ${ref.name}`,
-                                                                            "aria-label": `放大查看参考图 ${index + 1}`,
+                                                                            title: `点击放大查看 · ${ref.kind === 'text' ? '引用' : '参考图'} ${index + 1} · ${ref.name}`,
+                                                                            "aria-label": `放大查看${ref.kind === 'text' ? '引用' : '参考图'} ${index + 1}`,
                                                                             onClick: ()=>setMessageReferencePreview(ref),
                                                                             children: [
-                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsxs("span", { className: "message-ref-text", children: [/*#__PURE__*/ _jsx("b", { children: "▤" }), /*#__PURE__*/ _jsx("small", { children: referencePreviewText(ref, 28) })] }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: ref.name }),
+                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "message-ref-text", children: /*#__PURE__*/ _jsx("small", { children: ref.name }) }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: ref.name }),
                                                                                 /*#__PURE__*/ _jsx("span", {
+                                                                                    className: "message-ref-index",
                                                                                     children: index + 1
                                                                                 })
                                                                             ]
@@ -11226,6 +11586,10 @@ export default function Page() {
                                                                                         message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本'
                                                                                     ]
                                                                                 }),
+                                                                                message.retrying && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
+                                                                                    className: "message-retry-activity",
+                                                                                    children: message.activity.message
+                                                                                }) : null,
                                                                                 /*#__PURE__*/ _jsxs("button", {
                                                                                     type: "button",
                                                                                     onClick: ()=>pushTextToGenerate(message.content),
@@ -11338,7 +11702,6 @@ export default function Page() {
                                                             setConversationNavActiveId(item.id);
                                                         },
                                                     "aria-label": `第 ${item.index} 个提问`,
-                                                        title: item.text
                                                     }, item.id))
                                                 })
                                             }),
@@ -11352,7 +11715,6 @@ export default function Page() {
                                                      className: "conversation-nav-preview",
                                                      ref: conversationNavPreviewRef,
                                                      style: { '--conversation-nav-preview-top': `${previewPosition}%` },
-                                                      title: item.text,
                                                      children: /*#__PURE__*/ _jsx("span", {
                                                          className: "conversation-nav-preview-copy",
                                                          children: item.text
@@ -11454,7 +11816,9 @@ export default function Page() {
                                                         setAgentRefs([]);
                                                         setAgentFiles([]);
                                                     },
-                                                    label: "本轮参考图"
+                                                    label: agentRefs.some((ref)=>ref.kind === 'text') ? "本轮引用" : "本轮参考图",
+                                                    hint: "支持图片 / 视频 / 文档",
+                                                    accept: agentReferenceAccept
                                                 }),
                                                 agentFiles.length > 0 && /*#__PURE__*/ _jsx(ChatFileList, {
                                                     files: agentFiles,
@@ -11629,7 +11993,7 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("input", {
                                                                             type: "file",
                                                                             hidden: true,
-                                                                            accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1",
+                                                                            accept: agentReferenceAccept,
                                                                             multiple: true,
                                                                             onChange: (e)=>{
                                                                                 if (e.target.files) void addAgentAttachments(e.target.files);
@@ -11822,6 +12186,10 @@ export default function Page() {
                                         disabled: activeAgentBusy,
                                         icon: /*#__PURE__*/ _jsx(SkillIcon, { size: 16 })
                                     }, 'skills'),
+                                    /*#__PURE__*/ _jsx(McpManager, {
+                                        disabled: activeAgentBusy,
+                                        icon: /*#__PURE__*/ _jsx(McpIcon, { size: 16 })
+                                    }, 'mcp'),
                                     messages.length > 0 && !shareSelectionMode && /*#__PURE__*/ _jsxs("button", {
                                         type: "button",
                                         className: "conversation-share-entry",
@@ -12869,6 +13237,13 @@ export default function Page() {
                                                                                 onClick: ()=>restoreGenerateTask(task),
                                                                                 children: "恢复参数"
                                                                             }),
+                                                                            task.status === 'pending' && task.mode === 'upscale' && task.upscaleTaskId && /*#__PURE__*/ _jsx("button", {
+                                                                                type: "button",
+                                                                                className: "task-cancel-button",
+                                                                                title: "停止跟踪这条任务",
+                                                                                onClick: ()=>void cancelGenerateTask(task),
+                                                                                children: "停止跟踪"
+                                                                            }),
                                                                             task.request && task.status === 'error' && /*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
                                                                                 className: "task-retry-button",
@@ -13204,7 +13579,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${pageSize} 项` })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task) }, task.id)) }),
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task), onCancel: ()=>patchVideoTask(task, 'cancel'), onRetry: ()=>patchVideoTask(task, 'retry') }, task.id)) }),
                                             /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
                                                 /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
                                                 /*#__PURE__*/ _jsxs("div", { children: [
@@ -15377,6 +15752,10 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                     [
                                                         'video',
                                                         '视频模型'
+                                                    ],
+                                                    [
+                                                        'audio',
+                                                        '配音模型'
                                                     ],
                                                     [
                                                         'unknown',

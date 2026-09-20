@@ -20,17 +20,18 @@ export type AgentWebDecision = {
   query: string;
 };
 
-export const DEFAULT_AGENT_DIRECTIONS = [
-  '强化构图层级：让主体更突出，优化元素大小、位置和留白。',
-  '优化光线色彩：保持主体与场景不变，调整光影、色温和对比度。',
-  '调整细节风格：保持当前构图与主体，尝试更统一、精致的材质和视觉风格。',
-] as const;
-
-export const DEFAULT_CHAT_DIRECTIONS = [
-  '请结合当前上下文举一个具体例子，帮助我更好理解。',
-  '请换一个角度分析这个问题，并说明利弊或适用场景。',
-  '请把上面的内容整理成一份可以直接执行的步骤清单。',
-] as const;
+/**
+ * 识别“在网站上连续操作”的请求。这里的“搜索”是浏览器里的页面操作，
+ * 不能被普通联网搜索抢先消费，否则首轮打开网页后就不会再进入 MCP 补轮。
+ */
+export function likelyBrowserAutomationRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  const browserTarget = /(?:浏览器|网页|网站|页面|bilibili|哔哩哔哩|抖音|淘宝|京东|youtube|google|github|打开\s*(?:https?:\/\/|www\.)?\S+)/i.test(text);
+  const browserAction = /(?:打开|访问|进入|搜索|查找|点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|下载|滚动|切换|选中|发帖|购买)/i.test(text);
+  const chainedAction = /(?:然后|接着|之后|再|并且|并|并在|最后|同时|给第|第一个|第一条|第一个视频)/i.test(text);
+  return browserTarget && browserAction && (chainedAction || /(?:搜索|点击|点赞|评论|回复|填写|提交)/i.test(text) || /(?:打开|访问|进入)\s*(?:https?:\/\/|www\.)?\S+/i.test(text));
+}
 
 const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
 const directionHeadingPattern = /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i;
@@ -70,7 +71,12 @@ function isPromptOnlyRequest(text: string) {
   return !explicitImageAfterPrompt && !explicitImageBeforePrompt && (rejectsImageOutput || asksForPrompt);
 }
 
-/** Extract the numbered/bulleted continuation choices from an assistant caption. */
+/**
+ * Extract the numbered/bulleted continuation choices from an assistant caption.
+ * Returns an empty list when the model did not write its own direction section:
+ * canned suggestions repeat verbatim across unrelated turns, so the UI hides
+ * the section instead of showing generic text.
+ */
 export function extractAgentDirections(content: string) {
   const lines = String(content || '').replace(/\r/g, '').split('\n');
   const headingIndex = lines.findIndex((line) => directionHeadingPattern.test(line));
@@ -87,10 +93,10 @@ export function extractAgentDirections(content: string) {
     }
     if (directions.length) return directions;
   }
-  return [...DEFAULT_AGENT_DIRECTIONS];
+  return [];
 }
 
-/** Extract clickable follow-up prompts from a normal assistant reply. */
+/** Extract clickable follow-up prompts from a normal assistant reply; empty when the model wrote none. */
 export function extractChatDirections(content: string) {
   const lines = String(content || '').replace(/\r/g, '').split('\n');
   const headingIndex = lines.findIndex((line) => chatDirectionHeadingPattern.test(line));
@@ -107,7 +113,7 @@ export function extractChatDirections(content: string) {
     }
     if (directions.length) return directions;
   }
-  return [...DEFAULT_CHAT_DIRECTIONS];
+  return [];
 }
 
 export function isChatDirectionHeading(line: string) {
@@ -172,10 +178,19 @@ const externalFactPattern = /(?:人物|公司|机构|组织|品牌|产品|型号
 const recommendationPattern = /(?:推荐|建议买|值得买|适合我|帮我选|选择哪|哪个更好|哪个好|哪家好|性价比|避坑|排行榜|排名|附近|周边|攻略|路线|行程|住宿|酒店|餐厅|咖啡店|门票|活动|展览|演出|旅游|旅行|购物|购买|订票|best|recommend|where to|worth buying|nearby|itinerary|hotel|restaurant)/i;
 const comparisonPattern = /(?:对比|比较|区别|差异|优缺点|哪个好|哪个更|选哪个|vs\.?|versus|compare|comparison|difference|pros?\s*(?:and|&)\s*cons?)/i;
 const locationSensitivePattern = /(?:附近|周边|本地|当地|在我这里|到哪里|哪里可以|哪个城市|路线|天气|温度|空气质量|交通|门票|酒店|餐厅|咖啡店|活动|展览|演出|旅游|旅行|nearby|local|weather|air quality|traffic|route|hotel|restaurant)/i;
+const strongLocationPattern = /(?:附近|周边|当地|在我这里|到哪里|哪里可以|哪个城市|路线|天气|温度|空气质量|交通|门票|酒店|餐厅|咖啡店|展览|演出|旅游|旅行|nearby|near me|weather|air quality|traffic|route|hotel|restaurant)/i;
+const localDeviceResourcePattern = /(?:(?:本机|本设备|这台(?:电脑|机器|设备)|本地|local)\s*(?:的)?\s*(?:笔记|文件|文档|图片|照片|视频|音频|音乐|模型|部署|数据库|代码|项目|仓库|目录|文件夹|磁盘|硬盘|缓存|环境|应用|软件|程序|数据|资料|脚本|配置|日志|端口|主机|服务器|notes?|files?|documents?|models?|database|repo|folder)|(?:笔记|文件|文档|图片|照片|模型|数据|资料|代码|项目|数据库|缓存)[^，。！？]{0,6}(?:都|全)?(?:存|保存|存储|放)(?:在|到)?\s*(?:本机|本设备|本地))/i;
 const contextFollowUpPattern = /(?:^|[\s，。！？])(?:(?:他|她|它|其|这个人|那个人|该人物|该事件|这件事|这个消息|该消息)(?:现在|目前|后来|之后|最近)?(?:怎么样|如何|还在吗|还好吗|是否还在|的情况|的进展)?|(?:后来|之后|现在|目前|最近)(?:怎么样|如何|呢)?|结果呢|进展呢)(?:[\s，。！？]|$)/i;
 const creativeOrArtifactPattern = /(?:生图|画图|绘图|改图|修图|海报|插画|提示词|prompt|代码|编程|typescript|javascript|python|脚本|文件|附件|总结|概括|改写|润色|翻译|摘要|整理成|数学题|公式|推导|证明|教程|步骤|怎么做|如何制作|设计方案)/i;
 const conversationalPattern = /^(?:你好|嗨|哈喽|谢谢|感谢|晚安|早上好|你好吗|你是谁|你叫什么|能帮我吗|可以吗|在吗|有人吗)[。.!！?？]*$/i;
 const stableConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解).{0,80}(?:概念|原理|定义|理论|算法|语法|函数|定理|物理|化学|数学|生物|编程|代码|机制|方法|光合作用|相对论|递归|向量|概率)[。.!！?？]*$/i;
+// MCP 服务管理的动词/名词分开写：要同时认「接入某个服务」和「把某个服务删掉」两种语序。
+const MCP_MANAGE_VERB = '(?:接入|接个|连上|连接|添加|新增|删除|移除|删掉|断开|停用|启用|自检|查看|列出|配置|检测)';
+const MCP_MANAGE_NOUN = '(?:外部服务|远程服务|工具服务|服务|server)';
+const mcpManagementPattern = new RegExp(`mcp|model\\s+context\\s+protocol|(?:${MCP_MANAGE_VERB}[^，。！？]{0,10}${MCP_MANAGE_NOUN})|(?:${MCP_MANAGE_NOUN}[^，。！？]{0,8}${MCP_MANAGE_VERB})`, 'i');
+// 本地工具运行时（受控条目）单独认：「浏览器控制组件装了吗 / 启动浏览器运行时」也要下发管理工具，
+// 否则助手明明能查状态、能启停，却看不到入口。
+const mcpRuntimePattern = /(?:浏览器|browser|playwright|chromium)[^，。！？]{0,12}(?:运行时|组件|控制|工具|服务)|(?:运行时|浏览器控制)[^，。！？]{0,10}(?:状态|没反应|用不了|不能用|安装|启动|开启|停止|关闭)/i;
 
 function normalizeWebText(value: unknown, limit = 320) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
@@ -215,8 +230,9 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   const text = normalizeWebText(input);
   const query = buildAgentWebQuery(text, context);
   if (mode === 'off') return { shouldSearch: false, reason: 'off', query };
-  if (mode === 'always') return { shouldSearch: Boolean(query), reason: 'always', query };
   if (!text) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  if (likelyBrowserAutomationRequest(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  if (mode === 'always') return { shouldSearch: Boolean(query), reason: 'always', query };
 
   const explicit = explicitSearchPattern.test(text);
   if (explicit) return { shouldSearch: true, reason: 'explicit-search', query };
@@ -228,7 +244,8 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   const timeSensitive = timeSensitivePattern.test(text) && (question || hasConcreteTopic(text));
   const recommendation = recommendationPattern.test(text) && hasConcreteTopic(text);
   const comparison = comparisonPattern.test(text) && hasConcreteTopic(text);
-  const locationSensitive = locationSensitivePattern.test(text) && hasConcreteTopic(text);
+  const locationSensitive = locationSensitivePattern.test(text) && hasConcreteTopic(text)
+    && !(localDeviceResourcePattern.test(text) && !strongLocationPattern.test(text));
   const contextFollowUp = contextFollowUpPattern.test(text) && relevantContextForQuery(text, context).length > 0;
   const factQuestion = question && hasConcreteTopic(text);
 
@@ -290,6 +307,37 @@ export function likelyFileGenerationRequest(input: string) {
     || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
 }
 
+export function likelyArtifactGenerationRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  if (/\.(?:docx|xlsx|pptx|zip)\b/i.test(text)) return true;
+  if (/打包|压缩包|\bzip\b/i.test(text)) return true;
+  // “压缩”也可能是压缩图片/视频，只有不是媒体压缩时才当成打包意图。
+  if (/压缩/.test(text)
+    && !/(?:图片|照片|图像|视频|音频|画质|图).{0,6}压缩/.test(text)
+    && !/压缩.{0,6}(?:图片|照片|图像|视频|音频|画质)/.test(text)) return true;
+  return /(?:生成|制作|导出|下载|整理|输出|保存|创建|写|做|出一份|来一份).{0,40}(?:word|docx|文档|报告|方案|合同|简历|周报|日报|月报|纪要|会议记录|报价单|排期表|计划表|预算表|申请表|邀请函|感谢信|演讲稿|发言稿|致辞|问卷|总结|汇报|论文|说明书|手册|excel|xlsx|表格|报表|台账|清单|数据表|ppt|pptx|幻灯片|演示文稿|演示|deck)/i.test(text);
+}
+
+/**
+ * 上一轮助手已经提出可以交付某个文件、本轮用户只回了“1 / 好 / 可以”这类选择时，
+ * 也要继续下发 Office 工具：否则模型手里没有工具，只会说“已生成…文件”却拿不出文件。
+ */
+export function isArtifactFollowUpRequest(previousAssistantText: string, input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 24) return false;
+  const picksOption = /^(?:第)?\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:[.、)）:：]|号|个|选项)?$/i.test(text)
+    || /^(?:选|要|用|按)\s*(?:第)?\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:号|个|选项)?$/i.test(text)
+    || /^第\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:个|号|选项)$/i.test(text);
+  const confirms = /^(?:好|好的|好呀|可以|行|要|来吧|来一份|来一个|来一版|要一份|生成|做吧|做一份|就这个|就它|开始|确定|没问题|ok|okay|yes)$/i.test(text);
+  if (!picksOption && !confirms) return false;
+  const previous = String(previousAssistantText || '').replace(/\s+/g, ' ');
+  if (!previous) return false;
+  const mentionsArtifact = /(?:word|docx|excel|xlsx|ppt|pptx|文档|简历|周报|日报|月报|纪要|会议记录|报价单|排期表|计划表|预算表|申请表|邀请函|感谢信|演讲稿|发言稿|致辞|问卷|报告|方案|合同|总结|汇报|论文|说明书|手册|表格|报表|台账|清单|数据表|幻灯片|演示文稿|压缩包|打包|文件)/i.test(previous);
+  const offersArtifact = /(?:我可以|我也可以|我能|能帮你|要不要|需要我|要我|帮你|给你|生成|做一?份|做一?版|导成|导出|整理成|打包|压缩成|模板)/.test(previous);
+  return mentionsArtifact && offersArtifact;
+}
+
 /** Requests that need the model's tool planner rather than direct text streaming. */
 export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   const text = input.trim();
@@ -297,4 +345,16 @@ export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
   if (likelyImageGenerationRequest(text)) return true;
   if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
   return likelyFileGenerationRequest(text);
+}
+
+/**
+ * 用户这一轮是不是在说 MCP 服务本身（接入、查看、开关、移除）。
+ *
+ * 只有命中时才把 mcp_manage 下发给模型：普通「服务/服务器连不上」这类提问不该看到它。
+ * 这里只是下发条件，删除服务和打开写入权限还要在 lib/mcp/admin.ts 里按用户原话再校验一次。
+ */
+export function likelyMcpManagementRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  return mcpManagementPattern.test(text) || mcpRuntimePattern.test(text);
 }

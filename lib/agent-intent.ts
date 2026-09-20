@@ -31,10 +31,13 @@ const otherLabel = '通用对话';
 // for requests such as "描述一下这个画面", especially when a reference image
 // is attached: the requested deliverable is text, not a new image.
 // 「画布 / 画板 / 画框」同理是名词：画布上下文里到处是"画布"，不能当成"画"这个动作。
-const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
-const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
+const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|配(?:一|两|几|\d+)?张|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
+const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|吉祥物|IP形象|设计稿|设计图|mascot|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
 const imageEditPattern = /(?:修改|调整|改一下|改成|换成|替换|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
 const textArtifactPattern = /(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|总结|翻译|邮件|回复|文字|方向|创意|灵感|思路|markdown|json|csv|html|css)/i;
+// Office / 可下载文档类交付物。出现这些词时用户要的是一份文档，而不是一张图：
+// 「做一个 word 简历模板」这类说法会命中下面的“做一个…”弱信号，必须让文档交付优先。
+const documentDeliverablePattern = /(?:word|docx|excel|xlsx|ppt|pptx|pdf|文档|文件|简历|报告|周报|日报|月报|纪要|会议记录|总结|汇报|方案|合同|论文|说明书|手册|报表|台账|数据表|幻灯片|演示文稿|演示|deck|模板|自我介绍|报价单|排期表|计划表|预算表|申请表|邀请函|感谢信|演讲稿|发言稿|致辞|问卷)/i;
 const textActionPattern = /(?:写|撰写|改写|重写|润色|扩写|缩写|概括|总结|翻译|起|想|生成|整理|提取|反推|解释|分析|比较|输出|提供|列出|优化).{0,48}(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|文字)/i;
 const promptOnlyPattern = /(?:提示词|prompt)/i;
 const separateCopyPattern = /(?:另外|再|同时|并且|并|以及|配套|附上|额外).{0,36}(?:给我|提供|写|输出|来).{0,20}(?:文案|标题|配文|广告语|宣传语|脚本|文字)/i;
@@ -78,11 +81,11 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
   if (!text) return result('OTHER', '还没有足够的文字目标。', 'low', []);
 
   const asksForPrompt = promptOnlyPattern.test(text) && /(?:写|生成|优化|改写|润色|反推|提取|翻译|解释|给我|输出|提供|整理|怎么|如何|只要|仅需)/i.test(text);
-  const asksForText = textActionPattern.test(text) || (textArtifactPattern.test(text) && !imageActionPattern.test(text));
+  const asksForText = textActionPattern.test(text) || ((textArtifactPattern.test(text) || documentDeliverablePattern.test(text)) && !imageActionPattern.test(text));
   const asksForImage = (imageActionPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || /(?:出图|生图)/i.test(text));
   // 口语里经常省略“一”（例如“画只猫”“画条鱼”）。这类请求虽然没有
   // “图片 / 海报”等目标名词，仍然是在明确索要视觉产物。
-  const asksForImageWithoutTarget = /(?:画(?:个|一?只|一个|一张|一幅|一?条|一?头|一?匹|一?朵|一?辆|一?艘|一?座|一?棵|一?位)|画出|出图|生图|生成一张|生成一个|做一张|做一个|做个|来一张|来个).{1,80}/i.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
+  const asksForImageWithoutTarget = /(?:画(?:个|一?只|一个|一张|一幅|一?条|一?头|一?匹|一?朵|一?辆|一?艘|一?座|一?棵|一?位)|画出|出图|生图|生成一张|生成一个|做一张|来一张).{1,80}/i.test(text) && !documentDeliverablePattern.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
   const asksHowToCreateImage = /(?:怎么|如何|教我|教程|步骤|方法|技巧).{0,24}(?:画|绘制|生成图片|做图)/i.test(text);
   const asksForSeparateCopy = separateCopyPattern.test(text) || /(?:图片|海报|封面|宣传图).{0,30}(?:另外|再|同时|并且|以及).{0,30}(?:文案|标题|配文)/i.test(text);
   const textInsideImage = embeddedTextPattern.test(text) && (asksForImage || asksForImageWithoutTarget);

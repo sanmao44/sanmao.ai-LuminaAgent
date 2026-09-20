@@ -1,11 +1,13 @@
+import type { McpApprovalPolicy } from '@/lib/agent/approval';
+
 export type ProviderType = 'openai-compatible' | 'google-gemini';
-export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes';
+export type ProviderPlatform = 'custom' | '65535' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes' | 'gitee';
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
 export type UpscaleProviderId = 'tencent-ci' | 'aliyun-viapi';
 export type UpscaleModelId = 'tencent-super-resolution' | 'aliyun-standard-super-resolution' | 'aliyun-generative-super-resolution';
 export type UpscaleOutputFormat = 'png' | 'jpg' | 'bmp';
 export type UpscaleConnectionStatus = 'healthy' | 'idle' | 'error' | 'needs-bucket' | 'needs-authorization';
-export type ModelKind = 'chat' | 'image' | 'video' | 'unknown';
+export type ModelKind = 'chat' | 'image' | 'video' | 'audio' | 'unknown';
 export type MediaKind = 'image' | 'video' | 'audio';
 export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos';
 export type ProviderTextProtocol = 'chat-completions' | 'responses' | 'messages';
@@ -90,6 +92,7 @@ export type ModelCapability =
   | 'transparent'
   | 'upscale'
   | 'fast'
+  | 'speech'
   | 'web-search'
   | 'video-generate'
   | 'video-edit'
@@ -170,6 +173,8 @@ export type AppSettings = {
   webSearchQianfanConfigured?: boolean;
   skillsEnabled?: boolean;
   skillsAutoApprove?: boolean;
+  /** MCP 工具的审批档位：每次确认 / 标准信任 / 完全访问，缺省按标准信任。 */
+  mcpApprovalPolicy?: McpApprovalPolicy;
 };
 
 export type PublicState = {

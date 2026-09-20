@@ -27,13 +27,12 @@ test('extracts numbered continuation directions and caps them at three', () => {
   assert.deepEqual(directions, ['强化标题层级', '优化光线色彩', '调整细节风格']);
 });
 
-test('keeps compatibility with legacy bullet directions and provides a fallback', () => {
+test('keeps compatibility with legacy bullet directions and stays empty when absent', () => {
   const legacy = continuation.extractAgentDirections('## 下一版可尝试方向\n- 强化信息层级\n- 优化版式节奏');
   assert.deepEqual(legacy, ['强化信息层级', '优化版式节奏']);
 
   const fallback = continuation.extractAgentDirections('本版已完成。');
-  assert.equal(fallback.length, 3);
-  assert.ok(fallback.every((item) => typeof item === 'string' && item.length > 0));
+  assert.deepEqual(fallback, []);
 });
 
 test('extracts clickable follow-ups from ordinary assistant replies', () => {
@@ -49,7 +48,7 @@ test('extracts clickable follow-ups from ordinary assistant replies', () => {
 
   assert.deepEqual(directions, ['请举一个具体例子', '请比较两种常见方案', '请整理成执行清单']);
   assert.equal(continuation.isChatDirectionHeading('### 你还可以继续'), true);
-  assert.equal(continuation.extractChatDirections('只有普通回答').length, 3);
+  assert.deepEqual(continuation.extractChatDirections('只有普通回答'), []);
 });
 
 test('removes the rendered direction section without removing the caption', () => {

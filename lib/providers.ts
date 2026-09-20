@@ -423,7 +423,8 @@ async function fetchModelResponse(url: string, init: RequestInit, timeout = 2000
   }
 }
 
-function authHeaders(provider: RuntimeProvider, video = false) {
+/** 供其它服务端模块（如克隆出片的配音调用）复用同一套鉴权头。 */
+export function authHeaders(provider: RuntimeProvider, video = false) {
   const header = provider.authHeader?.trim() || 'Authorization';
   const prefix = provider.authPrefix ?? 'Bearer ';
   const key = video ? provider.videoApiKey || provider.apiKey : provider.apiKey;

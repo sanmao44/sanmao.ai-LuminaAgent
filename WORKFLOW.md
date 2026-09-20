@@ -44,6 +44,7 @@
 - 开发时可先运行 `npm run typecheck` 快速检查类型，但页面能打开或单项测试通过不能代替完整验证。
 - 并行任务尽量分开修改文件；合并后重新验证。验证期间不要继续修改源码，也不要并行运行其他构建或类型生成命令。
 - 验证通过后若再次修改源码，必须重新验证；不得使用 `any`、`@ts-ignore` 或关闭构建类型检查来掩盖错误。
+- 动了 MCP 连接器（`lib/mcp/`、`components/McpManager.tsx`）时，默认测试只跑假远端；想对真实 GitHub MCP 服务验证一次，用 `npm run smoke:github`（要先设 `GITHUB_MCP_TOKEN`，没设就自动跳过，只读调用、不改 GitHub 上的任何东西）。
 
 ### 方式 A（推荐，最简单）：直接在 `main` 上做
 

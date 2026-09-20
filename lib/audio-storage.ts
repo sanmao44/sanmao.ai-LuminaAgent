@@ -2,12 +2,14 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { knownMediaRoots, mediaDirectory } from './media-paths';
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const MAX_AUDIO_BYTES = 1024 * 1024 * 1024;
 
 function configuredRoot() {
-  return path.resolve(process.env.SANMAO_AUDIO_STORAGE_PATH || path.join(dataDir, 'audio'));
+  // 默认固定到用户级媒体库，换运行目录不再换掉素材。
+  return path.resolve(process.env.SANMAO_AUDIO_STORAGE_PATH || mediaDirectory('audio'));
 }
 
 export function getDefaultAudioStoragePath() { return configuredRoot(); }
@@ -46,11 +48,36 @@ export async function persistAudioBuffer(buffer: Buffer, contentType = 'audio/mp
   return { url: `/api/storage/audio?name=${encodeURIComponent(name)}`, path: root, name, bytes: buffer.byteLength, contentType: audioContentType(name) };
 }
 
+export function getLegacyAudioStoragePath() {
+  return path.resolve(path.join(process.cwd(), '..', 'audio_generation_records'));
+}
+
+/** 主目录优先，其后是历史运行目录与注册表目录，用于继续读取迁移前导入的音频。 */
+export function getAudioStorageRoots(configuredPath?: string) {
+  const primary = path.resolve(configuredPath?.trim() || configuredRoot());
+  const roots = [primary];
+  const candidates = [getLegacyAudioStoragePath(), path.join(dataDir, 'audio'), ...knownMediaRoots('audio')];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
+}
+
 export function resolveStoredAudioFile(root: string, name: string) {
   const base = path.resolve(root || configuredRoot());
   const target = path.resolve(base, name);
   if (target !== base && !target.startsWith(`${base}${path.sep}`)) return null;
   return target;
+}
+
+/** 主目录找不到时回退到历史目录，命中即返回真实文件；都没有则返回主目录候选。 */
+export function resolveStoredAudioFileWithFallback(root: string, name: string) {
+  const candidates = getAudioStorageRoots(root)
+    .map((candidate) => resolveStoredAudioFile(candidate, name))
+    .filter(Boolean) as string[];
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate;
+  return candidates[0] || null;
 }
 
 export function isStoredAudio(root: string, name: string) {

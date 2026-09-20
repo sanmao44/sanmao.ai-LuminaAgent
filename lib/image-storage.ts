@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { GeneratedImage } from './types';
+import { knownMediaRoots, mediaDirectory } from './media-paths';
 
 const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
 const legacyStoragePath = path.join(process.cwd(), '..', 'image_generation_records');
@@ -16,16 +17,24 @@ export type ImageDownloadAuth = {
 };
 
 function configuredRoot() {
-  return path.resolve(process.env.SANMAO_IMAGE_STORAGE_PATH || path.join(dataDir, 'images'));
+  // 默认固定到用户级媒体库，换运行目录不再换掉素材。
+  return path.resolve(process.env.SANMAO_IMAGE_STORAGE_PATH || mediaDirectory('image'));
 }
 
 export function getDefaultStoragePath() { return configuredRoot(); }
 export function getLegacyStoragePath() { return path.resolve(legacyStoragePath); }
 
 export function getStorageRoots(configuredPath?: string) {
+  // 主目录永远排第一；其余是历史目录（旧运行目录、image_generation_records、
+  // 媒体库注册表），用于继续读取迁移前生成的图片，避免画布节点断链。
   const primary = path.resolve(configuredPath?.trim() || configuredRoot());
-  if (configuredPath?.trim() || primary === getLegacyStoragePath()) return [primary];
-  return [primary, getLegacyStoragePath()];
+  const roots = [primary];
+  const candidates = [getLegacyStoragePath(), path.join(dataDir, 'images'), ...knownMediaRoots('image')];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
 }
 
 function imageMimeFromBytes(bytes: Uint8Array) {

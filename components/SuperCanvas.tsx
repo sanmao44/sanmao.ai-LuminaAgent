@@ -242,6 +242,9 @@ import PanoramaWorkbench, { type PanoramaSnapshot } from "@/components/canvas/Pa
 import OneClickCinematicPanel, {
   type OneClickCinematicVideoSelection,
 } from "@/components/canvas/OneClickCinematicPanel";
+import CanvasCloneDialog, {
+  type CanvasCloneReferenceOption,
+} from "@/components/canvas/CanvasCloneDialog";
 import CanvasGroupComposeDialog, {
   type CanvasGroupComposeSettings,
   type CanvasGroupComposeSource,
@@ -266,9 +269,11 @@ import type {
   CanvasVariantState,
   CanvasUpscaleParams,
   CanvasVideoClipState,
+  CanvasVideoEditorClip,
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
 import type { AngleGenerationInput } from "@/lib/angle-control";
+import type { CloneJob } from "@/lib/clone/types";
 import {
   normalizeVideoEditorState,
   syncVideoEditorInputs,
@@ -1524,6 +1529,7 @@ async function waitForCanvasUpscaleTask(taskId: string) {
     const latest = await getCanvasUpscaleTask(taskId);
     if (latest.task?.status === "succeeded") return latest;
     if (latest.task?.status === "failed") throw new Error(latest.task.error || "高清处理失败");
+    if (latest.task?.status === "cancelled") throw new Error("高清任务已取消。");
   }
   throw new Error("高清处理时间较长，请稍后重试。");
 }
@@ -2874,6 +2880,10 @@ export default function SuperCanvas() {
   const spaceHeldRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [runtime, setRuntime] = useState<CanvasRuntimeState | null>(null);
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+  // 弹窗关掉后仍在后台跑的克隆任务：工具栏上给个进度，跑完 / 失败提示一次。
+  const [cloneTask, setCloneTask] = useState<{ id: string; message: string; progress: number } | null>(null);
+  const cloneRunningIdRef = useRef("");
   const [runtimeError, setRuntimeError] = useState("");
   const [projects, setProjects] = useState<CanvasProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
@@ -3697,6 +3707,44 @@ export default function SuperCanvas() {
   }, [activePanel, ready, refreshGenerationLogs]);
 
   useEffect(() => {
+    // 关掉「克隆出片」弹窗不等于取消：任务在后台跑，这里在画布右上角挂一枚状态胶囊给进度，
+    // 并在从「跑」变成「完成 / 失败」的那一刻提示一次，免得用户不知道成片已经好了；
+    // 成片要放进画布，走「双击空白处 → 创建节点 → 克隆出片」，弹窗会自动接回这条任务。
+    if (!ready) return;
+    let disposed = false;
+    const tick = async () => {
+      if (window.document.hidden) return;
+      try {
+        const response = await fetch("/api/clone/jobs", { cache: "no-store" });
+        if (!response.ok) return;
+        const body = (await response.json().catch(() => ({}))) as {
+          jobs?: { id: string; stage: string; progress: number; message: string; shotCount?: number }[];
+        };
+        if (disposed) return;
+        const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+        const running = jobs.find((job) => job.stage !== "done" && job.stage !== "failed" && job.stage !== "cancelled") || null;
+        setCloneTask(running ? { id: running.id, message: running.message || "", progress: Number(running.progress) || 0 } : null);
+        const watchedId = cloneRunningIdRef.current;
+        if (watchedId && watchedId !== running?.id) {
+          const finished = jobs.find((job) => job.id === watchedId);
+          if (finished?.stage === "done") notify(`克隆出片已完成（${finished.shotCount || 0} 个镜头），双击画布空白处打开「创建节点 → 克隆出片」即可放入画布`, "ok");
+          else if (finished?.stage === "failed") notify(`克隆出片失败：${finished.message || "在「创建节点 → 克隆出片」里可继续任务"}`, "error");
+          cloneRunningIdRef.current = "";
+        }
+        if (running) cloneRunningIdRef.current = running.id;
+      } catch {
+        // 读不到就等下一轮，不打扰用户。
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 5000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [notify, ready]);
+
+  useEffect(() => {
     // React Strict Mode re-runs effects in development. Restore the mount
     // guard before the second setup so queued camera frames are not dropped.
     mountedRef.current = true;
@@ -4371,7 +4419,7 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       // During reference picking, node clicks stay reserved for selecting a
       // reference. Blank canvas clicks must still be able to pan the viewport.
@@ -5785,8 +5833,23 @@ export default function SuperCanvas() {
     notify("已创建对象组");
   }, [commit, notify, selectedIds]);
   const breakGroup = useCallback(() => {
-    if (!selectedGroupId) return;
-    const id = selectedGroupId;
+    // 框选与 Shift 追加选择都会清空 selectedGroupId（见 selectNode、finishInteraction），
+    // 只认这个字段会让 Ctrl+Shift+G 时灵时不灵；这里按当前选中范围反推出要解散的分组。
+    const groupsInSelection = new Set<string>();
+    for (const nodeId of selectedIds) {
+      const group = groupForNode(docRef.current, nodeId);
+      if (group) groupsInSelection.add(group.id);
+    }
+    const id =
+      [
+        selectedGroupId,
+        groupsInSelection.size === 1 ? [...groupsInSelection][0] : null,
+      ].find((candidate) => candidate && groupById(docRef.current, candidate)) ||
+      null;
+    if (!id) {
+      notify("请先选中一个对象组再解散。", "error");
+      return;
+    }
     commit((value) => {
       const group = groupById(value, id);
       if (!group) return value;
@@ -5805,7 +5868,7 @@ export default function SuperCanvas() {
     });
     clearSelection();
     notify("已解散对象组");
-  }, [clearSelection, commit, notify, selectedGroupId]);
+  }, [clearSelection, commit, notify, selectedGroupId, selectedIds]);
   const removeNodeFromGroup = useCallback(
     (nodeId: string) => {
       const node = nodeById(docRef.current, nodeId);
@@ -13398,14 +13461,16 @@ export default function SuperCanvas() {
           id: "video-tools",
           icon: "more",
           label: "更多",
-          actions: [{
-            id: "depth-video",
-            icon: "depth",
-            label: "生成深度图节点",
-            title: "免费在本机生成深度图视频，首次使用会下载模型",
-            disabled: !hasMedia || generationKeys.has(`depth:${node.id}`),
-            onClick: () => void createDepthVideoFromNode(node),
-          }],
+          actions: [
+            {
+              id: "depth-video",
+              icon: "depth",
+              label: "生成深度图节点",
+              title: "免费在本机生成深度图视频，首次使用会下载模型",
+              disabled: !hasMedia || generationKeys.has(`depth:${node.id}`),
+              onClick: () => void createDepthVideoFromNode(node),
+            },
+          ],
         }],
         dangerAction: {
           id: "delete",
@@ -14235,6 +14300,129 @@ export default function SuperCanvas() {
     </>
   ) : null;
 
+  const cloneReferences = useMemo<CanvasCloneReferenceOption[]>(
+    () =>
+      document.nodes
+        .filter((node) => node.type === "media" && node.data.kind === "video" && Boolean(node.data.url))
+        .map((node) => ({
+          nodeId: node.id,
+          name: String(node.data.name || "参考视频"),
+          url: String(node.data.url),
+          seconds: Number(node.data.durationMs || node.data.sourceDurationMs || 0) / 1000,
+        })),
+    [document.nodes],
+  );
+
+  /**
+   * 只有用户明确选中一条视频节点时才当作「预选参考」：
+   * 弹窗自己要靠这个值判断「用户是冲着这条视频来的」，从而不拿旧任务顶掉他的选择。
+   * 画布里只有一条视频的自动选中交给弹窗内部处理。
+   */
+  const preselectedCloneReferenceId = useMemo(() => {
+    const selectedVideos = [...selectedIds].filter((id) => {
+      const node = nodeById(document, id);
+      return Boolean(node && node.type === "media" && node.data.kind === "video" && node.data.url);
+    });
+    return selectedVideos.length === 1 ? selectedVideos[0] : null;
+  }, [document, selectedIds]);
+
+  /** 把克隆结果落到画布：镜头素材 + 一个带完整时间轴的视频编辑节点。 */
+  const applyCloneJob = useCallback(
+    (job: CloneJob) => {
+      const referenceNode = job.reference.nodeId ? nodeById(docRef.current, job.reference.nodeId) : undefined;
+      const center = screenToWorld(stageSize.width / 2, stageSize.height / 2);
+      const originX = referenceNode ? referenceNode.x + nodeSize(referenceNode).w + 120 : center.x;
+      const originY = referenceNode ? referenceNode.y : center.y;
+      const created: CanvasNode[] = [];
+      const primaryIds = new Map<number, string>();
+      const audioIds = new Map<number, string>();
+      const edges: { source: string; role: CanvasInputRole; order: number }[] = [];
+      let order = 0;
+      for (const shot of job.shots) {
+        const videoUrl = String(shot.videoUrl || "");
+        const imageUrl = String(shot.imageUrl || "");
+        if (videoUrl || imageUrl) {
+          const isVideo = Boolean(videoUrl);
+          const node = createMedia(
+            isVideo ? "video" : "image",
+            isVideo ? videoUrl : imageUrl,
+            `镜头 ${shot.index + 1}${isVideo ? "" : " · 首帧"}`,
+            { x: originX, y: originY + shot.index * 420 },
+            {
+              role: "克隆镜头",
+              status: "completed",
+              statusLabel: `克隆镜头 ${shot.index + 1}`,
+              autoFit: true,
+              ...(isVideo ? { videoInputModeAuto: false } : {}),
+            },
+          );
+          created.push(node);
+          primaryIds.set(shot.index, node.id);
+          edges.push({ source: node.id, role: isVideo ? "video" : "reference-image", order: order++ });
+        }
+        if (shot.audioUrl) {
+          const audioNode = createMedia(
+            "audio",
+            String(shot.audioUrl),
+            `配音 ${shot.index + 1}`,
+            { x: originX + 560, y: originY + shot.index * 200 },
+            { role: "克隆配音", status: "completed", statusLabel: `配音 ${shot.index + 1}` },
+          );
+          created.push(audioNode);
+          audioIds.set(shot.index, audioNode.id);
+          edges.push({ source: audioNode.id, role: "audio", order: order++ });
+        }
+      }
+      const editorDraft = createVideoEditorNode({ x: originX + 1180, y: originY });
+      const clips: CanvasVideoEditorClip[] = [];
+      for (const clip of job.timeline.clips) {
+        const match = /^clone-(video|audio|caption)-(\d+)$/.exec(clip.id);
+        if (!match) continue;
+        const track = match[1];
+        const index = Number(match[2]);
+        const sourceNodeId = track === "audio" ? audioIds.get(index) : track === "video" ? primaryIds.get(index) : undefined;
+        if (track !== "caption" && !sourceNodeId) continue;
+        clips.push({
+          ...clip,
+          id: `${editorDraft.id}-${track}-${index}`,
+          ...(sourceNodeId ? { sourceNodeId } : {}),
+        });
+      }
+      const editorNode: CanvasNode = {
+        ...editorDraft,
+        data: {
+          ...editorDraft.data,
+          // 用户的一句话要求可以很长，节点标题只留开头，免得在画布上撑成一整行。
+          name: `克隆成片 · ${(job.options.brief || job.reference.name || "未命名").slice(0, 24)}`,
+          status: "idle",
+          statusLabel: `${clips.filter((clip) => clip.track === "video").length} 个镜头 · ${Math.round(job.timeline.duration)} 秒`,
+          videoEditor: normalizeVideoEditorState({
+            version: 1,
+            projectDuration: job.timeline.duration,
+            fps: job.timeline.fps || 30,
+            aspect: job.timeline.aspect,
+            resolution: "1080p",
+            clips,
+            mutedTracks: [],
+            disabledTracks: [],
+          }),
+        },
+      };
+      commit((value) => {
+        let next: CanvasDocument = { ...value, nodes: [...value.nodes, ...created, editorNode] };
+        for (const edge of edges) {
+          next = addEdge(next, edge.source, editorNode.id, "right", "left", "reference", edge.role, edge.order);
+        }
+        return syncCanvasVideoEditorReferences(next);
+      });
+      setSelectedIds(new Set([editorNode.id]));
+      setSelectedGroupId(null);
+      setContextMenu(null);
+      notify(`已放入 ${clips.filter((clip) => clip.track === "video").length} 个镜头与成片节点`, "ok");
+    },
+    [commit, notify, screenToWorld, stageSize.height, stageSize.width],
+  );
+
   if (!ready)
     return (
       <section className="canvas-workspace canvas-loading">
@@ -14688,6 +14876,22 @@ export default function SuperCanvas() {
               <small>点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消</small>
             </div>
           </div>
+        )}
+        {cloneTask && (
+          <button
+            type="button"
+            className="canvas-status-chip canvas-clone-chip"
+            title={`克隆出片进行中：${cloneTask.message || "生成中"}，点击查看进度`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setCloneDialogOpen(true);
+            }}
+          >
+            <span aria-hidden="true" />
+            <b>克隆出片</b>
+            <small>{cloneTask.message || "生成中"}</small>
+            <em>{Math.round(Math.max(0, Math.min(1, cloneTask.progress)) * 100)}%</em>
+          </button>
         )}
         <div className="canvas-grid" />
         {snapGuides.length > 0 && (
@@ -15782,6 +15986,20 @@ export default function SuperCanvas() {
           onBusyChange={setAgentDockBusy}
           onPreviewImages={(images, index) => setAgentDockPreview({ images, index })}
         />
+        {cloneDialogOpen && createPortal(
+          <CanvasCloneDialog
+            references={cloneReferences}
+            models={runtime?.models || []}
+            defaultProviderId={runtime?.settings.defaultProviderId || null}
+            defaultProviderName={runtime?.providers.find((provider) => provider.id === runtime?.settings.defaultProviderId)?.name}
+            preselectedReferenceId={preselectedCloneReferenceId}
+            notify={notify}
+            onImportReference={() => openFilePicker(screenToWorld(stageSize.width / 2, stageSize.height / 2))}
+            onClose={() => setCloneDialogOpen(false)}
+            onApply={(job) => applyCloneJob(job)}
+          />,
+          window.document.body,
+        )}
         {contextGroup && contextMenu?.menu === "group" && contextMenu.groupId ? (
           <CanvasGroupContextMenu
             group={contextGroup}
@@ -15855,6 +16073,21 @@ export default function SuperCanvas() {
                 <span className="canvas-menu-copy">
                   <b>视频编辑节点</b>
                   <small>多轨剪辑、裁剪、分割和字幕</small>
+                </span>
+                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-menu-item canvas-menu-item-clone"
+                onClick={() => {
+                  setContextMenu(null);
+                  setCloneDialogOpen(true);
+                }}
+              >
+                <span className="canvas-menu-icon" aria-hidden="true">✦</span>
+                <span className="canvas-menu-copy">
+                  <b>克隆出片</b>
+                  <small>拆解参考视频节奏，重新生成整片</small>
                 </span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
@@ -19723,6 +19956,9 @@ function CanvasNodeCard({
       : [];
   const [mentionState, setMentionState] = useState<MentionState>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // 媒体文件被删/不在媒体库时给出可见提示，而不是留一片空白或只剩播放按钮。
+  const [mediaUnavailable, setMediaUnavailable] = useState(false);
+  const [mediaRetryKey, setMediaRetryKey] = useState(0);
   const [videoPlaybackState, setVideoPlaybackState] = useState<
     "paused" | "playing" | "ended"
   >("paused");
@@ -19743,6 +19979,7 @@ function CanvasNodeCard({
       } catch {}
     }
     setVideoPlaybackState("paused");
+    setMediaUnavailable(false);
   }, [data.url, videoClip?.startTime]);
 
   useEffect(() => {
@@ -19891,14 +20128,34 @@ function CanvasNodeCard({
                 <b>{data.kind === "video" ? "空视频节点" : data.kind === "audio" ? "空音频节点" : "空图片节点"}</b>
                  <small>{data.kind === "audio" ? "等待导入音频" : "选中后在下方生成"}</small>
               </div>
+            ) : mediaUnavailable ? (
+              <div className="canvas-media-state missing">
+                <span>!</span>
+                <b>素材文件已丢失</b>
+                <small>文件不在媒体库中，可重新生成或上传替换</small>
+                <button
+                  type="button"
+                  className="canvas-media-retry"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMediaUnavailable(false);
+                    setMediaRetryKey((value) => value + 1);
+                  }}
+                >
+                  重试加载
+                </button>
+              </div>
             ) : data.kind === "video" ? (
               <video
+                key={mediaRetryKey}
                 ref={videoRef}
                 src={data.url}
                 muted={videoClip ? videoClip.muted : true}
                 playsInline
                 preload="metadata"
                 draggable={false}
+                onError={() => setMediaUnavailable(true)}
                 style={videoClip ? { objectFit: videoClip.fit, transform: `translate(${(videoClip.x || 0) * 50}%, ${(videoClip.y || 0) * 50}%) scale(${videoClip.scale || 1})`, opacity: videoClip.opacity ?? 1, transformOrigin: "center center" } : undefined}
                 aria-label={`视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
                 onPlay={() => setVideoPlaybackState("playing")}
@@ -19943,9 +20200,11 @@ function CanvasNodeCard({
               </div>
             ) : (
               <img
+                key={mediaRetryKey}
                 src={data.url}
                 alt={data.name || "画布素材"}
                 draggable={false}
+                onError={() => setMediaUnavailable(true)}
                 onLoad={(event) =>
                   onNaturalSize(
                     node.id,
@@ -19955,7 +20214,7 @@ function CanvasNodeCard({
                 }
               />
             )}
-            {data.kind === "video" && data.url && (
+            {data.kind === "video" && data.url && !mediaUnavailable && (
               <button
                 type="button"
                 className={`canvas-video-play${videoIsPlaying ? " is-playing" : ""}${videoHasEnded ? " is-ended" : ""}`}

@@ -693,7 +693,7 @@ export async function generateCanvasUpscale(input: {
 
 export async function getCanvasUpscaleTask(taskId: string) {
   return request<{
-    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed"; error?: string; errorCode?: string; sourceImageId?: string };
+    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed" | "cancelled"; error?: string; errorCode?: string; sourceImageId?: string };
     images: Array<{ url: string; revisedPrompt?: string }>;
     model?: { id?: string; name?: string; provider?: string };
   }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: "no-store" });
@@ -715,6 +715,7 @@ export async function generateCanvasAgent(
     deliverable?: AgentDeliverable;
     intentReason?: string;
     intentText?: string;
+    runId?: string;
     signal?: AbortSignal;
   },
   onEvent?: (event: CanvasAgentStreamEvent) => void,
@@ -754,6 +755,7 @@ export async function generateCanvasAgent(
         ...(input.deliverable ? { deliverable: input.deliverable } : {}),
         ...(input.intentReason ? { intentReason: input.intentReason } : {}),
         ...(input.intentText ? { intentText: input.intentText } : {}),
+        ...(input.runId ? { runId: input.runId } : {}),
       },
       { signal: controller.signal, onEvent },
     );

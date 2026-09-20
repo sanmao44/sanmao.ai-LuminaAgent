@@ -700,3 +700,48 @@ test("storing a reply as a node brings it into view", () => {
   assert.match(dockText, /fitView\(\[node\.id\]\);/);
   assert.match(dockText, /^\s*fitView,$/m);
 });
+
+test("a waiting approval on the canvas gets the same confirm card as the main chat", () => {
+  // 画布里的危险外部操作以前只有一句说明，没有「允许 / 拒绝」；现在复用主对话的确认卡。
+  assert.match(component, /import AgentApprovalCard, \{ type AgentApprovalOutcome \} from "@\/components\/AgentApprovalCard";/);
+  assert.match(component, /approval\?: AgentApproval;/);
+  assert.match(component, /approvalResult\?: string;/);
+  assert.match(component, /mcpTools\?: AgentMcpToolUse\[\];/);
+  assert.match(component, /const approval = readStoredApproval\(response\.approval\);/);
+  assert.match(component, /if \(approval && !openRef\.current\) notify\(/);
+  assert.match(component, /\{message\.approval \? \(\s*<AgentApprovalCard\s+approval=\{message\.approval\}\s+onResolved=\{\(outcome\) => resolveMessageApproval\(message\.id, outcome\)\}\s+\/>/);
+  assert.match(component, /<div className="message-approval-result">\{message\.approvalResult\}<\/div>/);
+  // 处理过的确认卡不再留按钮，结果跟着消息走。
+  assert.match(component, /delete next\.approval;/);
+  assert.match(component, /next\.mcpTools = \[\.\.\.\(item\.mcpTools \|\| \[\]\), \.\.\.outcome\.mcpTools\];/);
+});
+
+test("a stored canvas session restores approvals and tool badges without trusting bad data", () => {
+  assert.match(component, /function readStoredApproval\(value: unknown\): AgentApproval \| undefined \{/);
+  assert.match(component, /function readStoredMcpTools\(value: unknown\): AgentMcpToolUse\[\] \{/);
+  assert.match(component, /\.\.\.readStoredMessageExtras\(message\),/);
+  assert.match(component, /if \(!value \|\| typeof value !== "object"\) return undefined;/);
+});
+
+test("canvas replies name the external tools they actually used", () => {
+  assert.match(component, /canvas-agent-dock-mcp/);
+  assert.ok(component.includes("外部工具 · ${tool.server} · ${tool.name}"));
+  assert.match(styles, /\.canvas-agent-dock-mcp span\{/);
+});
+
+test("canvas artifacts keep download and preview entry points", () => {
+  // 以前画布助手把 response.files 丢了：生成的 Word / Excel / PPT 在面板里既看不见也拿不到。
+  assert.match(component, /import type \{ AgentApproval, AgentApprovalCall, AgentGeneratedFile, AgentMcpToolUse \} from "@\/lib\/agent-client";/);
+  assert.match(component, /files\?: AgentGeneratedFile\[\];/);
+  assert.match(component, /function readStoredFiles\(value: unknown\): AgentGeneratedFile\[\] \{/);
+  assert.match(component, /const files = readStoredFiles\(response\.files\);/);
+  assert.match(component, /const files = readStoredFiles\(source\.files\);/, "刷新后产物卡片要跟着会话回来");
+  assert.match(component, /\.\.\.\(files\.length \? \{ files \} : \{\}\),/);
+  assert.match(component, /className="canvas-agent-dock-files"/);
+  assert.match(component, /formatAgentFileSize\(file\.size\)/);
+  assert.match(component, /onClick=\{\(\) => openCanvasAgentDockFile\(file, notify\)\}/);
+  assert.match(component, /\/api\/artifacts\/\$\{encodeURIComponent\(id\)\}\?preview=1&theme=\$\{theme\}/);
+  assert.match(component, /async function downloadCanvasAgentDockFile\(file: AgentGeneratedFile\) \{/);
+  assert.match(styles, /\.canvas-agent-dock-files\{/);
+  assert.match(styles, /\.canvas-agent-dock-file-actions button\{/);
+});

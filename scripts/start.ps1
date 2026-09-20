@@ -92,6 +92,271 @@ function Get-SanmaoSha256([string]$Path) {
     $sha256.Dispose()
   }
 }
+function Get-SanmaoDependencyFingerprint {
+  # package-lock.json carries the app version in its root entry, so every release
+  # rewrote it and forced a full node_modules wipe even when no dependency moved.
+  # Hash the declared dependency specifiers instead.
+  $packageJsonPath = Join-Path $root 'package.json'
+  if (-not (Test-Path -LiteralPath $packageJsonPath -PathType Leaf)) { return '' }
+  try {
+    $package = Get-Content -LiteralPath $packageJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json
+  } catch {
+    return ''
+  }
+  $entries = [System.Collections.Generic.List[string]]::new()
+  foreach ($section in @('dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies')) {
+    $dependencies = $package.$section
+    if ($null -eq $dependencies) { continue }
+    # Sort ordinal (not culture aware) so the fingerprint stays identical across
+    # machines, and matches the ordering Node uses for the same package.json.
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($property in $dependencies.PSObject.Properties) { $names.Add($property.Name) }
+    $names.Sort([System.StringComparer]::Ordinal)
+    foreach ($name in $names) {
+      [void]$entries.Add(('{0}/{1}@{2}' -f $section, $name, [string]$dependencies.$name))
+    }
+  }
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $payload = [System.Text.Encoding]::UTF8.GetBytes(($entries -join "`n"))
+    return ([System.BitConverter]::ToString($sha256.ComputeHash($payload))).Replace('-', '')
+  } finally {
+    $sha256.Dispose()
+  }
+}
+
+function Test-SanmaoFfmpegBinary([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  $previousPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $Path -version 1>$null 2>$null
+    return $LASTEXITCODE -eq 0
+  } catch {
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+}
+
+function Get-SanmaoFfmpegAsset {
+  # Mirrors ffmpeg-static's own resolution (release tag, base name, override URL)
+  # so the launcher fetches exactly the archive the package expects.
+  $releaseTag = 'b6.0'
+  $executableBaseName = 'ffmpeg'
+  $binariesBaseUrl = 'https://github.com/eugeneware/ffmpeg-static/releases/download'
+  # GitHub Release 在国内网络经常连接超时；主地址失败后自动改用公共镜像。
+  $fallbackBaseUrl = 'https://registry.npmmirror.com/-/binary/ffmpeg-static'
+  $customBaseUrl = ''
+  $packageJsonPath = Join-Path $root 'node_modules\ffmpeg-static\package.json'
+  if (Test-Path -LiteralPath $packageJsonPath -PathType Leaf) {
+    try {
+      $config = (Get-Content -LiteralPath $packageJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json).'ffmpeg-static'
+      if ($config) {
+        if ($config.'binary-release-tag') { $releaseTag = [string]$config.'binary-release-tag' }
+        if ($config.'executable-base-name') { $executableBaseName = [string]$config.'executable-base-name' }
+        $urlEnvName = [string]$config.'binaries-url-env-var'
+        if ($urlEnvName) {
+          $urlEnvItem = Get-Item -LiteralPath "env:$urlEnvName" -ErrorAction SilentlyContinue
+          if ($urlEnvItem -and $urlEnvItem.Value) { $customBaseUrl = [string]$urlEnvItem.Value }
+        }
+      }
+    } catch {}
+  }
+  $architecture = switch ($env:PROCESSOR_ARCHITECTURE) {
+    'ARM64' { 'arm64' }
+    'x86' { 'ia32' }
+    default { 'x64' }
+  }
+  $fileName = '{0}-win32-{1}.gz' -f $executableBaseName, $architecture
+  if ($customBaseUrl) {
+    # 用户显式指定了下载源，就只用它，不再回退到其他公共源。
+    $binariesBaseUrl = $customBaseUrl
+    $fallbackBaseUrl = ''
+  }
+  $urls = [System.Collections.Generic.List[string]]::new()
+  foreach ($baseUrl in @($binariesBaseUrl, $fallbackBaseUrl)) {
+    if ($baseUrl) { $urls.Add(('{0}/{1}/{2}' -f $baseUrl.TrimEnd('/'), $releaseTag, $fileName)) }
+  }
+  return [pscustomobject]@{
+    Release = $releaseTag
+    FileName = $fileName
+    Urls = $urls.ToArray()
+  }
+}
+
+function Get-SanmaoFileSize([string]$Path) {
+  if (Test-Path -LiteralPath $Path -PathType Leaf) { return [long](Get-Item -LiteralPath $Path).Length }
+  return 0
+}
+
+function Get-SanmaoFfmpegArchivePath([object]$Asset) {
+  return Join-Path $env:TEMP ('sanmao-{0}-{1}' -f $Asset.Release, $Asset.FileName)
+}
+
+function New-SanmaoFfmpegRequest([object]$Asset, [string]$Url) {
+  $request = [System.Net.HttpWebRequest]::Create($Url)
+  $proxyUrl = $env:HTTPS_PROXY
+  if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+  if ($proxyUrl) {
+    if ($proxyUrl -notmatch '^[a-z]+://') { $proxyUrl = 'http://' + $proxyUrl }
+    $request.Proxy = New-Object System.Net.WebProxy($proxyUrl)
+  } else {
+    $request.Proxy = [System.Net.WebRequest]::DefaultWebProxy
+  }
+  # 连接/读取都设上限，主地址不通时尽快让出位置给备用镜像。
+  $request.Timeout = 15000
+  $request.ReadWriteTimeout = 45000
+  return $request
+}
+
+function Test-SanmaoFfmpegArchiveComplete([object]$Asset, [string]$ArchivePath) {
+  $cachedSize = Get-SanmaoFileSize $ArchivePath
+  if ($cachedSize -le 0) { return $false }
+  foreach ($url in $Asset.Urls) {
+    try {
+      $request = New-SanmaoFfmpegRequest -Asset $Asset -Url $url
+      $request.Method = 'HEAD'
+      $response = $request.GetResponse()
+      try {
+        if ([long]$response.ContentLength -eq $cachedSize) { return $true }
+      } finally {
+        $response.Dispose()
+      }
+    } catch {
+    }
+  }
+  return $false
+}
+
+function Add-SanmaoFfmpegArchive([object]$Asset, [string]$Url, [string]$ArchivePath, [switch]$IsLastSource) {
+  # Download the rest of the archive, resuming from the bytes already on disk.
+  # Unstable links (a dropped proxy stream) then cost seconds instead of the
+  # whole 29 MB again. The caller already ruled out a complete local archive.
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $downloaded = Get-SanmaoFileSize $ArchivePath
+    try {
+      $request = New-SanmaoFfmpegRequest -Asset $Asset -Url $Url
+      if ($downloaded -gt 0) { $request.AddRange([long]$downloaded) }
+      $response = $request.GetResponse()
+      try {
+        $resume = ($downloaded -gt 0) -and ([int]$response.StatusCode -eq 206)
+        if (-not $resume) { $downloaded = 0 }
+        $expectedTotal = $downloaded + [long]$response.ContentLength
+        $mode = if ($resume) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
+        $input = $response.GetResponseStream()
+        try {
+          $output = [System.IO.File]::Open($ArchivePath, $mode, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+          try {
+            $buffer = New-Object byte[] 262144
+            $written = $downloaded
+            $lastReport = Get-Date
+            while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+              $output.Write($buffer, 0, $read)
+              $written += $read
+              if (((Get-Date) - $lastReport).TotalSeconds -ge 2) {
+                $lastReport = Get-Date
+                Write-Host -NoNewline ("`r  已下载 {0:N1}/{1:N1} MB   " -f ($written / 1MB), ($expectedTotal / 1MB))
+              }
+            }
+          } finally {
+            $output.Dispose()
+          }
+        } finally {
+          $input.Dispose()
+        }
+      } finally {
+        $response.Dispose()
+      }
+      Write-Host ''
+      if ((Get-SanmaoFileSize $ArchivePath) -ge $expectedTotal) { return $true }
+      Write-Host ('FFmpeg 组件下载未完成（{0:N1} MB），正在重试…' -f ((Get-SanmaoFileSize $ArchivePath) / 1MB)) -ForegroundColor Yellow
+    } catch {
+      Write-Host ''
+      $failed = $_.Exception
+      if ($failed.InnerException) { $failed = $failed.InnerException }
+      # 416 means the local archive is already at least as long as the remote one,
+      # so let the caller try to decompress it instead of downloading it again.
+      if ($failed -is [System.Net.WebException] -and $failed.Response -and [int]$failed.Response.StatusCode -eq 416) { return $true }
+      Write-Host ('FFmpeg 组件下载中断：{0}' -f $failed.Message) -ForegroundColor Yellow
+      if ((-not $IsLastSource) -and ((Get-SanmaoFileSize $ArchivePath) -le 0)) {
+        # 完全连不上的下载源重试没有意义，直接交给下一个候选地址。
+        break
+      }
+    }
+  }
+  return $false
+}
+
+function Save-SanmaoFfmpegArchive([object]$Asset, [string]$ArchivePath) {
+  # 本地已有完整归档就直接复用，不再请求网络。
+  if (Test-SanmaoFfmpegArchiveComplete -Asset $Asset -ArchivePath $ArchivePath) { return $true }
+  # 依次尝试主地址和备用镜像；两个源是同一份 release 资产，切换时重新下载，
+  # 避免把不同来源的字节拼在同一个归档里。
+  $urls = @($Asset.Urls)
+  for ($index = 0; $index -lt $urls.Count; $index++) {
+    $url = $urls[$index]
+    if ($index -gt 0) {
+      Write-Host ('主下载地址不可用，改用备用镜像 {0} 继续。' -f ([uri]$url).Host) -ForegroundColor Yellow
+      Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+    }
+    if (Add-SanmaoFfmpegArchive -Asset $Asset -Url $url -ArchivePath $ArchivePath -IsLastSource:($index -eq ($urls.Count - 1))) { return $true }
+  }
+  return $false
+}
+
+function Install-SanmaoFfmpegBinary([string]$TargetPath) {
+  # ffmpeg-static's own installer streams the archive through a pipeline that is
+  # far slower than a plain request on some networks. Fetch the archive here and
+  # decompress it, so npm skips its download because the binary already exists.
+  $asset = Get-SanmaoFfmpegAsset
+  $targetDirectory = Split-Path -Parent $TargetPath
+  if (-not (Test-Path -LiteralPath $targetDirectory)) { New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null }
+  $archivePath = Get-SanmaoFfmpegArchivePath $asset
+  Write-Host ('正在获取 FFmpeg 组件（{0}，约 29 MB）…' -f $asset.Release) -ForegroundColor Yellow
+  if (-not (Save-SanmaoFfmpegArchive -Asset $asset -ArchivePath $archivePath)) { return $false }
+  # Keep a .exe extension on the temporary file: PowerShell only executes files
+  # it recognizes, so validation would silently pass/fail on any other extension.
+  $executableName = [System.IO.Path]::GetFileNameWithoutExtension($TargetPath)
+  Get-ChildItem -LiteralPath $targetDirectory -Filter ('{0}.partial-*.exe' -f $executableName) -File -Force -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+  $temporaryPath = Join-Path $targetDirectory ('{0}.partial-{1}.exe' -f $executableName, $PID)
+  $startedAt = Get-Date
+  Write-Host '正在解压 FFmpeg 组件…' -ForegroundColor Yellow
+  try {
+    $archiveStream = [System.IO.File]::OpenRead($archivePath)
+    try {
+      $gzip = New-Object System.IO.Compression.GZipStream($archiveStream, [System.IO.Compression.CompressionMode]::Decompress)
+      try {
+        $output = [System.IO.File]::Create($temporaryPath)
+        try {
+          $gzip.CopyTo($output)
+        } finally {
+          $output.Dispose()
+        }
+      } finally {
+        $gzip.Dispose()
+      }
+    } finally {
+      $archiveStream.Dispose()
+    }
+  } catch {
+    Write-Host ('FFmpeg 组件解压失败：{0}' -f $_.Exception.Message) -ForegroundColor Yellow
+    Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  if (-not (Test-SanmaoFfmpegBinary $temporaryPath)) {
+    Write-Host 'FFmpeg 组件安装结果不可用，改用 npm 自带方式安装。' -ForegroundColor Yellow
+    Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  Move-Item -LiteralPath $temporaryPath -Destination $TargetPath -Force
+  Write-Host ('FFmpeg 已就绪（用时 {0:N0} 秒）。' -f ((Get-Date) - $startedAt).TotalSeconds) -ForegroundColor Green
+  return $true
+}
+
 
 function Get-SanmaoSourceFingerprint {
   $files = @()
@@ -427,6 +692,133 @@ function Write-Step([string]$text) {
   Write-Host ""
   Write-Host "==> $text" -ForegroundColor Cyan
 }
+# 首次安装依赖时官方 npm 源在国内网络下常常只有几十 KB/s（首次要下载约 800 MB），
+# 用户会以为程序卡住了。这里做一次很短的探测，官方源慢就整体切到国内镜像；依赖仍由
+# package-lock.json 校验完整性。可用 SANMAO_NO_MIRROR=1 完全禁用镜像，用
+# SANMAO_NPM_REGISTRY 指定自定义源。
+function Test-SanmaoRemoteSourceFast([string]$Url, [double]$TimeoutSeconds) {
+  try {
+    $request = [System.Net.HttpWebRequest]::Create($Url)
+    $proxyUrl = $env:HTTPS_PROXY
+    if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+    if ($proxyUrl) {
+      if ($proxyUrl -notmatch '^[a-z]+://') { $proxyUrl = 'http://' + $proxyUrl }
+      $request.Proxy = New-Object System.Net.WebProxy($proxyUrl)
+    } else {
+      $request.Proxy = [System.Net.WebRequest]::DefaultWebProxy
+    }
+    $request.Method = 'HEAD'
+    $request.Timeout = [int]($TimeoutSeconds * 1000)
+    $request.AllowAutoRedirect = $true
+    $request.UserAgent = 'SANMAO.AI-Launcher'
+    $response = $request.GetResponse()
+    $response.Close()
+    return $true
+  } catch [System.Net.WebException] {
+    # 能拿到响应（例如 404）说明网络本身是通的，只是路径不同。
+    if ($_.Exception.Response) { return $true }
+    return $false
+  } catch { return $false }
+}
+
+function Get-SanmaoNpmRegistry {
+  # 返回空字符串表示继续使用 npm 自身的默认源。
+  if ($env:SANMAO_NO_MIRROR -eq '1') { return '' }
+  if ($env:SANMAO_NPM_REGISTRY) { return $env:SANMAO_NPM_REGISTRY }
+  if (Test-SanmaoRemoteSourceFast 'https://registry.npmjs.org/-/ping' 1.2) { return '' }
+  Write-Host '官方 npm 源响应很慢，本次改用国内镜像 registry.npmmirror.com 下载依赖。' -ForegroundColor Yellow
+  Write-Host '依赖仍按 package-lock.json 校验完整性；如需只用官方源，可先设置环境变量 SANMAO_NO_MIRROR=1。' -ForegroundColor DarkGray
+  return 'https://registry.npmmirror.com'
+}
+function Format-SanmaoDuration([TimeSpan]$Span) {
+  if ($Span.TotalHours -ge 1) { return ('{0} 小时 {1} 分' -f [int]$Span.TotalHours, $Span.Minutes) }
+  if ($Span.TotalMinutes -ge 1) { return ('{0} 分 {1} 秒' -f [int]$Span.TotalMinutes, $Span.Seconds) }
+  return ('{0} 秒' -f [int]$Span.TotalSeconds)
+}
+
+function Get-SanmaoFolderSizeMB([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return 0 }
+  try {
+    $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    if (-not $sum) { return 0 }
+    return [int][math]::Round($sum / 1MB)
+  } catch { return 0 }
+}
+
+function Read-SanmaoLogLines([string]$Path, [int]$Tail = 0) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+  try {
+    # 子进程还在写这个日志，必须用共享读方式打开，否则会报“文件被占用”。
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      $reader = New-Object System.IO.StreamReader($stream)
+      $rawText = $reader.ReadToEnd()
+    } finally { $stream.Dispose() }
+  } catch { return @() }
+  $result = @($rawText -split "\r?\n" | Where-Object { $_.Trim() })
+  if ($Tail -gt 0 -and $result.Count -gt $Tail) { $result = $result[($result.Count - $Tail)..($result.Count - 1)] }
+  return $result
+}
+
+function Format-SanmaoLogLine([string]$Line, [int]$MaxLength = 64) {
+  $clean = ($Line -replace ([string][char]27 + '\[[0-9;?]*[a-zA-Z]'), '').Trim()
+  if ($clean.Length -gt $MaxLength) { $clean = $clean.Substring(0, $MaxLength) + '…' }
+  return $clean
+}
+
+function Show-SanmaoLogTail([string]$Path, [int]$TailLines = 20) {
+  $tail = @(Read-SanmaoLogLines -Path $Path -Tail $TailLines)
+  if ($tail.Count -eq 0) { return }
+  Write-Host ''
+  Write-Host "最后几行输出（完整日志：$Path）：" -ForegroundColor Yellow
+  foreach ($line in $tail) { Write-Host ('   ' + (Format-SanmaoLogLine $line -MaxLength 200)) -ForegroundColor DarkGray }
+}
+# 进度提示：长耗时步骤（npm 安装等）在后台执行并把输出写进日志，前台每隔几秒打印
+# “已用时间 + 目录体积 + 最近一行输出”，让用户能确认程序仍在下载，而不是卡死。
+# 这些步骤没有 TTY，npm 自己不打印进度，所以必须由启动器心跳兜底。
+function Invoke-SanmaoProgressStep {
+  param(
+    [Parameter(Mandatory)][string]$CommandLine,
+    [Parameter(Mandatory)][string]$LogPath,
+    [string]$SizePath = '',
+    [string]$SizeLabel = '已写入',
+    [string]$QuietHint = '',
+    [int]$IntervalSeconds = 8
+  )
+
+  $logDir = Split-Path -Parent $LogPath
+  if ($logDir) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+  Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+
+  $comSpec = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $comSpec
+  $startInfo.Arguments = '/d /s /c "' + $CommandLine + ' > "' + $LogPath + '" 2>&1"'
+  $startInfo.WorkingDirectory = $root
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  [void]$process.Start()
+
+  $started = Get-Date
+  $ticks = 0
+  while (-not $process.HasExited) {
+    Start-Sleep -Seconds $IntervalSeconds
+    $process.Refresh()
+    if ($process.HasExited) { break }
+    $ticks++
+    $message = '   已用 ' + (Format-SanmaoDuration ((Get-Date) - $started))
+    if ($SizePath) { $message += ' ｜ ' + $SizeLabel + ' ' + (Get-SanmaoFolderSizeMB $SizePath) + ' MB' }
+    $logLines = @(Read-SanmaoLogLines -Path $LogPath)
+    if ($logLines.Count -gt 0) { $message += ' ｜ ' + (Format-SanmaoLogLine $logLines[-1]) }
+    Write-Host $message -ForegroundColor DarkGray
+    if ($QuietHint -and ($ticks % 8) -eq 0) { Write-Host ('   提示：' + $QuietHint) -ForegroundColor DarkGray }
+  }
+  $process.WaitForExit()
+  return $process.ExitCode
+}
 function Stop-StartedServer {
   if ($script:serverProcess -and -not $script:serverProcess.HasExited) {
     Stop-Process -Id $script:serverProcess.Id -Force -ErrorAction SilentlyContinue
@@ -672,38 +1064,79 @@ if ($SkipBuild.IsPresent) {
   $nodeTypesExists = Test-Path '.\node_modules\@types\node\package.json'
   $reactTypesExists = Test-Path '.\node_modules\@types\react\package.json'
   $reactDomTypesExists = Test-Path '.\node_modules\@types\react-dom\package.json'
-  $ffmpegExists = Test-Path '.\node_modules\ffmpeg-static\ffmpeg.exe'
-  $packageLockHashPath = '.\node_modules\.sanmao-package-lock.sha256'
-  $packageLockChanged = $false
-  if (Test-Path '.\package-lock.json') {
-    if (-not (Test-Path $packageLockHashPath)) {
-      $packageLockChanged = $true
-    } else {
-      try {
-        $expectedLockHash = Get-SanmaoSha256 '.\package-lock.json'
-        $installedLockHash = (Get-Content -LiteralPath $packageLockHashPath -Raw -ErrorAction Stop).Trim()
-        $packageLockChanged = $expectedLockHash -ne $installedLockHash
-      } catch {
-        $packageLockChanged = $true
-      }
-    }
+  $ffmpegBinaryPath = Join-Path $root 'node_modules\ffmpeg-static\ffmpeg.exe'
+  $ffmpegExists = Test-Path -LiteralPath $ffmpegBinaryPath
+  $depsMarkerPath = '.\node_modules\.sanmao-deps.sha256'
+  $installedDepsFingerprint = ''
+  if (Test-Path -LiteralPath $depsMarkerPath) {
+    try { $installedDepsFingerprint = (Get-Content -LiteralPath $depsMarkerPath -Raw -ErrorAction Stop).Trim() } catch { $installedDepsFingerprint = '' }
   }
-  if (($installedNext -ne $requiredNext) -or (-not $nextCmdExists) -or (-not $typescriptExists) -or (-not $nodeTypesExists) -or (-not $reactTypesExists) -or (-not $reactDomTypesExists) -or (-not $ffmpegExists) -or $packageLockChanged) {
-    Write-Host '首次运行或依赖不完整，正在执行 npm install。这个过程通常需要 1～5 分钟。' -ForegroundColor Yellow
+  # Only a real dependency change needs an install. Every release rewrites
+  # package-lock.json (its root entry carries the app version), so comparing the
+  # lock file used to trigger a full node_modules wipe for version-only bumps.
+  $depsFingerprint = Get-SanmaoDependencyFingerprint
+  $dependenciesReady = ($installedNext -eq $requiredNext) -and $nextCmdExists -and $typescriptExists -and $nodeTypesExists -and $reactTypesExists -and $reactDomTypesExists -and $ffmpegExists
+  $dependenciesChanged = (-not $depsFingerprint) -or ($installedDepsFingerprint -ne $depsFingerprint)
+  if ((-not $dependenciesReady) -or $dependenciesChanged) {
+    if ($dependenciesReady) {
+      Write-Host '依赖清单有变化，正在增量同步依赖（保留已安装文件，优先使用本地缓存）。' -ForegroundColor Yellow
+    } else {
+      Write-Host '首次运行或依赖不完整，正在安装依赖。' -ForegroundColor Yellow
+      Write-Host '首次要下载约 800 MB 依赖（其中 FFmpeg 约 29 MB），网速较慢时可能要十几分钟甚至更久。' -ForegroundColor Yellow
+      Write-Host '安装期间会持续显示进度；下载阶段没有输出属正常现象，请不要关闭窗口。' -ForegroundColor Yellow
+    }
     foreach ($repairPort in $portRange) {
       if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
     }
     Start-Sleep -Milliseconds 500
-    if (Test-Path '.\package-lock.json') { & npm ci --include=dev --no-audit --no-fund } else { & npm install --include=dev --no-audit --no-fund }
-    if ($LASTEXITCODE -ne 0) {
+    $npmOptions = @('--include=dev', '--no-audit', '--no-fund', '--prefer-offline')
+    $npmOptionArgs = $npmOptions -join ' '
+    $npmLogPath = Join-Path $root '.data\logs\npm-install.log'
+    $npmMirrorLogPath = Join-Path $root '.data\logs\npm-install-mirror.log'
+    $npmSizePath = Join-Path $root 'node_modules'
+    $npmSizeLabel = '依赖目录'
+    $npmQuietHint = '依赖下载阶段通常没有输出，属正常现象；请保持窗口打开。'
+    Write-Host '正在检测下载源速度…' -ForegroundColor DarkGray
+    $npmRegistry = Get-SanmaoNpmRegistry
+    $npmRegistryArg = if ($npmRegistry) { ' --registry=' + $npmRegistry } else { '' }
+    $npmExit = 0
+    if ((-not (Test-Path -LiteralPath '.\node_modules')) -and (Test-Path -LiteralPath '.\package-lock.json')) {
+      # Clean install: add the packages without running their install scripts,
+      # place the FFmpeg binary ourselves, then run the deferred scripts. npm's
+      # own FFmpeg downloader is an order of magnitude slower on some networks.
+      # In a redirected, non-TTY process npm prints nothing while downloading, so
+      # the launcher heartbeat below is the only progress the user can see.
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm ci' + $npmRegistryArg + ' ' + $npmOptionArgs + ' --ignore-scripts') -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+      if ($npmExit -eq 0) {
+        [void](Install-SanmaoFfmpegBinary -TargetPath $ffmpegBinaryPath)
+        $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm rebuild --no-audit --no-fund' + $npmRegistryArg) -LogPath $npmLogPath -SizePath '' -SizeLabel '' -QuietHint ''
+      }
+    } else {
+      # Reconcile the existing tree instead of wiping it: npm ci deletes
+      # node_modules, which also threw the downloaded FFmpeg binary away.
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm install' + $npmRegistryArg + ' ' + $npmOptionArgs) -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+    }
+    if ($npmExit -ne 0 -and -not $npmRegistry -and $env:SANMAO_NO_MIRROR -ne '1') {
+      Write-Host '官方源安装失败，正在改用国内镜像重试。' -ForegroundColor Yellow
+      $npmLogPath = $npmMirrorLogPath
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm install ' + $npmOptionArgs + ' --registry=https://registry.npmmirror.com') -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+    }
+    if ($npmExit -ne 0) {
       Write-Host ''
       Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow
       Write-Host '你可以先在命令行运行：npm config get registry' -ForegroundColor Yellow
+      Show-SanmaoLogTail -Path $npmLogPath
       Fail '依赖安装失败，请检查网络后再次运行启动器。'
     }
-    if (Test-Path '.\package-lock.json') {
-      (Get-SanmaoSha256 '.\package-lock.json') | Set-Content -LiteralPath $packageLockHashPath -Encoding ASCII
+    if (-not (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
+      [void](Install-SanmaoFfmpegBinary -TargetPath $ffmpegBinaryPath)
     }
+    # Only record success once FFmpeg is usable, so an interrupted or incomplete
+    # install is retried (and repaired) on the next launch.
+    if ($depsFingerprint -and (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
+      $depsFingerprint | Set-Content -LiteralPath $depsMarkerPath -Encoding ASCII
+    }
+    Remove-Item -LiteralPath '.\node_modules\.sanmao-package-lock.sha256' -Force -ErrorAction SilentlyContinue
   } else {
     Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
   }
@@ -711,8 +1144,11 @@ if ($SkipBuild.IsPresent) {
   if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
     Fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
   }
-  if (-not (Test-Path '.\node_modules\ffmpeg-static\ffmpeg.exe')) {
+  if (-not (Test-Path -LiteralPath $ffmpegBinaryPath)) {
     Fail '依赖安装完成后仍找不到 FFmpeg。请删除 node_modules 文件夹后重新运行启动器。'
+  if (-not (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
+    Write-Host '警告：FFmpeg 组件不完整，视频裁剪/深度功能可能不可用；再次运行启动器会自动重装。' -ForegroundColor Yellow
+  }
   }
 }
 

@@ -1,7 +1,7 @@
 import { unlink } from 'node:fs/promises';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { findVideoTask, removeVideoTask } from '@/lib/video-task-store';
-import { refreshVideoTask, saveVideoTaskLocally } from '@/lib/video-task-service';
+import { cancelVideoTask, refreshVideoTask, retryVideoTask, saveVideoTaskLocally } from '@/lib/video-task-service';
 
 export const runtime = 'nodejs';
 
@@ -24,13 +24,29 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : '再次保存视频失败' }, { status: 400 }); }
 }
 
+/** 取消 / 重试长任务。取消只停止本地轮询；重试按原参数重新提交一条新任务。 */
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+  if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  const { id } = await context.params;
+  let action = '';
+  try { action = String((await request.json() as { action?: unknown })?.action || ''); } catch {}
+  if (action !== 'cancel' && action !== 'retry') return Response.json({ error: '不支持的操作。' }, { status: 400 });
+  try {
+    const task = action === 'cancel' ? await cancelVideoTask(id) : await retryVideoTask(id);
+    if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
+    return Response.json({ ok: true, task }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : '操作失败' }, { status: 400 });
+  }
+}
+
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const { id } = await context.params;
   const existing = await findVideoTask(id);
   if (!existing) return Response.json({ error: '视频任务不存在' }, { status: 404 });
   if (existing.status === 'pending' || existing.status === 'running') {
-    return Response.json({ error: '视频正在生成，完成或失败后才能删除。' }, { status: 409 });
+    return Response.json({ error: '视频正在生成，先取消任务再删除。' }, { status: 409 });
   }
 
   const task = await removeVideoTask(id);
