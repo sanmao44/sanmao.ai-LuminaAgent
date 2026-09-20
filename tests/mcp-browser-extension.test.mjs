@@ -33,6 +33,22 @@ test('从「打开方式」命令行里取出可执行文件：带引号和不�
   assert.equal(mcp.browserNameFromPath('C:\\x\\Tabbit Browser.exe'), 'Tabbit Browser');
 });
 
+test('Windows reg.exe 的中文代码页输出不会把默认浏览器路径解码成乱码', () => {
+  // reg.exe 在中文 Windows 上输出的「软件」是 GB18030 字节，不是 UTF-8。
+  const bytes = Uint8Array.from([0xc8, 0xed, 0xbc, 0xfe]);
+  assert.equal(mcp.decodeWindowsCommandOutput(bytes), '软件');
+});
+
+test('Windows 默认浏览器注册表支持 reg query 的 (Default) 前缀', () => {
+  const browser = 'E:\\软件\\Tabbit Browser\\Application\\Tabbit Browser.exe';
+  const detected = mcp.detectDefaultBrowserExecutable('win32', (file, args) => {
+    if (file !== 'reg.exe') return null;
+    if (args.includes('ProgId')) return '    ProgId    REG_SZ    TbBrHTM.TEST\r\n';
+    return `    (Default)    REG_SZ    "${browser}" --single-argument %1\r\n`;
+  });
+  assert.equal(detected, browser);
+});
+
 test('按安装位置认 profile，扩展装没装给的是确定结论', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-browser-profile-'));
   try {

@@ -48,9 +48,27 @@ export type McpBrowserExtensionBridge = {
 /** 执行外部命令：找不到命令、超时、非零退出都按「没有答案」处理，不抛。 */
 type CommandRunner = (file: string, args: readonly string[]) => string | null;
 
+/**
+ * Windows 的 reg.exe 会按当前系统代码页输出，而不是稳定的 UTF-8。
+ * 中文 Windows 常见的是 GBK/GB18030；如果这里强行用 UTF-8 解码，
+ * 默认浏览器路径中的中文会变成乱码，随后 existsSync 失败并错误回退到 Chrome。
+ */
+export function decodeWindowsCommandOutput(value: Uint8Array | string): string {
+  if (typeof value === 'string') return value;
+  if (!value.length) return '';
+  if (value[0] === 0xff && value[1] === 0xfe) return new TextDecoder('utf-16le').decode(value);
+  if (value[0] === 0xfe && value[1] === 0xff) return new TextDecoder('utf-16be').decode(value);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(value);
+  } catch {
+    return new TextDecoder('gb18030').decode(value);
+  }
+}
+
 const runCommand: CommandRunner = (file, args) => {
   try {
-    return execFileSync(file, [...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const output = execFileSync(file, [...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    return decodeWindowsCommandOutput(output);
   } catch {
     return null;
   }
@@ -98,6 +116,9 @@ function readWindowsDefaultBrowser(run: CommandRunner): string | null {
   const progId = /ProgId\s+REG_SZ\s+(.+)/.exec(choice || '')?.[1]?.trim();
   if (!progId) return null;
   const command = run('reg.exe', ['query', `HKCR\\${progId}\\shell\\open\\command`, '/ve']);
+  // `reg query ... /ve` prefixes the value with `(Default)    REG_SZ`.
+  // Match the type anywhere on the line so custom default browsers are not
+  // silently replaced by the hard-coded Chrome/Edge candidates.
   return parseExecutableFromCommand(/REG_(?:EXPAND_)?SZ\s+(.+)/.exec(command || '')?.[1]);
 }
 

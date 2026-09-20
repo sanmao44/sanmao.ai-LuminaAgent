@@ -94,6 +94,7 @@ export {
   PLAYWRIGHT_EXTENSION_TOKEN_ENV,
   browserExtensionHint,
   browserNameFromPath,
+  decodeWindowsCommandOutput,
   detectDefaultBrowserExecutable,
   extensionInstalledForBrowser,
   listBrowserProfiles,
