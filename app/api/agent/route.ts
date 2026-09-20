@@ -28,6 +28,7 @@ import { runMcpManageAction } from '@/lib/mcp/admin';
 import { isMcpRuntimeAction, runMcpRuntimeAction } from '@/lib/mcp/runtime-admin';
 
 import { TOOL_LOOP_MCP_REPEAT_LIMIT, mcpCallSignature, runToolLoop, trackMcpRepeat, type McpRepeatTracker, type ToolLoopTraceStep } from '@/lib/agent/tool-loop';
+import { hasInlineToolCallMarkup, parseInlineToolCalls } from '@/lib/agent/inline-tool-calls';
 import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, type AgentProgressStage } from '@/lib/agent/progress';
 import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, type NativeSearchResult } from '@/lib/native-web-search';
@@ -1000,13 +1001,18 @@ const auditMcpCall = (
       }
       plainMessage = await rewriteSearchRefusal(plainMessage);
       const cleanedMessage = stripToolCallMarkup(plainMessage).trim();
-      // 模型把工具调用写成了文本标记时，这一轮其实一件事都没做成（实测整条回复就是一个 "<"）。
-      // 交付物请求早就有这条补轮（见上面 archive/document 那段），这里对全部工具补一次；
-      // 只有正文被截成空才补，普通聊天不受影响。
-      if (!cleanedMessage && callableTools.length) {
+      // 某些模型会把工具调用写成 content 中的 `to=functions.xxx { ... }`，
+      // 前面带一句“点赞已完成”时正文并不为空，旧逻辑会直接把半截任务当成完成。
+      // 先尝试把它恢复成结构化调用；恢复不了再让模型重新用原生工具调用。
+      const inlineToolCalls = parseInlineToolCalls(plainMessage, callableTools);
+      if (inlineToolCalls.length) {
+        toolCalls = inlineToolCalls;
+        toolCallMessage = { ...message, content: null, tool_calls: inlineToolCalls };
+      }
+      if (!toolCalls.length && (hasInlineToolCallMarkup(plainMessage) || !cleanedMessage) && callableTools.length) {
         try {
           const retry = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-            messages: [...llmMessages, { role: 'user', content: '请直接回答，或直接调用工具完成这一步；不要把工具调用写成文本标记。' }],
+            messages: [...llmMessages, { role: 'user', content: '刚才的工具调用被写成了普通文字，没有执行。请使用当前提供的原生工具调用完成用户命令，不要输出 to=functions...、<function=...> 或其他工具调用文本标记。' }],
             tools: callableTools,
             tool_choice: 'auto',
           }, requestController.signal);
@@ -1021,7 +1027,9 @@ const auditMcpCall = (
         }
       }
       if (!toolCalls.length) {
-        plainMessage = cleanedMessage || '当前对话模型没有返回内容。';
+        plainMessage = hasInlineToolCallMarkup(plainMessage)
+          ? '模型返回了未执行的浏览器工具文本，当前操作尚未完成。请重试或切换支持原生工具调用的模型。'
+          : cleanedMessage || '当前对话模型没有返回内容。';
         llmResponseChars = plainMessage.length;
         return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
       }
@@ -1741,7 +1749,13 @@ const auditMcpCall = (
             return null;
           });
           stepMessages = [...(messages as ChatMessage[])];
-          stepReply = reply?.choices?.[0]?.message || null;
+          const rawReply = reply?.choices?.[0]?.message || null;
+          const inlineCalls = rawReply && !Array.isArray(rawReply.tool_calls)
+            ? parseInlineToolCalls(rawReply.content, mcpFollowupTools)
+            : [];
+          stepReply = inlineCalls.length
+            ? { ...rawReply, content: null, tool_calls: inlineCalls }
+            : rawReply;
           return stepReply;
         },
         runCalls: async (calls) => {
@@ -1770,7 +1784,7 @@ const auditMcpCall = (
           // 模型有时会在工具失败后用自然语言承认「还没做完」，这不是连续任务的完成信号。
           // 只匹配明确的未完成/等待/无法提交措辞，避免把普通说明误判成需要重试。
           const submissionGap = browserTextSubmissionGap(latestInstruction, usedMcpTools);
-          if (!browserTextNeedsContinuation(text) && !submissionGap) return false;
+          if (!browserTextNeedsContinuation(text) && !submissionGap && !hasInlineToolCallMarkup(text)) return false;
           browserCompletionPrompts += 1;
           const recovery = browserRecoveryNeeded;
           browserRecoveryNeeded = false;

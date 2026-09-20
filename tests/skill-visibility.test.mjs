@@ -97,7 +97,7 @@ test("an enabled skill keeps the request on the tool round so the model can real
   assert.match(route, /const cleanedFinal = stripToolCallMarkup\(finalized\)\.trim\(\);/);
   // 截完先攒成 cleanedMessage：正文被截成空时要再给模型一次带工具的机会，最后才走兜底文案。
   assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
-  assert.match(route, /plainMessage = cleanedMessage \|\| '当前对话模型没有返回内容。';/);
+  assert.match(route, /plainMessage = hasInlineToolCallMarkup\(plainMessage\)/, '工具调用文本不能被当成普通技能回答直接展示');
 });
 test("the tool round hands the assistant turn back so thinking models accept the follow-up", () => {
   // deepseek 之类的思维链模型在带 tool_calls 的助手消息上要求回传 reasoning_content，

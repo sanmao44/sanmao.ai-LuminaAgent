@@ -160,8 +160,11 @@ test('挂了浏览器控制就把 ref 用法写进系统提示', () => {
 test(`正文被截成空时，再给模型一次带工具的原生调用机会`, () => {
   // 回归：实测模型把工具调用写成文本标记后整条回复只剩一个 "<"，直接返回用户什么也看不到。
   assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
-  assert.match(route, /if \(!cleanedMessage && callableTools\.length\) \{/);
+  assert.match(route, /if \(!toolCalls\.length && \(hasInlineToolCallMarkup\(plainMessage\) \|\| !cleanedMessage\) && callableTools\.length\) \{/);
   assert.match(route, /tools: callableTools,/);
   assert.match(route, /不要把工具调用写成文本标记/);
-  assert.match(route, /if \(!toolCalls\.length\) \{\s+plainMessage = cleanedMessage \|\| '当前对话模型没有返回内容。';/, '补不到工具才走原来的兜底文案');
+  assert.match(route, /parseInlineToolCalls\(plainMessage, callableTools\)/, '正文夹带工具调用时也要恢复或重试');
+  assert.match(route, /hasInlineToolCallMarkup\(plainMessage\)/, '要识别 to=functions.xxx 这类文本调用');
+  assert.match(route, /parseInlineToolCalls\(rawReply\.content, mcpFollowupTools\)/, '补轮里的文本工具调用也要恢复');
+  assert.match(route, /if \(!toolCalls\.length\) \{\s+plainMessage = hasInlineToolCallMarkup\(plainMessage\)/, '补不到工具时不能把原始工具文本直接显示给用户');
 });
