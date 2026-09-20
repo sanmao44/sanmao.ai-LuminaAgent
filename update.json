@@ -1,26 +1,25 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.51",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.51",
+  "latestVersion": "0.7.52",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.52",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.51/SANMAO.AI-0.7.51.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip"
   ],
   "sha256": "4d1bb0ed5c1f095fe9413fb4bad782511e34de1d041e573ebfed76cb4c7660b9",
-  "publishedAt": "2026-09-20T21:26:32+08:00",
+  "publishedAt": "2026-09-21T01:55:33+08:00",
   "notes": [
-    "Agent 工具调用兼容性修复：兼容部分 DeepSeek 兼容服务返回的 DSML/XML 工具调用格式，避免图片生成请求被错误回退；画布请求与 MCP/技能上下文隔离，减少历史画布内容导致的误触发。",
-    "超级画布 Patch 校验收紧：限制合法节点类型与数值字段，拒绝空 Patch，并保留已应用 Patch 状态，降低 Agent 误修改和无效画布操作风险。",
-    "对话里可直接生成真实的 Word / Excel / PPT 与 ZIP 压缩包，产物以附件形式下载并支持在线预览（尽量还原 Excel 公式与条件格式、Word 目录样式、PPT 表格图表与演讲者备注）。",
-    "上传的 Word / Excel / PPT / PDF 会解析成文本进入上下文；文档引用不再显示成参考图，缩略图直接显示文件名。",
-    "MCP 连接器体系：新增官方连接器目录（Playwright / Filesystem / GitHub / Context7），面板支持粘贴配置一键识别、批量放行、授权记忆与调用审计，可管理站点名单与授权目录；助手也能自行接入或移除服务。",
-    "浏览器接管改为跟随系统默认浏览器，新增扩展自检与免点击连接码，修复点击「找不到元素」以及工具调用后不再继续的问题。",
-    "工具循环与安全：统一工具注册表与权限执行点，危险操作需确认并支持续跑；写工具不再自动重放；上传或拖入本机文件每次都要确认；拦截跨站请求并收紧 MCP 地址与会话边界。",
-    "视频、云端高清与克隆任务支持取消和重试，长任务显示进度账本与阶段说明。",
-    "启动器：依赖指纹改为按依赖清单计算，发新版不再重装依赖；npm 与 FFmpeg 慢时自动切换镜像，首次安装显示进度心跳。",
-    "界面与画布修复：侧栏滚轮不再连带滚动右侧页面、Ctrl+Shift+G 解散分组更可靠、Agent 背景光晕滚动不再错位、素材库断链修复、多选布局工具条更清爽。"
+    "任务日志排版重做：来源与结果改成整行记录，卡片不再出现大片空白、内容出框或被裁切；元信息标签可自动换行，失败原因最多两行显示。",
+    "从任务日志点“结果：…”查看大图，关闭预览后会回到任务日志面板，和“打开结果”行为一致。",
+    "画布项目支持版本管理：保存后可在项目面板一键恢复历史版本，也能删除不需要的版本（删除前二次确认）。",
+    "Agent 输入框在回车发送后自动清空，包含已选中的技能与引用芯片，不用再手动删除。",
+    "Agent 直接读取本地图片（MCP 文件读取）时，图片会进入对话并以“Agent 图片”展示，不必再手动转存。",
+    "对话指令识别更准：“出图 / 继续 / 改一下”会跟随当前这轮对话里的图，不再跳到无关旧图；改写类指令不会重复写同一个文件。",
+    "兼容更多模型输出的内联工具调用（XML / DSML 标记），减少工具调用被当成普通文本、需要重试的情况。",
+    "MCP 调用记录移到输入框下方，不再遮挡对话框。",
+    "补充 Agent 输入框结构、MCP 面板位置与任务日志排版的回归测试。"
   ]
 }
