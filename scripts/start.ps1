@@ -662,6 +662,31 @@ function Clear-SanmaoBuildArtifactMarkers {
   }
 }
 
+function Remove-SanmaoStaleNextBuildLock {
+  # Next.js leaves .next/lock behind when a build is interrupted. Do not
+  # blindly delete it: an active build owns the file and must be allowed to
+  # finish. Opening it without sharing probes for a live owner; only an
+  # unowned lock is safe to remove.
+  $lockPath = Join-Path $root '.next\lock'
+  if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return }
+  $stream = $null
+  try {
+    $stream = [System.IO.File]::Open(
+      $lockPath,
+      [System.IO.FileMode]::Open,
+      [System.IO.FileAccess]::ReadWrite,
+      [System.IO.FileShare]::None
+    )
+    $stream.Dispose()
+    $stream = $null
+    Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
+    Write-SanmaoLauncherLog '已清理上次异常退出遗留的 Next.js 构建锁。' 'WARN'
+  } catch {
+    if ($stream) { try { $stream.Dispose() } catch {} }
+    Write-SanmaoLauncherLog '检测到 Next.js 构建仍在进行，保留构建锁并让其继续。' 'INFO'
+  }
+}
+
 function Wait-SanmaoBuildArtifacts([int]$TimeoutMs = 15000) {
   $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
   do {
@@ -1183,9 +1208,18 @@ if ($SkipBuild.IsPresent) {
   Write-Host '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。' -ForegroundColor Yellow
   Write-Host '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。' -ForegroundColor Yellow
   Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
+  Remove-SanmaoStaleNextBuildLock
   Clear-SanmaoBuildArtifactMarkers
   $buildSourceFingerprint = Get-SanmaoSourceFingerprint
   & $nextCmd build --webpack
+  if ($LASTEXITCODE -ne 0 -and (Test-Path -LiteralPath (Join-Path $root '.next\lock') -PathType Leaf)) {
+    # A previous launcher may release the lock just after the preflight probe.
+    # Give that process a moment to exit, then retry once against the now-clean
+    # build directory instead of surfacing a transient lock error to users.
+    Start-Sleep -Seconds 2
+    Remove-SanmaoStaleNextBuildLock
+    & $nextCmd build --webpack
+  }
   if ($LASTEXITCODE -ne 0) {
     Fail '网页构建失败。请把本窗口中“构建失败”上方的报错截图发给我。'
   }
