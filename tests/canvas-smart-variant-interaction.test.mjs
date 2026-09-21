@@ -43,3 +43,12 @@ test("smart variant analysis has a bounded, cancellable request path", () => {
   assert.ok(portal.includes("停止分析"));
   assert.ok(portal.includes("closeSmartVariant"));
 });
+
+test("image variants anchor the first reference subject while allowing an explicit opt-out", () => {
+  assert.ok(source.includes("function variantIdentityAnchorPrompt"));
+  assert.ok(source.includes("参考图 1「${primaryName}」是主体身份锚点"));
+  assert.ok(source.includes("禁止换脸、换人、改变性别/年龄、身体比例漂移或重设计服装"));
+  assert.ok(source.includes("variantIdentityPreservation !== false"));
+  assert.ok(source.includes("保持首图主体"));
+  assert.ok(source.includes("首图主体锚定"));
+});

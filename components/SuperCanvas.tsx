@@ -1703,6 +1703,22 @@ function variantStatesFor(node: CanvasNode): CanvasVariantState[] {
   });
 }
 
+function variantIdentityPreservationEnabled(node: CanvasNode) {
+  return node.data.kind === "image" && node.data.variantIdentityPreservation !== false;
+}
+
+function variantIdentityAnchorPrompt(
+  enabled: boolean,
+  references: Array<{ name: string }>,
+) {
+  if (!enabled || !references.length) return "";
+  const primaryName = references[0]?.name || "参考图 1";
+  const auxiliary = references.length > 1
+    ? "其余参考图仅用于补充场景、构图、动作或风格，不能替换、混合或重设计主体身份。"
+    : "没有其他参考图可以替换该主体。";
+  return `参考图使用优先级（必须遵守）：参考图 1「${primaryName}」是主体身份锚点。若图中有人物，生成结果必须是同一人，严格保持面部身份、五官、年龄感、肤色、发型、体型比例、制服/服装、配饰和可识别标志；只按本次变体要求改变场景、机位、动作或光线，禁止换脸、换人、改变性别/年龄、身体比例漂移或重设计服装。若图中没有人物，则严格保持其主要可识别主体、材质、结构、配色和标识。${auxiliary} 这是尽力保持要求，最终一致性仍受所选模型能力影响。`;
+}
+
 function variantStatusLabel(status: CanvasVariantState["status"]) {
   return status === "running"
     ? "生成中"
@@ -7242,6 +7258,10 @@ export default function SuperCanvas() {
           name: String(node.data.name || "参考素材"),
         }))
         .filter((item) => item.url);
+      const identityAnchor = variantIdentityAnchorPrompt(
+        variantIdentityPreservationEnabled(generator),
+        refs,
+      );
       const batchName = `${kind === "video" ? "视频" : "图片"}变体批次`;
       const attachBatchGroup = (
         value: CanvasDocument,
@@ -7285,6 +7305,7 @@ export default function SuperCanvas() {
             [
               naturalCommonPrompt.value,
               instruction ? `变体要求：${instruction}` : "",
+              identityAnchor,
             ]
               .filter(Boolean)
               .join("\n"),
@@ -15491,6 +15512,16 @@ export default function SuperCanvas() {
                       } : item),
                     }));
                   }}
+                  onVariantIdentityPreservationChange={(target, enabled) => {
+                    if (target.type !== "generator" || target.data.kind !== "image") return;
+                    updateDoc((valueDoc) => ({
+                      ...valueDoc,
+                      nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
+                        ...item,
+                        data: { ...item.data, variantIdentityPreservation: enabled },
+                      } : item),
+                    }));
+                  }}
                   runtime={runtime}
                   editorPrompt={editorPromptFor(node)}
                   editorParams={editorParamsFor(node)}
@@ -15746,6 +15777,16 @@ export default function SuperCanvas() {
                       variantBatchId: undefined,
                       variantGroupId: undefined,
                     },
+                  } : item),
+                }));
+              }}
+              onVariantIdentityPreservationChange={(target, enabled) => {
+                if (target.type !== "generator" || target.data.kind !== "image") return;
+                updateDoc((valueDoc) => ({
+                  ...valueDoc,
+                  nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
+                    ...item,
+                    data: { ...item.data, variantIdentityPreservation: enabled },
                   } : item),
                 }));
               }}
@@ -18384,6 +18425,7 @@ type CanvasNodeEditorPopoverProps = {
   onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
   onVideoInputModeChange: (node: CanvasNode) => void;
   onVariantRequirementsChange: (node: CanvasNode, value: string) => void;
+  onVariantIdentityPreservationChange: (node: CanvasNode, enabled: boolean) => void;
   onReferenceReorder: (ownerId: string, draggedId: string, targetId: string) => void;
   onReferenceRemove: (ownerId: string, sourceId: string) => void;
   onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
@@ -19081,6 +19123,7 @@ function CanvasNodeEditorPopover({
   onEditorParamsChange,
   onVideoInputModeChange,
   onVariantRequirementsChange,
+  onVariantIdentityPreservationChange,
   onReferenceReorder,
   onReferenceRemove,
   onReferenceDrop,
@@ -19151,6 +19194,10 @@ function CanvasNodeEditorPopover({
     Boolean(data.url) &&
     !branchDraft;
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
+  const variantIdentityAnchorEnabled = node.type === "generator" && variantIdentityPreservationEnabled(node);
+  const variantPrimaryReference = node.type === "generator"
+    ? editorReferences.find((reference) => reference.data.kind === "image")
+    : undefined;
   const imageParams = isImageNode && editorParams && editorParams.kind === "image" ? editorParams : null;
   const imageQualityLabel = imageParams
     ? (IMAGE_QUALITY_OPTIONS.find((option) => option.value === imageParams.quality)?.label.replace("质量", "") || imageParams.quality)
@@ -19756,6 +19803,12 @@ function CanvasNodeEditorPopover({
                         </div>
                       </div>
                       <div className="canvas-node-variant-editor">
+                        {data.kind === "image" && (
+                          <label className="canvas-variant-identity-toggle" title="第一张参考图会作为主体身份锚点；模型会尽力保持人物或主要主体的一致性。">
+                            <input type="checkbox" checked={variantIdentityAnchorEnabled} onChange={(event) => onVariantIdentityPreservationChange(node, event.currentTarget.checked)} />
+                            <span><b>保持首图主体</b><small>{variantPrimaryReference ? `身份锚点：${variantPrimaryReference.data.name || "参考图 1"}（尽力保持）` : "连接图片后自动作为身份锚点"}</small></span>
+                          </label>
+                        )}
                         <CanvasVariantRequirementsEditor
                           value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                           references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
@@ -19974,6 +20027,12 @@ function CanvasNodeEditorPopover({
           <div className="canvas-node-editor-settings">
             {node.type === "generator" && (
               <div className="canvas-node-variant-editor">
+                {data.kind === "image" && (
+                  <label className="canvas-variant-identity-toggle" title="第一张参考图会作为主体身份锚点；模型会尽力保持人物或主要主体的一致性。">
+                    <input type="checkbox" checked={variantIdentityAnchorEnabled} onChange={(event) => onVariantIdentityPreservationChange(node, event.currentTarget.checked)} />
+                    <span><b>保持首图主体</b><small>{variantPrimaryReference ? `身份锚点：${variantPrimaryReference.data.name || "参考图 1"}（尽力保持）` : "连接图片后自动作为身份锚点"}</small></span>
+                  </label>
+                )}
                 <div className="canvas-node-variant-editor-head">
                   <label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>
                   <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
@@ -20119,6 +20178,7 @@ function CanvasNodeCard({
   onEditorPromptChange,
   onEditorParamsChange,
   onVariantRequirementsChange,
+  onVariantIdentityPreservationChange,
   runtime,
   editorPrompt,
   editorParams,
@@ -20173,6 +20233,7 @@ function CanvasNodeCard({
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
   onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
   onVariantRequirementsChange: (node: CanvasNode, value: string) => void;
+  onVariantIdentityPreservationChange: (node: CanvasNode, enabled: boolean) => void;
   runtime: CanvasRuntimeState | null;
   editorPrompt: string;
   editorParams?: CanvasGenerationParams;
@@ -20838,6 +20899,7 @@ function CanvasNodeCard({
           )}
           <div className="canvas-generator-summary">
             <span>参考素材 {referenceCount}</span>
+            {data.kind === "image" && <span>{variantIdentityPreservationEnabled(node) && referenceCount ? "首图主体锚定" : "主体锚定关闭"}</span>}
             <span>变体 {variantRequirements.length}</span>
             <span>完成 {completedVariants}/{variantRequirements.length}</span>
             <span>
