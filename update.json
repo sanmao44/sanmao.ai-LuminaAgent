@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip"
   ],
-  "sha256": "4d1bb0ed5c1f095fe9413fb4bad782511e34de1d041e573ebfed76cb4c7660b9",
+  "sha256": "719e0f91271c0d5ddaae37c6ca104fba36706da91db1e87e6a874536a9498415",
   "publishedAt": "2026-09-21T01:55:33+08:00",
   "notes": [
     "任务日志排版重做：来源与结果改成整行记录，卡片不再出现大片空白、内容出框或被裁切；元信息标签可自动换行，失败原因最多两行显示。",
