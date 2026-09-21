@@ -178,7 +178,7 @@ import {
   requestPromptOptimization,
   runReversePrompt,
 } from "@/lib/creation/agent";
-import { requestAgent, type AgentGeneratedImage } from "@/lib/agent-client";
+import { type AgentGeneratedImage } from "@/lib/agent-client";
 import CanvasAgentDock, {
   CANVAS_AGENT_DOCK_OPEN_KEY,
 } from "@/components/CanvasAgentDock";
@@ -1625,6 +1625,8 @@ type SmartVariantPlan = {
   categories: string[];
   variants: SmartVariantDraft[];
 };
+
+const SMART_VARIANT_MAX_WAIT_MS = 75_000;
 
 function smartVariantPlanningPrompt(
   sourceUnits: ReturnType<typeof smartVariantSourceUnits>,
@@ -13958,9 +13960,21 @@ export default function SuperCanvas() {
   const [smartVariantError, setSmartVariantError] = useState("");
   const [smartVariantBeforeApply, setSmartVariantBeforeApply] = useState<string | null>(null);
   const smartVariantSession = useRef<{ nodeId: string; sources: typeof smartVariantSources } | null>(null);
+  const smartVariantAbortRef = useRef<AbortController | null>(null);
   const savedSmartVariant = selectedSingle?.data.smartVariantSnapshot;
   const smartVariantTarget = nodeById(document, smartVariantSession.current?.nodeId || "");
   const smartVariantBusy = Boolean(smartVariantTarget && (generationKeys.has(smartVariantTarget.id) || ["running", "queued"].includes(String(smartVariantTarget.data.status)) || smartVariantTarget.data.variantStates?.some((item) => item.status === "running")));
+  const cancelSmartVariant = useCallback(() => {
+    const controller = smartVariantAbortRef.current;
+    controller?.abort(new DOMException("已停止变体分析", "AbortError"));
+    smartVariantAbortRef.current = null;
+    if (controller) setSmartVariantError("已停止变体分析，可重新分析。");
+    setSmartVariantLoading(false);
+  }, []);
+  const closeSmartVariant = useCallback(() => {
+    cancelSmartVariant();
+    setSmartVariantOpen(false);
+  }, [cancelSmartVariant]);
   const openSmartVariant = useCallback(async (reanalyze = false) => {
     if (!reanalyze && selectedSingle?.data.smartVariantSnapshot) {
       const saved = selectedSingle.data.smartVariantSnapshot;
@@ -13978,44 +13992,55 @@ export default function SuperCanvas() {
     setSmartVariantLoading(true);
     setSmartVariantError("");
     setSmartVariantPlan(null);
+    const controller = new AbortController();
+    smartVariantAbortRef.current = controller;
+    const timeout = window.setTimeout(() => {
+      controller.abort(new Error("变体分析超时，请检查对话模型后重试。"));
+    }, SMART_VARIANT_MAX_WAIT_MS);
     try {
       const sourceUnits = smartVariantSourceUnits(session.sources.filter((source) => source.id !== "shared-prompt"));
       const sharedPrompt = session.sources.find((source) => source.id === "shared-prompt")?.text || "";
       if (!sourceUnits.length) throw new Error("没有可用于整理的原文段落。");
-      const response = await requestAgent({
-        source: "canvas",
+      const response = await generateCanvasAgent({
         model: runtime?.settings.agentModelId || undefined,
         task: "smart_variant_planning",
         deliverable: "TEXT",
         webMode: "off",
-        messages: [{
-          role: "user",
-          content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt),
-        }],
+        signal: controller.signal,
+        messages: [{ role: "user", content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt) }],
       });
       let plan: SmartVariantPlan;
       try {
         plan = parseSmartVariantPlan(response.message, sourceUnits);
       } catch (firstError) {
         const repairReason = firstError instanceof Error ? firstError.message : "返回格式不符合要求";
-        const repairResponse = await requestAgent({
-          source: "canvas",
+        const repairResponse = await generateCanvasAgent({
           model: runtime?.settings.agentModelId || undefined,
           task: "smart_variant_planning",
           deliverable: "TEXT",
           webMode: "off",
+          signal: controller.signal,
           messages: [{ role: "user", content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt, repairReason) }],
         });
         plan = parseSmartVariantPlan(repairResponse.message, sourceUnits);
       }
-      setSmartVariantPlan(plan);
-      updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== session.nodeId ? node : {
-        ...node, data: { ...node.data, smartVariantSnapshot: { ...plan, sources: clone(session.sources) } },
-      }) }));
+      if (smartVariantAbortRef.current === controller) {
+        setSmartVariantPlan(plan);
+        updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== session.nodeId ? node : {
+          ...node, data: { ...node.data, smartVariantSnapshot: { ...plan, sources: clone(session.sources) } },
+        }) }));
+      }
     } catch (error) {
-      setSmartVariantError(error instanceof Error ? error.message : "智能变体分析失败");
+      const cancelled = controller.signal.aborted && controller.signal.reason instanceof DOMException && controller.signal.reason.name === "AbortError";
+      if (smartVariantAbortRef.current === controller) {
+        setSmartVariantError(cancelled ? "已停止变体分析，可重新分析。" : error instanceof Error ? error.message : "智能变体分析失败");
+      }
     } finally {
-      setSmartVariantLoading(false);
+      window.clearTimeout(timeout);
+      if (smartVariantAbortRef.current === controller) {
+        smartVariantAbortRef.current = null;
+        setSmartVariantLoading(false);
+      }
     }
   }, [chatModelsAvailable, runtime?.settings.agentModelId, selectedSingle, smartVariantSources, smartVariantOpen, smartVariantLoading, updateDoc]);
   const applySmartVariant = useCallback(() => {
@@ -14028,8 +14053,8 @@ export default function SuperCanvas() {
     updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== target.id ? node : {
       ...node, data: { ...node.data, smartVariantSnapshot: { ...clone(smartVariantPlan), sources: clone(smartVariantSession.current?.sources || []) }, variantRequirementsText: value, variantRequirements: normalizeVariantRequirements(value), variantStates: [], variantBatchId: undefined, variantGroupId: undefined },
     }) }));
-    setSmartVariantOpen(false);
-  }, [smartVariantPlan, updateDoc, generationKeys]);
+    closeSmartVariant();
+  }, [smartVariantPlan, updateDoc, generationKeys, closeSmartVariant]);
   const groupQuickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const group = contextGroup || selectedGroup;
     if (!group) return { primaryActions: [], menuGroups: [] };
@@ -16242,14 +16267,14 @@ export default function SuperCanvas() {
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
-            onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setSmartVariantOpen(false); }}
+            onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") closeSmartVariant(); }}
           >
             <div className="smart-variant-dialog">
               <header>
                 <div><strong>智能一键变体</strong><small>原文段落已锁定，AI 仅能一对一整理，不新增或删除信息</small></div>
-                <button type="button" onClick={() => setSmartVariantOpen(false)} aria-label="关闭">×</button>
+                <button type="button" onClick={closeSmartVariant} aria-label="关闭">×</button>
               </header>
-              {smartVariantLoading ? <div className="smart-variant-loading">正在分析共同提示词和直接连接的 Agent 文案…</div> : smartVariantError ? <div className="smart-variant-error">{smartVariantError}</div> : smartVariantPlan && (
+              {smartVariantLoading ? <div className="smart-variant-loading">正在分析共同提示词和直接连接的 Agent 文案…<button type="button" onClick={cancelSmartVariant}>停止分析</button></div> : smartVariantError ? <div className="smart-variant-error">{smartVariantError}</div> : smartVariantPlan && (
                 <div className="smart-variant-grid">
                   <section>
                     <b>分析来源</b>

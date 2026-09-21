@@ -31,3 +31,15 @@ test("smart variant planning locks one output to each source unit and retries in
   assert.ok(open.includes('source.id !== "shared-prompt"'));
   assert.ok(open.includes("smartVariantPlanningPrompt(sourceUnits, sharedPrompt, repairReason)"));
 });
+
+test("smart variant analysis has a bounded, cancellable request path", () => {
+  const open = source.slice(source.indexOf("const cancelSmartVariant ="), source.indexOf("const applySmartVariant ="));
+  const portal = source.slice(source.indexOf('{smartVariantOpen && createPortal('), source.indexOf('<CanvasMinimap'));
+  assert.ok(source.includes("const SMART_VARIANT_MAX_WAIT_MS = 75_000"));
+  assert.ok(open.includes("const controller = new AbortController()"));
+  assert.ok(open.includes("window.setTimeout"));
+  assert.ok(open.includes("generateCanvasAgent({"));
+  assert.ok(open.includes("signal: controller.signal"));
+  assert.ok(portal.includes("停止分析"));
+  assert.ok(portal.includes("closeSmartVariant"));
+});

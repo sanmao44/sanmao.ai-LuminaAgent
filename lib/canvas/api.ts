@@ -36,6 +36,7 @@ export type CanvasAgentTask =
   | "reverse_prompt"
   | "one_take_video_prompt"
   | "cinematic_shock_opening_director"
+  | "smart_variant_planning"
   | "optimize_prompt";
 
 export function inferCanvasAgentTask(
