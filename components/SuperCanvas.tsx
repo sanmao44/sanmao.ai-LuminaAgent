@@ -2903,7 +2903,7 @@ export default function SuperCanvas() {
   const [ready, setReady] = useState(false);
   const [runtime, setRuntime] = useState<CanvasRuntimeState | null>(null);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
-  // 弹窗关掉后仍在后台跑的克隆任务：工具栏上给个进度，跑完 / 失败提示一次。
+  // 只展示已进入生成队列的后台任务。planned 是待用户确认的编辑状态，不能误报为「进行中」。
   const [cloneTask, setCloneTask] = useState<{ id: string; message: string; progress: number } | null>(null);
   const cloneRunningIdRef = useRef("");
   const [runtimeError, setRuntimeError] = useState("");
@@ -3779,7 +3779,7 @@ export default function SuperCanvas() {
         };
         if (disposed) return;
         const jobs = Array.isArray(body.jobs) ? body.jobs : [];
-        const running = jobs.find((job) => job.stage !== "done" && job.stage !== "failed" && job.stage !== "cancelled") || null;
+        const running = jobs.find((job) => !["planned", "done", "failed", "cancelled"].includes(job.stage)) || null;
         setCloneTask(running ? { id: running.id, message: running.message || "", progress: Number(running.progress) || 0 } : null);
         const watchedId = cloneRunningIdRef.current;
         if (watchedId && watchedId !== running?.id) {

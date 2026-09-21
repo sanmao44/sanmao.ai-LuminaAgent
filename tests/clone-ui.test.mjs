@@ -268,7 +268,7 @@ test("克隆进度挂在画布右上角状态胶囊上，跑完/失败提示一�
   // 画布 stage 会在 pointerdown 时 setPointerCapture，把 click 抢走；胶囊必须列进
   // 「自己处理指针事件」的浮层清单里，否则点它不会有反应。
   assert.match(canvas, /\.canvas-context-menu,\.canvas-status-chip,/);
-  assert.match(canvas, /const running = jobs\.find\(\(job\) => job\.stage !== "done"/);
+  assert.match(canvas, /!\["planned", "done", "failed", "cancelled"\]\.includes\(job\.stage\)/);
   assert.match(canvas, /克隆出片已完成（\$\{finished\.shotCount \|\| 0\} 个镜头）/);
   assert.match(canvas, /克隆出片失败：\$\{finished\.message/);
   assert.match(canvas, /window\.setInterval\(\(\) => void tick\(\), 5000\)/);
