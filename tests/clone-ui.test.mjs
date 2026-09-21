@@ -82,7 +82,7 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.match(route, /export async function POST\(request: Request\)/);
   assert.match(route, /beginRuntimeRequest\('clone'\)/);
-  assert.match(route, /void runCloneJob\(created\.task\.id\)/);
+  assert.match(route, /void analyzeCloneJob\(created\.task\.id\)/);
   assert.match(route, /指定的配音模型不可用/);
   assert.match(route, /offlineSpeech: offlineSpeechSupported\(\)/);
   assert.match(route, /capabilities\.offlineSpeech \? OFFLINE_SPEECH_LABEL : undefined/);

@@ -16298,6 +16298,9 @@ export default function SuperCanvas() {
           <CanvasCloneDialog
             references={cloneReferences}
             assets={cloneAssets}
+            onAssetUploaded={(asset) => {
+              if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
+            }}
             models={runtime?.models || []}
             defaultProviderId={runtime?.settings.defaultProviderId || null}
             defaultProviderName={runtime?.providers.find((provider) => provider.id === runtime?.settings.defaultProviderId)?.name}

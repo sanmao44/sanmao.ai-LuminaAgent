@@ -11,6 +11,7 @@ export type CloneStage =
   | 'queued'
   | 'analyzing'
   | 'scripting'
+  | 'planned'
   | 'voicing'
   | 'imaging'
   | 'rendering'
@@ -33,6 +34,11 @@ export type CloneShot = {
   line: string;
   /** 重新生成画面用的提示词。 */
   prompt: string;
+  /** 当前镜头使用的素材节点；为空时继承全局素材。 */
+  assetIds?: string[];
+  strategy?: 'reference' | 'keyframe' | 'text' | 'static';
+  preserveIdentity?: boolean;
+  preserveProduct?: boolean;
   status: CloneShotStatus;
   imageUrl?: string;
   videoUrl?: string;
@@ -106,6 +112,7 @@ export type CloneJob = {
   message: string;
   reference: CloneReference;
   assets: CloneAsset[];
+  planConfirmed?: boolean;
   options: CloneOptions;
   capabilities: CloneCapabilities;
   warnings: string[];

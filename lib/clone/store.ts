@@ -24,6 +24,7 @@ export type CreateCloneJobInput = {
   modelIds?: CloneModelIds;
   warnings: string[];
   idempotencyKey?: string;
+  planConfirmed?: boolean;
 };
 
 export async function createCloneJob(input: CreateCloneJobInput) {
@@ -37,6 +38,7 @@ export async function createCloneJob(input: CreateCloneJobInput) {
     message: '已排队',
     reference: input.reference,
     assets: input.assets || [],
+    planConfirmed: Boolean(input.planConfirmed),
     options: input.options,
     capabilities: input.capabilities,
     models: input.models,

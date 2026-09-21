@@ -296,7 +296,7 @@ export function parseFfmpegDuration(stderr: unknown) {
 export const CLONE_STALE_JOB_MS = 10 * 60 * 1000;
 
 export function isCloneJobStale(job: { stage: CloneStage; updatedAt?: string }, now = Date.now()) {
-  if (job.stage === 'done' || job.stage === 'failed' || job.stage === 'cancelled') return false;
+  if (job.stage === 'done' || job.stage === 'failed' || job.stage === 'cancelled' || job.stage === 'planned') return false;
   const stamp = Date.parse(job.updatedAt || '');
   return Number.isFinite(stamp) && now - stamp > CLONE_STALE_JOB_MS;
 }
@@ -305,6 +305,7 @@ const STAGE_PROGRESS: Record<CloneStage, number> = {
   queued: 0,
   analyzing: 0.08,
   scripting: 0.2,
+  planned: 0.34,
   voicing: 0.3,
   imaging: 0.42,
   rendering: 0.68,
@@ -319,6 +320,7 @@ export function cloneStageProgress(stage: CloneStage) {
 }
 
 export function describeCloneStage(stage: CloneStage) {
+  if (stage === 'planned') return '镜头计划已生成，等待确认';
   switch (stage) {
     case 'queued': return '已排队';
     case 'analyzing': return '正在拆解参考视频';

@@ -1,7 +1,7 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { OFFLINE_SPEECH_LABEL, offlineSpeechSupported } from '@/lib/clone/offline-speech';
 import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
-import { reapStaleCloneJobs, runCloneJob } from '@/lib/clone/pipeline';
+import { analyzeCloneJob, reapStaleCloneJobs } from '@/lib/clone/pipeline';
 import { cloneJobSummary, createCloneJob, listCloneJobs } from '@/lib/clone/store';
 import type { CloneAsset, CloneReference } from '@/lib/clone/types';
 import { getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '@/lib/store';
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
       idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim().slice(0, 80) : undefined,
     });
     // 后台跑，立刻把任务交给前端轮询；与生成任务的持久化后台写法一致。
-    void runCloneJob(created.task.id).catch(() => undefined);
+    void analyzeCloneJob(created.task.id).catch(() => undefined);
     return Response.json({ ok: true, job: created.task, capabilities, warnings }, { status: created.created ? 202 : 200 });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });

@@ -128,6 +128,39 @@ export function buildCinematicDirectorRequest(input: {
 }
 
 function firstJsonObject(value: string) {
+  const normalized = String(value || "").replace(/^\uFEFF/, "").trim();
+  if (!normalized) return null;
+  const fenced = normalized.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  const source = fenced || normalized;
+  try {
+    return JSON.parse(source) as unknown;
+  } catch {
+    const start = source.indexOf("{");
+    if (start < 0) return null;
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let index = start; index < source.length; index += 1) {
+      const char = source[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') quoted = false;
+        continue;
+      }
+      if (char === '"') { quoted = true; continue; }
+      if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          try { return JSON.parse(source.slice(start, index + 1)) as unknown; } catch { return null; }
+        }
+      }
+    }
+    return null;
+  }
+}
+/*
   const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
   const source = (fenced || value).trim();
   try {
@@ -142,10 +175,15 @@ function firstJsonObject(value: string) {
       return null;
     }
   }
-}
+}*/
 
 export function parseCinematicDirectorPlan(value: string): CinematicDirectorPlan {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) throw new Error("导演模型返回为空");
   const parsed = firstJsonObject(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`导演返回不是有效 JSON（收到 ${rawValue.length} 个字符）`);
+  }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     throw new Error("导演方案格式无法解析，请重试。\n");
   const plan = parsed as CinematicDirectorPlan;

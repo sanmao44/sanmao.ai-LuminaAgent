@@ -411,6 +411,7 @@ async function executeCloneJob(id: string) {
   const started = await findCloneJob(id);
   if (!started) throw new Error('任务不存在。');
   if (started.stage === 'done' || started.stage === 'cancelled') return started;
+  if (started.stage === 'planned' && !started.planConfirmed) return started;
   try {
     await patchJob(id, { stage: 'analyzing', progress: cloneStageProgress('analyzing'), message: '正在拆解参考视频', error: undefined });
     // 高级设置里选的模型要真的生效：优先按 job.modelIds 精确取，取不到再退回自动选择。
@@ -583,6 +584,30 @@ async function executeCloneJob(id: string) {
     const message = error instanceof Error ? error.message : '克隆出片失败';
     return await patchJob(id, { stage: 'failed', progress: 0, message, error: message, finishedAt: new Date().toISOString() });
   }
+}
+
+/** 只执行抽帧、视觉拆解和文案规划，不触发生图/视频/TTS。 */
+export async function analyzeCloneJob(id: string) {
+  const job = await findCloneJob(id);
+  if (!job) throw new Error('任务不存在');
+  if (job.planConfirmed || job.stage === 'done') return job;
+  const chatPick = await resolveSelectedModel(job.modelIds?.chat, '对话 / 拆解模型', (modelId) => getRuntimeVisionModel(modelId));
+  const [referenceFile, duration] = await resolveReference(job);
+  const frames = await extractFrameFiles(referenceFile, frameSampleTimes(duration), path.join(cloneJobDirectory(id), 'frames'));
+  const analysis = await analyzeShots(chatPick.value, frames, job, duration);
+  if (analysis.warning) await appendWarnings(id, [analysis.warning]);
+  const normalized = analysis.shots;
+  const { lines, prompts } = await writeScript(chatPick.value, job, normalized);
+  const merged = normalized.map((shot, index) => ({ ...shot, prompt: prompts.get(index) || shot.prompt }));
+  const scriptLines = lines.length ? lines.flatMap((line) => { const parts = splitLines(line); return parts.length ? parts : [line]; }) : merged.map((shot) => shot.visual).filter(Boolean);
+  const planned = alignShotsWithLines(merged, scriptLines).map((shot) => ({
+    ...shot,
+    assetIds: (job.assets || []).filter((asset) => asset.kind === 'image').map((asset) => asset.nodeId).filter((value): value is string => Boolean(value)),
+    strategy: (job.assets || []).some((asset) => asset.kind === 'image') ? 'reference' as const : 'text' as const,
+    preserveIdentity: (job.assets || []).some((asset) => asset.role === 'person'),
+    preserveProduct: (job.assets || []).some((asset) => asset.role === 'product'),
+  }));
+  return await patchJob(id, { stage: 'planned', progress: cloneStageProgress('planned'), message: `已生成 ${planned.length} 个镜头计划，等待确认`, shots: planned, planConfirmed: false });
 }
 
 /** 将画布素材转换为图片编辑接口可接受的 data URL，避免把本地存储路径直接交给第三方。 */

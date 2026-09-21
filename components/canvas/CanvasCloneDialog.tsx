@@ -4,8 +4,9 @@
  * 「一键克隆出片」弹窗：选参考视频 → 一句话要求 → 后台跑管线 → 放入画布。
  * 只做窄管线（不贴脸、不换脸、不做数字人）：参考视频只用来拆结构与节奏，画面全部重生成。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ModelPicker from "@/components/ModelPicker";
+import { uploadCanvasAsset } from "@/lib/canvas/api";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import {
   CLONE_ASPECTS,
@@ -28,7 +29,7 @@ export type CanvasCloneReferenceOption = {
   seconds: number;
 };
 export type CanvasCloneAssetOption = {
-  nodeId: string;
+  nodeId?: string;
   name: string;
   url: string;
   kind: "image" | "video" | "audio";
@@ -44,6 +45,7 @@ type CanvasCloneDialogProps = {
   notify: (message: string, tone?: "ok" | "error") => void;
   /** 弹窗内直接导入参考视频（复用画布的导入流程，省得用户先关弹窗再去找工具栏）。 */
   onImportReference?: () => void;
+  onAssetUploaded?: (asset: CanvasCloneAssetOption) => void;
   onClose: () => void;
   onApply: (job: CloneJob) => void;
 };
@@ -56,6 +58,7 @@ const ASPECT_LABELS: Record<CloneOptions["aspect"], string> = {
 
 const VOICE_PRESETS = ["alloy", "echo", "fable", "nova", "onyx", "shimmer"];
 const TERMINAL_STAGES: CloneJob["stage"][] = ["done", "failed", "cancelled"];
+const PLAN_STAGE: CloneJob["stage"] = "planned";
 /** 失败任务只在 24 小时内自动接回：陈年失败任务否则会永远顶掉向导，每次打开弹窗都得先关掉它。 */
 const RESTORE_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SHOT_STATUS_LABELS: Record<string, string> = {
@@ -91,12 +94,16 @@ export default function CanvasCloneDialog({
   preselectedReferenceId,
   notify,
   onImportReference,
+  onAssetUploaded,
   onClose,
   onApply,
 }: CanvasCloneDialogProps) {
   const [step, setStep] = useState(preselectedReferenceId ? 2 : 1);
   const [referenceId, setReferenceId] = useState(preselectedReferenceId || "");
-  const [selectedAssets, setSelectedAssets] = useState<Record<string, CloneAssetRole>>({});
+  const [selectedAssets, setSelectedAssets] = useState<Record<string, CloneAssetRole | "">>({});
+  const [uploadedAssets, setUploadedAssets] = useState<CanvasCloneAssetOption[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const [brief, setBrief] = useState("");
   const [aspect, setAspect] = useState<CloneOptions["aspect"]>("9:16");
   const [maxShots, setMaxShots] = useState(CLONE_DEFAULT_MAX_SHOTS);
@@ -120,8 +127,9 @@ export default function CanvasCloneDialog({
 
   const flags = useMemo(() => cloneCapabilityFlags(models), [models]);
   const reference = references.find((item) => item.nodeId === referenceId) || null;
+  const allAssets = useMemo(() => [...assets, ...uploadedAssets], [assets, uploadedAssets]);
   const overBudget = maxShots > CLONE_DEFAULT_MAX_SHOTS || maxSeconds > CLONE_DEFAULT_MAX_SECONDS;
-  const running = Boolean(job) && !TERMINAL_STAGES.includes(job!.stage);
+  const running = Boolean(job) && !TERMINAL_STAGES.includes(job!.stage) && job!.stage !== PLAN_STAGE;
 
   useEffect(() => {
     let disposed = false;
@@ -212,6 +220,7 @@ export default function CanvasCloneDialog({
         if (disposed) return;
         if (!response.ok) throw new Error(data?.error || "读取克隆任务失败。");
         setJob(data.job as CloneJob);
+        if ((data.job as CloneJob).stage === PLAN_STAGE) setStep(3);
       } catch (failure) {
         if (!disposed) setError(failure instanceof Error ? failure.message : "读取克隆任务失败。");
       }
@@ -246,7 +255,7 @@ export default function CanvasCloneDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reference: { nodeId: reference.nodeId, name: reference.name, url: reference.url, seconds: reference.seconds },
-          assets: assets.filter((asset) => asset.nodeId !== reference.nodeId && selectedAssets[asset.nodeId]).map((asset) => ({ nodeId: asset.nodeId, name: asset.name, url: asset.url, kind: asset.kind, role: selectedAssets[asset.nodeId] })),
+          assets: allAssets.filter((asset) => asset.nodeId !== reference.nodeId && selectedAssets[asset.nodeId || ""]).map((asset) => ({ ...(asset.nodeId ? { nodeId: asset.nodeId } : {}), name: asset.name, url: asset.url, kind: asset.kind, role: selectedAssets[asset.nodeId || ""] })),
           brief: brief.trim(),
           options: {
             brief: brief.trim(),
@@ -260,19 +269,42 @@ export default function CanvasCloneDialog({
           videoModel: selectedModels.video,
           speechModel: selectedModels.speech,
           idempotencyKey: `canvas-clone-${reference.nodeId}-${requestKey([
-            brief.trim(), maxShots, maxSeconds, aspect, voice.trim(),
+            brief.trim(), maxShots, maxSeconds, aspect, voice.trim(), JSON.stringify(selectedAssets),
             selectedModels.chat, selectedModels.image, selectedModels.video, selectedModels.speech,
           ].join("|"))}`,
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || "创建克隆任务失败。");
-      setJob(data.job as CloneJob);
-      notify("已开始克隆出片，可关闭弹窗继续用画布", "ok");
+        setJob(data.job as CloneJob);
+        if ((data.job as CloneJob).stage === PLAN_STAGE) setStep(3);
+      setStep(3);
+      notify("已生成镜头计划，请确认后开始生成", "ok");
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "创建克隆任务失败。");
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function uploadAssets(files: FileList | null) {
+    if (!files?.length) return;
+    setUploading(true);
+    setError("");
+    try {
+      for (const file of Array.from(files).slice(0, 8)) {
+        if (!/^(image|video|audio)\//.test(file.type)) continue;
+        const data = await uploadCanvasAsset(file);
+        if (!data?.url) throw new Error(`上传失败：${file.name}`);
+        const nodeId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const asset = { nodeId, name: file.name, url: String(data.url), kind: data.kind as CanvasCloneAssetOption["kind"] };
+        setUploadedAssets((current) => [...current, asset]);
+        onAssetUploaded?.(asset);
+      }
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "上传素材失败");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -289,6 +321,23 @@ export default function CanvasCloneDialog({
       setError(failure instanceof Error ? failure.message : "取消失败。");
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function confirmPlan() {
+    if (!job || job.stage !== PLAN_STAGE) return;
+    setStarting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "confirm" }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "确认镜头计划失败");
+      setJob(data.job as CloneJob);
+      notify("已确认镜头计划，开始生成", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "确认镜头计划失败");
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -359,6 +408,7 @@ export default function CanvasCloneDialog({
 
   const readyShots = job ? job.shots.filter((shot) => shot.videoUrl || shot.imageUrl).length : 0;
   const progress = job ? (job.stage === "done" ? 1 : cloneStageProgress(job.stage) || job.progress) : 0;
+  const planJob = job as CloneJob | null;
 
   return (
     <div
@@ -469,8 +519,9 @@ export default function CanvasCloneDialog({
         ) : (
           <div className="clone-body">
             <ol className="clone-steps">
-              <li className={step === 1 ? "active" : "done"}><i>1</i>选参考视频</li>
-              <li className={step === 2 ? "active" : ""}><i>2</i>一句话要求</li>
+              <li className={step === 1 ? "active" : "done"}><i>1</i>结构参考</li>
+              <li className={step === 2 ? "active" : step > 2 ? "done" : ""}><i>2</i>素材角色</li>
+              <li className={step === 3 ? "active" : ""}><i>3</i>镜头计划</li>
             </ol>
 
             {step === 1 ? (
@@ -508,7 +559,7 @@ export default function CanvasCloneDialog({
                   )}
                 </div>
               )
-            ) : (
+            ) : step === 2 ? (
               <div className="clone-form">
                 <div className="clone-selected">
                   {reference ? (
@@ -532,23 +583,31 @@ export default function CanvasCloneDialog({
                   />
                 </label>
 
-                {assets.length > 0 && (
+                <div className="clone-asset-toolbar">
+                  <button type="button" className="clone-button ghost" onClick={() => uploadInputRef.current?.click()} disabled={uploading}>{uploading ? "上传中…" : "＋ 上传素材"}</button>
+                  <input ref={uploadInputRef} hidden type="file" multiple accept="image/*,video/*,audio/*" onChange={(event) => { void uploadAssets(event.target.files); event.currentTarget.value = ""; }} />
+                  <small>每个素材都要明确角色；不需要的素材不要勾选</small>
+                </div>
+
+                {allAssets.length > 0 && (
                   <div className="clone-field">
                     <span>参考素材（可选：人物 / 产品 / 品牌 / 风格）</span>
                     <div className="clone-asset-list">
-                      {assets.filter((asset) => asset.nodeId !== referenceId).map((asset) => {
-                        const role = selectedAssets[asset.nodeId] || "";
+                      {allAssets.filter((asset) => asset.nodeId !== referenceId).map((asset) => {
+                        const key = asset.nodeId || asset.url;
+                        const role = selectedAssets[key] || "";
                         return (
-                          <label className="clone-asset-row" key={asset.nodeId}>
-                            <input type="checkbox" checked={Boolean(role)} onChange={(event) => setSelectedAssets((current) => {
+                          <label className="clone-asset-row" key={key}>
+                            {asset.kind === "image" ? <img src={asset.url} alt="" /> : <span className="clone-asset-kind">{asset.kind === "audio" ? "♫" : "▶"}</span>}
+                            <input type="checkbox" checked={Object.prototype.hasOwnProperty.call(selectedAssets, key)} onChange={(event) => setSelectedAssets((current) => {
                               const next = { ...current };
-                              if (event.target.checked) next[asset.nodeId] = "style";
-                              else delete next[asset.nodeId];
+                              if (event.target.checked) next[key] = "" as CloneAssetRole;
+                              else delete next[key];
                               return next;
                             })} />
                             <span>{asset.name}</span>
-                            <select value={role} onChange={(event) => setSelectedAssets((current) => ({ ...current, [asset.nodeId]: event.target.value as CloneAssetRole }))} disabled={!role}>
-                              <option value="style">风格</option>
+                            <select value={role} onChange={(event) => setSelectedAssets((current) => ({ ...current, [key]: event.target.value as CloneAssetRole | "" }))} disabled={!Object.prototype.hasOwnProperty.call(selectedAssets, key)}>
+                              <option value="">设定角色</option>
                               <option value="person">人物</option>
                               <option value="product">产品</option>
                               <option value="brand">品牌</option>
@@ -652,6 +711,11 @@ export default function CanvasCloneDialog({
 
                 <p className="clone-hint">一期只做「重生成 + 配音 + 字幕」：不贴脸、不换脸、不做数字人，成片不含原视频画面与人脸。</p>
               </div>
+            ) : (
+              <div className="clone-plan-preview">
+                <div className="clone-plan-heading"><b>镜头计划</b><small>分析阶段不会消耗生图、视频或配音额度</small></div>
+                {planJob?.shots.map((shot) => <article className="clone-plan-shot" key={shot.index}><span className="clone-shot-index">{shot.index + 1}</span><div><b>{shot.visual || "镜头画面"}</b><p>{shot.line || "无口播文案"}</p><small>{shot.start.toFixed(1)}s–{shot.end.toFixed(1)}s · {shot.strategy === "reference" ? "多参考图" : shot.strategy === "keyframe" ? "关键帧首帧" : shot.strategy === "static" ? "静态图" : "文生视频"}</small></div></article>)}
+              </div>
             )}
 
             {error && <p className="clone-error">{error}</p>}
@@ -661,11 +725,13 @@ export default function CanvasCloneDialog({
                 <button type="button" className="clone-button ghost" onClick={() => setStep(1)}>上一步</button>
               )}
               <button type="button" className="clone-button ghost" onClick={closeDialog}>取消</button>
+              {step === 3 && <button type="button" className="clone-button ghost" onClick={() => setStep(2)}>修改素材</button>}
               {step === 2 && (
                 <button type="button" className="clone-button primary" onClick={start} disabled={starting || !reference || !flags.hasImageModel}>
                   {starting ? "正在创建任务…" : "开始克隆出片"}
                 </button>
               )}
+              {step === 3 && <button type="button" className="clone-button primary" onClick={confirmPlan} disabled={starting || !planJob || planJob.stage !== PLAN_STAGE}>{starting ? "确认中…" : "确认并开始生成"}</button>}
             </div>
           </div>
         )}
