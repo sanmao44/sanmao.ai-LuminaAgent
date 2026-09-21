@@ -439,7 +439,8 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(manager, /全部放行/);
   assert.match(manager, /只放行只读/);
   assert.match(manager, /styles\.toolDescription/);
-  assert.match(manager, /const showForm = formOpen \?\? servers\.length === 0/, '已有服务时“添加服务”表单默认收起，把高度让给工具清单');
+  assert.match(manager, /const customServers = servers\.filter\(\(server\) => !server\.catalogId\)/, '官方连接器与用户自定义服务分开');
+  assert.match(manager, /const showForm = formOpen \?\? customServers\.length === 0/, '已有自定义服务时“添加服务”表单默认收起');
   assert.match(manager, /aria-controls="mcp-add-body"/);
   assert.match(manager, /if \(!\(data\.servers as unknown\[\] \| undefined\)\?\.length\) setFormOpen\(null\)/, '删光服务后表单要重新展开');
   assert.match(client, /mcpTools\?: AgentMcpToolUse\[\];/);

@@ -11,6 +11,7 @@ type McpServerView = {
   url: string;
   enabled: boolean;
   allowWrite: boolean;
+  catalogId?: string;
   headerNames: string[];
   hasHeaders: boolean;
   enabledTools: string[];
@@ -34,6 +35,7 @@ function protocolNote(protocol: ProtocolView | null | undefined) {
 type ProbeTool = { name: string; title: string; description: string; readOnly: boolean; enabled: boolean; oversized?: boolean; unbypassableReason?: string | null };
 type ProbeState = { status: 'busy' | 'done' | 'error'; message: string; tools: ProbeTool[]; toolCount: number; readOnly: number };
 type Draft = { paste: string; name: string; url: string; headers: string; allowWrite: boolean };
+type McpView = 'connectors' | 'servers' | 'security' | 'advanced';
 
 type RuntimeView = {
   id: string;
@@ -279,16 +281,17 @@ function hostOf(url: string) {
  * 面板里的折叠区块：标题行本身就是开关，右侧可以挂常驻动作（刷新状态、展开表单）。
  * 长说明一律放进 body，标题行只留「这是什么 + 现在几项」的摘要，省得用户先读一屏字。
  */
-function PanelSection({ id, title, summary, aside, open, onToggle, children }: {
+function PanelSection({ id, title, summary, aside, open, onToggle, hidden = false, children }: {
   id: string;
   title: string;
   summary?: ReactNode;
   aside?: ReactNode;
   open: boolean;
   onToggle: () => void;
+  hidden?: boolean;
   children: ReactNode;
 }) {
-  return <div className={styles.form}>
+  return <div className={`${styles.form}${hidden ? ` ${styles.hidden}` : ''}`} hidden={hidden}>
     <div className={styles.formHead}>
       <h3 className={styles.sectionTitle}>
         <button type="button" className={styles.sectionToggle} aria-expanded={open} aria-controls={open ? id : undefined} onClick={onToggle}>
@@ -344,6 +347,8 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [notice, setNotice] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
+  const [activeView, setActiveView] = useState<McpView>('connectors');
+  const [catalogDetails, setCatalogDetails] = useState<Record<string, boolean>>({});
   /** 当前审批档位：存在设置里（/api/settings），面板只负责切换。 */
   const [approvalPolicy, setApprovalPolicy] = useState('trusted');
   /** 「完全访问」要点两次：第一下只是把按钮变成待确认状态。 */
@@ -357,9 +362,12 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   /** 列表头的「＋ 添加服务」直接把人送到面板底部的表单，省得自己找。 */
   const addSection = useRef<HTMLElement | null>(null);
   const jumpToAddForm = useCallback(() => {
+    setActiveView('servers');
     setFormOpen(true);
-    const reduceMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    addSection.current?.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+    if (typeof window !== 'undefined') {
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.requestAnimationFrame(() => addSection.current?.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' }));
+    }
   }, []);
   const dialog = useRef<HTMLDialogElement>(null);
   useBodyScrollLock(open);
@@ -445,9 +453,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     return () => clearInterval(timer);
   }, [open, installingRuntime, connectingEntry, applyPayload]);
 
+  const customServers = servers.filter((server) => !server.catalogId);
   const enabledCount = servers.filter((server) => server.enabled).length;
   /* 已经有服务时，"添加服务"表单默认收起：那个表单要占掉四百多像素，展开着会把工具清单挤到只剩一两行。 */
-  const showForm = formOpen ?? servers.length === 0;
+  const showForm = formOpen ?? customServers.length === 0;
 
   /** 把别处复制来的配置填进表单：只做识别，仍然要用户确认后才提交。 */
   function importConfig() {
@@ -983,10 +992,35 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         {error && <p className={styles.error} role="alert">{error}</p>}
         {notice && <p className={styles.notice} role="status">{notice}</p>}
 
+        <nav className={styles.viewNav} aria-label="MCP 设置分区">
+          {([
+            ['connectors', '连接器', `${catalog.filter((item) => CATALOG_STATE_TONE[item.state] === 'on').length} 个可用`],
+            ['servers', '我的服务', customServers.length ? `${customServers.length} 个已添加` : '还没有服务'],
+            ['security', '安全', approvalPolicy === 'full' ? '完全访问' : '默认保护'],
+            ['advanced', '高级', '运行时详情'],
+          ] as const).map(([view, label, summary]) => (
+            <button
+              key={view}
+              type="button"
+              className={activeView === view ? styles.viewNavActive : styles.viewNavButton}
+              aria-current={activeView === view ? 'page' : undefined}
+              onClick={() => setActiveView(view)}
+            >
+              <span>{label}</span>
+              <small>{summary}</small>
+            </button>
+          ))}
+        </nav>
+        <div className={styles.viewIntro}>
+          <strong>{activeView === 'connectors' ? '先从这里开始' : activeView === 'servers' ? '管理你自己添加的服务' : activeView === 'security' ? '控制助手什么时候需要询问你' : '不常用的运行与记录设置'}</strong>
+          <span>{activeView === 'connectors' ? '连接浏览器、本地文件、GitHub 等能力。' : activeView === 'servers' ? '服务默认保持只读，工具列表和高级配置按需展开。' : activeView === 'security' ? '默认保护你的数据，只有明确授权后才会执行修改操作。' : '这里保留安装状态、运行目录和运行日志。'}</span>
+        </div>
+
         <div className={styles.panel}>
           <PanelSection
             id="mcp-section-approval"
             title="审批档位"
+            hidden={activeView !== 'security'}
             open={!collapsed.approval}
             onToggle={() => toggleSection('approval')}
             summary={approvalPolicy === 'full'
@@ -1011,13 +1045,14 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
           <PanelSection
             id="mcp-section-servers"
             title="已连接的服务"
+            hidden={activeView !== 'servers'}
             open={!collapsed.servers}
             onToggle={() => toggleSection('servers')}
-            summary={servers.length ? `${servers.length} 个` : '还没有'}
+            summary={customServers.length ? `${customServers.length} 个` : '还没有'}
             aside={<button type="button" className={styles.addService} disabled={busy} onClick={jumpToAddForm}>＋ 添加服务</button>}
           >
-          {!servers.length && <p className={styles.empty}>还没有连接任何 MCP 服务。可以在下面粘贴一份配置或直接填地址；也可以直接在对话里说「帮我接入 xxx，地址是 https://…」。添加后会自动做一次连接自检。</p>}
-          {servers.map((server) => {
+          {!customServers.length && <p className={styles.empty}>还没有自定义 MCP 服务。可以在下面粘贴配置或直接填地址；官方连接器请到“连接器”页启用。</p>}
+          {customServers.map((server) => {
             const probe = probes[server.id];
             // 自检出来的工具列表可能有几十条：摊在面板里能把整页撑满，所以要能收回去。
             const probeKey = `probe:${server.id}`;
@@ -1074,6 +1109,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         <PanelSection
           id="mcp-section-catalog"
           title="官方连接器"
+          hidden={activeView !== 'connectors'}
           open={!collapsed.catalog}
           onToggle={() => toggleSection('catalog')}
           summary={`${catalog.filter((item) => CATALOG_STATE_TONE[item.state] === 'on').length} / ${catalog.length} 个已连接`}
@@ -1106,6 +1142,16 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   <span className={styles.fact}>能力 <b>{item.capabilities.join('、')}</b></span>
                   {item.allowedTools ? <span className={styles.fact}>放行 <b>{item.allowedTools}</b> 个工具</span> : null}
                 </div>
+                {item.examples.length > 0 && <p className={styles.hint}>可以直接说：{item.examples.slice(0, 2).join(' · ')}</p>}
+                <button
+                  type="button"
+                  className={styles.detailToggle}
+                  aria-expanded={Boolean(catalogDetails[item.id])}
+                  onClick={() => setCatalogDetails((current) => ({ ...current, [item.id]: !current[item.id] }))}
+                >
+                  {catalogDetails[item.id] ? '收起设置' : '设置与权限'}
+                </button>
+                {catalogDetails[item.id] && <div className={styles.catalogDetails}>
                 {remote && item.account && <p className={styles.meta}>账号：@{item.account}（连接时确认过一次，换成别的凭据要重新连接）</p>}
                 {protocolNote(item.protocol) && <p className={styles.meta}>{protocolNote(item.protocol)}</p>}
                 {item.blockedReason && <p className={styles.meta}>{item.blockedReason}</p>}
@@ -1253,6 +1299,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                     <li>不确定授权的是哪个目录，点这一行的「打开文件夹」看一眼。</li>
                   </ul>
                 </div>}
+                </div>}
               </div>
               <div className={styles.rowActions}>
                 {!remote && (runtime?.installing
@@ -1278,6 +1325,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         <PanelSection
           id="mcp-section-runtime"
           title="本地工具运行时详情"
+          hidden={activeView !== 'advanced'}
           open={!collapsed.runtime || installingRuntime}
           onToggle={() => toggleSection('runtime')}
           summary={`${runtimes.filter((runtime) => runtime.installed).length} / ${runtimes.length} 个已安装`}
@@ -1312,6 +1360,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         <PanelSection
           id="mcp-section-memory"
           title="工具授权记忆与最近调用"
+          hidden={activeView !== 'security'}
           open={!collapsed.memory}
           onToggle={() => toggleSection('memory')}
           summary={`已记住 ${Object.keys(toolPolicies).length} 个工具`}
@@ -1340,7 +1389,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
           </>}
         </PanelSection>
 
-        <section className={styles.form} ref={addSection}>
+        <section className={`${styles.form}${activeView !== 'servers' ? ` ${styles.hidden}` : ''}`} ref={addSection} hidden={activeView !== 'servers'}>
           <div className={styles.formHead}>
             <h3 className={styles.sectionTitle}>
               <button type="button" className={styles.sectionToggle} aria-expanded={showForm} aria-controls="mcp-add-body" disabled={busy} onClick={() => setFormOpen(!showForm)}>
