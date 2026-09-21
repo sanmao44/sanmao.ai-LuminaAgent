@@ -92,6 +92,31 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(store, /createTaskStore<CloneJob>\(\{ fileName: 'clone-jobs\.json', maxList: 200 \}\)/);
 });
 
+test("镜头计划只保存需要的素材，并按本地视频模型能力选择执行策略", () => {
+  assert.match(route, /hasReferenceImages: Boolean\(videoRuntime\?\.model\.capabilities\.includes\('video-reference'\)\)/);
+  assert.match(route, /hasFirstFrame: Boolean\(videoRuntime\?\.model\.capabilities\.includes\('video-first-frame'\)\)/);
+  assert.match(route, /hasReferenceAudio: Boolean\(videoRuntime\?\.model\.capabilities\.includes\('video-audio'\)\)/);
+  assert.match(pipeline, /不确定时宁可留空，不要把所有素材分配给每个镜头/);
+  assert.match(pipeline, /function fallbackShotAssets\(job: CloneJob, shot: CloneShot\)/);
+  assert.match(pipeline, /if \(job\.capabilities\.referenceImages\) return 'reference'/);
+  assert.match(pipeline, /if \(job\.capabilities\.firstFrame\) return 'keyframe'/);
+  assert.match(pipeline, /shot\.strategy === 'reference' \|\| legacyStrategy/);
+  assert.match(pipeline, /shot\.strategy === 'keyframe' \|\| legacyStrategy/);
+  assert.match(pipeline, /shot\.speechMode === 'talking' && job\.capabilities\.referenceAudio/);
+  assert.match(pipeline, /shot\.strategy === 'reference' \|\| shot\.strategy === 'text'/);
+  assert.match(jobRoute, /normalizeShotStrategy\(/);
+  assert.match(jobRoute, /validAssetIds\.has\(item\)/);
+});
+
+test("分析结果和用户确认会保存可复用 Blueprint，旧任务保持原有首帧链路", () => {
+  assert.match(cloneTypes, /export type CloneBlueprint = \{/);
+  assert.match(cloneTypes, /blueprint\?: CloneBlueprint;/);
+  assert.match(pipeline, /blueprint: \{ version: 1, sourceVideo: job\.reference, assets: job\.assets \|\| \[\], shots: planned/);
+  assert.match(jobRoute, /blueprint: latest\.blueprint \? \{ \.\.\.latest\.blueprint, shots, updatedAt: new Date\(\)\.toISOString\(\) \} : undefined/);
+  assert.match(pipeline, /const legacyStrategy = !shot\.strategy;/);
+  assert.match(pipeline, /started\.capabilities\.firstFrame !== false/);
+});
+
 test("管线包含抽帧、拆解、配音、生图、生视频五步与三条降级链", () => {
   assert.match(pipeline, /extractFrameFiles\(/);
   // 参考视频必须和 /api/storage/video 用同一套解析（回退历史目录），否则旧素材会解析成不存在的路径。

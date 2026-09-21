@@ -3,6 +3,19 @@ import { cleanupCloneJobDirectory, runCloneJob } from '@/lib/clone/pipeline';
 import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
 import type { CloneShot } from '@/lib/clone/types';
 
+function normalizeShotStrategy(
+  requested: CloneShot['strategy'] | undefined,
+  job: Awaited<ReturnType<typeof findCloneJob>>,
+  assetIds: string[],
+) {
+  if (!job) return 'text' as const;
+  const hasImageReference = assetIds.some((id) => job.assets.some((asset) => asset.kind === 'image' && (asset.nodeId || asset.url) === id));
+  if (requested === 'reference') return job.capabilities.video && job.capabilities.referenceImages && hasImageReference ? 'reference' : job.capabilities.video ? 'text' : 'static';
+  if (requested === 'keyframe') return job.capabilities.video && job.capabilities.firstFrame ? 'keyframe' : job.capabilities.video ? 'text' : 'static';
+  if (requested === 'text') return job.capabilities.video ? 'text' : 'static';
+  return 'static' as const;
+}
+
 export const runtime = 'nodejs';
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -35,15 +48,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (rawShots !== undefined) {
       if (!Array.isArray(rawShots) || rawShots.length !== job.shots.length) return Response.json({ error: '镜头计划数量不匹配' }, { status: 400 });
       const allowed = new Set(['reference', 'keyframe', 'text', 'static']);
+      const validAssetIds = new Set(job.assets.map((asset) => asset.nodeId || asset.url));
+      const strategyWarnings: string[] = [];
       shots = rawShots.map((value, index) => {
         const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
         const original = job.shots[index];
-        const strategy = typeof source.strategy === 'string' && allowed.has(source.strategy) ? source.strategy as CloneShot['strategy'] : original.strategy;
-        const assetIds = Array.isArray(source.assetIds) ? source.assetIds.filter((item): item is string => typeof item === 'string').slice(0, 16) : original.assetIds;
-        return { ...original, assetIds, strategy, preserveIdentity: Boolean(source.preserveIdentity ?? original.preserveIdentity), preserveProduct: Boolean(source.preserveProduct ?? original.preserveProduct) };
+        const requestedStrategy = typeof source.strategy === 'string' && allowed.has(source.strategy) ? source.strategy as CloneShot['strategy'] : original.strategy;
+        const assetIds = Array.isArray(source.assetIds)
+          ? [...new Set(source.assetIds.filter((item): item is string => typeof item === 'string' && validAssetIds.has(item)))].slice(0, 16)
+          : original.assetIds;
+        const strategy = normalizeShotStrategy(requestedStrategy, job, assetIds || []);
+        if (requestedStrategy && requestedStrategy !== strategy) strategyWarnings.push(`镜头 ${index + 1} 的「${requestedStrategy}」不兼容当前视频模型或素材，已改为「${strategy}」。`);
+        const speechMode = source.speechMode === 'talking' || source.speechMode === 'silent' || source.speechMode === 'narration' ? source.speechMode : original.speechMode;
+        return { ...original, assetIds, strategy, speechMode, preserveIdentity: Boolean(source.preserveIdentity ?? original.preserveIdentity), preserveProduct: Boolean(source.preserveProduct ?? original.preserveProduct) };
       });
+      if (strategyWarnings.length) await updateCloneJob(id, { warnings: [...new Set([...job.warnings, ...strategyWarnings])] });
     }
-    const updated = await updateCloneJob(id, { planConfirmed: true, shots, stage: 'queued', message: '已确认镜头计划，等待生成' });
+    const latest = await findCloneJob(id) || job;
+    const updated = await updateCloneJob(id, { planConfirmed: true, shots, blueprint: latest.blueprint ? { ...latest.blueprint, shots, updatedAt: new Date().toISOString() } : undefined, stage: 'queued', message: '已确认镜头计划，等待生成' });
     void runCloneJob(id).catch(() => undefined);
     return Response.json({ ok: true, job: updated }, { status: 202 });
   }

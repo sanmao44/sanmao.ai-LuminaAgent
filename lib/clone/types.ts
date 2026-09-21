@@ -21,6 +21,7 @@ export type CloneStage =
   | 'cancelled';
 
 export type CloneShotStatus = 'pending' | 'voicing' | 'imaging' | 'rendering' | 'done' | 'failed';
+export type CloneShotSpeechMode = 'narration' | 'talking' | 'silent';
 
 /** 一个镜头：参考视频里的一个时间段，对应一句新文案和一份重新生成的素材。 */
 export type CloneShot = {
@@ -34,9 +35,11 @@ export type CloneShot = {
   line: string;
   /** 重新生成画面用的提示词。 */
   prompt: string;
-  /** 当前镜头使用的素材节点；为空时继承全局素材。 */
+  /** 当前镜头实际使用的素材；缺少该字段的历史任务才继承全局素材。 */
   assetIds?: string[];
   strategy?: 'reference' | 'keyframe' | 'text' | 'static';
+  /** 声音与画面的关系：Talking 镜头只在视频模型支持时才传声音参考。 */
+  speechMode?: CloneShotSpeechMode;
   preserveIdentity?: boolean;
   preserveProduct?: boolean;
   status: CloneShotStatus;
@@ -61,6 +64,9 @@ export type CloneCapabilities = {
   speech: boolean;
   image: boolean;
   video: boolean;
+  referenceImages: boolean;
+  firstFrame: boolean;
+  referenceAudio: boolean;
   /** 没有在线 TTS 模型时，是否改用系统自带语音合成（Windows / macOS 的「本机离线配音」）。 */
   offlineSpeech: boolean;
 };
@@ -93,6 +99,16 @@ export type CloneModels = {
 /** 高级设置里显式选择的模型 id：为「自动」的轨道不写，执行时按 id 精确取模型。 */
 export type CloneModelIds = Partial<CloneModels>;
 
+/** 可复用的克隆蓝图：保留结构、素材依赖与策略，而非只保存一次性成片。 */
+export type CloneBlueprint = {
+  version: 1;
+  sourceVideo: CloneReference;
+  assets: CloneAsset[];
+  shots: CloneShot[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** 成片时间轴：直接落进画布的视频编辑节点。 */
 export type CloneTimeline = {
   duration: number;
@@ -113,6 +129,7 @@ export type CloneJob = {
   reference: CloneReference;
   assets: CloneAsset[];
   planConfirmed?: boolean;
+  blueprint?: CloneBlueprint;
   options: CloneOptions;
   capabilities: CloneCapabilities;
   warnings: string[];

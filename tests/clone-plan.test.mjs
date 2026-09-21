@@ -126,7 +126,7 @@ test('三条降级链都给出明确提示', () => {
 
   const full = plan.decideCapabilities({ hasVisionModel: true, hasSpeechModel: true, hasImageModel: true, hasVideoModel: true });
   assert.deepEqual(full.warnings, []);
-  assert.deepEqual(full.capabilities, { vision: true, speech: true, offlineSpeech: false, image: true, video: true });
+  assert.deepEqual(full.capabilities, { vision: true, speech: true, offlineSpeech: false, image: true, video: true, referenceImages: false, firstFrame: false, referenceAudio: false });
 });
 
 test('没有在线配音模型时用本机离线配音兜底，有在线模型时不抢戏', () => {

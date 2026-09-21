@@ -259,6 +259,9 @@ export function decideCapabilities(input: {
   hasSpeechModel: boolean;
   hasImageModel: boolean;
   hasVideoModel: boolean;
+  hasReferenceImages?: boolean;
+  hasFirstFrame?: boolean;
+  hasReferenceAudio?: boolean;
   /** 本机离线配音可用（Windows / macOS 自带语音合成），只在没有在线 TTS 模型时才兜底。 */
   offlineSpeech?: boolean;
 }): { capabilities: CloneCapabilities; warnings: string[] } {
@@ -276,6 +279,9 @@ export function decideCapabilities(input: {
       offlineSpeech,
       image: input.hasImageModel,
       video: input.hasVideoModel,
+      referenceImages: Boolean(input.hasReferenceImages),
+      firstFrame: Boolean(input.hasFirstFrame),
+      referenceAudio: Boolean(input.hasReferenceAudio),
     },
     warnings,
   };

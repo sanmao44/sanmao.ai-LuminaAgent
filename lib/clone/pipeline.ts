@@ -31,7 +31,7 @@ import { alignShotsWithLines, buildTimeline, clampShotSeconds, cloneStageProgres
 import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speech';
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
 import { findCloneJob, listCloneJobs, touchCloneJob, updateCloneJob } from './store';
-import type { CloneJob, CloneShot } from './types';
+import type { CloneAsset, CloneJob, CloneShot, CloneShotSpeechMode } from './types';
 
 const VIDEO_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 // 等服务商出片时定期续心跳：前端靠 updatedAt 判断这条任务是真的在跑，还是执行进程已经没了。
@@ -288,7 +288,7 @@ async function generateShotImage(runtime: ImageRuntime, job: CloneJob, shot: Clo
   const references = shot.strategy === 'text' ? [] : await cloneImageReferences(job, shot);
   const images = references.length
     ? await editImage(runtime.provider, runtime.model.rawId, {
-      prompt: `${prompt}。请严格保持参考素材中的${(job.assets || []).filter((asset) => asset.kind === 'image').map((asset) => asset.role).join('、')}身份与外观。`,
+      prompt: `${prompt}。请严格保持本镜头参考素材中的${(job.assets || []).filter((asset) => asset.kind === 'image' && (shot.assetIds || []).includes(asset.nodeId || asset.url)).map((asset) => asset.role).join('、')}身份与外观。`,
       references,
       aspectRatio: job.options.aspect,
       count: 1,
@@ -311,17 +311,23 @@ async function generateShotImage(runtime: ImageRuntime, job: CloneJob, shot: Clo
 async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: CloneShot, useFirstFrame = true) {
   if (!runtime) return null;
   const seconds = clampShotSeconds(Math.round(shot.audioSeconds || 4), getVideoModelLimits(runtime.model, runtime.provider));
-  const referenceImages = shot.strategy === 'text' ? [] : await cloneImageReferences(job, shot);
+  // strategy 缺失的是 0.7.50 以前的旧任务：沿用「参考图 + 已生成首帧」的旧链路，
+  // 不能因为升级 Blueprint 而悄悄变成纯文生视频。
+  const legacyStrategy = !shot.strategy;
+  const referenceImages = shot.strategy === 'reference' || legacyStrategy ? await cloneImageReferences(job, shot) : [];
+  const useKeyframe = shot.strategy === 'keyframe' || legacyStrategy;
+  const audios = shot.speechMode === 'talking' && job.capabilities.referenceAudio ? cloneAudioReferences(job, shot) : [];
   const input: VideoGenerationInput = {
     prompt: [shot.prompt || shot.visual || shot.line, job.options.brief ? `主题：${job.options.brief}` : '', '自然运动，无文字水印'].filter(Boolean).join('；'),
     operation: 'generate',
     seconds,
     aspectRatio: job.options.aspect,
     ...(referenceImages.length ? { referenceImages, videoMode: 'reference' as const } : {}),
-    ...(useFirstFrame && shot.imageUrl ? { firstFrame: shot.imageUrl } : {}),
+    ...(useKeyframe && useFirstFrame && shot.imageUrl ? { firstFrame: shot.imageUrl } : {}),
+    ...(audios.length ? { audios, requireAudio: true } : {}),
   };
   // 参考图模式与首帧模式互斥；若已有关键帧，优先使用关键帧保证镜头构图。
-  if (shot.imageUrl && referenceImages.length) {
+  if (useKeyframe && shot.imageUrl && referenceImages.length) {
     delete input.referenceImages;
     delete input.videoMode;
   }
@@ -497,9 +503,10 @@ async function executeCloneJob(id: string) {
 
     await patchJob(id, { stage: 'imaging', progress: cloneStageProgress('imaging'), message: '正在生成画面' });
     const imageWarnings: string[] = [];
-    let imagesDone = shots.filter((shot) => shot.imageUrl).length;
+    const shotsNeedingImage = shots.filter((shot) => !shot.imageUrl && shot.strategy !== 'reference' && shot.strategy !== 'text');
+    let imagesDone = shots.length - shotsNeedingImage.length;
     await mapWithConcurrency(shots, IMAGE_CONCURRENCY, async (shot, index) => {
-      if (await isCancelled(id) || shot.imageUrl) return;
+      if (await isCancelled(id) || shot.imageUrl || shot.strategy === 'reference' || shot.strategy === 'text') return;
       try {
         const imageUrl = await generateShotImage(imageRuntime, started, shot);
         if (imageUrl) shots = replaceShot(shots, index, { imageUrl, status: 'rendering' });
@@ -509,7 +516,7 @@ async function executeCloneJob(id: string) {
         shots = replaceShot(shots, index, { status: 'failed', error: message });
       }
       imagesDone += 1;
-      await patchJob(id, { shots, progress: round3(cloneStageProgress('imaging') + 0.26 * (imagesDone / shots.length)) });
+      await patchJob(id, { shots, progress: round3(cloneStageProgress('imaging') + 0.26 * (imagesDone / Math.max(1, shots.length))) });
     });
     if (imageWarnings.length) {
       const job = await findCloneJob(id);
@@ -519,7 +526,8 @@ async function executeCloneJob(id: string) {
     if (videoRuntime) {
       await patchJob(id, { stage: 'rendering', progress: cloneStageProgress('rendering'), message: '正在生成镜头' });
       const videoWarnings: string[] = [];
-      const useFirstFrame = await firstFrameTransportReady(videoRuntime);
+      // 新任务必须显式声明首帧能力；旧任务没有该字段时保留历史行为。
+      const useFirstFrame = started.capabilities.firstFrame !== false && await firstFrameTransportReady(videoRuntime);
       if (!useFirstFrame) {
         videoWarnings.push('图生视频需要服务商能访问的公网图片地址，当前没有连上图片中转；已自动改用文生视频，画面不会完全跟随生成的图片。');
       }
@@ -605,14 +613,73 @@ export async function analyzeCloneJob(id: string) {
   const { lines, prompts } = await writeScript(chatPick.value, job, normalized);
   const merged = normalized.map((shot, index) => ({ ...shot, prompt: prompts.get(index) || shot.prompt }));
   const scriptLines = lines.length ? lines.flatMap((line) => { const parts = splitLines(line); return parts.length ? parts : [line]; }) : merged.map((shot) => shot.visual).filter(Boolean);
-  const planned = alignShotsWithLines(merged, scriptLines).map((shot) => ({
-    ...shot,
-    assetIds: (job.assets || []).filter((asset) => asset.kind === 'image').map((asset) => asset.nodeId || asset.url),
-    strategy: (job.assets || []).some((asset) => asset.kind === 'image') ? 'reference' as const : 'text' as const,
-    preserveIdentity: (job.assets || []).some((asset) => asset.role === 'person'),
-    preserveProduct: (job.assets || []).some((asset) => asset.role === 'product'),
-  }));
-  return await patchJob(id, { stage: 'planned', progress: cloneStageProgress('planned'), message: `已生成 ${planned.length} 个镜头计划，等待确认`, shots: planned, planConfirmed: false });
+  const aligned = alignShotsWithLines(merged, scriptLines);
+  const planned = await planShotDependencies(chatPick.value, job, aligned);
+  const now = new Date().toISOString();
+  return await patchJob(id, {
+    stage: 'planned', progress: cloneStageProgress('planned'), message: `已生成 ${planned.length} 个镜头计划，等待确认`, shots: planned, planConfirmed: false,
+    blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: planned, createdAt: job.blueprint?.createdAt || now, updatedAt: now },
+  });
+}
+
+function defaultShotStrategy(job: CloneJob, assetIds: string[]) {
+  if (!assetIds.length) return job.capabilities.video ? 'text' as const : 'static' as const;
+  if (job.capabilities.referenceImages) return 'reference' as const;
+  if (job.capabilities.firstFrame) return 'keyframe' as const;
+  return job.capabilities.video ? 'text' as const : 'static' as const;
+}
+
+function fallbackShotAssets(job: CloneJob, shot: CloneShot) {
+  const lower = `${shot.visual} ${shot.prompt} ${shot.line}`.toLocaleLowerCase();
+  const assets = job.assets || [];
+  const find = (roles: CloneAsset['role'][]) => assets.filter((asset) => roles.includes(asset.role) && asset.kind === 'image').map((asset) => asset.nodeId || asset.url);
+  const productWords = /产品|商品|瓶|包装|logo|品牌|product|package|logo/i;
+  const personWords = /人|人物|主持|嘉宾|采访|近景|脸|person|host|speaker|portrait/i;
+  if (productWords.test(lower)) return find(['product', 'brand']);
+  if (personWords.test(lower)) return find(['person', 'scene']);
+  return find(['scene', 'style', 'broll']);
+}
+
+/** 把全局素材变成镜头级依赖。模型只提出建议；无法判断时走可解释的保守规则，不把全部素材塞进每个镜头。 */
+async function planShotDependencies(runtime: ChatRuntime, job: CloneJob, shots: CloneShot[]): Promise<CloneShot[]> {
+  const validIds = new Set((job.assets || []).map((asset) => asset.nodeId || asset.url));
+  const fallback = (shot: CloneShot) => {
+    const assetIds = fallbackShotAssets(job, shot);
+    const hasPerson = assetIds.some((id) => (job.assets || []).some((asset) => (asset.nodeId || asset.url) === id && asset.role === 'person'));
+    const hasProduct = assetIds.some((id) => (job.assets || []).some((asset) => (asset.nodeId || asset.url) === id && asset.role === 'product'));
+    if (hasPerson && shot.line) assetIds.push(...(job.assets || []).filter((asset) => asset.kind === 'audio' && asset.role === 'voice').map((asset) => asset.nodeId || asset.url));
+    const uniqueAssetIds = [...new Set(assetIds)];
+    return { ...shot, assetIds: uniqueAssetIds, strategy: defaultShotStrategy(job, uniqueAssetIds), speechMode: (hasPerson && Boolean(shot.line) ? 'talking' : shot.line ? 'narration' : 'silent') as CloneShotSpeechMode, preserveIdentity: hasPerson, preserveProduct: hasProduct };
+  };
+  if (!runtime || !job.assets?.length || !shots.length) return shots.map(fallback);
+  const catalog = job.assets.map((asset) => `${asset.nodeId || asset.url} | ${asset.role} | ${asset.kind} | ${asset.name}`).join('\n');
+  const shotList = shots.map((shot) => `${shot.index}: ${shot.visual} | ${shot.line}`).join('\n');
+  try {
+    const text = await askText(runtime, [{ role: 'system', content: SCRIPT_SYSTEM }, { role: 'user', content: [
+      '为短视频镜头规划素材依赖。只能使用给出的素材 id；不确定时宁可留空，不要把所有素材分配给每个镜头。',
+      '人物近景优先人物/场景；产品展示优先产品；品牌 CTA 优先品牌；声音素材只用于 talking 镜头。',
+      '返回 JSON：{"shots":[{"index":0,"assetIds":["id"],"speechMode":"narration|talking|silent"}]}。',
+      `素材：\n${catalog}`, `镜头：\n${shotList}`,
+    ].join('\n') }]);
+    const items = (parseJsonBlock(text) as { shots?: unknown[] } | null)?.shots;
+    const byIndex = new Map<number, { assetIds: string[]; speechMode?: CloneShotSpeechMode }>();
+    if (Array.isArray(items)) for (const item of items) {
+      const value = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      const index = Number(value.index);
+      const assetIds = Array.isArray(value.assetIds) ? value.assetIds.filter((id): id is string => typeof id === 'string' && validIds.has(id)).slice(0, 8) : [];
+      const speechMode = value.speechMode === 'talking' || value.speechMode === 'silent' || value.speechMode === 'narration' ? value.speechMode : undefined;
+      if (Number.isInteger(index) && index >= 0) byIndex.set(index, { assetIds, speechMode });
+    }
+    return shots.map((shot) => {
+      const suggested = byIndex.get(shot.index);
+      if (!suggested) return fallback(shot);
+      const assetIds = suggested.assetIds;
+      const roles = assetIds.map((id) => (job.assets || []).find((asset) => (asset.nodeId || asset.url) === id)?.role);
+      return { ...shot, assetIds, strategy: defaultShotStrategy(job, assetIds), speechMode: suggested.speechMode || (shot.line ? 'narration' : 'silent'), preserveIdentity: roles.includes('person'), preserveProduct: roles.includes('product') };
+    });
+  } catch {
+    return shots.map(fallback);
+  }
 }
 
 /** 将画布素材转换为图片编辑接口可接受的 data URL，避免把本地存储路径直接交给第三方。 */
@@ -638,4 +705,9 @@ async function cloneImageReferences(job: CloneJob, shot?: CloneShot) {
     }
   }
   return refs;
+}
+
+function cloneAudioReferences(job: CloneJob, shot: CloneShot) {
+  const selected = new Set(shot.assetIds || []);
+  return (job.assets || []).filter((asset) => asset.kind === 'audio' && selected.has(asset.nodeId || asset.url)).map((asset) => asset.url).slice(0, 3);
 }

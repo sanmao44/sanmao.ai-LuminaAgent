@@ -75,6 +75,9 @@ export async function POST(request: Request) {
       hasSpeechModel: Boolean(speechRuntime),
       hasImageModel: Boolean(imageRuntime),
       hasVideoModel: Boolean(videoRuntime),
+      hasReferenceImages: Boolean(videoRuntime?.model.capabilities.includes('video-reference')),
+      hasFirstFrame: Boolean(videoRuntime?.model.capabilities.includes('video-first-frame')),
+      hasReferenceAudio: Boolean(videoRuntime?.model.capabilities.includes('video-audio')),
       offlineSpeech: offlineSpeechSupported(),
     });
     if (!imageRuntime) {
