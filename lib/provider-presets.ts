@@ -77,6 +77,7 @@ function defaultResponsesPath(platform: ProviderPlatform) {
 }
 
 export const providerPresets: ProviderPreset[] = [
+  { value: 'apikl', label: 'API 快连 apikl.ai', short: 'API 快连', description: 'OpenAI 兼容中转站，Claude / GPT / Gemini / Grok / DeepSeek 等，地址已内置', logo: '/brand/providers/apikl.png', type: 'openai-compatible', baseUrl: 'https://api.apikl.ai/v1', needsBaseUrl: false, apiKeyUrl: 'https://apikl.ai/register?aff=WYG97GNX3X36', recommended: true },
   { value: '65535', label: '65535', short: '65535', description: 'OpenAI 兼容平台，支持原生异步视频任务', logo: '/brand/providers/65535.ico', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, apiKeyUrl: 'https://my.65535.space/register?aff=44291427', recommended: true, videoTransport: 'native-task', videoBaseUrl: 'https://task-api-1-cn.65535.space' },
   { value: 'new-api', label: 'New API / 中转站', short: 'New API', description: '已有连接的兼容标识；新建请使用“其他兼容平台”', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, showInPicker: false },
   { value: 'one-api', label: 'One API', short: 'One API', description: '已有连接的兼容标识；新建请使用“其他兼容平台”', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, showInPicker: false },

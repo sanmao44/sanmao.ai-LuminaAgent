@@ -28,7 +28,7 @@ const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCo
 
 test('provider picker uses real local logos for visible providers', async () => {
   const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
-  assert.equal(visiblePresets.length, 12);
+  assert.equal(visiblePresets.length, 13);
   assert.ok(visiblePresets.every((preset) => typeof preset.logo === 'string' && preset.logo.startsWith('/brand/providers/')) || visiblePresets.every((preset) => typeof preset.logo === 'string'));
   assert.match(pageSource, /className: preset\.logo \? 'platform-logo' : ''/);
   assert.match(pageSource, /children: preset\.logo \? .*src: preset\.logo/s);
