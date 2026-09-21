@@ -54,6 +54,7 @@ import { appendTextReferenceContext, normalizeCreativeReference, referencePrevie
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 import AgentApprovalCard from '@/components/AgentApprovalCard';
+import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/WelcomeExperience';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -5150,6 +5151,8 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
     });
 }
 export default function Page() {
+    const [welcomeVisible, setWelcomeVisible] = useState(true);
+    const [welcomeReady, setWelcomeReady] = useState(false);
     const [section, setSectionState] = useState('agent');
     const [managementNavOpen, setManagementNavOpen] = useState(false);
     const sectionRef = useRef('agent');
@@ -5189,6 +5192,14 @@ export default function Page() {
     const [toast, setToast] = useState('');
     const toastTimerRef = useRef(null);
     const [confirmState, setConfirmState] = useState(null);
+    useEffect(()=>{
+        try {
+            setWelcomeVisible(localStorage.getItem(WELCOME_SEEN_STORAGE_KEY) !== '1');
+        } catch {
+            setWelcomeVisible(true);
+        }
+        setWelcomeReady(true);
+    }, []);
     // Keep the feedback global so every send/generate entry point gets the same
     // lightweight celebration without touching its existing submit handler.
     useEffect(()=>{
@@ -10667,6 +10678,12 @@ export default function Page() {
         }, model.id);
     }
     const imageModeActive = section === 'generate' || section === 'angle';
+    if (!welcomeReady || welcomeVisible) {
+        return /*#__PURE__*/ _jsx(WelcomeExperience, {
+            theme,
+            onEnter: ()=>setWelcomeVisible(false)
+        });
+    }
     return /*#__PURE__*/ _jsxs("main", {
         className: `app-shell ${section === 'angle' ? 'angle-app-shell' : ''} ${section === 'video' ? 'video-app-shell' : ''} ${sidebarOpen ? 'sidebar-is-open' : ''}`,
         children: [
