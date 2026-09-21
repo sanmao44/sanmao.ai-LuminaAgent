@@ -525,7 +525,12 @@ async function executeCloneJob(id: string) {
       }
       let rendered = shots.filter((shot) => shot.videoUrl).length;
       await mapWithConcurrency(shots, VIDEO_CONCURRENCY, async (shot, index) => {
-        if (await isCancelled(id) || shot.videoUrl || shot.strategy === 'static') return;
+        if (await isCancelled(id) || shot.videoUrl) return;
+        if (shot.strategy === 'static') {
+          shots = replaceShot(shots, index, { status: shot.imageUrl ? 'done' : 'failed' });
+          await patchJob(id, { shots });
+          return;
+        }
         let videoUrl: string | null = null;
         let failure = '';
         for (let attempt = 0; attempt <= VIDEO_RETRY_WAITS_MS.length; attempt += 1) {
