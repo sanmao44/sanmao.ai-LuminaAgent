@@ -39,6 +39,51 @@ export function normalizeVariantRequirements(value: unknown): string[] {
   return normalized.length ? normalized : [""];
 }
 
+export type SmartVariantSource = {
+  id: string;
+  name: string;
+  text: string;
+};
+
+export type SmartVariantSourceUnit = {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  text: string;
+};
+
+const SMART_VARIANT_SECTION_HEADING = /^(?:#{1,6}\s+\S|第\s*[一二三四五六七八九十百\d]+\s*[章节部分][：:]?|[（(]?\d{1,3}[）)]\s*\S|\d{1,3}\s*[、.．:：]\s*\S|[一二三四五六七八九十]+\s*[、.．:：]\s*\S)/u;
+
+/**
+ * Keeps author-defined sections intact before asking an LLM to polish them.
+ * Markdown/numbered headings win over blank lines so a heading and its body
+ * always travel together as one generation requirement.
+ */
+export function smartVariantSourceUnits(sources: readonly SmartVariantSource[]): SmartVariantSourceUnit[] {
+  return sources.flatMap((source) => {
+    const text = String(source.text || "").replace(/\r\n?/g, "\n").trim();
+    if (!text) return [];
+    const lines = text.split("\n");
+    const headingIndexes = lines.reduce<number[]>((indexes, line, index) => {
+      if (SMART_VARIANT_SECTION_HEADING.test(line.trim())) indexes.push(index);
+      return indexes;
+    }, []);
+    const sections = headingIndexes.length
+      ? headingIndexes.map((start, index) => {
+          const prefix = index === 0 ? lines.slice(0, start) : [];
+          const end = headingIndexes[index + 1] ?? lines.length;
+          return [...prefix, ...lines.slice(start, end)].join("\n").trim();
+        }).filter(Boolean)
+      : text.split(/\n\s*\n+/).map((part) => part.trim()).filter(Boolean);
+    return sections.map((section, index) => ({
+      id: `${source.id}:section-${index + 1}`,
+      sourceId: source.id,
+      sourceName: source.name,
+      text: section,
+    }));
+  });
+}
+
 export function uid(prefix = "id") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }

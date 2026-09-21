@@ -20,3 +20,14 @@ test("smart variant apply uses the session target instead of current selection",
   assert.ok(apply.includes("node.id !== target.id"));
   assert.ok(!apply.includes("selectedSingle"));
 });
+
+test("smart variant planning locks one output to each source unit and retries invalid mappings", () => {
+  const planning = source.slice(source.indexOf("function smartVariantPlanningPrompt"), source.indexOf("function variantStatesFor"));
+  const open = source.slice(source.indexOf("const openSmartVariant ="), source.indexOf("const applySmartVariant ="));
+  assert.ok(planning.includes("每个 sourceId 恰好生成一条变体"));
+  assert.ok(planning.includes("禁止拆分一段为多条、合并多段为一条、遗漏或编造段落"));
+  assert.ok(planning.includes("variants.length !== sourceUnits.length"));
+  assert.ok(planning.includes("new Set(sourceIds).size !== sourceUnits.length"));
+  assert.ok(open.includes('source.id !== "shared-prompt"'));
+  assert.ok(open.includes("smartVariantPlanningPrompt(sourceUnits, sharedPrompt, repairReason)"));
+});
