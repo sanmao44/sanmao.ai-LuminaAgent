@@ -160,23 +160,6 @@ function firstJsonObject(value: string) {
     return null;
   }
 }
-/*
-  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const source = (fenced || value).trim();
-  try {
-    return JSON.parse(source) as unknown;
-  } catch {
-    const start = source.indexOf("{");
-    const end = source.lastIndexOf("}");
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(source.slice(start, end + 1)) as unknown;
-    } catch {
-      return null;
-    }
-  }
-}*/
-
 export function parseCinematicDirectorPlan(value: string): CinematicDirectorPlan {
   const rawValue = String(value || "").trim();
   if (!rawValue) throw new Error("导演模型返回为空");

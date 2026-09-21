@@ -285,7 +285,7 @@ async function generateShotImage(runtime: ImageRuntime, job: CloneJob, shot: Clo
   if (!runtime) return null;
   const state = await getPublicState();
   const prompt = [shot.prompt || shot.visual || shot.line, job.options.brief ? `主题：${job.options.brief}` : '', '画面真实自然，不要出现文字水印'].filter(Boolean).join('；');
-  const references = await cloneImageReferences(job);
+  const references = shot.strategy === 'text' ? [] : await cloneImageReferences(job, shot);
   const images = references.length
     ? await editImage(runtime.provider, runtime.model.rawId, {
       prompt: `${prompt}。请严格保持参考素材中的${(job.assets || []).filter((asset) => asset.kind === 'image').map((asset) => asset.role).join('、')}身份与外观。`,
@@ -311,7 +311,7 @@ async function generateShotImage(runtime: ImageRuntime, job: CloneJob, shot: Clo
 async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: CloneShot, useFirstFrame = true) {
   if (!runtime) return null;
   const seconds = clampShotSeconds(Math.round(shot.audioSeconds || 4), getVideoModelLimits(runtime.model, runtime.provider));
-  const referenceImages = await cloneImageReferences(job);
+  const referenceImages = shot.strategy === 'text' ? [] : await cloneImageReferences(job, shot);
   const input: VideoGenerationInput = {
     prompt: [shot.prompt || shot.visual || shot.line, job.options.brief ? `主题：${job.options.brief}` : '', '自然运动，无文字水印'].filter(Boolean).join('；'),
     operation: 'generate',
@@ -525,7 +525,7 @@ async function executeCloneJob(id: string) {
       }
       let rendered = shots.filter((shot) => shot.videoUrl).length;
       await mapWithConcurrency(shots, VIDEO_CONCURRENCY, async (shot, index) => {
-        if (await isCancelled(id) || shot.videoUrl) return;
+        if (await isCancelled(id) || shot.videoUrl || shot.strategy === 'static') return;
         let videoUrl: string | null = null;
         let failure = '';
         for (let attempt = 0; attempt <= VIDEO_RETRY_WAITS_MS.length; attempt += 1) {
@@ -602,7 +602,7 @@ export async function analyzeCloneJob(id: string) {
   const scriptLines = lines.length ? lines.flatMap((line) => { const parts = splitLines(line); return parts.length ? parts : [line]; }) : merged.map((shot) => shot.visual).filter(Boolean);
   const planned = alignShotsWithLines(merged, scriptLines).map((shot) => ({
     ...shot,
-    assetIds: (job.assets || []).filter((asset) => asset.kind === 'image').map((asset) => asset.nodeId).filter((value): value is string => Boolean(value)),
+    assetIds: (job.assets || []).filter((asset) => asset.kind === 'image').map((asset) => asset.nodeId || asset.url),
     strategy: (job.assets || []).some((asset) => asset.kind === 'image') ? 'reference' as const : 'text' as const,
     preserveIdentity: (job.assets || []).some((asset) => asset.role === 'person'),
     preserveProduct: (job.assets || []).some((asset) => asset.role === 'product'),
@@ -611,10 +611,11 @@ export async function analyzeCloneJob(id: string) {
 }
 
 /** 将画布素材转换为图片编辑接口可接受的 data URL，避免把本地存储路径直接交给第三方。 */
-async function cloneImageReferences(job: CloneJob) {
+async function cloneImageReferences(job: CloneJob, shot?: CloneShot) {
   const state = await getPublicState();
   const refs: string[] = [];
-  for (const asset of (job.assets || []).filter((item) => item.kind === 'image').slice(0, 8)) {
+  const selected = shot?.assetIds ? new Set(shot.assetIds) : null;
+  for (const asset of (job.assets || []).filter((item) => item.kind === 'image' && (!selected || selected.has(item.nodeId || item.url))).slice(0, 8)) {
     const value = asset.url;
     if (value.startsWith('data:image/')) { refs.push(value); continue; }
     let file: string | null = null;

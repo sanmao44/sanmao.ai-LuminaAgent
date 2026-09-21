@@ -37,7 +37,9 @@ function readAssets(raw: unknown): CloneAsset[] {
     if (!item || typeof item !== 'object') return [];
     const source = item as Record<string, unknown>;
     const url = String(source.url || '').trim();
-    const role = String(source.role || 'style') as CloneAsset['role'];
+    const rawRole = typeof source.role === 'string' ? source.role.trim() : '';
+    if (!rawRole) throw new Error('每个参考素材都必须先设定角色（人物、产品、品牌等）');
+    const role = rawRole as CloneAsset['role'];
     const kind = String(source.kind || 'image') as CloneAsset['kind'];
     if (!url || !roles.has(role) || !kinds.has(kind)) return [];
     return [{ ...(source.nodeId ? { nodeId: String(source.nodeId) } : {}), name: String(source.name || '参考素材').slice(0, 80), url, kind, role }];

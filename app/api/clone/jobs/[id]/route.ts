@@ -1,6 +1,7 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { cleanupCloneJobDirectory, runCloneJob } from '@/lib/clone/pipeline';
 import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
+import type { CloneShot } from '@/lib/clone/types';
 
 export const runtime = 'nodejs';
 
@@ -29,7 +30,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   if (action === 'confirm') {
     if (job.stage !== 'planned') return Response.json({ error: '镜头计划尚未生成' }, { status: 400 });
-    const updated = await updateCloneJob(id, { planConfirmed: true, stage: 'queued', message: '已确认镜头计划，等待生成' });
+    const rawShots = body && typeof body === 'object' ? (body as { shots?: unknown }).shots : undefined;
+    let shots = job.shots;
+    if (rawShots !== undefined) {
+      if (!Array.isArray(rawShots) || rawShots.length !== job.shots.length) return Response.json({ error: '镜头计划数量不匹配' }, { status: 400 });
+      const allowed = new Set(['reference', 'keyframe', 'text', 'static']);
+      shots = rawShots.map((value, index) => {
+        const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+        const original = job.shots[index];
+        const strategy = typeof source.strategy === 'string' && allowed.has(source.strategy) ? source.strategy as CloneShot['strategy'] : original.strategy;
+        const assetIds = Array.isArray(source.assetIds) ? source.assetIds.filter((item): item is string => typeof item === 'string').slice(0, 16) : original.assetIds;
+        return { ...original, assetIds, strategy, preserveIdentity: Boolean(source.preserveIdentity ?? original.preserveIdentity), preserveProduct: Boolean(source.preserveProduct ?? original.preserveProduct) };
+      });
+    }
+    const updated = await updateCloneJob(id, { planConfirmed: true, shots, stage: 'queued', message: '已确认镜头计划，等待生成' });
     void runCloneJob(id).catch(() => undefined);
     return Response.json({ ok: true, job: updated }, { status: 202 });
   }

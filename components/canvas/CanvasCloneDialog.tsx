@@ -117,6 +117,7 @@ export default function CanvasCloneDialog({
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   const [job, setJob] = useState<CloneJob | null>(null);
+  const [planShots, setPlanShots] = useState<CloneJob['shots']>([]);
   // 服务端是否有本机离线配音兜底（Windows / macOS 的系统语音合成）；只在没有在线配音模型时才用得上。
   const [offlineSpeech, setOfflineSpeech] = useState(false);
   const [applied, setApplied] = useState(false);
@@ -243,6 +244,10 @@ export default function CanvasCloneDialog({
       setError("没有可用的生图模型：请先在模型库启用一个生图模型，再回来一键出片。");
       return;
     }
+    if (Object.values(selectedAssets).some((role) => !role)) {
+      setError("请为已选素材设定角色，或取消勾选不参与本次克隆的素材");
+      return;
+    }
     if (overBudget && !costConfirmed) {
       setError("镜头数或时长超出默认成本闸门，请先确认预计消耗。");
       return;
@@ -329,7 +334,7 @@ export default function CanvasCloneDialog({
     setStarting(true);
     setError("");
     try {
-      const response = await fetch(`/api/clone/jobs/${job.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "confirm" }) });
+      const response = await fetch(`/api/clone/jobs/${job.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "confirm", shots: planShots }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || "确认镜头计划失败");
       setJob(data.job as CloneJob);
@@ -409,6 +414,7 @@ export default function CanvasCloneDialog({
   const readyShots = job ? job.shots.filter((shot) => shot.videoUrl || shot.imageUrl).length : 0;
   const progress = job ? (job.stage === "done" ? 1 : cloneStageProgress(job.stage) || job.progress) : 0;
   const planJob = job as CloneJob | null;
+  useEffect(() => { if (job?.stage === PLAN_STAGE) setPlanShots(job.shots); }, [job]);
 
   return (
     <div
@@ -436,7 +442,7 @@ export default function CanvasCloneDialog({
           <button type="button" className="clone-close" onClick={closeDialog} aria-label="关闭">×</button>
         </header>
 
-        {job ? (
+        {job && job.stage !== PLAN_STAGE ? (
           <div className="clone-body">
             <div className="clone-progress">
               <div className="clone-progress-track"><i style={{ width: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%` }} /></div>
@@ -511,6 +517,15 @@ export default function CanvasCloneDialog({
             {job.stage === "failed" && (
               <p className="clone-hint">「继续任务」会沿用这条任务接着跑：已经生成好的配音和镜头会跳过，不会重复计费。</p>
             )}
+          </div>
+        ) : job?.stage === PLAN_STAGE ? (
+          <div className="clone-body">
+            <div className="clone-progress"><div className="clone-progress-track"><i style={{ width: `${Math.round(Math.max(0, Math.min(1, job.progress)) * 100)}%` }} /></div><div className="clone-progress-copy"><b>镜头计划已生成</b><small>分析阶段不会消耗生图、视频或配音额度</small></div></div>
+            <div className="clone-plan-preview"><div className="clone-plan-heading"><b>镜头计划</b><small>逐镜头检查素材和生成方式，确认后才开始生成</small></div>
+              {planShots.map((shot, index) => <article className="clone-plan-shot" key={shot.index}><span className="clone-shot-index">{shot.index + 1}</span><div><b>{shot.visual || "镜头画面"}</b><p>{shot.line || "无口播文案"}</p><small>{shot.start.toFixed(1)}s–{shot.end.toFixed(1)}s · </small><select value={shot.strategy || "text"} onChange={(event) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, strategy: event.target.value as CloneJob['shots'][number]['strategy'] } : item))}><option value="reference">多参考图</option><option value="keyframe">关键帧首帧</option><option value="text">文生视频降级</option><option value="static">静态图降级</option></select>{job.assets.filter((asset) => asset.kind === "image").length > 0 && <div className="clone-plan-assets">{job.assets.filter((asset) => asset.kind === "image").map((asset) => { const id = asset.nodeId || asset.url; const checked = (shot.assetIds || []).includes(id); return <label key={id}><input type="checkbox" checked={checked} onChange={() => setPlanShots((current) => current.map((item, position) => { if (position !== index) return item; const next = new Set(item.assetIds || []); if (next.has(id)) next.delete(id); else next.add(id); return { ...item, assetIds: [...next] }; }))} />{asset.name}</label>; })}</div>}</div></article>)}
+            </div>
+            {error && <p className="clone-error">{error}</p>}
+            <div className="clone-actions"><button type="button" className="clone-button ghost" onClick={closeDialog}>取消</button><button type="button" className="clone-button primary" onClick={confirmPlan} disabled={starting}>{starting ? "确认中…" : "确认并开始生成"}</button></div>
           </div>
         ) : restoring ? (
           <div className="clone-body">

@@ -9691,15 +9691,11 @@ export default function SuperCanvas() {
       };
 
       try {
+        const directorInput = buildCinematicDirectorRequest({ sourceName, sourcePrompt: String(source.data.generation?.prompt || source.data.prompt || ""), settings, previousConcepts });
         const directorResponse = await generateCanvasAgent({
           messages: [{
             role: "user",
-            content: buildCinematicDirectorRequest({
-              sourceName,
-              sourcePrompt: String(source.data.generation?.prompt || source.data.prompt || ""),
-              settings,
-              previousConcepts,
-            }),
+            content: directorInput,
           }],
           model: runtime?.settings.agentModelId || "auto",
           task: "cinematic_shock_opening_director",
@@ -9714,7 +9710,26 @@ export default function SuperCanvas() {
             ...(source.data.mimeType ? { mimeType: String(source.data.mimeType) } : {}),
           }],
         });
-        const plan = parseCinematicDirectorPlan(directorResponse.message);
+        let plan: ReturnType<typeof parseCinematicDirectorPlan>;
+        try {
+          plan = parseCinematicDirectorPlan(directorResponse.message);
+        } catch (firstError) {
+          const reason = firstError instanceof Error ? firstError.message : "导演输出不可解析";
+          const retry = await generateCanvasAgent({
+            messages: [{ role: "user", content: `${directorInput}\n\n上一次输出无效（${reason}）。这是修复重试：只返回一个完整合法的 JSON 对象，不要 Markdown、解释或截断，并确保 videoPrompt 非空。` }],
+            model: runtime?.settings.agentModelId || "auto",
+            task: "cinematic_shock_opening_director",
+            deliverable: "TEXT",
+            intentReason: "cinematic director retry",
+            references: [{ id: source.id, nodeId: source.id, kind: "image", name: sourceName, url: sourceUrl, ...(source.data.mimeType ? { mimeType: String(source.data.mimeType) } : {}) }],
+          });
+          try {
+            plan = parseCinematicDirectorPlan(retry.message);
+          } catch (secondError) {
+            const detail = secondError instanceof Error ? secondError.message : "导演输出不可解析";
+            throw new Error(`导演模型两次均未返回可执行方案：${detail}`);
+          }
+        }
         const finalPrompt = compileCinematicVideoPrompt(plan, settings, videoParams);
         updateOutput(
           { status: "running", statusLabel: "准备生成…", processingStartedAt: Date.now() },
