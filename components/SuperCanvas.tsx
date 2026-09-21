@@ -14601,6 +14601,12 @@ export default function SuperCanvas() {
       .filter((item) => item.kind === "image" || item.kind === "audio"),
     [document.nodes],
   );
+  const preselectedCloneAssetIds = useMemo(
+    () => document.nodes
+      .filter((node) => selectedIds.has(node.id) && node.type === "media" && node.data.kind !== "video" && Boolean(node.data.url))
+      .map((node) => node.id),
+    [document.nodes, selectedIds],
+  );
 
   /**
    * 只有用户明确选中一条视频节点时才当作「预选参考」：
@@ -16313,6 +16319,7 @@ export default function SuperCanvas() {
           <CanvasCloneDialog
             references={cloneReferences}
             assets={cloneAssets}
+            initialAssetIds={preselectedCloneAssetIds}
             onAssetUploaded={(asset) => {
               if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
             }}

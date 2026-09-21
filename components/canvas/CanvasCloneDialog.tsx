@@ -42,6 +42,8 @@ type CanvasCloneDialogProps = {
   defaultProviderId?: string | null;
   defaultProviderName?: string;
   preselectedReferenceId?: string | null;
+  /** 从画布多选后进入克隆时，仅把这些非视频素材带入本次任务。 */
+  initialAssetIds?: string[];
   notify: (message: string, tone?: "ok" | "error") => void;
   /** 弹窗内直接导入参考视频（复用画布的导入流程，省得用户先关弹窗再去找工具栏）。 */
   onImportReference?: () => void;
@@ -92,6 +94,7 @@ export default function CanvasCloneDialog({
   defaultProviderId,
   defaultProviderName,
   preselectedReferenceId,
+  initialAssetIds = [],
   notify,
   onImportReference,
   onAssetUploaded,
@@ -101,7 +104,10 @@ export default function CanvasCloneDialog({
   const [step, setStep] = useState(preselectedReferenceId ? 2 : 1);
   const [referenceId, setReferenceId] = useState(preselectedReferenceId || "");
   const [selectedAssets, setSelectedAssets] = useState<Record<string, CloneAssetRole | "">>({});
+  const [assetNames, setAssetNames] = useState<Record<string, string>>({});
   const [uploadedAssets, setUploadedAssets] = useState<CanvasCloneAssetOption[]>([]);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+  const [assetQuery, setAssetQuery] = useState("");
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [brief, setBrief] = useState("");
@@ -129,8 +135,29 @@ export default function CanvasCloneDialog({
   const flags = useMemo(() => cloneCapabilityFlags(models), [models]);
   const reference = references.find((item) => item.nodeId === referenceId) || null;
   const allAssets = useMemo(() => [...assets, ...uploadedAssets], [assets, uploadedAssets]);
+  const selectedAssetOptions = useMemo(
+    () => allAssets.filter((asset) => Object.prototype.hasOwnProperty.call(selectedAssets, asset.nodeId || asset.url)),
+    [allAssets, selectedAssets],
+  );
+  const availableCanvasAssets = useMemo(() => {
+    const query = assetQuery.trim().toLocaleLowerCase();
+    return assets.filter((asset) => {
+      const key = asset.nodeId || asset.url;
+      return asset.nodeId !== referenceId
+        && !Object.prototype.hasOwnProperty.call(selectedAssets, key)
+        && (!query || asset.name.toLocaleLowerCase().includes(query));
+    });
+  }, [assetQuery, assets, referenceId, selectedAssets]);
   const overBudget = maxShots > CLONE_DEFAULT_MAX_SHOTS || maxSeconds > CLONE_DEFAULT_MAX_SECONDS;
   const running = Boolean(job) && !TERMINAL_STAGES.includes(job!.stage) && job!.stage !== PLAN_STAGE;
+
+  useEffect(() => {
+    if (!initialAssetIds.length) return;
+    setSelectedAssets((current) => {
+      if (Object.keys(current).length) return current;
+      return Object.fromEntries(initialAssetIds.map((id) => [id, ""]));
+    });
+  }, [initialAssetIds]);
 
   useEffect(() => {
     let disposed = false;
@@ -260,7 +287,7 @@ export default function CanvasCloneDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reference: { nodeId: reference.nodeId, name: reference.name, url: reference.url, seconds: reference.seconds },
-          assets: allAssets.filter((asset) => asset.nodeId !== reference.nodeId && selectedAssets[asset.nodeId || ""]).map((asset) => ({ ...(asset.nodeId ? { nodeId: asset.nodeId } : {}), name: asset.name, url: asset.url, kind: asset.kind, role: selectedAssets[asset.nodeId || ""] })),
+          assets: selectedAssetOptions.filter((asset) => asset.nodeId !== reference.nodeId && selectedAssets[asset.nodeId || asset.url]).map((asset) => { const key = asset.nodeId || asset.url; return { ...(asset.nodeId ? { nodeId: asset.nodeId } : {}), name: assetNames[key]?.trim() || asset.name, url: asset.url, kind: asset.kind, role: selectedAssets[key] }; }),
           brief: brief.trim(),
           options: {
             brief: brief.trim(),
@@ -599,43 +626,41 @@ export default function CanvasCloneDialog({
                 </label>
 
                 <div className="clone-asset-toolbar">
+                  <button type="button" className="clone-button ghost" onClick={() => setAssetPickerOpen(true)}>从画布添加</button>
                   <button type="button" className="clone-button ghost" onClick={() => uploadInputRef.current?.click()} disabled={uploading}>{uploading ? "上传中…" : "＋ 上传素材"}</button>
                   <input ref={uploadInputRef} hidden type="file" multiple accept="image/*,video/*,audio/*" onChange={(event) => { void uploadAssets(event.target.files); event.currentTarget.value = ""; }} />
                   <small>每个素材都要明确角色；不需要的素材不要勾选</small>
                 </div>
 
-                {allAssets.length > 0 && (
+                {selectedAssetOptions.length > 0 && (
                   <div className="clone-field">
                     <span>参考素材（可选：人物 / 产品 / 品牌 / 风格）</span>
                     <div className="clone-asset-list">
-                      {allAssets.filter((asset) => asset.nodeId !== referenceId).map((asset) => {
+                      {selectedAssetOptions.map((asset) => {
                         const key = asset.nodeId || asset.url;
                         const role = selectedAssets[key] || "";
                         return (
                           <label className="clone-asset-row" key={key}>
                             {asset.kind === "image" ? <img src={asset.url} alt="" /> : <span className="clone-asset-kind">{asset.kind === "audio" ? "♫" : "▶"}</span>}
-                            <input type="checkbox" checked={Object.prototype.hasOwnProperty.call(selectedAssets, key)} onChange={(event) => setSelectedAssets((current) => {
-                              const next = { ...current };
-                              if (event.target.checked) next[key] = "" as CloneAssetRole;
-                              else delete next[key];
-                              return next;
-                            })} />
-                            <span>{asset.name}</span>
+                            <input value={assetNames[key] ?? asset.name} aria-label="素材名称" maxLength={80} onChange={(event) => setAssetNames((current) => ({ ...current, [key]: event.target.value }))} />
                             <select value={role} onChange={(event) => setSelectedAssets((current) => ({ ...current, [key]: event.target.value as CloneAssetRole | "" }))} disabled={!Object.prototype.hasOwnProperty.call(selectedAssets, key)}>
                               <option value="">设定角色</option>
                               <option value="person">人物</option>
                               <option value="product">产品</option>
                               <option value="brand">品牌</option>
                               <option value="scene">场景</option>
+                              <option value="style">风格</option>
                               <option value="broll">B-roll</option>
                               <option value="voice">声音</option>
-                            </select>
+                            </select><button type="button" className="clone-asset-remove" aria-label={`移除 ${asset.name}`} onClick={() => setSelectedAssets((current) => { const next = { ...current }; delete next[key]; return next; })}>×</button>
                           </label>
                         );
                       })}
                     </div>
                   </div>
                 )}
+                {!selectedAssetOptions.length && <div className="clone-assets-empty">本次还没有内容素材。可从画布添加、直接上传，或先多选人物、产品、品牌素材后再打开克隆。</div>}
+                {assetPickerOpen && <div className="clone-asset-picker" role="dialog" aria-label="从画布添加素材"><div className="clone-asset-picker-head"><b>从画布添加素材</b><button type="button" onClick={() => setAssetPickerOpen(false)}>完成</button></div><input value={assetQuery} placeholder="搜索画布素材" onChange={(event) => setAssetQuery(event.target.value)} />{availableCanvasAssets.length ? <div className="clone-asset-picker-list">{availableCanvasAssets.map((asset) => { const key = asset.nodeId || asset.url; return <button type="button" key={key} onClick={() => setSelectedAssets((current) => ({ ...current, [key]: "" }))}>{asset.kind === "image" ? <img src={asset.url} alt="" /> : <span>{asset.kind === "audio" ? "◉" : "▷"}</span>}<b>{asset.name}</b><em>添加</em></button>; })}</div> : <p>没有可添加的画布素材。</p>}</div>}
 
                 <div className="clone-field">
                   <span>画幅</span>
