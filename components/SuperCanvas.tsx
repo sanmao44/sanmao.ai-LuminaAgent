@@ -92,6 +92,8 @@ import { createPortal } from "react-dom";
 import type { ClientReferenceImage } from "@/lib/types";
 import type { GenerationLog } from "@/lib/generation-log";
 import {
+  archiveCanvasRemoteImages,
+  canvasRemoteMediaUrls,
   getCanvasVideoTask,
   generateCanvasAgent,
   generateCanvasImage,
@@ -3861,6 +3863,35 @@ export default function SuperCanvas() {
       pollStartedAtRef.current.clear();
     };
   }, [notify]);
+
+  /*
+   * 服务商临时地址只活一小段时间，节点一直用它的话，图片会挂、参考素材也会读不到。
+   * 画布打开时补一次，之后每分钟看一次，把远端图片归档成本地存储地址；同一地址一个会话只试一次。
+   */
+  const healedRemoteMediaRef = useRef(new Set<string>());
+  const healRemoteNodeMedia = useCallback(async () => {
+    const remoteUrls = canvasRemoteMediaUrls(docRef.current.nodes)
+      .filter((url) => !healedRemoteMediaRef.current.has(url));
+    if (!remoteUrls.length) return;
+    remoteUrls.slice(0, 16).forEach((url) => healedRemoteMediaRef.current.add(url));
+    const archived = await archiveCanvasRemoteImages(remoteUrls);
+    if (!archived.size) return;
+    updateDoc((value) => ({
+      ...value,
+      nodes: value.nodes.map((node) => {
+        const local = archived.get(String(node.data.url || "").trim());
+        return local ? { ...node, data: { ...node.data, url: local } } : node;
+      }),
+    }));
+    addLog(`已把 ${archived.size} 张远端图片保存到本地`);
+  }, [addLog, updateDoc]);
+
+  useEffect(() => {
+    if (!ready) return;
+    void healRemoteNodeMedia();
+    const timer = window.setInterval(() => void healRemoteNodeMedia(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [healRemoteNodeMedia, ready]);
 
   useEffect(() => {
     if (!ready || !runtime) return;

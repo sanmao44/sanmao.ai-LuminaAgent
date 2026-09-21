@@ -29,6 +29,29 @@ function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers({ 'content-type': 'application/json' }), async json() { return body; } };
 }
 
+function binaryResponse(type = 'image/png') {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'content-type': type }),
+    async blob() { return new Blob([new Uint8Array([1])], { type }); },
+  };
+}
+
+/* asDataUrl 用 FileReader 把 blob 转成 data URL；单测里只需要它回调 onload。 */
+async function withFileReader(callback) {
+  const original = globalThis.FileReader;
+  globalThis.FileReader = class {
+    readAsDataURL(blob) {
+      queueMicrotask(() => {
+        this.result = `data:${blob?.type || 'image/png'};base64,ARCHIVED`;
+        this.onload?.();
+      });
+    }
+  };
+  try { return await callback(); } finally { globalThis.FileReader = original; }
+}
+
 async function withFetch(handler, callback) {
   const original = globalThis.fetch;
   globalThis.fetch = handler;
@@ -606,6 +629,96 @@ test('canvas agent reuses a bounded prepared-reference cache and invalidates by 
   } finally {
     mocks.restore();
   }
+});
+
+test('canvas agent archives a remote reference on the server when the browser cannot read it', async () => {
+  const mocks = withImageCanvas({ width: 1600, height: 900 });
+  const requested = [];
+  let payload;
+  try {
+    const remote = 'https://task-cdn.example.com/?url=stale-model-sheet.png';
+    const archived = '/api/storage/file?name=archived-model-sheet.png';
+    await withFileReader(() => withFetch(async (input, options) => {
+      requested.push(input);
+      if (input === remote) throw new TypeError('Failed to fetch');
+      if (input === '/api/storage/images') return jsonResponse({ ok: true, images: [{ url: archived }] });
+      if (input === archived) return binaryResponse('image/png');
+      payload = JSON.parse(options?.body || '{}');
+      return jsonResponse({ ok: true, message: '已完成' });
+    }, () => api.generateCanvasAgent({
+      messages: [{ role: 'user', content: '照这张图继续' }],
+      model: 'provider-a-chat-model',
+      references: [{ url: remote, name: '继续生成图片 1' }],
+    })));
+
+    assert.deepEqual(requested.slice(0, 3), [remote, '/api/storage/images', archived]);
+    assert.equal(payload.messages[0].references[0].url, 'data:image/jpeg;base64,AA==');
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas agent names the reference it cannot read instead of blaming the network', async () => {
+  let archiveAttempted = false;
+  const remote = 'https://task-cdn.example.com/?url=gone-model-sheet.png';
+  await withFetch(async (input) => {
+    if (input === remote) throw new TypeError('Failed to fetch');
+    if (input === '/api/storage/images') {
+      archiveAttempted = true;
+      return jsonResponse({ error: '图片保存失败' }, 400);
+    }
+    return jsonResponse({ ok: true, message: '已完成' });
+  }, async () => {
+    await assert.rejects(
+      () => api.generateCanvasAgent({
+        messages: [{ role: 'user', content: '照这张图继续' }],
+        model: 'provider-a-chat-model',
+        references: [{ url: remote, name: '继续生成图片 1' }],
+      }),
+      (error) => {
+        assert.match(error.message, /参考素材「继续生成图片 1」读取失败/);
+        assert.match(error.message, /已失效/);
+        assert.doesNotMatch(error.message, /Failed to fetch/);
+        return true;
+      },
+    );
+  });
+  assert.equal(archiveAttempted, true);
+});
+
+test('canvas media archiving keeps only the addresses the server could store', async () => {
+  const requests = [];
+  const archived = await withFetch(async (input, options) => {
+    requests.push({ input, body: JSON.parse(options?.body || '{}') });
+    if (String(input) !== '/api/storage/images') return jsonResponse({ error: 'unexpected' }, 404);
+    return options.body.includes('gone.png')
+      ? jsonResponse({ error: '图片保存失败' }, 400)
+      : jsonResponse({ ok: true, images: [{ url: '/api/storage/file?name=kept.png' }] });
+  }, () => api.archiveCanvasRemoteImages([
+    'https://task-cdn.example.com/?url=fresh.png',
+    'https://task-cdn.example.com/?url=gone.png',
+    '/api/storage/file?name=already-local.png',
+  ]));
+
+  assert.deepEqual(requests.map((request) => request.body.images[0].url), [
+    'https://task-cdn.example.com/?url=fresh.png',
+    'https://task-cdn.example.com/?url=gone.png',
+  ]);
+  assert.deepEqual([...archived.entries()], [
+    ['https://task-cdn.example.com/?url=fresh.png', '/api/storage/file?name=kept.png'],
+  ]);
+});
+
+test('canvas media archiving targets only remote image addresses', () => {
+  assert.deepEqual(api.canvasRemoteMediaUrls([
+    { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
+    { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
+    { data: { kind: 'image', url: '/api/storage/file?name=local.png' } },
+    { data: { kind: 'image', url: 'http://localhost:3210/api/storage/file?name=local.png' } },
+    { data: { kind: 'video', url: 'https://task-cdn.example.com/?url=clip.mp4' } },
+    { data: { kind: 'audio', url: 'https://task-cdn.example.com/?url=voice.mp3' } },
+    { data: { url: 'data:image/png;base64,AA==' } },
+  ]), ['https://task-cdn.example.com/?url=fresh.png']);
 });
 
 test('canvas upscale marks the request as canvas-originated', async () => {

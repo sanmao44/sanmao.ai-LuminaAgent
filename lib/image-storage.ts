@@ -150,6 +150,37 @@ async function fetchImageResponse(url: string, downloadAuth?: ImageDownloadAuth)
   throw new Error('下载服务商图片失败：重定向次数过多');
 }
 
+/*
+ * 服务商常把图片放在一个中转地址里（?url=… 包着真实图片地址）。这种中转只活一小段时间、
+ * 而且很容易超时或返回 5xx；原地址读不到时，里面那个地址往往还活着，所以这里按内层地址再取一次。
+ */
+function unwrappedRelayImageUrl(url: string) {
+  try {
+    for (const value of new URL(url).searchParams.values()) {
+      const inner = value.trim();
+      if (/^https?:\/\//i.test(inner) && inner !== url) return inner;
+    }
+  } catch { /* 不是合法 URL，就没有内层地址可取 */ }
+  return '';
+}
+
+async function fetchReadableImageResponse(url: string, downloadAuth?: ImageDownloadAuth) {
+  const relayed = () => unwrappedRelayImageUrl(url);
+  let response: Response;
+  try {
+    response = await fetchImageResponse(url, downloadAuth);
+  } catch (error) {
+    const inner = relayed();
+    if (!inner) throw error;
+    return fetchImageResponse(inner, downloadAuth);
+  }
+  if (response.ok) return response;
+  const inner = relayed();
+  if (!inner) return response;
+  const retried = await fetchImageResponse(inner, downloadAuth);
+  return retried.ok ? retried : response;
+}
+
 function compactBase64(value: string) {
   const compact = value.trim().replace(/\s/g, '');
   return compact.length >= 16 && compact.length % 4 !== 1 && /^[A-Za-z0-9+/=_-]+$/.test(compact) ? compact : '';
@@ -225,7 +256,7 @@ async function readImageBuffer(url: string, downloadAuth?: ImageDownloadAuth, de
     return { buffer, mime, ext: imageExtension(mime) };
   }
   if (!/^https?:\/\//i.test(url)) throw new Error('图片结果不是可读取的 data URL 或 HTTP 地址，无法保存到本地');
-  const response = await fetchImageResponse(url, downloadAuth);
+  const response = await fetchReadableImageResponse(url, downloadAuth);
   if (!response.ok) throw new Error(`下载服务商图片失败：HTTP ${response.status}`);
   const contentLength = Number(response.headers.get('content-length') || 0);
   if (contentLength > MAX_STORED_IMAGE_BYTES) throw new Error('图片超过 100MB，无法保存');

@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CreativeReference } from "../creative-references";
 import type { WorkspaceContext } from "../workspace-context";
-import type { CanvasDocument } from "./types";
+import type { CanvasDocument, CanvasNode } from "./types";
 import {
   requestAgent,
   type AgentResponse,
@@ -360,12 +360,77 @@ async function cachedCanvasAgentReference(url: string) {
   }
 }
 
+/**
+ * 画布文档里需要补归档的远端图片地址：本地存储/中转地址跳过，同一地址只留一次。
+ * 这些地址只活一小段时间，节点一直用它们的话，图片会挂、参考素材也会读不到。
+ */
+export function canvasRemoteMediaUrls(nodes: readonly CanvasNode[]) {
+  const urls = nodes
+    .filter((node) => node.data.kind !== "video" && node.data.kind !== "audio")
+    .map((node) => String(node.data.url || "").trim())
+    .filter((url) => /^https?:\/\//i.test(url) && !/\/api\/(?:storage|media)\//i.test(url));
+  return Array.from(new Set(urls));
+}
+
+/**
+ * 把画布节点上的远端图片补归档成本地存储地址。
+ * 服务商临时地址只活一小段时间，节点一直用它的话，图片会挂、参考素材也会读不到；
+ * 本地存储地址不会过期，画布和参考素材都能直接读。归档不到的地址不会出现在结果里。
+ */
+export async function archiveCanvasRemoteImages(urls: readonly string[]) {
+  const archived = new Map<string, string>();
+  for (const url of Array.from(new Set(urls)).slice(0, 16)) {
+    if (!/^https?:\/\//i.test(url)) continue;
+    try {
+      const response = await fetch("/api/storage/images", {
+        cache: "no-store",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images: [{ url }] }),
+      });
+      if (!response.ok) continue;
+      const data = (await response.json().catch(() => null)) as { images?: Array<{ url?: string }> } | null;
+      const local = String(data?.images?.[0]?.url || "");
+      if (local.startsWith("/api/storage/file?")) archived.set(url, local);
+    } catch { /* 归档失败就保持原地址，由调用方决定怎么呈现 */ }
+  }
+  return archived;
+}
+
+/* 参考素材在浏览器里读不到时的兜底：先让服务端归档一份本地副本，再按本地地址读。 */
+async function archiveRemoteCanvasReference(url: string) {
+  const archived = await archiveCanvasRemoteImages([url]);
+  const local = archived.get(url);
+  return local ? cachedCanvasAgentReference(local).catch(() => "") : "";
+}
+
+/* 说清失败原因，并顺手给出下一步；调用方只负责补上「是哪一张」。 */
+function referenceFailureReason(error: unknown, url: string) {
+  const text = error instanceof Error ? error.message.trim() : "";
+  if (/Failed to fetch|NetworkError|Load failed|network/i.test(text) && /^https?:\/\//i.test(url))
+    return "原始图片地址已失效，或不允许浏览器直接读取，请重新上传或重新生成这张图，或改用其它参考素材。";
+  if (/timeout|超时/i.test(text)) return "读取原始图片超时，请重试或改用其它参考素材。";
+  return text ? (/[。！？]$/.test(text) ? text : `${text}。`) : "图片内容无法读取，请重新导入这张图。";
+}
+
+async function canvasAgentReference(reference: { url: string; name?: string }, index: number) {
+  const url = String(reference.url || "");
+  try {
+    return await cachedCanvasAgentReference(url);
+  } catch (error) {
+    const archived = await archiveRemoteCanvasReference(url);
+    if (archived) return archived;
+    const name = reference.name || `参考图 ${index + 1}`;
+    throw new Error(`参考素材「${name}」读取失败：${referenceFailureReason(error, url)}`);
+  }
+}
+
 export async function prepareCanvasAgentReferences(
   references: Array<{ url: string; name?: string }> = [],
 ) {
-  return Promise.all(references.slice(0, 16).map(async (reference) => ({
+  return Promise.all(references.slice(0, 16).map(async (reference, index) => ({
     ...reference,
-    url: await cachedCanvasAgentReference(reference.url),
+    url: await canvasAgentReference(reference, index),
   })));
 }
 
@@ -739,7 +804,7 @@ export async function generateCanvasAgent(
       if (reference.kind === "text") {
         return { id: reference.id || `canvas-ref-${index + 1}`, kind: "text" as const, name: reference.name || `文本 ${index + 1}`, text: reference.text || "", ...(reference.mimeType ? { mimeType: reference.mimeType } : {}), ...(reference.nodeId ? { nodeId: reference.nodeId } : {}) };
       }
-      const url = reference.url ? await cachedCanvasAgentReference(reference.url) : "";
+      const url = reference.url ? await canvasAgentReference({ url: reference.url, ...(reference.name ? { name: reference.name } : {}) }, index) : "";
       return { id: reference.id || `canvas-ref-${index + 1}`, kind: reference.kind || "image", name: reference.name || `参考图 ${index + 1}`, url, ...(reference.mimeType ? { mimeType: reference.mimeType } : {}), ...(reference.nodeId ? { nodeId: reference.nodeId } : {}) };
     }));
     const messages = input.messages.map((message, index, all) => ({

@@ -73,6 +73,27 @@ test('stores valid image bytes under a local storage URL', async () => {
   }
 });
 
+test('falls back to the inner address when the relayed provider image url fails', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    if (String(url).includes('task-cdn.example.com')) return new Response('relay gone', { status: 404 });
+    return new Response(png, { status: 200, headers: { 'content-type': 'image/png' } });
+  };
+  try {
+    const relayed = 'https://task-cdn.example.com/?url=https%3A%2F%2Ftask1.example.com%2Fjobs%2Fimg_abc%2F0.png';
+    const result = await storage.persistGeneratedImages([{ url: relayed }]);
+    assert.deepEqual(requested, [relayed, 'https://task1.example.com/jobs/img_abc/0.png']);
+    assert.match(result.images[0].url, /^\/api\/storage\/file\?name=/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('sends provider auth only to a trusted provider host', async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
   const previousFetch = globalThis.fetch;
