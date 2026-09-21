@@ -354,17 +354,21 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.doesNotMatch(continuation, /createGenerator\(/);
 });
 
-test("completed image editors expose a default-on current-image reference switch", () => {
+test("completed image editors remember the current-image reference switch per node", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   const editorEnd = component.indexOf("function CanvasMaskSummary", editorStart);
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "image editor should be present");
   const editor = component.slice(editorStart, editorEnd);
   assert.match(editor, /useCurrentImageAsReference/);
-  assert.match(editor, /useState\(true\)/);
+  assert.match(editor, /useState\(currentImageReference \?\? true\)/);
   assert.match(editor, /checked=\{useCurrentImageAsReference\}/);
   assert.match(editor, /aria-label="当前图片作参考"/);
   assert.match(editor, /!branchDraft/);
-  assert.match(editor, /setUseCurrentImageAsReference\(true\)/);
+  assert.match(editor, /setUseCurrentImageAsReference\(currentImageReference \?\? true\)/);
+  assert.match(editor, /onCurrentImageReferenceChange\?\.\(next\)/);
+  assert.doesNotMatch(editor, /setUseCurrentImageAsReference\(true\)/);
+  assert.match(component, /const \[currentImageReferenceByNode, setCurrentImageReferenceByNode\] = useState<Record<string, boolean>>\(\{\}\)/);
+  assert.match(component, /currentImageReference=\{currentImageReferenceByNode\[editorNode\.id\]\}/);
   assert.match(styles, /\.canvas-current-image-reference-toggle/);
   assert.match(styles, /input:focus-visible\+\.canvas-current-image-reference-switch/);
 });

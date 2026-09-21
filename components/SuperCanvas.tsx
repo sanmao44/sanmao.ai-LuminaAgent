@@ -2918,6 +2918,7 @@ export default function SuperCanvas() {
   const [referencePickerHoverNodeId, setReferencePickerHoverNodeId] = useState<string | null>(null);
   const [referencePickerFlashNodeId, setReferencePickerFlashNodeId] = useState<string | null>(null);
   const [expandedEditorId, setExpandedEditorId] = useState<string | null>(null);
+  const [currentImageReferenceByNode, setCurrentImageReferenceByNode] = useState<Record<string, boolean>>({});
   const [nodeGestureActive, setNodeGestureActive] = useState(false);
   const [quickToolbarNodeId, setQuickToolbarNodeId] = useState<string | null>(
     null,
@@ -15721,6 +15722,12 @@ export default function SuperCanvas() {
                 writeCustomImagePresets(next);
               }}
               onToggleEditor={toggleEditor}
+              currentImageReference={currentImageReferenceByNode[editorNode.id]}
+              onCurrentImageReferenceChange={(value) => {
+                setCurrentImageReferenceByNode((current) => current[editorNode.id] === value
+                  ? current
+                  : { ...current, [editorNode.id]: value });
+              }}
               onGenerate={runEditorGeneration}
               onOneTake={runOneTakeForAgentNode}
               smartVariantAction={editorNode.type === "generator" && editorNode.id === selectedSingle?.id ? (
@@ -18370,6 +18377,8 @@ type CanvasNodeEditorPopoverProps = {
   onImagePresetClear: () => void;
   onSaveImagePreset: (preset: CustomImagePreset) => void;
   onDeleteImagePreset: (presetId: string) => void;
+  currentImageReference?: boolean;
+  onCurrentImageReferenceChange?: (value: boolean) => void;
   maskState?: CanvasMaskState;
   onLocalEdit?: () => void;
   onLocalEditRemove?: () => void;
@@ -19108,6 +19117,8 @@ function CanvasNodeEditorPopover({
   onImagePresetClear,
   onSaveImagePreset,
   onDeleteImagePreset,
+  currentImageReference,
+  onCurrentImageReferenceChange,
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLDivElement | null>(null);
@@ -19117,7 +19128,7 @@ function CanvasNodeEditorPopover({
   const [promptOptimizing, setPromptOptimizing] = useState(false);
   const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
-  const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(true);
+  const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(currentImageReference ?? true);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
@@ -19335,10 +19346,13 @@ function CanvasNodeEditorPopover({
 
   useEffect(() => {
     setPromptBeforeOptimization(null);
-    setUseCurrentImageAsReference(true);
     setSelectedPresetId(supportsImagePresets ? (branchDraft?.presetId || node.data.generation?.presetId || "") : "");
     setSelectedPresetName(supportsImagePresets ? (branchDraft?.presetName || node.data.generation?.presetName || "") : "");
   }, [branchDraft?.presetId, branchDraft?.presetName, node.data.generation?.presetId, node.data.generation?.presetName, node.id, supportsImagePresets]);
+
+  useEffect(() => {
+    setUseCurrentImageAsReference(currentImageReference ?? true);
+  }, [currentImageReference, node.id]);
 
   async function optimizeEditorPrompt() {
     if (!visibleEditorPrompt.trim()) return;
@@ -19718,7 +19732,11 @@ function CanvasNodeEditorPopover({
                   <input
                     type="checkbox"
                     checked={useCurrentImageAsReference}
-                    onChange={(event) => setUseCurrentImageAsReference(event.currentTarget.checked)}
+                    onChange={(event) => {
+                      const next = event.currentTarget.checked;
+                      setUseCurrentImageAsReference(next);
+                      onCurrentImageReferenceChange?.(next);
+                    }}
                     aria-label="当前图片作参考"
                   />
                   <span className="canvas-current-image-reference-switch" aria-hidden="true">
