@@ -973,6 +973,26 @@ test('normalizes variant requirements by removing blank lines', () => {
   assert.deepEqual(model.normalizeVariantRequirements([]), ['']);
 });
 
+test('locks smart variant units to authored headings before AI planning', () => {
+  const units = model.smartVariantSourceUnits([{
+    id: 'agent-copy',
+    name: '产品文案',
+    text: '开场说明\n\n## 01 首屏视觉\n保留夜景和产品主体。\n\n## 02 材质与工艺\n突出金属边框。\n\n## 03 RGB 灯效\n强调多彩动态灯效。',
+  }]);
+  assert.deepEqual(units.map(({ id, sourceId, sourceName, text }) => ({ id, sourceId, sourceName, text })), [
+    { id: 'agent-copy:section-1', sourceId: 'agent-copy', sourceName: '产品文案', text: '开场说明\n\n## 01 首屏视觉\n保留夜景和产品主体。' },
+    { id: 'agent-copy:section-2', sourceId: 'agent-copy', sourceName: '产品文案', text: '## 02 材质与工艺\n突出金属边框。' },
+    { id: 'agent-copy:section-3', sourceId: 'agent-copy', sourceName: '产品文案', text: '## 03 RGB 灯效\n强调多彩动态灯效。' },
+  ]);
+});
+
+test('uses blank paragraphs as smart variant units when headings are absent', () => {
+  const units = model.smartVariantSourceUnits([{
+    id: 'agent-copy', name: '产品文案', text: '第一段\n\n第二段\n\n第三段',
+  }]);
+  assert.deepEqual(units.map((unit) => unit.text), ['第一段', '第二段', '第三段']);
+});
+
 test('keeps legacy advanced generators compatible as a single default variant', () => {
   const document = model.normalizeDocument({
     nodes: [
