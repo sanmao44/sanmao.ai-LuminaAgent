@@ -132,6 +132,11 @@ gh release create v0.7.25 `
 ```
 
 > 如果想**全自动**：配好 `.github/workflows` 里的 CI，之后**只要打 tag / 推分支**，GitHub 就会自动从 `main` 打包 ZIP 和 DMG 并出 Release，不用手动 `gh release create`。
+> ZIP 必须用仓库脚本生成，避免 Windows 资源管理器把中文文件名显示成乱码：
+> ```powershell
+> npm run build:release-zip -- --ref <发布源 commit 或 tag> --output "C:\path\to\SANMAO.AI-x.y.z.zip"
+> ```
+> 该脚本使用 `git archive` 并在生成后检查 ZIP 中文文件名的 UTF-8 标志；校验失败时不会保留错误压缩包。
 > **发布前必做校验（避免“SHA-256 校验失败”）：**
 > `npm run check` 和 GitHub CI 会强制检查 `update.json`：`latestVersion` 必须与 `package.json` 一致，`packageUrl`、`releaseUrl` 和非全零 SHA-256 必须完整且版本一致。未生成真实 ZIP 校验值前，不要把发布准备提交推到 `main`。
 > 上传 zip 后，在仓库根目录运行：
@@ -181,4 +186,3 @@ gh release create v0.7.25 `
 - 分支合并后：确认已合并 → 默认删除本地/远程分支
 - 想发一版：升级版本号 → `git tag` → 从 `main` 生成 ZIP + DMG → `gh release create`（发布）
 - 用户更新：`git pull` 或 下载 Release zip
-
