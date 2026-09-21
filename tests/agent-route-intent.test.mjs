@@ -66,10 +66,10 @@ function harness(options = {}) {
   new Function('require', 'module', 'exports', compiled)((id) => mocks[id] || requireTs(id === '@/lib/tools' ? '@/lib/tools/index' : id), module, module.exports);
   return {
     calls, images,
-    async post(messages, extra = {}) {
+    async post(messages) {
       const response = await module.exports.POST(new Request('http://localhost/api/agent', {
         method: 'POST',
-        body: JSON.stringify({ messages, webMode: 'off', ...extra }),
+        body: JSON.stringify({ messages, webMode: 'off' }),
       }));
       const data = await response.json();
       assert.equal(response.status, 200, JSON.stringify(data));
@@ -77,17 +77,6 @@ function harness(options = {}) {
     },
   };
 }
-
-test('smart variant planning uses the isolated JSON-only route without tools', async () => {
-  const agent = harness({ reply: () => ({ content: '{"categories":[],"variants":[]}' }) });
-  const data = await agent.post([{ role: 'user', content: '按 sourceId 整理变体' }], {
-    source: 'canvas', task: 'smart_variant_planning', deliverable: 'TEXT',
-  });
-  assert.equal(data.message, '{"categories":[],"variants":[]}');
-  assert.equal(agent.calls.length, 1);
-  assert.equal(agent.calls[0].tools, undefined);
-  assert.match(agent.calls[0].messages[0].content, /只返回一个合法 JSON 对象/);
-});
 
 const history = [
   { role: 'user', content: '画个对牛弹琴的寓意图，9:16' },

@@ -31,24 +31,3 @@ test("smart variant planning locks one output to each source unit and retries in
   assert.ok(open.includes('source.id !== "shared-prompt"'));
   assert.ok(open.includes("smartVariantPlanningPrompt(sourceUnits, sharedPrompt, repairReason)"));
 });
-
-test("smart variant analysis has a bounded, cancellable request path", () => {
-  const open = source.slice(source.indexOf("const cancelSmartVariant ="), source.indexOf("const applySmartVariant ="));
-  const portal = source.slice(source.indexOf('{smartVariantOpen && createPortal('), source.indexOf('<CanvasMinimap'));
-  assert.ok(source.includes("const SMART_VARIANT_MAX_WAIT_MS = 75_000"));
-  assert.ok(open.includes("const controller = new AbortController()"));
-  assert.ok(open.includes("window.setTimeout"));
-  assert.ok(open.includes("generateCanvasAgent({"));
-  assert.ok(open.includes("signal: controller.signal"));
-  assert.ok(portal.includes("停止分析"));
-  assert.ok(portal.includes("closeSmartVariant"));
-});
-
-test("image variants anchor the first reference subject while allowing an explicit opt-out", () => {
-  assert.ok(source.includes("function variantIdentityAnchorPrompt"));
-  assert.ok(source.includes("参考图 1「${primaryName}」是主体身份锚点"));
-  assert.ok(source.includes("禁止换脸、换人、改变性别/年龄、身体比例漂移或重设计服装"));
-  assert.ok(source.includes("variantIdentityPreservation !== false"));
-  assert.ok(source.includes("保持首图主体"));
-  assert.ok(source.includes("首图主体锚定"));
-});

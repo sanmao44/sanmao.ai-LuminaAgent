@@ -298,8 +298,6 @@ export type CanvasNodeData = {
   variantRequirements?: string[];
   /** Editing buffer that preserves empty lines while the user types. */
   variantRequirementsText?: string;
-  /** Keep the first image reference as the subject/identity anchor for image variants. */
-  variantIdentityPreservation?: boolean;
   smartVariantSnapshot?: {
     categories: string[];
     variants: { instruction: string; category?: string; sources?: string[] }[];

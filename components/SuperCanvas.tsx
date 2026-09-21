@@ -178,7 +178,7 @@ import {
   requestPromptOptimization,
   runReversePrompt,
 } from "@/lib/creation/agent";
-import { type AgentGeneratedImage } from "@/lib/agent-client";
+import { requestAgent, type AgentGeneratedImage } from "@/lib/agent-client";
 import CanvasAgentDock, {
   CANVAS_AGENT_DOCK_OPEN_KEY,
 } from "@/components/CanvasAgentDock";
@@ -1626,8 +1626,6 @@ type SmartVariantPlan = {
   variants: SmartVariantDraft[];
 };
 
-const SMART_VARIANT_MAX_WAIT_MS = 75_000;
-
 function smartVariantPlanningPrompt(
   sourceUnits: ReturnType<typeof smartVariantSourceUnits>,
   sharedPrompt = "",
@@ -1701,22 +1699,6 @@ function variantStatesFor(node: CanvasNode): CanvasVariantState[] {
       ...(current?.updatedAt ? { updatedAt: current.updatedAt } : {}),
     };
   });
-}
-
-function variantIdentityPreservationEnabled(node: CanvasNode) {
-  return node.data.kind === "image" && node.data.variantIdentityPreservation !== false;
-}
-
-function variantIdentityAnchorPrompt(
-  enabled: boolean,
-  references: Array<{ name: string }>,
-) {
-  if (!enabled || !references.length) return "";
-  const primaryName = references[0]?.name || "参考图 1";
-  const auxiliary = references.length > 1
-    ? "其余参考图仅用于补充场景、构图、动作或风格，不能替换、混合或重设计主体身份。"
-    : "没有其他参考图可以替换该主体。";
-  return `参考图使用优先级（必须遵守）：参考图 1「${primaryName}」是主体身份锚点。若图中有人物，生成结果必须是同一人，严格保持面部身份、五官、年龄感、肤色、发型、体型比例、制服/服装、配饰和可识别标志；只按本次变体要求改变场景、机位、动作或光线，禁止换脸、换人、改变性别/年龄、身体比例漂移或重设计服装。若图中没有人物，则严格保持其主要可识别主体、材质、结构、配色和标识。${auxiliary} 这是尽力保持要求，最终一致性仍受所选模型能力影响。`;
 }
 
 function variantStatusLabel(status: CanvasVariantState["status"]) {
@@ -7258,10 +7240,6 @@ export default function SuperCanvas() {
           name: String(node.data.name || "参考素材"),
         }))
         .filter((item) => item.url);
-      const identityAnchor = variantIdentityAnchorPrompt(
-        variantIdentityPreservationEnabled(generator),
-        refs,
-      );
       const batchName = `${kind === "video" ? "视频" : "图片"}变体批次`;
       const attachBatchGroup = (
         value: CanvasDocument,
@@ -7305,7 +7283,6 @@ export default function SuperCanvas() {
             [
               naturalCommonPrompt.value,
               instruction ? `变体要求：${instruction}` : "",
-              identityAnchor,
             ]
               .filter(Boolean)
               .join("\n"),
@@ -13981,21 +13958,9 @@ export default function SuperCanvas() {
   const [smartVariantError, setSmartVariantError] = useState("");
   const [smartVariantBeforeApply, setSmartVariantBeforeApply] = useState<string | null>(null);
   const smartVariantSession = useRef<{ nodeId: string; sources: typeof smartVariantSources } | null>(null);
-  const smartVariantAbortRef = useRef<AbortController | null>(null);
   const savedSmartVariant = selectedSingle?.data.smartVariantSnapshot;
   const smartVariantTarget = nodeById(document, smartVariantSession.current?.nodeId || "");
   const smartVariantBusy = Boolean(smartVariantTarget && (generationKeys.has(smartVariantTarget.id) || ["running", "queued"].includes(String(smartVariantTarget.data.status)) || smartVariantTarget.data.variantStates?.some((item) => item.status === "running")));
-  const cancelSmartVariant = useCallback(() => {
-    const controller = smartVariantAbortRef.current;
-    controller?.abort(new DOMException("已停止变体分析", "AbortError"));
-    smartVariantAbortRef.current = null;
-    if (controller) setSmartVariantError("已停止变体分析，可重新分析。");
-    setSmartVariantLoading(false);
-  }, []);
-  const closeSmartVariant = useCallback(() => {
-    cancelSmartVariant();
-    setSmartVariantOpen(false);
-  }, [cancelSmartVariant]);
   const openSmartVariant = useCallback(async (reanalyze = false) => {
     if (!reanalyze && selectedSingle?.data.smartVariantSnapshot) {
       const saved = selectedSingle.data.smartVariantSnapshot;
@@ -14013,55 +13978,44 @@ export default function SuperCanvas() {
     setSmartVariantLoading(true);
     setSmartVariantError("");
     setSmartVariantPlan(null);
-    const controller = new AbortController();
-    smartVariantAbortRef.current = controller;
-    const timeout = window.setTimeout(() => {
-      controller.abort(new Error("变体分析超时，请检查对话模型后重试。"));
-    }, SMART_VARIANT_MAX_WAIT_MS);
     try {
       const sourceUnits = smartVariantSourceUnits(session.sources.filter((source) => source.id !== "shared-prompt"));
       const sharedPrompt = session.sources.find((source) => source.id === "shared-prompt")?.text || "";
       if (!sourceUnits.length) throw new Error("没有可用于整理的原文段落。");
-      const response = await generateCanvasAgent({
+      const response = await requestAgent({
+        source: "canvas",
         model: runtime?.settings.agentModelId || undefined,
         task: "smart_variant_planning",
         deliverable: "TEXT",
         webMode: "off",
-        signal: controller.signal,
-        messages: [{ role: "user", content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt) }],
+        messages: [{
+          role: "user",
+          content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt),
+        }],
       });
       let plan: SmartVariantPlan;
       try {
         plan = parseSmartVariantPlan(response.message, sourceUnits);
       } catch (firstError) {
         const repairReason = firstError instanceof Error ? firstError.message : "返回格式不符合要求";
-        const repairResponse = await generateCanvasAgent({
+        const repairResponse = await requestAgent({
+          source: "canvas",
           model: runtime?.settings.agentModelId || undefined,
           task: "smart_variant_planning",
           deliverable: "TEXT",
           webMode: "off",
-          signal: controller.signal,
           messages: [{ role: "user", content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt, repairReason) }],
         });
         plan = parseSmartVariantPlan(repairResponse.message, sourceUnits);
       }
-      if (smartVariantAbortRef.current === controller) {
-        setSmartVariantPlan(plan);
-        updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== session.nodeId ? node : {
-          ...node, data: { ...node.data, smartVariantSnapshot: { ...plan, sources: clone(session.sources) } },
-        }) }));
-      }
+      setSmartVariantPlan(plan);
+      updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== session.nodeId ? node : {
+        ...node, data: { ...node.data, smartVariantSnapshot: { ...plan, sources: clone(session.sources) } },
+      }) }));
     } catch (error) {
-      const cancelled = controller.signal.aborted && controller.signal.reason instanceof DOMException && controller.signal.reason.name === "AbortError";
-      if (smartVariantAbortRef.current === controller) {
-        setSmartVariantError(cancelled ? "已停止变体分析，可重新分析。" : error instanceof Error ? error.message : "智能变体分析失败");
-      }
+      setSmartVariantError(error instanceof Error ? error.message : "智能变体分析失败");
     } finally {
-      window.clearTimeout(timeout);
-      if (smartVariantAbortRef.current === controller) {
-        smartVariantAbortRef.current = null;
-        setSmartVariantLoading(false);
-      }
+      setSmartVariantLoading(false);
     }
   }, [chatModelsAvailable, runtime?.settings.agentModelId, selectedSingle, smartVariantSources, smartVariantOpen, smartVariantLoading, updateDoc]);
   const applySmartVariant = useCallback(() => {
@@ -14074,8 +14028,8 @@ export default function SuperCanvas() {
     updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== target.id ? node : {
       ...node, data: { ...node.data, smartVariantSnapshot: { ...clone(smartVariantPlan), sources: clone(smartVariantSession.current?.sources || []) }, variantRequirementsText: value, variantRequirements: normalizeVariantRequirements(value), variantStates: [], variantBatchId: undefined, variantGroupId: undefined },
     }) }));
-    closeSmartVariant();
-  }, [smartVariantPlan, updateDoc, generationKeys, closeSmartVariant]);
+    setSmartVariantOpen(false);
+  }, [smartVariantPlan, updateDoc, generationKeys]);
   const groupQuickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const group = contextGroup || selectedGroup;
     if (!group) return { primaryActions: [], menuGroups: [] };
@@ -15512,16 +15466,6 @@ export default function SuperCanvas() {
                       } : item),
                     }));
                   }}
-                  onVariantIdentityPreservationChange={(target, enabled) => {
-                    if (target.type !== "generator" || target.data.kind !== "image") return;
-                    updateDoc((valueDoc) => ({
-                      ...valueDoc,
-                      nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
-                        ...item,
-                        data: { ...item.data, variantIdentityPreservation: enabled },
-                      } : item),
-                    }));
-                  }}
                   runtime={runtime}
                   editorPrompt={editorPromptFor(node)}
                   editorParams={editorParamsFor(node)}
@@ -15777,16 +15721,6 @@ export default function SuperCanvas() {
                       variantBatchId: undefined,
                       variantGroupId: undefined,
                     },
-                  } : item),
-                }));
-              }}
-              onVariantIdentityPreservationChange={(target, enabled) => {
-                if (target.type !== "generator" || target.data.kind !== "image") return;
-                updateDoc((valueDoc) => ({
-                  ...valueDoc,
-                  nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
-                    ...item,
-                    data: { ...item.data, variantIdentityPreservation: enabled },
                   } : item),
                 }));
               }}
@@ -16308,14 +16242,14 @@ export default function SuperCanvas() {
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
-            onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") closeSmartVariant(); }}
+            onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setSmartVariantOpen(false); }}
           >
             <div className="smart-variant-dialog">
               <header>
                 <div><strong>智能一键变体</strong><small>原文段落已锁定，AI 仅能一对一整理，不新增或删除信息</small></div>
-                <button type="button" onClick={closeSmartVariant} aria-label="关闭">×</button>
+                <button type="button" onClick={() => setSmartVariantOpen(false)} aria-label="关闭">×</button>
               </header>
-              {smartVariantLoading ? <div className="smart-variant-loading">正在分析共同提示词和直接连接的 Agent 文案…<button type="button" onClick={cancelSmartVariant}>停止分析</button></div> : smartVariantError ? <div className="smart-variant-error">{smartVariantError}</div> : smartVariantPlan && (
+              {smartVariantLoading ? <div className="smart-variant-loading">正在分析共同提示词和直接连接的 Agent 文案…</div> : smartVariantError ? <div className="smart-variant-error">{smartVariantError}</div> : smartVariantPlan && (
                 <div className="smart-variant-grid">
                   <section>
                     <b>分析来源</b>
@@ -18425,7 +18359,6 @@ type CanvasNodeEditorPopoverProps = {
   onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
   onVideoInputModeChange: (node: CanvasNode) => void;
   onVariantRequirementsChange: (node: CanvasNode, value: string) => void;
-  onVariantIdentityPreservationChange: (node: CanvasNode, enabled: boolean) => void;
   onReferenceReorder: (ownerId: string, draggedId: string, targetId: string) => void;
   onReferenceRemove: (ownerId: string, sourceId: string) => void;
   onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
@@ -19123,7 +19056,6 @@ function CanvasNodeEditorPopover({
   onEditorParamsChange,
   onVideoInputModeChange,
   onVariantRequirementsChange,
-  onVariantIdentityPreservationChange,
   onReferenceReorder,
   onReferenceRemove,
   onReferenceDrop,
@@ -19194,10 +19126,6 @@ function CanvasNodeEditorPopover({
     Boolean(data.url) &&
     !branchDraft;
   const variantRequirements = node.type === "generator" ? variantRequirementsFor(node) : [];
-  const variantIdentityAnchorEnabled = node.type === "generator" && variantIdentityPreservationEnabled(node);
-  const variantPrimaryReference = node.type === "generator"
-    ? editorReferences.find((reference) => reference.data.kind === "image")
-    : undefined;
   const imageParams = isImageNode && editorParams && editorParams.kind === "image" ? editorParams : null;
   const imageQualityLabel = imageParams
     ? (IMAGE_QUALITY_OPTIONS.find((option) => option.value === imageParams.quality)?.label.replace("质量", "") || imageParams.quality)
@@ -19803,12 +19731,6 @@ function CanvasNodeEditorPopover({
                         </div>
                       </div>
                       <div className="canvas-node-variant-editor">
-                        {data.kind === "image" && (
-                          <label className="canvas-variant-identity-toggle" title="第一张参考图会作为主体身份锚点；模型会尽力保持人物或主要主体的一致性。">
-                            <input type="checkbox" checked={variantIdentityAnchorEnabled} onChange={(event) => onVariantIdentityPreservationChange(node, event.currentTarget.checked)} />
-                            <span><b>保持首图主体</b><small>{variantPrimaryReference ? `身份锚点：${variantPrimaryReference.data.name || "参考图 1"}（尽力保持）` : "连接图片后自动作为身份锚点"}</small></span>
-                          </label>
-                        )}
                         <CanvasVariantRequirementsEditor
                           value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                           references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
@@ -20027,12 +19949,6 @@ function CanvasNodeEditorPopover({
           <div className="canvas-node-editor-settings">
             {node.type === "generator" && (
               <div className="canvas-node-variant-editor">
-                {data.kind === "image" && (
-                  <label className="canvas-variant-identity-toggle" title="第一张参考图会作为主体身份锚点；模型会尽力保持人物或主要主体的一致性。">
-                    <input type="checkbox" checked={variantIdentityAnchorEnabled} onChange={(event) => onVariantIdentityPreservationChange(node, event.currentTarget.checked)} />
-                    <span><b>保持首图主体</b><small>{variantPrimaryReference ? `身份锚点：${variantPrimaryReference.data.name || "参考图 1"}（尽力保持）` : "连接图片后自动作为身份锚点"}</small></span>
-                  </label>
-                )}
                 <div className="canvas-node-variant-editor-head">
                   <label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>
                   <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
@@ -20178,7 +20094,6 @@ function CanvasNodeCard({
   onEditorPromptChange,
   onEditorParamsChange,
   onVariantRequirementsChange,
-  onVariantIdentityPreservationChange,
   runtime,
   editorPrompt,
   editorParams,
@@ -20233,7 +20148,6 @@ function CanvasNodeCard({
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
   onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
   onVariantRequirementsChange: (node: CanvasNode, value: string) => void;
-  onVariantIdentityPreservationChange: (node: CanvasNode, enabled: boolean) => void;
   runtime: CanvasRuntimeState | null;
   editorPrompt: string;
   editorParams?: CanvasGenerationParams;
@@ -20899,7 +20813,6 @@ function CanvasNodeCard({
           )}
           <div className="canvas-generator-summary">
             <span>参考素材 {referenceCount}</span>
-            {data.kind === "image" && <span>{variantIdentityPreservationEnabled(node) && referenceCount ? "首图主体锚定" : "主体锚定关闭"}</span>}
             <span>变体 {variantRequirements.length}</span>
             <span>完成 {completedVariants}/{variantRequirements.length}</span>
             <span>

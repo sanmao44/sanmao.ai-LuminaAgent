@@ -520,24 +520,6 @@ test('canvas agent forwards explicit reverse-prompt tasks', async () => {
   }
 });
 
-test('canvas agent forwards smart variant planning as a text-only task', async () => {
-  let request;
-  await withFetch(async (input, options) => {
-    request = { input, options };
-    return jsonResponse({ ok: true, message: '{"variants":[]}' });
-  }, () => api.generateCanvasAgent({
-    messages: [{ role: 'user', content: '按 sourceId 整理变体' }],
-    model: 'provider-a-chat-model',
-    task: 'smart_variant_planning',
-    deliverable: 'TEXT',
-  }));
-
-  const payload = JSON.parse(request.options.body);
-  assert.equal(payload.task, 'smart_variant_planning');
-  assert.equal(payload.deliverable, 'TEXT');
-  assert.equal(payload.webMode, 'off');
-});
-
 test('canvas agent forwards one-take task duration in the request payload', async () => {
   let request;
   await withFetch(async (input, options) => {
