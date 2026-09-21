@@ -59,6 +59,18 @@ git push origin main        # 同步到 GitHub（备份），不会发布
 - 家里/公司只要 `git pull` 就能拿到。
 - **平时不改版本号，不发布。**
 
+### 同步后收尾（必须做，不许跳过）
+
+```powershell
+git fetch origin main
+git rev-parse HEAD origin/main   # 两个哈希必须一致
+git status --short               # 必须为空
+```
+
+- `git status --short` 出现“已修改”时，先用 `git diff --ignore-cr-at-eol origin/main -- <路径>` 判断：结果为空说明内容已经在远端（最常见原因：运行目录被更新包覆盖）→ 直接 `git reset --hard origin/main`；不为空则停下来问用户，不得清理。
+- 已确认进过远端的 `stash`：先 `git stash show -p --binary > 备份.patch` 再 `git stash drop`；多余的 Codex 工作树用 `git worktree remove <路径>` 清掉。
+- 目的：同步结束就对齐，不再出现“本地落后远端 / 工作区一堆已修改”。
+
 ### 方式 B（想用分支隔离开发）：用分支，但**完工后必须合并回 main**
 
 ```powershell

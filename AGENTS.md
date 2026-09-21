@@ -34,3 +34,21 @@ Codex 在操作本项目时，请严格遵守以下规则：
 ## 6. 用户端更新
 - 用户通过 `update.json` 检测新版本，并下载 `packageUrl` 的 zip 覆盖运行目录。
 - 确保 `update.json` 的版本号与 `package.json` 一致。
+
+## 7. 铁律：同步后必须收尾，本地与远端对齐，不留残留
+- 每次执行完“同步”（`git commit` + `git push`）后，必须紧接着执行下面的收尾命令，一条都不能跳过：
+```powershell
+git fetch origin main
+git rev-parse HEAD origin/main   # 两个哈希必须一致
+git status --short               # 必须为空（只允许出现被忽略的本地数据目录）
+```
+- `git status --short` 出现“已修改”时，先用 `git diff --ignore-cr-at-eol origin/main -- <路径>` 判断：
+  - 与远端等价（最常见原因：运行目录被更新包覆盖）→ 直接 `git reset --hard origin/main` 丢弃，**不要再当成未提交改动上报**。
+  - 与远端不等价 → 停下来问用户，禁止丢弃。
+- 同一轮收尾里清理已过期的本地残留：
+```powershell
+git stash list        # 确认内容已进 origin/main 的 stash：先 `git stash show -p --binary > 备份.patch`，再 `git stash drop`
+git worktree list     # 多余的 Codex 工作树：`git worktree remove <路径>`
+```
+- 绝对禁止：`git reset --hard` 到比 `origin/main` 更旧的提交、丢弃未推送的提交、在未确认内容已进远端前做任何清理。
+- 收尾结束后，不允许再留下“本地落后远端”或“工作区一堆已修改”的状态。
