@@ -22,6 +22,10 @@ const superCanvas = await readFile(
   new URL("../components/SuperCanvas.tsx", import.meta.url),
   "utf8",
 );
+const agentRoute = await readFile(
+  new URL("../app/api/agent/route.ts", import.meta.url),
+  "utf8",
+);
 const canvasCss = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 
 test("cinematic director keeps the default duration at eight seconds", () => {
@@ -89,4 +93,25 @@ test("one-click cinematic keeps its footer inside a constrained dialog", () => {
   assert.match(canvasCss, /\.canvas-one-click-body\{[^}]*overflow-y:auto/);
   assert.match(canvasCss, /\.canvas-one-click-footer\{[^}]*flex-wrap:wrap/);
   assert.match(canvasCss, /\.canvas-one-click-footer button\{[^}]*max-width:100%/);
+});
+
+test("cinematic director retries a short, tool-free visual-model path", () => {
+  const start = agentRoute.indexOf("if (isCinematicDirectorTask) {");
+  const end = agentRoute.indexOf("if (needsWebSearch && nativeWebSearch)", start);
+  assert.ok(start >= 0 && end > start);
+  const source = agentRoute.slice(start, end);
+  assert.match(source, /directorAttemptTimeoutMs = 45_000/);
+  assert.match(source, /capabilities\.includes\('vision'\)/);
+  assert.match(source, /tool_choice: 'none'/);
+  assert.match(source, /directorCandidates\.length/);
+  assert.match(source, /导演模型未返回可执行方案/);
+  assert.doesNotMatch(source, /tools:/);
+});
+
+test("cinematic director does not use the generic tool-call failure message", () => {
+  const genericFailure = "当前对话模型未能发起工具调用，操作尚未完成";
+  const genericFailureIndex = agentRoute.indexOf(genericFailure);
+  assert.ok(genericFailureIndex >= 0);
+  const surrounding = agentRoute.slice(Math.max(0, genericFailureIndex - 160), genericFailureIndex + genericFailure.length + 160);
+  assert.match(surrounding, /!isCinematicDirectorTask/);
 });
