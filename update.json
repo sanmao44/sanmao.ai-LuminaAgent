@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.52",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.52",
+  "latestVersion": "0.7.53",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.53",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.53/SANMAO.AI-0.7.53.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.52/SANMAO.AI-0.7.52.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.53/SANMAO.AI-0.7.53.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.53/SANMAO.AI-0.7.53.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.53/SANMAO.AI-0.7.53.zip"
   ],
   "sha256": "719e0f91271c0d5ddaae37c6ca104fba36706da91db1e87e6a874536a9498415",
-  "publishedAt": "2026-09-21T01:55:33+08:00",
+  "publishedAt": "2026-09-21T18:52:00+08:00",
   "notes": [
     "任务日志排版重做：来源与结果改成整行记录，卡片不再出现大片空白、内容出框或被裁切；元信息标签可自动换行，失败原因最多两行显示。",
     "从任务日志点“结果：…”查看大图，关闭预览后会回到任务日志面板，和“打开结果”行为一致。",
@@ -20,6 +20,9 @@
     "对话指令识别更准：“出图 / 继续 / 改一下”会跟随当前这轮对话里的图，不再跳到无关旧图；改写类指令不会重复写同一个文件。",
     "兼容更多模型输出的内联工具调用（XML / DSML 标记），减少工具调用被当成普通文本、需要重试的情况。",
     "MCP 调用记录移到输入框下方，不再遮挡对话框。",
-    "补充 Agent 输入框结构、MCP 面板位置与任务日志排版的回归测试。"
+    "补充 Agent 输入框结构、MCP 面板位置与任务日志排版的回归测试。",
+    "一键成片导演模型失败时自动切换可用模型，并增加超时恢复，减少任务卡住。",
+    "修复导演任务被误判为工具调用失败的问题，并提升相关 Agent 与画布流程稳定性。",
+    "修复媒体加载的瞬时失败重试与启动器陈旧构建锁，提升成片任务和应用启动可靠性。"
   ]
 }
