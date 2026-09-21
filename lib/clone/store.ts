@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createTaskStore } from '../task-store';
-import type { CloneCapabilities, CloneJob, CloneModelIds, CloneModels, CloneOptions, CloneReference, CloneStage } from './types';
+import type { CloneAsset, CloneCapabilities, CloneJob, CloneModelIds, CloneModels, CloneOptions, CloneReference, CloneStage } from './types';
 
 const store = createTaskStore<CloneJob>({ fileName: 'clone-jobs.json', maxList: 200 });
 
@@ -17,6 +17,7 @@ const CLONE_FINISHED_STAGES: CloneStage[] = ['done', 'cancelled'];
 
 export type CreateCloneJobInput = {
   reference: CloneReference;
+  assets?: CloneAsset[];
   options: CloneOptions;
   capabilities: CloneCapabilities;
   models: CloneModels;
@@ -35,6 +36,7 @@ export async function createCloneJob(input: CreateCloneJobInput) {
     progress: 0,
     message: '已排队',
     reference: input.reference,
+    assets: input.assets || [],
     options: input.options,
     capabilities: input.capabilities,
     models: input.models,

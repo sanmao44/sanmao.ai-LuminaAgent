@@ -16,6 +16,17 @@ export type ImageDownloadAuth = {
   trustedHostSuffixes?: string[];
 };
 
+export type PersistGeneratedImagesOptions = {
+  /** Keep a provider URL when the provider generated the image but local archival failed. */
+  preserveRemoteImages?: boolean;
+};
+
+export type RemoteImageFallback = {
+  index: number;
+  url: string;
+  error: string;
+};
+
 function configuredRoot() {
   // 默认固定到用户级媒体库，换运行目录不再换掉素材。
   return path.resolve(process.env.SANMAO_IMAGE_STORAGE_PATH || mediaDirectory('image'));
@@ -94,12 +105,34 @@ async function fetchImageResponse(url: string, downloadAuth?: ImageDownloadAuth)
   let currentUrl = url;
   for (let redirectCount = 0; redirectCount <= 3; redirectCount++) {
     const headers = canUseDownloadAuth(currentUrl, downloadAuth) ? downloadAuth!.headers : undefined;
-    const response = await fetch(currentUrl, {
+    const request = async () => fetch(currentUrl, {
       ...(headers ? { headers } : {}),
       signal: AbortSignal.timeout(30_000),
       cache: 'no-store',
       redirect: 'manual',
     });
+    let response: Response | undefined;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        response = await request();
+        const retryableStatus = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
+        if (!retryableStatus || attempt === 2) break;
+        const retryAfter = Number(response.headers.get('retry-after') || 0);
+        const delay = retryAfter > 0 && retryAfter <= 5 ? retryAfter * 1_000 : 300 * (attempt + 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      } catch (error) {
+        lastError = error;
+        if (attempt === 2) {
+          const host = (() => { try { return new URL(currentUrl).host; } catch { return currentUrl; } })();
+          const cause = error instanceof Error && error.cause && typeof error.cause === 'object' ? error.cause as { code?: unknown; message?: unknown } : undefined;
+          const detail = String(cause?.code || cause?.message || (error instanceof Error ? error.message : error) || 'FETCH_FAILED').trim();
+          throw new Error(`下载服务商图片失败：${host}（${detail || 'FETCH_FAILED'}）`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+      }
+    }
+    if (!response) throw lastError instanceof Error ? lastError : new Error('下载服务商图片失败：未收到响应');
     if ((response.status === 401 || response.status === 403) && headers) {
       const unauthenticated = await fetch(currentUrl, {
         signal: AbortSignal.timeout(30_000),
@@ -214,11 +247,12 @@ async function readImageBuffer(url: string, downloadAuth?: ImageDownloadAuth, de
   return { buffer, mime, ext: imageExtension(mime) };
 }
 
-export async function persistGeneratedImages(images: GeneratedImage[], configuredPath?: string, downloadAuth?: ImageDownloadAuth) {
+export async function persistGeneratedImages(images: GeneratedImage[], configuredPath?: string, downloadAuth?: ImageDownloadAuth, options: PersistGeneratedImagesOptions = {}) {
   const root = path.resolve(configuredPath?.trim() || configuredRoot());
   await mkdir(root, { recursive: true });
   const writtenFiles: string[] = [];
   const failures: string[] = [];
+  const remoteFallbacks: RemoteImageFallback[] = [];
   const saved = await Promise.all(images.map(async (image, index) => {
     try {
       const loaded = await readImageBuffer(image.url, downloadAuth);
@@ -229,14 +263,17 @@ export async function persistGeneratedImages(images: GeneratedImage[], configure
       return { ...image, url: `/api/storage/file?name=${encodeURIComponent(name)}` };
     } catch (error) {
       failures.push(`第 ${index + 1} 张：${error instanceof Error ? error.message : '未知错误'}`);
+      if (options.preserveRemoteImages && /^https?:\/\//i.test(image.url)) remoteFallbacks.push({ index, url: image.url, error: error instanceof Error ? error.message : '鏈煡閿欒' });
       return null;
     }
   }));
-  if (failures.length) {
+  const unrecoverableFailures = failures.length - remoteFallbacks.length;
+  if (failures.length && (!options.preserveRemoteImages || unrecoverableFailures > 0)) {
     await Promise.all(writtenFiles.map((file) => rm(file, { force: true }).catch(() => undefined)));
     throw new Error(`本地图片保存失败：${failures.join('；')}`);
   }
-  return { images: saved as GeneratedImage[], path: root };
+  const persisted = saved.map((image, index) => image || (options.preserveRemoteImages && remoteFallbacks.some((fallback) => fallback.index === index) ? images[index] : null)).filter(Boolean) as GeneratedImage[];
+  return { images: persisted, path: root, ...(remoteFallbacks.length ? { remoteFallbacks } : {}) };
 }
 
 export function resolveStoredFile(root: string, name: string) {

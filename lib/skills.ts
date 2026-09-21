@@ -1243,7 +1243,7 @@ export function readLocalSkillDocument(dir: string) {
 
 // 模型把工具调用写成文本标记的几种形态：DSML 那套自家格式，以及工具调用被当成普通
 // XML 吐出来的 <tool_call> / <function=name>。命中就把标记之后的部分截掉，别把原文露给用户。
-const MODEL_TOOL_MARKUP_PATTERN = /(?:\|\s*)?<[|｜]{0,4}DSML[|｜]{0,4}>|｜｜\s*DSML|<\s*DSML\s*\||<\s*\/?\s*tool_calls?\b|<\s*function\s*=/i;
+const MODEL_TOOL_MARKUP_PATTERN = /(?:\|\s*)?<[|｜]{0,4}DSML[|｜]{0,4}>|｜｜\s*DSML|<\s*DSML\s*\||<\s*\/?\s*tool_calls?\b|<\s*function\s*=|\bto\s*=\s*functions\./i;
 
 /** 标记写到一半就被截断时留在末尾的半个 `<`：它不是内容，不该显示给用户。 */
 const TRAILING_PARTIAL_MARKUP = /\s*<\s*$/;

@@ -61,6 +61,17 @@ test("selected mention chips do not reopen the picker without a fresh @", () => 
   assert.match(editor, /isMentionTriggerAtCaret\(editor, range\.startContainer, range\.startOffset\)/);
 });
 
+test("contentEditable clears after submit even when input updates are batched", () => {
+  assert.match(editor, /const editorValue = serializeEditor\(editor\);/);
+  assert.match(editor, /editorValue !== value/);
+  assert.match(editor, /Do not let the input-event skip flag prevent a real external change/);
+});
+
+test("Agent Enter does not submit while an IME is composing", () => {
+  assert.match(page, /event\.nativeEvent\.isComposing \|\| event\.keyCode === 229/);
+  assert.match(page, /if \(event\.nativeEvent\.isComposing \|\| event\.keyCode === 229\) return;\s*event\.preventDefault\(\);/);
+});
+
 test("Agent reference tray stays compact and keeps the picker above it", () => {
   assert.match(styles, /\.agent-composer \.reference-block\{[^}]*margin:0 0 6px;padding:7px 9px/);
   assert.match(styles, /\.agent-composer \.reference-thumb,\.agent-composer \.add-reference\{height:52px\}/);

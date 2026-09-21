@@ -26,17 +26,13 @@
 .message-approval-result{display:flex;align-items:center;gap:6px;margin:10px 0 2px;padding:7px 9px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--text-2);font-size:9px;line-height:1.5}
 @media(max-width:560px){.agent-approval-actions{display:grid;grid-template-columns:1fr 1fr}}
 
-/* MCP 徽标可展开：默认仍是原来那一行徽标，点开后用浮层列出这一轮每次外部调用的服务、工具、读写与结果。
-   浮层走绝对定位，展开不会把消息排版顶开；配色用主题变量，暗色下也读得清。 */
+/* MCP 徽标只负责切换详情，详情固定停靠在输入框下方，避免遮挡输入区。 */
 .message-skill-badge,.message-mcp-badge{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px}
 .message-skill-badge{border-color:color-mix(in srgb,var(--accent) 34%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
 .message-mcp-badge{border-color:color-mix(in srgb,var(--accent-2) 38%,var(--line));background:color-mix(in srgb,var(--accent-2) 14%,var(--panel))}
 .message-label .message-mcp-detail{position:relative;display:inline-flex;align-items:center;max-width:100%;flex:0 1 auto;min-width:0}
-.message-label .message-mcp-detail>summary{display:inline-flex;align-items:center;gap:5px;max-width:100%;border-radius:999px;cursor:pointer;list-style:none}
-.message-label .message-mcp-detail>summary::-webkit-details-marker{display:none}
-.message-label .message-mcp-detail>summary::after{content:'▾';color:var(--message-assistant-label);font-size:8px;font-weight:900;line-height:1}
-.message-label .message-mcp-detail[open]>summary::after{content:'▴'}
-.message-label .message-mcp-detail>summary:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.message-label .message-mcp-detail{padding:0;border:0;background:transparent;color:inherit;cursor:pointer}
+.message-label .message-mcp-detail:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
 .message-label .message-mcp-detail .message-mcp-badge{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 一轮里调用多次外部工具时，MCP 徽标会很长。flex 项默认不肯收缩到内容以下，
    结果把左边那行说明压成了一字一行的竖排（实测截图就是这个）。所以：整行允许换行、
@@ -44,9 +40,12 @@
 .message-label{flex-wrap:wrap}
 .message-label>span{flex:none}
 .message-label>small{flex:none;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
-.message-mcp-detail-panel{position:absolute;z-index:60;top:calc(100% + 7px);left:0;display:grid;gap:8px;width:max-content;max-width:min(360px,80vw);padding:11px 12px;border:1px solid color-mix(in srgb,var(--accent-2) 34%,var(--line));border-radius:12px;background:var(--panel);box-shadow:0 18px 44px color-mix(in srgb,#0b1020 26%,transparent)}
-.message-mcp-detail-head{color:var(--muted);font-size:8px;font-weight:850;letter-spacing:.02em}
-.message-mcp-detail-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.agent-mcp-detail-dock{display:block;margin-top:10px;padding-top:10px;border-top:1px solid var(--agent-composer-divider)}
+.message-mcp-detail-panel{display:grid;gap:8px;width:100%;max-width:100%;padding:10px 11px;border:1px solid color-mix(in srgb,var(--accent-2) 34%,var(--line));border-radius:12px;background:var(--panel-2);box-shadow:0 8px 22px color-mix(in srgb,#0b1020 10%,transparent)}
+.message-mcp-detail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:8px;font-weight:850;letter-spacing:.02em}
+.message-mcp-detail-close{display:grid;place-items:center;width:24px;height:24px;flex:none;padding:0;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--muted);cursor:pointer}
+.message-mcp-detail-close:hover,.message-mcp-detail-close:focus-visible{border-color:var(--danger);background:var(--danger-soft);color:var(--danger);outline:none}
+.message-mcp-detail-list{display:grid;gap:6px;max-height:min(220px,32vh);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;margin:0;padding:0 4px 0 0;list-style:none}
 .message-mcp-detail-list li{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--text-2);font-size:9px;font-weight:650}
 .message-mcp-detail-list li b{color:var(--text);font-weight:900}
 .message-mcp-detail-list li code{padding:1px 5px;border:1px solid var(--line);border-radius:5px;background:var(--panel-2);color:var(--accent-text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:9px}
@@ -55,4 +54,4 @@
 .message-mcp-detail-list li.is-failed .message-mcp-detail-tag{border-color:color-mix(in srgb,var(--danger) 34%,var(--line));background:var(--danger-soft);color:var(--danger)}
 .message-mcp-detail-list li.is-failed .message-mcp-detail-state{border-color:color-mix(in srgb,var(--danger) 40%,var(--line));background:var(--danger-soft);color:var(--danger)}
 .message-mcp-detail-note{color:var(--muted);font-size:8px;font-weight:650;line-height:1.5}
-@media(max-width:780px){.message-label .message-mcp-detail{display:none}}
+@media(max-width:780px){.agent-mcp-detail-dock{margin-top:8px;padding-top:8px}.message-mcp-detail-panel{padding:9px}.message-mcp-detail-list{max-height:180px}}

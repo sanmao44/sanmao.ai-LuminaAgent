@@ -39,3 +39,28 @@ test("task log metadata keeps the important output details visually distinct", (
   assert.match(styles, /\.canvas-task-log-meta-count\{[^}]*color:var\(--accent-text\)/);
   assert.match(styles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
 });
+
+test("task log keeps preview actions beside metadata instead of wasting a full row", () => {
+  assert.match(styles, /\.canvas-task-log-card\{[^}]*grid-template-areas:"preview main status" "preview meta actions"/);
+  assert.match(styles, /\.canvas-task-log-meta\{[^}]*grid-area:meta/);
+  assert.match(styles, /\.canvas-task-log-actions\{[^}]*grid-area:actions/);
+  assert.match(component, /if \(lightboxReturnPanel\) setActivePanel\(lightboxReturnPanel\);/);
+});
+
+test("task log result chips return to the task log panel after the media viewer closes", () => {
+  const start = component.indexOf("const focusLogNode = useCallback(");
+  assert.ok(start >= 0, "task log node focus handler should exist");
+  assert.match(
+    component.slice(start, start + 320),
+    /focusCanvasNode\(nodeId, openMedia, openMedia && activePanel === "activity" \? "activity" : null\)/,
+  );
+  assert.match(component, /onFocusNode=\{focusLogNode\}/);
+});
+
+test("task log restores its scroll position after opening and closing media preview", () => {
+  assert.match(component, /activityPanelScrollTopRef = useRef<number \| null>\(null\)/);
+  assert.match(component, /restoreScrollTop=\{activityPanelScrollTopRef\.current\}/);
+  assert.match(component, /onRememberScrollPosition=\{\(scrollTop\) =>/);
+  assert.match(component, /scrollBodyRef\.current\?\.scrollTo\(\{ top: restoreScrollTop, behavior: "auto" \}\)/);
+  assert.match(component, /rememberScrollBeforeMediaOpen\(openMedia\)/);
+});

@@ -3,7 +3,7 @@ import { OFFLINE_SPEECH_LABEL, offlineSpeechSupported } from '@/lib/clone/offlin
 import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
 import { reapStaleCloneJobs, runCloneJob } from '@/lib/clone/pipeline';
 import { cloneJobSummary, createCloneJob, listCloneJobs } from '@/lib/clone/store';
-import type { CloneReference } from '@/lib/clone/types';
+import type { CloneAsset, CloneReference } from '@/lib/clone/types';
 import { getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '@/lib/store';
 import { resolveSpeechRuntime } from '@/lib/clone/speech';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
@@ -29,6 +29,21 @@ function readReference(raw: unknown): CloneReference {
   };
 }
 
+function readAssets(raw: unknown): CloneAsset[] {
+  if (!Array.isArray(raw)) return [];
+  const roles = new Set<CloneAsset['role']>(['person', 'product', 'brand', 'scene', 'style', 'broll', 'voice']);
+  const kinds = new Set<CloneAsset['kind']>(['image', 'video', 'audio']);
+  return raw.flatMap((item): CloneAsset[] => {
+    if (!item || typeof item !== 'object') return [];
+    const source = item as Record<string, unknown>;
+    const url = String(source.url || '').trim();
+    const role = String(source.role || 'style') as CloneAsset['role'];
+    const kind = String(source.kind || 'image') as CloneAsset['kind'];
+    if (!url || !roles.has(role) || !kinds.has(kind)) return [];
+    return [{ ...(source.nodeId ? { nodeId: String(source.nodeId) } : {}), name: String(source.name || '参考素材').slice(0, 80), url, kind, role }];
+  }).slice(0, 16);
+}
+
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   // 画布每 5 秒拉一次这个列表：顺手把中断的任务标成失败，用户才有「继续任务」可点。
@@ -44,6 +59,7 @@ export async function POST(request: Request) {
     releaseRuntimeRequest = await beginRuntimeRequest('clone');
     const body = await request.json();
     const reference = readReference(body.reference);
+    const assets = readAssets(body.assets);
     const options = normalizeCloneOptions({ ...(body.options || {}), brief: body.brief ?? body.options?.brief });
     const [chatRuntime, imageRuntime, videoRuntime, speechRuntime] = await Promise.all([
       // 拆解要真的看图：没显式选模型时优先带 vision 的对话模型，否则画面拆解会无谓降级。
@@ -68,6 +84,7 @@ export async function POST(request: Request) {
     }
     const created = await createCloneJob({
       reference,
+      assets,
       options,
       capabilities,
       warnings,

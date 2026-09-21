@@ -38,7 +38,7 @@ test('the stream can post-process the accumulated answer before the final event'
 });
 
 test('tool rounds for skills, images and files stay buffered', () => {
-  assert.ok(source.includes("const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;"));
+  assert.ok(source.includes("const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;"));
   assert.ok(source.includes("if (wantsStream && !skillContext.skills.length && !isTextPolishTask && !identityQuestion) {"));
   assert.ok(source.includes('const shouldUseTools = useTools && !isCinematicDirectorTask;'));
 });

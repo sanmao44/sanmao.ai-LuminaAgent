@@ -20,6 +20,24 @@ test('routes explicit visual requests to an image deliverable', () => {
   assert.notEqual(intent.classifyAgentDeliverable('怎么画只猫').deliverable, 'IMAGE');
 });
 
+test('real conversation scene commands generate images while commentary remains text', () => {
+  const messages = [
+    { role: 'assistant', content: '对牛弹琴', images: [{ id: 'image' }] },
+    { role: 'assistant', content: '鲁迅式评论文字' },
+  ];
+  for (const text of ['生成鲁迅再评论这张图的场景', '生成鲁迅在评论这张图的场景', '出图']) {
+    assert.equal(intent.classifyAgentDeliverable(text, { messages, hasReferences: true }).deliverable, 'IMAGE', text);
+  }
+  for (const text of ['鲁迅看到这张图会怎么说？', '不要出图，只解释', '分析如何修改背景', '继续']) {
+    assert.notEqual(intent.classifyAgentDeliverable(text, { messages }).deliverable, 'IMAGE', text);
+  }
+  assert.equal(intent.needsSemanticIntent('按刚才的做', intent.classifyAgentDeliverable('按刚才的做')), true);
+  assert.equal(intent.needsSemanticIntent('不要生成', intent.classifyAgentDeliverable('不要生成')), false);
+  assert.equal(intent.parseSemanticIntent('{"deliverable":"IMAGE","confidence":"low"}'), null);
+  assert.equal(intent.parseSemanticIntent('{"deliverable":"DELETE","confidence":"high"}'), null);
+  assert.equal(intent.parseSemanticIntent('{"deliverable":"IMAGE","confidence":"high"}')?.deliverable, 'IMAGE');
+});
+
 test('routes prompt and copy requests to text without being fooled by visual nouns', () => {
   assert.equal(intent.classifyAgentDeliverable('帮我写一个小红书封面标题').deliverable, 'TEXT');
   assert.equal(intent.classifyAgentDeliverable('帮我优化这个生图提示词，不要出图').deliverable, 'TEXT');
@@ -73,6 +91,18 @@ test('keeps plain questions as questions when the canvas context rides along', (
   assert.notEqual(intent.classifyAgentDeliverable('画布上这张图是谁画的？').deliverable, 'IMAGE');
   // 真正的生图请求不受影响。
   assert.equal(intent.classifyAgentDeliverable('画一张机器人海报').deliverable, 'IMAGE');
+});
+
+test('metadata questions about an existing image stay text-only', () => {
+  for (const input of [
+    '这张图片是用什么模型生成的？',
+    '这张图的服务商是什么？',
+    '图片尺寸和生成参数是什么？',
+    '上一张图的生成记录在哪里？',
+  ]) {
+    assert.equal(intent.classifyAgentDeliverable(input, { hasReferences: true }).deliverable, 'OTHER', input);
+  }
+  assert.equal(intent.classifyAgentDeliverable('用这个风格生成一张图片').deliverable, 'IMAGE');
 });
 
 test('canvas context cannot turn a plain request into a tool-producing image turn', () => {

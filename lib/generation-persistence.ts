@@ -36,7 +36,7 @@ type BackgroundPersistenceOptions = {
 export async function persistGenerationResult(options: BackgroundPersistenceOptions) {
   const storageStartedAt = Date.now();
   try {
-    const stored = await persistGeneratedImages(options.images, options.storagePath, options.downloadAuth);
+    const stored = await persistGeneratedImages(options.images, options.storagePath, options.downloadAuth, { preserveRemoteImages: true });
     const patch = {
       status: 'success' as const,
       durationMs: Date.now() - options.startedAt,
@@ -45,6 +45,9 @@ export async function persistGenerationResult(options: BackgroundPersistenceOpti
       imageCount: stored.images.length,
       imageUrls: stored.images.map((image) => image.url),
       storagePath: stored.path,
+      ...(stored.remoteFallbacks?.length ? {
+        storageError: `本地归档失败，已保留服务商图片地址：${stored.remoteFallbacks.map((item) => `第 ${item.index + 1} 张`).join('、')}`,
+      } : {}),
     };
     try {
       if (options.logId) await finishGenerationLog(options.logId, patch);

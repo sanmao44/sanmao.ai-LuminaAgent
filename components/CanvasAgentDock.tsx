@@ -42,6 +42,8 @@ import type { WorkspaceContext } from "@/lib/workspace-context";
 import type { CanvasDocument } from "@/lib/canvas/types";
 import type { CanvasPatch } from "@/lib/canvas/patch";
 
+type AgentGeneratedImage = import("@/lib/agent-client").AgentGeneratedImage;
+
 export const CANVAS_AGENT_DOCK_OPEN_KEY = "sanmao.canvas.agentdock.open.v1";
 export const CANVAS_AGENT_DOCK_SESSION_KEY = "sanmao.canvas.agentdock.session.v1";
 
@@ -50,7 +52,7 @@ export type CanvasAgentDockMessage = {
   role: "user" | "assistant";
   content: string;
   model?: string;
-  images?: Array<{ url: string; revisedPrompt?: string }>;
+  images?: AgentGeneratedImage[];
   skills?: Array<{ id: string; name: string }>;
   error?: string;
   /** 失败时存一份用户原话：重试直接用这句，@ 编号按当时的选区再解析一次。 */
@@ -98,11 +100,11 @@ type Props = {
   onFocusNodes: (ids: string[]) => void;
   /* 落画布后回传新节点 id：消息上的按钮要能变成「定位结果」。 */
   onApplyImages: (
-    images: Array<{ url: string; revisedPrompt?: string }>,
+    images: AgentGeneratedImage[],
     meta: { prompt: string; model?: string; runContext?: CanvasAgentRunContext },
   ) => string[];
   onApplyText: (text: string, meta: { prompt: string }) => string[];
-  onApplyPlan: (plan: CanvasAgentDockPlan, images?: Array<{ url: string; revisedPrompt?: string }>, runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
+  onApplyPlan: (plan: CanvasAgentDockPlan, images?: AgentGeneratedImage[], runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
   onCreateAgentNode: (text: string) => void;
   onUseAsImagePrompt: (text: string) => void;
   onUseAsVideoPrompt: (text: string) => void;
@@ -425,7 +427,13 @@ function readSession(): CanvasAgentDockSession | null {
             content: String(message.content || ""),
             ...(message.model ? { model: String(message.model) } : {}),
             ...(Array.isArray(message.images) && message.images.length
-              ? { images: message.images.map((image) => ({ url: String(image.url || ""), ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}) })) }
+              ? { images: message.images.map((image) => ({
+                  url: String(image.url || ""),
+                  ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}),
+                  ...(image.modelId ? { modelId: String(image.modelId) } : {}),
+                  ...(image.modelName ? { modelName: String(image.modelName) } : {}),
+                  ...(image.providerName ? { providerName: String(image.providerName) } : {}),
+                })) }
               : {}),
             ...(Array.isArray(message.skills) && message.skills.length
               ? { skills: message.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
@@ -953,6 +961,9 @@ export default function CanvasAgentDock({
           ? (response.images || []).map((image) => ({
               url: String(image.url || ""),
               ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}),
+              ...(image.modelId ? { modelId: String(image.modelId) } : {}),
+              ...(image.modelName ? { modelName: String(image.modelName) } : {}),
+              ...(image.providerName ? { providerName: String(image.providerName) } : {}),
             }))
           : [];
         const plan = buildCanvasAgentDockPlan(text, {
@@ -1566,7 +1577,13 @@ export default function CanvasAgentDock({
                       event.dataTransfer.effectAllowed = "copy";
                       event.dataTransfer.setData(
                         CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
-                        JSON.stringify({ url: image.url, revisedPrompt: image.revisedPrompt || "" }),
+                        JSON.stringify({
+                          url: image.url,
+                          revisedPrompt: image.revisedPrompt || "",
+                          modelId: image.modelId || "",
+                          modelName: image.modelName || "",
+                          providerName: image.providerName || "",
+                        }),
                       );
                     }}
                     onClick={() => onPreviewImages(message.images || [], index)}

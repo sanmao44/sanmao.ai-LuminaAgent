@@ -58,8 +58,8 @@ test('server cancellation reaches model, search, image, stream, and subprocess t
   assert.ok(route.includes('searchWeb(query, requestController.signal)'));
   assert.ok(route.includes('chatCompletion(agentRuntime.provider, agentRuntime.model.rawId'));
   assert.ok(route.includes('chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId'));
-  assert.ok(route.includes('generateImage(imageRuntime.provider, imageRuntime.model.rawId'));
-  assert.ok(route.includes('editImage(imageRuntime.provider, imageRuntime.model.rawId'));
+  assert.ok(route.includes('generateImage(candidate.provider, candidate.model.rawId'));
+  assert.ok(route.includes('editImage(candidate.provider, candidate.model.rawId'));
   assert.ok(route.includes('status: cancelled ? 499 : 502'));
   assert.ok(route.includes("cancelled ? '本轮 Agent 已停止。'"));
   assert.ok(providers.includes('signal: combineSignals(signal, 180000)'));

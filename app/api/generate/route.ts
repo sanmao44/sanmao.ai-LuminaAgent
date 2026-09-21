@@ -1,5 +1,5 @@
 import { editImage, generateImage, imageDownloadAuth, imageMimeFromBytes, ProviderImageFormatError } from '@/lib/providers';
-import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
+import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, generationCamera, normalizeAngleState, readViewpointOptions, VIEWPOINT_LIMITS } from '@/lib/angle-control';
@@ -14,6 +14,36 @@ import { normalizeStarApiLandscapeImages, normalizeStarApiLandscapePrompt } from
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
+
+function isSafeImageModelFallbackError(error: unknown) {
+  const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number } | null;
+  return failure?.providerFailureKind === 'http'
+    && [400, 415, 422].includes(Number(failure.providerStatus || failure.status));
+}
+
+async function runImageModelCandidates<T extends { model: { id: string } }, R>(
+  initial: T,
+  loadFallbacks: () => Promise<readonly T[]>,
+  operation: (runtime: T) => Promise<R>,
+) {
+  const candidates: T[] = [initial];
+  let fallbacksLoaded = false;
+  for (let index = 0; index < candidates.length; index += 1) {
+    try {
+      return await operation(candidates[index]);
+    } catch (error) {
+      if (!isSafeImageModelFallbackError(error)) throw error;
+      if (index < candidates.length - 1) continue;
+      if (fallbacksLoaded) throw error;
+      fallbacksLoaded = true;
+      let fallbacks: readonly T[];
+      try { fallbacks = await loadFallbacks(); } catch { throw error; }
+      candidates.push(...fallbacks.filter((candidate) => candidate.model.id !== initial.model.id));
+      if (index >= candidates.length - 1) throw error;
+    }
+  }
+  throw new Error('没有可用的生图模型');
+}
 
 function readCameraNumber(value: unknown, field: string) {
   if (value === undefined) return undefined;
@@ -147,9 +177,10 @@ export async function POST(request: Request) {
       : [];
     if (camera?.viewpoint && references.length !== (hasAngleGuide ? 2 : 1)) return Response.json({ error: hasAngleGuide ? '请提交原始参考图和一张构图导引，原图必须排在第一张。' : '请提交一张原始参考图。' }, { status: 400 });
     const hasEditInput = references.length > 0 || (typeof body.mask === 'string' && body.mask.trim().length > 0) || (typeof body.moveGuide === 'string' && body.moveGuide.trim().length > 0);
-    const runtime = hasEditInput
-      ? await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit') || (camera && body.model && body.model !== 'auto' ? null : await getRuntimeImageModelForCapability('auto', 'edit'))
-      : await getRuntimeImageGenerationModel(String(body.model || 'auto'));
+    const requestedModelId = String(body.model || 'auto');
+    let runtime = hasEditInput
+      ? await getRuntimeImageModelForCapability(requestedModelId, 'edit') || (camera && body.model && body.model !== 'auto' ? null : await getRuntimeImageModelForCapability('auto', 'edit'))
+      : await getRuntimeImageGenerationModel(requestedModelId);
     if (!runtime) return Response.json({ error: hasEditInput ? '没有可用的改图模型，请启用带 edit 能力的图片模型' : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;
     const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
@@ -193,9 +224,19 @@ export async function POST(request: Request) {
     modeForLog = references.length ? 'edit' : 'generate';
     logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, presetId, presetName, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const storagePath = (await getPublicState()).settings.imageStoragePath;
-    const providerImages = references.length
-      ? await editImage(runtime.provider, runtime.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
-      : await generateImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
+    const providerImages = await runImageModelCandidates(
+      runtime,
+      requestedModelId === 'auto'
+        ? async () => getRuntimeImageModelCandidates('auto', references.length ? 'edit' : 'generate')
+        : async () => [],
+      async (candidate) => {
+        runtime = candidate;
+        runtimeProviderId = candidate.provider.id;
+        return references.length
+          ? editImage(candidate.provider, candidate.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
+          : generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+      },
+    );
     const maskSafeImages = mask
       ? await enforceLocalEditMask(providerImages, references[0], mask, {
           storagePath,

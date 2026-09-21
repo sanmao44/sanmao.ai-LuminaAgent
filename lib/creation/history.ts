@@ -6,7 +6,7 @@ import type { LocalEditAnnotation } from '../local-edit';
 import type { ProvenanceEdge, ProvenanceEdgeDraft } from '../provenance/types';
 
 export async function recordCanvasImages(
-  images: Array<{ url: string; revisedPrompt?: string }>,
+  images: Array<{ url: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string }>,
   meta: {
     prompt: string;
     presetId?: string;
@@ -51,9 +51,9 @@ export async function recordCanvasImages(
     prompt: meta.prompt,
     presetId: meta.presetId,
     presetName: meta.presetName,
-    modelId: meta.modelId,
-    modelName: meta.modelName,
-    providerName: meta.providerName,
+    modelId: image.modelId || meta.modelId,
+    modelName: image.modelName || meta.modelName,
+    providerName: image.providerName || meta.providerName,
     aspectRatio: meta.aspectRatio,
     outputSize: meta.outputSize,
     outputFormat: meta.outputFormat,

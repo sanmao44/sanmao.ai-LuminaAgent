@@ -62,6 +62,16 @@ export type AgentGeneratedFile = {
   downloadUrl?: string;
 };
 
+/** 图片结果的真实生图运行时信息；不要与对话模型字段混用。 */
+export type AgentGeneratedImage = {
+  url: string;
+  localFileName?: string;
+  revisedPrompt?: string;
+  modelId?: string;
+  modelName?: string;
+  providerName?: string;
+};
+
 /** 这一轮真正落到外部 MCP 服务上的调用，用于给用户看"助手用了哪个外部工具"。 */
 export type AgentMcpToolUse = {
   server: string;
@@ -103,7 +113,7 @@ export type AgentResponse = {
   message: string;
   model?: string;
   deliverable?: AgentDeliverable;
-  images?: Array<{ url: string; revisedPrompt?: string }>;
+  images?: AgentGeneratedImage[];
   files?: AgentGeneratedFile[];
   generations?: Array<Record<string, unknown>>;
   webSearch?: Record<string, unknown> | null;

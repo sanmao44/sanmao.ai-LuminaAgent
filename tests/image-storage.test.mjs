@@ -216,3 +216,40 @@ test('accepts raw base64 image content returned by a provider URL', async () => 
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('retries transient provider download failures before saving the image', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response('busy', { status: 503 });
+    return new Response(png, { status: 200, headers: { 'content-type': 'image/png' } });
+  };
+  try {
+    const result = await storage.persistGeneratedImages([{ url: 'https://provider.example/result.png' }]);
+    assert.equal(calls, 2);
+    assert.match(result.images[0].url, /^\/api\/storage\/file\?name=/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('preserves a provider image URL when local archival cannot download it', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  const providerUrl = 'https://provider.example/result.png?signature=temporary';
+  globalThis.fetch = async () => { throw new Error('fetch failed'); };
+  try {
+    const result = await storage.persistGeneratedImages([{ url: providerUrl }], undefined, undefined, { preserveRemoteImages: true });
+    assert.deepEqual(result.images, [{ url: providerUrl }]);
+    assert.equal(result.remoteFallbacks.length, 1);
+    assert.equal(result.remoteFallbacks[0].index, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

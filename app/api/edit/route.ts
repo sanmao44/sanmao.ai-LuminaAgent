@@ -2,7 +2,7 @@ import { editImage, imageDownloadAuth, type ImageEditInput } from '@/lib/provide
 import { resolveStoredImageReference } from '@/lib/image-storage';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
-import { getPublicState, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
+import { getPublicState, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
@@ -11,6 +11,36 @@ import { normalizeStarApiLandscapeImages, normalizeStarApiLandscapePrompt } from
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
+
+function isSafeImageModelFallbackError(error: unknown) {
+  const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number } | null;
+  return failure?.providerFailureKind === 'http'
+    && [400, 415, 422].includes(Number(failure.providerStatus || failure.status));
+}
+
+async function runImageModelCandidates<T extends { model: { id: string } }, R>(
+  initial: T,
+  loadFallbacks: () => Promise<readonly T[]>,
+  operation: (runtime: T) => Promise<R>,
+) {
+  const candidates: T[] = [initial];
+  let fallbacksLoaded = false;
+  for (let index = 0; index < candidates.length; index += 1) {
+    try {
+      return await operation(candidates[index]);
+    } catch (error) {
+      if (!isSafeImageModelFallbackError(error)) throw error;
+      if (index < candidates.length - 1) continue;
+      if (fallbacksLoaded) throw error;
+      fallbacksLoaded = true;
+      let fallbacks: readonly T[];
+      try { fallbacks = await loadFallbacks(); } catch { throw error; }
+      candidates.push(...fallbacks.filter((candidate) => candidate.model.id !== initial.model.id));
+      if (index >= candidates.length - 1) throw error;
+    }
+  }
+  throw new Error('没有可用的生图模型');
+}
 
 export async function POST(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
@@ -40,7 +70,8 @@ export async function POST(request: Request) {
     if (!references.length) return Response.json({ error: '请至少添加一张参考图。' }, { status: 400 });
     if (body.mask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
     if (rawMoveGuide && !mask) return Response.json({ error: '移动引导图需要同时提交局部编辑范围。' }, { status: 400 });
-    const runtime = await getRuntimeImageModelForCapability(String(body.model || 'auto'), 'edit');
+    const requestedModelId = String(body.model || 'auto');
+    let runtime = await getRuntimeImageModelForCapability(requestedModelId, 'edit');
     if (!runtime) return Response.json({ error: '没有支持图片修改的可用模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;
     const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
@@ -74,7 +105,17 @@ export async function POST(request: Request) {
     promptForLog = generationPrompt;
     aspectRatioForLog = input.aspectRatio || '自动';
     logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
-    const providerImages = await editImage(runtime.provider, runtime.model.rawId, input, requestController.signal);
+    const providerImages = await runImageModelCandidates(
+      runtime,
+      requestedModelId === 'auto'
+        ? async () => getRuntimeImageModelCandidates('auto', 'edit')
+        : async () => [],
+      async (candidate) => {
+        runtime = candidate;
+        runtimeProviderId = candidate.provider.id;
+        return editImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+      },
+    );
     const maskSafeImages = mask
       ? await enforceLocalEditMask(providerImages, resolvedReferences[0], mask, {
           storagePath,

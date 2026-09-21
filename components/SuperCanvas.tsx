@@ -177,7 +177,7 @@ import {
   requestPromptOptimization,
   runReversePrompt,
 } from "@/lib/creation/agent";
-import { requestAgent } from "@/lib/agent-client";
+import { requestAgent, type AgentGeneratedImage } from "@/lib/agent-client";
 import CanvasAgentDock, {
   CANVAS_AGENT_DOCK_OPEN_KEY,
 } from "@/components/CanvasAgentDock";
@@ -246,6 +246,7 @@ import OneClickCinematicPanel, {
 } from "@/components/canvas/OneClickCinematicPanel";
 import CanvasCloneDialog, {
   type CanvasCloneReferenceOption,
+  type CanvasCloneAssetOption,
 } from "@/components/canvas/CanvasCloneDialog";
 import CanvasGroupComposeDialog, {
   type CanvasGroupComposeSettings,
@@ -327,6 +328,7 @@ import {
   creativeProjectVersion,
   creativeProjectIdForCanvas,
   readCreativeProjects,
+  removeCreativeProjectVersion,
   saveCreativeProjects,
   type CreativeProjectVersion,
 } from "@/lib/creative-projects";
@@ -2938,9 +2940,11 @@ export default function SuperCanvas() {
     nodeId: string;
     compare: boolean;
   } | null>(null);
+  const [lightboxReturnPanel, setLightboxReturnPanel] = useState<"activity" | null>(null);
+  const activityPanelScrollTopRef = useRef<number | null>(null);
   /* Agent 面板里还没落画布的图也要能看大图：复用同一个媒体预览器。 */
   const [agentDockPreview, setAgentDockPreview] = useState<{
-    images: Array<{ url: string; revisedPrompt?: string }>;
+    images: AgentGeneratedImage[];
     index: number;
   } | null>(null);
   const [panoramaNodeId, setPanoramaNodeId] = useState<string | null>(null);
@@ -3042,6 +3046,7 @@ export default function SuperCanvas() {
     setProjectMenuOpen(false);
     setReusePreview(null);
     setLightbox(null);
+    setLightboxReturnPanel(null);
     setPanoramaNodeId(null);
     setTextLightboxNodeId(null);
     setMaskNodeId(null);
@@ -3063,8 +3068,9 @@ export default function SuperCanvas() {
     setVariantMentionState(null);
   }, []);
   const openCanvasMediaViewer = useCallback(
-    (nodeId: string, compare = false) => {
+    (nodeId: string, compare = false, returnPanel: "activity" | null = null) => {
       closeCanvasOverlayConflicts();
+      setLightboxReturnPanel(returnPanel);
       setLightbox({ nodeId, compare });
     },
     [closeCanvasOverlayConflicts],
@@ -5984,6 +5990,21 @@ export default function SuperCanvas() {
     setProjectMenuOpen(false);
     notify(`已恢复到 ${version.label}`);
   }, [clearSelection, commit, currentProject?.projectId, notify]);
+  const deleteProjectVersion = useCallback((versionId: string) => {
+    if (!currentProject?.projectId) return;
+    const version = projectVersions.find((item) => item.id === versionId);
+    if (!version) return notify("找不到这个项目版本", "error");
+    if (!window.confirm(`删除“${version.label}”？删除后不能恢复。`)) return;
+    const next = removeCreativeProjectVersion(
+      readCreativeProjects(),
+      currentProject.projectId,
+      versionId,
+    );
+    if (!next) return notify("项目版本删除失败，请重试", "error");
+    if (!saveCreativeProjects(next)) return notify("项目版本删除失败，请重试", "error");
+    setProjectVersions(next.find((project) => project.id === currentProject.projectId)?.versions || []);
+    notify(`已删除 ${version.label}`);
+  }, [currentProject?.projectId, notify, projectVersions]);
   const deleteProject = useCallback(
     (id: string) => {
       if (projects.length <= 1) return notify("至少保留一个画布。", "error");
@@ -9969,10 +9990,16 @@ export default function SuperCanvas() {
     (payload: string, point: Point) => {
       let url = "";
       let revisedPrompt = "";
+      let modelId = "";
+      let modelName = "";
+      let providerName = "";
       try {
-        const parsed = JSON.parse(payload) as { url?: string; revisedPrompt?: string };
+        const parsed = JSON.parse(payload) as { url?: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string };
         url = String(parsed?.url || "").trim();
         revisedPrompt = String(parsed?.revisedPrompt || "").trim();
+        modelId = String(parsed?.modelId || "").trim();
+        modelName = String(parsed?.modelName || "").trim();
+        providerName = String(parsed?.providerName || "").trim();
       } catch {
         url = "";
       }
@@ -9982,7 +10009,19 @@ export default function SuperCanvas() {
       }
       const draft = createMedia("image", url, "Agent 图片", point, {
         role: "Agent 生成结果",
+        ...(modelName ? { model: modelName } : {}),
+        ...(providerName ? { providerName } : {}),
         ...(revisedPrompt ? { prompt: revisedPrompt } : {}),
+        ...(modelId ? {
+          generation: {
+            kind: "image",
+            prompt: revisedPrompt || "Agent 图片",
+            params: clone({ ...readSharedCreationSettings("image", runtime), model: modelId }),
+            modelId,
+            modelName: modelName || undefined,
+            providerName: providerName || undefined,
+          },
+        } : {}),
       });
       const node = { ...draft, ...openNodePosition(point, draft) };
       commit((value) => ({ ...value, nodes: [...value.nodes, node] }));
@@ -9991,11 +10030,11 @@ export default function SuperCanvas() {
       setContextMenu(null);
       notify("已把这张图放到画布上");
     },
-    [commit, notify, openNodePosition],
+    [commit, notify, openNodePosition, runtime],
   );
   const applyAgentDockImages = useCallback(
     (
-      images: Array<{ url: string; revisedPrompt?: string }>,
+      images: AgentGeneratedImage[],
       meta: { prompt: string; model?: string; runContext?: CanvasAgentRunContext },
     ) => {
       const incoming = images.filter((image) => Boolean(String(image.url || "").trim()));
@@ -10038,11 +10077,15 @@ export default function SuperCanvas() {
           desired,
           {
             role: "Agent 生成结果",
-            ...(meta.model ? { model: meta.model } : {}),
+            ...(image.modelName ? { model: image.modelName } : {}),
+            ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
               prompt: meta.prompt,
-              params: clone(imageSettings),
+              params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
+              ...(image.modelId ? { modelId: image.modelId } : {}),
+              ...(image.modelName ? { modelName: image.modelName } : {}),
+              ...(image.providerName ? { providerName: image.providerName } : {}),
               referenceIds,
               ...(runContext ? { operation: runContext.operation, taskId: runContext.runId } : {}),
               ...(anchor ? { parentNodeId: anchor.id } : {}),
@@ -10084,8 +10127,6 @@ export default function SuperCanvas() {
       void recordCanvasImages(incoming, {
         prompt: meta.prompt,
         source: "canvas",
-        modelId: imageSettings.model,
-        ...(meta.model ? { modelName: meta.model } : {}),
         ...(anchor ? { parentId: anchor.id } : {}),
         ...(runContext ? { taskId: runContext.runId, chatId: runContext.chatId, projectId: runContext.creativeProjectId } : {}),
         ...(runContext?.references?.length ? {
@@ -10123,7 +10164,7 @@ export default function SuperCanvas() {
   const applyAgentDockPlan = useCallback(
     (
       plan: CanvasAgentDockPlan,
-      images: Array<{ url: string; revisedPrompt?: string }> = [],
+      images: AgentGeneratedImage[] = [],
       runContext?: CanvasAgentRunContext,
     ): CanvasAgentDockPlanResult => {
       const validImages = images.filter((image) => Boolean(String(image.url || "").trim()));
@@ -10298,10 +10339,15 @@ export default function SuperCanvas() {
           };
           const draft = createMedia("image", image.url, `Agent 图片 ${index + 1}`, desired, {
             role: "Agent 生成结果",
+            ...(image.modelName ? { model: image.modelName } : {}),
+            ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
               prompt: plan.sourcePrompt || "Agent 批量生成",
-              params: clone(imageSettings),
+              params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
+              ...(image.modelId ? { modelId: image.modelId } : {}),
+              ...(image.modelName ? { modelName: image.modelName } : {}),
+              ...(image.providerName ? { providerName: image.providerName } : {}),
               referenceIds,
               ...(runContext ? { operation: runContext.operation, taskId: runContext.runId } : {}),
               ...(anchor ? { parentNodeId: anchor.id } : {}),
@@ -10369,7 +10415,6 @@ export default function SuperCanvas() {
         void recordCanvasImages(validImages, {
           prompt: plan.sourcePrompt || "Agent 批量生成",
           source: "canvas",
-          modelId: imageSettings.model,
           ...(anchor ? { parentId: anchor.id } : {}),
           ...(runContext ? { taskId: runContext.runId, chatId: runContext.chatId, projectId: runContext.creativeProjectId } : {}),
           ...(runContext?.references?.length ? {
@@ -12522,6 +12567,8 @@ export default function SuperCanvas() {
         }
         if (lightbox) {
           setLightbox(null);
+          if (lightboxReturnPanel) setActivePanel(lightboxReturnPanel);
+          setLightboxReturnPanel(null);
           return;
         }
         if (panoramaNodeId) {
@@ -13079,7 +13126,7 @@ export default function SuperCanvas() {
     }
   }, [notify]);
   const focusCanvasNode = useCallback(
-    (nodeId: string, openMedia = false) => {
+    (nodeId: string, openMedia = false, returnPanel: "activity" | null = null) => {
       const node = nodeById(docRef.current, nodeId);
       if (!node) {
         notify("当前画布中找不到这条血缘节点", "error");
@@ -13088,7 +13135,7 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       setActivePanel(null);
-      if (openMedia && node.type === "media" && node.data.url) openCanvasMediaViewer(node.id);
+      if (openMedia && node.type === "media" && node.data.url) openCanvasMediaViewer(node.id, false, returnPanel);
       else fitView([node.id]);
     },
     [fitView, notify, openCanvasMediaViewer],
@@ -13115,9 +13162,17 @@ export default function SuperCanvas() {
         notify("当前任务还没有对应的画布节点。", "error");
         return;
       }
-      focusCanvasNode(node.id, openMedia);
+      focusCanvasNode(node.id, openMedia, openMedia && activePanel === "activity" ? "activity" : null);
     },
-    [focusCanvasNode, notify],
+    [activePanel, focusCanvasNode, notify],
+  );
+  /* Log-panel result chips open the media viewer too: closing it must land back
+     on the task log panel, exactly like the "打开结果" button does. */
+  const focusLogNode = useCallback(
+    (nodeId: string, openMedia = false) => {
+      focusCanvasNode(nodeId, openMedia, openMedia && activePanel === "activity" ? "activity" : null);
+    },
+    [activePanel, focusCanvasNode],
   );
   const retryGenerationLog = useCallback(
     (log: CanvasGenerationLog) => {
@@ -14475,6 +14530,13 @@ export default function SuperCanvas() {
         })),
     [document.nodes],
   );
+  const cloneAssets = useMemo<CanvasCloneAssetOption[]>(
+    () => document.nodes
+      .filter((node) => node.type === "media" && node.data.kind !== "video" && Boolean(node.data.url))
+      .map((node) => ({ nodeId: node.id, name: String(node.data.name || "参考素材"), url: String(node.data.url), kind: node.data.kind as "image" | "audio" }))
+      .filter((item) => item.kind === "image" || item.kind === "audio"),
+    [document.nodes],
+  );
 
   /**
    * 只有用户明确选中一条视频节点时才当作「预选参考」：
@@ -14796,17 +14858,31 @@ export default function SuperCanvas() {
                 <span>项目版本</span>
                 <button type="button" onClick={saveProjectVersion} disabled={!currentProject}>保存当前版本</button>
               </div>
-              {projectVersions.length ? projectVersions.slice().reverse().map((version) => (
-                <button
-                  type="button"
-                  className="canvas-project-version-row"
-                  key={version.id}
-                  onClick={() => restoreProjectVersion(version.id)}
-                >
-                  <b>{version.label}</b>
-                  <small>{new Date(version.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" })}</small>
-                </button>
-              )) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
+              {projectVersions.length ? (
+                <div className="canvas-project-version-list">
+                  {projectVersions.slice().reverse().map((version) => (
+                    <div className="canvas-project-version-row" key={version.id}>
+                      <button
+                        type="button"
+                        className="canvas-project-version-restore"
+                        onClick={() => restoreProjectVersion(version.id)}
+                      >
+                        <b>{version.label}</b>
+                        <small>{new Date(version.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" })}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className="canvas-project-version-delete"
+                        aria-label={`删除 ${version.label}`}
+                        title={`删除 ${version.label}`}
+                        onClick={() => deleteProjectVersion(version.id)}
+                      >
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
             </div>
             <div className="canvas-popover-actions">
               <button type="button" onClick={newProject}>＋ 新建画布</button>
@@ -16172,6 +16248,7 @@ export default function SuperCanvas() {
         {cloneDialogOpen && createPortal(
           <CanvasCloneDialog
             references={cloneReferences}
+            assets={cloneAssets}
             models={runtime?.models || []}
             defaultProviderId={runtime?.settings.defaultProviderId || null}
             defaultProviderName={runtime?.providers.find((provider) => provider.id === runtime?.settings.defaultProviderId)?.name}
@@ -16513,7 +16590,11 @@ export default function SuperCanvas() {
           item={viewerItem}
           references={viewerReferences}
           initialCompare={lightbox.compare}
-          onClose={() => setLightbox(null)}
+          onClose={() => {
+            setLightbox(null);
+            if (lightboxReturnPanel) setActivePanel(lightboxReturnPanel);
+            setLightboxReturnPanel(null);
+          }}
           onAngle={
             viewerNode.data.kind === "image" && isCanvasReadyImageSource(viewerNode)
               ? () => openImagePanorama(viewerNode.id)
@@ -16623,10 +16704,14 @@ export default function SuperCanvas() {
           loading={generationLogsLoading}
           onRefresh={() => void refreshGenerationLogs()}
           onFocusTask={focusGenerationLog}
-          onFocusNode={focusCanvasNode}
+          onFocusNode={focusLogNode}
           onRetryTask={retryGenerationLog}
           onClose={() => setActivePanel(null)}
           onNotify={notify}
+          restoreScrollTop={activityPanelScrollTopRef.current}
+          onRememberScrollPosition={(scrollTop) => {
+            activityPanelScrollTopRef.current = scrollTop;
+          }}
         />
       )}
       {activePanel === "settings" && (
@@ -21691,7 +21776,7 @@ function CanvasTextLightbox({
   );
 }
 
-function CanvasPanelShell({ title, subtitle, onClose, children, className = "" }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; className?: string }) {
+function CanvasPanelShell({ title, subtitle, onClose, children, className = "", bodyRef }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; className?: string; bodyRef?: RefObject<HTMLDivElement | null> }) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -21704,7 +21789,7 @@ function CanvasPanelShell({ title, subtitle, onClose, children, className = "" }
   return <div className="canvas-modal-backdrop canvas-panel-backdrop">
     <aside className={`canvas-side-panel ${className}`}>
       <header><div><b>{title}</b><small>{subtitle}</small></div><button type="button" onClick={onClose} aria-label={`关闭${title}`}>×</button></header>
-      <div className="canvas-side-panel-body">{children}</div>
+      <div ref={bodyRef} className="canvas-side-panel-body">{children}</div>
     </aside>
   </div>;
 }
@@ -21720,6 +21805,8 @@ function CanvasActivityDrawer({
   onRetryTask,
   onClose,
   onNotify,
+  restoreScrollTop,
+  onRememberScrollPosition,
 }: {
   taskLogs: CanvasGenerationLog[];
   activityLogs: CanvasActivityLog[];
@@ -21731,12 +21818,25 @@ function CanvasActivityDrawer({
   onRetryTask: (log: CanvasGenerationLog) => void;
   onClose: () => void;
   onNotify: (message: string, kind?: Notice["kind"]) => void;
+  restoreScrollTop: number | null;
+  onRememberScrollPosition: (scrollTop: number) => void;
 }) {
   const [tab, setTab] = useState<"tasks" | "activity">("tasks");
   const [status, setStatus] = useState<"all" | CanvasGenerationLog["status"]>("all");
   const [media, setMedia] = useState<"all" | "image" | "video" | "llm">("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const scrollBodyRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (restoreScrollTop === null) return;
+    const frame = requestAnimationFrame(() => {
+      scrollBodyRef.current?.scrollTo({ top: restoreScrollTop, behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [restoreScrollTop]);
+  const rememberScrollBeforeMediaOpen = (openMedia: boolean) => {
+    if (openMedia) onRememberScrollPosition(scrollBodyRef.current?.scrollTop || 0);
+  };
   const filteredTasks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return taskLogs.filter((log) => {
@@ -21768,6 +21868,7 @@ function CanvasActivityDrawer({
       subtitle="与主界面统一的生成任务记录"
       onClose={onClose}
       className="canvas-activity-panel canvas-task-log-panel"
+      bodyRef={scrollBodyRef}
     >
       <div className="canvas-log-tabs" role="tablist" aria-label="日志类型">
         <button type="button" className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>任务 <b>{summary.total}</b></button>
@@ -21817,9 +21918,9 @@ function CanvasActivityDrawer({
                 {lineage.length > 0 && <div className="canvas-task-log-detail canvas-task-log-lineage" onClick={(event) => event.stopPropagation()}>
                   <div><b>结果与来源</b><small>统一活动：{activityTask.kind} · {activityTask.status} · {activityTask.sourceId || log.id}{log.projectId ? ` · 项目 ${log.projectId}` : ""}{log.chatId ? ` · 对话 ${log.chatId}` : ""}</small></div>
                   {lineage.map((record: CanvasLineageRecord) => <div key={record.resultNodeId} className="canvas-task-log-lineage-row canvas-task-log-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
-                    <button type="button" onClick={() => onFocusNode(record.resultNodeId, canOpenNode(record.resultNodeId))}>结果：{nodeLabel(record.resultNodeId)}</button>
+                    <button type="button" onClick={() => { const openMedia = canOpenNode(record.resultNodeId); rememberScrollBeforeMediaOpen(openMedia); onFocusNode(record.resultNodeId, openMedia); }}>结果：{nodeLabel(record.resultNodeId)}</button>
                     <span>← {relationLabel(record.edges[0]?.relation || "derived_from")}</span>
-                    {record.sourceNodeIds.map((sourceId) => <button type="button" key={sourceId} onClick={() => onFocusNode(sourceId, canOpenNode(sourceId))}>来源：{nodeLabel(sourceId)}</button>)}
+                    {record.sourceNodeIds.map((sourceId) => <button type="button" key={sourceId} onClick={() => { const openMedia = canOpenNode(sourceId); rememberScrollBeforeMediaOpen(openMedia); onFocusNode(sourceId, openMedia); }}>来源：{nodeLabel(sourceId)}</button>)}
                   </div>)}
                 </div>}
                 <div className="canvas-task-log-preview">
@@ -21828,7 +21929,7 @@ function CanvasActivityDrawer({
                 <div className="canvas-task-log-status">{generationLogStatusLabel(log.status)}</div>
                 <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.presetName ? `预设：${log.presetName} · ` : ""}{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{log.status === "pending" && <small className="pending-note">任务正在后台生成，可继续使用画布</small>}{log.error && <small className="error-note">{log.error}</small>}</div>
                 <div className="canvas-task-log-meta"><span className="canvas-task-log-meta-count">{kind === "llm" ? `${log.llmCallCount || 0} 次调用` : kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span className="canvas-task-log-meta-duration">{generationLogDuration(log)}</span><span className="canvas-task-log-meta-size">{kind === "llm" ? `${log.task || "普通对话"} · ${log.responseChars || 0} 字响应 · 联网 ${log.webSearchStatus || "未检索"}` : kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
-                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{log.status === "error" && kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); onRetryTask(log); }}>重试</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); onFocusTask(log, Boolean(urls.length)); }}>{urls.length ? "打开结果" : "定位节点"}</button>}</div>
+                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{log.status === "error" && kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); onRetryTask(log); }}>重试</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); const openMedia = Boolean(urls.length); rememberScrollBeforeMediaOpen(openMedia); onFocusTask(log, openMedia); }}>{urls.length ? "打开结果" : "定位节点"}</button>}</div>
                 {selectedId === log.id && <div className="canvas-task-log-detail"><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{kind === "llm" && <small>模型调用：{log.llmCallCount || 0} 次 · 响应：{log.responseChars || 0} 字 · 联网：{log.webSearchStatus || "未检索"}</small>}{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
                 </article>;
             })}

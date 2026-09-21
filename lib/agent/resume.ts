@@ -26,6 +26,8 @@ import { listFilesystemRoots, listFilesystemWriteRoots } from '@/lib/mcp/filesys
 import { recordMcpCall, type McpAuditDecision } from '@/lib/mcp/audit';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import { stripToolCallMarkup } from '@/lib/skills';
+import { verifyFilesystemMove } from '@/lib/agent/filesystem-result';
+import { toolOutcomeText } from '@/lib/agent/tool-outcome';
 
 /** 续跑的整体上限：比一轮 MCP 预算再多一点拿来整理回答。 */
 export const RESUME_TIMEOUT_MS = MCP_TURN_TIME_BUDGET_MS + 30_000;
@@ -150,6 +152,13 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
         retry: meta.readOnly,
         timeouts: { call: Math.max(5_000, Math.min(MCP_CALL_TIMEOUT_MS, budget)) },
       });
+      if (!result.isError && server.catalogId === 'filesystem' && meta.toolName === 'move_file') {
+        const problem = await verifyFilesystemMove(args);
+        if (problem) {
+          result.isError = true;
+          result.text = problem;
+        }
+      }
       budget -= Date.now() - startedAt;
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
       if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });
@@ -291,6 +300,12 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     }
   }
 
-  const fallback = usedMcpTools.length ? '已按你的确认执行完成。' : '这一步没有执行。';
-  return { status: 200, body: { ok: true, message: text || `${fallback}（这轮没能整理出说明文字，可以继续追问细节。）`, mcpTools: usedMcpTools } };
+  const fallback = usedMcpTools.length ? '已按你的确认调用工具，请核对实际结果。' : '这一步没有执行。';
+  const outcomes = executed.flatMap((message) => {
+    try {
+      const value = JSON.parse(String(message.content || '')) as { ok?: boolean; error?: string; content?: string };
+      return typeof value.ok === 'boolean' ? [{ name: message.tool_call_id || '操作', ok: value.ok, error: value.error || (!value.ok ? value.content : undefined) }] : [];
+    } catch { return []; }
+  });
+  return { status: 200, body: { ok: true, message: toolOutcomeText(text || `${fallback}（这轮没能整理出说明文字，可以继续追问细节。）`, outcomes), mcpTools: usedMcpTools } };
 }

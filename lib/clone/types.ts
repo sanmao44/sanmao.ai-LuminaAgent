@@ -66,6 +66,17 @@ export type CloneReference = {
   seconds: number;
 };
 
+/** 用户提供给克隆管线的身份/产品/品牌素材；sourceVideo 与这些素材职责不同。 */
+export type CloneAssetRole = 'person' | 'product' | 'brand' | 'scene' | 'style' | 'broll' | 'voice';
+export type CloneAssetKind = 'image' | 'video' | 'audio';
+export type CloneAsset = {
+  nodeId?: string;
+  name: string;
+  url: string;
+  kind: CloneAssetKind;
+  role: CloneAssetRole;
+};
+
 export type CloneModels = {
   chat: string;
   image?: string;
@@ -94,6 +105,7 @@ export type CloneJob = {
   progress: number;
   message: string;
   reference: CloneReference;
+  assets: CloneAsset[];
   options: CloneOptions;
   capabilities: CloneCapabilities;
   warnings: string[];

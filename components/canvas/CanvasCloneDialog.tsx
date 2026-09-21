@@ -18,7 +18,7 @@ import {
   cloneStageProgress,
   describeCloneStage,
 } from "@/lib/clone/plan";
-import type { CloneJob, CloneOptions } from "@/lib/clone/types";
+import type { CloneAssetRole, CloneJob, CloneOptions } from "@/lib/clone/types";
 import type { RegistryModel } from "@/lib/types";
 
 export type CanvasCloneReferenceOption = {
@@ -27,9 +27,16 @@ export type CanvasCloneReferenceOption = {
   url: string;
   seconds: number;
 };
+export type CanvasCloneAssetOption = {
+  nodeId: string;
+  name: string;
+  url: string;
+  kind: "image" | "video" | "audio";
+};
 
 type CanvasCloneDialogProps = {
   references: CanvasCloneReferenceOption[];
+  assets?: CanvasCloneAssetOption[];
   models: RegistryModel[];
   defaultProviderId?: string | null;
   defaultProviderName?: string;
@@ -77,6 +84,7 @@ function requestKey(value: string) {
 
 export default function CanvasCloneDialog({
   references,
+  assets = [],
   models,
   defaultProviderId,
   defaultProviderName,
@@ -88,6 +96,7 @@ export default function CanvasCloneDialog({
 }: CanvasCloneDialogProps) {
   const [step, setStep] = useState(preselectedReferenceId ? 2 : 1);
   const [referenceId, setReferenceId] = useState(preselectedReferenceId || "");
+  const [selectedAssets, setSelectedAssets] = useState<Record<string, CloneAssetRole>>({});
   const [brief, setBrief] = useState("");
   const [aspect, setAspect] = useState<CloneOptions["aspect"]>("9:16");
   const [maxShots, setMaxShots] = useState(CLONE_DEFAULT_MAX_SHOTS);
@@ -237,6 +246,7 @@ export default function CanvasCloneDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reference: { nodeId: reference.nodeId, name: reference.name, url: reference.url, seconds: reference.seconds },
+          assets: assets.filter((asset) => asset.nodeId !== reference.nodeId && selectedAssets[asset.nodeId]).map((asset) => ({ nodeId: asset.nodeId, name: asset.name, url: asset.url, kind: asset.kind, role: selectedAssets[asset.nodeId] })),
           brief: brief.trim(),
           options: {
             brief: brief.trim(),
@@ -521,6 +531,37 @@ export default function CanvasCloneDialog({
                     onChange={(event) => setBrief(event.target.value)}
                   />
                 </label>
+
+                {assets.length > 0 && (
+                  <div className="clone-field">
+                    <span>参考素材（可选：人物 / 产品 / 品牌 / 风格）</span>
+                    <div className="clone-asset-list">
+                      {assets.filter((asset) => asset.nodeId !== referenceId).map((asset) => {
+                        const role = selectedAssets[asset.nodeId] || "";
+                        return (
+                          <label className="clone-asset-row" key={asset.nodeId}>
+                            <input type="checkbox" checked={Boolean(role)} onChange={(event) => setSelectedAssets((current) => {
+                              const next = { ...current };
+                              if (event.target.checked) next[asset.nodeId] = "style";
+                              else delete next[asset.nodeId];
+                              return next;
+                            })} />
+                            <span>{asset.name}</span>
+                            <select value={role} onChange={(event) => setSelectedAssets((current) => ({ ...current, [asset.nodeId]: event.target.value as CloneAssetRole }))} disabled={!role}>
+                              <option value="style">风格</option>
+                              <option value="person">人物</option>
+                              <option value="product">产品</option>
+                              <option value="brand">品牌</option>
+                              <option value="scene">场景</option>
+                              <option value="broll">B-roll</option>
+                              <option value="voice">声音</option>
+                            </select>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="clone-field">
                   <span>画幅</span>

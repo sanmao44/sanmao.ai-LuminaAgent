@@ -14,6 +14,7 @@ export type InlineToolCall = {
 };
 
 const INLINE_TOOL_MARKER = /(?:\bto\s*=\s*functions\.|<\s*function\s*=\s*)([A-Za-z0-9_-]+)/gi;
+const TOOL_CALL_MARKER = /<\s*tool_call\b[^>]*>([\s\S]*?)<\/\s*tool_call\s*>/gi;
 // DeepSeek-compatible providers sometimes emit their tool call as DSML text
 // instead of populating `message.tool_calls`. Keep this matcher deliberately
 // narrow: the recovered name still has to exist in the tools offered this
@@ -63,6 +64,8 @@ export function hasInlineToolCallMarkup(text: unknown) {
   const source = String(text ?? '');
   INLINE_TOOL_MARKER.lastIndex = 0;
   if (INLINE_TOOL_MARKER.test(source)) return true;
+  TOOL_CALL_MARKER.lastIndex = 0;
+  if (TOOL_CALL_MARKER.test(source) || /<\s*tool_call\b/i.test(source)) return true;
   DSML_INVOKE_MARKER.lastIndex = 0;
   return DSML_INVOKE_MARKER.test(source);
 }
@@ -106,6 +109,28 @@ function parseDsmlToolCalls(source: string, definitions: readonly InlineToolDefi
   }
 }
 
+function parseToolCallBlocks(source: string, definitions: readonly InlineToolDefinition[], calls: InlineToolCall[]) {
+  const marker = new RegExp(TOOL_CALL_MARKER.source, TOOL_CALL_MARKER.flags);
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(source))) {
+    let parsed: any;
+    try { parsed = JSON.parse(match[1].trim()); } catch { continue; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+    const name = offeredToolName(parsed.name || parsed.function?.name, definitions);
+    if (!name) continue;
+    const rawArguments = parsed.arguments ?? parsed.function?.arguments;
+    const args = typeof rawArguments === 'string'
+      ? (() => { try { return JSON.parse(rawArguments); } catch { return null; } })()
+      : rawArguments;
+    if (!args || typeof args !== 'object' || Array.isArray(args)) continue;
+    calls.push({
+      id: `inline_tool_${calls.length + 1}`,
+      type: 'function',
+      function: { name, arguments: JSON.stringify(args) },
+    });
+  }
+}
+
 /** Recover provider-emitted text calls such as `to=functions.playwright_browserclick { ... }`. */
 export function parseInlineToolCalls(text: unknown, definitions: readonly InlineToolDefinition[]): InlineToolCall[] {
   const source = String(text ?? '');
@@ -130,6 +155,7 @@ export function parseInlineToolCalls(text: unknown, definitions: readonly Inline
     });
     marker.lastIndex = source.indexOf(argumentsText, marker.lastIndex) + argumentsText.length;
   }
+  parseToolCallBlocks(source, definitions, calls);
   parseDsmlToolCalls(source, definitions, calls);
   return calls;
 }

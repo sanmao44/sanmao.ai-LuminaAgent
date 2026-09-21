@@ -35,6 +35,19 @@ test('只恢复本轮实际提供且参数为合法对象的工具', () => {
   assert.deepEqual(inline.parseInlineToolCalls('普通文本，没有工具调用', tools), []);
 });
 
+test('recovers JSON tool envelopes only for tools actually offered', () => {
+  const text = '<tool_call>{"name":"image_generate","arguments":{"prompt":"鲁迅评论图画","aspectRatio":"9:16"}}</tool_call>';
+  assert.equal(inline.parseInlineToolCalls(text, tools)[0]?.function.name, 'image_generate');
+  assert.deepEqual(inline.parseInlineToolCalls(text, []), []);
+  assert.deepEqual(inline.parseInlineToolCalls('<tool_call>{"name":"image_generate","arguments":[]}</tool_call>', tools), []);
+});
+
+test('detects incomplete tool envelopes without executing them', () => {
+  const text = '<tool_call>{"name":"image_generate","arguments":';
+  assert.equal(inline.hasInlineToolCallMarkup(text), true);
+  assert.deepEqual(inline.parseInlineToolCalls(text, tools), []);
+});
+
 test('恢复 DSML 图片调用时保留真实参数，不被 fallback 覆盖', () => {
   const text = [
     '<｜DSML｜function_calls>',

@@ -17,6 +17,7 @@ export type GalleryLocalEditMask = {
 export type GalleryItem = {
   id: string;
   url: string;
+  localFileName?: string;
   prompt: string;
   presetId?: string;
   presetName?: string;

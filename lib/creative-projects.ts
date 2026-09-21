@@ -175,6 +175,19 @@ export function appendCreativeProjectVersion(
     : item));
 }
 
+export function removeCreativeProjectVersion(
+  projects: readonly CreativeProject[],
+  projectId: string,
+  versionId: string,
+) {
+  const normalized = normalizeCreativeProjects(projects);
+  const project = normalized.find((item) => item.id === projectId);
+  if (!project?.versions?.some((version) => version.id === versionId)) return null;
+  return normalizeCreativeProjects(normalized.map((item) => item.id === projectId
+    ? { ...item, versions: item.versions?.filter((version) => version.id !== versionId) }
+    : item));
+}
+
 export function creativeProjectVersion(projects: readonly CreativeProject[], projectId: string, versionId: string) {
   return normalizeCreativeProjects(projects)
     .find((project) => project.id === projectId)

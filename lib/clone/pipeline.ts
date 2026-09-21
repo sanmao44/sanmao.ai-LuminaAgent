@@ -17,7 +17,7 @@ import path from 'node:path';
 import { resolveLocalDataDir } from '../data-paths';
 import { persistAudioBuffer } from '../audio-storage';
 import { persistGeneratedImages, resolveStoredFileWithFallback } from '../image-storage';
-import { chatCompletion, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '../providers';
+import { chatCompletion, editImage, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '../providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '../store';
 import type { VideoGenerationInput } from '../types';
 import { getPublicMediaTransportStatusLive } from '../signed-media';
@@ -285,12 +285,22 @@ async function generateShotImage(runtime: ImageRuntime, job: CloneJob, shot: Clo
   if (!runtime) return null;
   const state = await getPublicState();
   const prompt = [shot.prompt || shot.visual || shot.line, job.options.brief ? `主题：${job.options.brief}` : '', '画面真实自然，不要出现文字水印'].filter(Boolean).join('；');
-  const images = await generateImage(runtime.provider, runtime.model.rawId, {
-    prompt,
-    aspectRatio: job.options.aspect,
-    count: 1,
-    responseFormat: 'url',
-  });
+  const references = await cloneImageReferences(job);
+  const images = references.length
+    ? await editImage(runtime.provider, runtime.model.rawId, {
+      prompt: `${prompt}。请严格保持参考素材中的${(job.assets || []).filter((asset) => asset.kind === 'image').map((asset) => asset.role).join('、')}身份与外观。`,
+      references,
+      aspectRatio: job.options.aspect,
+      count: 1,
+      responseFormat: 'url',
+      fidelity: 'high',
+    })
+    : await generateImage(runtime.provider, runtime.model.rawId, {
+      prompt,
+      aspectRatio: job.options.aspect,
+      count: 1,
+      responseFormat: 'url',
+    });
   if (!images.length) throw new Error('生图接口没有返回图片。');
   const stored = await persistGeneratedImages(images, state.settings.imageStoragePath || '', imageDownloadAuth(runtime.provider));
   const url = stored.images[0]?.url;
@@ -301,13 +311,20 @@ async function generateShotImage(runtime: ImageRuntime, job: CloneJob, shot: Clo
 async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: CloneShot, useFirstFrame = true) {
   if (!runtime) return null;
   const seconds = clampShotSeconds(Math.round(shot.audioSeconds || 4), getVideoModelLimits(runtime.model, runtime.provider));
+  const referenceImages = await cloneImageReferences(job);
   const input: VideoGenerationInput = {
     prompt: [shot.prompt || shot.visual || shot.line, job.options.brief ? `主题：${job.options.brief}` : '', '自然运动，无文字水印'].filter(Boolean).join('；'),
     operation: 'generate',
     seconds,
     aspectRatio: job.options.aspect,
+    ...(referenceImages.length ? { referenceImages, videoMode: 'reference' as const } : {}),
     ...(useFirstFrame && shot.imageUrl ? { firstFrame: shot.imageUrl } : {}),
   };
+  // 参考图模式与首帧模式互斥；若已有关键帧，优先使用关键帧保证镜头构图。
+  if (shot.imageUrl && referenceImages.length) {
+    delete input.referenceImages;
+    delete input.videoMode;
+  }
   const task = await createVideoGeneration({ modelId: runtime.model.id, input, source: 'canvas' });
   if (!task) throw new Error('视频任务创建失败。');
   if (task.status === 'failed') throw new Error(task.error || '视频任务失败。');
@@ -566,4 +583,28 @@ async function executeCloneJob(id: string) {
     const message = error instanceof Error ? error.message : '克隆出片失败';
     return await patchJob(id, { stage: 'failed', progress: 0, message, error: message, finishedAt: new Date().toISOString() });
   }
+}
+
+/** 将画布素材转换为图片编辑接口可接受的 data URL，避免把本地存储路径直接交给第三方。 */
+async function cloneImageReferences(job: CloneJob) {
+  const state = await getPublicState();
+  const refs: string[] = [];
+  for (const asset of (job.assets || []).filter((item) => item.kind === 'image').slice(0, 8)) {
+    const value = asset.url;
+    if (value.startsWith('data:image/')) { refs.push(value); continue; }
+    let file: string | null = null;
+    if (value.startsWith('/api/storage/file')) {
+      const name = new URL(value, 'http://localhost').searchParams.get('name') || '';
+      file = resolveStoredFileWithFallback(state.settings.imageStoragePath || '', name);
+    }
+    if (file && existsSync(file)) {
+      refs.push(`data:image/jpeg;base64,${(await readFile(file)).toString('base64')}`);
+      continue;
+    }
+    if (/^https?:\/\//i.test(value)) {
+      const response = await fetch(value, { cache: 'no-store' });
+      if (response.ok) refs.push(`data:${response.headers.get('content-type') || 'image/jpeg'};base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`);
+    }
+  }
+  return refs;
 }

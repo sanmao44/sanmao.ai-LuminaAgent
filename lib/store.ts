@@ -773,3 +773,32 @@ export async function getRuntimeImageGenerationModel(id: string | null | undefin
   if (!provider) return null;
   return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
 }
+
+/**
+ * Return the automatic image-model order used by the runtime, with the
+ * configured default first.  Callers use this only after a provider has
+ * explicitly rejected a request; transport failures and ambiguous upstream
+ * failures must not trigger a second paid generation request.
+ */
+export async function getRuntimeImageModelCandidates(id: string | null | undefined, capability?: ModelCapability) {
+  const state = await readState();
+  const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const compatible = models.filter((item) => {
+    const provider = state.providers.find((candidate) => candidate.id === item.providerId);
+    return isProviderModelLibraryEnabled(provider)
+      && item.kind === 'image'
+      && item.enabled
+      && item.published
+      && (!capability || item.capabilities.includes(capability));
+  });
+  const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
+  const first = explicit || selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultImageModelId);
+  if (!first) return [];
+  const ordered = [first, ...compatible.filter((item) => item.id !== first.id)];
+  const runtimes = await Promise.all(ordered.map(async (model) => {
+    const provider = state.providers.find((item) => item.id === model.providerId);
+    if (!provider) return null;
+    return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+  }));
+  return runtimes.filter((runtime): runtime is NonNullable<typeof runtime> => Boolean(runtime));
+}
