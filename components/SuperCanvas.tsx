@@ -20327,6 +20327,9 @@ function CanvasNodeCard({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // 媒体文件被删/不在媒体库时给出可见提示，而不是留一片空白或只剩播放按钮。
   const [mediaUnavailable, setMediaUnavailable] = useState(false);
+  const [mediaLoadMessage, setMediaLoadMessage] = useState<"missing" | "temporary">("temporary");
+  const mediaRetryAttemptRef = useRef(0);
+  const mediaRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mediaRetryKey, setMediaRetryKey] = useState(0);
   const [videoPlaybackState, setVideoPlaybackState] = useState<
     "paused" | "playing" | "ended"
@@ -20348,8 +20351,45 @@ function CanvasNodeCard({
       } catch {}
     }
     setVideoPlaybackState("paused");
+    if (mediaRetryTimerRef.current) clearTimeout(mediaRetryTimerRef.current);
+    mediaRetryAttemptRef.current = 0;
     setMediaUnavailable(false);
+    setMediaLoadMessage("temporary");
   }, [data.url, videoClip?.startTime]);
+
+  const handleMediaError = () => {
+    const attempt = mediaRetryAttemptRef.current;
+    if (attempt < 2) {
+      mediaRetryAttemptRef.current = attempt + 1;
+      mediaRetryTimerRef.current = setTimeout(() => {
+        setMediaUnavailable(false);
+        setMediaRetryKey((value) => value + 1);
+      }, 500 * (attempt + 1));
+      return;
+    }
+    void fetch(String(data.url), { cache: "no-store", headers: { Range: "bytes=0-1" } })
+      .then((response) => {
+        setMediaLoadMessage(response.status === 404 || response.status === 400 ? "missing" : "temporary");
+        setMediaUnavailable(true);
+      })
+      .catch(() => {
+        setMediaLoadMessage("temporary");
+        setMediaUnavailable(true);
+      });
+  };
+
+  const retryMediaLoad = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (mediaRetryTimerRef.current) clearTimeout(mediaRetryTimerRef.current);
+    mediaRetryAttemptRef.current = 0;
+    setMediaUnavailable(false);
+    setMediaLoadMessage("temporary");
+    setMediaRetryKey((value) => value + 1);
+  };
+
+  useEffect(() => () => {
+    if (mediaRetryTimerRef.current) clearTimeout(mediaRetryTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -20498,19 +20538,15 @@ function CanvasNodeCard({
                  <small>{data.kind === "audio" ? "等待导入音频" : "选中后在下方生成"}</small>
               </div>
             ) : mediaUnavailable ? (
-              <div className="canvas-media-state missing">
+              <div className={`canvas-media-state ${mediaLoadMessage === "missing" ? "missing" : "temporary"}`}>
                 <span>!</span>
-                <b>素材文件已丢失</b>
-                <small>文件不在媒体库中，可重新生成或上传替换</small>
+                <b>{mediaLoadMessage === "missing" ? "素材文件已丢失" : "素材暂时无法加载"}</b>
+                <small>{mediaLoadMessage === "missing" ? "文件不在媒体库中，可重新生成或上传替换" : "可能是服务暂时重启或网络波动，原视频不会被删除"}</small>
                 <button
                   type="button"
                   className="canvas-media-retry"
                   onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMediaUnavailable(false);
-                    setMediaRetryKey((value) => value + 1);
-                  }}
+                  onClick={retryMediaLoad}
                 >
                   重试加载
                 </button>
@@ -20524,7 +20560,7 @@ function CanvasNodeCard({
                 playsInline
                 preload="metadata"
                 draggable={false}
-                onError={() => setMediaUnavailable(true)}
+                onError={handleMediaError}
                 style={videoClip ? { objectFit: videoClip.fit, transform: `translate(${(videoClip.x || 0) * 50}%, ${(videoClip.y || 0) * 50}%) scale(${videoClip.scale || 1})`, opacity: videoClip.opacity ?? 1, transformOrigin: "center center" } : undefined}
                 aria-label={`视频预览${videoDuration ? `，时长 ${videoDuration}` : ""}`}
                 onPlay={() => setVideoPlaybackState("playing")}
@@ -20573,7 +20609,7 @@ function CanvasNodeCard({
                 src={data.url}
                 alt={data.name || "画布素材"}
                 draggable={false}
-                onError={() => setMediaUnavailable(true)}
+                onError={handleMediaError}
                 onLoad={(event) =>
                   onNaturalSize(
                     node.id,
