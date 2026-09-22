@@ -5151,8 +5151,8 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
     });
 }
 export default function Page() {
-    const [welcomeVisible, setWelcomeVisible] = useState(true);
-    const [welcomeReady, setWelcomeReady] = useState(false);
+    // 'boot'：还不知道本次安装是否看过开屏；'welcome'：首次进入展示开屏；'workspace'：直接进工作区。
+    const [welcomeStage, setWelcomeStage] = useState('boot');
     const [section, setSectionState] = useState('agent');
     const [managementNavOpen, setManagementNavOpen] = useState(false);
     const sectionRef = useRef('agent');
@@ -5193,13 +5193,39 @@ export default function Page() {
     const toastTimerRef = useRef(null);
     const [confirmState, setConfirmState] = useState(null);
     useEffect(()=>{
-        try {
-            setWelcomeVisible(localStorage.getItem(WELCOME_SEEN_STORAGE_KEY) !== '1');
-        } catch {
-            setWelcomeVisible(true);
-        }
-        setWelcomeReady(true);
+        let active = true;
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(()=>controller.abort(), 2500);
+        void (async ()=>{
+            let seen = false;
+            try {
+                seen = localStorage.getItem(WELCOME_SEEN_STORAGE_KEY) === '1';
+            } catch  {}
+            try {
+                // 以「本次安装」的服务端标记为准：新用户换浏览器、重新解压一份包都能看到开屏。
+                const res = await fetch('/api/onboarding', {
+                    cache: 'no-store',
+                    signal: controller.signal
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (typeof data?.seen === 'boolean') seen = data.seen;
+                }
+            } catch  {}
+            window.clearTimeout(timeoutId);
+            if (active) setWelcomeStage(seen ? 'workspace' : 'welcome');
+        })();
+        return ()=>{
+            active = false;
+            window.clearTimeout(timeoutId);
+            controller.abort();
+        };
     }, []);
+    function enterWelcome() {
+        setWelcomeStage('workspace');
+        // 记到本次安装，之后换浏览器也不会重复开屏；写入失败时仍以本机标记兜底。
+        void fetch('/api/onboarding', { method: 'POST' }).catch(()=>undefined);
+    }
     // Keep the feedback global so every send/generate entry point gets the same
     // lightweight celebration without touching its existing submit handler.
     useEffect(()=>{
@@ -10678,10 +10704,23 @@ export default function Page() {
         }, model.id);
     }
     const imageModeActive = section === 'generate' || section === 'angle';
-    if (!welcomeReady || welcomeVisible) {
+    if (welcomeStage === 'boot') {
+        return /*#__PURE__*/ _jsxs("div", {
+            className: "welcome-boot",
+            children: [
+                /*#__PURE__*/ _jsx("span", {
+                    className: "loader"
+                }),
+                /*#__PURE__*/ _jsx("p", {
+                    children: "正在读取本地配置…"
+                })
+            ]
+        });
+    }
+    if (welcomeStage === 'welcome') {
         return /*#__PURE__*/ _jsx(WelcomeExperience, {
             theme,
-            onEnter: ()=>setWelcomeVisible(false)
+            onEnter: ()=>enterWelcome()
         });
     }
     return /*#__PURE__*/ _jsxs("main", {

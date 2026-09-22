@@ -1,4 +1,5 @@
 @import './video-studio.css';
+.welcome-boot{position:fixed;inset:0;z-index:240;display:grid;place-items:center;align-content:center;gap:10px;background:var(--bg);color:var(--muted);font-size:11px}
 .welcome-experience{--welcome-ink:#191a25;--welcome-muted:#6d7180;--welcome-line:rgba(38,35,76,.16);--welcome-pointer-x:50%;--welcome-pointer-y:43%;--welcome-parallax-x:0px;--welcome-parallax-y:0px;--welcome-parallax-soft-x:0px;--welcome-parallax-soft-y:0px;position:fixed;inset:0;z-index:240;overflow:hidden;overflow:clip;isolation:isolate;background:#f2f1f7;color:var(--welcome-ink);animation:welcome-enter .9s cubic-bezier(.22,1,.36,1) both}
 .welcome-experience.is-dark{--welcome-ink:#f1f0f7;--welcome-muted:#a4a3b3;--welcome-line:rgba(219,216,255,.18);background:#0d0e15}
 .welcome-experience.is-leaving{animation:welcome-leave .56s cubic-bezier(.76,0,.24,1) both;pointer-events:none}
