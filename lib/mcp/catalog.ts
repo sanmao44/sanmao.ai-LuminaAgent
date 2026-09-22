@@ -541,6 +541,11 @@ function expandWindowsEnv(template: string, env: NodeJS.ProcessEnv) {
   return template.replace(/%([^%]+)%/g, (_match, name: string) => env[name] || env[name.toUpperCase()] || '');
 }
 
+/** 候选路径是按各平台写死的；在非该平台的主机上做存在性检查要按宿主分隔符读（只有测试会跨平台跑），在对应平台上原样返回。 */
+function hostPath(file: string) {
+  return path.sep === '\\' ? file : file.replace(/\\/g, '/');
+}
+
 /**
  * 找用户机器上已有的浏览器。默认 headed + 系统浏览器，避免为了一个 MCP 再下一份 Chromium。
  * Chrome 优先：兼容性最好，Edge 作为兜底。
@@ -554,7 +559,9 @@ export function detectSystemBrowser(
   for (const channel of ['chrome', 'msedge'] as const) {
     for (const template of candidates[channel]) {
       const file = platform === 'win32' ? expandWindowsEnv(template, env) : template;
-      if (file && existsSync(file)) return { channel, path: file };
+      // 候选路径是按反斜杠写的：非 Windows 主机上要换成宿主分隔符才读得到文件。
+      const local = file ? hostPath(file) : '';
+      if (local && existsSync(local)) return { channel, path: local };
     }
   }
   return { channel: null, path: null };
@@ -720,12 +727,14 @@ export function setCatalogEntryExtensionToken(id: unknown, value: unknown, optio
 const extensionCheckCache = new Map<string, { at: number; installed: boolean | null }>();
 const EXTENSION_CHECK_TTL_MS = 60_000;
 
-function cachedExtensionInstalled(executablePath: string | null): boolean | null {
+function cachedExtensionInstalled(executablePath: string | null, platform: string = process.platform): boolean | null {
   if (!executablePath) return null;
-  const hit = extensionCheckCache.get(executablePath);
+  // 缓存键带上平台：同一个路径在不同平台上结论不同（非 Windows 一律是「无法确认」）。
+  const key = platform + ':' + executablePath;
+  const hit = extensionCheckCache.get(key);
   if (hit && Date.now() - hit.at < EXTENSION_CHECK_TTL_MS) return hit.installed;
-  const installed = extensionInstalledForBrowser(executablePath);
-  extensionCheckCache.set(executablePath, { at: Date.now(), installed });
+  const installed = extensionInstalledForBrowser(executablePath, platform);
+  extensionCheckCache.set(key, { at: Date.now(), installed });
   return installed;
 }
 
@@ -746,19 +755,23 @@ export function resolveCatalogBrowserExecutable(
   return { path: null, name: '', source: 'none' };
 }
 
-/** 面板要显示的「接的是哪个浏览器、扩展装没装、连接码配没配」；非浏览器条目返回 null。 */
+/**
+ * 面板要显示的「接的是哪个浏览器、扩展装没装、连接码配没配」；非浏览器条目返回 null。
+ * platform 只给测试用：让「在别的平台上会怎么判」也能验证，默认就是跑代码的这台机器。
+ */
 export function catalogBrowserBridge(
   entry: McpCatalogEntry,
-  options: { dataDir?: string } = {},
+  options: { dataDir?: string; platform?: string } = {},
 ): McpBrowserExtensionBridge | null {
   if (!entry.browserExtension) return null;
+  const platform = options.platform || process.platform;
   const browser = resolveCatalogBrowserExecutable(entry, options);
   return {
     browserName: browser.name,
     executablePath: browser.path,
     source: browser.source,
-    userDataDir: resolveUserDataDir(browser.path),
-    extensionInstalled: cachedExtensionInstalled(browser.path),
+    userDataDir: resolveUserDataDir(browser.path, platform),
+    extensionInstalled: cachedExtensionInstalled(browser.path, platform),
     tokenConfigured: Boolean(catalogEntryExtensionToken(entry.id, options)),
   };
 }

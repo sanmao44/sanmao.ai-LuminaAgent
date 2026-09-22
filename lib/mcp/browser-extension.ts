@@ -88,7 +88,8 @@ export function parseExecutableFromCommand(raw: unknown): string | null {
 
 /** 浏览器名字：认得出的用常用名，其余用文件名（Tabbit Browser.exe → Tabbit Browser）。 */
 export function browserNameFromPath(file: unknown): string {
-  const base = path.basename(String(file ?? ''));
+  // Windows 写法的路径在非 Windows 主机上也要认：先把反斜杠统一成正斜杠，宿主分隔符不再影响结果。
+  const base = path.basename(String(file ?? '').replace(/\\/g, '/'));
   if (!base) return '';
   const known: Record<string, string> = {
     'chrome.exe': 'Google Chrome',
@@ -215,16 +216,26 @@ function profileRank(profile: string) {
  * 结尾斜杠），所以按规范化之后的前缀关系比：同一条路径、或一个是另一个的上级都算同一棵。
  */
 export function sameProfileTree(a: unknown, b: unknown): boolean {
-  const norm = (value: unknown) => {
-    const text = String(value ?? '').trim();
-    if (!text) return '';
-    const resolved = path.resolve(text).replace(/[\\/]+$/, '');
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-  };
-  const left = norm(a);
-  const right = norm(b);
+  const left = String(a ?? '').trim();
+  const right = String(b ?? '').trim();
   if (!left || !right) return false;
-  return left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
+  // 报错里的路径可能是 Windows 写法，而跑代码的这台机器不是 Windows（CI 上就是这样）：
+  // 那时也要按 Windows 的规则比较，不能拿宿主的分隔符与大小写规则去量另一套路径。
+  const windows = process.platform === 'win32' || (isWindowsStylePath(left) && isWindowsStylePath(right));
+  const norm = (value: string) => {
+    const resolved = path.resolve(windows ? value.replace(/\\/g, '/') : value).replace(/[\\/]+$/, '');
+    return windows ? resolved.toLowerCase() : resolved;
+  };
+  const leftPath = norm(left);
+  const rightPath = norm(right);
+  // 前缀比较按路径里实际出现的分隔符来：宿主不是 Windows 时 path.resolve 也可能给反斜杠。
+  const under = (child: string, parent: string) => child.startsWith(parent + '/') || (parent.includes('\\') && child.startsWith(parent + '\\'));
+  return leftPath === rightPath || under(leftPath, rightPath) || under(rightPath, leftPath);
+}
+
+/** Windows 写法的路径（如 C:\x 、C:/x 、\\server\share）：大小写不敏感，且反斜杠与正斜杠等价。 */
+function isWindowsStylePath(text: string): boolean {
+  return /^[a-z]:[\\/]|^\\\\/i.test(text);
 }
 
 /** 某个 profile 里装没装扩展：认 Extensions 目录，也认 Preferences 里的记录。 */

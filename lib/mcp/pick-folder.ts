@@ -50,6 +50,12 @@ export function folderPickerCommand(platform: string = process.platform) {
   return { command: 'zenity', args: ['--file-selection', '--directory', `--title=${PICKER_TITLE}`] };
 }
 
+/** 目标平台的绝对路径写法：win32 认盘符（D:\ 或 D:/）与 UNC，其余按 POSIX 判。 */
+function isAbsolutePickedPath(value: string, platform: string): boolean {
+  if (platform !== 'win32') return path.posix.isAbsolute(value);
+  return /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\');
+}
+
 type PickerRun = { code: number | null; stdout: string; stderr: string; failure: Error | null; timedOut: boolean };
 
 /**
@@ -106,7 +112,8 @@ export async function pickFolder(options: FolderPickOptions = {}): Promise<Folde
   const picked = result.stdout.trim();
   if (picked) {
     // 选择框只可能回本机路径；真收到相对路径说明这条路子被人接了，宁可不加。
-    if (!path.isAbsolute(picked)) throw new Error('系统选择框回了一个无效路径，请手填绝对路径。');
+    // 绝对路径要按目标平台的写法判：拿宿主平台的规则去量另一个平台的路径会得出相反结论。
+    if (!isAbsolutePickedPath(picked, platform)) throw new Error('系统选择框回了一个无效路径，请手填绝对路径。');
     return { path: picked };
   }
   // 取消在各平台表现不一样：Windows/macOS 退 0 或报 User canceled，zenity 直接退 1 且什么都不输出。
