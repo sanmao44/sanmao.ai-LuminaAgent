@@ -24,8 +24,16 @@ function fakeSpawn(result = {}) {
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.killed = false;
-    child.kill = () => { child.killed = true; };
-    if (!result.hang) {
+    child.kill = () => {
+      child.killed = true;
+      // 真子进程被 kill 之后句柄就释放了，假 child 也要一样，否则事件循环会被一直吊着。
+      if (child.keepAlive) clearTimeout(child.keepAlive);
+    };
+    if (result.hang) {
+      // 真弹窗没关时，子进程句柄是活的、事件循环因此不空；假 child 得自己撑着。
+      // 不然 unref 过的超时定时器根本没机会触发，测到的就不是「超时」而是「进程提前退出」。
+      child.keepAlive = setTimeout(() => {}, 10_000);
+    } else {
       setImmediate(() => {
         if (result.error) { child.emit('error', result.error); return; }
         if (result.stdout) child.stdout.emit('data', result.stdout);
