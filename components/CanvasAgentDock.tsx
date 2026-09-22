@@ -935,6 +935,7 @@ export default function CanvasAgentDock({
           {
             messages: outbound,
             model,
+            executionMode: "agent-dock",
             webMode,
             // 画布上下文只给模型看，意图判断必须用用户自己那句话。
             intentText: text,

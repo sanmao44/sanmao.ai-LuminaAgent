@@ -6,6 +6,7 @@ import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
   requestAgent,
+  type AgentExecutionMode,
   type AgentResponse,
   type AgentStreamEvent,
 } from "../agent-client";
@@ -777,6 +778,7 @@ export async function generateCanvasAgent(
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     model?: string;
     webMode?: "off" | "auto" | "always";
+    executionMode?: AgentExecutionMode;
     references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">>;
     task?: CanvasAgentTask;
     durationSeconds?: number;
@@ -815,6 +817,7 @@ export async function generateCanvasAgent(
     return await requestAgent(
       {
         source: "canvas",
+        ...(input.executionMode ? { executionMode: input.executionMode } : {}),
         messages,
         model: input.model || "auto",
         ...(input.task ? { task: input.task } : {}),

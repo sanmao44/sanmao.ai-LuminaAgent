@@ -507,6 +507,9 @@ export async function POST(request: Request) {
     } : {};
     const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
     const isCanvasSource = sourceForLog === 'canvas';
+    // The canvas-node surface is deliberately text-only. The right-side dock
+    // is the execution surface and must opt in explicitly from the client.
+    const isCanvasNodeExecution = isCanvasSource && body.executionMode !== 'agent-dock';
     wantsStream = body.stream === true;
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
@@ -573,6 +576,10 @@ export async function POST(request: Request) {
     let requestedIntentReason = hasExplicitDeliverable && typeof body.intentReason === 'string' && body.intentReason.trim()
       ? body.intentReason.trim().slice(0, 320)
       : intentDecision.reason;
+    if (isCanvasNodeExecution) {
+      requestedDeliverable = 'TEXT';
+      requestedIntentReason = '左侧 Agent 节点仅允许文案输出，实施操作请交给右侧 Agent 助手。';
+    }
     const llmStartedAt = Date.now();
     let llmLogId: string | null = null;
     let llmCallCount = 0;
@@ -690,7 +697,7 @@ export async function POST(request: Request) {
       '[原文]',
     ].join('\n');
     const identityQuestion = isModelIdentityQuestion(latestInstruction);
-    const imageGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
+    const imageGenerationRequest = !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
     if (imageGenerationRequest && !latestReferenceImageCount
       && /(?:这张图|这幅图|原图|参考图|第[一二三四五六七八九十\d]+张|这几张|这些图)/.test(latestInstruction)
       && !/(?:不参考|不用|不要用).{0,8}(?:原图|上.{0,2}图|参考图)/.test(latestInstruction)) {
@@ -711,7 +718,7 @@ export async function POST(request: Request) {
         ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
         : Response.json({ ok: true, message: clarification, images: [], files: [], deliverable: 'CLARIFY' });
     }
-    const fileGenerationRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyFileGenerationRequest(latestInstruction);
+    const fileGenerationRequest = !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyFileGenerationRequest(latestInstruction);
     // 上一轮助手提出可以交付文件、本轮用户只回“1/好/可以”时，也要继续下发 Office 工具。
     const previousAssistantText = (() => {
       for (let index = messages.length - 2; index >= 0; index -= 1) {
@@ -720,15 +727,15 @@ export async function POST(request: Request) {
       }
       return '';
     })();
-    const artifactFollowUpRequest = !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && isArtifactFollowUpRequest(previousAssistantText, latestInstruction);
+    const artifactFollowUpRequest = !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && isArtifactFollowUpRequest(previousAssistantText, latestInstruction);
     const artifactGenerationRequest = fileGenerationRequest
       || artifactFollowUpRequest
-      || (!isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyArtifactGenerationRequest(latestInstruction));
-    const webMode = resolveAgentWebMode(body.webMode, body.webSearch);
+      || (!isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyArtifactGenerationRequest(latestInstruction));
+    const webMode = isCanvasNodeExecution ? 'off' : resolveAgentWebMode(body.webMode, body.webSearch);
     const webSearchEnabled = webMode !== 'off';
     llmWebSearchStatus = webMode === 'off' ? 'disabled' : 'not-needed';
-    const browserAutomationRequest = likelyBrowserAutomationRequest(latestInstruction);
-    const filesystemRequest = likelyFilesystemRequest(latestInstruction, previousAssistantText);
+    const browserAutomationRequest = !isCanvasNodeExecution && likelyBrowserAutomationRequest(latestInstruction);
+    const filesystemRequest = !isCanvasNodeExecution && likelyFilesystemRequest(latestInstruction, previousAssistantText);
     const filesystemActionRequest = filesystemRequest && !/(?:可以吗|能不能|怎么|如何|[?？]$)/.test(latestInstruction);
     const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isCinematicDirectorTask || isSmartVariantPlanningTask || isPromptOptimizationTask || identityQuestion || browserAutomationRequest || filesystemRequest || imageGenerationRequest;
     const rawWebDecision = shouldUseAgentWebSearch(webMode, latestInstruction, messages.slice(0, -1));
@@ -762,12 +769,16 @@ export async function POST(request: Request) {
     // but is noise (and an accidental MCP trigger) for image/canvas work.
     const skillsAvailableThisTurn = skillContext.settings.enabled && !isCanvasSource && !imageGenerationRequest;
     const skillPromptSection = skillsAvailableThisTurn ? skillContext.indexSection + skillContext.toolHint : '';
-    const canvasPatchRequest = isCanvasSource && Boolean(canvasDocument) && !imageGenerationRequest &&
+    const canvasPatchRequest = !isCanvasNodeExecution && isCanvasSource && Boolean(canvasDocument) && !imageGenerationRequest &&
       /(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组).{0,24}(?:画布|节点|选中)|(?:画布|节点|选中).{0,24}(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组)/.test(latestInstruction);
     let system = appendPersonaToSystem(buildSystem(initialWebInstructions, ''), body.persona);
     const executionInstructions = '\n\n执行规则：只使用当前对话的消息、记忆和素材，不猜测其他对话。理解“出图/继续/这张图/改名”等省略时，优先采用本对话最近确认的目标和实际产物；新指令优先，历史建议不是用户授权。要求操作时必须真实调用工具并核验结果，不能用创作说明代替图片、用承诺代替执行。仅缺少关键对象或权限不足时询问一个必要问题。修改或重命名文件后重新读取目标信息确认，不得仅凭计划说成功。本地图片用 read_media_file 读取，应用会保存并展示图片，不要要求用户手动拖入已能读取的图片。工具调用只使用原生结构，不写进正文。';
+    const canvasNodeExecutionInstructions = isCanvasNodeExecution
+      ? '\n\n左侧画布 Agent 节点模式：本轮只生成文案、分析或可复制的提示词。禁止调用图片、视频、文件、画布修改、浏览器、文件系统和其他外部执行工具；不要声称已经完成实施。若用户要求实施，只需说明应将结果交给右侧 Agent 助手执行。'
+      : '';
     system += executionInstructions;
-    if (isCanvasSource && canvasDocument) {
+    system += canvasNodeExecutionInstructions;
+    if (!isCanvasNodeExecution && isCanvasSource && canvasDocument) {
       system += '\n\n超级画布操作：当用户明确要求新增、修改、连接或删除画布节点时，必须调用 canvas_patch 提出结构化操作；不要声称已经修改画布。Patch 会由客户端校验并一次性应用。每个新增节点必须提供完整的合法 CanvasNode，连接必须引用当前节点或同一 Patch 中先前新增的节点。若用户只是分析或提问，不要调用 canvas_patch。';
     }
     system += skillPromptSection;
@@ -943,7 +954,7 @@ export async function POST(request: Request) {
     const imageToolsAllowed = imageGenerationRequest;
     // 本轮下发哪些工具完全由注册表决定（lib/tools）：模型看不到没启用的能力。
     // 用户这一轮在谈 MCP 服务本身时才下发管理工具：普通提问不该看到它。
-    const mcpAdminRequest = likelyMcpManagementRequest(latestInstruction);
+    const mcpAdminRequest = !isCanvasNodeExecution && likelyMcpManagementRequest(latestInstruction);
     const gatingContext = {
       fileGeneration: fileGenerationRequest,
       deliveryRequest: artifactGenerationRequest,
@@ -969,10 +980,12 @@ export async function POST(request: Request) {
     // decide which remote connectors to load; otherwise a stale node saying
     // “GitHub” can make GitHub tools appear in an unrelated image request.
     const creativeToolIsolation = imageGenerationRequest && !browserAutomationRequest && !filesystemRequest && !mcpAdminRequest;
-    const mcpTurnText = creativeToolIsolation ? '' : isCanvasSource ? latestInstruction : recentTurnText;
+    const toolSelectionIsolated = isCanvasNodeExecution || creativeToolIsolation;
+    const mcpTurnText = toolSelectionIsolated ? '' : isCanvasSource ? latestInstruction : recentTurnText;
     const selectedMcpServers = creativeToolIsolation
       ? []
       : mcpServersForTurn(listMcpServers(), mcpTurnText, priorityServerIds);
+    if (isCanvasNodeExecution) selectedMcpServers.splice(0, selectedMcpServers.length);
     const mcpRuntime = await loadMcpToolRuntime({
       signal: requestController.signal,
       servers: selectedMcpServers,
@@ -1016,8 +1029,9 @@ const auditMcpCall = (
     // 用户第一轮说「打开 example.com」、第二轮只说「继续」时，工具不能凭空消失。
     // 面板给某个服务打开「按需下发」后，它的工具只在提到这个服务时才挂上；没打开的仍然全量下发。
     const lazyGroupKeywords = lazyMcpGroupKeywords(mcpRuntime.servers, mcpTools);
-    const toolSelectionText = creativeToolIsolation ? '' : `${mcpTurnText}\n${priorityServerIds.join(' ')}`;
+    const toolSelectionText = toolSelectionIsolated ? '' : `${mcpTurnText}\n${priorityServerIds.join(' ')}`;
     const callableTools = toolSchemasFor(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords);
+    if (isCanvasNodeExecution) callableTools.splice(0, callableTools.length);
     /**
      * 浏览器工具最容易翻车的是元素定位：模型会把快照里的 [ref=f5e14] 连前缀一起抄进 target，
      * 或者自己编一个 CSS 选择器，于是每次都「找不到元素」——用户看到的就是「浏览器打开了，
