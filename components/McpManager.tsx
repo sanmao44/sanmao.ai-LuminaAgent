@@ -365,7 +365,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
     setActiveView('servers');
     setFormOpen(true);
     if (typeof window !== 'undefined') {
-      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches && document.documentElement.dataset.motion !== 'on';
       window.requestAnimationFrame(() => addSection.current?.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' }));
     }
   }, []);

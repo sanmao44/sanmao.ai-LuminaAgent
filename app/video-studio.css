@@ -356,7 +356,7 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
 .video-submit:active{transform:translateY(0);filter:brightness(.98)}
 .video-submit:disabled{cursor:wait;opacity:.68;transform:none;box-shadow:0 7px 16px color-mix(in srgb,var(--accent) 15%,transparent)}
 @media(max-width:620px){.video-submit{min-height:46px}.video-submit span{font-size:11px}}
-@media(prefers-reduced-motion:reduce){.video-submit::after,.video-submit b{transition:none}.video-submit:hover::after{transform:none}}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .video-submit::after,html:not([data-motion="on"]) .video-submit b{transition:none}html:not([data-motion="on"]) .video-submit:hover::after{transform:none}}
 
 .video-media-dialog-inner video{display:block;width:min(780px,88vw);max-height:calc(90vh - 74px);border-radius:14px;background:#000}
 @media(max-width:620px){.video-media-dialog-inner video{width:calc(100vw - 44px);max-height:calc(90vh - 72px)}}
@@ -522,7 +522,7 @@ html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webki
   .creative-video-parameters-dialog .creative-video-parameter-grid{gap:9px}
   .creative-video-parameters-dialog .creative-video-parameter-grid span{min-height:56px;padding:10px 12px}
 }
-@media(prefers-reduced-motion:reduce){.video-advanced-details>summary::after{transition:none}}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .video-advanced-details>summary::after{transition:none}}
 
 /* Keep the live desktop composition balanced: the prompt owns spare height,
    while the media tray stays at its content height and the account card is

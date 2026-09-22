@@ -1,63 +1,31 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
 const STORAGE_KEY = 'sanmao-motion-preference';
-type MotionPreferenceValue = 'auto' | 'on' | 'off';
+type MotionPreferenceValue = 'on' | 'off';
 
+/**
+ * 默认强制开启动态效果：公司统一策略会把 prefers-reduced-motion 设为 reduce，
+ * 画布流光、生成进度、欢迎页动画会整体停摆，看起来像卡住或掉帧。
+ * 只有用户在本机明确关过（off）时才真的停用动画，系统策略不再覆盖本应用。
+ */
 function applyMotionPreference(value: MotionPreferenceValue) {
-  if (value === 'on' || value === 'off') document.documentElement.dataset.motion = value;
-  else delete document.documentElement.dataset.motion;
+  document.documentElement.dataset.motion = value;
 }
 
 function readPreference(): MotionPreferenceValue {
   try {
-    const value = window.localStorage.getItem(STORAGE_KEY);
-    return value === 'on' || value === 'off' ? value : 'auto';
+    return window.localStorage.getItem(STORAGE_KEY) === 'off' ? 'off' : 'on';
   } catch {
-    return 'auto';
+    return 'on';
   }
 }
 
 export default function MotionPreference() {
-  const [systemReduced, setSystemReduced] = useState(false);
-  const [preference, setPreference] = useState<MotionPreferenceValue>('auto');
-
   useEffect(() => {
-    const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-    const next = readPreference();
-    setPreference(next);
-    setSystemReduced(Boolean(media?.matches));
-    applyMotionPreference(next);
-
-    const onChange = () => setSystemReduced(Boolean(media?.matches));
-    media?.addEventListener?.('change', onChange);
-    media?.addListener?.(onChange);
-    return () => {
-      media?.removeEventListener?.('change', onChange);
-      media?.removeListener?.(onChange);
-    };
+    applyMotionPreference(readPreference());
   }, []);
 
-  if (!systemReduced || preference !== 'auto') return null;
-
-  function enableMotion() {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, 'on');
-    } catch {
-      // The in-memory attribute still enables motion for this page session.
-    }
-    applyMotionPreference('on');
-    setPreference('on');
-  }
-
-  return (
-    <aside className="motion-compat-notice" role="status">
-      <span>
-        <strong>检测到系统已减少动态效果</strong>
-        <small>公司电脑的系统策略可能让画布和加载动画停止。</small>
-      </span>
-      <button type="button" onClick={enableMotion}>仅为本应用开启</button>
-    </aside>
-  );
+  return null;
 }

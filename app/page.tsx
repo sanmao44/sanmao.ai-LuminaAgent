@@ -5299,7 +5299,7 @@ export default function Page() {
         const frame = window.requestAnimationFrame(()=>{
             const result = providerTestResultRef.current;
             if (!result) return;
-            const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches && document.documentElement.dataset.motion !== 'on';
             result.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
         });
         return ()=>window.cancelAnimationFrame(frame);

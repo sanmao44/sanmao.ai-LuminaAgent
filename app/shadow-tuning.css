@@ -116,8 +116,7 @@ html[data-theme="dark"] {
 .update-notice,
 .update-progress-tray,
 .history-page:not(.logs-page) .history-toolbar,
-.video-reference-dock,
-.motion-compat-notice {
+.video-reference-dock {
   box-shadow:var(--shadow-float);
 }
 
