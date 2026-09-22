@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.54",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.54",
+  "latestVersion": "0.7.55",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.55",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.55/SANMAO.AI-0.7.55.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.55/SANMAO.AI-0.7.55.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.55/SANMAO.AI-0.7.55.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.55/SANMAO.AI-0.7.55.zip"
   ],
   "sha256": "4cab1e8e526c51a376c7e5fb6077fd3ec94c422ed38799da0a0b6aaf9300255d",
-  "publishedAt": "2026-09-21T16:53:31Z",
+  "publishedAt": "2026-09-22T03:41:12Z",
   "notes": [
     "任务日志排版重做：来源与结果改成整行记录，卡片不再出现大片空白、内容出框或被裁切；元信息标签可自动换行，失败原因最多两行显示。",
     "从任务日志点“结果：…”查看大图，关闭预览后会回到任务日志面板，和“打开结果”行为一致。",
@@ -28,6 +28,9 @@
     "MCP 面板拆分为连接器、我的服务、安全与高级设置，浏览和管理更清晰。",
     "新增 apikl.ai API 快连，并作为推荐服务商提供。",
     "修复超级画布读取服务商临时图片地址失败的问题，自动归档可用的远端图片。",
-    "超级画布的“当前图片作参考”开关按节点记忆，减少重复设置。"
+    "超级画布的“当前图片作参考”开关按节点记忆，减少重复设置。",
+    "默认开启动态效果：不再受系统“减少动态效果”策略影响，画布流光、节点进度与欢迎页动画都会正常播放（此前会被整体停掉，看起来像卡住）。",
+    "移除右下角“检测到系统已减少动态效果”的提示条。",
+    "修复全新安装时开屏欢迎页偶尔一闪而过的问题。"
   ]
 }
